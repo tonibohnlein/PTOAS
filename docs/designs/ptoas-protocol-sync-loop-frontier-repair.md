@@ -2,11 +2,13 @@
 
 ## Status
 
-Step 2B, following the occurrence analysis at `78a8c09f5`, adds a low-level
-repair builder, disposable-clone materialization, and an independent concrete
-cycle verifier. It is **not connected to F selection or native pass emission**.
-This is executable repair machinery, but not yet a complete function certificate.
-No native corpus admission or device-performance improvement is claimed.
+Step 2B (`db6041516`) introduced isolated-loop repair. The boundary continuation
+adds a native `loop-frontier` complete-world alternative to F under
+`--protocol-sync-mixed --protocol-sync-fallback=fail`. It composes straight-line
+prefix/suffix work with an unconditional loop, including zero-trip flow. The
+isolated low-level API remains available and is not a full-function certificate.
+The new native acceptance fixture is separate from historical corpus results;
+no corpus-wide admission or device-performance improvement is claimed.
 
 The builder consumes the bounded local-memory analysis gate, then conservatively
 orders every adjacent physical phase, including phases with disjoint storage.
@@ -18,8 +20,8 @@ candidate coalescing and protocol optimization remain later work.
 
 - One unconditional positive-constant-step `scf.for`, no iter_args or nested
   regions, and ordinary vector-core phases with bounded local UB footprints.
-- Every physical phase is in the loop body. Prefix/suffix physical effects,
-  choices, sections, dynamic/subview/modulo storage, macros and queues reject.
+- Physical phases may be in the straight-line prefix, loop body or suffix.
+  Choices, sections, dynamic/subview/modulo storage, macros and queues reject.
 - Planning rejects pre-existing synchronization and hidden reservations. Explicit
   caller-supplied event reservations are honored; event scarcity publishes no
   partial recipe. Fixed-supply composition remains an integration requirement.
@@ -112,45 +114,92 @@ validates all canonical record provenance fields.
 
 ## Remaining integration gates
 
-1. Add canonical-record consistency and provenance mutations before selecting
-   repairs by obligation ID or mask.
-2. Compose prefix/suffix requirements with loop entry, exit and zero-trip flow.
-3. Represent this indivisible cycle as a complete-world alternative in F,
-   including allocation, costs, fixed supply and mandatory exit drains.
-4. Extend F's concrete-world reconstruction to consume the local certificate
-   while retaining all nonlocal, visibility and unsupported-effect obligations.
-5. Run native compilation with fallback disabled in both GM modes. Then extend
-   participation to choices and nested-region composition.
+The boundary continuation implements canonical-record consistency, outer
+handoffs, atomic F selection, conservative event allocation, concrete cycle
+reconstruction and the mandatory exit drain. Full residual interpretation still
+checks GM visibility, ordered effects and any nonlocal timeline. Unsupported
+fixed supply remains a rejection of this alternative, not ignored semantics.
 
-The public pass remains fail closed until those gates are implemented together;
-the low-level local verifier is not used as a shortcut around F.
+Remaining work is participation for choices, nested-region composition, wider
+provenance recovery, integration with fixed supply, and sparse backward motion
+instead of a fully serialized chain. Event keys remain distinct per static
+handoff in each directed domain. Scarcity cannot publish a partial loop recipe.
 
-## Review disposition and generality
+## Boundary certificate
 
-Independent algorithm and compiler-engineering reviews accepted this milestone
+The last body pipe is the entry gateway; the first body pipe is the drained
+exit gateway. The prefix's final phase hands off to the entry gateway **before
+the prime**. The closing wait after the loop hands off to the first suffix
+phase. Other adjacent outer phases use directed events or named barriers.
+
+On a zero-trip execution, entry acquisition precedes the prime, the drain
+consumes that prime, and the suffix handoff follows the drain. Thus the prefix
+still orders the suffix without an unconditional wait for a skipped body set.
+With equal first/last body pipes, named barriers replace the closing event;
+the entry and exit gateways remain the same pipe. The arbitrary-trip cycle
+invariant above composes with these non-recurring boundary handoffs.
+
+F retains the canonical requirement records, including atoms, access IDs and
+iteration relations, and compares them against fresh analysis during plan
+verification. A compact logical `orderedLoop` certificate supplies completion
+for the supported occurrence relations; it does not populate visibility supply.
+Only that complete certificate enables canonical loop requirements to replace
+local timeline rejection records. Unknown local footprints still reject.
+
+Concrete verification reconstructs every phase, boundary handoff, loop action,
+event key and final exit barrier from freshly extracted IR, without reading
+planner tags or the selected recipe. It then runs the residual interpreter with
+the reconstructed completion certificate. The straight-line-only scoreboard is
+not used to interpret loops; the conservative total-order induction establishes
+local completion, with the independent bounded execution oracle as a test.
+
+The alternative competes with existing complete worlds, including when optional
+protocol recognition is disabled in the mixed planner. It is not yet integrated
+into the separate legacy `--protocol-sync-direct-repair` entry point. Action and
+event-pressure costs are structural counts, not performance predictions.
+
+## Step 2B review disposition and generality
+
+Independent algorithm and compiler-engineering reviews accepted Step 2B
 with no blocking findings for its isolated-loop, local-completion scope. This
 is a length-N serialized phase cycle, not yet sparse backward frontier search:
 requirements currently gate eligibility, while the repair orders every adjacent
 phase. It should remain a conservative alternative as compositional region
 analysis and more selective placement develop.
 
-Before native integration, the next acceptance case is a prefix write, an
+Those reviews requested a native acceptance case with a prefix write, an
 ordinary loop with unrelated work, and suffix consumption or reuse. It must
 compile with fallback disabled in both GM modes, with canonical entry,
 backedge, exit and zero-trip obligations checked by F. F must also check fixed
 and hidden event reservations; the local concrete checker has no reservation
-context. Canonical provenance and mask mutations remain an integration gate.
+context. The boundary continuation implements the native case and canonical
+provenance/mask mutations, and rejects fixed/hidden supply for this alternative.
+Separate algorithm and compiler-engineering reviews accepted the native boundary
+continuation with no blocking findings. Both were read-only code reviews; their
+acceptance does not imply independent test reruns or new hardware qualification.
+
+The reviews retain these nonblocking follow-ups:
+
+- Preserve resource-infeasible versus unsupported alternative diagnostics.
+- Validate complete-world accounting/optimality alongside semantic consistency.
+- Keep the logical certificate builder restricted to checked callers; consider
+  an explicitly checked certificate type before broadening its use.
+- Add an all-lanes drain and function-return rule to the execution oracle. It
+  currently treats `PIPE_ALL` as a separate lane; final exit completion is
+  checked by production reconstruction, not independently by that oracle.
+- Compose fixed supply and implement sparse placement only with corresponding
+  proof and verification extensions. The current exclusions remain intentional.
 
 The current deletion and motion tests mainly establish sensitivity of the
 canonical-shape checker. They do not establish that every rejected mutation
 is semantically unsafe: this conservative cycle can contain redundant actions.
 The duplicate-set test additionally has an independent execution witness.
-Integration should add semantic witnesses for unsafe backedge deletion,
-premature signals, late waits and missing drains. The execution oracle uses
+The boundary continuation adds semantic witnesses for unsafe entry/backedge
+deletion, premature signals, late waits and missing drains. The execution oracle uses
 fixed 512-byte fixture ranges and shared operation extraction; it is not a
 general storage-provenance oracle or hardware qualification.
 
-## Validation record
+## Step 2B validation record
 
 Validated on baseline `78a8c09f59a87d90a1a3fa861318d497cd64776f` plus this
 working-tree milestone, with the existing LLVM/MLIR 19.1.7 toolchain:
@@ -176,3 +225,53 @@ scoreboard selection passed 3/3 tests; the full ProtocolSync selection passed
 42/42 in 35.54 seconds. The changed-code checker reported seven code files,
 zero errors and zero warnings; whitespace validation passed. No full-system,
 device, timing or native-corpus campaign was run for this local-repair slice.
+
+## Native boundary continuation validation
+
+Baseline `db6041516420c27b4fe77d87fed2c90925921786` plus the boundary
+working-tree changes, LLVM/MLIR 19.1.7, workspace Python 3.12.13. Builds and
+tests were limited to two workers in aggregate; no LLVM or full-system rebuild
+was performed. Relevant compiler and unit targets were built incrementally.
+
+The final ProtocolSync selection passed **44/44** in 32.58 seconds:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" .venv/bin/python \
+  /home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit \
+  -v -j 2 build/test/lit --filter protocol_sync \
+  -o build/protocol-sync-loop-boundaries-suite-final.json
+```
+
+The dedicated boundary regression checks two functions: a three-phase loop
+with unrelated scratch work and suffix physical-address reuse, and a
+single-phase same-pipe loop. Both compile through native mixed selection with
+fallback disabled in both GM modes, and both emitted programs pass fresh
+concrete verification. A2 IR emission also passes. The A3 C++ emission smoke
+checks use the same input and flags without `--emit-pto-ir`; C++ text emission
+is not a device compiler or device execution result.
+
+The multi-phase fixture has ten canonical local requirements, four distinct
+event keys and conservative directed-domain pressure two. The single-phase
+fixture has four requirements, two event keys and pressure one. These are
+fixture-specific structural counts, not corpus or performance measurements.
+Safe GM mode succeeds here because the relevant GM reads precede writes;
+completion ordering discharges possible WAR/WAW overlap. A separate same-GM
+prefix-store/body-load fixture remains rejected in **both** modes: completion
+does not supply unqualified publication, and argument disjointness cannot
+remove overlap on the same argument.
+
+The loop unit additionally checks both GM contracts with partial local overlap
+for trips 0, 1, 2, 3, 4, 7, 8 and 11. Its independent asynchronous execution
+oracle witnesses unsafe entry-wait deletion (including zero trips), backedge
+wait deletion, premature signal, late wait and missing closing drain. Plan
+verification rejects changed atom masks, source access IDs, iteration distances
+and missing boundary edges. The previous 27-topology/216-execution cycle tests
+and 81-program/648-trace requirement tests remain passing.
+
+One existing mixed-selection assertion was updated from four/two to five/three
+attempted/feasible worlds: the extra serial-loop alternative is feasible, but
+the previous combined protocol still wins. No safety or allocation assertion
+was removed. Changed-code checking passed for fourteen code files with zero
+errors/warnings; `git diff --check` passed. Local result JSON files live in the
+ignored build tree, not a committed campaign archive. No corpus rerun,
+device/CA-model campaign or performance measurement was performed.

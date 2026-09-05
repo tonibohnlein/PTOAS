@@ -14,6 +14,7 @@
 #define PTO_TRANSFORMS_PROTOCOLSYNC_MIXEDPROTOCOLPLAN_H
 
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
+#include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
 #include "PTO/Transforms/ProtocolSync/OneShotPublish.h"
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 
@@ -48,6 +49,7 @@ enum class SyncMixedWorldKind : std::uint8_t {
     OneShotPublish,
     ReadyRelease,
     CombinedProtocols,
+    LoopFrontier,
 };
 
 struct SyncMixedWorldCost {
@@ -65,6 +67,7 @@ struct SyncMixedProtocolPlan {
     SyncMixedPlanStatus status = SyncMixedPlanStatus::Empty;
     std::optional<SyncOneShotPublishPlan> oneShot;
     std::optional<SyncReadyReleasePlan> readyRelease;
+    std::optional<SyncLoopFrontierPlan> loopFrontier;
     llvm::SmallVector<SyncResidualObligation, 16> directObligations;
     SyncDirectRepairPlan directRepair;
     SyncSelectedWorld selectedWorld;
@@ -87,6 +90,13 @@ FailureOr<SyncMixedProtocolPlan> buildMixedProtocolPlan(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels, bool enableProtocols = true,
     ProtocolSyncStatistics* statistics = nullptr);
+FailureOr<std::optional<SyncMixedProtocolPlan>> buildMixedLoopFrontierPlan(
+    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
+    const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels);
+LogicalResult verifyMixedLoopFrontierPlan(
+    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
+    const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
+    const SyncMixedProtocolPlan& plan);
 /// Select and reverse-delete an individually well-formed, possibly
 /// overcomplete candidate pool, then record the exact complete world. Event
 /// IDs must not have been allocated yet.

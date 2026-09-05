@@ -1,0 +1,113 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias --protocol-sync-dump=plan %s -o %t.safe.ir 2> %t.safe.log
+// RUN: FileCheck %s --input-file=%t.safe.log --check-prefix=PLAN
+// RUN: FileCheck %s --input-file=%t.safe.ir --check-prefix=IR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.disjoint.ir
+// RUN: FileCheck %s --input-file=%t.disjoint.ir --check-prefix=IR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.safe.ir -o /dev/null 2> %t.verify
+// RUN: FileCheck %s --input-file=%t.verify --check-prefix=VERIFY
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-gm-alias=assume-disjoint-arguments --protocol-sync-dump=concrete-verification %t.disjoint.ir -o /dev/null 2> %t.disjoint.verify
+// RUN: FileCheck %s --input-file=%t.disjoint.verify --check-prefix=VERIFY
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-fallback=fail %s -o %t.a2.ir
+// RUN: FileCheck %s --input-file=%t.a2.ir --check-prefix=IR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.safe.cpp
+// RUN: FileCheck %s --input-file=%t.safe.cpp --check-prefix=CXX
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.disjoint.cpp
+// RUN: FileCheck %s --input-file=%t.disjoint.cpp --check-prefix=CXX
+
+// PLAN: world=loop-frontier
+// CXX-LABEL: AICORE void loop_boundaries(
+// CXX: set_flag(PIPE_MTE2, PIPE_MTE3,
+// CXX: wait_flag(PIPE_MTE2, PIPE_MTE3,
+// CXX: for (int64_t
+// CXX: wait_flag(PIPE_MTE3, PIPE_V,
+// CXX: TSTORE(
+// CXX: set_flag(PIPE_MTE3, PIPE_V,
+// CXX: }
+// CXX: wait_flag(PIPE_MTE3, PIPE_V,
+// CXX: TABS(
+// CXX: TSTORE(
+// CXX-LABEL: AICORE void same_pipe_loop_boundaries(
+// CXX: for (int64_t
+// CXX: pipe_barrier(PIPE_V);
+// CXX: TABS(
+// VERIFY: concrete-verification function=@loop_boundaries status=accepted first-failed-stage=none
+// VERIFY: concrete-verification function=@same_pipe_loop_boundaries status=accepted first-failed-stage=none
+// IR-LABEL: func.func @loop_boundaries
+// IR: pto.tload
+// IR: pto.barrier <PIPE_MTE2>
+// IR: pto.tload
+// IR: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>,
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>,
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_V>,
+// IR: scf.for
+// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>,
+// IR: pto.tabs
+// IR: pto.tabs
+// IR: pto.tstore
+// IR: pto.set_flag[<PIPE_MTE3>, <PIPE_V>,
+// IR: }
+// IR: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>,
+// IR: pto.tabs
+// IR: pto.tstore
+// IR: pto.barrier <PIPE_ALL>
+// IR-LABEL: func.func @same_pipe_loop_boundaries
+// IR: pto.tload
+// IR: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// IR: scf.for
+// IR: pto.barrier <PIPE_V>
+// IR: pto.tabs
+// IR: }
+// IR: pto.barrier <PIPE_V>
+// IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
+// IR: pto.tstore
+// IR: pto.barrier <PIPE_ALL>
+
+module {
+  func.func @loop_boundaries(%n: index,
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c1024 = arith.constant 1024 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %a = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    %reuse = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    %scratch = pto.alloc_tile addr = %c1024 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%scratch : !pto.tile_buf<vec, 16x16xf16>)
+    scf.for %i = %zero to %n step %one {
+      pto.tabs ins(%scratch : !pto.tile_buf<vec, 16x16xf16>) outs(%scratch : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    }
+    pto.tabs ins(%reuse : !pto.tile_buf<vec, 16x16xf16>) outs(%reuse : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%reuse : !pto.tile_buf<vec, 16x16xf16>) outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+  func.func @same_pipe_loop_boundaries(%n: index,
+      %input: !pto.partition_tensor_view<16x16xf16>,
+      %output: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %a = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    scf.for %i = %zero to %n step %one {
+      pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    pto.tstore ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%output : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+}

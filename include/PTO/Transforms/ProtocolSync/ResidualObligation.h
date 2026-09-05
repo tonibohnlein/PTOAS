@@ -118,6 +118,9 @@ struct SyncSelectedVisibility {
 };
 
 struct SyncSelectedWorld {
+    /// Atomic fully serialized ordinary-loop completion certificate. Never
+    /// implies visibility. Concrete verification reconstructs it without tags.
+    std::optional<SyncRegionId> orderedLoop;
     llvm::SmallVector<SyncSelectedProtocol, 4> protocols;
     llvm::SmallVector<SyncSelectedCompletion, 8> completions;
     llvm::SmallVector<SyncSelectedVisibility, 2> visibility;

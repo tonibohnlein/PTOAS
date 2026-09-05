@@ -13,6 +13,7 @@
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
 #include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
 #include "PTO/Transforms/ProtocolSync/LocalMemoryAnalysis.h"
+#include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
 #include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -56,6 +57,11 @@ struct AbstractState {
 
 class CompletionGraph {
 public:
+    void setOrderedLoop(const StructuredSyncIR& value, SyncRegionId carrier)
+    {
+        schedule = &value;
+        orderedLoop = carrier;
+    }
     explicit CompletionGraph(unsigned phaseCount)
     {
         sameIteration.reserve(phaseCount);
@@ -113,6 +119,9 @@ public:
 
     bool covers(SyncPhaseId source, SyncPhaseId target, const SyncIterationRelation& relation) const
     {
+        if (schedule && loopFrontierOrders(*schedule, orderedLoop, source, target, relation)) {
+            return true;
+        }
         if (relation.kind == SyncIterationRelationKind::SameIteration && relation.distance == 0) {
             return reachesSameIteration(source, target);
         }
@@ -126,6 +135,8 @@ public:
     }
 
 private:
+    const StructuredSyncIR* schedule = nullptr;
+    SyncRegionId orderedLoop = kInvalidSyncId;
     bool reachesSameIteration(SyncPhaseId source, SyncPhaseId target) const
     {
         const bool invalidEndpoint = source >= sameIteration.size() || target >= sameIteration.size();
@@ -223,6 +234,17 @@ SyncIterationRelation iterationRelation(const SyncPhase* source, const SyncPhase
         return {SyncIterationRelationKind::Unknown, 0};
     }
     if (source->iterationDomain.loops != target->iterationDomain.loops) {
+        const bool forward = source->id < target->id && source->guard.empty() && target->guard.empty();
+        if (forward) {
+            const bool entry = source->iterationDomain.loops.empty() && target->iterationDomain.loops.size() == 1;
+            const bool exit = source->iterationDomain.loops.size() == 1 && target->iterationDomain.loops.empty();
+            if (entry) {
+                return {SyncIterationRelationKind::LoopEntry, 0, target->iterationDomain.loops.front()};
+            }
+            if (exit) {
+                return {SyncIterationRelationKind::LoopExit, 0, source->iterationDomain.loops.front()};
+            }
+        }
         return {
             SyncIterationRelationKind::Unknown, 0,
             innermostCommonLoop(source->iterationDomain.loops, target->iterationDomain.loops)};
@@ -1295,9 +1317,22 @@ FailureOr<SyncInterpretationResult> mlir::pto::protocol_sync::interpretSelectedW
     }
 
     AbstractState state;
-    FailureOr<SyncLocalMemoryAnalysis> local = analyzeLocalMemory(schedule);
+    SyncLocalFlowOptions localOptions;
+    localOptions.analyzeSingleLoop = effectiveWorld.orderedLoop.has_value();
+    FailureOr<SyncLocalMemoryAnalysis> local = analyzeLocalMemory(schedule, localOptions);
     if (failed(local)) {
         return failure();
+    }
+    if (effectiveWorld.orderedLoop) {
+        if (local->loopStatus != SyncLocalLoopStatus::Complete || local->loopCarrier != *effectiveWorld.orderedLoop ||
+            !effectiveWorld.protocols.empty()) {
+            return failure();
+        }
+        completionGraph.setOrderedLoop(schedule, *effectiveWorld.orderedLoop);
+        local->boundary.clear();
+        for (const SyncLocalAccessRegion& region : local->regions) {
+            local->coveredAccesses.set(region.access);
+        }
     }
     accumulator.result.localAtoms = local->atoms.size();
     accumulator.result.localRequirements = local->requirements.size();

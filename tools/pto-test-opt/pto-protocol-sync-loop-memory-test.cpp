@@ -17,6 +17,8 @@
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
 #include "PTO/Transforms/ProtocolSync/LocalMemoryAnalysis.h"
 #include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
+#include "PTO/Transforms/ProtocolSync/MixedProtocolPlan.h"
+#include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -527,6 +529,98 @@ bool testCyclePlacementAndResources(MLIRContext& context)
     return true;
 }
 
+bool boundaryWitness(OwningOpRef<ModuleOp> module, unsigned mutation)
+{
+    auto function = *module->getOps<func::FuncOp>().begin();
+    auto loop = *function.getOps<scf::ForOp>().begin();
+    if (mutation == 0) {
+        // Remove entry acquisition: also unsafe on the zero-trip bypass.
+        (*function.getOps<WaitFlagOp>().begin())->erase();
+    } else if (mutation == 1) {
+        (*loop.getOps<WaitFlagOp>().begin())->erase();
+    } else if (mutation == 2) {
+        auto signal = *loop.getOps<SetFlagOp>().begin();
+        signal->moveBefore(signal->getPrevNode());
+    } else if (mutation == 3) {
+        auto waits = loop.getOps<WaitFlagOp>();
+        auto iterator = waits.begin();
+        ++iterator;
+        auto wait = *iterator;
+        wait->moveAfter(wait->getNextNode());
+    } else {
+        loop->getNextNode()->erase(); // Unconsumed closing token.
+    }
+    Fixture witness(std::move(module));
+    return witness.build() && failed(verifyFreshConcreteSyncSemantics(witness.function)) &&
+           !checkLoopFrontierInterleavings(witness.schedule, mutation == 0 ? 0 : 3);
+}
+
+bool testNativeBoundaryWorlds(MLIRContext& context)
+{
+    for (StringRef alias : {StringRef("may-alias"), StringRef("assume-disjoint-arguments")}) {
+        const std::string text = kPrelude.str() + effect(0, "%a") + kLoop.str() + effect(2, "%a") + effect(1, "%a") +
+                                 "}\n" + effect(2, "%b") + effect(1, "%b") + "return\n}\n}\n";
+        auto original = parseSourceString<ModuleOp>(text, &context);
+        if (!original) {
+            return false;
+        }
+        Fixture fixture(std::move(original));
+        fixture.function->setAttr("pto.gm_alias", StringAttr::get(&context, alias));
+        if (!fixture.build()) {
+            return false;
+        }
+        auto stages = analyzePipelineStages(fixture.schedule);
+        if (failed(stages)) {
+            return false;
+        }
+        auto timelines = analyzeStorageTimelines(fixture.schedule, *stages);
+        auto channels = analyzeChannels(fixture.schedule, *stages, timelines);
+        auto plan = buildMixedProtocolPlan(fixture.schedule, *stages, timelines, channels, false);
+        if (!check(
+                succeeded(plan) && plan->loopFrontier &&
+                    succeeded(verifyMixedProtocolPlan(fixture.schedule, *stages, timelines, channels, *plan)),
+                "boundary world must be complete without protocol recognition")) {
+            return false;
+        }
+        for (unsigned mutation = 0; mutation < 4; ++mutation) {
+            auto bad = *plan;
+            auto& requirement = bad.loopFrontier->requirements.front();
+            if (mutation == 0) {
+                requirement.atoms.clear();
+            } else if (mutation == 1) {
+                requirement.sourceAccess = kInvalidSyncId;
+            } else if (mutation == 2) {
+                requirement.iteration.distance += 1;
+            } else {
+                bad.loopFrontier->boundaryEdges.clear();
+            }
+            if (!check(
+                    failed(verifyMixedProtocolPlan(fixture.schedule, *stages, timelines, channels, bad)),
+                    "canonical provenance and boundary recipe mutations must reject")) {
+                return false;
+            }
+        }
+        IRMapping mapping;
+        OwningOpRef<ModuleOp> emitted = cast<ModuleOp>(fixture.module->getOperation()->clone(mapping));
+        auto function = cast<func::FuncOp>(mapping.lookup(fixture.function.getOperation()));
+        const bool verified = succeeded(materializeLoopFrontierRepair(function, mapping, *plan->loopFrontier)) &&
+                              succeeded(verifyFreshConcreteSyncSemantics(function)) &&
+                              interleavings(cast<ModuleOp>(emitted->clone()));
+        if (!verified) {
+            return check(false, "boundary repair must pass fresh concrete and asynchronous execution checks");
+        }
+        for (unsigned mutation = 0; mutation < 5; ++mutation) {
+            if (!check(
+                    boundaryWitness(cast<ModuleOp>(emitted->clone()), mutation),
+                    "unsafe boundary/cycle mutation needs an independent execution witness")) {
+                return false;
+            }
+        }
+    }
+    llvm::outs() << "protocol-sync native boundary worlds: both GM modes, provenance and lifetime witnesses pass\n";
+    return true;
+}
+
 } // namespace
 
 int main()
@@ -536,7 +630,8 @@ int main()
     MLIRContext context(registry);
     context.disableMultithreading();
     return testOracle(context) && testMutationsAndLimits(context) && testSelfPhaseAndBoundaries(context) &&
-                   testConcreteCycles(context) && testCyclePlacementAndResources(context) ?
+                   testConcreteCycles(context) && testCyclePlacementAndResources(context) &&
+                   testNativeBoundaryWorlds(context) ?
                0 :
                1;
 }

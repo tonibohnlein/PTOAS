@@ -8,7 +8,8 @@ It adds opt-in canonical local-memory requirements for one unconditional
 not yet enable ordinary-loop synchronization emission or increase native kernel
 admission. The subsequent [acknowledged loop-frontier repair](ptoas-protocol-sync-loop-frontier-repair.md)
 adds a low-level recurring recipe and independent concrete cycle verification;
-boundary composition and integration with F remain required for native emission.
+its boundary continuation integrates the conservative recipe into F's native
+mixed path. This document's diagnostic measurements remain the Step 2A record.
 
 The supported analysis subset is one function block, one positive-constant-step
 loop without iter_args, ordinary vector-core phases, and independently recovered

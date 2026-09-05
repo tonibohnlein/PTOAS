@@ -9,9 +9,9 @@
 // for the full text of the License.
 
 //===- LoopFrontierRepair.h - Acknowledged phase-frontier cycle -*- C++ -*-===//
-// Low-level recurring repair for an isolated ordinary loop in disposable IR.
-// This is a local completion certificate, NOT a complete function certificate:
-// GM visibility, exit drains, fixed supply and F integration remain separate.
+// Acknowledged recurring repair with optional prefix/suffix boundary handoffs.
+// Native F selection uses the boundary form plus the full residual interpreter.
+// The local cycle alone is NOT a visibility or complete-function certificate.
 #ifndef PTO_TRANSFORMS_PROTOCOLSYNC_LOOPFRONTIERREPAIR_H
 #define PTO_TRANSFORMS_PROTOCOLSYNC_LOOPFRONTIERREPAIR_H
 
@@ -36,14 +36,21 @@ struct SyncLoopFrontierPlan {
     Operation* loop = nullptr;
     /// Lexical adjacent phase frontiers; the last edge crosses the backedge.
     llvm::SmallVector<SyncLoopFrontierEdge, 8> edges;
+    /// Outer straight-line chain. The loop denotes its last-pipe entry gateway
+    /// as a target and its first-pipe drained gateway as a source.
+    llvm::SmallVector<SyncLoopFrontierEdge, 8> boundaryEdges;
+    llvm::SmallVector<SyncResidualObligation, 16> requirements;
+    bool includeBoundaries = false;
     std::uint64_t requirementCount = 0;
     std::string detail;
 };
 
 /// Builds a conservative complete local phase-order cycle, not a storage
-/// capacity-one protocol. Does not change IR, coverage bits, or F selection.
+/// capacity-one protocol. Does not change IR or coverage bits. The default
+/// remains the isolated diagnostic API; native F requests includeBoundaries.
 FailureOr<SyncLoopFrontierPlan> buildLoopFrontierRepairPlan(
-    const StructuredSyncIR& schedule, llvm::ArrayRef<SyncEventReservation> reservations = {});
+    const StructuredSyncIR& schedule, llvm::ArrayRef<SyncEventReservation> reservations = {},
+    bool includeBoundaries = false);
 
 /// Caller owns disposable whole-module staging IR and must discard it on any
 /// failure. Successful emission alone does not authorize committing the clone.
@@ -54,8 +61,16 @@ LogicalResult materializeLoopFrontierRepair(
 /// arbitrary-trip consumption-before-rearm by the acknowledged cycle invariant,
 /// including the zero-trip prime/drain path. Consults no plan or diagnostic tags.
 /// Rejects unsupported scope. Certifies local completion only, not GM visibility,
-/// mandatory function exit, or the completeness of shared operation semantics.
-LogicalResult verifyConcreteLoopFrontierRepair(const StructuredSyncIR& schedule);
+/// or the completeness of shared operation semantics. The boundary form also
+/// requires the final function-exit drain; F must still check nonlocal effects.
+LogicalResult verifyConcreteLoopFrontierRepair(const StructuredSyncIR& schedule, bool includeBoundaries = false);
+
+/// Logical completion-only certificate; concrete callers must first reconstruct
+/// every action with verifyConcreteLoopFrontierRepair(..., true).
+FailureOr<SyncSelectedWorld> buildLoopFrontierWorld(const StructuredSyncIR& schedule);
+bool loopFrontierOrders(
+    const StructuredSyncIR& schedule, SyncRegionId carrier, SyncPhaseId source, SyncPhaseId target,
+    const SyncIterationRelation& relation);
 
 } // namespace mlir::pto::protocol_sync
 #endif // PTO_TRANSFORMS_PROTOCOLSYNC_LOOPFRONTIERREPAIR_H

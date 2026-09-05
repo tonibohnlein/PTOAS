@@ -505,6 +505,12 @@ LogicalResult mlir::pto::protocol_sync::verifyMixedProtocolPlan(
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
     const SyncMixedProtocolPlan& plan, ProtocolSyncStatistics* statistics)
 {
+    if (plan.loopFrontier) {
+        return verifyMixedLoopFrontierPlan(schedule, stages, timelines, channels, plan);
+    }
+    if (plan.selectedWorld.orderedLoop) {
+        return failure();
+    }
     const bool malformedPlan = !schedule.isFrozen();
     if (malformedPlan) {
         return failure();
@@ -640,6 +646,12 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyMixedProtocolPlanInD
     func::FuncOp function = schedule.getFunction();
     IRMapping mapping;
     buildIdentityMapping(function, mapping);
+    if (plan.loopFrontier) {
+        if (failed(materializeLoopFrontierRepair(function, mapping, *plan.loopFrontier))) {
+            return failure();
+        }
+        return verifyFreshConcreteSyncSemantics(function, statistics);
+    }
     if (plan.oneShot && failed(materializeOneShotPublishPlan(function, mapping, *plan.oneShot, statistics))) {
         return failure();
     }

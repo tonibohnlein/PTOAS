@@ -398,14 +398,17 @@ bool testMixedSelectionAndAllocation(MLIRContext& context)
                           plan->oneShot && plan->oneShot->candidates.size() == 1 &&
                           plan->selectedWorldKind == SyncMixedWorldKind::CombinedProtocols &&
                           plan->initialResidualCount == 2 && plan->directRepair.candidates.size() == 1 &&
-                          plan->candidateCountBeforeDeletion == 3 && plan->completeWorldsAttempted == 4 &&
-                          plan->completeWorldsFeasible == 2 && plan->selectedCost.generatedEventPairs == 3 &&
+                          plan->candidateCountBeforeDeletion == 3 && plan->completeWorldsAttempted == 5 &&
+                          plan->completeWorldsFeasible == 3 && plan->selectedCost.generatedEventPairs == 3 &&
                           plan->selectedCost.targetedBarriers == 0 && plan->selectedCost.fixedExitDrains == 1 &&
                           plan->selectedCost.staticActions == 8 && plan->reverseDeletionAttempts == 3 &&
                           plan->reverseDeletionRemoved == 0 &&
                           succeeded(verifyMixedProtocolPlan(
                               fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, *plan));
     if (!check(selected, "mixed protocol/direct selection is not exact")) {
+        if (succeeded(plan)) {
+            printMixedProtocolPlan(fixture.schedule.getFunction(), *plan, llvm::errs());
+        }
         return false;
     }
 

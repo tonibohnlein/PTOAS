@@ -62,7 +62,7 @@ void emitAcquire(OpBuilder& builder, const SyncLoopFrontierEdge& edge, Location 
 } // namespace
 
 FailureOr<SyncLoopFrontierPlan> mlir::pto::protocol_sync::buildLoopFrontierRepairPlan(
-    const StructuredSyncIR& schedule, ArrayRef<SyncEventReservation> reservations)
+    const StructuredSyncIR& schedule, ArrayRef<SyncEventReservation> reservations, bool includeBoundaries)
 {
     SyncLoopFrontierPlan plan;
     plan.detail = "needs one isolated ordinary loop with bounded local footprints and no fixed synchronization";
@@ -83,13 +83,22 @@ FailureOr<SyncLoopFrontierPlan> mlir::pto::protocol_sync::buildLoopFrontierRepai
         return failure();
     }
     SmallVector<const SyncPhase*, 8> phases;
+    SmallVector<const SyncPhase*, 8> outer;
     for (const SyncPhase& phase : schedule.getPhases()) {
+        const bool outerPhase = includeBoundaries && phase.operation && phase.operation->getBlock() == loop->getBlock();
+        if (outerPhase) {
+            outer.push_back(&phase);
+            continue;
+        }
         const bool isolated = phase.operation && phase.operation->getBlock() == loop.getBody() &&
                               (phases.empty() || phases.back()->operation != phase.operation);
         if (!isolated) {
             return plan;
         }
         phases.push_back(&phase);
+    }
+    if (phases.empty()) {
+        return plan;
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
     if (!target.supportsDirectRepairEmission()) {
@@ -126,8 +135,58 @@ FailureOr<SyncLoopFrontierPlan> mlir::pto::protocol_sync::buildLoopFrontierRepai
         }
         edges.push_back(edge);
     }
+    SmallVector<SyncLoopFrontierEdge, 8> boundaries;
+    if (includeBoundaries) {
+        SmallVector<Operation*, 8> nodes;
+        std::map<Operation*, PIPE> pipes;
+        for (const SyncPhase* phase : outer) {
+            if (phase->operation->isBeforeInBlock(loop)) {
+                nodes.push_back(phase->operation);
+            }
+            pipes.emplace(phase->operation, phase->pipe);
+        }
+        nodes.push_back(loop);
+        for (const SyncPhase* phase : outer) {
+            if (loop->isBeforeInBlock(phase->operation)) {
+                nodes.push_back(phase->operation);
+            }
+        }
+        for (unsigned index = 1; index < nodes.size(); ++index) {
+            Operation* source = nodes[index - 1];
+            Operation* destination = nodes[index];
+            const PIPE src = source == loop ? phases.front()->pipe : pipes.at(source);
+            const PIPE dst = destination == loop ? phases.back()->pipe : pipes.at(destination);
+            SyncLoopFrontierEdge edge{source, destination, src, dst, std::nullopt};
+            if (src == dst) {
+                if (!target.supportsPipeBarrier({SyncPhysicalCore::Vector, src})) {
+                    return plan;
+                }
+            } else {
+                if (!target.supportsEvent({SyncPhysicalCore::Vector, src}, {SyncPhysicalCore::Vector, dst})) {
+                    return plan;
+                }
+                for (unsigned id : target.getCompilerEventIds()) {
+                    const bool available =
+                        !reserved(src, dst, id, reservations) && occupied.emplace(src, dst, id).second;
+                    if (available) {
+                        edge.eventId = id;
+                        break;
+                    }
+                }
+                if (!edge.eventId) {
+                    plan.status = SyncLoopFrontierStatus::ResourceInfeasible;
+                    plan.detail = "no unreserved event ID for an outer frontier";
+                    return plan;
+                }
+            }
+            boundaries.push_back(edge);
+        }
+    }
     plan.loop = loop;
     plan.edges = std::move(edges);
+    plan.boundaryEdges = std::move(boundaries);
+    plan.includeBoundaries = includeBoundaries;
+    plan.requirements = local->requirements;
     plan.requirementCount = local->requirements.size();
     plan.status = SyncLoopFrontierStatus::Ready;
     plan.detail = "local completion cycle only; full F verification is still required";
@@ -193,5 +252,27 @@ LogicalResult mlir::pto::protocol_sync::materializeLoopFrontierRepair(
     }
     builder.setInsertionPointAfter(loop);
     emitAcquire(builder, backedge, loop.getLoc());
+    Operation* loopDrain = loop->getNextNode();
+    for (const auto& edge : plan.boundaryEdges) {
+        Operation* source = mapping.lookupOrNull(edge.source);
+        Operation* destination = mapping.lookupOrNull(edge.target);
+        const bool validBoundary = source && destination && source->getBlock() == loop->getBlock() &&
+                                   destination->getBlock() == loop->getBlock() && source->isBeforeInBlock(destination);
+        if (!validBoundary) {
+            return failure();
+        }
+        // Insert entry acquisition before the prime, not merely before scf.for.
+        Operation* acquireAnchor = destination == loop && backedge.eventId ? loop->getPrevNode() : destination;
+        if (edge.eventId) {
+            builder.setInsertionPointAfter(source == loop ? loopDrain : source);
+            emitEvent<SetFlagOp>(builder, edge, source->getLoc());
+        }
+        builder.setInsertionPoint(acquireAnchor);
+        emitAcquire(builder, edge, destination->getLoc());
+    }
+    if (plan.includeBoundaries) {
+        builder.setInsertionPoint(clone.getBody().front().getTerminator());
+        builder.create<BarrierOp>(clone.getLoc(), PipeAttr::get(clone.getContext(), PIPE::PIPE_ALL));
+    }
     return success();
 }

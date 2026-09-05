@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// Completion of a prefix store does not establish GM publication to a loop
+// load. Disjoint-arguments mode cannot remove overlap on the very same argument.
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.safe.ir 2>&1 | FileCheck %s
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.disjoint.ir 2>&1 | FileCheck %s
+// CHECK: ProtocolSync mixed mode found no complete supported plan
+
+module {
+  func.func @unqualified_loop_publication(%n: index,
+      %gm: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %a = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%gm : !pto.partition_tensor_view<16x16xf16>)
+    scf.for %i = %zero to %n step %one {
+      pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    pto.tstore ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%gm : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+}

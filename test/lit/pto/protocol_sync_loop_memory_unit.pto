@@ -13,3 +13,4 @@
 // CHECK-NEXT: protocol-sync loop self-phase and unsupported boundaries: pass
 // CHECK-NEXT: protocol-sync concrete loop cycles: 27 topologies and action deletions pass
 // CHECK-NEXT: protocol-sync loop placement mutations and event reservations: pass
+// CHECK-NEXT: protocol-sync native boundary worlds: both GM modes, provenance and lifetime witnesses pass

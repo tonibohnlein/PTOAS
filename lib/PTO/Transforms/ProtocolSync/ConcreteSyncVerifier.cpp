@@ -17,6 +17,7 @@
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
 #include "PTO/Transforms/ProtocolSync/EventAllocation.h"
 #include "PTO/Transforms/ProtocolSync/LocalMemoryAnalysis.h"
+#include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
 #include "PTO/Transforms/ProtocolSync/StorageTimeline.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -822,8 +823,17 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
     if (!state.target.isSupported()) {
         return rejectAtStage("target", firstFailedStage);
     }
-    if (failed(reconstructConcreteWorld(state, function, firstFailedStage))) {
-        return failure();
+    const bool loopFrontier = succeeded(verifyConcreteLoopFrontierRepair(schedule, true));
+    if (loopFrontier) {
+        auto world = buildLoopFrontierWorld(schedule);
+        if (failed(world)) {
+            return rejectAtStage("loop-frontier-world", firstFailedStage);
+        }
+        state.world = std::move(*world);
+    } else {
+        if (failed(reconstructConcreteWorld(state, function, firstFailedStage))) {
+            return failure();
+        }
     }
     const SyncInterpretationOptions options{/*fixedSynchronizationIsModeled=*/true};
     FailureOr<SyncInterpretationResult> result =
@@ -844,10 +854,12 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
     if (!result->isComplete()) {
         return rejectAtStage("residual-obligations", firstFailedStage);
     }
-    if (failed(verifyLocalMemoryCoverage(schedule, state.world))) {
+    // The loop checker establishes total dynamic phase order, including all
+    // boundary paths. The straight-line scoreboard cannot interpret recurrence.
+    if (!loopFrontier && failed(verifyLocalMemoryCoverage(schedule, state.world))) {
         return rejectAtStage("local-memory-coverage", firstFailedStage);
     }
-    if (failed(verifyConcreteLocalScoreboard(schedule))) {
+    if (!loopFrontier && failed(verifyConcreteLocalScoreboard(schedule))) {
         return rejectAtStage("local-concrete-scoreboard", firstFailedStage);
     }
     return success();

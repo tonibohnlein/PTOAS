@@ -13,7 +13,9 @@
 // Each forward handoff orders adjacent phases, and the last handoff closes
 // the iteration cycle. Unique event keys plus the cycle prove a consuming wait
 // precedes every rearm; prime/drain handles zero trips. This proof is only for
-// the declared isolated-loop local-completion subset, not arbitrary protocols.
+// the declared unconditional-loop local-completion subset, not arbitrary
+// protocols. The optional boundary form also reconstructs the outer phase
+// chain, entry/exit gateways and final function drain; F checks nonlocal effects.
 
 #include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
 #include "PTO/Transforms/ProtocolSync/ProtocolSyncTarget.h"
@@ -63,6 +65,46 @@ std::optional<unsigned> readEvent(Operation* operation, PIPE source, PIPE target
 class CycleChecker {
 public:
     CycleChecker(const ProtocolSyncTarget& model, ArrayRef<Operation*> body) : model(model), body(body) {}
+
+    LogicalResult withBoundaries(
+        ArrayRef<const SyncPhase*> phases, ArrayRef<const SyncPhase*> prefix, ArrayRef<const SyncPhase*> suffix,
+        ArrayRef<Operation*> outer, Operation* loop)
+    {
+        unsigned position = 0;
+        const auto takeOuter = [&]() -> Operation* { return position < outer.size() ? outer[position++] : nullptr; };
+        for (unsigned index = 0; index < prefix.size(); ++index) {
+            const bool matches = takeOuter() == prefix[index]->operation;
+            if (!matches) {
+                return failure();
+            }
+            const PIPE destination = index + 1 < prefix.size() ? prefix[index + 1]->pipe : phases.back()->pipe;
+            if (failed(outerHandoff(outer, position, prefix[index]->pipe, destination))) {
+                return failure();
+            }
+        }
+        const unsigned cycleSize = phases.front()->pipe != phases.back()->pipe ? 3 : 2;
+        const bool cycleFits = position <= outer.size() && outer.size() - position >= cycleSize;
+        if (!cycleFits || failed(run(phases, outer.slice(position, cycleSize), loop))) {
+            return failure();
+        }
+        position += cycleSize;
+        const bool hasSuffix = !suffix.empty();
+        if (hasSuffix && failed(outerHandoff(outer, position, phases.front()->pipe, suffix.front()->pipe))) {
+            return failure();
+        }
+        for (unsigned index = 0; index < suffix.size(); ++index) {
+            const bool matches = takeOuter() == suffix[index]->operation;
+            if (!matches) {
+                return failure();
+            }
+            const bool hasNext = index + 1 < suffix.size();
+            if (hasNext && failed(outerHandoff(outer, position, suffix[index]->pipe, suffix[index + 1]->pipe))) {
+                return failure();
+            }
+        }
+        auto exit = dyn_cast_or_null<BarrierOp>(takeOuter());
+        return success(exit && exit.getPipe().getPipe() == PIPE::PIPE_ALL && position == outer.size());
+    }
 
     LogicalResult run(ArrayRef<const SyncPhase*> phases, ArrayRef<Operation*> outer, Operation* loop)
     {
@@ -118,6 +160,21 @@ public:
     }
 
 private:
+    LogicalResult outerHandoff(ArrayRef<Operation*> outer, unsigned& position, PIPE source, PIPE target)
+    {
+        const unsigned needed = source == target ? 1 : 2;
+        const bool fits = position <= outer.size() && outer.size() - position >= needed;
+        if (!fits) {
+            return failure();
+        }
+        if (source == target) {
+            return barrier(outer[position++], target);
+        }
+        auto set = readEvent<SetFlagOp>(outer[position++], source, target, model);
+        auto wait = readEvent<WaitFlagOp>(outer[position++], source, target, model);
+        return success(set && set == wait && keys.emplace(source, target, *set).second);
+    }
+
     Operation* take() { return cursor < body.size() ? body[cursor++] : nullptr; }
 
     LogicalResult barrier(Operation* operation, PIPE pipe)
@@ -149,7 +206,8 @@ private:
 
 } // namespace
 
-LogicalResult mlir::pto::protocol_sync::verifyConcreteLoopFrontierRepair(const StructuredSyncIR& schedule)
+LogicalResult mlir::pto::protocol_sync::verifyConcreteLoopFrontierRepair(
+    const StructuredSyncIR& schedule, bool includeBoundaries)
 {
     SyncLocalFlowOptions options;
     options.analyzeSingleLoop = true;
@@ -165,7 +223,14 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteLoopFrontierRepair(const S
         return failure();
     }
     llvm::DenseMap<Operation*, const SyncPhase*> phaseAt;
+    SmallVector<const SyncPhase*, 8> prefix;
+    SmallVector<const SyncPhase*, 8> suffix;
     for (const SyncPhase& phase : schedule.getPhases()) {
+        const bool outerPhase = includeBoundaries && phase.operation && phase.operation->getBlock() == loop->getBlock();
+        if (outerPhase) {
+            (phase.operation->isBeforeInBlock(loop) ? prefix : suffix).push_back(&phase);
+            continue;
+        }
         const bool inLoop = phase.operation && phase.operation->getBlock() == loop.getBody();
         if (!inLoop || !phaseAt.try_emplace(phase.operation, &phase).second) {
             return failure();
@@ -184,7 +249,9 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteLoopFrontierRepair(const S
     }
     SmallVector<Operation*, 4> outer;
     for (Operation& operation : *loop->getBlock()) {
-        const bool significant = &operation == loop.getOperation() || synchronization(operation);
+        const bool physical =
+            llvm::any_of(schedule.getPhases(), [&](const SyncPhase& phase) { return phase.operation == &operation; });
+        const bool significant = &operation == loop.getOperation() || synchronization(operation) || physical;
         if (significant) {
             outer.push_back(&operation);
         }
@@ -195,5 +262,6 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteLoopFrontierRepair(const S
         return failure();
     }
     CycleChecker checker(model, body);
-    return checker.run(phases, outer, loop);
+    return includeBoundaries ? checker.withBoundaries(phases, prefix, suffix, outer, loop) :
+                               checker.run(phases, outer, loop);
 }

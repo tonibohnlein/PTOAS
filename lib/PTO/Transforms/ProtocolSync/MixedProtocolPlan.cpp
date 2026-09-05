@@ -429,6 +429,8 @@ SyncMixedWorldCost computeWorldCost(const SyncMixedProtocolPlan& plan, std::uint
 unsigned worldTieBreak(SyncMixedWorldKind kind)
 {
     switch (kind) {
+        case SyncMixedWorldKind::LoopFrontier:
+            return 4;
         case SyncMixedWorldKind::CombinedProtocols:
             return 0;
         case SyncMixedWorldKind::ReadyRelease:
@@ -557,9 +559,8 @@ FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPla
         SyncMixedProtocolPlan plan;
         plan.protocolsEnabled = enableProtocols;
         plan.status = SyncMixedPlanStatus::Unsupported;
-        plan.failures.push_back({
-            SyncMixedPlanRejection::UnsupportedTarget,
-            target.getUnsupportedReason(ProtocolSyncEmissionMode::Mixed)});
+        plan.failures.push_back(
+            {SyncMixedPlanRejection::UnsupportedTarget, target.getUnsupportedReason(ProtocolSyncEmissionMode::Mixed)});
         return plan;
     }
 
@@ -710,6 +711,19 @@ FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPla
         }
     }
 
+    auto loopAlternative = buildMixedLoopFrontierPlan(schedule, stages, timelines, channels);
+    if (failed(loopAlternative)) {
+        return failure();
+    }
+    if (*loopAlternative) {
+        ++worldsAttempted;
+        ++worldsFeasible;
+        auto& candidate = **loopAlternative;
+        candidate.protocolsEnabled = enableProtocols;
+        if (!best || worldCostsLess(candidate, *best)) {
+            best = std::move(candidate);
+        }
+    }
     if (statistics) {
         statistics->completeWorldsAttempted += worldsAttempted;
         statistics->completeWorldsFeasible += worldsFeasible;
@@ -795,6 +809,15 @@ LogicalResult mlir::pto::protocol_sync::selectMixedProtocolCandidates(
 LogicalResult mlir::pto::protocol_sync::allocateMixedProtocolEvents(
     const StructuredSyncIR& schedule, SyncMixedProtocolPlan& plan, ProtocolSyncStatistics* statistics)
 {
+    if (plan.loopFrontier) {
+        // The atomic loop builder reserves distinct static keys before it
+        // publishes a complete alternative. Full plan verification follows.
+        if (statistics) {
+            statistics->maxEventDomainPressure =
+                std::max(statistics->maxEventDomainPressure, plan.selectedCost.eventPressure);
+        }
+        return success(plan.status == SyncMixedPlanStatus::Ready);
+    }
     const bool canAllocate = schedule.isFrozen() && plan.isComplete() && !hasAllocatedEvent(plan);
     if (!canAllocate) {
         return failure();
@@ -866,6 +889,8 @@ StringRef mlir::pto::protocol_sync::stringifySyncMixedPlanStatus(SyncMixedPlanSt
 StringRef mlir::pto::protocol_sync::stringifySyncMixedWorldKind(SyncMixedWorldKind kind)
 {
     switch (kind) {
+        case SyncMixedWorldKind::LoopFrontier:
+            return "loop-frontier";
         case SyncMixedWorldKind::DirectOnly:
             return "direct-only";
         case SyncMixedWorldKind::OneShotPublish:
