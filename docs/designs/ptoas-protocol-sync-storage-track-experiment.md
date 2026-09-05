@@ -242,6 +242,14 @@ result no longer describes the whole current verification path. The
 199-program coverage audit must be rerun against that verifier before reporting
 actual coverage or redundancy.
 
+The [C7.1 rebaseline](ptoas-protocol-sync-c71-rebaseline.md) has now rerun all
+199 programs through F on the A2/A3-merged implementation: 17 of 204 functions
+pass, 171 stop during extraction/reconstruction, and 16 stop on residual
+obligations. This does not establish that the rejected old programs race.
+The same report provides the current 394-row census, categorized unprojected
+accesses, multi-family use shapes, per-function/topology first failures and
+the exact patch-frozen artifact register.
+
 ## Related compiler structures
 
 The closest concrete analogue found in the literature scan is Triton's

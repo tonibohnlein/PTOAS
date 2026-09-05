@@ -1380,12 +1380,13 @@ static LogicalResult validateProtocolSyncConfiguration() {
       protocolSyncDump != "channels" && protocolSyncDump != "residuals" &&
       protocolSyncDump != "lane-frontiers" &&
       protocolSyncDump != "storage-tracks" &&
+      protocolSyncDump != "concrete-verification" &&
       protocolSyncDump != "plan") {
     llvm::errs() << "Error: invalid --protocol-sync-dump='"
                  << protocolSyncDump
                  << "', expected 'none', 'schedule', 'channels', "
-                    "'lane-frontiers', 'storage-tracks', 'residuals', or "
-                    "'plan'.\n";
+                    "'lane-frontiers', 'storage-tracks', "
+                    "'concrete-verification', 'residuals', or 'plan'.\n";
     return failure();
   }
   if (!protocolSyncActive &&
@@ -1399,6 +1400,12 @@ static LogicalResult validateProtocolSyncConfiguration() {
   if (protocolSyncDump == "plan" && !protocolSyncEmission) {
     llvm::errs() << "Error: --protocol-sync-dump=plan requires "
                     "a ProtocolSync emission mode.\n";
+    return failure();
+  }
+  if (protocolSyncDump == "concrete-verification" &&
+      !protocolSyncAnalysisOnly) {
+    llvm::errs() << "Error: --protocol-sync-dump=concrete-verification requires "
+                    "--protocol-sync-analysis-only.\n";
     return failure();
   }
   return success();

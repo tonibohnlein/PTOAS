@@ -192,6 +192,21 @@ prime, and an inconsistent depth-two lane role. Verifier-only reanalysis is
 accounted in `verifier_transitions` and does not inflate planner analysis or
 residual statistics.
 
+Analysis-only runs can invoke this trust boundary directly with
+`--protocol-sync-dump=concrete-verification`. The stable diagnostic reports an
+accepted or rejected verdict for each function without selecting, allocating,
+or materializing synchronization. This mode exists for fixed-output audits; it
+does not turn concrete synchronization into planning supply.
+The diagnostic also reports `first-failed-stage` (or `none` on acceptance),
+separating unsupported schedule extraction, recurring/static event
+reconstruction, barriers, fixed supply, event assignment, interpretation, and
+remaining obligations. A reconstruction rejection is not a race witness.
+Analysis-only compiler success does not imply concrete-verifier acceptance;
+read the verdict and the separate `concrete_verifier_*` counters.
+
+The maintained host campaign and artifact contract are described in
+[`test/experiments/protocol_sync/README.md`](../../test/experiments/protocol_sync/README.md).
+
 ## Post-C.7 evidence and remaining F revision
 
 The 2026-09-05 storage-track campaign found that F has the correct completeness

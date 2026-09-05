@@ -59,7 +59,21 @@ void printIntervals(ArrayRef<SyncByteInterval> intervals, raw_ostream& output)
     output << ']';
 }
 
-void printStorageFamily(const SyncStorageFamily& family, AsmState& state, raw_ostream& output)
+SyncRegionId findRootScope(const StructuredSyncIR& schedule, mlir::Value root)
+{
+    Operation* owner = root && root.getParentRegion() ? root.getParentRegion()->getParentOp() : nullptr;
+    for (Operation* operation = owner; operation; operation = operation->getParentOp()) {
+        for (const SyncRegion& region : schedule.getRegions()) {
+            if (region.operation == operation) {
+                return region.id;
+            }
+        }
+    }
+    return kInvalidSyncId;
+}
+
+void printStorageFamily(
+    const StructuredSyncIR& schedule, const SyncStorageFamily& family, AsmState& state, raw_ostream& output)
 {
     output << "  storage-family #" << family.id << " root=";
     printValue(family.root, state, output);
@@ -74,7 +88,10 @@ void printStorageFamily(const SyncStorageFamily& family, AsmState& state, raw_os
     output << " range=";
     printIntervals(family.intervals, output);
     output << " unknown-range=" << (family.unknownRange ? "yes" : "no")
-           << " complete-slots=" << (family.physicalSlotsComplete ? "yes" : "no") << '\n';
+           << " complete-slots=" << (family.physicalSlotsComplete ? "yes" : "no");
+    Operation* definition = family.root ? family.root.getDefiningOp() : nullptr;
+    output << " root-op=" << (definition ? definition->getName().getStringRef() : "block-argument")
+           << " root-lexical-scope=#" << findRootScope(schedule, family.root) << '\n';
 }
 
 void printSlotExpression(const SyncSlotExpression& slot, AsmState& state, raw_ostream& output)
@@ -160,7 +177,7 @@ void printRegion(const SyncRegion& region, raw_ostream& output)
             output << "region#" << element.child;
         }
     });
-    output << "]\n";
+    output << "] op=" << (region.operation ? region.operation->getName().getStringRef() : "none") << '\n';
 }
 
 void printSemanticAction(
@@ -252,7 +269,7 @@ void mlir::pto::protocol_sync::printStructuredSyncIR(const StructuredSyncIR& sch
         printSummary(summary, id, state, output);
     }
     for (const SyncStorageFamily& family : schedule.getStorageFamilies()) {
-        printStorageFamily(family, state, output);
+        printStorageFamily(schedule, family, state, output);
     }
     for (const SyncRegion& region : schedule.getRegions()) {
         printRegion(region, output);

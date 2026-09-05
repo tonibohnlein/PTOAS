@@ -710,21 +710,37 @@ LogicalResult verifyAllSynchronizationConsumed(const ConcreteState& state, func:
     return failure(unmodeled);
 }
 
-LogicalResult reconstructConcreteWorld(ConcreteState& state, func::FuncOp function)
+LogicalResult rejectAtStage(StringRef stage, StringRef* firstFailedStage)
+{
+    if (firstFailedStage) {
+        *firstFailedStage = stage;
+    }
+    return failure();
+}
+
+LogicalResult reconstructConcreteWorld(ConcreteState& state, func::FuncOp function, StringRef* firstFailedStage)
 {
     for (const SyncOpSummary& summary : state.schedule.getSummaries()) {
         state.reservations.append(summary.eventReservations.begin(), summary.eventReservations.end());
         if (summary.queue) {
-            return failure();
+            return rejectAtStage("queue-supply", firstFailedStage);
         }
     }
-    const bool invalidWorld =
-        failed(reconstructReadyReleaseProtocols(state, function)) || failed(reconstructStaticEvents(state, function)) ||
-        failed(reconstructBarriers(state, function)) || failed(verifyAllSynchronizationConsumed(state, function)) ||
-        failed(verifySyncEventGenerationAssignment(
-            state.target, state.reservations, state.generations, /*allowUnallocated=*/false));
-    if (invalidWorld) {
-        return failure();
+    if (failed(reconstructReadyReleaseProtocols(state, function))) {
+        return rejectAtStage("recurring-events", firstFailedStage);
+    }
+    if (failed(reconstructStaticEvents(state, function))) {
+        return rejectAtStage("static-events", firstFailedStage);
+    }
+    if (failed(reconstructBarriers(state, function))) {
+        return rejectAtStage("barriers", firstFailedStage);
+    }
+    if (failed(verifyAllSynchronizationConsumed(state, function))) {
+        return rejectAtStage("unmodeled-fixed-sync", firstFailedStage);
+    }
+    if (failed(verifySyncEventGenerationAssignment(
+            state.target, state.reservations, state.generations, /*allowUnallocated=*/false))) {
+        return rejectAtStage("event-generation-assignment", firstFailedStage);
     }
     return success();
 }
@@ -732,26 +748,32 @@ LogicalResult reconstructConcreteWorld(ConcreteState& state, func::FuncOp functi
 } // namespace
 
 LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
-    const SyncSemanticContext& context, func::FuncOp function, ProtocolSyncStatistics* statistics)
+    const SyncSemanticContext& context, func::FuncOp function, ProtocolSyncStatistics* statistics,
+    StringRef* firstFailedStage)
 {
+    if (firstFailedStage) {
+        *firstFailedStage = "none";
+    }
     if (!function || failed(mlir::verify(function))) {
-        return failure();
+        return rejectAtStage("ir-verification", firstFailedStage);
     }
     StructuredSyncIR schedule(function);
     StructuredSyncIRBuilder builder(context);
     const bool invalidSchedule = failed(builder.build(function, schedule)) || !schedule.getFailures().empty();
     if (invalidSchedule) {
-        return failure();
+        return rejectAtStage("schedule", firstFailedStage);
     }
     FailureOr<PipelineStageAnalysisResult> stages = analyzePipelineStages(schedule);
     if (failed(stages)) {
-        return failure();
+        return rejectAtStage("pipeline-stages", firstFailedStage);
     }
     StorageTimelineAnalysisResult timelines = analyzeStorageTimelines(schedule, *stages);
     ChannelAnalysisResult channels = analyzeChannels(schedule, *stages, timelines);
     ConcreteState state{schedule, ProtocolSyncTarget::resolve(function)};
-    const bool invalidTargetOrWorld = !state.target.isSupported() || failed(reconstructConcreteWorld(state, function));
-    if (invalidTargetOrWorld) {
+    if (!state.target.isSupported()) {
+        return rejectAtStage("target", firstFailedStage);
+    }
+    if (failed(reconstructConcreteWorld(state, function, firstFailedStage))) {
         return failure();
     }
     const SyncInterpretationOptions options{/*fixedSynchronizationIsModeled=*/true};
@@ -767,5 +789,11 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
         const std::uint64_t available = std::numeric_limits<std::uint64_t>::max() - statistics->verifierTransitions;
         statistics->verifierTransitions += std::min(available, combined);
     }
-    return success(succeeded(result) && result->isComplete());
+    if (failed(result)) {
+        return rejectAtStage("interpretation", firstFailedStage);
+    }
+    if (!result->isComplete()) {
+        return rejectAtStage("residual-obligations", firstFailedStage);
+    }
+    return success();
 }

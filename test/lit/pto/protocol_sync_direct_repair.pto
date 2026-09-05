@@ -14,6 +14,18 @@
 // RUN:   %S/protocol_sync_one_shot.pto -o %t.ir 2> %t.plan
 // RUN: FileCheck %s --input-file=%t.ir --check-prefix=IR
 // RUN: FileCheck %s --input-file=%t.plan --check-prefix=PLAN
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir \
+// RUN:   --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification \
+// RUN:   --protocol-sync-statistics %t.ir -o %t.verified 2> %t.verify
+// RUN: FileCheck %s --input-file=%t.verify --check-prefix=CONCRETE
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir \
+// RUN:   %t.ir -o %t.reparsed
+// RUN: diff %t.verified %t.reparsed
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
+// RUN:   --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification \
+// RUN:   --protocol-sync-statistics %S/protocol_sync_one_shot.pto \
+// RUN:   -o /dev/null 2> %t.unsynchronized
+// RUN: FileCheck %s --input-file=%t.unsynchronized --check-prefix=UNCOVERED
 // RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir \
 // RUN:   --protocol-sync-direct-repair --protocol-sync-fallback=fail \
 // RUN:   --protocol-sync-dump=plan %S/protocol_sync_one_shot.pto \
@@ -87,6 +99,16 @@
 // IR-NEXT: pto.tstore
 // IR-NEXT: pto.barrier <PIPE_ALL>
 // IR-NEXT: return
+
+// CONCRETE: PROTOCOL-SYNC concrete-verification function=@linear_one_shot status=accepted first-failed-stage=none
+// CONCRETE: "concrete_verifier_accepted":1
+// CONCRETE: "concrete_verifier_rejected":0
+// CONCRETE: "concrete_verifier_runs":1
+
+// UNCOVERED: PROTOCOL-SYNC concrete-verification function=@linear_one_shot status=rejected first-failed-stage=residual-obligations
+// UNCOVERED: "concrete_verifier_accepted":0
+// UNCOVERED: "concrete_verifier_rejected":1
+// UNCOVERED: "concrete_verifier_runs":1
 
 // CXX-LABEL: AICORE void linear_one_shot(
 // CXX: TLOAD

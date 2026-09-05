@@ -1,0 +1,59 @@
+{
+  "status": "externally-reported-not-locally-reproduced",
+  "population": "PyPTO/PyPTO-Lib A3 strict mixed, fallback=fail",
+  "source_commit": "c4f92411421734ba7820129cdb1412583606d4f6",
+  "report_sha256": "2f1ec2354fd684853bd9d51aff952e3cc251fd0f83fdeaa1202466e8bab81072",
+  "report_original_path": "/home/toni/work/pypto3_sync/protocol-sync-c4f924-diagnosis-REPORT.md",
+  "input_manifest": null,
+  "input_hashes": null,
+  "per_kernel_blocker_matrix": null,
+  "missing_artifacts": "Exact 152 inputs, manifest and raw diagnosis; the report's /tmp directory is absent locally.",
+  "kernels": 152,
+  "admitted": 4,
+  "rejected": 148,
+  "crashes": 0,
+  "timeouts": 0,
+  "first_gate": {
+    "semantic_extraction": 36,
+    "no_complete_world": 112
+  },
+  "semantic_extraction_kernels": {
+    "set_validshape": 15,
+    "comm_twait": 4,
+    "missing_physical_core": 10,
+    "queue_storage_provenance": 7
+  },
+  "world_gate_protocol_population": {
+    "no_candidate": 97,
+    "candidates_but_incomplete_residual_repair": 15
+  },
+  "overlapping_direct_repair_rejections": {
+    "unsupported_kind": {"kernels": 106, "occurrences": 3131},
+    "recurring_domain": {"kernels": 98, "occurrences": 1709},
+    "invalid_endpoint": {"kernels": 73, "occurrences": 176},
+    "unsupported_control": {"kernels": 21, "occurrences": 439}
+  },
+  "overlapping_timeline_rejections_kernels": {
+    "conflicting_physical_ranges": 78,
+    "incompatible_iteration_domains": 29,
+    "in_place_access": 16,
+    "missing_consumers": 10,
+    "missing_producers": 8,
+    "partial_overlap": 3
+  },
+  "overlapping_retained_obligation_kernels": {
+    "completion": 112,
+    "exit_completion": 112,
+    "unknown_gm_alias": 102,
+    "reclamation": 59,
+    "ssa_completion": 19,
+    "acc_conflict": 16,
+    "ordered_memory": 3,
+    "visibility": 3
+  },
+  "limitations": [
+    "Blocker categories overlap; subtracting them cannot predict admission gains.",
+    "The report does not identify individual inputs; no per-kernel attribution is invented.",
+    "Compiler admission is not device correctness or performance evidence."
+  ]
+}

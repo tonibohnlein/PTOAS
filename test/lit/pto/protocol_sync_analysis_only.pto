@@ -36,6 +36,9 @@
 // RUN: not ptoas --pto-arch=a3 --protocol-sync-one-shot \
 // RUN:   --protocol-sync-fallback=invalid --emit-pto-ir %s -o /dev/null 2>&1 | \
 // RUN:   FileCheck %s --check-prefix=INVALID-FALLBACK
+// RUN: not ptoas --pto-arch=a3 --protocol-sync-one-shot \
+// RUN:   --protocol-sync-dump=concrete-verification --emit-pto-ir %s \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=CONCRETE-REQUIRES-ANALYSIS
 // RUN: not ptoas --pto-arch=a3 --protocol-sync-fallback=fail \
 // RUN:   --emit-pto-ir %s -o /dev/null 2>&1 | \
 // RUN:   FileCheck %s --check-prefix=FALLBACK-REQUIRES-EMISSION
@@ -131,8 +134,9 @@ module {
 
 // OPTION-ERROR: Error: --protocol-sync-dump and --protocol-sync-statistics require either --protocol-sync-analysis-only or a ProtocolSync emission mode.
 // INVALID-DUMP: Error: invalid --protocol-sync-dump='invalid', expected 'none', 'schedule', 'channels',
-// INVALID-DUMP-SAME: 'lane-frontiers', 'storage-tracks', 'residuals', or 'plan'.
+// INVALID-DUMP-SAME: 'lane-frontiers', 'storage-tracks', 'concrete-verification', 'residuals', or 'plan'.
 // MODE-MUTEX: Error: --protocol-sync-analysis-only and --protocol-sync-one-shot are mutually exclusive.
 // PLAN-REQUIRES-EMISSION: Error: --protocol-sync-dump=plan requires a ProtocolSync emission mode.
 // INVALID-FALLBACK: Error: invalid --protocol-sync-fallback='invalid', expected 'legacy' or 'fail'.
+// CONCRETE-REQUIRES-ANALYSIS: Error: --protocol-sync-dump=concrete-verification requires --protocol-sync-analysis-only.
 // FALLBACK-REQUIRES-EMISSION: Error: --protocol-sync-fallback requires a ProtocolSync emission mode.

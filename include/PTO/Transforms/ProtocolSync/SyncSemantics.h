@@ -301,6 +301,9 @@ struct ProtocolSyncStatistics {
     std::uint64_t storageLifecycleEMismatches = 0;
     std::uint64_t storageLifecycleIndependentOnly = 0;
     std::uint64_t storageLifecycleEOnly = 0;
+    std::uint64_t concreteVerifierRuns = 0;
+    std::uint64_t concreteVerifierAccepted = 0;
+    std::uint64_t concreteVerifierRejected = 0;
     std::uint64_t interpreterTransitions = 0;
     std::uint64_t interpreterPeakStates = 0;
     std::uint64_t memoryPairTests = 0;

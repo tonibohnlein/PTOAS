@@ -660,3 +660,36 @@ after the two A2 one-shot commits landed. The scoped compliance checker reported
 These are host/compiler validation results. No new device campaign was run for
 C.6 or C.7, and none of the conclusions above should be relabeled as
 PTO-ISA or hardware qualification.
+
+## C7.1 rebaseline on the A2/A3 merged implementation
+
+The [2026-09-05 C7.1 report](ptoas-protocol-sync-c71-rebaseline.md) supersedes
+the pending corpus and concrete-audit statuses above. Both 394-row campaigns
+and all 199 old emitted programs were rerun on `8c3a0b58d` plus the recorded
+diagnostic patch. The actual patch, scripts, inputs, commands, per-row records,
+raw diagnostics and hashes are retained in a disk-backed archive; compact
+records are under `protocol-sync-evidence/c71/patch-frozen-8c3a0b58d/`.
+This is explicitly patch-frozen, not yet a clean-commit freeze.
+
+All 40 comparable storage counters reproduced the earlier local `44e3bb474`
+run. The new first-proof census divides 474 recurring rejections into 244
+cardinality, 88 multiple-loop, 50 choice and 92 visibility records. All 126
+unprojected accesses are local PyPTO-Lib queue-origin/consumer accesses.
+Multi-family use-shape classification leaves asynchronous liveness unproved;
+only 52 tracks are straight-line sequential-use candidates.
+
+F accepts 17 of 204 concrete functions and rejects 187. Of the rejections,
+171 stop in extraction or synchronization reconstruction and 16 reach the
+residual-obligation stage. These are verifier-surface results, not a legacy
+race count or exact coverage percentage. The full host suite passes 1,892
+tests with one unsupported and no failures; all 35 ProtocolSync tests pass.
+
+The 152-kernel acceptance report is retained separately with its source hash,
+but its exact input manifest is still missing. The user has chosen a fresh
+current-main PyPTO/PyPTO-Lib acceptance population instead of recovering those
+historical inputs; collection and clean-revision admission runs remain pending.
+The new acceptance runner
+retains overlapping exposed blockers independently of strict admission.
+The [GM alias contract](ptoas-protocol-sync-gm-alias-contract.md) records the
+agreed default-safe / assumed-disjoint-argument modes for the next semantic
+implementation; this diagnostic snapshot does not implement the mode switch.

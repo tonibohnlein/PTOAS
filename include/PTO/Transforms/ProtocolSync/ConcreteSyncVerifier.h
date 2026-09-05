@@ -16,6 +16,7 @@
 #include "PTO/Transforms/ProtocolSync/SyncSemantics.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LogicalResult.h"
+#include "llvm/ADT/StringRef.h"
 
 namespace mlir::pto::protocol_sync {
 
@@ -23,8 +24,11 @@ namespace mlir::pto::protocol_sync {
 /// effects from concrete PTO operations without consulting planner candidates
 /// or diagnostic tags, and require the resulting world to discharge every
 /// memory, generation, visibility, SSA, and exit obligation.
+/// When requested, report the first failed reconstruction/verification stage.
+/// A stage rejection is not a race witness or an obligation coverage percentage.
 LogicalResult verifyConcreteSyncSemantics(
-    const SyncSemanticContext& context, func::FuncOp function, ProtocolSyncStatistics* statistics = nullptr);
+    const SyncSemanticContext& context, func::FuncOp function, ProtocolSyncStatistics* statistics = nullptr,
+    llvm::StringRef* firstFailedStage = nullptr);
 
 } // namespace mlir::pto::protocol_sync
 

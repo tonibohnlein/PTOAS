@@ -8,6 +8,100 @@ experiments. It revises the storage-generation and residual-obligation parts of
 the original implementation plan and its first amendment. It does not make the
 diagnostic C.6/C.7 candidates selectable.
 
+The [C7.1 rebaseline](ptoas-protocol-sync-c71-rebaseline.md) now supplies the
+394-row A2/A3-merged E/F rerun and the 199-program concrete audit. It is a
+patch-frozen snapshot pending the clean-commit step; the separate 152-kernel
+acceptance inputs remain unavailable. The user selected a fresh current-main
+PyPTO/PyPTO-Lib acceptance population instead. Historical pending measurements below
+should be read with that newer report. The user's agreed two-mode GM policy is
+specified in the [GM alias contract](ptoas-protocol-sync-gm-alias-contract.md).
+
+## Native-coverage revision: agreed implementation contract
+
+Status: approved implementation direction, not a claim of completed native
+coverage. This section revises the delivery sequence below.
+
+Keep ProtocolSync's complete-world gate, allocator and cloned emission. Add a
+general native baseline underneath optional lifecycle recognition:
+
+```text
+shared operation semantics and authoritative provenance
+  -> physical atoms + structured memory/effect state
+  -> canonical requirements + missing/invalid facts
+  -> fixed supply + structured backward lane-frontier repair
+  -> complete native world or atomic protocol-plus-residual alternative
+  -> allocation + cloned emission + independent concrete verification
+```
+
+Lanes organize legal placement, not correctness requirements. Forward effect
+analysis discovers requirements; a structured backward traversal, inspired by
+InsertSync, proposes common completion frontiers. It retains path and loop
+instances rather than flattening control into a DAG. Small certified handoff
+recipes do not require the source loop to match a storage lifecycle pattern.
+
+Separate actual requirements, missing/invalid semantic facts, and optional
+recognition failures. Replace rejected-timeline synthetic residuals only when
+canonical local RAW/WAR/WAW discovery replaces their conservative protection.
+An in-place local access is not automatically an ACC conflict. Preserve
+outstanding readers and writers as well as must/may reaching definitions;
+logical generation replacement does not retire asynchronous effects.
+
+The native planner checks existing transitive supply before inserting repair.
+It groups obligations only when every claimed ID is covered by a legal,
+target-qualified frontier. At choices, guaranteed synchronization coverage is
+intersected across feasible arms while alternative memory states are retained.
+Never wait unconditionally for a potentially absent signal. Loops need entry,
+body, backedge and exit relations, including same-static-phase recurrences.
+Capacity-one control handshakes may serialize execution but do not assert
+capacity-one storage. Zero-trip and arbitrary-trip token invariants are required;
+bounded unrolling is a test oracle, not the loop proof.
+
+Direct-only constructs a complete baseline, including verified fixed supply.
+Mixed selection preserves it when an optional protocol does not match or cannot
+allocate. On the same semantic contract, direct-only admission must imply mixed
+admission. Retain the deterministic structural cost comparison; it is not a
+device-performance model. Do not add a generic body PIPE_ALL escape hatch.
+
+Implementation gates, each with corresponding concrete-verifier support:
+
+1. Commit diagnostics, rerun the clean 394-row C.6/C.7 and 199-program audits,
+   and freeze a current-main frontend acceptance manifest with all collection
+   failures and overlapping blockers.
+2. Recover Exact/Conservative/Unknown access precision, descriptor shape state,
+   physical-core and queue provenance, and both explicit GM alias contracts.
+   Introduce canonical local effects and dual-run with F on the shared subset;
+   classify synthetic-old and newly discovered requirements separately.
+3. Deliver direct-only straight-line reuse, partial overlap and ordinary
+   in-place local computation without lifecycle recognition. Import qualified
+   existing events, barriers and macro supply before residual planning.
+4. Deliver repeated same-iteration handoffs, carried requirements, choices,
+   nested summaries and exits. Event reuse needs a target-consumption or
+   happens-before proof; retain conservative interference otherwise.
+5. Close GM visibility, communication, cache/fence, queue ownership and ACC/proxy
+   blockers one qualified domain at a time. Existing certified supply is distinct
+   from synthesizing arbitrary collectives. These rows remain in the goal.
+6. Make OneShot and ReadyRelease certificates over canonical subsets, localize
+   their shape restrictions, and allow unrelated work and compatible candidates.
+   New stable/alternating L1 and accumulator lifecycle optimizations remain
+   postponed; baseline ACC correctness does not.
+
+The concrete verifier reconstructs outstanding effects and concrete event
+generations without planner coverage lists or diagnostic tags. Report missing
+semantics, invalid input, uncovered requirements with witnesses, event-lifetime
+or deadlock failures, and analysis limits separately. Independent byte-set and
+bounded path/iteration oracles and synchronization/address/guard/slot mutation
+tests are acceptance gates, alongside host regressions and device qualification.
+
+The delivery goal is native compilation of every valid collected current-main
+A2/A3 acceptance kernel in both may-alias and assumed-disjoint-argument modes,
+with legacy fallback disabled. Coverage takes priority over overlap; certified
+serialization is allowed. Focused PyPTO/PyPTO-Lib provenance and contract fixes
+are in scope, separately committed, without changing kernel intent. A5 is out
+of scope. Use A3 device qualification and shared A2/A3 host/simulator regression;
+do not imply A2 silicon evidence. Every new target claim requires authoritative
+PTO-ISA, model, negative-test and focused device evidence. Missing facts or
+qualification block completion rather than silently shrinking the population.
+
 The earlier executive decision remains sound:
 
 > Protocol-first, obligation-complete.

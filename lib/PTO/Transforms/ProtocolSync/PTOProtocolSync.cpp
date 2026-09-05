@@ -12,6 +12,7 @@
 
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
+#include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
 #include "PTO/Transforms/ProtocolSync/LaneFrontierAnalysis.h"
 #include "PTO/Transforms/ProtocolSync/LanePatternAnalysis.h"
@@ -216,6 +217,9 @@ void printStatistics(
     counts["storage_lifecycle_independent_only"] =
         static_cast<std::int64_t>(statistics.storageLifecycleIndependentOnly);
     counts["storage_lifecycle_e_only"] = static_cast<std::int64_t>(statistics.storageLifecycleEOnly);
+    counts["concrete_verifier_runs"] = static_cast<std::int64_t>(statistics.concreteVerifierRuns);
+    counts["concrete_verifier_accepted"] = static_cast<std::int64_t>(statistics.concreteVerifierAccepted);
+    counts["concrete_verifier_rejected"] = static_cast<std::int64_t>(statistics.concreteVerifierRejected);
     counts["interpreter_transitions"] = static_cast<std::int64_t>(statistics.interpreterTransitions);
     counts["interpreter_peak_states"] = static_cast<std::int64_t>(statistics.interpreterPeakStates);
     counts["memory_pair_tests"] = static_cast<std::int64_t>(statistics.memoryPairTests);
@@ -372,17 +376,23 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
         }
         const bool validDumpMode = dumpMode == "none" || dumpMode == "schedule" || dumpMode == "channels" ||
                                    dumpMode == "lane-frontiers" || dumpMode == "storage-tracks" ||
-                                   dumpMode == "residuals" || dumpMode == "plan";
+                                   dumpMode == "concrete-verification" || dumpMode == "residuals" ||
+                                   dumpMode == "plan";
         if (!validDumpMode) {
             getOperation().emitError("unknown ProtocolSync dump mode '")
                 << dumpMode
-                << "'; expected 'none', 'schedule', 'channels', 'lane-frontiers', 'storage-tracks', 'residuals', or "
-                   "'plan'";
+                << "'; expected 'none', 'schedule', 'channels', 'lane-frontiers', 'storage-tracks', "
+                   "'concrete-verification', 'residuals', or 'plan'";
             signalPassFailure();
             return;
         }
         if (dumpMode == "plan" && analysisOnly) {
             getOperation().emitError("ProtocolSync plan dumps require an emission execution mode");
+            signalPassFailure();
+            return;
+        }
+        if (dumpMode == "concrete-verification" && !analysisOnly) {
+            getOperation().emitError("ProtocolSync concrete-verification dumps require analysis execution mode");
             signalPassFailure();
             return;
         }
@@ -1007,7 +1017,25 @@ private:
             printLaneFrontierAnalysis(schedule, laneFrontiers, llvm::errs());
             printLanePatternAnalysis(schedule, timelines, lanePatterns, llvm::errs());
         } else if (dumpMode == "storage-tracks") {
+            printStructuredSyncIR(schedule, llvm::errs());
+            FailureOr<SyncReadyReleasePlan> diagnosticPlan =
+                buildReadyReleaseProtocolPlan(schedule, *stages, timelines, channels);
+            if (succeeded(diagnosticPlan)) {
+                printReadyReleaseProtocolPlan(function, *diagnosticPlan, llvm::errs());
+            }
             printStorageTrackAnalysis(schedule, laneFrontiers, storageTracks, llvm::errs());
+        } else if (dumpMode == "concrete-verification") {
+            printStructuredSyncIR(schedule, llvm::errs());
+            const ProtocolSyncClock::time_point verificationStart = ProtocolSyncClock::now();
+            ++result.concreteVerifierRuns;
+            StringRef firstFailedStage;
+            const bool verified = succeeded(verifyConcreteSyncSemantics(context, function, &result, &firstFailedStage));
+            result.verificationUs += elapsedMicroseconds(verificationStart);
+            result.concreteVerifierAccepted += verified ? 1 : 0;
+            result.concreteVerifierRejected += verified ? 0 : 1;
+            llvm::errs() << "PROTOCOL-SYNC concrete-verification function=@" << function.getSymName()
+                         << " status=" << (verified ? "accepted" : "rejected")
+                         << " first-failed-stage=" << firstFailedStage << '\n';
         }
         const bool oracleMismatch = llvm::any_of(channels.getChannels(), [](const SyncChannel& channel) {
             return channel.readyOracle == SyncDemandOracleStatus::Mismatch ||
