@@ -2,7 +2,7 @@
   "schema_version": 1,
   "contract": "ptoas_resolved_node_durations_v1",
   "function": "external_duration",
-  "ptoas_graph_sha256": "6a66574f91c6b4623ef9f6712dfa5e1d2d8202613f053d49a1d65ed250c782a2",
+  "ptoas_graph_sha256": "eda88f6378311e78f651f0854a8d3f533cffed50ed475fc1cf8ab19adccf3cf0",
   "schedule_semantic_sha256": "test-fixture",
   "graph_shape": {
     "node_count": 1,
@@ -19,6 +19,7 @@
     "op_name": "pto.load_scalar",
     "cycles": 37,
     "source": "test_exact_provider",
-    "detail": "fixed fixture duration"
+    "detail": "fixed fixture duration",
+    "evidence_class": "calibrated_signature"
   }]
 }

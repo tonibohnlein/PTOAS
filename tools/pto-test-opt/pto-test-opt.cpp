@@ -29,8 +29,12 @@ int main(int argc, char **argv) {
                   mlir::scf::SCFDialect, mlir::cf::ControlFlowDialect,
                   mlir::LLVM::LLVMDialect>();
 
+#ifdef PTO_REUSE_MODEL_ONLY
+  mlir::registerPass([] { return mlir::pto::createPrintKernelScheduleGraphPass(); });
+#else
   mlir::registerAllPasses();
   mlir::pto::registerPTOPasses();
+#endif
 
   return failed(mlir::MlirOptMain(argc, argv, "PTO lit pass runner\n",
                                   registry));

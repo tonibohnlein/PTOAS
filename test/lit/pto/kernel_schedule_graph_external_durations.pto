@@ -19,7 +19,7 @@ module {
 
 // CHECK-LABEL: KernelScheduleGraph @external_duration nodes=1
 // CHECK: node[0] op=pto.load_scalar
-// CHECK-SAME: duration_cycles=37 duration_exact=true
+// CHECK-SAME: duration_cycles=37 duration_resolved=true duration_evidence_class=calibrated_signature
 // CHECK-SAME: pypto_access_order=0
 // CHECK-SAME: duration_provenance=test_exact_provider
 // CHECK: longest_path_cycles=37

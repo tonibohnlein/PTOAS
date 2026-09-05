@@ -12,13 +12,16 @@ OneStopParallel vertex type is the numeric `PIPE` value returned by
 weights; communication and memory weights are zero. For latency scoring,
 `pto-print-kernel-schedule-graph` accepts either a pinned PTO-ISA
 `formula_params.csv` through `--duration-table`, or PyPTO's resolved composite
-provider output through `--node-durations`. The latter combines formula,
-transfer-bandwidth, scalar-stage, matmul, and exact Perf-Sim evidence without
-duplicating that logic in PTOAS. Its JSON binds every positive cycle value and
-provenance string to the function, exact unweighted graph SHA-256, node ID,
-operation, and `pypto_access_order`. `--require-exact-durations` refuses any
-unresolved node. The two duration inputs are mutually exclusive; neither may
-substitute a family average or fallback.
+provider output through `--node-durations`. The latter combines calibrated
+formula/signature evidence with pinned analytical and generic Perf-Sim
+approximations without duplicating that logic in PTOAS. Its JSON identifies the
+evidence class and binds every nonnegative cycle value and provenance string to
+the function, exact unweighted graph SHA-256, node ID, operation, and
+`pypto_access_order`. `--require-exact-durations` is the historical name of the
+completeness gate: it refuses unresolved/fallback nodes, while the evidence
+class distinguishes calibrated signatures from resolved approximations. The
+two duration inputs are mutually exclusive; neither may substitute an
+unpinned family average or unsupported fallback.
 
 The graph separately records a latency on each dependency. Ordinary
 SSA/control/memory edges have zero added delay. A placement analysis adds
@@ -28,7 +31,28 @@ therefore remains non-reusing and reusable across placements.
 `getLongestPathCycles()` scores the whole selected placement—not a sum of
 independent pair penalties—as the longest path through operation work plus
 dependency delay. Positive-distance recurrences remain outside this
-per-iteration path and must be scored through an initiation interval model.
+per-iteration path. `getRecurrenceInitiationIntervalCycles()` scores their
+return paths as a loop initiation-interval lower bound, and
+`getLatencyLowerBoundCycles()` reports the maximum of that bound and the
+acyclic longest path.
+
+The analysis indexes zero-distance edge latencies once. Longest-path scoring
+is `O(V + E)`. Recurrence return paths are computed once per distinct
+recurrence target, for `O(E + T(V + E) + R)` total work, where `T` is the
+number of distinct recurrence targets and `R` the number of recurrence edges.
+This deliberately avoids rescanning all dependencies for every traversed edge.
+
+These are bounds for the supplied graph, not a complete invocation-latency
+claim. The recurrence bound includes cycles with one positive-distance edge,
+not cycles composed of multiple recurrence edges. Control-path feasibility,
+fixed per-pipe issue order, and finite loop execution must be validated before
+interpreting it as a kernel score. Do not count a numeric bound as a complete
+latency prediction.
+
+For low-memory source validation, the `pto-reuse-model-opt` target registers
+only this graph pass and links its implementation via `PTOKernelScheduleModel`.
+It uses the same sources as the full tool, but avoids unrelated transform
+objects. It is not an assembler or a replacement for product code generation.
 
 PTOAS deliberately does not reconstruct DSA buffer identity from lowered PTO:
 that information belongs to the producer that exported the DSA problem and
@@ -56,8 +80,9 @@ also binds the edge set to the exact unweighted graph SHA-256. The importer
 validates function identity, node IDs, direction/kind, recurrence distance and
 common-loop depth, and non-empty provenance. A file naming another function is
 an error rather than an empty edge set. Positive-distance placement edges stay
-as recurrence metadata and do not make the per-iteration DAG cyclic. It does
-not infer missing relations.
+out of the acyclic adjacency graph but contribute to the reported
+recurrence-II and combined latency lower bounds. It does not infer missing
+relations.
 
 The underlying `ScheduleGraph` is PTOAS-owned and has no MLIR dependency. Its
 query API satisfies OneStopParallel's typed computational DAG contract:

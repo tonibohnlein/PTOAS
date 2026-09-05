@@ -38,3 +38,5 @@ module {
 // CHECK-LABEL: KernelScheduleGraph @placement_recurrence nodes=2
 // CHECK-DAG: edge 1 -> 0 kind=placement-reuse-war distance=1 latency_cycles=64
 // CHECK-SAME: provenance=buffers=0,1;candidate=0;accesses=4,2 recurrence_loop_depth=1
+// CHECK: recurrence_ii_cycles={{[1-9][0-9]*}}
+// CHECK: latency_lower_bound_cycles={{[1-9][0-9]*}}

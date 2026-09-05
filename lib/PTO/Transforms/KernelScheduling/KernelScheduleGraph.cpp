@@ -11,10 +11,14 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
 
 #include <algorithm>
+#include <limits>
+#include <map>
 #include <tuple>
 
 using namespace mlir;
@@ -22,37 +26,112 @@ using namespace mlir;
 namespace mlir {
 namespace pto {
 
-KernelScheduleGraph::VertexIdx
-KernelScheduleGraph::addNode(Operation *operation, PIPE pipe,
-                             ScheduleNodeKind kind, VertexIdx originalOrder,
-                             VertexIdx block, unsigned loopDepth,
-                             uint64_t durationCycles,
-                             bool hasExactDuration,
-                             std::optional<PTOISADurationSignature>
-                                 durationSignature,
-                             std::optional<unsigned> pyptoAccessOrder) {
-  const VertexIdx id = graph_.AddVertex(
-      /*workWeight=*/durationCycles, /*commWeight=*/0, /*memWeight=*/0,
-      static_cast<ScheduleGraph::VertexTypeType>(pipe));
-  nodes_.push_back(
-      {id, operation, pipe, kind, originalOrder, block, loopDepth,
-       pyptoAccessOrder, durationCycles, hasExactDuration,
-       std::move(durationSignature), {}});
-  return id;
+namespace {
+
+FailureOr<uint64_t> addCycles(uint64_t lhs, uint64_t rhs)
+{
+    if (rhs > std::numeric_limits<uint64_t>::max() - lhs) {
+        return failure();
+    }
+    return lhs + rhs;
+}
+
+FailureOr<std::vector<KernelScheduleGraph::VertexIdx>> getTopologicalOrder(const ScheduleGraph& graph)
+{
+    std::vector<KernelScheduleGraph::VertexIdx> indegrees;
+    std::vector<KernelScheduleGraph::VertexIdx> ready;
+    indegrees.reserve(graph.NumVertices());
+    ready.reserve(graph.NumVertices());
+    for (KernelScheduleGraph::VertexIdx node : graph.Vertices()) {
+        indegrees.push_back(graph.InDegree(node));
+        if (indegrees.back() == 0) {
+            ready.push_back(node);
+        }
+    }
+    for (std::size_t index = 0; index < ready.size(); ++index) {
+        for (KernelScheduleGraph::VertexIdx target : graph.Children(ready[index])) {
+            if (--indegrees[target] == 0) {
+                ready.push_back(target);
+            }
+        }
+    }
+    if (ready.size() != graph.NumVertices()) {
+        return failure();
+    }
+    return ready;
+}
+
+bool isResolvedDurationEvidenceClass(llvm::StringRef evidenceClass)
+{
+    return llvm::StringSwitch<bool>(evidenceClass)
+        .Cases("calibrated_signature", "calibrated_compatible_encoding", true)
+        .Cases("calibrated_operation_family", "calibrated_formula_signature", true)
+        .Cases("calibrated_instruction_model", "pinned_analytical_model", true)
+        .Cases("pinned_perf_sim_approximation", "pinned_formula_shape_approximation", true)
+        .Case("pinned_formula_family_approximation", true)
+        .Default(false);
+}
+
+using EdgeLatencyMap =
+    llvm::DenseMap<std::pair<KernelScheduleGraph::VertexIdx, KernelScheduleGraph::VertexIdx>, uint64_t>;
+
+EdgeLatencyMap getZeroDistanceEdgeLatencies(ArrayRef<KernelScheduleDependency> dependencies)
+{
+    EdgeLatencyMap result;
+    for (const KernelScheduleDependency& dependency : dependencies) {
+        if (dependency.iterationDistance != 0) {
+            continue;
+        }
+        auto key = std::make_pair(dependency.source, dependency.target);
+        auto [it, inserted] = result.try_emplace(key, dependency.latencyCycles);
+        if (!inserted) {
+            it->second = std::max(it->second, dependency.latencyCycles);
+        }
+    }
+    return result;
+}
+
+} // namespace
+
+KernelScheduleGraph::VertexIdx KernelScheduleGraph::addNode(
+    Operation* operation, PIPE pipe, ScheduleNodeKind kind, VertexIdx originalOrder, VertexIdx block,
+    unsigned loopDepth, uint64_t durationCycles, bool hasResolvedDuration,
+    std::optional<PTOISADurationSignature> durationSignature, std::optional<unsigned> pyptoAccessOrder)
+{
+    const VertexIdx id = graph_.AddVertex(
+        /*workWeight=*/durationCycles, /*commWeight=*/0, /*memWeight=*/0,
+        static_cast<ScheduleGraph::VertexTypeType>(pipe));
+    nodes_.push_back(
+        {id,
+         operation,
+         pipe,
+         kind,
+         originalOrder,
+         block,
+         loopDepth,
+         pyptoAccessOrder,
+         durationCycles,
+         hasResolvedDuration,
+         std::move(durationSignature),
+         {},
+         hasResolvedDuration ? "calibrated_formula_signature" : "unresolved"});
+    return id;
 }
 
 LogicalResult KernelScheduleGraph::setNodeDuration(
-    VertexIdx id, uint64_t durationCycles, llvm::StringRef provenance) {
-  if (id >= nodes_.size() || provenance.empty() ||
-      !graph_.SetVertexWorkWeight(id, durationCycles)) {
-    return failure();
-  }
-  KernelScheduleNode &node = nodes_[id];
-  node.durationCycles = durationCycles;
-  node.hasExactDuration = true;
-  node.durationSignature.reset();
-  node.durationProvenance = provenance.str();
-  return success();
+    VertexIdx id, uint64_t durationCycles, llvm::StringRef provenance, llvm::StringRef evidenceClass)
+{
+    if (id >= nodes_.size() || provenance.empty() || !isResolvedDurationEvidenceClass(evidenceClass) ||
+        !graph_.SetVertexWorkWeight(id, durationCycles)) {
+        return failure();
+    }
+    KernelScheduleNode& node = nodes_[id];
+    node.durationCycles = durationCycles;
+    node.hasResolvedDuration = true;
+    node.durationSignature.reset();
+    node.durationProvenance = provenance.str();
+    node.durationEvidenceClass = evidenceClass.str();
+    return success();
 }
 
 void KernelScheduleGraph::addDependency(VertexIdx source, VertexIdx target,
@@ -91,44 +170,96 @@ void KernelScheduleGraph::addDependency(VertexIdx source, VertexIdx target,
 }
 
 FailureOr<uint64_t> KernelScheduleGraph::getLongestPathCycles() const {
-  if (!isAcyclic()) {
-    return failure();
-  }
   if (graph_.NumVertices() == 0) {
     return uint64_t{0};
   }
-  std::vector<uint64_t> distances(graph_.NumVertices(), 0);
-  std::vector<VertexIdx> indegrees;
-  std::vector<VertexIdx> ready;
-  indegrees.reserve(graph_.NumVertices());
-  ready.reserve(graph_.NumVertices());
-  for (VertexIdx node : graph_.Vertices()) {
-    indegrees.push_back(graph_.InDegree(node));
-    if (indegrees.back() == 0) {
-      ready.push_back(node);
-    }
+  FailureOr<std::vector<VertexIdx>> order = getTopologicalOrder(graph_);
+  if (failed(order)) {
+      return failure();
   }
-  for (std::size_t index = 0; index < ready.size(); ++index) {
-    const VertexIdx source = ready[index];
-    distances[source] = std::max(distances[source],
-                                 graph_.VertexWorkWeight(source));
-    for (VertexIdx target : graph_.Children(source)) {
-      uint64_t edgeLatency = 0;
-      for (const KernelScheduleDependency &dependency : dependencies_) {
-        if (dependency.source == source && dependency.target == target &&
-            dependency.iterationDistance == 0) {
-          edgeLatency = std::max(edgeLatency, dependency.latencyCycles);
-        }
+  std::vector<uint64_t> distances(graph_.NumVertices(), 0);
+  const EdgeLatencyMap edgeLatencies = getZeroDistanceEdgeLatencies(dependencies_);
+  for (VertexIdx source : *order) {
+      distances[source] = std::max(distances[source], graph_.VertexWorkWeight(source));
+      for (VertexIdx target : graph_.Children(source)) {
+          const auto latency = edgeLatencies.find(std::make_pair(source, target));
+          const uint64_t edgeLatency = latency == edgeLatencies.end() ? 0 : latency->second;
+          FailureOr<uint64_t> withEdge = addCycles(distances[source], edgeLatency);
+          if (failed(withEdge)) {
+              return failure();
+          }
+          FailureOr<uint64_t> withTarget = addCycles(*withEdge, graph_.VertexWorkWeight(target));
+          if (failed(withTarget)) {
+              return failure();
+          }
+          distances[target] = std::max(distances[target], *withTarget);
       }
-      distances[target] = std::max(
-          distances[target], distances[source] + edgeLatency +
-                                graph_.VertexWorkWeight(target));
-      if (--indegrees[target] == 0) {
-        ready.push_back(target);
-      }
-    }
   }
   return *std::max_element(distances.begin(), distances.end());
+}
+
+FailureOr<uint64_t> KernelScheduleGraph::getRecurrenceInitiationIntervalCycles() const
+{
+    FailureOr<std::vector<VertexIdx>> order = getTopologicalOrder(graph_);
+    if (failed(order)) {
+        return failure();
+    }
+    const EdgeLatencyMap edgeLatencies = getZeroDistanceEdgeLatencies(dependencies_);
+    std::map<VertexIdx, std::vector<std::optional<uint64_t>>> returnPathsByTarget;
+    uint64_t recurrenceII = 0;
+    for (const KernelScheduleDependency& recurrence : dependencies_) {
+        if (recurrence.iterationDistance == 0) {
+            continue;
+        }
+        auto [cached, inserted] = returnPathsByTarget.try_emplace(recurrence.target);
+        if (inserted) {
+            std::vector<std::optional<uint64_t>>& distances = cached->second;
+            distances.resize(graph_.NumVertices());
+            distances[recurrence.target] = graph_.VertexWorkWeight(recurrence.target);
+            for (VertexIdx source : *order) {
+                if (!distances[source]) {
+                    continue;
+                }
+                for (VertexIdx target : graph_.Children(source)) {
+                    const auto latency = edgeLatencies.find(std::make_pair(source, target));
+                    const uint64_t edgeLatency = latency == edgeLatencies.end() ? 0 : latency->second;
+                    FailureOr<uint64_t> withEdge = addCycles(*distances[source], edgeLatency);
+                    if (failed(withEdge)) {
+                        return failure();
+                    }
+                    FailureOr<uint64_t> withTarget = addCycles(*withEdge, graph_.VertexWorkWeight(target));
+                    if (failed(withTarget)) {
+                        return failure();
+                    }
+                    if (!distances[target] || *withTarget > *distances[target]) {
+                        distances[target] = *withTarget;
+                    }
+                }
+            }
+        }
+        const std::vector<std::optional<uint64_t>>& distances = cached->second;
+        if (!distances[recurrence.source]) {
+            continue;
+        }
+        FailureOr<uint64_t> cycle = addCycles(*distances[recurrence.source], recurrence.latencyCycles);
+        if (failed(cycle)) {
+            return failure();
+        }
+        const uint64_t distance = recurrence.iterationDistance;
+        const uint64_t bound = *cycle / distance + (*cycle % distance != 0);
+        recurrenceII = std::max(recurrenceII, bound);
+    }
+    return recurrenceII;
+}
+
+FailureOr<uint64_t> KernelScheduleGraph::getLatencyLowerBoundCycles() const
+{
+    FailureOr<uint64_t> longestPath = getLongestPathCycles();
+    FailureOr<uint64_t> recurrenceII = getRecurrenceInitiationIntervalCycles();
+    if (failed(longestPath) || failed(recurrenceII)) {
+        return failure();
+    }
+    return std::max(*longestPath, *recurrenceII);
 }
 
 StringRef stringifyScheduleNodeKind(ScheduleNodeKind kind) {
@@ -203,17 +334,15 @@ void printKernelScheduleGraph(llvm::raw_ostream &os, func::FuncOp func,
      << " dag_edges=" << graph.getGraph().NumEdges()
      << " dependencies=" << graph.getDependencies().size() << "\n";
   for (const KernelScheduleNode &node : graph.getNodes()) {
-    os << "  node[" << node.id
-       << "] op=" << node.operation->getName().getStringRef()
-       << " pipe=" << stringifyPIPE(node.pipe)
-       << " kind=" << stringifyScheduleNodeKind(node.kind)
-       << " order=" << node.originalOrder << " block=" << node.block
-       << " loop_depth=" << node.loopDepth
-       << " duration_cycles=" << node.durationCycles
-       << " duration_exact=" << (node.hasExactDuration ? "true" : "false");
-    if (node.pyptoAccessOrder) {
-      os << " pypto_access_order=" << *node.pyptoAccessOrder;
-    }
+      os << "  node[" << node.id << "] op=" << node.operation->getName().getStringRef()
+         << " pipe=" << stringifyPIPE(node.pipe) << " kind=" << stringifyScheduleNodeKind(node.kind)
+         << " order=" << node.originalOrder << " block=" << node.block << " loop_depth=" << node.loopDepth
+         << " duration_cycles=" << node.durationCycles
+         << " duration_resolved=" << (node.hasResolvedDuration ? "true" : "false")
+         << " duration_evidence_class=" << node.durationEvidenceClass;
+      if (node.pyptoAccessOrder) {
+          os << " pypto_access_order=" << *node.pyptoAccessOrder;
+      }
     if (node.durationSignature) {
       os << " duration_signature=" << node.durationSignature->opcode << ":"
          << node.durationSignature->dtype << ":"
@@ -240,11 +369,22 @@ void printKernelScheduleGraph(llvm::raw_ostream &os, func::FuncOp func,
     }
     os << "\n";
   }
-  if (FailureOr<uint64_t> longestPath = graph.getLongestPathCycles();
-      succeeded(longestPath)) {
-    os << "  longest_path_cycles=" << *longestPath << "\n";
+  FailureOr<uint64_t> longestPath = graph.getLongestPathCycles();
+  if (succeeded(longestPath)) {
+      os << "  longest_path_cycles=" << *longestPath << "\n";
   } else {
-    os << "  longest_path_cycles=unavailable_cycle\n";
+      os << "  longest_path_cycles=unavailable_cycle\n";
+  }
+  FailureOr<uint64_t> recurrenceII = graph.getRecurrenceInitiationIntervalCycles();
+  if (succeeded(recurrenceII)) {
+      os << "  recurrence_ii_cycles=" << *recurrenceII << "\n";
+  } else {
+      os << "  recurrence_ii_cycles=unavailable_cycle\n";
+  }
+  if (succeeded(longestPath) && succeeded(recurrenceII)) {
+      os << "  latency_lower_bound_cycles=" << std::max(*longestPath, *recurrenceII) << "\n";
+  } else {
+      os << "  latency_lower_bound_cycles=unavailable_cycle\n";
   }
 }
 

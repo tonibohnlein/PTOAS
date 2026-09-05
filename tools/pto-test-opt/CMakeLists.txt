@@ -35,6 +35,17 @@ add_dependencies(pto-test-opt
   PTOPassesIncGen
 )
 
+add_llvm_executable(pto-reuse-model-opt
+  pto-test-opt.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_compile_definitions(pto-reuse-model-opt PRIVATE PTO_REUSE_MODEL_ONLY=1)
+target_link_libraries(pto-reuse-model-opt PRIVATE
+  PTOKernelScheduleModel MLIRMlirOptMain MLIRParser
+  MLIRControlFlowDialect MLIRLLVMDialect
+)
+add_dependencies(pto-reuse-model-opt PTOOpsIncGen PTOPassesIncGen)
+
 add_llvm_executable(pto-vpto-scheduler-tracker-test
   pto-vpto-scheduler-tracker-test.cpp
   PARTIAL_SOURCES_INTENDED

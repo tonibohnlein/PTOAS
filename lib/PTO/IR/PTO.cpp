@@ -16002,9 +16002,6 @@ static LogicalResult verifyTSelA2A3(TSelOp op) {
   }
   if (op.getTmp()) {
     Type tmpTy = op.getTmp().getType();
-    if (getElemByteSize(getElemTy(tmpTy)) != 4) {
-      return op.emitOpError("expects A2/A3 tsel tmp element type to be 4 bytes wide");
-    }
     unsigned elemBits = getPTOStorageElemBitWidth(elem);
     if (elemBits != 16 && elemBits != 32) {
       return op.emitOpError("expects A2/A3 tsel data element type to be 16 or 32 bits");

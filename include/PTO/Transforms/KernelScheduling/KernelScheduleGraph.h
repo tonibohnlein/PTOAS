@@ -58,14 +58,16 @@ struct KernelScheduleNode {
   /// PyPTO's source-level access identity, when carried by the PTO location.
   /// It is the stable join key for external DSA reuse-candidate provenance.
   std::optional<unsigned> pyptoAccessOrder;
-  /// Exact durations are supplied by a pinned PTO-ISA formula table. The
+  /// Resolved durations are supplied by a pinned, non-fallback model. The
   /// legacy structural graph intentionally retains unit weights.
   uint64_t durationCycles = 1;
-  bool hasExactDuration = false;
+  bool hasResolvedDuration = false;
   /// Present exactly when PTO-ISA supplied the node duration.
   std::optional<PTOISADurationSignature> durationSignature;
-  /// Stable producer provenance for externally resolved exact durations.
+  /// Stable producer provenance for externally resolved durations.
   std::string durationProvenance;
+  /// Calibration quality, kept separate from mere non-fallback resolution.
+  std::string durationEvidenceClass;
 };
 
 struct KernelScheduleGraphBuildOptions {
@@ -96,20 +98,19 @@ class KernelScheduleGraph {
 public:
   using VertexIdx = ScheduleGraph::VertexIdx;
 
-  VertexIdx addNode(Operation *operation, PIPE pipe, ScheduleNodeKind kind,
-                    VertexIdx originalOrder, VertexIdx block,
-                    unsigned loopDepth, uint64_t durationCycles = 1,
-                    bool hasExactDuration = false,
-                    std::optional<PTOISADurationSignature> durationSignature = std::nullopt,
-                    std::optional<unsigned> pyptoAccessOrder = std::nullopt);
+  VertexIdx addNode(
+      Operation* operation, PIPE pipe, ScheduleNodeKind kind, VertexIdx originalOrder, VertexIdx block,
+      unsigned loopDepth, uint64_t durationCycles = 1, bool hasResolvedDuration = false,
+      std::optional<PTOISADurationSignature> durationSignature = std::nullopt,
+      std::optional<unsigned> pyptoAccessOrder = std::nullopt);
   void addDependency(VertexIdx source, VertexIdx target,
                      ScheduleDependencyKind kind,
                      unsigned iterationDistance = 0,
                      Operation *recurrenceLoop = nullptr,
                      uint64_t latencyCycles = 0,
                      llvm::StringRef provenance = {});
-  LogicalResult setNodeDuration(VertexIdx id, uint64_t durationCycles,
-                                llvm::StringRef provenance);
+  LogicalResult setNodeDuration(
+      VertexIdx id, uint64_t durationCycles, llvm::StringRef provenance, llvm::StringRef evidenceClass);
 
   const ScheduleGraph &getGraph() const { return graph_; }
   ArrayRef<KernelScheduleNode> getNodes() const { return nodes_; }
@@ -122,8 +123,14 @@ public:
   /// Positive-distance recurrences describe a loop initiation interval and are
   /// intentionally excluded from this per-iteration DAG score.
   FailureOr<uint64_t> getLongestPathCycles() const;
+  /// Maximum recurrence-constrained initiation interval. For every
+  /// positive-distance edge S(k)->T(k+d), this includes the longest
+  /// zero-distance path T..S plus the recurrence-edge latency, divided by d.
+  FailureOr<uint64_t> getRecurrenceInitiationIntervalCycles() const;
+  /// Conservative score combining acyclic latency and recurrence throughput.
+  FailureOr<uint64_t> getLatencyLowerBoundCycles() const;
 
-private:
+  private:
   ScheduleGraph graph_;
   std::vector<KernelScheduleNode> nodes_;
   std::vector<KernelScheduleDependency> dependencies_;

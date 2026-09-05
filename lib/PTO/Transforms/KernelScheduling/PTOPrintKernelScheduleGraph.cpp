@@ -51,6 +51,7 @@ struct ResolvedNodeDuration {
   std::string operation;
   uint64_t cycles = 0;
   std::string provenance;
+  std::string evidenceClass;
 };
 
 struct ResolvedNodeDurationDocument {
@@ -220,11 +221,11 @@ loadResolvedNodeDurations(llvm::StringRef path, llvm::StringRef function,
     std::optional<llvm::StringRef> operation = node->getString("op_name");
     std::optional<llvm::StringRef> source = node->getString("source");
     std::optional<llvm::StringRef> detail = node->getString("detail");
-    if (!id || *id < 0 || static_cast<uint64_t>(*id) >= seen.size() ||
-        seen[*id] || !access || *access < 0 || !cycles || *cycles <= 0 ||
-        !operation || operation->empty() || !source || source->empty() ||
-        !detail) {
-      return failure();
+    std::optional<llvm::StringRef> evidenceClass = node->getString("evidence_class");
+    if (!id || *id < 0 || static_cast<uint64_t>(*id) >= seen.size() || seen[*id] || !access || *access < 0 || !cycles ||
+        *cycles < 0 || !operation || operation->empty() || !source || source->empty() || !detail || !evidenceClass ||
+        evidenceClass->empty()) {
+        return failure();
     }
     const auto &graphNode = graph.getNode(static_cast<unsigned>(*id));
     if (!graphNode.pyptoAccessOrder ||
@@ -234,8 +235,8 @@ loadResolvedNodeDurations(llvm::StringRef path, llvm::StringRef function,
     }
     seen[*id] = true;
     document.nodes.push_back(
-        {static_cast<unsigned>(*id), static_cast<unsigned>(*access),
-         operation->str(), static_cast<uint64_t>(*cycles), source->str()});
+        {static_cast<unsigned>(*id), static_cast<unsigned>(*access), operation->str(), static_cast<uint64_t>(*cycles),
+         source->str(), evidenceClass->str()});
   }
   return document;
 }
@@ -304,21 +305,20 @@ struct PrintKernelScheduleGraphPass
         return;
       }
       for (const ResolvedNodeDuration &duration : durations->nodes) {
-        if (failed(graph->setNodeDuration(duration.node, duration.cycles,
-                                          duration.provenance))) {
-          func.emitError("failed to apply an external node duration");
-          signalPassFailure();
-          return;
-        }
+          if (failed(graph->setNodeDuration(
+                  duration.node, duration.cycles, duration.provenance, duration.evidenceClass))) {
+              func.emitError("failed to apply an external node duration");
+              signalPassFailure();
+              return;
+          }
       }
     }
-    if (requireExactDurations &&
-        llvm::any_of(graph->getNodes(), [](const pto::KernelScheduleNode &node) {
-          return !node.hasExactDuration;
+    if (requireExactDurations && llvm::any_of(graph->getNodes(), [](const pto::KernelScheduleNode& node) {
+            return !node.hasResolvedDuration;
         })) {
-      func.emitError("kernel schedule graph has unresolved node durations");
-      signalPassFailure();
-      return;
+        func.emitError("kernel schedule graph has unresolved node durations");
+        signalPassFailure();
+        return;
     }
     if (!placementReuseEdges.empty()) {
       FailureOr<llvm::SmallVector<PlacementReuseEdge, 8>> edges =

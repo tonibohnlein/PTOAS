@@ -217,7 +217,7 @@ private:
               ? pto::ScheduleNodeKind::Transfer
               : pto::ScheduleNodeKind::Compute;
       uint64_t durationCycles = 1;
-      bool hasExactDuration = false;
+      bool hasResolvedDuration = false;
       std::optional<pto::PTOISADurationSignature> signature;
       if (options_.durationTable) {
         signature = pto::getPTOISADurationSignature(op);
@@ -226,19 +226,18 @@ private:
                       : std::nullopt;
         if (estimate) {
           durationCycles = estimate->cycles;
-          hasExactDuration = true;
+          hasResolvedDuration = true;
         } else if (options_.requireExactDurations) {
-          op->emitError("kernel schedule graph has no exact PTO-ISA duration "
-                        "for this operation");
-          durationUnavailable_ = true;
-          return;
+            op->emitError(
+                "kernel schedule graph has no matching pinned PTO-ISA duration "
+                "for this operation");
+            durationUnavailable_ = true;
+            return;
         }
       }
-      const VertexIdx id =
-          graph_.addNode(op, *pipe, kind, order++, getBlockId(op->getBlock()),
-                         getLoopDepth(op), durationCycles, hasExactDuration,
-                         hasExactDuration ? signature : std::nullopt,
-                         getPyptoAccessOrder(op));
+      const VertexIdx id = graph_.addNode(
+          op, *pipe, kind, order++, getBlockId(op->getBlock()), getLoopDepth(op), durationCycles, hasResolvedDuration,
+          hasResolvedDuration ? signature : std::nullopt, getPyptoAccessOrder(op));
       nodeIds_.try_emplace(op, id);
     });
     memoryAccesses_.resize(graph_.getNodes().size());
@@ -613,29 +612,29 @@ private:
       return;
     }
     const SmallVector<VertexIdx, 8> nodes = getLoopNodes(forOp);
-    for (auto [iterArg, yielded] :
-         llvm::zip(forOp.getRegionIterArgs(), forOp.getYieldedValues())) {
-      llvm::SetVector<VertexIdx> producers;
-      DenseSet<Value> producerVisited;
-      collectScheduledProducers(yielded, producers, producerVisited);
-      for (VertexIdx producer : producers) {
-        if (!forOp->isAncestor(graph_.getNode(producer).operation)) {
-          continue;
+    for (auto mapping : llvm::zip(forOp.getRegionIterArgs(), forOp.getYieldedValues())) {
+        Value iterArg = std::get<0>(mapping);
+        Value yielded = std::get<1>(mapping);
+        llvm::SetVector<VertexIdx> producers;
+        DenseSet<Value> producerVisited;
+        collectScheduledProducers(yielded, producers, producerVisited);
+        for (VertexIdx producer : producers) {
+            if (!forOp->isAncestor(graph_.getNode(producer).operation)) {
+                continue;
+            }
+            for (VertexIdx target : nodes) {
+                bool consumesIterArg =
+                    llvm::any_of(graph_.getNode(target).operation->getOperands(), [&](Value operand) {
+                        DenseSet<Value> visited;
+                        return valueDependsOn(operand, iterArg, visited);
+                    });
+                if (consumesIterArg) {
+                    graph_.addDependency(
+                        producer, target, pto::ScheduleDependencyKind::LoopCarriedSSA,
+                        /*iterationDistance=*/1, forOp);
+                }
+            }
         }
-        for (VertexIdx target : nodes) {
-          bool consumesIterArg =
-              llvm::any_of(graph_.getNode(target).operation->getOperands(),
-                           [&](Value operand) {
-                             DenseSet<Value> visited;
-                             return valueDependsOn(operand, iterArg, visited);
-                           });
-          if (consumesIterArg) {
-            graph_.addDependency(producer, target,
-                                 pto::ScheduleDependencyKind::LoopCarriedSSA,
-                                 /*iterationDistance=*/1, forOp);
-          }
-        }
-      }
     }
   }
 

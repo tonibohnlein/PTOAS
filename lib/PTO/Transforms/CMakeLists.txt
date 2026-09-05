@@ -12,6 +12,22 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 set(_ptoas_transforms_private_link_libs)
+
+# The analysis runner and its unit tests must not require the full backend.
+# Compile the same model sources in a small, explicitly selected library.
+add_library(PTOKernelScheduleModel STATIC EXCLUDE_FROM_ALL
+  KernelScheduling/KernelScheduleGraph.cpp
+  KernelScheduling/KernelScheduleGraphBuilder.cpp
+  KernelScheduling/PTOISADuration.cpp
+  KernelScheduling/PTOPrintKernelScheduleGraph.cpp
+  Utils.cpp
+)
+add_dependencies(PTOKernelScheduleModel PTOOpsIncGen PTOPassesIncGen)
+llvm_update_compile_flags(PTOKernelScheduleModel)
+target_link_libraries(PTOKernelScheduleModel PUBLIC
+  PTOIR MLIRIR MLIRPass MLIRFuncDialect MLIRArithDialect MLIRMemRefDialect
+  MLIRSCFDialect MLIRTensorDialect MLIRBufferizationDialect MLIRSupport
+)
 if(TARGET vfsim::native_core)
   list(APPEND _ptoas_transforms_private_link_libs
     $<BUILD_INTERFACE:vfsim::native_core>)

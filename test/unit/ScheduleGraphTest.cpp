@@ -89,40 +89,83 @@ bool testCycleDetection() {
 bool testCompletePlacementLongestPath() {
   mlir::pto::KernelScheduleGraph graph;
   const auto first = graph.addNode(
-      nullptr, mlir::pto::PIPE::PIPE_V, mlir::pto::ScheduleNodeKind::Compute,
-      0, 0, 0, /*durationCycles=*/10, /*hasExactDuration=*/true);
+      nullptr, mlir::pto::PIPE::PIPE_V, mlir::pto::ScheduleNodeKind::Compute, 0, 0, 0, /*durationCycles=*/10,
+      /*hasResolvedDuration=*/true);
   const auto second = graph.addNode(
-      nullptr, mlir::pto::PIPE::PIPE_MTE2,
-      mlir::pto::ScheduleNodeKind::Transfer, 1, 0, 0,
-      /*durationCycles=*/20, /*hasExactDuration=*/true);
+      nullptr, mlir::pto::PIPE::PIPE_MTE2, mlir::pto::ScheduleNodeKind::Transfer, 1, 0, 0,
+      /*durationCycles=*/20, /*hasResolvedDuration=*/true);
   graph.addNode(
-      nullptr, mlir::pto::PIPE::PIPE_V, mlir::pto::ScheduleNodeKind::Compute,
-      2, 0, 0, /*durationCycles=*/40, /*hasExactDuration=*/true);
+      nullptr, mlir::pto::PIPE::PIPE_V, mlir::pto::ScheduleNodeKind::Compute, 2, 0, 0, /*durationCycles=*/40,
+      /*hasResolvedDuration=*/true);
   // This models a selected address reuse: a synchronization delay belongs to
   // the edge, and the whole placement is scored once through the DAG.
   graph.addDependency(first, second,
                       mlir::pto::ScheduleDependencyKind::PlacementReuseRAW,
                       0, nullptr, /*latencyCycles=*/17,
                       "buffers=0,1;accesses=4,9");
-  // A recurrence contributes to a loop-II model, not the per-iteration path.
+  // A recurrence is excluded from the acyclic path but contributes its return
+  // path and edge latency to the loop initiation-interval lower bound.
   graph.addDependency(second, first,
                       mlir::pto::ScheduleDependencyKind::MemoryWAR,
                       /*iterationDistance=*/1, nullptr,
                       /*latencyCycles=*/999);
   auto longestPath = graph.getLongestPathCycles();
+  auto recurrenceII = graph.getRecurrenceInitiationIntervalCycles();
+  auto latencyLowerBound = graph.getLatencyLowerBoundCycles();
   return check(succeeded(longestPath), "weighted graph remains acyclic") &&
-         check(*longestPath == 47,
-               "node and selected reuse-edge weights form the longest path") &&
-         check(graph.getGraph().VertexWorkWeight(second) == 20,
-               "node duration is exposed to DAG consumers") &&
-         check(graph.getDependencies().front().kind ==
-                   mlir::pto::ScheduleDependencyKind::PlacementReuseRAW,
-               "placement-induced dependency remains distinguishable") &&
-         check(graph.getDependencies().front().provenance ==
-                   "buffers=0,1;accesses=4,9",
-               "placement provenance is retained") &&
-         check(graph.getDependencies().back().latencyCycles == 999,
-               "recurrence latency remains explicit metadata");
+         check(*longestPath == 47, "node and selected reuse-edge weights form the longest path") &&
+         check(
+             succeeded(recurrenceII) && *recurrenceII == 1046,
+             "positive-distance recurrence includes its return path") &&
+         check(
+             succeeded(latencyLowerBound) && *latencyLowerBound == 1046,
+             "combined lower bound includes recurrence throughput") &&
+         check(graph.getGraph().VertexWorkWeight(second) == 20, "node duration is exposed to DAG consumers") &&
+         check(
+             graph.getDependencies().front().kind == mlir::pto::ScheduleDependencyKind::PlacementReuseRAW,
+             "placement-induced dependency remains distinguishable") &&
+         check(
+             graph.getDependencies().front().provenance == "buffers=0,1;accesses=4,9",
+             "placement provenance is retained") &&
+         check(graph.getDependencies().back().latencyCycles == 999, "recurrence latency remains explicit metadata");
+}
+
+bool testRecurrenceDistanceRoundsUp()
+{
+    mlir::pto::KernelScheduleGraph graph;
+    const auto first = graph.addNode(
+        nullptr, mlir::pto::PIPE::PIPE_V, mlir::pto::ScheduleNodeKind::Compute, 0, 0, 0, /*durationCycles=*/5,
+        /*hasResolvedDuration=*/true);
+    const auto second = graph.addNode(
+        nullptr, mlir::pto::PIPE::PIPE_MTE2, mlir::pto::ScheduleNodeKind::Transfer, 1, 0, 0,
+        /*durationCycles=*/8, /*hasResolvedDuration=*/true);
+    graph.addDependency(first, second, mlir::pto::ScheduleDependencyKind::SSA);
+    graph.addDependency(
+        second, first, mlir::pto::ScheduleDependencyKind::PlacementReuseWAR,
+        /*iterationDistance=*/2, nullptr,
+        /*latencyCycles=*/4, "two-iteration recurrence");
+    auto recurrenceII = graph.getRecurrenceInitiationIntervalCycles();
+    return check(
+        succeeded(recurrenceII) && *recurrenceII == 9, "recurrence cycle latency is divided by distance with ceiling");
+}
+
+bool testRecurrencesSharingTargetReuseReturnPath()
+{
+    mlir::pto::KernelScheduleGraph graph;
+    const auto target =
+        graph.addNode(nullptr, mlir::pto::PIPE::PIPE_V, mlir::pto::ScheduleNodeKind::Compute, 0, 0, 0, 2, true);
+    const auto firstSource =
+        graph.addNode(nullptr, mlir::pto::PIPE::PIPE_MTE2, mlir::pto::ScheduleNodeKind::Transfer, 1, 0, 0, 3, true);
+    const auto secondSource =
+        graph.addNode(nullptr, mlir::pto::PIPE::PIPE_MTE3, mlir::pto::ScheduleNodeKind::Transfer, 2, 0, 0, 5, true);
+    graph.addDependency(target, firstSource, mlir::pto::ScheduleDependencyKind::SSA);
+    graph.addDependency(firstSource, secondSource, mlir::pto::ScheduleDependencyKind::SSA);
+    graph.addDependency(firstSource, target, mlir::pto::ScheduleDependencyKind::LoopCarriedSSA, 1, nullptr, 4);
+    graph.addDependency(secondSource, target, mlir::pto::ScheduleDependencyKind::LoopCarriedSSA, 2, nullptr, 1);
+
+    auto recurrenceII = graph.getRecurrenceInitiationIntervalCycles();
+    return check(
+        succeeded(recurrenceII) && *recurrenceII == 9, "recurrences sharing a target retain independent cycle bounds");
 }
 
 bool testExternallyResolvedNodeDuration() {
@@ -134,29 +177,39 @@ bool testExternallyResolvedNodeDuration() {
       nullptr, mlir::pto::PIPE::PIPE_MTE2,
       mlir::pto::ScheduleNodeKind::Transfer, 1, 0, 0);
   graph.addDependency(source, target, mlir::pto::ScheduleDependencyKind::SSA);
-  const bool firstResolved = succeeded(graph.setNodeDuration(
-      source, 13, "pto_isa_a2a3_cce_vrsqrt"));
+  const bool firstResolved =
+      succeeded(graph.setNodeDuration(source, 13, "pto_isa_a2a3_cce_vrsqrt", "calibrated_instruction_model"));
   const bool secondResolved =
-      succeeded(graph.setNodeDuration(target, 29, "static_transfer_bandwidth"));
+      succeeded(graph.setNodeDuration(target, 29, "static_transfer_bandwidth", "pinned_analytical_model"));
+  const auto familyApproximation = graph.addNode(
+      nullptr, mlir::pto::PIPE::PIPE_V, mlir::pto::ScheduleNodeKind::Compute,
+      2, 0, 0);
+  const bool familyApproximationResolved = succeeded(graph.setNodeDuration(
+      familyApproximation, 17, "TROWEXPAND family", "pinned_formula_family_approximation"));
   const auto longestPath = graph.getLongestPathCycles();
-  return check(firstResolved && secondResolved, "external durations apply") &&
-         check(graph.getNode(source).hasExactDuration,
-               "external duration is exact") &&
-         check(graph.getNode(source).durationProvenance ==
-                   "pto_isa_a2a3_cce_vrsqrt",
-               "external duration provenance retained") &&
-         check(succeeded(longestPath) && *longestPath == 42,
-               "external durations change the weighted longest path") &&
-         check(failed(graph.setNodeDuration(target, 0, "")),
-               "empty provenance is rejected");
+  return check(firstResolved && secondResolved && familyApproximationResolved, "external durations apply") &&
+         check(graph.getNode(source).hasResolvedDuration, "external duration is resolved") &&
+         check(
+             graph.getNode(source).durationProvenance == "pto_isa_a2a3_cce_vrsqrt",
+             "external duration provenance retained") &&
+         check(
+             graph.getNode(source).durationEvidenceClass == "calibrated_instruction_model",
+             "calibration quality remains distinct from resolution") &&
+         check(succeeded(longestPath) && *longestPath == 42, "external durations change the weighted longest path") &&
+         check(failed(graph.setNodeDuration(target, 0, "", "")), "empty provenance is rejected") &&
+         check(
+             failed(graph.setNodeDuration(target, 1, "provider", "unsupported_fallback")),
+             "fallback evidence is rejected") &&
+         check(failed(graph.setNodeDuration(target, 1, "provider", "unresolved")), "unresolved evidence is rejected") &&
+         check(failed(graph.setNodeDuration(target, 1, "provider", "unknown")), "unknown evidence is rejected");
 }
 
 } // namespace
 
 int main() {
-  const bool passed = testEmptyGraph() && testVertexPropertiesAndEdges() &&
-                      testInvalidAndDuplicateEdges() && testCycleDetection() &&
-                      testCompletePlacementLongestPath() &&
-                      testExternallyResolvedNodeDuration();
-  return passed ? 0 : 1;
+    const bool passed = testEmptyGraph() && testVertexPropertiesAndEdges() && testInvalidAndDuplicateEdges() &&
+                        testCycleDetection() && testCompletePlacementLongestPath() &&
+                        testRecurrenceDistanceRoundsUp() && testRecurrencesSharingTargetReuseReturnPath() &&
+                        testExternallyResolvedNodeDuration();
+    return passed ? 0 : 1;
 }

@@ -19,6 +19,7 @@
     "op_name": "pto.load_scalar",
     "cycles": 37,
     "source": "test_exact_provider",
-    "detail": "fixed fixture duration"
+    "detail": "fixed fixture duration",
+    "evidence_class": "calibrated_signature"
   }]
 }
