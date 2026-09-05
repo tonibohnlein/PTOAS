@@ -22,7 +22,7 @@ from campaign import inputs, probe_command
 from census import classify_track, first_control_gate, population, summarize, topology_hash
 from records import fields, new_function, parse_diagnostics
 from provenance import untracked_sources
-from native_followup import checked_path, successful_probe
+from native_followup import checked_path, pattern_flags, successful_probe
 
 
 def statistics(name, **counts):
@@ -151,9 +151,20 @@ class EvidenceTests(unittest.TestCase):
 class AcceptanceTests(unittest.TestCase):
     """Admission is not inferred from absent diagnostics or aggregate failures."""
 
+    def test_followup_pattern_policy_compatibility(self):
+        self.assertEqual(pattern_flags({}, {}), [])
+        for mode in ("on", "off"):
+            self.assertEqual(pattern_flags({"patterns": mode}, {"patterns": mode}),
+                             [f"--protocol-sync-patterns={mode}"])
+        for metadata, probe in (({"patterns": "off"}, {}), ({}, {"patterns": "off"}),
+                                ({"patterns": "invalid"}, {"patterns": "invalid"})):
+            with self.assertRaisesRegex(ValueError, "policies"):
+                pattern_flags(metadata, probe)
+
     def test_all_probes_share_architecture_and_alias_contract(self):
         args = SimpleNamespace(python=Path("python"), ptoas=Path("ptoas"),
-                               input_root=Path("inputs"), results=Path("results"), arch="a2", gm_alias=None)
+                               input_root=Path("inputs"), results=Path("results"), arch="a2", gm_alias=None,
+                               patterns="off")
         for alias in (None, "may-alias", "assume-disjoint-arguments"):
             args.gm_alias = alias
             for strict in (False, True):
@@ -162,6 +173,23 @@ class AcceptanceTests(unittest.TestCase):
                 overrides = [flag for flag in command if flag.startswith("--protocol-sync-gm-alias=")]
                 self.assertEqual(overrides, [] if alias is None else [f"--protocol-sync-gm-alias={alias}"])
                 self.assertEqual("--protocol-sync-fallback=fail" in command, strict)
+                self.assertEqual("--protocol-sync-patterns=off" in command, strict)
+
+    def test_general_only_requires_zero_selected_patterns(self):
+        counts = {"selected_one_shot_protocols": 0, "selected_ready_release_protocols": 0}
+        function = {"statistics": {"planner_result": "materialized-mixed",
+                                   "producer": "protocol-plus-direct-residuals", "counts": counts}}
+        probe = {"return_code": 0, "functions": [function], "patterns": "off"}
+        self.assertEqual(classify_strict(probe), "admitted")
+        self.assertTrue(successful_probe("mixed-cpp", 0, [function], True, "off"))
+        for name in counts:
+            counts[name] = 1
+            self.assertEqual(classify_strict(probe), "incomplete-or-invocation-error")
+            self.assertFalse(successful_probe("mixed-cpp", 0, [function], True, "off"))
+            counts[name] = 0
+        del counts["selected_one_shot_protocols"]
+        self.assertEqual(classify_strict(probe), "incomplete-or-invocation-error")
+        self.assertFalse(successful_probe("mixed-cpp", 0, [function], True, "off"))
 
     def test_missing_statistics_or_crash_is_not_rejection(self):
         for return_code in (0, 1, -11, 124):

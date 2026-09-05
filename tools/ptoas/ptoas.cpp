@@ -253,6 +253,12 @@ llvm::cl::opt<std::string> protocolSyncFallback(
     llvm::cl::desc("ProtocolSync whole-function fallback: legacy or fail"),
     llvm::cl::init("legacy"));
 
+llvm::cl::opt<std::string> protocolSyncPatterns(
+    "protocol-sync-patterns",
+    llvm::cl::desc("Optional lifecycle protocols in --protocol-sync-mixed: on or off; "
+                   "off retains general direct, loop, and structured frontier repair"),
+    llvm::cl::init("on"));
+
 llvm::cl::opt<std::string> protocolSyncDump(
     "protocol-sync-dump",
     llvm::cl::desc(

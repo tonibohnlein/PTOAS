@@ -58,8 +58,11 @@ def arguments():
     parser.add_argument("--expected-rows", type=int, required=True)
     parser.add_argument("--arch", choices=("a2", "a3"), default="a3")
     parser.add_argument("--gm-alias", choices=("may-alias", "assume-disjoint-arguments"))
+    parser.add_argument("--patterns", choices=("on", "off"), default="on")
     parser.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
+    if args.patterns == "off" and args.mode != "acceptance":
+        parser.error("--patterns=off requires --mode=acceptance")
     for key in ("input_root", "ptoas", "python", "build_root"):
         setattr(args, key, getattr(args, key).absolute())
     args.results = args.results.resolve()
@@ -100,6 +103,8 @@ def probe_command(args, row, dump, strict=False):
     """Use one declared architecture and alias contract for every probe."""
     flags = ["--protocol-sync-mixed", "--protocol-sync-fallback=fail"] if strict else [
         "--enable-insert-sync", "--protocol-sync-analysis-only"]
+    if strict:
+        flags.append(f"--protocol-sync-patterns={args.patterns}")
     if args.gm_alias is not None:
         flags.append(f"--protocol-sync-gm-alias={args.gm_alias}")
     output = str(args.results / "emitted" / f"{row['case_id']}.pto") if strict else "/dev/null"
@@ -123,7 +128,7 @@ def execute_probe(args, row, dump, suffix="", strict=False):
     diagnostic.write_bytes(gzip.compress(output, mtime=0))
     record = dict(row, command=command, return_code=return_code,
                   diagnostics_sha256=sha256(diagnostic), target_arch=args.arch,
-                  gm_alias_override=args.gm_alias)
+                  gm_alias_override=args.gm_alias, patterns=args.patterns)
     record.update(parse_diagnostics(output.decode("utf-8", errors="replace")))
     if strict and return_code == 0:
         emitted = args.results / "emitted" / f"{row['case_id']}.pto"
@@ -166,6 +171,7 @@ def prepare_campaign(args):
         "toolchain": toolchain,
         "mode": args.mode, "workers": args.workers,
         "target_arch": args.arch, "gm_alias_override": args.gm_alias,
+        "patterns": args.patterns,
         "started_utc": datetime.now(timezone.utc).isoformat(),
         "invocation": sys.argv, "python_version": sys.version,
         "input_root": str(args.input_root),

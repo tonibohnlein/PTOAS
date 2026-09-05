@@ -354,6 +354,7 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
         dumpMode = options.dumpMode;
         executionMode = options.executionMode;
         fallbackMode = options.fallbackMode;
+        patternMode = options.patternMode;
         gmAliasMode = options.gmAliasMode;
         statistics = options.statistics;
     }
@@ -372,6 +373,16 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
         const bool emitReadyRelease = executionMode == "ready-release";
         const bool emitDirectRepair = executionMode == "direct-repair";
         const bool emitMixed = executionMode == "mixed";
+        if (patternMode != "on" && patternMode != "off") {
+            getOperation().emitError("ProtocolSync patterns must be 'on' or 'off'");
+            signalPassFailure();
+            return;
+        }
+        if (patternMode == "off" && !emitMixed) {
+            getOperation().emitError("ProtocolSync patterns=off requires execution-mode=mixed");
+            signalPassFailure();
+            return;
+        }
         if (!analysisOnly && !emitOneShot && !emitReadyRelease && !emitDirectRepair && !emitMixed) {
             getOperation().emitError("unknown ProtocolSync execution mode '")
                 << executionMode << "'; expected 'analysis', 'one-shot', 'ready-release', 'direct-repair', or 'mixed'";
@@ -692,7 +703,7 @@ private:
         ProtocolSyncClock::time_point start = ProtocolSyncClock::now();
         ++result.protocolPlansAttempted;
         FailureOr<SyncMixedProtocolPlan> plan =
-            buildMixedProtocolPlan(schedule, stages, timelines, channels, true, &result);
+            buildMixedProtocolPlan(schedule, stages, timelines, channels, patternMode == "on", &result);
         result.planningUs = elapsedMicroseconds(start);
         const LogicalResult verified =
             failed(plan) ? failure() : verifyMixedProtocolPlan(schedule, stages, timelines, channels, *plan, &result);

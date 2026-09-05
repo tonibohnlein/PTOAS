@@ -21,7 +21,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from acceptance import classify_strict
+from acceptance import classify_strict, no_selected_patterns
 from campaign import REPO, write_json
 from provenance import sha256
 from records import parse_diagnostics
@@ -46,6 +46,16 @@ def checked_path(root, name, expected_hash):
     return path
 
 
+def pattern_flags(metadata, probe):
+    """Preserve old compiler compatibility and reject inconsistent evidence."""
+    patterns = metadata.get("patterns", "on")
+    if patterns not in {"on", "off"} or probe.get("patterns", "on") != patterns:
+        raise ValueError("campaign and strict row pattern policies disagree or are invalid")
+    # Historical compiler fingerprints predate this option. Absence means the
+    # original default, not permission to send a new option to an old binary.
+    return [f"--protocol-sync-patterns={patterns}"] if "patterns" in metadata else []
+
+
 def collect_jobs(args):
     """Construct explicit probes from validated inputs and declared contracts."""
     jobs = []
@@ -59,6 +69,9 @@ def collect_jobs(args):
             raise ValueError("follow-up requires a completed, source-stable acceptance campaign")
         arch = metadata["target_arch"]
         alias = metadata["gm_alias_override"]
+        patterns = metadata.get("patterns", "on")
+        if patterns not in {"on", "off"}:
+            raise ValueError("invalid campaign pattern policy")
         if arch not in {"a2", "a3"} or alias not in {"may-alias", "assume-disjoint-arguments"}:
             raise ValueError("follow-up requires explicit supported target and GM contracts")
         mode = f"{arch}-{alias}"
@@ -72,6 +85,7 @@ def collect_jobs(args):
                            "rows_sha256": sha256(directory / "rows.jsonl"), "metadata": metadata})
         rows = [json.loads(line) for line in (directory / "rows.jsonl").read_text(encoding="utf-8").splitlines()]
         for row in rows:
+            policy_flags = pattern_flags(metadata, row["strict_mixed"])
             case = row["case_id"]
             if not re.fullmatch(r"[A-Za-z0-9_-]+", case) or row.get("level", "level3") not in {"level2", "level3"}:
                 raise ValueError("invalid case identifier or pipeline level")
@@ -84,7 +98,8 @@ def collect_jobs(args):
             if classify_strict(row["strict_mixed"]) == "admitted":
                 emitted = row["strict_mixed"]["emitted_ir"]
                 ir_path = checked_path(directory, emitted["path"], emitted["sha256"])
-                probes.append(("mixed-cpp", base + native + ["--protocol-sync-mixed", str(source)], ".cpp"))
+                probes.append(("mixed-cpp", base + native + ["--protocol-sync-mixed"] +
+                               policy_flags + [str(source)], ".cpp"))
                 # Emitted IR is already physically assigned, regardless of input level.
                 concrete = base[:3] + ["--pto-level=level3", f"--protocol-sync-gm-alias={alias}",
                                       "--emit-pto-ir", "--protocol-sync-analysis-only",
@@ -97,17 +112,20 @@ def collect_jobs(args):
                     legacy_seen.add((arch, case))
             for kind, command, suffix in probes:
                 jobs.append({"mode": mode, "case_id": case, "kind": kind, "command": command,
+                             "patterns": patterns,
                              "source": row["source"], "input_sha256": row["input_sha256"], "suffix": suffix})
     return jobs, provenance
 
 
-def successful_probe(kind, return_code, functions, output_exists):
+def successful_probe(kind, return_code, functions, output_exists, patterns="on"):
     """An analysis-only exit code is not a concrete-verifier acceptance verdict."""
     if return_code != 0 or not output_exists:
         return False
     if kind == "concrete":
         return bool(functions) and all(f.get("verdict", {}).get("status") == "accepted" for f in functions)
     if kind in {"mixed-cpp", "direct-cpp"}:
+        if kind == "mixed-cpp" and patterns == "off" and not no_selected_patterns(functions):
+            return False
         return bool(functions) and all(f.get("statistics", {}).get("producer") ==
                                       "protocol-plus-direct-residuals" for f in functions)
     return True
@@ -128,7 +146,7 @@ def execute(job, results):
     diagnostic = results / (prefix + ".txt.gz")
     diagnostic.write_bytes(gzip.compress(output, mtime=0))
     functions = parse_diagnostics(output.decode("utf-8", errors="replace"))["functions"]
-    verdict = successful_probe(job["kind"], return_code, functions, output_path.is_file())
+    verdict = successful_probe(job["kind"], return_code, functions, output_path.is_file(), job["patterns"])
     return dict(job, command=command, return_code=return_code, successful=verdict, functions=functions,
                 diagnostic_sha256=sha256(diagnostic),
                 output_sha256=sha256(output_path) if output_path.exists() else None)

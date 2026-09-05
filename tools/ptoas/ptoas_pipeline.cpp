@@ -1311,6 +1311,16 @@ static LogicalResult validateAllocationConfiguration(ModuleOp module,
 }
 
 static LogicalResult validateProtocolSyncConfiguration() {
+  if (protocolSyncPatterns != "on" && protocolSyncPatterns != "off") {
+    llvm::errs() << "Error: --protocol-sync-patterns must be 'on' or 'off'.\n";
+    return failure();
+  }
+  const bool patternsWithoutMixed =
+      protocolSyncPatterns.getNumOccurrences() != 0 && !protocolSyncMixed;
+  if (patternsWithoutMixed) {
+    llvm::errs() << "Error: --protocol-sync-patterns requires --protocol-sync-mixed.\n";
+    return failure();
+  }
   const bool protocolSyncActive =
       protocolSyncAnalysisOnly || protocolSyncOneShot ||
       protocolSyncReadyRelease || protocolSyncDirectRepair ||
@@ -1631,6 +1641,7 @@ static LogicalResult runMainLoweringPipeline(
                             : protocolSyncMixed        ? "mixed"
                                                        : "analysis";
     options.fallbackMode = protocolSyncFallback.getValue();
+    options.patternMode = protocolSyncPatterns.getValue();
     options.gmAliasMode = protocolSyncGMAlias.getValue();
     options.dumpMode = protocolSyncDump.getValue();
     options.statistics = protocolSyncStatistics.getValue();

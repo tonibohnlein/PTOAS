@@ -106,6 +106,18 @@ improvements from blocker counts. Retain collection failures as explicit rows.
 
 Use `--mode acceptance --expected-rows COUNT` with the frozen population's
 manifest and its actual row count.
+Add `--patterns=off` for the general-repair acceptance gate. This passes
+`--protocol-sync-patterns=off` only to mixed emission, retains direct, loop,
+and structured frontier alternatives, and requires explicit zero selected
+OneShot and ReadyRelease counts. Native C++ follow-up preserves that policy;
+missing counts or a selected specialized protocol cannot count as admission.
+The compiler modifier is valid only with `--protocol-sync-mixed` and defaults
+to `on`, preserving existing mixed-mode behavior. This is not the older,
+straight-line-only `--protocol-sync-direct-repair` mode.
+
+On a two-worker host, run campaigns serially with `--workers=1` under a
+two-CPU affinity mask (for example `taskset -c 0,1`). This also bounds nested
+LLVM/MLIR pools; two subprocesses each using two CPUs would exceed the limit.
 For each row this collects a storage/schedule snapshot, a separate empty-world
 residual snapshot, and actual strict mixed emission with fallback disabled.
 Optional manifest `level` is `level2` or `level3` (default: already physically

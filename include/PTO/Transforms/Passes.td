@@ -60,6 +60,8 @@ def PTOProtocolSync : Pass<"pto-protocol-sync", "ModuleOp"> {
            "Execution mode: analysis, one-shot, ready-release, direct-repair, or mixed">,
     Option<"fallbackMode", "fallback-mode", "std::string", "\"legacy\"",
            "Whole-function fallback for unsupported plans: legacy or fail">,
+    Option<"patternMode", "patterns", "std::string", "\"on\"",
+           "Optional lifecycle protocols in mixed mode: on or off">,
     Option<"gmAliasMode", "gm-alias", "std::string", "\"\"",
            "GM caller contract: may-alias or assume-disjoint-arguments; unset inherits IR or may-alias">,
     Option<"dumpMode", "dump", "std::string", "\"none\"",

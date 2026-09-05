@@ -13,9 +13,20 @@
 from collections import Counter
 
 
+def no_selected_patterns(functions):
+    """Missing selection evidence must not certify general-only compilation."""
+    return bool(functions) and all(
+        function.get("statistics", {}).get("counts", {}).get("selected_one_shot_protocols") == 0
+        and function.get("statistics", {}).get("counts", {}).get("selected_ready_release_protocols") == 0
+        for function in functions)
+
+
 def classify_strict(probe):
     """A normal fail-closed rejection is distinct from a crash or invocation error."""
     stats = [function["statistics"] for function in probe["functions"] if "statistics" in function]
+    if probe.get("patterns", "on") == "off" and probe["return_code"] == 0:
+        if not no_selected_patterns(probe["functions"]):
+            return "incomplete-or-invocation-error"
     if probe["return_code"] == 0 and stats and all(
             record.get("planner_result") in {"materialized-mixed", "no-op"}
             and record.get("producer") == "protocol-plus-direct-residuals" for record in stats):
@@ -51,6 +62,7 @@ def observed_blockers(row):
 def summarize_acceptance(rows):
     """Return a per-program matrix; counts overlap and cannot predict admission."""
     records = [{"case_id": row["case_id"], "source": row["source"],
+                "patterns": row["strict_mixed"].get("patterns", "on"),
                 "target_arch": row.get("target_arch", "a3"),
                 "gm_alias_override": row.get("gm_alias_override"),
                 "input_sha256": row["input_sha256"], "strict_status": classify_strict(row["strict_mixed"]),
