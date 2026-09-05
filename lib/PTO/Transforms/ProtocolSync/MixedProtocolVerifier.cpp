@@ -23,6 +23,7 @@
 #include <chrono>
 #include <map>
 #include <tuple>
+#include <vector>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -76,7 +77,8 @@ bool sameWorld(const SyncSelectedWorld& first, const SyncSelectedWorld& second)
 
 using ObligationKey = std::tuple<
     SyncObligationKind, SyncPhaseId, SyncPhaseId, std::optional<SyncGenerationId>, std::optional<SyncChannelId>,
-    SyncControlRelation, SyncIterationRelationKind, unsigned, SyncRegionId, std::string>;
+    SyncControlRelation, SyncIterationRelationKind, unsigned, SyncRegionId, std::string, std::optional<std::uint32_t>,
+    std::vector<std::uint32_t>, SyncAccessId, SyncAccessId, SyncRegionPrecision>;
 
 ObligationKey obligationKey(const SyncResidualObligation& obligation)
 {
@@ -90,7 +92,12 @@ ObligationKey obligationKey(const SyncResidualObligation& obligation)
         obligation.iteration.kind,
         obligation.iteration.distance,
         obligation.iteration.carrier,
-        obligation.detail};
+        obligation.detail,
+        obligation.localRequirement,
+        {obligation.atoms.begin(), obligation.atoms.end()},
+        obligation.sourceAccess,
+        obligation.targetAccess,
+        obligation.precision};
 }
 
 bool hasInternalRejection(const SyncDirectRepairPlan& plan)
@@ -337,6 +344,9 @@ LogicalResult verifyAllocationState(const StructuredSyncIR& schedule, const Sync
     for (const SyncOpSummary& summary : schedule.getSummaries()) {
         reservations.append(summary.eventReservations.begin(), summary.eventReservations.end());
     }
+    if (failed(reconstructFixedSyncSupply(schedule, &reservations))) {
+        return failure();
+    }
     SmallVector<SyncEventGeneration, 16> generations;
     const auto appendGeneration = [&](SyncEventGenerationKind kind, SyncPhysicalCore core, PIPE sourcePipe,
                                       PIPE targetPipe, Operation* setAnchor, Operation* waitAnchor,
@@ -415,10 +425,21 @@ LogicalResult verifyAllocationState(const StructuredSyncIR& schedule, const Sync
         (plan.status != SyncMixedPlanStatus::ResourceInfeasible || !anyAllocated) && authoritativeStatusMatches);
 }
 
-LogicalResult verifyGeneratedOwnership(func::FuncOp function, const SyncMixedProtocolPlan& plan)
+LogicalResult verifyGeneratedOwnership(const StructuredSyncIR& schedule, const SyncMixedProtocolPlan& plan)
 {
+    // Only operations from the pre-emission schedule are fixed supply. An
+    // untagged newly emitted operation must still fail ownership validation.
+    llvm::DenseSet<Operation*> fixedSupply;
+    for (const SyncOpSummary& summary : schedule.getSummaries()) {
+        if (summary.provider == SyncSummaryProvider::FixedSynchronization) {
+            fixedSupply.insert(summary.operation);
+        }
+    }
     bool malformed = false;
-    function.walk([&](Operation* operation) {
+    schedule.getFunction().walk([&](Operation* operation) {
+        if (fixedSupply.contains(operation)) {
+            return;
+        }
         const bool fixed = isFixedSyncOperation(operation);
         const bool generated = operation->hasAttrOfType<UnitAttr>(kGeneratedAttr);
         if (!fixed && !generated) {
@@ -641,7 +662,7 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyMixedProtocolPlanInD
         succeeded(verifyDirectRepairMaterialization(
             schedule, stages, plan.directObligations, function, mapping, plan.directRepair, statistics));
     const bool verified =
-        validOneShot && validReadyRelease && validDirect && succeeded(verifyGeneratedOwnership(function, plan)) &&
+        validOneShot && validReadyRelease && validDirect && succeeded(verifyGeneratedOwnership(schedule, plan)) &&
         succeeded(verifyConcreteSyncSemantics(context, function, statistics)) && succeeded(mlir::verify(function));
     if (statistics) {
         statistics->verificationUs += elapsedMicroseconds(start);

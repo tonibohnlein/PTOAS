@@ -11,6 +11,7 @@
 //===- DirectRepairMaterialization.cpp - Emit and verify direct repairs -===//
 
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
+#include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
 
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -156,7 +157,7 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyDirectRepairPlan(
     const DirectRepairClock::time_point verificationStart = DirectRepairClock::now();
     const bool verified =
         succeeded(verifyDirectRepairMaterialization(schedule, stages, obligations, clone, mapping, plan, statistics)) &&
-        succeeded(mlir::verify(*stagingModule));
+        succeeded(verifyFreshConcreteSyncSemantics(clone, statistics)) && succeeded(mlir::verify(*stagingModule));
     if (statistics) {
         statistics->verificationUs += elapsedMicroseconds(verificationStart);
     }
@@ -182,8 +183,10 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyDirectRepairPlanInDi
         return failure();
     }
     const DirectRepairClock::time_point verificationStart = DirectRepairClock::now();
-    const LogicalResult verified =
-        verifyDirectRepairMaterialization(schedule, stages, obligations, function, identityMapping, plan, statistics);
+    const LogicalResult verified = success(
+        succeeded(verifyDirectRepairMaterialization(
+            schedule, stages, obligations, function, identityMapping, plan, statistics)) &&
+        succeeded(verifyFreshConcreteSyncSemantics(function, statistics)));
     if (statistics) {
         statistics->verificationUs += elapsedMicroseconds(verificationStart);
     }

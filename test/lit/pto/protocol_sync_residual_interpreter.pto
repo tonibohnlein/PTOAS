@@ -32,7 +32,8 @@
 
 // EMPTY: PROTOCOL-SYNC selected-world function=@linear_one_shot status=residual
 // EMPTY-SAME: protocols=0 completions=0 visibility=0 exit-completions=0 obligations=7
-// EMPTY: obligation #0 kind=completion source=#0 target=#1 generation=#0 channel=#0
+// EMPTY: obligation #0 kind=completion source=#0 target=#1 generation=none channel=none
+// EMPTY-SAME: local-requirement=#0 accesses=[#1, #2] atoms=[#0] precision=conservative
 // EMPTY: obligation #3 kind=completion source=#0 target=#3 generation=none channel=none
 // EMPTY: obligation #6 kind=exit-completion source=#3 target=#3
 // EMPTY-STATS: "residual_obligations":7
@@ -52,9 +53,12 @@
 // RESIDUALS-NEXT: obligation #1 kind=reclamation source=#1 target=#0 generation=#0 channel=#0
 // RESIDUALS-SAME: iteration=loop-carried distance=1
 // RESIDUALS: PROTOCOL-SYNC selected-world function=@sequential_generations status=residual
-// RESIDUALS: obligation #1 kind=reclamation source=#1 target=#2 generation=#0 channel=#0
+// RESIDUALS: kind=reclamation source=#1 target=#2 generation=none channel=none
+// RESIDUALS-SAME: local-requirement=
 // RESIDUALS: PROTOCOL-SYNC selected-world function=@partial_overlapping_writes status=residual
+// This fixture uses subviews: keep its old protection until their provenance is recovered.
 // RESIDUALS: obligation #0 kind=unknown-alias source=#0 target=#0 generation=#0 channel=none
 // RESIDUALS: obligation #1 kind=unknown-alias source=#1 target=#1 generation=#1 channel=none
 // RESIDUALS: PROTOCOL-SYNC selected-world function=@in_place_access status=residual
-// RESIDUALS: obligation #0 kind=acc-conflict source=#0 target=#1 generation=#0 channel=none
+// RESIDUALS: obligation #0 kind=completion source=#0 target=#1 generation=none channel=none
+// RESIDUALS-SAME: local-requirement=#0

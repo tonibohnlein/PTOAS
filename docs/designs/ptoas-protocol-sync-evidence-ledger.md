@@ -725,3 +725,36 @@ local-obligation store, structured loop repair, or target publication
 qualification. No new device claim or selectable lifecycle family is added.
 Fresh-main frontend snapshots are pinned in the C7.1 report; their native
 build, input collection and four-way acceptance campaign remain pending.
+
+## Native-coverage revision: local outstanding-access frontiers
+
+The [local frontier baseline](ptoas-protocol-sync-local-frontier-baseline.md)
+implements the first production slice of sparse discovery, certified ordering
+propagation, backward lane-frontier placement, and concrete verification.
+It replaces recognition-derived obligations only for a fully accounted,
+straight-line vector-UB domain. Conservative footprint atoms preserve physical
+reuse across logical allocations; sparse chains retain outstanding writers and
+readers. Existing direct-only and complete mixed worlds consume those obligations.
+
+Fixed events and supported barriers now contribute completion before repair
+planning, with occupied IDs reserved conservatively. Concrete verification
+independently enumerates overlapping access pairs rather than trusting atom
+grouping or candidate coverage. The 243-program straight-line byte/hazard oracle,
+concrete synchronization mutations, invalid/overflowing-range tests, and all 40
+focused ProtocolSync tests pass. The full host suite passes 1,897 tests with one
+unsupported and zero failures; the scoped compliance check reports 22 code files,
+zero errors and zero warnings.
+
+This does not complete general generation/participation analysis, views, loops,
+queue/ACC contracts, or the current-main frontend acceptance campaign. The
+C.6/C.7 numbers above remain the frozen diagnostic evidence, not measurements
+of this production implementation. No new hardware or performance claim is made.
+
+The subsequent frozen-input A3 admission campaign records 30/394 native rows in
+may-alias mode and 37/394 under the disjoint-GM-argument contract, including six
+zero-physical-work rows in each. Every admitted row generates C++ and passes
+fresh concrete verification. Both runs are source-stable working-tree evidence,
+not clean-commit or current-main frontend collection. The local-frontier report
+above documents the population, five examples, overlapping blockers and the
+archived source/input/output provenance. The evidence-accounting suite now has
+25 tests; the new runner preserves emitted IR and untracked compiler sources.

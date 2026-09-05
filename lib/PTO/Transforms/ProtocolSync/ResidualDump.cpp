@@ -83,8 +83,19 @@ void mlir::pto::protocol_sync::printResidualObligations(
         }
         output << " control=" << stringifySyncControlRelation(obligation.control) << " iteration=";
         printIteration(obligation.iteration, output);
+        if (obligation.localRequirement) {
+            output << " local-requirement=#" << *obligation.localRequirement << " accesses=[#"
+                   << obligation.sourceAccess << ", #" << obligation.targetAccess << "] atoms=[";
+            for (unsigned index = 0; index < obligation.atoms.size(); ++index) {
+                output << (index == 0 ? "" : ", ") << '#' << obligation.atoms[index];
+            }
+            output << "] precision=conservative";
+        }
         output << " detail=\"" << obligation.detail << "\"\n";
     }
+    output << "  canonical-local atoms=" << result.localAtoms << " requirements=" << result.localRequirements
+           << " covered=" << result.localRequirementsCovered << " boundary=\"" << result.localAnalysisBoundary
+           << "\"\n";
     output << "PROTOCOL-SYNC selected-world-end function=@" << function.getSymName() << '\n';
 }
 

@@ -14,11 +14,21 @@
 #define PTO_TRANSFORMS_PROTOCOLSYNC_CONCRETESYNCVERIFIER_H
 
 #include "PTO/Transforms/ProtocolSync/SyncSemantics.h"
+#include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/StringRef.h"
 
 namespace mlir::pto::protocol_sync {
+
+/// Import only the fixed synchronization that the concrete interpreter can
+/// certify. Failure leaves opaque-effect protection in place. Occupied IDs are
+/// conservatively reserved for planning; this does not enable new ID reuse.
+FailureOr<SyncSelectedWorld> reconstructFixedSyncSupply(
+    const StructuredSyncIR& schedule, llvm::SmallVectorImpl<SyncEventReservation>* occupiedEvents = nullptr);
+
+/// Rebuild provenance as well as the schedule for a mutated or cloned function.
+LogicalResult verifyFreshConcreteSyncSemantics(func::FuncOp function, ProtocolSyncStatistics* statistics = nullptr);
 
 /// Rebuild semantic facts from the staged function, reconstruct synchronization
 /// effects from concrete PTO operations without consulting planner candidates

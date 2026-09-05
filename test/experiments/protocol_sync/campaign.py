@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from census import summarize
-from provenance import build_metadata, sha256
+from provenance import build_metadata, sha256, snapshot_untracked, untracked_sources
 from records import parse_diagnostics
 
 
@@ -102,10 +102,11 @@ def probe_command(args, row, dump, strict=False):
         "--enable-insert-sync", "--protocol-sync-analysis-only"]
     if args.gm_alias is not None:
         flags.append(f"--protocol-sync-gm-alias={args.gm_alias}")
+    output = str(args.results / "emitted" / f"{row['case_id']}.pto") if strict else "/dev/null"
     return [str(args.python), str(args.ptoas), f"--pto-arch={args.arch}",
             f"--pto-level={row.get('level', 'level3')}", "--emit-pto-ir", *flags,
             f"--protocol-sync-dump={dump}", "--protocol-sync-statistics",
-            str(args.input_root / row["source"]), "-o", "/dev/null"]
+            str(args.input_root / row["source"]), "-o", output]
 
 
 def execute_probe(args, row, dump, suffix="", strict=False):
@@ -124,6 +125,9 @@ def execute_probe(args, row, dump, suffix="", strict=False):
                   diagnostics_sha256=sha256(diagnostic), target_arch=args.arch,
                   gm_alias_override=args.gm_alias)
     record.update(parse_diagnostics(output.decode("utf-8", errors="replace")))
+    if strict and return_code == 0:
+        emitted = args.results / "emitted" / f"{row['case_id']}.pto"
+        record["emitted_ir"] = {"path": str(emitted), "sha256": sha256(emitted)}
     return record
 
 
@@ -141,13 +145,16 @@ def prepare_campaign(args):
     tracked_diff = git_output("diff", "HEAD", "--")
     experiment_path = str(Path(__file__).parent.relative_to(REPO))
     experiment_dirty = git_output("status", "--porcelain", "--", experiment_path)
-    if (tracked_diff or experiment_dirty) and not args.allow_dirty:
+    new_sources = untracked_sources(REPO)
+    if (tracked_diff or experiment_dirty or new_sources) and not args.allow_dirty:
         raise ValueError("tracked worktree is dirty; commit the experiment or use --allow-dirty for debugging")
     rows = inputs(args)
     toolchain = build_metadata(args.build_root, args.ptoas)
     args.results.mkdir(parents=True, exist_ok=False)
     (args.results / "diagnostics").mkdir()
     (args.results / "scripts").mkdir()
+    (args.results / "emitted").mkdir()
+    snapshot_untracked(REPO, args.results / "untracked-source", new_sources)
     for path in sorted(Path(__file__).parent.glob("*.py")):
         (args.results / "scripts" / path.name).write_bytes(path.read_bytes())
     metadata = {
@@ -155,6 +162,7 @@ def prepare_campaign(args):
         "tracked_diff_sha256": hashlib.sha256(tracked_diff.encode()).hexdigest(),
         "tracked_clean": not tracked_diff,
         "experiment_clean": not experiment_dirty,
+        "untracked_sources_sha256": new_sources,
         "toolchain": toolchain,
         "mode": args.mode, "workers": args.workers,
         "target_arch": args.arch, "gm_alias_override": args.gm_alias,
@@ -197,6 +205,7 @@ def finish_campaign(args, metadata, tracked_diff, summary):
             Path(metadata["toolchain"]["compiler_library"]["path"]))
         and metadata["script_sha256"] == {
             path.name: sha256(path) for path in sorted(Path(__file__).parent.glob("*.py"))}
+        and metadata["untracked_sources_sha256"] == untracked_sources(REPO)
     )
     write_json(args.results / "run.json", metadata)
     write_json(args.results / "summary.json", summary)

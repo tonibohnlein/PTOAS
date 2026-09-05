@@ -17,7 +17,8 @@ def classify_strict(probe):
     """A normal fail-closed rejection is distinct from a crash or invocation error."""
     stats = [function["statistics"] for function in probe["functions"] if "statistics" in function]
     if probe["return_code"] == 0 and stats and all(
-            record.get("planner_result") == "materialized-mixed" for record in stats):
+            record.get("planner_result") in {"materialized-mixed", "no-op"}
+            and record.get("producer") == "protocol-plus-direct-residuals" for record in stats):
         return "admitted"
     if probe["return_code"] == 1 and any(record.get("producer") == "fail-closed-policy" for record in stats):
         return "rejected"
@@ -35,6 +36,12 @@ def observed_blockers(row):
             for reason, count in stats.get(histogram, {}).items():
                 if count:
                     blockers[f"{histogram}.{reason}"] += count
+    for function in row["empty_world"].get("functions", []):
+        for kind, count in function.get("statistics", {}).get("residual_obligations_by_kind", {}).items():
+            if count:
+                # Separate probe identity avoids adding repeated observations
+                # as though they were distinct semantic obligations.
+                blockers[f"empty-world.{kind}"] += count
     for function in row["strict_mixed"]["functions"]:
         for rejection in function["direct_rejections"]:
             blockers[f"direct-repair.{rejection['reason']}"] += 1

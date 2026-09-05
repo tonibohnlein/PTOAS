@@ -15,11 +15,14 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from acceptance import classify_strict, summarize_acceptance
 from campaign import inputs, probe_command
 from census import classify_track, first_control_gate, population, summarize, topology_hash
 from records import fields, new_function, parse_diagnostics
+from provenance import untracked_sources
+from native_followup import checked_path, successful_probe
 
 
 def statistics(name, **counts):
@@ -29,6 +32,29 @@ def statistics(name, **counts):
 
 class EvidenceTests(unittest.TestCase):
     """Do not let a missing dump or ambiguous scope become positive evidence."""
+
+    def test_native_followup_requires_concrete_verdict(self):
+        functions = [{"verdict": {"status": "rejected"}}]
+        self.assertFalse(successful_probe("concrete", 0, functions, True))
+        self.assertFalse(successful_probe("concrete", 0, [], True))
+        functions[0]["verdict"]["status"] = "accepted"
+        self.assertTrue(successful_probe("concrete", 0, functions, True))
+        self.assertFalse(successful_probe("concrete", 0, functions, False))
+
+    def test_native_followup_rejects_fallback_producer(self):
+        functions = [{"statistics": {"producer": "protocol-plus-direct-residuals"}}]
+        for kind in ("direct-cpp", "mixed-cpp"):
+            self.assertTrue(successful_probe(kind, 0, functions, True))
+        functions[0]["statistics"]["producer"] = "legacy-fallback"
+        self.assertFalse(successful_probe("mixed-cpp", 0, functions, True))
+
+    def test_followup_artifact_cannot_escape_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "allowed").mkdir()
+            (root / "outside").write_text("not an input", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "escaped"):
+                checked_path(root / "allowed", "../outside", "unused")
 
     def test_fields_preserve_lists_and_quoted_reasons(self):
         self.assertEqual(fields('families=[#1:slot=none, #2:slot=none] detail="two words"'),
@@ -127,11 +153,11 @@ class AcceptanceTests(unittest.TestCase):
 
     def test_all_probes_share_architecture_and_alias_contract(self):
         args = SimpleNamespace(python=Path("python"), ptoas=Path("ptoas"),
-                               input_root=Path("inputs"), arch="a2", gm_alias=None)
+                               input_root=Path("inputs"), results=Path("results"), arch="a2", gm_alias=None)
         for alias in (None, "may-alias", "assume-disjoint-arguments"):
             args.gm_alias = alias
             for strict in (False, True):
-                command = probe_command(args, {"source": "kernel.pto"}, "plan", strict)
+                command = probe_command(args, {"case_id": "one", "source": "kernel.pto"}, "plan", strict)
                 self.assertIn("--pto-arch=a2", command)
                 overrides = [flag for flag in command if flag.startswith("--protocol-sync-gm-alias=")]
                 self.assertEqual(overrides, [] if alias is None else [f"--protocol-sync-gm-alias={alias}"])
@@ -141,6 +167,30 @@ class AcceptanceTests(unittest.TestCase):
         for return_code in (0, 1, -11, 124):
             self.assertEqual(classify_strict({"functions": [], "return_code": return_code}),
                              "incomplete-or-invocation-error")
+
+    def test_noop_is_native_only_with_native_producer(self):
+        function = {"statistics": {"planner_result": "no-op", "producer": "protocol-plus-direct-residuals"}}
+        probe = {"return_code": 0, "functions": [function]}
+        self.assertEqual(classify_strict(probe), "admitted")
+        function["statistics"]["producer"] = "legacy-fallback-unsupported"
+        self.assertEqual(classify_strict(probe), "incomplete-or-invocation-error")
+
+    def test_canonical_local_precision_boundary_is_retained(self):
+        text = ('PROTOCOL-SYNC selected-world function=@f\n'
+                '  canonical-local atoms=0 requirements=0 covered=0 boundary="crosses a block"\n')
+        record = parse_diagnostics(text)["functions"][0]["canonical_local"][0]
+        self.assertEqual(record["boundary"], "crosses a block")
+
+    def test_untracked_source_change_changes_fingerprint(self):
+        with tempfile.TemporaryDirectory(prefix="protocol-sync-source-") as directory:
+            root = Path(directory)
+            (root / "lib").mkdir()
+            source = root / "lib/new.cpp"
+            source.write_text("first\n", encoding="utf-8")
+            with patch("provenance.checked_output", return_value="lib/new.cpp\0"):
+                first = untracked_sources(root)
+                source.write_text("second\n", encoding="utf-8")
+                self.assertNotEqual(first, untracked_sources(root))
 
     def test_overlapping_blockers_survive_semantic_gate(self):
         function = new_function("f")

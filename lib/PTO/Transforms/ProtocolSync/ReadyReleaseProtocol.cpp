@@ -12,6 +12,7 @@
 
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 #include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
+#include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/ProtocolSync/EventAllocation.h"
@@ -607,9 +608,15 @@ LogicalResult mlir::pto::protocol_sync::allocateReadyReleaseProtocolEvents(
 LogicalResult mlir::pto::protocol_sync::allocateReadyReleaseProtocolEvents(
     const StructuredSyncIR& schedule, SyncReadyReleasePlan& plan, ProtocolSyncStatistics* statistics)
 {
+    if (plan.status != SyncReadyReleasePlanStatus::Ready) {
+        return success();
+    }
     llvm::SmallVector<SyncEventReservation, 4> importedReservations;
     for (const SyncOpSummary& summary : schedule.getSummaries()) {
         importedReservations.append(summary.eventReservations.begin(), summary.eventReservations.end());
+    }
+    if (failed(reconstructFixedSyncSupply(schedule, &importedReservations))) {
+        return failure();
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
     return allocateReadyReleaseProtocolEvents(target, importedReservations, plan, statistics);

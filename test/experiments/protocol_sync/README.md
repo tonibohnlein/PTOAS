@@ -118,3 +118,16 @@ absent diagnostic is not a successful proof. Empty-world obligations can occur
 in accepted programs too. Strict admission/rejection is therefore recorded
 separately from overlapping blocker occurrences. Per-row raw logs remain the
 authority for unparsed or newly introduced diagnostics.
+
+Strict acceptance retains successful output under `emitted/`. Untracked
+compiler/test sources are fingerprinted and copied into `untracked-source/`;
+`--allow-dirty` does not make these development runs clean baselines.
+
+Use `native_followup.py --campaign RESULTS [--campaign OTHER_RESULTS]
+--results FRESH_DIRECTORY --workers 2` to generate C++ for every native-admitted
+row and independently invoke concrete verification on its emitted IR. Selected
+`--examples CASE...` also run direct-only and legacy C++ emission. The default
+examples address the frozen 394-row manifest. Commands, raw diagnostics, output
+hashes and parent-campaign provenance are retained. Rejected analysis verdicts
+are not successes merely because the analysis process returned zero. This is
+host source generation, not device compilation or execution.

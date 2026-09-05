@@ -123,6 +123,15 @@ add_llvm_executable(pto-protocol-sync-mixed-test
   PARTIAL_SOURCES_INTENDED
 )
 
+add_llvm_executable(pto-protocol-sync-local-memory-test
+  pto-protocol-sync-local-memory-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-protocol-sync-local-memory-test PRIVATE
+  PTOIR PTOTransforms MLIRArithDialect MLIRFuncDialect MLIRIR MLIRParser MLIRSCFDialect MLIRSupport
+)
+add_dependencies(pto-protocol-sync-local-memory-test PTOOpsIncGen PTOPassesIncGen)
+
 target_link_libraries(pto-protocol-sync-mixed-test PRIVATE
   PTOIR
   PTOTransforms

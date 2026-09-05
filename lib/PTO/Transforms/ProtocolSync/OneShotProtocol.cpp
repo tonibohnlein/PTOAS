@@ -10,6 +10,7 @@
 //===- OneShotProtocol.cpp - Checkpoint D planning and allocation --------===//
 #include "PTO/Transforms/ProtocolSync/OneShotProtocol.h"
 #include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
+#include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/ProtocolSync/EventAllocation.h"
@@ -447,6 +448,9 @@ LogicalResult mlir::pto::protocol_sync::allocateOneShotProtocolEvents(
     SmallVector<SyncEventReservation, 8> reservations;
     for (const SyncOpSummary& summary : schedule.getSummaries()) {
         reservations.append(summary.eventReservations.begin(), summary.eventReservations.end());
+    }
+    if (failed(reconstructFixedSyncSupply(schedule, &reservations))) {
+        return failure();
     }
     SmallVector<SyncEventGeneration, 8> generations;
     SmallVector<SyncOneShotProtocol*, 8> eventProtocols;

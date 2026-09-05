@@ -212,10 +212,16 @@ struct ConcreteCandidate {
 };
 
 LogicalResult collectConcreteCandidates(
-    func::FuncOp clone, unsigned candidateCount, llvm::DenseMap<SyncDirectCandidateId, ConcreteCandidate>& records)
+    func::FuncOp clone, unsigned candidateCount, const llvm::DenseSet<Operation*>& fixedSupply,
+    llvm::DenseMap<SyncDirectCandidateId, ConcreteCandidate>& records)
 {
     bool malformed = false;
     clone.walk([&](Operation* operation) {
+        // This whitelist comes from the original immutable schedule, not from
+        // user-editable generated tags. Concrete verification checks the supply.
+        if (fixedSupply.contains(operation)) {
+            return;
+        }
         const bool fixed = isFixedSyncOperation(operation);
         const bool generated = operation->hasAttr(kGeneratedAttr);
         if (!fixed && !generated) {
@@ -628,8 +634,19 @@ LogicalResult mlir::pto::protocol_sync::verifyDirectRepairMaterialization(
         return failure();
     }
     llvm::DenseMap<SyncDirectCandidateId, ConcreteCandidate> records;
-    const bool completeRecords = succeeded(collectConcreteCandidates(clone, plan.candidates.size(), records)) &&
-                                 records.size() == plan.candidates.size();
+    llvm::DenseSet<Operation*> fixedSupply;
+    for (const SyncOpSummary& summary : schedule.getSummaries()) {
+        if (summary.provider == SyncSummaryProvider::FixedSynchronization) {
+            Operation* fixed = mapping.lookupOrNull(summary.operation);
+            if (!fixed) {
+                return failure();
+            }
+            fixedSupply.insert(fixed);
+        }
+    }
+    const bool completeRecords =
+        succeeded(collectConcreteCandidates(clone, plan.candidates.size(), fixedSupply, records)) &&
+        records.size() == plan.candidates.size();
     if (!completeRecords) {
         return failure();
     }

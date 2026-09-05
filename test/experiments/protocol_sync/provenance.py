@@ -18,6 +18,33 @@ import subprocess
 from pathlib import Path
 
 
+SOURCE_ROOTS = ("include", "lib", "tools", "test/experiments", "test/lit")
+
+
+def untracked_sources(repo):
+    """Include new compiler/test sources without traversing unrelated checkouts."""
+    output = checked_output(["git", "-C", str(repo), "ls-files", "--others", "--exclude-standard",
+                             "-z", "--", *SOURCE_ROOTS])
+    result = {}
+    for name in filter(None, output.split("\0")):
+        path = repo / name
+        if path.is_symlink() or not path.resolve(strict=True).is_relative_to(repo.resolve()):
+            raise ValueError(f"untracked source is not a regular in-repository file: {name}")
+        result[name] = sha256(path)
+    return result
+
+
+def snapshot_untracked(repo, destination, fingerprints):
+    """Retain actual new source contents, not just hashes of unavailable files."""
+    for name, fingerprint in fingerprints.items():
+        source = repo / name
+        if sha256(source) != fingerprint:
+            raise ValueError(f"untracked source changed while snapshotting: {name}")
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+
+
 def sha256(path):
     """Hash a file with bounded memory use."""
     with path.open("rb") as stream:

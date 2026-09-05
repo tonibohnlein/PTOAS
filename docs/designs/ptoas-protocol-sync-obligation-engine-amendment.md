@@ -21,6 +21,12 @@ specified in the [GM alias contract](ptoas-protocol-sync-gm-alias-contract.md).
 Status: approved implementation direction, not a claim of completed native
 coverage. This section revises the delivery sequence below.
 
+The [local frontier baseline](ptoas-protocol-sync-local-frontier-baseline.md)
+records the first production slice: conservative physical UB atoms, sparse
+outstanding-access requirements, fixed-supply import, backward source-frontier
+placement, and independent concrete all-pair checks. Its straight-line admission
+boundary is explicit; it does not complete general generation or loop analysis.
+
 Keep ProtocolSync's complete-world gate, allocator and cloned emission. Add a
 general native baseline underneath optional lifecycle recognition:
 

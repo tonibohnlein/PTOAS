@@ -13,8 +13,10 @@
 #include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
 #include "PTO/Transforms/ProtocolSync/EventAllocation.h"
+#include "PTO/Transforms/ProtocolSync/LocalMemoryAnalysis.h"
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
 #include "PTO/Transforms/ProtocolSync/StorageTimeline.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -747,6 +749,44 @@ LogicalResult reconstructConcreteWorld(ConcreteState& state, func::FuncOp functi
 
 } // namespace
 
+FailureOr<SyncSelectedWorld> mlir::pto::protocol_sync::reconstructFixedSyncSupply(
+    const StructuredSyncIR& schedule, SmallVectorImpl<SyncEventReservation>* occupiedEvents)
+{
+    const bool hasFixed = llvm::any_of(schedule.getSummaries(), [](const SyncOpSummary& summary) {
+        return summary.provider == SyncSummaryProvider::FixedSynchronization;
+    });
+    if (!hasFixed) {
+        return SyncSelectedWorld{};
+    }
+    ConcreteState state{schedule, ProtocolSyncTarget::resolve(schedule.getFunction())};
+    const bool validSupply =
+        state.target.isSupported() && succeeded(reconstructConcreteWorld(state, schedule.getFunction(), nullptr));
+    if (!validSupply) {
+        return failure();
+    }
+    if (occupiedEvents) {
+        for (const SyncEventGeneration& generation : state.generations) {
+            if (!generation.eventId) {
+                return failure();
+            }
+            occupiedEvents->push_back({generation.sourcePipe, generation.targetPipe, {*generation.eventId}});
+        }
+    }
+    return std::move(state.world);
+}
+
+LogicalResult mlir::pto::protocol_sync::verifyFreshConcreteSyncSemantics(
+    func::FuncOp function, ProtocolSyncStatistics* statistics)
+{
+    LegacySyncIRAdapter adapter;
+    LegacySyncSnapshot snapshot;
+    if (failed(adapter.buildSnapshot(function, snapshot))) {
+        return failure();
+    }
+    SyncSemanticContext context = adapter.buildSemanticContext(snapshot);
+    return verifyConcreteSyncSemantics(context, function, statistics);
+}
+
 LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
     const SyncSemanticContext& context, func::FuncOp function, ProtocolSyncStatistics* statistics,
     StringRef* firstFailedStage)
@@ -794,6 +834,9 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
     }
     if (!result->isComplete()) {
         return rejectAtStage("residual-obligations", firstFailedStage);
+    }
+    if (failed(verifyLocalMemoryCoverage(schedule, state.world))) {
+        return rejectAtStage("local-memory-coverage", firstFailedStage);
     }
     return success();
 }

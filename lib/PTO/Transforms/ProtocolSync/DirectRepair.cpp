@@ -13,6 +13,7 @@
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
 
 #include "PTO/Transforms/ProtocolSync/EventAllocation.h"
+#include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -173,6 +174,15 @@ LogicalResult appendFrontierCandidates(const FrontierGroup& group, SyncDirectRep
             frontierRanks.push_back(operationRanks.lookup(interval.target->operation));
         }
     }
+    // Traverse the sparse source links backwards within this lane/guard group.
+    // A common wait was chosen at an earliest consumer boundary above. The
+    // first source reaching each wait is its latest legal signal frontier.
+    // Unrelated operations and disjoint storage histories are not searched.
+    llvm::stable_sort(intervals, [&](const RepairInterval& first, const RepairInterval& second) {
+        const unsigned firstSource = operationRanks.lookup(first.source->operation);
+        const unsigned secondSource = operationRanks.lookup(second.source->operation);
+        return firstSource != secondSource ? firstSource > secondSource : first.obligation->id < second.obligation->id;
+    });
     for (const RepairInterval& interval : intervals) {
         const unsigned sourceRank = operationRanks.lookup(interval.source->operation);
         const unsigned targetRank = operationRanks.lookup(interval.target->operation);
@@ -183,9 +193,7 @@ LogicalResult appendFrontierCandidates(const FrontierGroup& group, SyncDirectRep
         }
         CandidateFrontier& frontier = frontiers[std::distance(frontierRanks.begin(), found)];
         frontier.obligations.push_back(interval.obligation->id);
-        const bool isLaterSource =
-            !frontier.latestSource || operationRanks.lookup(frontier.latestSource->operation) < sourceRank;
-        if (isLaterSource) {
+        if (!frontier.latestSource) {
             frontier.latestSource = interval.source;
         }
     }
@@ -573,6 +581,9 @@ LogicalResult mlir::pto::protocol_sync::allocateDirectRepairEvents(
     SmallVector<SyncEventReservation, 8> reservations;
     for (const SyncOpSummary& summary : schedule.getSummaries()) {
         reservations.append(summary.eventReservations.begin(), summary.eventReservations.end());
+    }
+    if (failed(reconstructFixedSyncSupply(schedule, &reservations))) {
+        return failure();
     }
     return allocateDirectRepairEventsImpl(target, reservations, &schedule, plan, statistics);
 }

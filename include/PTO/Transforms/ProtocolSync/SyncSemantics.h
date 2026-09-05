@@ -54,6 +54,10 @@ enum class SyncAccessMode : std::uint8_t {
 
 enum class SyncVisibilityClass : std::uint8_t { Local, Global, Unknown };
 
+/// Precision of the accessed byte set, not of the allocation's base address.
+/// A conservative footprint must never be used as a definite killing write.
+enum class SyncRegionPrecision : std::uint8_t { Exact, Conservative, Unknown };
+
 enum class SyncCompletionKind : std::uint8_t {
     PhaseEnd,
     MacroInternal,

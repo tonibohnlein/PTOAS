@@ -64,6 +64,8 @@ def read_detail(function, current, phase, track, line):
         function["direct_rejections"].append(fields(line))
     elif stripped.startswith("independent-lifecycle component="):
         function["lifecycles"].append(fields(line))
+    elif stripped.startswith("canonical-local "):
+        function.setdefault("canonical_local", []).append(fields(line))
     elif stripped.startswith(("projection-audit ", "transition-audit ", "independent-e-differential ")):
         function[stripped.split()[0]] = fields(line)
     elif current is not None and stripped.startswith((

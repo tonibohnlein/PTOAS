@@ -76,6 +76,13 @@ struct SyncResidualObligation {
     SyncControlRelation control = SyncControlRelation::Unknown;
     SyncIterationRelation iteration;
     std::string detail;
+    /// Stable provenance in the canonical local store, independent of residual
+    /// numbering and optional protocol selection. Empty for legacy obligations.
+    std::optional<std::uint32_t> localRequirement;
+    llvm::SmallVector<std::uint32_t, 2> atoms;
+    SyncAccessId sourceAccess = kInvalidSyncId;
+    SyncAccessId targetAccess = kInvalidSyncId;
+    SyncRegionPrecision precision = SyncRegionPrecision::Unknown;
 };
 
 enum class SyncSelectedProtocolKind : std::uint8_t {
@@ -119,6 +126,10 @@ struct SyncInterpretationResult {
     std::uint64_t noAliasResults = 0;
     std::uint64_t mayAliasResults = 0;
     std::uint64_t unknownAliasResults = 0;
+    std::uint64_t localAtoms = 0;
+    std::uint64_t localRequirements = 0;
+    std::uint64_t localRequirementsCovered = 0;
+    std::string localAnalysisBoundary;
 
     bool isComplete() const { return obligations.empty(); }
 };

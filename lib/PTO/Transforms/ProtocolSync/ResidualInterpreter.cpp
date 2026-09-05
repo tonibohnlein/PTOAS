@@ -12,6 +12,8 @@
 
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
 #include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
+#include "PTO/Transforms/ProtocolSync/LocalMemoryAnalysis.h"
+#include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -230,7 +232,28 @@ SyncIterationRelation iterationRelation(const SyncPhase* source, const SyncPhase
 
 using ObligationKey = std::tuple<
     std::uint8_t, SyncPhaseId, SyncPhaseId, SyncGenerationId, SyncChannelId, std::uint8_t, std::uint8_t, unsigned,
-    SyncRegionId>;
+    SyncRegionId, std::uint32_t>;
+
+void mergeFixedSupply(SyncSelectedWorld& world, const SyncSelectedWorld& supply)
+{
+    for (const SyncSelectedCompletion& completion : supply.completions) {
+        const bool present = llvm::any_of(world.completions, [&](const SyncSelectedCompletion& current) {
+            return current.source == completion.source && current.target == completion.target &&
+                   current.control == completion.control && current.iteration.kind == completion.iteration.kind &&
+                   current.iteration.distance == completion.iteration.distance &&
+                   current.iteration.carrier == completion.iteration.carrier;
+        });
+        if (!present) {
+            world.completions.push_back(completion);
+        }
+    }
+    // The current importer supplies completion, not GM visibility.
+    for (SyncPhaseId phase : supply.exitCompletedPhases) {
+        if (!llvm::is_contained(world.exitCompletedPhases, phase)) {
+            world.exitCompletedPhases.push_back(phase);
+        }
+    }
+}
 
 class ResidualAccumulator {
 public:
@@ -245,7 +268,8 @@ public:
             static_cast<std::uint8_t>(obligation.control),
             static_cast<std::uint8_t>(obligation.iteration.kind),
             obligation.iteration.distance,
-            obligation.iteration.carrier};
+            obligation.iteration.carrier,
+            obligation.localRequirement.value_or(kInvalidSyncId)};
         if (!seen.insert(key).second) {
             return success();
         }
@@ -1255,24 +1279,59 @@ FailureOr<SyncInterpretationResult> mlir::pto::protocol_sync::interpretSelectedW
         return failure();
     }
     accumulator.result.peakStates = 1;
+    SyncSelectedWorld effectiveWorld = world;
+    SyncInterpretationOptions effectiveOptions = options;
+    if (!options.fixedSynchronizationIsModeled) {
+        FailureOr<SyncSelectedWorld> fixed = reconstructFixedSyncSupply(schedule);
+        if (succeeded(fixed)) {
+            mergeFixedSupply(effectiveWorld, *fixed);
+            effectiveOptions.fixedSynchronizationIsModeled = true;
+        }
+    }
     CompletionGraph completionGraph(schedule.getPhases().size());
     CompletionGraph visibilityGraph(schedule.getPhases().size());
-    if (failed(validateWorld(schedule, channels, world, completionGraph, visibilityGraph))) {
+    if (failed(validateWorld(schedule, channels, effectiveWorld, completionGraph, visibilityGraph))) {
         return failure();
     }
 
     AbstractState state;
+    FailureOr<SyncLocalMemoryAnalysis> local = analyzeLocalMemory(schedule);
+    if (failed(local)) {
+        return failure();
+    }
+    accumulator.result.localAtoms = local->atoms.size();
+    accumulator.result.localRequirements = local->requirements.size();
+    accumulator.result.localAnalysisBoundary = local->boundary;
+    for (const SyncResidualObligation& requirement : local->requirements) {
+        if (completionGraph.covers(requirement.source, requirement.target, requirement.iteration)) {
+            ++accumulator.result.localRequirementsCovered;
+        } else if (failed(accumulator.append(requirement))) {
+            return failure();
+        }
+    }
     for (auto [index, timeline] : llvm::enumerate(timelines.getTimelines())) {
         const SyncChannel& channel = channels.getChannels()[index];
-        if (timeline.id != index || channel.id != index || channel.generation != timeline.id ||
-            failed(evaluateTimeline(schedule, stages, timeline, channel, world, completionGraph, state, accumulator))) {
+        if (timeline.id != index || channel.id != index || channel.generation != timeline.id) {
+            return failure();
+        }
+        const bool canonicalCoverage =
+            !timeline.accesses.empty() && llvm::all_of(timeline.accesses, [&](SyncAccessId id) {
+                return id < local->coveredAccesses.size() && local->coveredAccesses.test(id);
+            });
+        // A selected atomic protocol must still prove its own complete
+        // certificate. Native residual repair must not mask a broken selection.
+        if (canonicalCoverage && !findSelectedProtocol(effectiveWorld, channel.id)) {
+            continue;
+        }
+        if (failed(evaluateTimeline(
+                schedule, stages, timeline, channel, effectiveWorld, completionGraph, state, accumulator))) {
             return failure();
         }
     }
     const bool invalidResult = failed(evaluateMemoryHazards(schedule, completionGraph, visibilityGraph, accumulator)) ||
                                failed(evaluateSSACompletions(schedule, completionGraph, accumulator)) ||
-                               failed(evaluateOpaqueEffects(schedule, options, accumulator)) ||
-                               failed(evaluateExitCompletion(schedule, world, completionGraph, accumulator));
+                               failed(evaluateOpaqueEffects(schedule, effectiveOptions, accumulator)) ||
+                               failed(evaluateExitCompletion(schedule, effectiveWorld, completionGraph, accumulator));
     if (invalidResult) {
         return failure();
     }

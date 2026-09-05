@@ -1,0 +1,11 @@
+{
+  "archive": "/home/toni/work/pypto3_sync_more/PTOAS/build/protocol-sync-native-local-1f9b2a27-worktree.tar.gz",
+  "bytes": 20373457,
+  "clean_committed_campaigns": false,
+  "generator_sha256": "c6c96b71c814cb6179c80dd347608375c2cce58d817f6584ed60b9fc527e26fc",
+  "included_artifacts": {
+    "canonical-sync-394-corpus-d99520397.tar.gz": "91b011b9225c1308d185885554752ba1d64198436c3af60c6d4d243cda2bbd2a",
+    "protocol-sync-native-local-followup-v2.tar.gz": "fc6b8e20e647b8054704e2efa2095e16df27ca4f5da472bcc7e477f282f2f759"
+  },
+  "sha256": "720d3e262372a8c87e77dbb66cf32a792c4c18b0ea691d99c79fc08cebf45603"
+}
