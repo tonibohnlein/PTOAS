@@ -576,9 +576,20 @@ bool testNativeBoundaryWorlds(MLIRContext& context)
         }
         auto timelines = analyzeStorageTimelines(fixture.schedule, *stages);
         auto channels = analyzeChannels(fixture.schedule, *stages, timelines);
-        auto plan = buildMixedProtocolPlan(fixture.schedule, *stages, timelines, channels, false);
+        auto normal = buildMixedProtocolPlan(fixture.schedule, *stages, timelines, channels, false);
         if (!check(
-                succeeded(plan) && plan->loopFrontier &&
+                succeeded(normal) && !normal->isComplete() && !normal->loopFrontier,
+                "normal repair must not silently select a serialized cycle")) {
+            return false;
+        }
+        auto reference = buildMixedLoopFrontierPlan(fixture.schedule, *stages, timelines, channels);
+        const bool hasReference = succeeded(reference) && reference->has_value();
+        if (!check(hasReference, "missing serialized reference")) {
+            return false;
+        }
+        auto& plan = *reference;
+        if (!check(
+                plan->loopFrontier &&
                     succeeded(verifyMixedProtocolPlan(fixture.schedule, *stages, timelines, channels, *plan)),
                 "boundary world must be complete without protocol recognition")) {
             return false;
@@ -618,7 +629,7 @@ bool testNativeBoundaryWorlds(MLIRContext& context)
             }
         }
     }
-    llvm::outs() << "protocol-sync native boundary worlds: both GM modes, provenance and lifetime witnesses pass\n";
+    llvm::outs() << "protocol-sync reference boundary worlds: both GM modes, provenance and lifetime witnesses pass\n";
     return true;
 }
 

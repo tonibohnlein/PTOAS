@@ -1,5 +1,12 @@
 # Balanced choices and ordinary-loop composition
 
+## Policy revision — 2026-09-06
+
+The serialized V-hub implementation described here is now a reference constructor,
+not a normal mixed-planner alternative. Its concrete/path/token tests remain.
+See the [parallelism-first campaign](ptoas-protocol-sync-general-repair-campaign.md)
+for the replacement objective and selective structured-repair work.
+
 ## Scope
 
 This continuation over `5fcb8cf279084587163c6f0c48306f6ab75275ea` implements

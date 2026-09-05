@@ -34,6 +34,9 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::protocol_sync;
 
+bool checkIndependentReadinessInterleavings(
+    const StructuredSyncIR& schedule, SyncPhaseId first, SyncPhaseId second, bool& overlapWitness);
+
 namespace {
 
 constexpr StringLiteral kSharedFixture = R"mlir(
@@ -43,7 +46,7 @@ module attributes {pto.target_arch = "a3"} {
       %input1: !pto.partition_tensor_view<16x16xf16>,
       %output0: !pto.partition_tensor_view<16x16xf16>,
       %output1: !pto.partition_tensor_view<16x16xf16>)
-      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.gm_alias = "assume-disjoint-arguments"} {
     %c0 = arith.constant 0 : i64
     %c512 = arith.constant 512 : i64
     %c1024 = arith.constant 1024 : i64
@@ -245,6 +248,49 @@ FailureOr<SyncInterpretationResult> interpretEmpty(const AnalysisFixture& fixtur
     return interpretSelectedWorld(fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, world);
 }
 
+bool testReadinessOverlapAndMutations(func::FuncOp function)
+{
+    bool passed = true;
+    AnalysisFixture emitted(function);
+    if (!check(
+            buildAnalysis(emitted) && emitted.schedule.getPhases().size() == 6,
+            "cannot reconstruct emitted independent-frontier fixture")) {
+        return false;
+    }
+    bool overlap = false;
+    passed &= check(
+        checkIndependentReadinessInterleavings(emitted.schedule, 1, 2, overlap) && overlap,
+        "independent L2 and C1 cannot remain outstanding concurrently");
+    Operation* load1 = emitted.schedule.findPhase(1)->operation;
+    Operation* earlySet = emitted.schedule.findPhase(0)->operation->getNextNode();
+    if (!check(isa<SetFlagOp>(earlySet), "first producer has no immediate publication")) {
+        return false;
+    }
+    // This mutation remains race-free but removes the required overlap witness.
+    earlySet->moveAfter(load1);
+    AnalysisFixture delayed(function);
+    if (!check(buildAnalysis(delayed), "cannot reconstruct delayed publication")) {
+        return false;
+    }
+    passed &= check(
+        checkIndependentReadinessInterleavings(delayed.schedule, 1, 2, overlap) && !overlap,
+        "oracle did not distinguish safe serialization from independent readiness");
+    earlySet->moveAfter(emitted.schedule.findPhase(0)->operation);
+    Operation* secondWait = emitted.schedule.findPhase(3)->operation->getPrevNode();
+    if (!check(isa<WaitFlagOp>(secondWait), "second consumer has no immediate acquisition")) {
+        return false;
+    }
+    secondWait->moveBefore(emitted.schedule.findPhase(2)->operation);
+    AnalysisFixture advanced(function);
+    if (!check(buildAnalysis(advanced), "cannot reconstruct advanced acquisition")) {
+        return false;
+    }
+    passed &= check(
+        checkIndependentReadinessInterleavings(advanced.schedule, 1, 2, overlap) && !overlap,
+        "oracle did not detect blocking from an unnecessarily early acquisition");
+    return passed;
+}
+
 bool testSharedRepairAndMaterialization(MLIRContext& context)
 {
     OwningOpRef<ModuleOp> module = parseFixture(context, kSharedFixture);
@@ -271,42 +317,42 @@ bool testSharedRepairAndMaterialization(MLIRContext& context)
     passed &= check(
         succeeded(verifyDirectRepairPlan(fixture.schedule, *fixture.stages, residuals->obligations, *plan)),
         "independent logical verifier rejected shared plan");
-    const unsigned sharedEvents = llvm::count_if(plan->candidates, [](const SyncDirectRepairCandidate& candidate) {
-        return candidate.kind == SyncDirectRepairKind::DirectedEvent && candidate.obligations.size() == 2;
+    const unsigned independentEvents = llvm::count_if(plan->candidates, [](const SyncDirectRepairCandidate& candidate) {
+        return candidate.kind == SyncDirectRepairKind::DirectedEvent && candidate.obligations.size() == 1;
     });
     const unsigned exitCandidates = llvm::count_if(plan->candidates, [](const SyncDirectRepairCandidate& candidate) {
         return candidate.kind == SyncDirectRepairKind::ExitBarrier && candidate.obligations.size() >= 2;
     });
-    passed &= check(sharedEvents == 2, "overlapping intervals did not share both directed frontiers");
+    passed &= check(independentEvents == 4, "independent readiness frontiers were merged");
     passed &= check(exitCandidates == 1, "terminal phases did not share one exit drain");
 
-    SyncDirectRepairPlan inflated = *plan;
-    auto shared = llvm::find_if(inflated.candidates, [](const SyncDirectRepairCandidate& candidate) {
-        return candidate.kind == SyncDirectRepairKind::DirectedEvent && candidate.obligations.size() == 2;
-    });
-    if (!check(shared != inflated.candidates.end(), "cannot construct inflated-frontier negative")) {
+    auto duplicateObligations = residuals->obligations;
+    auto duplicate = duplicateObligations.front();
+    duplicate.id = duplicateObligations.size();
+    duplicateObligations.push_back(duplicate);
+    auto deduplicated = buildDirectRepairPlan(fixture.schedule, *fixture.stages, duplicateObligations);
+    passed &= check(
+        succeeded(deduplicated) && deduplicated->candidates.size() == plan->candidates.size() &&
+            succeeded(verifyDirectRepairPlan(fixture.schedule, *fixture.stages, duplicateObligations, *deduplicated)),
+        "identical endpoints must share one normal repair without losing obligations");
+
+    SyncDirectRepairPlan merged = *plan;
+    const bool hasTwoFrontiers = merged.candidates.size() >= 2;
+    if (!check(hasTwoFrontiers, "cannot construct merged-frontier negative")) {
         return false;
     }
-    const auto setSingleObligation = [&](SyncDirectRepairCandidate& candidate, SyncObligationId id) {
-        const SyncResidualObligation& obligation = residuals->obligations[id];
-        const SyncPhase* source = fixture.schedule.findPhase(obligation.source);
-        const SyncPhase* target = fixture.schedule.findPhase(obligation.target);
-        candidate.sourcePhase = source->id;
-        candidate.targetPhase = target->id;
-        candidate.sourceOperation = source->operation;
-        candidate.targetOperation = target->operation;
-        candidate.obligations.assign(1, id);
-    };
-    SyncDirectRepairCandidate split = *shared;
-    setSingleObligation(*shared, shared->obligations.front());
-    setSingleObligation(split, split.obligations.back());
-    inflated.candidates.insert(std::next(shared), std::move(split));
-    for (auto [id, candidate] : llvm::enumerate(inflated.candidates)) {
+    auto& first = merged.candidates[0];
+    const auto& second = merged.candidates[1];
+    first.sourcePhase = second.sourcePhase;
+    first.sourceOperation = second.sourceOperation;
+    first.obligations.append(second.obligations.begin(), second.obligations.end());
+    merged.candidates.erase(std::next(merged.candidates.begin()));
+    for (auto [id, candidate] : llvm::enumerate(merged.candidates)) {
         candidate.id = id;
     }
     passed &= check(
-        failed(verifyDirectRepairPlan(fixture.schedule, *fixture.stages, residuals->obligations, inflated)),
-        "independent verifier accepted two mergeable direct frontiers");
+        failed(verifyDirectRepairPlan(fixture.schedule, *fixture.stages, residuals->obligations, merged)),
+        "normal-placement verifier accepted a delayed merged publication");
 
     passed &= check(
         succeeded(allocateDirectRepairEvents(fixture.schedule, *plan)) &&
@@ -344,7 +390,7 @@ bool testSharedRepairAndMaterialization(MLIRContext& context)
     passed &= check(
         sets == directedCandidates && waits == directedCandidates && tails == 1,
         "materialized shared recipe has wrong action counts");
-    return passed;
+    return testReadinessOverlapAndMutations(function) && passed;
 }
 
 bool testVerifierRollbackAndRecurrence(MLIRContext& context)
@@ -488,8 +534,15 @@ bool testNonAdjacentSamePipe(MLIRContext& context)
             vectorBarrier = barrier;
         }
     });
-    const bool exactPlacement = computes.size() == 3 && vectorBarrier && vectorBarrier->getPrevNode() == computes[1] &&
-                                vectorBarrier->getNextNode() == computes[2];
+    Operation* previous = vectorBarrier ? vectorBarrier->getPrevNode() : nullptr;
+    Operation* next = vectorBarrier ? vectorBarrier->getNextNode() : nullptr;
+    while (isa_and_nonnull<SetFlagOp, WaitFlagOp>(previous)) {
+        previous = previous->getPrevNode();
+    }
+    while (isa_and_nonnull<SetFlagOp, WaitFlagOp>(next)) {
+        next = next->getNextNode();
+    }
+    const bool exactPlacement = computes.size() == 3 && vectorBarrier && previous == computes[1] && next == computes[2];
     return check(exactPlacement, "same-pipe barrier was not placed at the nonadjacent target frontier");
 }
 
@@ -625,7 +678,7 @@ int main()
     passed &= testEventCapacity(context);
     passed &= testModuleAtomicity(context);
     if (passed) {
-        llvm::outs() << "protocol-sync direct shared frontiers: pass\n";
+        llvm::outs() << "protocol-sync direct independent readiness and overlap witness: pass\n";
         llvm::outs() << "protocol-sync direct full-world interpretation: pass\n";
         llvm::outs() << "protocol-sync direct verifier rollback: pass\n";
         llvm::outs() << "protocol-sync direct recurrence rejection: pass\n";

@@ -21,6 +21,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 #include <map>
+#include <optional>
 #include <set>
 #include <tuple>
 #include <vector>
@@ -114,8 +115,13 @@ public:
         }
     }
 
-    bool run(bool* unsafeWitness = nullptr)
+    bool run(
+        bool* unsafeWitness = nullptr, std::optional<std::pair<SyncPhaseId, SyncPhaseId>> overlap = std::nullopt,
+        bool* overlapWitness = nullptr)
     {
+        if (overlapWitness) {
+            *overlapWitness = false;
+        }
         if (unsafeWitness) {
             *unsafeWitness = false;
         }
@@ -146,6 +152,9 @@ public:
         constexpr unsigned maximumStates = 100000;
         for (unsigned index = 0; index < work.size(); ++index) {
             const State state = work[index];
+            if (overlap && overlapWitness) {
+                *overlapWitness |= hasPendingOverlap(state, completionBase, *overlap);
+            }
             bool advanced = false;
             bool finished = true;
             const auto enqueue = [&](State next) {
@@ -249,6 +258,20 @@ public:
     }
 
 private:
+    bool hasPendingOverlap(
+        const std::vector<unsigned>& state, unsigned completionBase, std::pair<SyncPhaseId, SyncPhaseId> overlap) const
+    {
+        bool firstPending = false;
+        bool secondPending = false;
+        for (unsigned phase = 0; phase < phases.size(); ++phase) {
+            const auto [owner, position] = positions[phase];
+            const bool pending = state[owner] > position && state[completionBase + phase] == 0;
+            firstPending |= pending && phases[phase]->id == overlap.first;
+            secondPending |= pending && phases[phase]->id == overlap.second;
+        }
+        return firstPending && secondPending;
+    }
+
     static unsigned prefix(const Boundary& cut, unsigned lane)
     {
         return lane < cut.prefixes.size() ? cut.prefixes[lane] : 0;
@@ -291,6 +314,18 @@ private:
 };
 
 } // namespace
+
+bool checkIndependentReadinessInterleavings(
+    const StructuredSyncIR& schedule, SyncPhaseId first, SyncPhaseId second, bool& overlapWitness)
+{
+    ExecutionOracle oracle(schedule);
+    for (Operation& operation : schedule.getFunction().getBody().front()) {
+        oracle.append(operation);
+    }
+    // The caller requires both exhaustive safety and an overlapping execution.
+    // Finding a witness before an unsafe state or budget limit is not success.
+    return oracle.run(nullptr, std::make_pair(first, second), &overlapWitness);
+}
 
 bool checkStructuredFrontierInterleavings(
     const StructuredSyncIR& schedule, unsigned trips, std::uint64_t choices, bool* unsafeWitness)

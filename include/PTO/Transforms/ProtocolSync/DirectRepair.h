@@ -63,6 +63,8 @@ enum class SyncDirectRepairRejection : std::uint8_t {
 /// One indivisible physical recipe. A shared candidate covers every listed
 /// obligation; selection and reverse deletion must therefore add or remove the
 /// complete record rather than any individual action.
+/// Normal repairs share only identical source/target endpoints. Merely
+/// intersecting placement intervals is not a concurrency-preservation proof.
 struct SyncDirectRepairCandidate {
     SyncDirectCandidateId id = kInvalidSyncId;
     SyncDirectRepairKind kind = SyncDirectRepairKind::PipeBarrier;
@@ -112,8 +114,8 @@ LogicalResult applyDirectRepairCandidates(
 LogicalResult allocateDirectRepairEvents(
     const StructuredSyncIR& schedule, SyncDirectRepairPlan& plan, ProtocolSyncStatistics* statistics = nullptr);
 LogicalResult allocateDirectRepairEvents(
-    const ProtocolSyncTarget& target, llvm::ArrayRef<SyncEventReservation> reservations,
-    SyncDirectRepairPlan& plan, ProtocolSyncStatistics* statistics = nullptr);
+    const ProtocolSyncTarget& target, llvm::ArrayRef<SyncEventReservation> reservations, SyncDirectRepairPlan& plan,
+    ProtocolSyncStatistics* statistics = nullptr);
 
 /// Low-level emitter for a function inside caller-owned disposable staging IR.
 /// The caller must verify and discard the complete staging module on failure.

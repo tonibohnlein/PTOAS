@@ -1,5 +1,12 @@
 # ProtocolSync local frontier baseline
 
+## Policy revision — 2026-09-06
+
+The interval-merging placement described here is historical. Normal repair now
+retains independent readiness endpoints; see the
+[parallelism-first campaign](ptoas-protocol-sync-general-repair-campaign.md).
+The historical measurements below do not measure the revised policy.
+
 ## Status
 
 This is the first production slice of the agreed sparse-requirement / backward

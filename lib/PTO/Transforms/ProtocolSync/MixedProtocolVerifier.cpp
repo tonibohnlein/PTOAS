@@ -605,7 +605,7 @@ LogicalResult mlir::pto::protocol_sync::verifyMixedProtocolPlan(
 
     FailureOr<SyncMixedProtocolPlan> authoritative =
         buildMixedProtocolPlan(schedule, stages, timelines, channels, plan.protocolsEnabled, nullptr);
-    const bool optimalWorldMatches =
+    const bool selectedPolicyMatches =
         succeeded(authoritative) && authoritative->isComplete() &&
         authoritative->selectedWorldKind == plan.selectedWorldKind &&
         authoritative->selectedCost.generatedEventPairs == plan.selectedCost.generatedEventPairs &&
@@ -616,7 +616,7 @@ LogicalResult mlir::pto::protocol_sync::verifyMixedProtocolPlan(
         authoritative->completeWorldsAttempted == plan.completeWorldsAttempted &&
         authoritative->completeWorldsFeasible == plan.completeWorldsFeasible &&
         sameWorld(authoritative->selectedWorld, plan.selectedWorld);
-    if (!optimalWorldMatches) {
+    if (!selectedPolicyMatches) {
         return failure();
     }
 

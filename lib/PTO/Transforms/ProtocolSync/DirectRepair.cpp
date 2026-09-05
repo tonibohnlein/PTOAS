@@ -159,48 +159,17 @@ LogicalResult appendFrontierCandidates(const FrontierGroup& group, SyncDirectRep
         return firstSource != secondSource ? firstSource < secondSource : first.obligation->id < second.obligation->id;
     });
 
-    struct CandidateFrontier {
-        const SyncPhase* target = nullptr;
-        const SyncPhase* latestSource = nullptr;
-        llvm::SmallVector<SyncObligationId, 4> obligations;
-    };
-    SmallVector<CandidateFrontier, 8> frontiers;
-    SmallVector<unsigned, 8> frontierRanks;
+    // Normal repair preserves each independent readiness frontier. Overlapping
+    // placement intervals do not justify delaying a publication or advancing a
+    // wait. Only identical endpoint pairs share a mechanism here; broader
+    // sharing needs a separate no-additional-blocking certificate.
+    llvm::DenseMap<SyncPhaseId, llvm::DenseMap<SyncPhaseId, unsigned>> byEndpoints;
     for (const RepairInterval& interval : intervals) {
-        const unsigned sourceRank = operationRanks.lookup(interval.source->operation);
-        const bool needsFrontier = frontierRanks.empty() || sourceRank >= frontierRanks.back();
-        if (needsFrontier) {
-            frontiers.push_back({interval.target, nullptr, {}});
-            frontierRanks.push_back(operationRanks.lookup(interval.target->operation));
-        }
-    }
-    // Traverse the sparse source links backwards within this lane/guard group.
-    // A common wait was chosen at an earliest consumer boundary above. The
-    // first source reaching each wait is its latest legal signal frontier.
-    // Unrelated operations and disjoint storage histories are not searched.
-    llvm::stable_sort(intervals, [&](const RepairInterval& first, const RepairInterval& second) {
-        const unsigned firstSource = operationRanks.lookup(first.source->operation);
-        const unsigned secondSource = operationRanks.lookup(second.source->operation);
-        return firstSource != secondSource ? firstSource > secondSource : first.obligation->id < second.obligation->id;
-    });
-    for (const RepairInterval& interval : intervals) {
-        const unsigned sourceRank = operationRanks.lookup(interval.source->operation);
-        const unsigned targetRank = operationRanks.lookup(interval.target->operation);
-        auto found = llvm::upper_bound(frontierRanks, sourceRank);
-        const bool noCoveringFrontier = found == frontierRanks.end() || *found > targetRank;
-        if (noCoveringFrontier) {
-            return failure();
-        }
-        CandidateFrontier& frontier = frontiers[std::distance(frontierRanks.begin(), found)];
-        frontier.obligations.push_back(interval.obligation->id);
-        if (!frontier.latestSource) {
-            frontier.latestSource = interval.source;
-        }
-    }
-
-    for (CandidateFrontier& frontier : frontiers) {
-        if (!frontier.latestSource || frontier.obligations.empty()) {
-            return failure();
+        auto& targets = byEndpoints[interval.source->id];
+        auto found = targets.find(interval.target->id);
+        if (found != targets.end()) {
+            plan.candidates[found->second].obligations.push_back(interval.obligation->id);
+            continue;
         }
         SyncDirectRepairCandidate candidate;
         candidate.id = plan.candidates.size();
@@ -209,14 +178,14 @@ LogicalResult appendFrontierCandidates(const FrontierGroup& group, SyncDirectRep
         candidate.core = group.core;
         candidate.sourcePipe = group.sourcePipe;
         candidate.targetPipe = group.targetPipe;
-        candidate.sourcePhase = frontier.latestSource->id;
-        candidate.targetPhase = frontier.target->id;
-        candidate.sourceOperation = frontier.latestSource->operation;
-        candidate.targetOperation = frontier.target->operation;
+        candidate.sourcePhase = interval.source->id;
+        candidate.targetPhase = interval.target->id;
+        candidate.sourceOperation = interval.source->operation;
+        candidate.targetOperation = interval.target->operation;
         candidate.control = group.control;
         candidate.iteration = {SyncIterationRelationKind::SameIteration, 0};
-        candidate.obligations = std::move(frontier.obligations);
-        llvm::sort(candidate.obligations);
+        candidate.obligations.push_back(interval.obligation->id);
+        targets[interval.target->id] = candidate.id;
         plan.candidates.push_back(std::move(candidate));
     }
     return success();
@@ -277,9 +246,8 @@ LogicalResult allocateDirectRepairEventsImpl(
 {
     const bool canAllocate =
         target.supportsDirectRepairEmission() && plan.status == SyncDirectRepairPlanStatus::Ready &&
-        llvm::none_of(plan.candidates, [](const SyncDirectRepairCandidate& candidate) {
-            return candidate.eventId.has_value();
-        });
+        llvm::none_of(
+            plan.candidates, [](const SyncDirectRepairCandidate& candidate) { return candidate.eventId.has_value(); });
     if (!canAllocate) {
         return failure();
     }
@@ -351,9 +319,9 @@ FailureOr<SyncDirectRepairPlan> mlir::pto::protocol_sync::buildDirectRepairPlan(
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(schedule.getFunction());
     if (!target.supportsDirectRepairEmission()) {
         plan.status = SyncDirectRepairPlanStatus::Unsupported;
-        plan.rejections.push_back({
-            kInvalidSyncId, SyncDirectRepairRejection::UnsupportedTarget,
-            target.getUnsupportedReason(ProtocolSyncEmissionMode::DirectRepair)});
+        plan.rejections.push_back(
+            {kInvalidSyncId, SyncDirectRepairRejection::UnsupportedTarget,
+             target.getUnsupportedReason(ProtocolSyncEmissionMode::DirectRepair)});
         for (const SyncResidualObligation& obligation : obligations) {
             plan.uncoveredObligations.push_back(obligation.id);
         }

@@ -19,8 +19,6 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
-#include <limits>
-#include <tuple>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -426,65 +424,6 @@ SyncMixedWorldCost computeWorldCost(const SyncMixedProtocolPlan& plan, std::uint
     return cost;
 }
 
-unsigned worldTieBreak(SyncMixedWorldKind kind)
-{
-    switch (kind) {
-        case SyncMixedWorldKind::StructuredFrontier:
-            return 5;
-        case SyncMixedWorldKind::LoopFrontier:
-            return 4;
-        case SyncMixedWorldKind::CombinedProtocols:
-            return 0;
-        case SyncMixedWorldKind::ReadyRelease:
-            return 1;
-        case SyncMixedWorldKind::OneShotPublish:
-            return 2;
-        case SyncMixedWorldKind::DirectOnly:
-            return 3;
-    }
-    return 3;
-}
-
-bool worldCostsLess(const SyncMixedProtocolPlan& first, const SyncMixedProtocolPlan& second)
-{
-    const SyncMixedWorldCost& left = first.selectedCost;
-    const SyncMixedWorldCost& right = second.selectedCost;
-    const std::uint64_t leftProtocols =
-        (first.oneShot ? first.oneShot->candidates.size() : 0) + (first.readyRelease ? 1 : 0);
-    const std::uint64_t rightProtocols =
-        (second.oneShot ? second.oneShot->candidates.size() : 0) + (second.readyRelease ? 1 : 0);
-    const auto leftKey = std::make_tuple(
-        left.generatedEventPairs, left.targetedBarriers, left.eventPressure, left.staticActions,
-        worldTieBreak(first.selectedWorldKind), std::numeric_limits<std::uint64_t>::max() - leftProtocols);
-    const auto rightKey = std::make_tuple(
-        right.generatedEventPairs, right.targetedBarriers, right.eventPressure, right.staticActions,
-        worldTieBreak(second.selectedWorldKind), std::numeric_limits<std::uint64_t>::max() - rightProtocols);
-    return leftKey < rightKey;
-}
-
-struct ProtocolSelection {
-    SmallVector<SyncOneShotPublishId, 4> oneShot;
-    bool readyRelease = false;
-};
-
-FailureOr<std::optional<SyncOneShotPublishPlan>> selectOneShotAlternative(
-    const std::optional<SyncOneShotPublishPlan>& candidates, ArrayRef<SyncOneShotPublishId> selected)
-{
-    if (selected.empty()) {
-        return std::optional<SyncOneShotPublishPlan>{};
-    }
-    if (!candidates) {
-        return failure();
-    }
-    SyncMixedProtocolPlan source;
-    source.oneShot = candidates;
-    FailureOr<SyncOneShotPublishPlan> subset = selectOneShotCandidates(source, selected);
-    if (failed(subset)) {
-        return failure();
-    }
-    return std::optional<SyncOneShotPublishPlan>(std::move(*subset));
-}
-
 void recordSelectionAllocationWork(const ProtocolSyncStatistics& source, ProtocolSyncStatistics* destination)
 {
     if (!destination) {
@@ -566,24 +505,10 @@ FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPla
         return plan;
     }
 
-    std::optional<SyncOneShotPublishPlan> oneShot;
     std::optional<SyncReadyReleasePlan> readyRelease;
     if (enableProtocols) {
-        FailureOr<SyncOneShotPublishPlan> candidates =
-            buildOneShotPublishCandidates(schedule, stages, timelines, channels);
-        if (failed(candidates)) {
-            return failure();
-        }
-        if (!candidates->candidates.empty()) {
-            if (failed(verifyOneShotPublishPlan(schedule, stages, timelines, channels, *candidates))) {
-                return failure();
-            }
-            if (statistics) {
-                statistics->protocolCandidates += candidates->candidates.size();
-            }
-            oneShot = std::move(*candidates);
-        }
-
+        // One-shot handoffs are ordinary direct repairs, not independently
+        // selected pipeline patterns. Retain legacy APIs for explicit tests.
         FailureOr<SyncReadyReleasePlan> candidate = buildReadyReleaseProtocolPlan(
             schedule, stages, timelines, channels, nullptr, SyncReadyReleasePlanningScope::MixedCandidate);
         const bool readyReleaseFailed = failed(candidate) || hasInternalRejection(*candidate);
@@ -602,26 +527,19 @@ FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPla
     std::optional<SyncMixedProtocolPlan> best;
     std::optional<SyncMixedProtocolPlan> unsupported;
     std::optional<SyncMixedProtocolPlan> resourceInfeasible;
-    ProtocolSelection bestSelection;
     std::uint64_t worldsAttempted = 0;
     std::uint64_t worldsFeasible = 0;
-    const auto evaluateSelection = [&](const ProtocolSelection& selection) -> LogicalResult {
+    const auto evaluateSelection = [&](bool useReadyRelease) -> LogicalResult {
         ++worldsAttempted;
-        FailureOr<std::optional<SyncOneShotPublishPlan>> selectedOneShot =
-            selectOneShotAlternative(oneShot, selection.oneShot);
-        if (failed(selectedOneShot)) {
-            return failure();
-        }
         std::optional<SyncReadyReleasePlan> selectedReadyRelease;
-        if (selection.readyRelease) {
+        if (useReadyRelease) {
             if (!readyRelease) {
                 return failure();
             }
             selectedReadyRelease = readyRelease;
         }
         FailureOr<SyncMixedProtocolPlan> candidate = buildCompleteCandidateWorld(
-            schedule, stages, timelines, channels, std::move(*selectedOneShot), std::move(selectedReadyRelease),
-            statistics);
+            schedule, stages, timelines, channels, std::nullopt, std::move(selectedReadyRelease), statistics);
         if (failed(candidate)) {
             return failure();
         }
@@ -649,96 +567,22 @@ FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPla
         }
         candidate->selectedCost = computeWorldCost(*candidate, allocationStatistics.maxEventDomainPressure);
         ++worldsFeasible;
-        if (!best || worldCostsLess(*candidate, *best)) {
-            best = std::move(*candidate);
-            bestSelection = selection;
-        }
+        best = std::move(*candidate);
         return success();
     };
 
-    ProtocolSelection emptySelection;
-    if (failed(evaluateSelection(emptySelection))) {
+    // Prefer the admitted complete pipeline construction, then repair without
+    // it if composition or allocation fails. Event counts do not rank a more
+    // serialized world above an independently ready one.
+    if (readyRelease && failed(evaluateSelection(true))) {
         return failure();
     }
-    if (oneShot) {
-        for (const SyncOneShotPublishCandidate& candidate : oneShot->candidates) {
-            ProtocolSelection singleton;
-            singleton.oneShot.push_back(candidate.id);
-            if (failed(evaluateSelection(singleton))) {
-                return failure();
-            }
-        }
-    }
-    if (readyRelease) {
-        ProtocolSelection singleton;
-        singleton.readyRelease = true;
-        if (failed(evaluateSelection(singleton))) {
-            return failure();
-        }
-    }
-
-    const unsigned protocolCandidateCount = (oneShot ? oneShot->candidates.size() : 0) + (readyRelease ? 1 : 0);
-    if (!best && protocolCandidateCount > 1) {
-        ProtocolSelection allProtocols;
-        if (oneShot) {
-            for (const SyncOneShotPublishCandidate& candidate : oneShot->candidates) {
-                allProtocols.oneShot.push_back(candidate.id);
-            }
-        }
-        allProtocols.readyRelease = readyRelease.has_value();
-        if (failed(evaluateSelection(allProtocols))) {
-            return failure();
-        }
-    }
-    if (best) {
-        if (oneShot) {
-            for (const SyncOneShotPublishCandidate& candidate : oneShot->candidates) {
-                if (llvm::is_contained(bestSelection.oneShot, candidate.id)) {
-                    continue;
-                }
-                ProtocolSelection trial = bestSelection;
-                trial.oneShot.push_back(candidate.id);
-                llvm::sort(trial.oneShot);
-                if (failed(evaluateSelection(trial))) {
-                    return failure();
-                }
-            }
-        }
-        if (readyRelease && !bestSelection.readyRelease) {
-            ProtocolSelection trial = bestSelection;
-            trial.readyRelease = true;
-            if (failed(evaluateSelection(trial))) {
-                return failure();
-            }
-        }
-    }
-
-    auto loopAlternative = buildMixedLoopFrontierPlan(schedule, stages, timelines, channels);
-    if (failed(loopAlternative)) {
+    if (!best && failed(evaluateSelection(false))) {
         return failure();
     }
-    if (*loopAlternative) {
-        ++worldsAttempted;
-        ++worldsFeasible;
-        auto& candidate = **loopAlternative;
-        candidate.protocolsEnabled = enableProtocols;
-        if (!best || worldCostsLess(candidate, *best)) {
-            best = std::move(candidate);
-        }
-    }
-    auto structuredAlternative = buildMixedStructuredFrontierPlan(schedule, stages, timelines, channels);
-    if (failed(structuredAlternative)) {
-        return failure();
-    }
-    if (*structuredAlternative) {
-        ++worldsAttempted;
-        ++worldsFeasible;
-        auto& candidate = **structuredAlternative;
-        candidate.protocolsEnabled = enableProtocols;
-        if (!best || worldCostsLess(candidate, *best)) {
-            best = std::move(candidate);
-        }
-    }
+    // The total-phase loop cycle and V-hub packages are reference/recovery
+    // mechanisms. Without a certified event-pressure recovery decision, normal
+    // synthesis must expose unsupported selective repair instead of using them.
     if (statistics) {
         statistics->completeWorldsAttempted += worldsAttempted;
         statistics->completeWorldsFeasible += worldsFeasible;

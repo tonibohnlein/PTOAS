@@ -64,24 +64,20 @@ module attributes {pto.target_arch = "a3"} {
 // MIXED-FAIL: PROTOCOL-SYNC mixed-plan function=@ready_release_with_direct_tail status=unsupported
 // MIXED-FAIL: ProtocolSync mixed mode found no complete supported plan
 
-// ONE-SHOT: PROTOCOL-SYNC mixed-plan function=@linear_one_shot status=ready world=one-shot-publish
-// ONE-SHOT-SAME: initial-residuals=3 direct-candidates=1 candidates-before-deletion=4 reverse-attempts=4 reverse-removed=0 worlds-attempted=6 worlds-feasible=6 event-pairs=2 targeted-barriers=1 fixed-exit-drains=1
-// ONE-SHOT: one-shot-publish #0 kind=directed-event phases=#0->#1 channels=[#0]
-// ONE-SHOT: one-shot-publish #1 kind=pipe-barrier phases=#1->#2 channels=[#1]
-// ONE-SHOT: one-shot-publish #2 kind=directed-event phases=#2->#3 channels=[#2]
-// ONE-SHOT: "complete_worlds_attempted":6
-// ONE-SHOT-SAME: "complete_worlds_feasible":6
+// ONE-SHOT: PROTOCOL-SYNC mixed-plan function=@linear_one_shot status=ready world=direct-only
+// ONE-SHOT-SAME: direct-candidates=4 candidates-before-deletion=5 reverse-attempts=5 reverse-removed=1 worlds-attempted=1 worlds-feasible=1 event-pairs=2 targeted-barriers=1 fixed-exit-drains=1
+// ONE-SHOT: "complete_worlds_attempted":1
+// ONE-SHOT-SAME: "complete_worlds_feasible":1
 // ONE-SHOT: "selected_world_event_pairs":2
 // ONE-SHOT-SAME: "selected_world_fixed_exit_drains":1
 // ONE-SHOT-SAME: "selected_world_targeted_barriers":1
 
 // DIRECT: PROTOCOL-SYNC mixed-plan function=@guarded_direct status=ready world=direct-only
-// The balanced structured alternative is also complete, but the cheaper
-// existing direct-only world remains selected with unchanged actions.
-// DIRECT-SAME: direct-candidates=3 candidates-before-deletion=4 reverse-attempts=4 reverse-removed=1 worlds-attempted=2 worlds-feasible=2 event-pairs=2 targeted-barriers=0 fixed-exit-drains=1
+// The serialized structured reference is not a normal selection alternative.
+// DIRECT-SAME: direct-candidates=3 candidates-before-deletion=4 reverse-attempts=4 reverse-removed=1 worlds-attempted=1 worlds-feasible=1 event-pairs=2 targeted-barriers=0 fixed-exit-drains=1
 
 // IMPLICIT: --protocol-sync-mixed requires an explicit --pto-arch=a2 or --pto-arch=a3
-// A2: PROTOCOL-SYNC mixed-plan function=@linear_one_shot status=ready world=one-shot-publish
+// A2: PROTOCOL-SYNC mixed-plan function=@linear_one_shot status=ready world=direct-only
 // MUTEX: --enable-insert-sync
 // MUTEX-SAME: --protocol-sync-mixed
 // MUTEX-SAME: mutually exclusive

@@ -1,5 +1,12 @@
 # ProtocolSync acknowledged loop-frontier repair
 
+## Policy revision — 2026-09-06
+
+The serialized cycle described here is now a reference constructor, not a normal
+mixed-planner alternative. Boundary and event-lifetime tests remain. See the
+[parallelism-first campaign](ptoas-protocol-sync-general-repair-campaign.md)
+for the replacement objective and selective loop-repair work.
+
 ## Status
 
 Step 2B (`db6041516`) introduced isolated-loop repair. The boundary continuation

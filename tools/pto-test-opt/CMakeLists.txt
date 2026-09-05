@@ -99,6 +99,7 @@ add_dependencies(pto-protocol-sync-ready-release-test
 
 add_llvm_executable(pto-protocol-sync-direct-repair-test
   pto-protocol-sync-direct-repair-test.cpp
+  ProtocolSyncLoopOracle.cpp
   PARTIAL_SOURCES_INTENDED
 )
 

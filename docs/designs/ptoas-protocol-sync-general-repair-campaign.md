@@ -1,4 +1,66 @@
-# General frontier repair campaign
+# Parallelism-first general frontier repair campaign
+
+## Governing revision — 2026-09-06
+
+The revised objective supersedes the count-first and serialized-coverage policy
+recorded below. Preserve the pipeline overlap permitted by required dependencies
+and qualified target mechanisms within the existing operation schedule. Do not
+reorder computation or alter buffer allocation. Fewer synchronization actions
+are not an improvement when they add blocking between independent operations.
+
+Normal repair publishes each required completion immediately after its source
+frontier and acquires it immediately before its target. Initially, only identical
+endpoint obligations share a repair. Broader sharing needs a certificate that it
+adds no blocking; intersecting legal placement intervals are insufficient.
+For `L1, L2, C1, C2` with only `L1 -> C1` and `L2 -> C2`, retain two events:
+`set A` after L1, `set B` after L2, `wait A` before C1, `wait B` before C2.
+The independent execution oracle must permit L2 and C1 to remain outstanding
+together. Delaying the first signal until after L2 is a race-free but unacceptable
+normal placement, not a performance optimization.
+
+Every admitted **pattern** identifies a pipeline structure and supplies its known
+efficient synchronization implementation, including intended overlap, storage
+reuse, participation and event lifecycle. Elementary OneShot handoffs belong to
+general repair, not the pattern catalog. Capacity-one control handshakes are
+general recurring machinery; proven multi-slot pipeline protocols are useful
+specializations. Existing narrow ReadyRelease construction remains transitional
+until its overlap contract and general/pattern classification are audited.
+
+Serialization is permitted only as explicit resource recovery after certified
+event pressure, not simply because selective synthesis is missing or an analysis
+budget expires. First try a non-serializing plan and proven-safe event reuse.
+Total-phase loop cycles and V-hub packages remain reference constructors; they
+must not win normal selection by having fewer event pairs. Removing them from
+normal selection can temporarily lower native admission. Report that regression
+honestly rather than counting serialized coverage as campaign completion.
+
+### Revised implementation order
+
+1. **P0/P1 — readiness policy:** independent direct frontiers, matching policy
+   verification and overlap regression; fold normal OneShot selection into direct
+   repair; remove count-first and serialized normal-world selection.
+2. **P2 — event lifetimes:** prove consuming waits happen before rearming; separate
+   proven pressure, conservative unknown interference and exhausted analysis.
+   Add explicitly attributed serialization recovery only after that distinction.
+3. **P3 — bounded evidence and frontend facts:** finish frozen collection without
+   losing failures; descriptor state, access precision, authoritative core/view
+   provenance and both GM contracts. Preserve the historical 394-row population.
+4. **P4 — canonical structured state:** shared atoms, generations, outstanding
+   readers/writers, stable requirement IDs and compositional boundary summaries.
+5. **P5 — selective structured synthesis:** ordinary loops, choices, their
+   composition and nesting, entry/backedge/exit/bypass and slot distances, with
+   semantic verification and arbitrary-trip event invariants in the same slice.
+6. **P6 — efficient protocols and remaining effects:** qualify genuine pipeline
+   specializations, fixed supply, visibility, queues, communication and ACC/L1
+   domains individually. Do not weaken semantic gates for admission.
+7. **P7 — closure:** frozen corpus in A2/A3, both GM contracts and patterns on/off;
+   native compilation without fallback, C++ emission and fresh verification.
+   Report normal, resource-serialized, unsupported, analysis and collection
+   outcomes separately. Host overlap witnesses are not device throughput results.
+
+Each accepted slice requires independent algorithm and compiler-integration
+reviews and a local commit. No pushes. The historical N-stage ledger below
+records prior work, not the current selection policy or acceptance result.
 
 ## Contract and frozen source baseline
 
@@ -16,9 +78,9 @@ differential corpus separate from the newly collected frontend population.
 Completion means every frozen valid frontend row compiles natively with legacy
 fallback disabled, emits C++, and passes fresh concrete verification, separately
 for A2/A3 and both GM contracts. General-only measurements disable specialized
-OneShot/ReadyRelease selection. Existing qualified serialized alternatives remain
-feasibility fallbacks, but completion also requires selective, obligation-driven
-structured repair. Host acceptance is not a hardware-correctness measurement.
+pipeline-pattern selection. Completion requires selective, obligation-driven
+structured repair; serialized references do not satisfy normal admission.
+Host acceptance is not a hardware-correctness measurement.
 
 ## Execution and commit policy
 
@@ -30,7 +92,7 @@ resource-intensive workers across the entire machine; main owns targeted builds
 and tests, review agents inspect read-only. Store durable evidence under `build/`,
 not the RAM-backed `/tmp`. Do not rebuild unchanged targets or LLVM.
 
-## Ordered stages and acceptance gates
+## Historical ordered stages (superseded by P0–P7 above)
 
 1. **N0 — freeze and baseline:** immutable frontend revisions, unsynchronized
    generated inputs, parameters, collection failures, commands and hashes;
@@ -70,6 +132,47 @@ suite before committing. Device validation and target claims remain separately
 qualified. Exhausted search budgets are not semantic counterexamples.
 
 ## Progress ledger
+
+### P0/P1 — independent readiness policy accepted
+
+This slice over `58bad1ba37570711ccea8c0a3b0006d79e2cd4a3` replaces greedy
+interval merging with exact-endpoint repair and matching placement verification.
+Mixed normal synthesis no longer selects elementary OneShot candidates or ranks
+complete plans by event count. Serialized loop/V-hub recipes remain explicitly
+constructed reference tests, not normal selection alternatives.
+
+The new `protocol_sync_independent_readiness.pto` checks separate publications
+and late acquisitions in A2/A3 and both GM modes, plus fresh concrete verification
+and C++ emission. The direct unit's independent asynchronous oracle establishes
+an L2/C1 outstanding-overlap witness and exhaustive bounded safety. Delaying the
+first signal or advancing the second wait remains safe but removes the witness.
+Identical endpoint obligations still share a repair. Existing reference loop,
+choice, boundary, zero-trip and event mutation coverage is retained.
+
+Validation on 2026-09-06:
+
+- Targeted `cmake --build build --parallel 2 --target PTOASCompiler
+  pto-protocol-sync-direct-repair-test pto-protocol-sync-mixed-test
+  pto-protocol-sync-loop-memory-test` and incremental test-target rebuilds pass.
+- With the workspace venv on PATH, `taskset -c 0,1 .venv/bin/python
+  /home/toni/work/llvm19/llvm-project/build-shared/bin/llvm-lit -v -j1
+  build/test/lit --filter 'protocol_sync_' -o build/protocol-sync-p1-tests.json`:
+  **47/47 pass**, 61.82 seconds. This is the focused host checkpoint, not the
+  entire repository suite or a new frontend corpus/device campaign.
+  Result JSON SHA-256:
+  `613ee4e44ac75dc9a90d0030b6e52f0fde9ac5aa13a0ace8f73fae5e8e055468`.
+- Changed-code compliance check against HEAD: 13 files, zero errors/warnings;
+  `git diff --check` passes. New C++ remains C++17, target-scoped CMake reuses the
+  existing oracle source, and no target-ordering semantics were strengthened.
+  Proprietary static analyzers and device qualification were not run.
+- Independent read-only algorithm and compiler-integration reviews by
+  `campaign_n0_algorithm_review` and `campaign_n0_compiler_review`: accepted.
+
+Next is P2: certified event-generation death/reuse and honest pressure
+classification. No serialized resource-recovery path is enabled by this slice.
+Selective structured admission and the frozen corpus closure remain unfinished.
+
+### Historical N0 progress
 
 - N0 in progress: source heads resolved; added general-only mixed-mode selection
   control and evidence-policy propagation. No current-head corpus results yet.

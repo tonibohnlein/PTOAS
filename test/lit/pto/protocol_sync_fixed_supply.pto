@@ -25,6 +25,7 @@
 // reserved even though another static handoff is lexically later in the domain.
 // CHECK-LABEL: func.func @fixed_partial
 // CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
 // CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 // CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 // CHECK-NEXT: pto.tabs
@@ -36,6 +37,7 @@
 // CHECK-NEXT: pto.barrier <PIPE_V>
 // CHECK-NEXT: pto.tabs
 // CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>,
 // CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>,
 // CHECK-NEXT: pto.tstore
 // VERIFY: concrete-verification function=@fixed_partial status=accepted first-failed-stage=none

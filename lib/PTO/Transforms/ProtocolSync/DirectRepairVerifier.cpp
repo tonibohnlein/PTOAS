@@ -55,8 +55,6 @@ bool isBefore(Operation* source, Operation* target)
            source->isBeforeInBlock(target);
 }
 
-bool isBeforeOrEqual(Operation* source, Operation* target) { return source == target || isBefore(source, target); }
-
 bool hasExactPhaseStage(const PipelineStageAnalysisResult& stages, const SyncPhase& phase)
 {
     const SyncStage* stage = stages.findStageForPhase(phase.id);
@@ -164,8 +162,6 @@ LogicalResult verifyFrontierCandidate(
         return failure();
     }
 
-    Operation* latestSource = nullptr;
-    Operation* earliestTarget = nullptr;
     for (SyncObligationId id : candidate.obligations) {
         if (id >= obligations.size()) {
             return failure();
@@ -184,21 +180,13 @@ LogicalResult verifyFrontierCandidate(
             !source->iterationDomain.loops.empty() || !destination->iterationDomain.loops.empty() ||
             source->operation->getBlock() != frontierSource->operation->getBlock() ||
             destination->operation->getBlock() != frontierTarget->operation->getBlock() ||
-            !sameGuard(source->guard, frontierSource->guard) ||
-            !isBeforeOrEqual(source->operation, frontierSource->operation) ||
-            !isBeforeOrEqual(frontierTarget->operation, destination->operation);
+            !sameGuard(source->guard, frontierSource->guard) || source != frontierSource ||
+            destination != frontierTarget;
         if (invalidObligation) {
             return failure();
         }
-        if (!latestSource || isBefore(latestSource, source->operation)) {
-            latestSource = source->operation;
-        }
-        if (!earliestTarget || isBefore(destination->operation, earliestTarget)) {
-            earliestTarget = destination->operation;
-        }
     }
     return success(
-        latestSource == frontierSource->operation && earliestTarget == frontierTarget->operation &&
         frontierSource->core == candidate.core && frontierTarget->core == candidate.core &&
         frontierSource->pipe == candidate.sourcePipe && frontierTarget->pipe == candidate.targetPipe &&
         phaseControlRelation(*frontierSource, *frontierTarget) == candidate.control);
@@ -359,93 +347,16 @@ LogicalResult verifyConcreteTail(
     return success(!invalid && returns != 0 && concrete.tails.size() == returns);
 }
 
-struct VerifiedFrontierGroup {
-    SyncDirectRepairKind kind = SyncDirectRepairKind::PipeBarrier;
-    SyncPhysicalCore core = SyncPhysicalCore::Unknown;
-    PIPE sourcePipe = PIPE::PIPE_UNASSIGNED;
-    PIPE targetPipe = PIPE::PIPE_UNASSIGNED;
-    Block* block = nullptr;
-    SyncControlRelation control = SyncControlRelation::Unknown;
-    llvm::SmallVector<SyncControlAtom, 2> guard;
-    llvm::SmallVector<const SyncDirectRepairCandidate*, 4> candidates;
-};
-
-bool matchesVerifiedGroup(
-    const VerifiedFrontierGroup& group, const SyncDirectRepairCandidate& candidate, ArrayRef<SyncControlAtom> guard)
-{
-    return group.kind == candidate.kind && group.core == candidate.core && group.sourcePipe == candidate.sourcePipe &&
-           group.targetPipe == candidate.targetPipe && group.block == candidate.sourceOperation->getBlock() &&
-           group.control == candidate.control && sameGuard(group.guard, guard);
-}
-
-void addVerifiedCandidateToGroups(
-    const StructuredSyncIR& schedule, const SyncDirectRepairCandidate& candidate,
-    SmallVectorImpl<VerifiedFrontierGroup>& groups, llvm::DenseMap<Block*, SmallVector<unsigned, 4>>& groupsByBlock)
-{
-    const SyncPhase* source = schedule.findPhase(candidate.sourcePhase);
-    SmallVector<unsigned, 4>& blockGroups = groupsByBlock[candidate.sourceOperation->getBlock()];
-    for (unsigned index : blockGroups) {
-        if (matchesVerifiedGroup(groups[index], candidate, source->guard)) {
-            groups[index].candidates.push_back(&candidate);
-            return;
-        }
-    }
-    const unsigned index = groups.size();
-    VerifiedFrontierGroup group;
-    group.kind = candidate.kind;
-    group.core = candidate.core;
-    group.sourcePipe = candidate.sourcePipe;
-    group.targetPipe = candidate.targetPipe;
-    group.block = candidate.sourceOperation->getBlock();
-    group.control = candidate.control;
-    group.guard.assign(source->guard.begin(), source->guard.end());
-    group.candidates.push_back(&candidate);
-    groups.push_back(std::move(group));
-    blockGroups.push_back(index);
-}
-
-LogicalResult verifyGroupHasNoMergeableFrontiers(const VerifiedFrontierGroup& group)
-{
-    llvm::DenseMap<Operation*, unsigned> operationRanks;
-    for (auto [rank, operation] : llvm::enumerate(*group.block)) {
-        operationRanks[&operation] = rank;
-    }
-    SmallVector<const SyncDirectRepairCandidate*, 8> candidates(group.candidates.begin(), group.candidates.end());
-    llvm::stable_sort(candidates, [&](const auto* first, const auto* second) {
-        const unsigned firstSource = operationRanks.lookup(first->sourceOperation);
-        const unsigned secondSource = operationRanks.lookup(second->sourceOperation);
-        if (firstSource != secondSource) {
-            return firstSource < secondSource;
-        }
-        return operationRanks.lookup(first->targetOperation) < operationRanks.lookup(second->targetOperation);
-    });
-    std::optional<unsigned> furthestTarget;
-    for (const SyncDirectRepairCandidate* candidate : candidates) {
-        const bool ranked = operationRanks.count(candidate->sourceOperation) != 0 &&
-                            operationRanks.count(candidate->targetOperation) != 0;
-        if (!ranked) {
-            return failure();
-        }
-        const unsigned sourceRank = operationRanks.lookup(candidate->sourceOperation);
-        const unsigned targetRank = operationRanks.lookup(candidate->targetOperation);
-        if (furthestTarget && sourceRank < *furthestTarget) {
-            return failure();
-        }
-        furthestTarget = furthestTarget ? std::max(*furthestTarget, targetRank) : targetRank;
-    }
-    return success();
-}
-
-LogicalResult verifyCandidatesCannotShareFrontier(
-    const StructuredSyncIR& schedule, ArrayRef<SyncDirectRepairCandidate> candidates)
+LogicalResult verifyUniqueCandidateFrontiers(ArrayRef<SyncDirectRepairCandidate> candidates)
 {
     bool flatExitSeen = false;
     llvm::DenseSet<Operation*> sectionExits;
-    SmallVector<VerifiedFrontierGroup, 8> groups;
-    llvm::DenseMap<Block*, SmallVector<unsigned, 4>> groupsByBlock;
+    llvm::DenseMap<SyncPhaseId, llvm::DenseSet<SyncPhaseId>> endpoints;
     for (const SyncDirectRepairCandidate& candidate : candidates) {
         if (candidate.kind != SyncDirectRepairKind::ExitBarrier) {
-            addVerifiedCandidateToGroups(schedule, candidate, groups, groupsByBlock);
+            if (!endpoints[candidate.sourcePhase].insert(candidate.targetPhase).second) {
+                return failure();
+            }
             continue;
         }
         if (!candidate.tailSectionOperation) {
@@ -456,11 +367,6 @@ LogicalResult verifyCandidatesCannotShareFrontier(
             continue;
         }
         if (!sectionExits.insert(candidate.tailSectionOperation).second) {
-            return failure();
-        }
-    }
-    for (const VerifiedFrontierGroup& group : groups) {
-        if (failed(verifyGroupHasNoMergeableFrontiers(group))) {
             return failure();
         }
     }
@@ -493,8 +399,7 @@ LogicalResult mlir::pto::protocol_sync::verifyDirectRepairPlan(
             plan.uncoveredObligations.size() == obligations.size() && canonicalUncovered &&
             plan.rejections.size() == 1 && plan.rejections.front().obligation == kInvalidSyncId &&
             plan.rejections.front().reason == SyncDirectRepairRejection::UnsupportedTarget &&
-            plan.rejections.front().detail ==
-                target.getUnsupportedReason(ProtocolSyncEmissionMode::DirectRepair);
+            plan.rejections.front().detail == target.getUnsupportedReason(ProtocolSyncEmissionMode::DirectRepair);
         return success(validUnsupported);
     }
     if (plan.status == SyncDirectRepairPlanStatus::Unsupported) {
@@ -541,7 +446,7 @@ LogicalResult mlir::pto::protocol_sync::verifyDirectRepairPlan(
             }
         }
     }
-    if (failed(verifyCandidatesCannotShareFrontier(schedule, plan.candidates))) {
+    if (failed(verifyUniqueCandidateFrontiers(plan.candidates))) {
         return failure();
     }
     SmallVector<SyncEventReservation, 8> reservations;

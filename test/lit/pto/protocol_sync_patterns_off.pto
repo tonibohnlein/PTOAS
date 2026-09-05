@@ -12,11 +12,6 @@
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=CONCRETE
 // RUN: not ptoas --protocol-sync-patterns=off %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=MODE
 // RUN: not ptoas --pto-arch=a3 --protocol-sync-mixed --protocol-sync-patterns=invalid %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=VALUE
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-dump=plan %S/protocol_sync_structured_frontier.pto -o %t.structured.pto 2> %t.structured.log
-// RUN: FileCheck %s --input-file=%t.structured.log --check-prefix=STRUCTURED
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.structured.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=STRUCTURED-VERIFIED
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-dump=plan %S/protocol_sync_loop_boundaries.pto -o %t.loop.pto 2>&1 | FileCheck %s --check-prefix=LOOP
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.loop.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=LOOP-VERIFIED
 
 module {}
 
@@ -26,9 +21,3 @@ module {}
 // CONCRETE: PROTOCOL-SYNC concrete-verification function=@linear_one_shot status=accepted
 // MODE: --protocol-sync-patterns requires --protocol-sync-mixed
 // VALUE: --protocol-sync-patterns must be 'on' or 'off'
-// STRUCTURED: PROTOCOL-SYNC mixed-plan function=@choice_frontier status=ready world=structured-frontier
-// STRUCTURED: PROTOCOL-SYNC mixed-plan function=@loop_choice_frontier status=ready world=structured-frontier
-// STRUCTURED-VERIFIED: concrete-verification function=@choice_frontier status=accepted
-// STRUCTURED-VERIFIED: concrete-verification function=@loop_choice_frontier status=accepted
-// LOOP: PROTOCOL-SYNC mixed-plan function=@loop_boundaries status=ready world=loop-frontier
-// LOOP-VERIFIED: concrete-verification function=@loop_boundaries status=accepted

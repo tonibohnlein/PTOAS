@@ -13,6 +13,6 @@
 // CHECK-NEXT: protocol-sync loop self-phase and unsupported boundaries: pass
 // CHECK-NEXT: protocol-sync concrete loop cycles: 27 topologies and action deletions pass
 // CHECK-NEXT: protocol-sync loop placement mutations and event reservations: pass
-// CHECK-NEXT: protocol-sync native boundary worlds: both GM modes, provenance and lifetime witnesses pass
+// CHECK-NEXT: protocol-sync reference boundary worlds: both GM modes, provenance and lifetime witnesses pass
 // CHECK-NEXT: protocol-sync execution exit: 15 drain/return cases across eight trip counts pass
-// CHECK-NEXT: protocol-sync structured choices and loops: 12 native worlds, paths and mutations pass
+// CHECK-NEXT: protocol-sync structured choices and loops: 12 reference worlds, paths and mutations pass

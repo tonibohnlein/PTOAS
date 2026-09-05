@@ -395,11 +395,10 @@ bool testMixedSelectionAndAllocation(MLIRContext& context)
     FailureOr<SyncMixedProtocolPlan> plan =
         buildMixedProtocolPlan(fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels);
     const bool selected = succeeded(plan) && plan->status == SyncMixedPlanStatus::Ready && plan->readyRelease &&
-                          plan->oneShot && plan->oneShot->candidates.size() == 1 &&
-                          plan->selectedWorldKind == SyncMixedWorldKind::CombinedProtocols &&
-                          plan->initialResidualCount == 2 && plan->directRepair.candidates.size() == 1 &&
-                          plan->candidateCountBeforeDeletion == 3 && plan->completeWorldsAttempted == 5 &&
-                          plan->completeWorldsFeasible == 3 && plan->selectedCost.generatedEventPairs == 3 &&
+                          !plan->oneShot && plan->selectedWorldKind == SyncMixedWorldKind::ReadyRelease &&
+                          plan->initialResidualCount == 3 && plan->directRepair.candidates.size() == 2 &&
+                          plan->candidateCountBeforeDeletion == 3 && plan->completeWorldsAttempted == 1 &&
+                          plan->completeWorldsFeasible == 1 && plan->selectedCost.generatedEventPairs == 3 &&
                           plan->selectedCost.targetedBarriers == 0 && plan->selectedCost.fixedExitDrains == 1 &&
                           plan->selectedCost.staticActions == 8 && plan->reverseDeletionAttempts == 3 &&
                           plan->reverseDeletionRemoved == 0 &&
@@ -444,9 +443,11 @@ bool testMixedSelectionAndAllocation(MLIRContext& context)
 
     const bool allocated = succeeded(allocateMixedProtocolEvents(fixture.schedule, *plan)) &&
                            plan->status == SyncMixedPlanStatus::Ready && plan->readyRelease->lanes.size() == 1 &&
-                           plan->readyRelease->lanes.front().readyEventId == 1 &&
-                           plan->readyRelease->lanes.front().releaseEventId == 0;
-    const bool collisionAvoided = plan->oneShot->candidates.front().eventId == 0;
+                           plan->readyRelease->lanes.front().readyEventId.has_value() &&
+                           plan->readyRelease->lanes.front().releaseEventId.has_value();
+    const bool collisionAvoided =
+        plan->directRepair.candidates.front().eventId.has_value() &&
+        plan->directRepair.candidates.front().eventId != plan->readyRelease->lanes.front().readyEventId;
     if (!check(
             allocated && collisionAvoided &&
                 succeeded(verifyMixedProtocolPlan(
@@ -456,14 +457,14 @@ bool testMixedSelectionAndAllocation(MLIRContext& context)
     }
 
     SyncMixedProtocolPlan exhausted = unallocated;
-    if (!check(exhausted.oneShot && !exhausted.oneShot->candidates.empty(), "mixed fixture has no one-shot event")) {
+    if (!check(!exhausted.directRepair.candidates.empty(), "mixed fixture has no one-shot event")) {
         return false;
     }
-    const SyncOneShotPublishCandidate baseEvent = exhausted.oneShot->candidates.front();
+    const SyncDirectRepairCandidate baseEvent = exhausted.directRepair.candidates.front();
     for (unsigned index = 1; index < 6; ++index) {
-        SyncOneShotPublishCandidate extra = baseEvent;
-        extra.id = exhausted.oneShot->candidates.size();
-        exhausted.oneShot->candidates.push_back(std::move(extra));
+        SyncDirectRepairCandidate extra = baseEvent;
+        extra.id = exhausted.directRepair.candidates.size();
+        exhausted.directRepair.candidates.push_back(std::move(extra));
     }
     const bool rejectedAtomically = succeeded(allocateMixedProtocolEvents(fixture.schedule, exhausted)) &&
                                     exhausted.status == SyncMixedPlanStatus::ResourceInfeasible &&
@@ -474,15 +475,14 @@ bool testMixedSelectionAndAllocation(MLIRContext& context)
 
     SyncMixedProtocolPlan analysisLimited = unallocated;
     if (!check(
-            analysisLimited.oneShot && !analysisLimited.oneShot->candidates.empty(),
-            "mixed fixture has no analysis-limit event candidate")) {
+            !analysisLimited.directRepair.candidates.empty(), "mixed fixture has no analysis-limit event candidate")) {
         return false;
     }
-    const SyncOneShotPublishCandidate limitedBaseEvent = analysisLimited.oneShot->candidates.front();
+    const SyncDirectRepairCandidate limitedBaseEvent = analysisLimited.directRepair.candidates.front();
     for (unsigned index = 1; index < 1025; ++index) {
-        SyncOneShotPublishCandidate extra = limitedBaseEvent;
-        extra.id = analysisLimited.oneShot->candidates.size();
-        analysisLimited.oneShot->candidates.push_back(std::move(extra));
+        SyncDirectRepairCandidate extra = limitedBaseEvent;
+        extra.id = analysisLimited.directRepair.candidates.size();
+        analysisLimited.directRepair.candidates.push_back(std::move(extra));
     }
     ProtocolSyncStatistics limitStatistics;
     const bool analysisLimitPreserved =
@@ -494,7 +494,7 @@ bool testMixedSelectionAndAllocation(MLIRContext& context)
     }
 
     SyncMixedProtocolPlan malformed = *plan;
-    malformed.oneShot->candidates.front().eventId = malformed.readyRelease->lanes.front().readyEventId;
+    malformed.directRepair.candidates.front().eventId = malformed.readyRelease->lanes.front().readyEventId;
     const std::string before = printModule(*module);
     const bool rejectedCollision = failed(
         verifyMixedProtocolPlan(fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, malformed));
@@ -555,10 +555,10 @@ bool testSuccessfulReverseDeletion(MLIRContext& context)
     const bool selected = succeeded(selectMixedProtocolCandidates(
                               fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, *plan)) &&
                           plan->candidateCountBeforeDeletion == 4 && plan->reverseDeletionAttempts == 4 &&
-                          plan->reverseDeletionRemoved == 1 && plan->directRepair.candidates.size() == 1;
+                          plan->reverseDeletionRemoved == 1 && plan->directRepair.candidates.size() == 2;
     SyncDirectRepairCandidate* retainedExit = findExitRepair(*plan);
-    const bool remapped = retainedExit && retainedExit->id == 0 && retainedExit->obligations.size() == 2 &&
-                          retainedExit->obligations[0] == 0 && retainedExit->obligations[1] == 1;
+    const bool remapped = retainedExit && retainedExit->id == 1 && retainedExit->obligations.size() == 2 &&
+                          retainedExit->obligations[0] == 1 && retainedExit->obligations[1] == 2;
     FailureOr<SyncInterpretationResult> exact = interpretSelectedWorld(
         fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, plan->selectedWorld);
     if (!check(
@@ -678,15 +678,15 @@ bool testCompleteWorldCompetitionAndSharedFrontier(MLIRContext& context)
     FailureOr<SyncMixedProtocolPlan> direct =
         buildMixedProtocolPlan(fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, false);
     const bool worldsCompete =
-        succeeded(protocol) && protocol->status == SyncMixedPlanStatus::Ready && protocol->oneShot &&
-        protocol->selectedWorldKind == SyncMixedWorldKind::OneShotPublish && protocol->completeWorldsAttempted == 2 &&
-        protocol->completeWorldsFeasible == 2 && protocol->directRepair.candidates.size() == 1 &&
+        succeeded(protocol) && protocol->status == SyncMixedPlanStatus::Ready && !protocol->hasProtocol() &&
+        protocol->selectedWorldKind == SyncMixedWorldKind::DirectOnly && protocol->completeWorldsAttempted == 1 &&
+        protocol->completeWorldsFeasible == 1 && protocol->directRepair.candidates.size() == 2 &&
         protocol->selectedCost.generatedEventPairs == 0 && protocol->selectedCost.targetedBarriers == 1 &&
         protocol->selectedCost.fixedExitDrains == 1 && protocol->selectedCost.staticActions == 1 && succeeded(direct) &&
         direct->status == SyncMixedPlanStatus::Ready && !direct->hasProtocol() &&
         direct->selectedWorldKind == SyncMixedWorldKind::DirectOnly && direct->completeWorldsAttempted == 1 &&
         direct->completeWorldsFeasible == 1 && direct->directRepair.candidates.size() == 2;
-    if (!check(worldsCompete, "complete protocol and freshly repaired direct worlds did not compete")) {
+    if (!check(worldsCompete, "elementary same-endpoint sharing must use ordinary repair in both modes")) {
         return false;
     }
     if (!check(
@@ -750,13 +750,11 @@ bool testCandidateGranularitySelection(MLIRContext& context)
         });
         event = found == plan->directRepair.candidates.end() ? nullptr : &*found;
     }
-    const bool selectedSubset =
-        succeeded(plan) && plan->status == SyncMixedPlanStatus::Ready && plan->oneShot &&
-        plan->oneShot->candidates.size() == 1 && plan->oneShot->candidates.front().sourcePhase == 0 &&
-        plan->oneShot->candidates.front().targetPhase == 1 && event && event->obligations.size() == 2 &&
-        plan->selectedCost.generatedEventPairs == 2 && plan->selectedCost.fixedExitDrains == 1 &&
-        plan->completeWorldsAttempted == 6 && plan->completeWorldsFeasible == 6;
-    if (!check(selectedSubset, "selector did not retain one protocol and directly repair the other channels")) {
+    const bool selectedSubset = succeeded(plan) && plan->status == SyncMixedPlanStatus::Ready && !plan->hasProtocol() &&
+                                event && plan->selectedCost.generatedEventPairs == 3 &&
+                                plan->selectedCost.fixedExitDrains == 1 && plan->completeWorldsAttempted == 1 &&
+                                plan->completeWorldsFeasible == 1;
+    if (!check(selectedSubset, "normal selection must retain the three independent handoffs")) {
         return false;
     }
     return check(
@@ -789,13 +787,14 @@ bool testConcreteVerifierFaultInjection(MLIRContext& context)
     const bool adjacentProtocolsCompose = runConcreteFault(
         context, kFixture, "mixed",
         [](func::FuncOp function, SyncMixedProtocolPlan& plan) {
-            if (!plan.oneShot || !plan.readyRelease) {
+            const bool missingParticipants = plan.directRepair.candidates.empty() || !plan.readyRelease;
+            if (missingParticipants) {
                 return false;
             }
-            auto found = llvm::find_if(plan.oneShot->candidates, [](const SyncOneShotPublishCandidate& candidate) {
-                return candidate.kind == SyncOneShotPublishKind::DirectedEvent;
+            auto found = llvm::find_if(plan.directRepair.candidates, [](const SyncDirectRepairCandidate& candidate) {
+                return candidate.kind == SyncDirectRepairKind::DirectedEvent;
             });
-            if (found == plan.oneShot->candidates.end()) {
+            if (found == plan.directRepair.candidates.end()) {
                 return false;
             }
             Operation* wait = found->targetOperation->getPrevNode();
@@ -824,13 +823,13 @@ bool testConcreteVerifierFaultInjection(MLIRContext& context)
     const bool earlySetRejected = runConcreteFault(
         context, kFixture, "mixed",
         [](func::FuncOp, SyncMixedProtocolPlan& plan) {
-            if (!plan.oneShot) {
+            if (plan.directRepair.candidates.empty()) {
                 return false;
             }
-            auto found = llvm::find_if(plan.oneShot->candidates, [](const SyncOneShotPublishCandidate& candidate) {
-                return candidate.kind == SyncOneShotPublishKind::DirectedEvent;
+            auto found = llvm::find_if(plan.directRepair.candidates, [](const SyncDirectRepairCandidate& candidate) {
+                return candidate.kind == SyncDirectRepairKind::DirectedEvent;
             });
-            if (found == plan.oneShot->candidates.end()) {
+            if (found == plan.directRepair.candidates.end()) {
                 return false;
             }
             Operation* set = found->sourceOperation->getNextNode();
@@ -848,13 +847,13 @@ bool testConcreteVerifierFaultInjection(MLIRContext& context)
     const bool lateWaitRejected = runConcreteFault(
         context, kFixture, "mixed",
         [](func::FuncOp, SyncMixedProtocolPlan& plan) {
-            if (!plan.oneShot) {
+            if (plan.directRepair.candidates.empty()) {
                 return false;
             }
-            auto found = llvm::find_if(plan.oneShot->candidates, [](const SyncOneShotPublishCandidate& candidate) {
-                return candidate.kind == SyncOneShotPublishKind::DirectedEvent;
+            auto found = llvm::find_if(plan.directRepair.candidates, [](const SyncDirectRepairCandidate& candidate) {
+                return candidate.kind == SyncDirectRepairKind::DirectedEvent;
             });
-            if (found == plan.oneShot->candidates.end()) {
+            if (found == plan.directRepair.candidates.end()) {
                 return false;
             }
             Operation* wait = found->targetOperation->getPrevNode();
@@ -872,13 +871,13 @@ bool testConcreteVerifierFaultInjection(MLIRContext& context)
     const bool directionRejected = runConcreteFault(
         context, kFixture, "mixed",
         [](func::FuncOp function, SyncMixedProtocolPlan& plan) {
-            if (!plan.oneShot) {
+            if (plan.directRepair.candidates.empty()) {
                 return false;
             }
-            auto found = llvm::find_if(plan.oneShot->candidates, [](const SyncOneShotPublishCandidate& candidate) {
-                return candidate.kind == SyncOneShotPublishKind::DirectedEvent;
+            auto found = llvm::find_if(plan.directRepair.candidates, [](const SyncDirectRepairCandidate& candidate) {
+                return candidate.kind == SyncDirectRepairKind::DirectedEvent;
             });
-            if (found == plan.oneShot->candidates.end()) {
+            if (found == plan.directRepair.candidates.end()) {
                 return false;
             }
             auto set = dyn_cast_or_null<SetFlagOp>(found->sourceOperation->getNextNode());
@@ -896,13 +895,13 @@ bool testConcreteVerifierFaultInjection(MLIRContext& context)
     const bool overlappingIdRejected = runConcreteFault(
         context, kFixture, "mixed",
         [](func::FuncOp, SyncMixedProtocolPlan& plan) {
-            if (!plan.oneShot) {
+            if (plan.directRepair.candidates.empty()) {
                 return false;
             }
-            auto found = llvm::find_if(plan.oneShot->candidates, [](const SyncOneShotPublishCandidate& candidate) {
-                return candidate.kind == SyncOneShotPublishKind::DirectedEvent;
+            auto found = llvm::find_if(plan.directRepair.candidates, [](const SyncDirectRepairCandidate& candidate) {
+                return candidate.kind == SyncDirectRepairKind::DirectedEvent;
             });
-            if (found == plan.oneShot->candidates.end()) {
+            if (found == plan.directRepair.candidates.end()) {
                 return false;
             }
             Operation* set = found->sourceOperation->getNextNode();

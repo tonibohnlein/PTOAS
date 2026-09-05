@@ -8,64 +8,16 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias --protocol-sync-dump=plan %s -o %t.safe.ir 2> %t.plan
-// RUN: FileCheck %s --input-file=%t.plan --check-prefix=PLAN
-// RUN: FileCheck %s --input-file=%t.safe.ir --check-prefix=IR
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.disjoint.ir
-// RUN: FileCheck %s --input-file=%t.disjoint.ir --check-prefix=IR
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.safe.ir -o /dev/null 2> %t.verify
-// RUN: FileCheck %s --input-file=%t.verify --check-prefix=VERIFY
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-gm-alias=assume-disjoint-arguments --protocol-sync-dump=concrete-verification %t.disjoint.ir -o /dev/null 2> %t.disjoint.verify
-// RUN: FileCheck %s --input-file=%t.disjoint.verify --check-prefix=VERIFY
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.cpp
-// RUN: FileCheck %s --input-file=%t.cpp --check-prefix=CXX
-// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-fallback=fail %s -o %t.a2.ir
-// RUN: FileCheck %s --input-file=%t.a2.ir --check-prefix=IR
+// RUN: not ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
 
-// PLAN: world=structured-frontier
-// PLAN: world=structured-frontier
-// VERIFY: concrete-verification function=@choice_frontier status=accepted first-failed-stage=none
-// VERIFY: concrete-verification function=@loop_choice_frontier status=accepted first-failed-stage=none
-// CXX-LABEL: AICORE void choice_frontier(
-// CXX: if (
-// CXX: set_flag(PIPE_V, PIPE_MTE3,
-// CXX: TSTORE(
-// CXX: wait_flag(PIPE_MTE3, PIPE_V,
-// CXX: pipe_barrier(PIPE_ALL);
-// CXX-LABEL: AICORE void loop_choice_frontier(
-// CXX: for (int64_t
-// CXX: if (
-// CXX: TSTORE(
-// CXX: wait_flag(PIPE_MTE3, PIPE_V,
-// CXX: TABS(
-// CXX: pipe_barrier(PIPE_ALL);
-// IR-LABEL: func.func @choice_frontier
-// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE2>,
-// IR-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>,
-// IR-NEXT: pto.tload
-// IR-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
-// IR-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
-// IR: scf.if
-// IR: pto.set_flag[<PIPE_V>, <PIPE_MTE3>,
-// IR-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
-// IR-NEXT: pto.tstore
-// IR-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_V>,
-// IR-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>,
-// IR: pto.tabs
-// IR-NEXT: pto.barrier <PIPE_V>
-// IR: pto.barrier <PIPE_ALL>
-// IR-LABEL: func.func @loop_choice_frontier
-// IR: scf.for
-// IR: scf.if
-// IR: pto.tstore
-// IR-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_V>,
-// IR-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>,
-// IR: } else {
-// IR: pto.tabs
-// IR-NEXT: pto.barrier <PIPE_V>
-// IR: pto.tabs
-// IR-NEXT: pto.barrier <PIPE_V>
-// IR: pto.barrier <PIPE_ALL>
+// Normal synthesis must not silently select the serialized reference recipe.
+// Its positive concrete, path and token-mutation tests remain in
+// pto-protocol-sync-loop-memory-test through the explicit reference builders.
+// CHECK: mixed-plan function=@choice_frontier status=unsupported
+// CHECK: ProtocolSync mixed mode found no complete supported plan
 
 module {
   func.func @choice_frontier(%condition: i1,

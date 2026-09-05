@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-direct-repair --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.direct.pto
+// RUN: FileCheck %s --input-file=%t.direct.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a3.pto
+// RUN: FileCheck %s --input-file=%t.a3.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.a3.disjoint.pto
+// RUN: FileCheck %s --input-file=%t.a3.disjoint.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a2.pto
+// RUN: FileCheck %s --input-file=%t.a2.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.a2.disjoint.pto
+// RUN: FileCheck %s --input-file=%t.a2.disjoint.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a3.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFIED
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a2.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFIED
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail %s -o %t.cpp
+
+// Distinct physical regions, two independent readiness requirements. The first
+// publication must not capture the second load. The second acquisition must
+// not move before C1.
+// The execution-oracle companion also checks overlapping outstanding L2/C1.
+// CHECK-LABEL: func.func @independent_readiness
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[A:[0-9]+]]>]
+// CHECK-NEXT: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[B:[0-9]+]]>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[A]]>]
+// CHECK-NEXT: pto.tabs
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[B]]>]
+// CHECK-NEXT: pto.tabs
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: return
+// VERIFIED: concrete-verification function=@independent_readiness status=accepted
+
+module {
+  func.func @independent_readiness(%in0: !pto.partition_tensor_view<16x16xf16>,
+                                  %in1: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c512 = arith.constant 512 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c1536 = arith.constant 1536 : i64
+    %a = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x16xf16>
+    %x = pto.alloc_tile addr = %c1024 : !pto.tile_buf<vec, 16x16xf16>
+    %y = pto.alloc_tile addr = %c1536 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%in0 : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%in1 : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%y : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}

@@ -270,12 +270,22 @@ bool runCase(MLIRContext& context, unsigned shape, StringRef alias)
     }
     auto timelines = analyzeStorageTimelines(fixture.schedule, *stages);
     auto channels = analyzeChannels(fixture.schedule, *stages, timelines);
-    auto plan = buildMixedProtocolPlan(fixture.schedule, *stages, timelines, channels, false);
-    const bool invalidPlan = failed(plan) || !plan->structuredFrontier ||
+    auto normal = buildMixedProtocolPlan(fixture.schedule, *stages, timelines, channels, false);
+    const bool unexpectedNormal = failed(normal) || normal->isComplete() || normal->structuredFrontier;
+    if (unexpectedNormal) {
+        return false;
+    }
+    auto reference = buildMixedStructuredFrontierPlan(fixture.schedule, *stages, timelines, channels);
+    const bool missingReference = failed(reference) || !reference->has_value();
+    if (missingReference) {
+        return false;
+    }
+    auto& plan = *reference;
+    const bool invalidPlan = !plan->structuredFrontier ||
                              failed(verifyMixedProtocolPlan(fixture.schedule, *stages, timelines, channels, *plan));
     if (invalidPlan) {
         llvm::errs() << "FAIL structured native shape=" << shape << " alias=" << alias << '\n';
-        if (succeeded(plan)) {
+        if (plan) {
             printMixedProtocolPlan(fixture.function, *plan, llvm::errs());
         }
         return false;
@@ -371,6 +381,6 @@ bool runStructuredFrontierTests(MLIRContext& context)
             return false;
         }
     }
-    llvm::outs() << "protocol-sync structured choices and loops: 12 native worlds, paths and mutations pass\n";
+    llvm::outs() << "protocol-sync structured choices and loops: 12 reference worlds, paths and mutations pass\n";
     return true;
 }
