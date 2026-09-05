@@ -11,3 +11,5 @@
 // CHECK: protocol-sync loop occurrence oracle: 81 programs, 648 traces pass
 // CHECK-NEXT: protocol-sync loop boundary mutations and limits: pass
 // CHECK-NEXT: protocol-sync loop self-phase and unsupported boundaries: pass
+// CHECK-NEXT: protocol-sync concrete loop cycles: 27 topologies and action deletions pass
+// CHECK-NEXT: protocol-sync loop placement mutations and event reservations: pass

@@ -114,12 +114,14 @@ link/dependency graph is unnecessary. Run the smallest relevant test first,
 then the focused suite at a semantic checkpoint. Do not repeat a full build or
 the full host suite for small assertion, formatting, or documentation changes.
 
-## Step 2: unconditional single-loop repair (not implemented)
+## Step 2: unconditional single-loop repair (native integration pending)
 
 The [single-loop occurrence foundation](ptoas-protocol-sync-single-loop-occurrences.md)
 implements the initial requirement-discovery slice as an opt-in analysis with
-an independent bounded oracle. Native recurring repair and its concrete token
-verification remain unimplemented; this does not change loop admission.
+an independent bounded oracle. The [acknowledged loop-frontier repair](ptoas-protocol-sync-loop-frontier-repair.md)
+adds a low-level isolated-loop recipe, disposable-clone emission and independent
+concrete verification. Integration with F and boundary composition remain
+unimplemented; neither milestone changes native loop admission.
 
 Add explicit same-iteration and carried occurrence relations, including
 same-static-phase backedges. Compose live-in, body, zero-trip bypass and exit

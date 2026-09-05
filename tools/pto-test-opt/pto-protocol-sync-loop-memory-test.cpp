@@ -16,6 +16,7 @@
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
 #include "PTO/Transforms/ProtocolSync/LocalMemoryAnalysis.h"
+#include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -31,6 +32,8 @@
 using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::protocol_sync;
+
+bool checkLoopFrontierInterleavings(const StructuredSyncIR& schedule, unsigned trips);
 
 namespace {
 
@@ -346,6 +349,184 @@ bool testSelfPhaseAndBoundaries(MLIRContext& context)
     return true;
 }
 
+OwningOpRef<ModuleOp> repairLoop(MLIRContext& context, StringRef body)
+{
+    auto module =
+        parseSourceString<ModuleOp>(kPrelude.str() + kLoop.str() + body.str() + "}\nreturn\n}\n}\n", &context);
+    if (!module || failed(verify(*module))) {
+        return {};
+    }
+    Fixture fixture(std::move(module));
+    if (!fixture.build()) {
+        return {};
+    }
+    auto plan = buildLoopFrontierRepairPlan(fixture.schedule);
+    const bool ready = succeeded(plan) && plan->status == SyncLoopFrontierStatus::Ready;
+    if (!ready) {
+        return {};
+    }
+    IRMapping mapping;
+    OwningOpRef<ModuleOp> clone = cast<ModuleOp>(fixture.module->getOperation()->clone(mapping));
+    auto function = cast<func::FuncOp>(mapping.lookup(fixture.function.getOperation()));
+    const bool emitted =
+        succeeded(materializeLoopFrontierRepair(function, mapping, *plan)) && succeeded(verify(*clone));
+    if (!emitted) {
+        return {};
+    }
+    return clone;
+}
+
+bool concreteCycle(OwningOpRef<ModuleOp> module)
+{
+    if (!module || failed(verify(*module))) {
+        return false;
+    }
+    Fixture fixture(std::move(module));
+    return fixture.build() && succeeded(verifyConcreteLoopFrontierRepair(fixture.schedule));
+}
+
+bool interleavings(OwningOpRef<ModuleOp> module)
+{
+    Fixture fixture(std::move(module));
+    if (!fixture.build()) {
+        return false;
+    }
+    for (unsigned trips : {0, 1, 2, 3, 4, 7, 8, 11}) {
+        if (!checkLoopFrontierInterleavings(fixture.schedule, trips)) {
+            llvm::errs() << "FAIL: unsafe FIFO interleaving or oracle limit at trips=" << trips << '\n';
+            return false;
+        }
+    }
+    return true;
+}
+
+SmallVector<Operation*> syncOperations(ModuleOp module)
+{
+    SmallVector<Operation*> operations;
+    module.walk([&](Operation* operation) {
+        if (isa<SetFlagOp, WaitFlagOp, BarrierOp>(operation)) {
+            operations.push_back(operation);
+        }
+    });
+    return operations;
+}
+
+bool testConcreteCycles(MLIRContext& context)
+{
+    for (unsigned encoding = 0; encoding < 27; ++encoding) {
+        const std::string body =
+            effect(encoding % 3, "%a") + effect((encoding / 3) % 3, "%b") + effect((encoding / 9) % 3, "%a");
+        auto module = repairLoop(context, body);
+        if (!check(module && concreteCycle(cast<ModuleOp>(module->clone())), "concrete phase cycle must verify")) {
+            return false;
+        }
+        if (!check(interleavings(cast<ModuleOp>(module->clone())), "all enabled FIFO interleavings must be safe")) {
+            return false;
+        }
+        const std::size_t count = syncOperations(*module).size();
+        for (std::size_t index = 0; index < count; ++index) {
+            OwningOpRef<ModuleOp> mutated = cast<ModuleOp>(module->clone());
+            syncOperations(*mutated)[index]->erase();
+            if (!check(!concreteCycle(std::move(mutated)), "deleting any cycle action must reject")) {
+                return false;
+            }
+        }
+    }
+    if (!check(concreteCycle(repairLoop(context, effect(0, "%a"))), "single-pipe self recurrence must verify")) {
+        return false;
+    }
+    llvm::outs() << "protocol-sync concrete loop cycles: 27 topologies and action deletions pass\n";
+    return true;
+}
+
+bool testCyclePlacementAndResources(MLIRContext& context)
+{
+    const std::string body = effect(0, "%a") + effect(2, "%a") + effect(0, "%b") + effect(2, "%b") + effect(1, "%a");
+    auto module = repairLoop(context, body);
+    if (!module || !concreteCycle(cast<ModuleOp>(module->clone()))) {
+        return false;
+    }
+    for (unsigned mutation = 0; mutation < 5; ++mutation) {
+        OwningOpRef<ModuleOp> mutated = cast<ModuleOp>(module->clone());
+        auto function = *mutated->getOps<func::FuncOp>().begin();
+        auto loop = *function.getOps<scf::ForOp>().begin();
+        auto set = *loop.getOps<SetFlagOp>().begin();
+        auto wait = *loop.getOps<WaitFlagOp>().begin();
+        if (mutation == 0) {
+            set->moveBefore(set->getPrevNode());
+        } else if (mutation == 1) {
+            wait->moveAfter(wait->getNextNode());
+        } else if (mutation == 2) {
+            set.setEventIdAttr(EventAttr::get(&context, EVENT::EVENT_ID7));
+        } else if (mutation == 3) {
+            OpBuilder builder(set);
+            auto choice = builder.create<scf::IfOp>(set.getLoc(), function.getArgument(1), false);
+            set->moveBefore(choice.thenBlock()->getTerminator());
+        } else {
+            OpBuilder builder(set);
+            builder.setInsertionPointAfter(set);
+            builder.insert(set->clone());
+            Fixture witness(cast<ModuleOp>(mutated->clone()));
+            if (!check(
+                    witness.build() && !checkLoopFrontierInterleavings(witness.schedule, 3),
+                    "independent execution must detect a live-key rearm")) {
+                return false;
+            }
+        }
+        if (!check(!concreteCycle(std::move(mutated)), "moved, mismatched or guarded cycle action must reject")) {
+            return false;
+        }
+    }
+    auto original = parseSourceString<ModuleOp>(kPrelude.str() + kLoop.str() + body + "}\nreturn\n}\n}\n", &context);
+    if (!original) {
+        return false;
+    }
+    Fixture fixture(std::move(original));
+    if (!fixture.build()) {
+        return false;
+    }
+    SyncEventReservation reservation{PIPE::PIPE_MTE2, PIPE::PIPE_V, {0, 2, 4}};
+    auto holes = buildLoopFrontierRepairPlan(fixture.schedule, {reservation});
+    if (!check(
+            succeeded(holes) && holes->status == SyncLoopFrontierStatus::Ready, "non-contiguous IDs must allocate")) {
+        return false;
+    }
+    for (const auto& edge : holes->edges) {
+        if (edge.sourcePipe == reservation.source && edge.targetPipe == reservation.target &&
+            !check(
+                edge.eventId && !llvm::is_contained(reservation.eventIds, *edge.eventId),
+                "reserved ID was allocated")) {
+            return false;
+        }
+    }
+    const auto target = ProtocolSyncTarget::resolve(fixture.function);
+    reservation.eventIds.assign(target.getCompilerEventIds().begin(), target.getCompilerEventIds().end());
+    auto exhausted = buildLoopFrontierRepairPlan(fixture.schedule, {reservation});
+    if (!check(
+            succeeded(exhausted) && exhausted->status == SyncLoopFrontierStatus::ResourceInfeasible &&
+                exhausted->edges.empty(),
+            "event exhaustion must not expose a partial recipe")) {
+        return false;
+    }
+    auto prefixModule = parseSourceString<ModuleOp>(program(3), &context);
+    if (!prefixModule) {
+        return false;
+    }
+    Fixture prefix(std::move(prefixModule));
+    if (!prefix.build()) {
+        return false;
+    }
+    auto unsupported = buildLoopFrontierRepairPlan(prefix.schedule);
+    if (!check(
+            succeeded(unsupported) && unsupported->status == SyncLoopFrontierStatus::Unsupported &&
+                unsupported->edges.empty(),
+            "prefix effects need a separate boundary composition proof")) {
+        return false;
+    }
+    llvm::outs() << "protocol-sync loop placement mutations and event reservations: pass\n";
+    return true;
+}
+
 } // namespace
 
 int main()
@@ -354,5 +535,8 @@ int main()
     registry.insert<PTODialect, arith::ArithDialect, func::FuncDialect, scf::SCFDialect>();
     MLIRContext context(registry);
     context.disableMultithreading();
-    return testOracle(context) && testMutationsAndLimits(context) && testSelfPhaseAndBoundaries(context) ? 0 : 1;
+    return testOracle(context) && testMutationsAndLimits(context) && testSelfPhaseAndBoundaries(context) &&
+                   testConcreteCycles(context) && testCyclePlacementAndResources(context) ?
+               0 :
+               1;
 }

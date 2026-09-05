@@ -116,6 +116,8 @@ add_mlir_dialect_library(PTOTransforms
   ProtocolSync/LocalMemoryAnalysis.cpp
   ProtocolSync/LocalMemoryRegionFlow.cpp
   ProtocolSync/LocalMemoryLoopFlow.cpp
+  ProtocolSync/LoopFrontierRepair.cpp
+  ProtocolSync/ConcreteLoopFrontiers.cpp
   ProtocolSync/LocalMemoryVerifier.cpp
   ProtocolSync/LaneFrontierAnalysis.cpp
   ProtocolSync/LaneFrontierDump.cpp

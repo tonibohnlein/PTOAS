@@ -6,8 +6,9 @@ This is step 2A of the structured-repair continuation, based on `e433b74fa`.
 It adds opt-in canonical local-memory requirements for one unconditional
 `scf.for` with a straight-line body and straight-line prefix/suffix. It does
 not yet enable ordinary-loop synchronization emission or increase native kernel
-admission. The next implementation slice must add an acknowledged recurring
-recipe and its independent concrete event-lifetime proof together.
+admission. The subsequent [acknowledged loop-frontier repair](ptoas-protocol-sync-loop-frontier-repair.md)
+adds a low-level recurring recipe and independent concrete cycle verification;
+boundary composition and integration with F remain required for native emission.
 
 The supported analysis subset is one function block, one positive-constant-step
 loop without iter_args, ordinary vector-core phases, and independently recovered
