@@ -15,6 +15,7 @@
 
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
 #include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
+#include "PTO/Transforms/ProtocolSync/StructuredFrontier.h"
 #include "PTO/Transforms/ProtocolSync/OneShotPublish.h"
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 
@@ -50,6 +51,7 @@ enum class SyncMixedWorldKind : std::uint8_t {
     ReadyRelease,
     CombinedProtocols,
     LoopFrontier,
+    StructuredFrontier,
 };
 
 struct SyncMixedWorldCost {
@@ -68,6 +70,7 @@ struct SyncMixedProtocolPlan {
     std::optional<SyncOneShotPublishPlan> oneShot;
     std::optional<SyncReadyReleasePlan> readyRelease;
     std::optional<SyncLoopFrontierPlan> loopFrontier;
+    std::optional<SyncStructuredFrontierPlan> structuredFrontier;
     llvm::SmallVector<SyncResidualObligation, 16> directObligations;
     SyncDirectRepairPlan directRepair;
     SyncSelectedWorld selectedWorld;
@@ -93,6 +96,13 @@ FailureOr<SyncMixedProtocolPlan> buildMixedProtocolPlan(
 FailureOr<std::optional<SyncMixedProtocolPlan>> buildMixedLoopFrontierPlan(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels);
+FailureOr<std::optional<SyncMixedProtocolPlan>> buildMixedStructuredFrontierPlan(
+    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
+    const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels);
+LogicalResult verifyMixedStructuredFrontierPlan(
+    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
+    const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
+    const SyncMixedProtocolPlan& plan);
 LogicalResult verifyMixedLoopFrontierPlan(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,

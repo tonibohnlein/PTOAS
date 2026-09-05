@@ -184,9 +184,9 @@ The reviews retain these nonblocking follow-ups:
 - Validate complete-world accounting/optimality alongside semantic consistency.
 - Keep the logical certificate builder restricted to checked callers; consider
   an explicitly checked certificate type before broadening its use.
-- Add an all-lanes drain and function-return rule to the execution oracle. It
-  currently treats `PIPE_ALL` as a separate lane; final exit completion is
-  checked by production reconstruction, not independently by that oracle.
+- The [completion-supply continuation](ptoas-protocol-sync-completion-supply.md)
+  closes the all-lanes drain/function-return gap in the execution oracle.
+  Production terminal-drain policy remains separate from semantic retirement.
 - Compose fixed supply and implement sparse placement only with corresponding
   proof and verification extensions. The current exclusions remain intentional.
 

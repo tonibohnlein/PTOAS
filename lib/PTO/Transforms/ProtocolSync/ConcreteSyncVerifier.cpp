@@ -11,6 +11,7 @@
 //===- ConcreteSyncVerifier.cpp - Verify emitted synchronization -------===//
 
 #include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
+#include "PTO/Transforms/ProtocolSync/StructuredFrontier.h"
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
@@ -824,7 +825,11 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
         return rejectAtStage("target", firstFailedStage);
     }
     const bool loopFrontier = succeeded(verifyConcreteLoopFrontierRepair(schedule, true));
-    if (loopFrontier) {
+    auto structured = reconstructStructuredFrontier(schedule);
+    const bool structuredFrontier = succeeded(structured);
+    if (structuredFrontier) {
+        state.world = std::move(*structured);
+    } else if (loopFrontier) {
         auto world = buildLoopFrontierWorld(schedule);
         if (failed(world)) {
             return rejectAtStage("loop-frontier-world", firstFailedStage);
@@ -856,10 +861,10 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
     }
     // The loop checker establishes total dynamic phase order, including all
     // boundary paths. The straight-line scoreboard cannot interpret recurrence.
-    if (!loopFrontier && failed(verifyLocalMemoryCoverage(schedule, state.world))) {
+    if (!loopFrontier && !structuredFrontier && failed(verifyLocalMemoryCoverage(schedule, state.world))) {
         return rejectAtStage("local-memory-coverage", firstFailedStage);
     }
-    if (!loopFrontier && failed(verifyConcreteLocalScoreboard(schedule))) {
+    if (!loopFrontier && !structuredFrontier && failed(verifyConcreteLocalScoreboard(schedule))) {
         return rejectAtStage("local-concrete-scoreboard", firstFailedStage);
     }
     return success();

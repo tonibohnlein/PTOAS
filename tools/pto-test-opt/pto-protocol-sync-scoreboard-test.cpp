@@ -29,6 +29,8 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::protocol_sync;
 
+bool runCompletionSupplyTests(MLIRContext& context);
+
 namespace {
 
 const std::string kLoad = "pto.tload ins(%in : !pto.partition_tensor_view<16x16xf16>) "
@@ -188,5 +190,5 @@ int main()
     registry.insert<PTODialect, arith::ArithDialect, func::FuncDialect, scf::SCFDialect>();
     MLIRContext context(registry);
     context.disableMultithreading();
-    return runCases(context) ? 0 : 1;
+    return runCases(context) && runCompletionSupplyTests(context) ? 0 : 1;
 }

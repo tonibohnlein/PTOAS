@@ -15,6 +15,7 @@
 // RUN:   --protocol-sync-direct-repair --protocol-sync-fallback=fail %s -o %t.a3.ir
 // RUN: FileCheck %s --input-file=%t.a3.ir --check-prefix=REPAIR
 // CHECK: protocol-sync concrete scoreboard: 40 A2/A3 cases pass
+// CHECK-NEXT: protocol-sync completion supply: 1024 graphs, witnesses and negative controls pass
 
 // REPAIR-LABEL: func.func @named_barrier_requires_exit_drain
 // REPAIR: pto.tload

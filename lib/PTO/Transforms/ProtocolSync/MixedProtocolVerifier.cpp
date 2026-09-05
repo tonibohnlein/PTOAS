@@ -505,6 +505,12 @@ LogicalResult mlir::pto::protocol_sync::verifyMixedProtocolPlan(
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
     const SyncMixedProtocolPlan& plan, ProtocolSyncStatistics* statistics)
 {
+    if (plan.structuredFrontier) {
+        return verifyMixedStructuredFrontierPlan(schedule, stages, timelines, channels, plan);
+    }
+    if (!plan.selectedWorld.acknowledgedPhases.empty()) {
+        return failure();
+    }
     if (plan.loopFrontier) {
         return verifyMixedLoopFrontierPlan(schedule, stages, timelines, channels, plan);
     }
@@ -646,6 +652,12 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyMixedProtocolPlanInD
     func::FuncOp function = schedule.getFunction();
     IRMapping mapping;
     buildIdentityMapping(function, mapping);
+    if (plan.structuredFrontier) {
+        if (failed(materializeStructuredFrontier(function, mapping, *plan.structuredFrontier))) {
+            return failure();
+        }
+        return verifyFreshConcreteSyncSemantics(function, statistics);
+    }
     if (plan.loopFrontier) {
         if (failed(materializeLoopFrontierRepair(function, mapping, *plan.loopFrontier))) {
             return failure();

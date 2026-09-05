@@ -429,6 +429,8 @@ SyncMixedWorldCost computeWorldCost(const SyncMixedProtocolPlan& plan, std::uint
 unsigned worldTieBreak(SyncMixedWorldKind kind)
 {
     switch (kind) {
+        case SyncMixedWorldKind::StructuredFrontier:
+            return 5;
         case SyncMixedWorldKind::LoopFrontier:
             return 4;
         case SyncMixedWorldKind::CombinedProtocols:
@@ -724,6 +726,19 @@ FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPla
             best = std::move(candidate);
         }
     }
+    auto structuredAlternative = buildMixedStructuredFrontierPlan(schedule, stages, timelines, channels);
+    if (failed(structuredAlternative)) {
+        return failure();
+    }
+    if (*structuredAlternative) {
+        ++worldsAttempted;
+        ++worldsFeasible;
+        auto& candidate = **structuredAlternative;
+        candidate.protocolsEnabled = enableProtocols;
+        if (!best || worldCostsLess(candidate, *best)) {
+            best = std::move(candidate);
+        }
+    }
     if (statistics) {
         statistics->completeWorldsAttempted += worldsAttempted;
         statistics->completeWorldsFeasible += worldsFeasible;
@@ -809,9 +824,11 @@ LogicalResult mlir::pto::protocol_sync::selectMixedProtocolCandidates(
 LogicalResult mlir::pto::protocol_sync::allocateMixedProtocolEvents(
     const StructuredSyncIR& schedule, SyncMixedProtocolPlan& plan, ProtocolSyncStatistics* statistics)
 {
-    if (plan.loopFrontier) {
-        // The atomic loop builder reserves distinct static keys before it
-        // publishes a complete alternative. Full plan verification follows.
+    if (plan.loopFrontier || plan.structuredFrontier) {
+        // Atomic builders allocate before publishing a complete alternative.
+        // Serial loops use distinct static keys; balanced structured packages
+        // reuse keys only after an acknowledged consuming round trip.
+        // Full plan verification follows.
         if (statistics) {
             statistics->maxEventDomainPressure =
                 std::max(statistics->maxEventDomainPressure, plan.selectedCost.eventPressure);
@@ -889,6 +906,8 @@ StringRef mlir::pto::protocol_sync::stringifySyncMixedPlanStatus(SyncMixedPlanSt
 StringRef mlir::pto::protocol_sync::stringifySyncMixedWorldKind(SyncMixedWorldKind kind)
 {
     switch (kind) {
+        case SyncMixedWorldKind::StructuredFrontier:
+            return "structured-frontier";
         case SyncMixedWorldKind::LoopFrontier:
             return "loop-frontier";
         case SyncMixedWorldKind::DirectOnly:

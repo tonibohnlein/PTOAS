@@ -13,6 +13,8 @@
 // interleavings and independent asynchronous completions, and reject local
 // hazards, live-key rearming, leaks or deadlock. Same-pipe issue is not completion.
 // Uses fixture allocation byte ranges, not production requirements or recipes.
+// Global drains rendezvous at the preceding command prefix on every lane.
+// Return checks completion rather than implicitly waiting for pending work.
 
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -33,6 +35,11 @@ enum class CommandKind { Phase, Set, Wait, Barrier };
 struct Command {
     CommandKind kind;
     unsigned identity;
+};
+struct Boundary {
+    std::vector<unsigned> prefixes;
+    unsigned phaseCount = 0;
+    bool returns = false;
 };
 using EventKey = std::tuple<PIPE, PIPE, unsigned>;
 
@@ -63,7 +70,7 @@ bool hazard(const SyncPhase& first, const SyncPhase& second, const StructuredSyn
             }
             const auto x = cast<IntegerAttr>(leftAddr.getValue()).getInt();
             const auto y = cast<IntegerAttr>(rightAddr.getValue()).getInt();
-            // Fixture addresses are only 0 and 256, independent of atom masks.
+            // Compare fixture byte intervals directly, independent of atom masks.
             if (x < y + 512 && y < x + 512) {
                 return true;
             }
@@ -96,12 +103,32 @@ public:
                 wait.getSrcPipe().getPipe(), wait.getDstPipe().getPipe(),
                 static_cast<unsigned>(wait.getEventId().getEvent()), false);
         } else if (auto barrier = dyn_cast<BarrierOp>(&operation)) {
-            queues[laneId(barrier.getPipe().getPipe())].push_back({CommandKind::Barrier, 0});
+            const bool allLanes = barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
+            if (allLanes) {
+                boundary(false);
+            } else {
+                queues[laneId(barrier.getPipe().getPipe())].push_back({CommandKind::Barrier, 0});
+            }
+        } else if (isa<func::ReturnOp>(operation)) {
+            boundary(true);
         }
     }
 
-    bool run()
+    bool run(bool* unsafeWitness = nullptr)
     {
+        if (unsafeWitness) {
+            *unsafeWitness = false;
+        }
+        const auto unsafe = [&]() {
+            if (unsafeWitness) {
+                *unsafeWitness = true;
+            }
+            return false;
+        };
+        const bool hasReturn = !boundaries.empty() && boundaries.back().returns;
+        if (!hasReturn) {
+            return false;
+        }
         std::vector<std::vector<unsigned>> predecessors(phases.size());
         for (unsigned target = 0; target < phases.size(); ++target) {
             for (unsigned source = 0; source < target; ++source) {
@@ -113,7 +140,8 @@ public:
         using State = std::vector<unsigned>;
         std::set<State> visited;
         const unsigned completionBase = queues.size() + events.size();
-        std::vector<State> work{State(completionBase + phases.size(), 0)};
+        const unsigned boundaryIndex = completionBase + phases.size();
+        std::vector<State> work{State(boundaryIndex + 1, 0)};
         visited.insert(work.front());
         constexpr unsigned maximumStates = 100000;
         for (unsigned index = 0; index < work.size(); ++index) {
@@ -125,6 +153,30 @@ public:
                     work.push_back(std::move(next));
                 }
             };
+            const Boundary* cut =
+                state[boundaryIndex] < boundaries.size() ? &boundaries[state[boundaryIndex]] : nullptr;
+            if (cut) {
+                finished = false;
+                bool reached = true;
+                for (unsigned lane = 0; lane < queues.size(); ++lane) {
+                    reached &= state[lane] == prefix(*cut, lane);
+                }
+                if (reached) {
+                    bool completed = true;
+                    for (unsigned phase = 0; phase < cut->phaseCount; ++phase) {
+                        completed &= state[completionBase + phase] != 0;
+                    }
+                    if (cut->returns && !completed) {
+                        return unsafe(); // Return must not drain asynchronous work.
+                    }
+                    if (completed) {
+                        State next = state;
+                        ++next[boundaryIndex];
+                        enqueue(std::move(next));
+                        advanced = true;
+                    }
+                }
+            }
             // An issued phase may complete independently of subsequent issue.
             for (unsigned phase = 0; phase < phases.size(); ++phase) {
                 const auto [owner, position] = positions[phase];
@@ -142,6 +194,9 @@ public:
                     continue;
                 }
                 finished = false;
+                if (cut && state[lane] >= prefix(*cut, lane)) {
+                    continue; // No lane crosses a global boundary early.
+                }
                 const Command command = queues[lane][state[lane]];
                 const unsigned token = queues.size() + command.identity;
                 if (command.kind == CommandKind::Set || command.kind == CommandKind::Barrier) {
@@ -158,12 +213,12 @@ public:
                     continue;
                 }
                 if (command.kind == CommandKind::Set && state[token] != 0) {
-                    return false;
+                    return unsafe();
                 }
                 if (command.kind == CommandKind::Phase) {
                     for (unsigned previous : predecessors[command.identity]) {
                         if (state[completionBase + previous] == 0) {
-                            return false;
+                            return unsafe();
                         }
                     }
                 }
@@ -180,12 +235,12 @@ public:
                 return false; // Test budget exhaustion is not a passing proof.
             }
             if (!advanced && !finished) {
-                return false;
+                return unsafe();
             }
             if (finished) {
                 for (unsigned token = queues.size(); token < completionBase; ++token) {
                     if (state[token] != 0) {
-                        return false;
+                        return unsafe();
                     }
                 }
             }
@@ -194,6 +249,22 @@ public:
     }
 
 private:
+    static unsigned prefix(const Boundary& cut, unsigned lane)
+    {
+        return lane < cut.prefixes.size() ? cut.prefixes[lane] : 0;
+    }
+
+    void boundary(bool returns)
+    {
+        Boundary cut;
+        cut.phaseCount = phases.size();
+        cut.returns = returns;
+        for (const auto& queue : queues) {
+            cut.prefixes.push_back(queue.size());
+        }
+        boundaries.push_back(std::move(cut));
+    }
+
     unsigned laneId(PIPE pipe)
     {
         auto [found, inserted] = lanes.emplace(pipe, queues.size());
@@ -216,9 +287,45 @@ private:
     std::vector<std::vector<Command>> queues;
     std::vector<const SyncPhase*> phases;
     std::vector<std::pair<unsigned, unsigned>> positions;
+    std::vector<Boundary> boundaries;
 };
 
 } // namespace
+
+bool checkStructuredFrontierInterleavings(
+    const StructuredSyncIR& schedule, unsigned trips, std::uint64_t choices, bool* unsafeWitness)
+{
+    if (unsafeWitness) {
+        *unsafeWitness = false;
+    }
+    ExecutionOracle oracle(schedule);
+    unsigned decision = 0;
+    const auto expand = [&](const auto& self, Block& block) -> bool {
+        for (Operation& op : block) {
+            if (auto branch = dyn_cast<scf::IfOp>(op)) {
+                if (decision >= 64) {
+                    return false;
+                }
+                const bool takeThen = (choices & (std::uint64_t{1} << decision++)) != 0;
+                Region& arm = takeThen ? branch.getThenRegion() : branch.getElseRegion();
+                const bool invalidArm = !arm.empty() && !self(self, arm.front());
+                if (invalidArm) {
+                    return false;
+                }
+            } else if (auto loop = dyn_cast<scf::ForOp>(op)) {
+                for (unsigned iteration = 0; iteration < trips; ++iteration) {
+                    if (!self(self, *loop.getBody())) {
+                        return false;
+                    }
+                }
+            } else {
+                oracle.append(op);
+            }
+        }
+        return true;
+    };
+    return expand(expand, schedule.getFunction().getBody().front()) && oracle.run(unsafeWitness);
+}
 
 bool checkLoopFrontierInterleavings(const StructuredSyncIR& schedule, unsigned trips)
 {

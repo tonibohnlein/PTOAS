@@ -54,9 +54,21 @@ enum class SyncControlRelation : std::uint8_t {
     Unknown,
 };
 
+enum class SyncParticipationRelation : std::uint8_t {
+    MustCoexecute,
+    SameFeasiblePath,
+    MutuallyExclusive,
+    SourceMayBeAbsent,
+    TargetMayBeAbsent,
+    Unknown,
+};
+
 enum class SyncIterationRelationKind : std::uint8_t {
     SameIteration,
     LoopCarried,
+    /// Any strictly positive distance in the named carrier. Guards may select
+    /// different arms in different iterations; never interpret as distance one.
+    LoopCarriedAny,
     /// Outside-before -> body(i), for every executing iteration i.
     LoopEntry,
     /// Body(i) -> outside-after, for every executing iteration i.
@@ -89,6 +101,7 @@ struct SyncResidualObligation {
     SyncAccessId sourceAccess = kInvalidSyncId;
     SyncAccessId targetAccess = kInvalidSyncId;
     SyncRegionPrecision precision = SyncRegionPrecision::Unknown;
+    SyncParticipationRelation participation = SyncParticipationRelation::Unknown;
 };
 
 enum class SyncSelectedProtocolKind : std::uint8_t {
@@ -118,6 +131,9 @@ struct SyncSelectedVisibility {
 };
 
 struct SyncSelectedWorld {
+    /// Each listed phase acquires and returns completion on PIPE_V on its own
+    /// path. Requires a checked balanced recipe, not a whole-choice order flag.
+    llvm::SmallVector<SyncPhaseId, 16> acknowledgedPhases;
     /// Atomic fully serialized ordinary-loop completion certificate. Never
     /// implies visibility. Concrete verification reconstructs it without tags.
     std::optional<SyncRegionId> orderedLoop;

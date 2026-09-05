@@ -36,6 +36,7 @@ using namespace mlir::pto;
 using namespace mlir::pto::protocol_sync;
 
 bool checkLoopFrontierInterleavings(const StructuredSyncIR& schedule, unsigned trips);
+bool runStructuredFrontierTests(MLIRContext& context);
 
 namespace {
 
@@ -621,6 +622,54 @@ bool testNativeBoundaryWorlds(MLIRContext& context)
     return true;
 }
 
+bool testOracleExitCompletion(MLIRContext& context)
+{
+    const std::string all = "pto.barrier <PIPE_ALL>\n";
+    const std::string loadDrain = "pto.barrier <PIPE_MTE2>\n";
+    const std::string vectorDrain = "pto.barrier <PIPE_V>\n";
+    const std::string set = "pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]\n";
+    const std::string wait = "pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]\n";
+    const std::string twoLanes = "%c1024 = arith.constant 1024 : i64\n"
+                                 "%independent = pto.alloc_tile addr = %c1024 : !pto.tile_buf<vec, 16x16xf16>\n" +
+                                 effect(0, "%a") + effect(2, "%independent");
+    const std::pair<std::string, bool> cases[] = {
+        {"", true},
+        {effect(0, "%a"), false},
+        {effect(0, "%a") + all, true},
+        {all + effect(0, "%a"), false},
+        {effect(0, "%a") + vectorDrain, false},
+        {effect(0, "%a") + loadDrain, true},
+        {effect(0, "%a") + all + effect(2, "%a") + all, true},
+        {effect(0, "%a") + all + effect(2, "%a"), false},
+        {effect(0, "%a") + set + all, false}, // A drain cannot consume a token.
+        {effect(0, "%a") + set + wait, true},
+        {kLoop.str() + effect(0, "%a") + loadDrain + "}\n" + all, true},
+        {twoLanes + all, true},
+        {twoLanes + vectorDrain, false},
+        {twoLanes + loadDrain, false},
+        {twoLanes + loadDrain + vectorDrain, true},
+    };
+    for (auto [index, test] : llvm::enumerate(cases)) {
+        auto module = parseSourceString<ModuleOp>(kPrelude.str() + test.first + "return\n}\n}\n", &context);
+        if (!module) {
+            return false;
+        }
+        Fixture fixture(std::move(module));
+        if (!fixture.build()) {
+            return false;
+        }
+        for (unsigned trips : {0, 1, 2, 3, 4, 7, 8, 11}) {
+            const bool matches = checkLoopFrontierInterleavings(fixture.schedule, trips) == test.second;
+            if (!matches) {
+                llvm::errs() << "FAIL: exit oracle case=" << index << " trips=" << trips << '\n';
+                return false;
+            }
+        }
+    }
+    llvm::outs() << "protocol-sync execution exit: 15 drain/return cases across eight trip counts pass\n";
+    return true;
+}
+
 } // namespace
 
 int main()
@@ -631,7 +680,8 @@ int main()
     context.disableMultithreading();
     return testOracle(context) && testMutationsAndLimits(context) && testSelfPhaseAndBoundaries(context) &&
                    testConcreteCycles(context) && testCyclePlacementAndResources(context) &&
-                   testNativeBoundaryWorlds(context) ?
+                   testNativeBoundaryWorlds(context) && testOracleExitCompletion(context) &&
+                   runStructuredFrontierTests(context) ?
                0 :
                1;
 }

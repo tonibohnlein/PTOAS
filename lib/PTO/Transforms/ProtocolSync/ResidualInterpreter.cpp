@@ -11,6 +11,8 @@
 //===- ResidualInterpreter.cpp - Interpret selected synchronization -----===//
 
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
+#include "PTO/Transforms/ProtocolSync/CompletionSupply.h"
+#include "PTO/Transforms/ProtocolSync/StructuredFrontier.h"
 #include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
 #include "PTO/Transforms/ProtocolSync/LocalMemoryAnalysis.h"
 #include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
@@ -57,6 +59,12 @@ struct AbstractState {
 
 class CompletionGraph {
 public:
+    bool hasAcknowledgements() const { return !acknowledged.empty(); }
+    void setAcknowledgements(const StructuredSyncIR& value, ArrayRef<SyncPhaseId> phases)
+    {
+        schedule = &value;
+        acknowledged.assign(phases.begin(), phases.end());
+    }
     void setOrderedLoop(const StructuredSyncIR& value, SyncRegionId carrier)
     {
         schedule = &value;
@@ -119,6 +127,9 @@ public:
 
     bool covers(SyncPhaseId source, SyncPhaseId target, const SyncIterationRelation& relation) const
     {
+        if (schedule && structuredFrontierOrders(*schedule, acknowledged, source, target, relation)) {
+            return true;
+        }
         if (schedule && loopFrontierOrders(*schedule, orderedLoop, source, target, relation)) {
             return true;
         }
@@ -135,6 +146,7 @@ public:
     }
 
 private:
+    SmallVector<SyncPhaseId, 16> acknowledged;
     const StructuredSyncIR* schedule = nullptr;
     SyncRegionId orderedLoop = kInvalidSyncId;
     bool reachesSameIteration(SyncPhaseId source, SyncPhaseId target) const
@@ -837,7 +849,9 @@ LogicalResult evaluateMemoryHazards(
             if (source->id == target->id || source->id > target->id || incompatible) {
                 continue;
             }
-            const SyncIterationRelation relation = iterationRelation(source, target);
+            const SyncIterationRelation relation = completionGraph.hasAcknowledgements() ?
+                                                       structuredIterationRelation(*source, *target) :
+                                                       iterationRelation(source, target);
             if (failed(evaluateMemoryPair(
                     schedule, sourceAccess, targetAccess, completionGraph, visibilityGraph, relation, accumulator))) {
                 return failure();
@@ -861,11 +875,14 @@ LogicalResult evaluateMemoryHazards(
             if (!target) {
                 continue;
             }
-            for (const SyncIterationRelation& relation : carriedMemoryRelations(*source, *target)) {
+            for (SyncIterationRelation relation : carriedMemoryRelations(*source, *target)) {
+                if (completionGraph.hasAcknowledgements()) {
+                    relation = {SyncIterationRelationKind::LoopCarriedAny, 0, relation.carrier};
+                }
                 const bool sourceDirectlyInCarrier = source->iterationDomain.loops.back() == relation.carrier;
                 const bool killedInTargetIteration =
                     source->id < target->id && sourceDirectlyInCarrier && guardImplies(target->guard, source->guard);
-                if (killedInTargetIteration) {
+                if (killedInTargetIteration && !completionGraph.hasAcknowledgements()) {
                     continue;
                 }
                 if (failed(evaluateMemoryPair(
@@ -1319,9 +1336,28 @@ FailureOr<SyncInterpretationResult> mlir::pto::protocol_sync::interpretSelectedW
     AbstractState state;
     SyncLocalFlowOptions localOptions;
     localOptions.analyzeSingleLoop = effectiveWorld.orderedLoop.has_value();
+    localOptions.analyzeStructured = !effectiveWorld.acknowledgedPhases.empty();
     FailureOr<SyncLocalMemoryAnalysis> local = analyzeLocalMemory(schedule, localOptions);
     if (failed(local)) {
         return failure();
+    }
+    if (localOptions.analyzeStructured) {
+        const bool complete = local->structuredStatus == SyncLocalStructuredStatus::Complete &&
+                              !effectiveWorld.orderedLoop && effectiveWorld.protocols.empty() &&
+                              effectiveWorld.acknowledgedPhases.size() == schedule.getPhases().size();
+        if (!complete) {
+            return failure();
+        }
+        for (const auto& phase : schedule.getPhases()) {
+            if (effectiveWorld.acknowledgedPhases[phase.id] != phase.id) {
+                return failure();
+            }
+        }
+        completionGraph.setAcknowledgements(schedule, effectiveWorld.acknowledgedPhases);
+        local->boundary.clear();
+        for (const auto& region : local->regions) {
+            local->coveredAccesses.set(region.access);
+        }
     }
     if (effectiveWorld.orderedLoop) {
         if (local->loopStatus != SyncLocalLoopStatus::Complete || local->loopCarrier != *effectiveWorld.orderedLoop ||
@@ -1337,13 +1373,26 @@ FailureOr<SyncInterpretationResult> mlir::pto::protocol_sync::interpretSelectedW
     accumulator.result.localAtoms = local->atoms.size();
     accumulator.result.localRequirements = local->requirements.size();
     accumulator.result.localAnalysisBoundary = local->boundary;
+    auto supply = buildCompletionSupply(schedule, effectiveWorld);
+    if (failed(supply)) {
+        return failure();
+    }
     for (const SyncResidualObligation& requirement : local->requirements) {
         // Cross-region state is retained, but does not replace legacy protection
         // before participation, placement and concrete coverage are supported.
         if (!local->boundary.empty()) {
             continue;
         }
-        if (completionGraph.covers(requirement.source, requirement.target, requirement.iteration)) {
+        const bool covered = completionGraph.covers(requirement.source, requirement.target, requirement.iteration);
+        // Migration gate: explicit supply must reproduce the established
+        // interpreter on its declared subset. No new placement or admission.
+        const bool supplyMismatch =
+            supply->getStatus() == SyncCompletionSupplyStatus::Complete &&
+            supply->covers(requirement.source, requirement.target, requirement.iteration) != covered;
+        if (supplyMismatch) {
+            return failure();
+        }
+        if (covered) {
             ++accumulator.result.localRequirementsCovered;
         } else if (failed(accumulator.append(requirement))) {
             return failure();

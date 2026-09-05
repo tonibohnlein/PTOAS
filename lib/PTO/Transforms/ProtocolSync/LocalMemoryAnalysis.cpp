@@ -116,12 +116,21 @@ FailureOr<SyncLocalMemoryAnalysis> mlir::pto::protocol_sync::analyzeLocalMemory(
     if (options.analyzeSingleLoop) {
         result.loopStatus = SyncLocalLoopStatus::Unsupported;
     }
-    if (!collectRegions(schedule, result, options.analyzeSingleLoop)) {
+    if (options.analyzeStructured) {
+        result.structuredStatus = SyncLocalStructuredStatus::Unsupported;
+    }
+    if (!collectRegions(schedule, result, options.analyzeSingleLoop || options.analyzeStructured)) {
         result.regions.clear();
         return result;
     }
     if (failed(buildAtoms(result))) {
         return failure();
+    }
+    if (options.analyzeStructured) {
+        if (failed(analyzeStructuredLocalFlow(schedule, result, options.maximumExpandedEntries))) {
+            return failure();
+        }
+        return result;
     }
     if (options.analyzeSingleLoop) {
         if (failed(analyzeLocalLoopFlow(schedule, result, options.maximumExpandedEntries))) {

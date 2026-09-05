@@ -32,6 +32,7 @@ namespace mlir::pto::protocol_sync {
 
 enum class SyncLocalExpandedStateStatus { NotRequested, Complete, LimitExceeded };
 enum class SyncLocalLoopStatus { NotRequested, Complete, Unsupported, LimitExceeded };
+enum class SyncLocalStructuredStatus { NotRequested, Complete, Unsupported, LimitExceeded };
 
 struct SyncLocalFlowOptions {
     /// Diagnostic only: production uses sparse predecessor/outstanding links.
@@ -39,6 +40,7 @@ struct SyncLocalFlowOptions {
     std::size_t maximumExpandedEntries = 1048576;
     /// Occurrence-aware single-loop requirements only; no emission admission.
     bool analyzeSingleLoop = false;
+    bool analyzeStructured = false;
 };
 
 struct SyncLocalAccessRegion {
@@ -109,6 +111,7 @@ struct SyncLocalMemoryAnalysis {
     llvm::SmallVector<SyncResidualObligation, 16> requirements;
     SyncLocalExpandedStateStatus expandedStateStatus = SyncLocalExpandedStateStatus::NotRequested;
     SyncLocalLoopStatus loopStatus = SyncLocalLoopStatus::NotRequested;
+    SyncLocalStructuredStatus structuredStatus = SyncLocalStructuredStatus::NotRequested;
     SyncRegionId loopCarrier = kInvalidSyncId;
     std::string boundary;
 };
@@ -131,6 +134,11 @@ LogicalResult analyzeLocalRegionFlow(
 /// entry, distance-one backedges, exit, and zero-trip obligations. Results do
 /// not authorize clearing rejected-timeline protection or recurring emission.
 LogicalResult analyzeLocalLoopFlow(
+    const StructuredSyncIR& schedule, SyncLocalMemoryAnalysis& result, std::size_t maximumEntries);
+
+/// Conservative guarded histories over choices and at most one ordinary loop.
+/// No coveredAccesses are published until a complete acknowledgement is checked.
+LogicalResult analyzeStructuredLocalFlow(
     const StructuredSyncIR& schedule, SyncLocalMemoryAnalysis& result, std::size_t maximumEntries);
 
 /// Exhaustive, non-atomized reference check. Does not consume sparse states,

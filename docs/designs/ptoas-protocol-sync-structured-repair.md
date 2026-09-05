@@ -2,6 +2,12 @@
 
 ## Checkpoints and scope
 
+The post-boundary implementation sequence is recorded in the
+[completion-supply continuation](ptoas-protocol-sync-completion-supply.md).
+It closes the execution-oracle exit gap and introduces bounded straight-line
+supply summaries before choices, loop composition, and selective optimization.
+Historical checkpoint numbering and measurements below remain unchanged.
+
 The straight-line local-frontier baseline is committed as `27d2c2c4e`.
 Its frozen-input host results are 30/394 native rows with may-alias GM and
 37/394 with disjoint GM arguments, including six zero-physical-work rows.
@@ -142,7 +148,13 @@ The concrete verifier must reconstruct the recurrence from actual sets,
 waits, barriers and loop boundaries without planner tags. General recurring
 repair cannot pass by falling through the current strict-E reconstruction.
 
-## Steps 3 and 4: participation and frontend recovery (not implemented)
+## Steps 3 and 4: participation and frontend recovery
+
+The revised-order [balanced structured continuation](ptoas-protocol-sync-balanced-structured-frontiers.md)
+now implements a bounded native participation/choice baseline and composes it
+with one ordinary loop. It retains conservative histories rather than exact
+must-reaching generations. Broader frontier motion and the frontend recovery
+below remain future work.
 
 Introduce explicit participation relations and guarded reaching states before
 placing synchronization across joins. Use balanced branch-local mechanisms or

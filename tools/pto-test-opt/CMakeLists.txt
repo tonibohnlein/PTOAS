@@ -135,6 +135,7 @@ add_dependencies(pto-protocol-sync-local-memory-test PTOOpsIncGen PTOPassesIncGe
 add_llvm_executable(pto-protocol-sync-loop-memory-test
   pto-protocol-sync-loop-memory-test.cpp
   ProtocolSyncLoopOracle.cpp
+  ProtocolSyncStructuredTest.cpp
   PARTIAL_SOURCES_INTENDED
 )
 target_link_libraries(pto-protocol-sync-loop-memory-test PRIVATE
@@ -144,6 +145,7 @@ add_dependencies(pto-protocol-sync-loop-memory-test PTOOpsIncGen PTOPassesIncGen
 
 add_llvm_executable(pto-protocol-sync-scoreboard-test
   pto-protocol-sync-scoreboard-test.cpp
+  ProtocolSyncSupplyTest.cpp
   PARTIAL_SOURCES_INTENDED
 )
 target_link_libraries(pto-protocol-sync-scoreboard-test PRIVATE
