@@ -1,0 +1,12 @@
+{
+  "archive": "/home/toni/work/pypto3_sync_more/PTOAS/build/protocol-sync-c71-1e911a4e0-evidence.tar.gz",
+  "bytes": 11749756,
+  "clean_committed_campaigns": true,
+  "generator_sha256": "c6c96b71c814cb6179c80dd347608375c2cce58d817f6584ed60b9fc527e26fc",
+  "included_artifacts": {
+    "CMakeCache.txt": "09041d821afbe1f64f598667766423d3bff74b316149a7ce10456d49d1486bfb",
+    "canonical-sync-394-corpus-d99520397.tar.gz": "91b011b9225c1308d185885554752ba1d64198436c3af60c6d4d243cda2bbd2a",
+    "protocol-sync-c71-old-emitted-inputs.tar.gz": "005461f12f6d961f8dca8458d229cac6ce3361c5c48d5cbf511471e9d91f2094"
+  },
+  "sha256": "1802eb8ac72e0d91f6b9a7fb3a0cbe268aa7842ee2be829ab4eedcb72ad9a461"
+}

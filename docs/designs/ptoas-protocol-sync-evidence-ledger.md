@@ -669,7 +669,16 @@ and all 199 old emitted programs were rerun on `8c3a0b58d` plus the recorded
 diagnostic patch. The actual patch, scripts, inputs, commands, per-row records,
 raw diagnostics and hashes are retained in a disk-backed archive; compact
 records are under `protocol-sync-evidence/c71/patch-frozen-8c3a0b58d/`.
-This is explicitly patch-frozen, not yet a clean-commit freeze.
+That initial snapshot was patch-frozen. The subsequent clean rerun at
+`1e911a4e00b62ad63846e531e88e11936a38ce16` completed both 394-row campaigns
+and the 199-program audit without `--allow-dirty`; source stability passed.
+All semantic aggregates reproduced, with differences only in timing fields.
+Compact records are under `protocol-sync-evidence/c71/clean-1e911a4e0/`.
+The raw archive is `build/protocol-sync-c71-1e911a4e0-evidence.tar.gz`,
+11,749,756 bytes, SHA256
+`1802eb8ac72e0d91f6b9a7fb3a0cbe268aa7842ee2be829ab4eedcb72ad9a461`.
+This completes the clean diagnostic freeze, not the new frontend acceptance
+campaign or target qualification.
 
 All 40 comparable storage counters reproduced the earlier local `44e3bb474`
 run. The new first-proof census divides 474 recurring rejections into 244

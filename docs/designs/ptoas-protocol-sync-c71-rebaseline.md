@@ -2,10 +2,26 @@
 
 ## Status and reproducibility boundary
 
-The host experiments below completed on 2026-09-05. This is a **patch-frozen
-worktree snapshot, not a clean-commit freeze**. The user has confirmed the
-diagnostic commit; the subsequent clean-revision rerun is still pending. No new
-protocol or repair was enabled, and nothing was pushed during this work.
+The host experiments below completed on 2026-09-05 and were rerun on clean
+commit `1e911a4e00b62ad63846e531e88e11936a38ce16`. All three runs recorded a
+clean, stable source revision, without `--allow-dirty`. Their semantic
+aggregates exactly match the earlier patch-frozen runs; only timing fields
+changed. No new protocol or repair was enabled in this freeze, and nothing
+was pushed during this work.
+
+The clean archive is disk-backed, 11,749,756 bytes:
+
+```text
+build/protocol-sync-c71-1e911a4e0-evidence.tar.gz
+SHA256 1802eb8ac72e0d91f6b9a7fb3a0cbe268aa7842ee2be829ab4eedcb72ad9a461
+```
+
+Its [compact manifest and aggregates](protocol-sync-evidence/c71/clean-1e911a4e0/archive.json)
+record the experiment/source commit, toolchain revisions, commands, input
+hashes, per-row hashes and archive hash. The archive contains the inputs and
+raw results, not just their hashes. It is retained locally, not uploaded to CI.
+
+### Earlier patch-frozen snapshot (retained for comparison)
 
 Source base: `8c3a0b58d755fe770cbe37bdc6401ab9d0c5b3a1`, whose diagnostic
 commits sit above E/F and the A2/A3 capability merge `c4f924114`. The exact
@@ -39,9 +55,8 @@ The LLVM checkout has a two-line `<cstdint>` include adjustment in
 toolchain is not falsely described as a pristine upstream checkout. CANN and
 PTO-ISA runtimes were not exercised.
 
-Commit the diagnostic infrastructure and rerun without
-`--allow-dirty` before declaring the clean-commit freeze complete. The runner
-and archive commands are documented in
+The diagnostic infrastructure is committed and the clean rerun is complete.
+The runner and archive commands are documented in
 [`test/experiments/protocol_sync/README.md`](../../test/experiments/protocol_sync/README.md).
 
 ## Differential population: all 394 rows
@@ -68,8 +83,8 @@ extracted ranges, not proof that dynamic-subview or valid-shape extraction is
 semantically exact. No C.6/C.7 candidate is selectable.
 
 Atoms per projected access: p50 **1**, p95 **4**, maximum **33**. The current
-storage analysis takes 244 us p50, 3,415 us p95 and 25,598 us maximum across
-405 function instances (345,738 us aggregate). This is one host run, without a
+storage analysis in the clean run takes 222 us p50, 3,097 us p95 and 25,170 us
+maximum across 405 function instances (276,330 us aggregate). This is one host run, without a
 memory-use/scaling or device-performance claim.
 
 ## First failed E proof for the 474 recurring records

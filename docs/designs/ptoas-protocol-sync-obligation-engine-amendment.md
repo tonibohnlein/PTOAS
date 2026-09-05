@@ -9,8 +9,8 @@ the original implementation plan and its first amendment. It does not make the
 diagnostic C.6/C.7 candidates selectable.
 
 The [C7.1 rebaseline](ptoas-protocol-sync-c71-rebaseline.md) now supplies the
-394-row A2/A3-merged E/F rerun and the 199-program concrete audit. It is a
-patch-frozen snapshot pending the clean-commit step; the separate 152-kernel
+394-row A2/A3-merged E/F rerun and the 199-program concrete audit, including a
+clean-commit freeze at `1e911a4e0`; the separate 152-kernel
 acceptance inputs remain unavailable. The user selected a fresh current-main
 PyPTO/PyPTO-Lib acceptance population instead. Historical pending measurements below
 should be read with that newer report. The user's agreed two-mode GM policy is
