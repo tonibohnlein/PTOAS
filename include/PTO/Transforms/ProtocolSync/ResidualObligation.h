@@ -164,6 +164,9 @@ struct SyncInterpretationOptions {
     /// world effects. Those operations must then not also appear as opaque
     /// semantic actions. Planning keeps the default fail-closed behavior.
     bool fixedSynchronizationIsModeled = false;
+    /// Enable complete canonical requirements for the isolated-loop subset.
+    /// This grants no completion supply and must not set orderedLoop.
+    bool isolatedLoopIsModeled = false;
 };
 
 FailureOr<SyncSelectedWorld> buildSelectedWorld(const SyncOneShotPlan& plan, const ChannelAnalysisResult& channels);

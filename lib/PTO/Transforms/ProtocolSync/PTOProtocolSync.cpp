@@ -555,11 +555,14 @@ private:
     FailureOr<SyncInterpretationResult> evaluateWorld(
         func::FuncOp function, const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
         const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
-        const SyncSelectedWorld& world, ProtocolSyncStatistics& result, bool allowDump = true)
+        const SyncSelectedWorld& world, ProtocolSyncStatistics& result, bool allowDump = true,
+        bool isolatedLoop = false)
     {
         const ProtocolSyncClock::time_point start = ProtocolSyncClock::now();
+        SyncInterpretationOptions options;
+        options.isolatedLoopIsModeled = isolatedLoop;
         FailureOr<SyncInterpretationResult> interpretation =
-            interpretSelectedWorld(schedule, stages, timelines, channels, world, &result);
+            interpretSelectedWorld(schedule, stages, timelines, channels, world, &result, options);
         result.interpretationUs += elapsedMicroseconds(start);
         const bool shouldDump = allowDump && succeeded(interpretation) && dumpMode == "residuals";
         if (shouldDump) {
@@ -815,7 +818,8 @@ private:
             return failure();
         }
         FailureOr<SyncInterpretationResult> final =
-            evaluateWorld(function, schedule, stages, timelines, channels, plan->selectedWorld, result);
+            evaluateWorld(function, schedule, stages, timelines, channels, plan->selectedWorld, result, true,
+                          plan->selectiveLoop.has_value());
         const bool finalWorldComplete = succeeded(final) && final->isComplete();
         if (!finalWorldComplete) {
             result.totalUs = elapsedMicroseconds(totalStart);

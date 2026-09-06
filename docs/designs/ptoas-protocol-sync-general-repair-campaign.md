@@ -573,6 +573,78 @@ In safe GM mode, possible output/input aliasing across iterations can require
 publication that these completion events do not qualify. That remains an
 explicit blocker, not permission to waive the visibility obligation.
 
+### P4b — native selective isolated-loop repair
+
+The P4a token proof now has a production caller. An isolated unconditional
+`scf.for` with fixed bounded UB footprints and ordinary Vector-core MTE2/V/MTE3
+phases can receive an atomic selective repair without a recognized storage
+protocol. Forward and distance-one carried obligations select handoffs at their
+actual source/target phases. There is no total-phase cycle, V hub, implicit
+ordered-loop grant, or count-first merging of independent readiness frontiers.
+
+Cross-lane handoffs are established first. A same-pipe cut is added only if
+their iteration-aware completion closure does not already satisfy its hazard.
+This matters for repeated loads: a redundant MTE2 backedge barrier before the
+second load could also drain the first load of the current iteration. Avoiding
+that barrier preserves the intended independent handoffs. Distinct logical
+channels retain distinct IDs in each directed domain; resource failure does
+not silently enable serialization.
+
+The mixed planner, final emission gate and residual interpreter consume explicit
+completion relations. Canonical local obligations remain present; the scope
+option accounts for analyzed loop accesses without declaring them ordered.
+Independent concrete reconstruction reads actual sets, waits, primes, drains,
+barriers and action order, then checks event consumption before rearm. A separate
+all-access-pair checker verifies local and GM occurrence coverage without the
+sparse atom/requirement builder. Fixed-footprint writer self-recurrence composes
+distance-one coverage to arbitrary positive distances; this argument does not
+extend to symbolic slots or conditional execution. Loop-carried SSA arguments
+remain outside this native slice.
+
+Scope is deliberately bounded: one isolated top-level loop, positive constant
+step, no iter_args, choices, physical prefix/suffix, nested loops, macros, queue
+effects, descriptor mutation or hidden/fixed synchronization. Planner bounds on
+operations, phases, accesses, channels, barriers and expanded completions match
+the concrete verifier's supported budget. Unknown scope or exceeded budget
+remains unsupported before materialization. GM may-alias write/read publication
+remains unqualified; the disjoint-argument contract is explicit, not inferred.
+
+Tests include two independent readiness handoffs, a fork/join/store loop,
+one-phase self-recurrence, zero/one/odd/even trips, missing prime and backedge
+mutations, shifted physical overlap, budget rejection and mixed-plan metadata
+corruption. The asynchronous oracle admits simultaneous second-load and
+first-consumer work. It does not claim that two loads separated by a blocking
+source signal can execute concurrently. Its reduced fixtures have 512-byte
+footprints; it is not an execution proof for arbitrary corpus dimensions.
+
+The frozen driver `719dac71d4fe5c6bce89_000` (`chunked_add`) compiled natively
+under A3/disjoint-GM with patterns disabled and fallback disabled: six event
+pairs, zero targeted body barriers, one mandatory exit drain, maximum directed
+domain pressure two. This is one targeted admission, not a rebaselined corpus
+percentage or a device/performance measurement. Artifacts:
+`build/protocol-sync-p4b-chunked-add.pto` and
+`build/protocol-sync-p4b-native.json` (two native lit tests passed before the
+final budget/self-recurrence additions).
+
+Algorithm and compiler reviews accepted the slice after fixing redundant
+same-pipe cuts, deduplicating concrete supply and enforcing emitted-size budgets.
+Final validation on 2026-09-06:
+
+- Targeted two-worker build of `PTOASCompiler`, `pto-test-opt` and the seven
+  ProtocolSync unit executables passed; all static callers were freshly linked.
+- Configured LLVM lit through the workspace venv, `taskset -c 0,1`,
+  `-v -j1 build/test/lit --filter protocol_sync -o
+  build/protocol-sync-p4b-final.json`: **54/54 passed**, 114.97 seconds.
+- The preceding 55-test run had 54 passes and one incorrect new scalar-SSA
+  expectation: scalar order was intrinsic. That unrelated test and speculative
+  SSA change were removed; the final rebuild/rerun above includes the retained
+  selective-loop tests unchanged.
+- Changed-code prefilter: 17 code/build files, zero errors/warnings.
+  `git diff --check` passed. No full system or device suite was run.
+
+The next implementation scope is selective entry/exit/bypass composition, then
+choices; the campaign and full-corpus objective remain incomplete.
+
 ### Historical N0 progress
 
 - N0 in progress: source heads resolved; added general-only mixed-mode selection

@@ -37,6 +37,7 @@ using namespace mlir::pto::protocol_sync;
 
 bool checkLoopFrontierInterleavings(const StructuredSyncIR& schedule, unsigned trips);
 bool runStructuredFrontierTests(MLIRContext& context);
+bool testSelectiveLoopRepair(MLIRContext& context);
 
 namespace {
 
@@ -692,7 +693,7 @@ int main()
     return testOracle(context) && testMutationsAndLimits(context) && testSelfPhaseAndBoundaries(context) &&
                    testConcreteCycles(context) && testCyclePlacementAndResources(context) &&
                    testNativeBoundaryWorlds(context) && testOracleExitCompletion(context) &&
-                   runStructuredFrontierTests(context) ?
+                   runStructuredFrontierTests(context) && testSelectiveLoopRepair(context) ?
                0 :
                1;
 }

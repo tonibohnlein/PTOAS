@@ -19,6 +19,7 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
+#include <set>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -584,6 +585,18 @@ FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPla
     if (!best && failed(evaluateSelection(false))) {
         return failure();
     }
+    if (!best && findIsolatedSyncLoop(schedule, false)) {
+        ++worldsAttempted;
+        auto selective = buildMixedSelectiveLoopPlan(schedule, stages, timelines, channels);
+        if (failed(selective)) {
+            return failure();
+        }
+        if (*selective) {
+            best = std::move(**selective);
+            best->protocolsEnabled = enableProtocols;
+            ++worldsFeasible;
+        }
+    }
     // The total-phase loop cycle and V-hub packages are reference/recovery
     // mechanisms. Without a certified event-pressure recovery decision, normal
     // synthesis must expose unsupported selective repair instead of using them.
@@ -672,7 +685,7 @@ LogicalResult mlir::pto::protocol_sync::selectMixedProtocolCandidates(
 LogicalResult mlir::pto::protocol_sync::allocateMixedProtocolEvents(
     const StructuredSyncIR& schedule, SyncMixedProtocolPlan& plan, ProtocolSyncStatistics* statistics)
 {
-    if (plan.loopFrontier || plan.structuredFrontier) {
+    if (plan.loopFrontier || plan.structuredFrontier || plan.selectiveLoop) {
         // Atomic builders allocate before publishing a complete alternative.
         // Serial loops use distinct static keys; balanced structured packages
         // reuse keys only after an acknowledged consuming round trip.
@@ -680,6 +693,17 @@ LogicalResult mlir::pto::protocol_sync::allocateMixedProtocolEvents(
         if (statistics) {
             statistics->maxEventDomainPressure =
                 std::max(statistics->maxEventDomainPressure, plan.selectedCost.eventPressure);
+            if (plan.selectiveLoop) {
+                std::set<std::pair<PIPE, PIPE>> domains;
+                for (const auto& edge : plan.selectiveLoop->edges) {
+                    if (edge.placement.eventId) {
+                        domains.emplace(edge.placement.sourcePipe, edge.placement.targetPipe);
+                        statistics->maximumEventIdPlusOne = std::max<std::uint64_t>(
+                            statistics->maximumEventIdPlusOne, *edge.placement.eventId + 1);
+                    }
+                }
+                statistics->eventDomains += domains.size();
+            }
         }
         return success(plan.status == SyncMixedPlanStatus::Ready);
     }
@@ -758,6 +782,8 @@ StringRef mlir::pto::protocol_sync::stringifySyncMixedWorldKind(SyncMixedWorldKi
     switch (kind) {
         case SyncMixedWorldKind::StructuredFrontier:
             return "structured-frontier";
+        case SyncMixedWorldKind::SelectiveLoop:
+            return "selective-loop";
         case SyncMixedWorldKind::LoopFrontier:
             return "loop-frontier";
         case SyncMixedWorldKind::DirectOnly:

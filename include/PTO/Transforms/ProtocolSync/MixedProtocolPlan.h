@@ -16,6 +16,7 @@
 #include "PTO/Transforms/ProtocolSync/DirectRepair.h"
 #include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
 #include "PTO/Transforms/ProtocolSync/StructuredFrontier.h"
+#include "PTO/Transforms/ProtocolSync/SelectiveLoopRepair.h"
 #include "PTO/Transforms/ProtocolSync/OneShotPublish.h"
 #include "PTO/Transforms/ProtocolSync/ReadyReleaseProtocol.h"
 
@@ -53,6 +54,7 @@ enum class SyncMixedWorldKind : std::uint8_t {
     CombinedProtocols,
     LoopFrontier,
     StructuredFrontier,
+    SelectiveLoop,
 };
 
 struct SyncMixedWorldCost {
@@ -73,6 +75,7 @@ struct SyncMixedProtocolPlan {
     std::optional<SyncReadyReleasePlan> readyRelease;
     std::optional<SyncLoopFrontierPlan> loopFrontier;
     std::optional<SyncStructuredFrontierPlan> structuredFrontier;
+    std::optional<SyncSelectiveLoopPlan> selectiveLoop;
     llvm::SmallVector<SyncResidualObligation, 16> directObligations;
     SyncDirectRepairPlan directRepair;
     SyncSelectedWorld selectedWorld;
@@ -98,6 +101,13 @@ FailureOr<SyncMixedProtocolPlan> buildMixedProtocolPlan(
 FailureOr<std::optional<SyncMixedProtocolPlan>> buildMixedLoopFrontierPlan(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels);
+FailureOr<std::optional<SyncMixedProtocolPlan>> buildMixedSelectiveLoopPlan(
+    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
+    const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels);
+LogicalResult verifyMixedSelectiveLoopPlan(
+    const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
+    const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels,
+    const SyncMixedProtocolPlan& plan);
 FailureOr<std::optional<SyncMixedProtocolPlan>> buildMixedStructuredFrontierPlan(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels);

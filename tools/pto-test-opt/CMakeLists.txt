@@ -139,6 +139,7 @@ add_llvm_executable(pto-protocol-sync-loop-memory-test
   pto-protocol-sync-loop-memory-test.cpp
   ProtocolSyncLoopOracle.cpp
   ProtocolSyncStructuredTest.cpp
+  ProtocolSyncSelectiveLoopTest.cpp
   PARTIAL_SOURCES_INTENDED
 )
 target_link_libraries(pto-protocol-sync-loop-memory-test PRIVATE

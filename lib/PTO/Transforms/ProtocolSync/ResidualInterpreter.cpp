@@ -16,6 +16,7 @@
 #include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
 #include "PTO/Transforms/ProtocolSync/LocalMemoryAnalysis.h"
 #include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
+#include "PTO/Transforms/ProtocolSync/SelectiveLoopRepair.h"
 #include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -1361,7 +1362,7 @@ FailureOr<SyncInterpretationResult> mlir::pto::protocol_sync::interpretSelectedW
 
     AbstractState state;
     SyncLocalFlowOptions localOptions;
-    localOptions.analyzeSingleLoop = effectiveWorld.orderedLoop.has_value();
+    localOptions.analyzeSingleLoop = effectiveWorld.orderedLoop.has_value() || options.isolatedLoopIsModeled;
     localOptions.analyzeStructured = !effectiveWorld.acknowledgedPhases.empty();
     FailureOr<SyncLocalMemoryAnalysis> local = analyzeLocalMemory(schedule, localOptions);
     if (failed(local)) {
@@ -1391,6 +1392,19 @@ FailureOr<SyncInterpretationResult> mlir::pto::protocol_sync::interpretSelectedW
             return failure();
         }
         completionGraph.setOrderedLoop(schedule, *effectiveWorld.orderedLoop);
+        local->boundary.clear();
+        for (const SyncLocalAccessRegion& region : local->regions) {
+            local->coveredAccesses.set(region.access);
+        }
+    }
+    if (options.isolatedLoopIsModeled) {
+        const auto isolated = findIsolatedSyncLoop(schedule, true);
+        const bool complete = isolated && local->loopStatus == SyncLocalLoopStatus::Complete &&
+                              local->loopCarrier == *isolated && !effectiveWorld.orderedLoop &&
+                              effectiveWorld.acknowledgedPhases.empty();
+        if (!complete) {
+            return failure();
+        }
         local->boundary.clear();
         for (const SyncLocalAccessRegion& region : local->regions) {
             local->coveredAccesses.set(region.access);

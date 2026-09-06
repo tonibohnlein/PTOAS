@@ -514,6 +514,9 @@ LogicalResult mlir::pto::protocol_sync::verifyMixedProtocolPlan(
     if (!plan.selectedWorld.acknowledgedPhases.empty()) {
         return failure();
     }
+    if (plan.selectiveLoop) {
+        return verifyMixedSelectiveLoopPlan(schedule, stages, timelines, channels, plan);
+    }
     if (plan.loopFrontier) {
         return verifyMixedLoopFrontierPlan(schedule, stages, timelines, channels, plan);
     }
@@ -658,6 +661,12 @@ LogicalResult mlir::pto::protocol_sync::materializeAndVerifyMixedProtocolPlanInD
     func::FuncOp function = schedule.getFunction();
     IRMapping mapping;
     buildIdentityMapping(function, mapping);
+    if (plan.selectiveLoop) {
+        if (failed(materializeSelectiveLoopRepair(function, *plan.selectiveLoop))) {
+            return failure();
+        }
+        return verifyFreshConcreteSyncSemantics(function, statistics);
+    }
     if (plan.structuredFrontier) {
         if (failed(materializeStructuredFrontier(function, mapping, *plan.structuredFrontier))) {
             return failure();

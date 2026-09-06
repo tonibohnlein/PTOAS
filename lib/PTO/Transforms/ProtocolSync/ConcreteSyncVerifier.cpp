@@ -19,6 +19,7 @@
 #include "PTO/Transforms/ProtocolSync/EventAllocation.h"
 #include "PTO/Transforms/ProtocolSync/LocalMemoryAnalysis.h"
 #include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
+#include "PTO/Transforms/ProtocolSync/SelectiveLoopRepair.h"
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
 #include "PTO/Transforms/ProtocolSync/StorageTimeline.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -827,7 +828,11 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
     const bool loopFrontier = succeeded(verifyConcreteLoopFrontierRepair(schedule, true));
     auto structured = reconstructStructuredFrontier(schedule);
     const bool structuredFrontier = succeeded(structured);
-    if (structuredFrontier) {
+    auto selective = reconstructSelectiveLoop(schedule);
+    const bool selectiveLoop = succeeded(selective);
+    if (selectiveLoop) {
+        state.world = std::move(*selective);
+    } else if (structuredFrontier) {
         state.world = std::move(*structured);
     } else if (loopFrontier) {
         auto world = buildLoopFrontierWorld(schedule);
@@ -840,7 +845,8 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
             return failure();
         }
     }
-    const SyncInterpretationOptions options{/*fixedSynchronizationIsModeled=*/true};
+    const SyncInterpretationOptions options{/*fixedSynchronizationIsModeled=*/true,
+                                             /*isolatedLoopIsModeled=*/selectiveLoop};
     FailureOr<SyncInterpretationResult> result =
         interpretSelectedWorld(schedule, *stages, timelines, channels, state.world, nullptr, options);
     if (statistics) {
@@ -861,10 +867,11 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
     }
     // The loop checker establishes total dynamic phase order, including all
     // boundary paths. The straight-line scoreboard cannot interpret recurrence.
-    if (!loopFrontier && !structuredFrontier && failed(verifyLocalMemoryCoverage(schedule, state.world))) {
+    const bool straightLine = !selectiveLoop && !loopFrontier && !structuredFrontier;
+    if (straightLine && failed(verifyLocalMemoryCoverage(schedule, state.world))) {
         return rejectAtStage("local-memory-coverage", firstFailedStage);
     }
-    if (!loopFrontier && !structuredFrontier && failed(verifyConcreteLocalScoreboard(schedule))) {
+    if (straightLine && failed(verifyConcreteLocalScoreboard(schedule))) {
         return rejectAtStage("local-concrete-scoreboard", firstFailedStage);
     }
     return success();

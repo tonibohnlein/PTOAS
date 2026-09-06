@@ -362,7 +362,7 @@ bool checkStructuredFrontierInterleavings(
     return expand(expand, schedule.getFunction().getBody().front()) && oracle.run(unsafeWitness);
 }
 
-bool checkLoopFrontierInterleavings(const StructuredSyncIR& schedule, unsigned trips)
+bool checkSelectiveLoopInterleavings(const StructuredSyncIR& schedule, unsigned trips, bool* overlapWitness)
 {
     func::FuncOp function = schedule.getFunction();
     ExecutionOracle oracle(schedule);
@@ -377,5 +377,11 @@ bool checkLoopFrontierInterleavings(const StructuredSyncIR& schedule, unsigned t
             oracle.append(operation);
         }
     }
-    return oracle.run();
+    const auto overlap = overlapWitness ? std::optional<std::pair<SyncPhaseId, SyncPhaseId>>({1, 2}) : std::nullopt;
+    return oracle.run(nullptr, overlap, overlapWitness);
+}
+
+bool checkLoopFrontierInterleavings(const StructuredSyncIR& schedule, unsigned trips)
+{
+    return checkSelectiveLoopInterleavings(schedule, trips, nullptr);
 }

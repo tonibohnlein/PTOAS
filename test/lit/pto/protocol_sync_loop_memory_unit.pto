@@ -16,3 +16,4 @@
 // CHECK-NEXT: protocol-sync reference boundary worlds: both GM modes, provenance and lifetime witnesses pass
 // CHECK-NEXT: protocol-sync execution exit: 15 drain/return cases across eight trip counts pass
 // CHECK-NEXT: protocol-sync structured choices and loops: 12 reference worlds, paths and mutations pass
+// CHECK-NEXT: protocol-sync selective loop: native recipe, occurrence coverage and overlap oracle pass
