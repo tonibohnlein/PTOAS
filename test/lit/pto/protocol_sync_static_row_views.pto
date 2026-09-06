@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a3.pto
+// RUN: FileCheck %s --input-file=%t.a3.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.a3.disjoint.pto
+// RUN: FileCheck %s --input-file=%t.a3.disjoint.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a2.pto
+// RUN: FileCheck %s --input-file=%t.a2.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.a2.disjoint.pto
+// RUN: FileCheck %s --input-file=%t.a2.disjoint.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a3.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFIED
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a2.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFIED
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail %s -o %t.cpp
+
+// Full-width views preserve their own physical footprint after lowering.
+// Distinct readiness signals must remain between the two independent loads.
+// CHECK-LABEL: func.func @disjoint_row_views
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[A:[0-9]+]]>]
+// CHECK-NEXT: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[B:[0-9]+]]>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[A]]>]
+// CHECK-NEXT: pto.tabs
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[B]]>]
+// CHECK-NEXT: pto.tabs
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: return
+// CHECK-LABEL: func.func @overlapping_row_views
+// CHECK: pto.tload
+// CHECK: pto.tabs
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID[[RELEASE:[0-9]+]]>]
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID[[RELEASE]]>]
+// CHECK-NEXT: pto.tload
+// CHECK: pto.tabs
+// VERIFIED: concrete-verification function=@disjoint_row_views status=accepted
+// VERIFIED: concrete-verification function=@overlapping_row_views status=accepted
+
+module {
+  func.func @disjoint_row_views(%in0: !pto.partition_tensor_view<4x16xf16>,
+                                %in1: !pto.partition_tensor_view<4x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    %root = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 8x16xf16>
+    %a = pto.subview %root[%zero, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 4x16xf16>
+    %b = pto.subview %root[%four, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 4x16xf16>
+    pto.tload ins(%in0 : !pto.partition_tensor_view<4x16xf16>) outs(%a : !pto.tile_buf<vec, 4x16xf16>)
+    pto.tload ins(%in1 : !pto.partition_tensor_view<4x16xf16>) outs(%b : !pto.tile_buf<vec, 4x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 4x16xf16>) outs(%a : !pto.tile_buf<vec, 4x16xf16>)
+    pto.tabs ins(%b : !pto.tile_buf<vec, 4x16xf16>) outs(%b : !pto.tile_buf<vec, 4x16xf16>)
+    return
+  }
+  func.func @overlapping_row_views(%in0: !pto.partition_tensor_view<4x16xf16>,
+                                   %in1: !pto.partition_tensor_view<4x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %two = arith.constant 2 : index
+    %root = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 8x16xf16>
+    %reused = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 8x16xf16>
+    %a = pto.subview %root[%zero, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 4x16xf16>
+    %b = pto.subview %reused[%two, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 4x16xf16>
+    pto.tload ins(%in0 : !pto.partition_tensor_view<4x16xf16>) outs(%a : !pto.tile_buf<vec, 4x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 4x16xf16>) outs(%a : !pto.tile_buf<vec, 4x16xf16>)
+    pto.tload ins(%in1 : !pto.partition_tensor_view<4x16xf16>) outs(%b : !pto.tile_buf<vec, 4x16xf16>)
+    pto.tabs ins(%b : !pto.tile_buf<vec, 4x16xf16>) outs(%b : !pto.tile_buf<vec, 4x16xf16>)
+    return
+  }
+}

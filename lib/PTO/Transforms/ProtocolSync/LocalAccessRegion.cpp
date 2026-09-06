@@ -15,16 +15,18 @@
 #include "mlir/IR/Matchers.h"
 
 #include <limits>
+#include <optional>
 
 using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::protocol_sync;
 
-SyncLocalAccessRegion mlir::pto::protocol_sync::recoverLocalAccessRegion(const SyncAccess& access)
+namespace {
+
+SyncLocalAccessRegion recoverAllocationRegion(const SyncAccess& access, AllocTileOp allocation)
 {
     SyncLocalAccessRegion region;
     region.access = access.id;
-    auto allocation = access.value ? access.value.getDefiningOp<AllocTileOp>() : AllocTileOp();
     if (!allocation || access.slot || access.storage.space != AddressSpace::VEC) {
         return region;
     }
@@ -59,4 +61,86 @@ SyncLocalAccessRegion mlir::pto::protocol_sync::recoverLocalAccessRegion(const S
     // the instruction touches. Even a static allocation is only an upper bound.
     region.precision = SyncRegionPrecision::Conservative;
     return region;
+}
+
+std::optional<std::uint64_t> nonnegativeConstant(Value value)
+{
+    IntegerAttr attribute;
+    const bool known = value && matchPattern(value, m_Constant(&attribute));
+    const bool invalid = !known || attribute.getValue().getBitWidth() > 64 || attribute.getValue().isNegative();
+    if (invalid) {
+        return std::nullopt;
+    }
+    return attribute.getValue().getZExtValue();
+}
+
+bool isOrdinaryRowLayout(TileBufType type)
+{
+    return type.getRank() == 2 && type.getBLayoutValueI32() == static_cast<int32_t>(BLayout::RowMajor) &&
+           type.getSLayoutValueI32() == static_cast<int32_t>(SLayout::NoneBox) &&
+           type.getCompactModeI32() == static_cast<int32_t>(CompactMode::Null);
+}
+
+SyncLocalAccessRegion recoverRowSubview(const SyncAccess& access, SubViewOp view)
+{
+    SyncLocalAccessRegion unknown;
+    unknown.access = access.id;
+    auto allocation = view.getSource().getDefiningOp<AllocTileOp>();
+    const bool unsupportedView = !allocation || view.getOffsets().size() != 2 || view.getSizes().size() != 2 ||
+                                 view.getValidRow() || view.getValidCol();
+    if (unsupportedView) {
+        return unknown;
+    }
+    const TileBufType parent = allocation.getResult().getType();
+    const TileBufType child = view.getResult().getType();
+    const bool compatibleTypes = isOrdinaryRowLayout(parent) && isOrdinaryRowLayout(child) &&
+                                 parent.getElementType() == child.getElementType() &&
+                                 parent.getMemorySpace() == child.getMemorySpace() &&
+                                 parent.getConfigAttr() == child.getConfigAttr();
+    const bool supportedShape = compatibleTypes && child.getValidShape() == child.getShape() &&
+                                parent.getShape()[0] > 0 && child.getShape()[0] > 0 &&
+                                child.getShape()[1] == parent.getShape()[1];
+    if (!supportedShape) {
+        return unknown;
+    }
+    for (unsigned dimension = 0; dimension < 2; ++dimension) {
+        auto size = dyn_cast<IntegerAttr>(view.getSizes()[dimension]);
+        const bool matchingSize =
+            size && size.getValue().getBitWidth() <= 64 && size.getInt() == child.getShape()[dimension];
+        if (!matchingSize) {
+            return unknown;
+        }
+    }
+    const auto row = nonnegativeConstant(view.getOffsets()[0]);
+    const auto column = nonnegativeConstant(view.getOffsets()[1]);
+    const auto parentRows = static_cast<std::uint64_t>(parent.getShape()[0]);
+    const auto childRows = static_cast<std::uint64_t>(child.getShape()[0]);
+    if (!row || !column || *column != 0 || childRows > parentRows || *row > parentRows - childRows) {
+        return unknown;
+    }
+    SyncLocalAccessRegion region = recoverAllocationRegion(access, allocation);
+    if (region.precision == SyncRegionPrecision::Unknown) {
+        return unknown;
+    }
+    // Only full-width row slices: their inherited and result-type strides
+    // coincide, including after ResolveBufferSelect. Column slices can retain
+    // a larger physical type; do not infer a footprint from logical sizes.
+    // The allocation calculation proved size and end cannot overflow, and the
+    // dimensional containment above bounds both products and the adjusted end.
+    const std::uint64_t rowBytes = region.interval.size / parentRows;
+    region.interval = {region.interval.begin + *row * rowBytes, childRows * rowBytes};
+    return region;
+}
+
+} // namespace
+
+SyncLocalAccessRegion mlir::pto::protocol_sync::recoverLocalAccessRegion(const SyncAccess& access)
+{
+    if (access.value && !access.slot && access.storage.space == AddressSpace::VEC) {
+        if (auto view = access.value.getDefiningOp<SubViewOp>()) {
+            return recoverRowSubview(access, view);
+        }
+    }
+    auto allocation = access.value ? access.value.getDefiningOp<AllocTileOp>() : AllocTileOp();
+    return recoverAllocationRegion(access, allocation);
 }

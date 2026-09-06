@@ -360,6 +360,98 @@ passed. A frozen-frontend hello-world meta specialization emitted raw PTO under
 No compiler rebuild or device execution was needed. Full driver collection and
 native acceptance remain subsequent work, not results implied by this smoke.
 
+### P3b follow-up — driver population and native baseline
+
+The completed source-driver collection at `0294705ec790` retains **35 call-site
+seeds: 15 collected, 20 needing a driver adapter**, with no source-inventory
+failure placeholders. The collected seeds emit **18 raw PTO kernels**. This is
+a separate, deliberately bounded population, not a replacement for the 349
+static seeds, 9,754 static raw outputs, historical 394 rows, or parameterized
+frontend tests. Source/tool stability checks passed. No driver or device kernel
+was executed.
+
+Artifacts below are relative to `build/protocol-sync-native-corpus/`:
+
+- `driver-p3b/manifest.tsv`: `9e1906b6cb091d4487fc5a380c0a17025769ab049b95706b75baba179471b37a`.
+- `driver-p3b/collection.json`: `021efd1174bf7614e991ee0626c46f399f3c6bf89540a2ea7a4965606f93c143`.
+- `driver-p3b/summary.json`: `e82d0dd3b08ca4bca5d937d3deb2d7841fe5112a098ffa989499a0d49ea83979`.
+- `driver-p3b/run.json`: `43ef3fe0287b974050fce9961d02a7067254f998524c1a9068d26bca5a0dbdcb`.
+- `driver-p3b/hashes.json`: `8da1331cbcf469963fcaa4dd1058d050ae116c01ee39f47781731f6900a44cef`.
+
+The acceptance runner used `--mode acceptance --workers 1 --expected-rows 18`,
+the driver manifest/input root, `--patterns off`, and all four combinations of
+`--arch a2|a3` and `--gm-alias may-alias|assume-disjoint-arguments`. Each run used
+`taskset -c 0,1 .venv/bin/python test/experiments/protocol_sync/campaign.py`;
+exact commands, compiler fingerprints and per-row hashes are in each run's
+metadata. All four configurations admitted **16/18** natively with fallback
+disabled; all 18 diagnostic probes completed. Runner `failed_rows=0` denotes
+probe health, not 18 admitted kernels.
+
+The same two rows reject in each configuration:
+
+- `719dac71d4fe5c6bce89_000`, `chunked_add` from
+  `examples/beginner/02_elementwise.py`: ordinary loop/reuse and recurring
+  endpoint obligations remain unsupported by selective repair.
+- `0053ad4c1a05b5b1c9dc_000`, `matmul_acc_64` from
+  `examples/intermediate/04_matmul_acc.py`: ACC, conflicting-range and
+  unknown-alias obligations remain unresolved.
+
+The four `acceptance-p3b-*/summary.json` SHA-256 values are:
+
+| Configuration | SHA-256 |
+| --- | --- |
+| A2, may alias | `f14614070e6de94253fd68ad68b20731421ba420dc46a016d3d7762938e16a7d` |
+| A2, disjoint arguments | `60f74150c6b9a45263b0d21bb74d9e5fe9bdb8e7585471db774c8544647f36f8` |
+| A3, may alias | `58d4cdd4330e37ccafd0e3a8a7ff3282adfcdced2b9dbbfe8af9300d378b92f7` |
+| A3, disjoint arguments | `6f0d91695d59e030b13179cebd23dd7efea2c21f3c27f978d59868750b20c3b7` |
+
+`native_followup.py --workers 1` over these four campaigns passed **128/128**
+checks: 16 fresh concrete-verifier runs and 16 C++ emissions per configuration.
+Compiler stability passed; `followup-p3b/summary.json` hashes to
+`d749a020662de2ab2180952772b1f50972b335b141627d78855f31c5cf1bbcbe`.
+These measurements precede the P3c compiler rebuild. They establish neither
+device correctness/performance nor acceptance of the larger static population.
+
+### P3c — conservative full-width UB row views
+
+Recover bounded full-width row slices of direct addressed UB allocations when
+the inherited and result-type physical strides agree. Bounds, positive static
+dimensions, sizes/type agreement, ordinary row-major/unboxed/non-padded layout,
+and checked address arithmetic are required. Preserve **Conservative** access
+precision: an allocation or view extent is not an exact instruction footprint.
+
+This deliberately excludes column cuts, nested views, slot selection, dynamic
+offsets/addresses, unsupported layouts and partial/dynamic view valid extents.
+`PTOResolveBufferSelect.cpp` can retain the parent's physical type when strides
+differ; logical contiguity alone is not a sufficient footprint proof. No
+legacy approximate subview span is imported as exact evidence.
+
+The independent byte-set oracle covers all 36 contained row intervals of an
+8-by-16 f16 tile, reconstructs their atom union, and checks precision. Negative
+cases cover each unsupported boundary above. A fresh concrete reference accepts
+two disjoint views, then rejects changing one offset to create overlap while
+leaving synchronization unchanged. This is an address mutation of a manual
+reference, not a claim that every legal descriptor change must race.
+
+The native regression covers disjoint and partially overlapping views, including
+different allocation SSA roots at the same physical address. Independent
+readiness signals remain separate; overlapping reuse needs its reverse handoff.
+It runs A2/A3 and both GM modes with patterns/fallback disabled, fresh concrete
+verification for both targets, and A3 C++ emission. Its GM accesses are reads;
+this fixture does not qualify GM alias or publication hazards.
+
+Independent algorithm and compiler reviews accepted the bounded recovery proof.
+On 2026-09-06, the compiler DSO, `pto-test-opt` and seven ProtocolSync unit
+targets were rebuilt incrementally with `taskset -c 0,1 cmake --build build
+--parallel 2 --target ...`; no LLVM rebuild or competing intensive job ran.
+The local-memory unit target alone was relinked for subsequent test-only fixes.
+The final configured LLVM lit invocation, through `.venv/bin/python` with the
+venv on PATH and `taskset -c 0,1`, used `-v -j1 build/test/lit --filter
+protocol_sync_ -o build/protocol-sync-p3c-tests.json`: **50/50 passed**, 70.22 s.
+Earlier failures were a missing output expectation and malformed raw-IR type
+syntax in the new test; both were corrected before this clean checkpoint.
+Changed-code prefilter and `git diff --check` passed. No system/device suite ran.
+
 ### Historical N0 progress
 
 - N0 in progress: source heads resolved; added general-only mixed-mode selection

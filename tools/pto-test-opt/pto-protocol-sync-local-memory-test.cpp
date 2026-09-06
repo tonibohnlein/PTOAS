@@ -23,6 +23,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <iterator>
 #include <set>
 #include <string>
 
@@ -275,6 +276,199 @@ module {
     return true;
 }
 
+bool testStaticRowViews(MLIRContext& context)
+{
+    for (unsigned row = 0; row < 8; ++row) {
+        for (unsigned height = 1; height <= 8 - row; ++height) {
+            const std::string shape = std::to_string(height) + "x16xf16";
+            const std::string tile = "!pto.tile_buf<vec, " + shape + ">";
+            const std::string input = "!pto.partition_tensor_view<" + shape + ">";
+            const std::string text = "module { func.func @view(%in: " + input + ", %out: " + input +
+                                     ") attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {\n"
+                                     "%base = arith.constant 32 : i64\n%zero = arith.constant 0 : index\n"
+                                     "%row = arith.constant " +
+                                     std::to_string(row) +
+                                     " : index\n"
+                                     "%tile = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 8x16xf16>\n"
+                                     "%view = pto.subview %tile[%row, %zero] sizes [" +
+                                     std::to_string(height) + ", 16] : !pto.tile_buf<vec, 8x16xf16> -> " + tile +
+                                     "\n"
+                                     "pto.tload ins(%in : " +
+                                     input + ") outs(%view : " + tile +
+                                     ")\n"
+                                     "pto.tstore ins(%view : " +
+                                     tile + ") outs(%out : " + input + ")\nreturn } }";
+            auto module = parseSourceString<ModuleOp>(text, &context);
+            if (!module) {
+                return check(false, "static row-view fixture must verify");
+            }
+            Fixture fixture(std::move(module));
+            if (!fixture.build()) {
+                return check(false, "static row-view extraction");
+            }
+            auto analysis = analyzeLocalMemory(fixture.schedule);
+            const bool complete = succeeded(analysis) && analysis->boundary.empty() &&
+                                  analysis->coveredAccesses.count() == 2 && analysis->requirements.size() == 1;
+            if (!check(complete, "row views must enter canonical local requirements")) {
+                return false;
+            }
+            // Independent 8x16 f16 byte lattice, not production stride/range
+            // recovery. Cover every contained row interval including both ends.
+            std::set<std::uint64_t> expected;
+            for (unsigned r = row; r < row + height; ++r) {
+                for (unsigned column = 0; column < 16; ++column) {
+                    expected.insert(32 + r * 32 + column * 2);
+                    expected.insert(33 + r * 32 + column * 2);
+                }
+            }
+            for (const SyncLocalAccessRegion& region : analysis->regions) {
+                std::set<std::uint64_t> actual;
+                for (const SyncLocalStorageAtom& atom : analysis->atoms) {
+                    if (llvm::is_contained(atom.accesses, region.access)) {
+                        for (std::uint64_t byte = atom.interval.begin; byte < atom.interval.begin + atom.interval.size;
+                             ++byte) {
+                            actual.insert(byte);
+                        }
+                    }
+                }
+                if (!check(
+                        actual == expected && region.precision == SyncRegionPrecision::Conservative,
+                        "row-view atoms match byte oracle without claiming exact instruction effects")) {
+                    return false;
+                }
+                SyncAccess recurring = *fixture.schedule.findAccess(region.access);
+                recurring.slot.emplace();
+                if (!check(
+                        recoverLocalAccessRegion(recurring).precision == SyncRegionPrecision::Unknown,
+                        "row-view recovery cannot erase a slot relation")) {
+                    return false;
+                }
+            }
+        }
+    }
+    llvm::outs() << "protocol-sync static row-view byte oracle: 36 intervals pass\n";
+    return true;
+}
+
+bool testUnsupportedViews(MLIRContext& context)
+{
+    constexpr StringLiteral text = R"mlir(
+module {
+  func.func @views(%dynamic: index, %address: i64) {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %seven = arith.constant 7 : index
+    %negative = arith.constant -1 : index
+    %root = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 8x16xf16>
+    %dynamic_view = pto.subview %root[%dynamic, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 4x16xf16>
+    %column_view = pto.subview %root[%zero, %zero] sizes [1, 8]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 1x8xf16>
+    %outside = pto.subview %root[%seven, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 4x16xf16>
+    %negative_view = pto.subview %root[%negative, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 4x16xf16>
+    %shifted_column = pto.subview %root[%zero, %one] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 4x16xf16>
+    %nested = pto.subview %dynamic_view[%zero, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 4x16xf16> -> !pto.tile_buf<vec, 4x16xf16>
+    %overflow_root = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 8x4611686018427387904xf16>
+    %overflow = pto.subview %overflow_root[%zero, %zero] sizes [4, 4611686018427387904]
+      : !pto.tile_buf<vec, 8x4611686018427387904xf16> -> !pto.tile_buf<vec, 4x4611686018427387904xf16>
+    %unknown_root = pto.alloc_tile addr = %address : !pto.tile_buf<vec, 8x16xf16>
+    %unknown_address = pto.subview %unknown_root[%zero, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 4x16xf16>
+    %size_mismatch = pto.subview %root[%zero, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 5x16xf16>
+    %col_root = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 8x16xf16, blayout=col_major>
+    %col = pto.subview %col_root[%zero, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16, blayout=col_major> -> !pto.tile_buf<vec, 4x16xf16, blayout=col_major>
+    %box_root = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 8x16xf16, slayout=row_major>
+    %box = pto.subview %box_root[%zero, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16, slayout=row_major> -> !pto.tile_buf<vec, 4x16xf16, slayout=row_major>
+    %packed_root = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 8x16xf16, compact=2>
+    %packed = pto.subview %packed_root[%zero, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16, compact=2> -> !pto.tile_buf<vec, 4x16xf16, compact=2>
+    %valid = pto.subview %root[%zero, %zero] sizes [4, 16] valid [%dynamic, %dynamic]
+      : !pto.tile_buf<vec, 8x16xf16>
+      -> !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=16, v_row=?, v_col=?,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %partial = pto.subview %root[%zero, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16>
+      -> !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=16, v_row=2, v_col=16,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    return
+  }
+}
+)mlir";
+    auto module = parseSourceString<ModuleOp>(text, ParserConfig(&context, /*verifyAfterParse=*/false));
+    if (!module) {
+        return false;
+    }
+    auto function = *module->getOps<func::FuncOp>().begin();
+    for (auto view : function.getOps<SubViewOp>()) {
+        SyncAccess access;
+        access.value = view.getResult();
+        access.storage.space = AddressSpace::VEC;
+        if (!check(
+                recoverLocalAccessRegion(access).precision == SyncRegionPrecision::Unknown,
+                "unproven view bounds/layout must stay unknown")) {
+            return false;
+        }
+    }
+    llvm::outs() << "protocol-sync unsupported view bounds: pass\n";
+    return true;
+}
+
+bool testConcreteViewMutation(MLIRContext& context)
+{
+    constexpr StringLiteral text = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @views(%input: !pto.partition_tensor_view<4x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %base = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    %root = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 8x16xf16>
+    %a = pto.subview %root[%zero, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 4x16xf16>
+    %b = pto.subview %root[%four, %zero] sizes [4, 16]
+      : !pto.tile_buf<vec, 8x16xf16> -> !pto.tile_buf<vec, 4x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<4x16xf16>) outs(%a : !pto.tile_buf<vec, 4x16xf16>)
+    pto.set_flag [<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.tload ins(%input : !pto.partition_tensor_view<4x16xf16>) outs(%b : !pto.tile_buf<vec, 4x16xf16>)
+    pto.set_flag [<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+    pto.wait_flag [<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.tabs ins(%a : !pto.tile_buf<vec, 4x16xf16>) outs(%a : !pto.tile_buf<vec, 4x16xf16>)
+    pto.wait_flag [<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+    pto.tabs ins(%b : !pto.tile_buf<vec, 4x16xf16>) outs(%b : !pto.tile_buf<vec, 4x16xf16>)
+    pto.barrier <PIPE_ALL>
+    return
+  }
+}
+)mlir";
+    auto module = parseSourceString<ModuleOp>(text, &context);
+    if (!module) {
+        return false;
+    }
+    auto function = *module->getOps<func::FuncOp>().begin();
+    if (!check(succeeded(verifyFreshConcreteSyncSemantics(function)), "disjoint row-view concrete supply")) {
+        return false;
+    }
+    auto views = function.getOps<SubViewOp>();
+    auto first = *views.begin();
+    auto second = *std::next(views.begin());
+    // Keep synchronization unchanged while making two physical row windows
+    // overlap. No planner labels or selected obligation records are consulted.
+    second->setOperand(1, first.getOffsets()[0]);
+    if (!check(failed(verifyFreshConcreteSyncSemantics(function)), "shifted overlapping view requires new ordering")) {
+        return false;
+    }
+    llvm::outs() << "protocol-sync concrete row-view address mutation: pass\n";
+    return true;
+}
+
 std::string branchEffect(unsigned mode, StringRef buffer)
 {
     const std::string operand = buffer.str() + " : !pto.tile_buf<vec, 16x16xf16>";
@@ -513,6 +707,7 @@ int main()
     MLIRContext context(registry);
     context.disableMultithreading();
     return testSparseChains(context) && testConcreteMutations(context) && testUnknownAndOverflow(context) &&
+                   testStaticRowViews(context) && testUnsupportedViews(context) && testConcreteViewMutation(context) &&
                    testCompositionalRegions(context) && testExpansionLimits(context) ?
                0 :
                1;
