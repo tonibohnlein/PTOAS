@@ -72,13 +72,19 @@ std::optional<SyncRegionId> mlir::pto::protocol_sync::findIsolatedSyncLoop(
         return std::nullopt;
     }
     llvm::DenseSet<Operation*> operations;
+    const auto core = schedule.getPhases().front().core;
     for (const SyncPhase& phase : schedule.getPhases()) {
+        const bool staging =
+            core == SyncPhysicalCore::Cube &&
+            (phase.pipe == PIPE::PIPE_MTE2 || phase.pipe == PIPE::PIPE_MTE1 || phase.pipe == PIPE::PIPE_MTE3);
+        const bool vector =
+            core == SyncPhysicalCore::Vector &&
+            (phase.pipe == PIPE::PIPE_MTE2 || phase.pipe == PIPE::PIPE_V || phase.pipe == PIPE::PIPE_MTE3);
         const bool supported =
             phase.operation &&
             (phase.operation->getBlock() == loop.getBody() || phase.operation->getBlock() == loop->getBlock()) &&
-            phase.operation->getNumResults() == 0 && phase.guard.empty() && phase.core == SyncPhysicalCore::Vector &&
-            !phase.macroPhase && phase.completion == SyncCompletionKind::PhaseEnd &&
-            (phase.pipe == PIPE::PIPE_MTE2 || phase.pipe == PIPE::PIPE_V || phase.pipe == PIPE::PIPE_MTE3) &&
+            phase.operation->getNumResults() == 0 && phase.guard.empty() && phase.core == core && !phase.macroPhase &&
+            phase.completion == SyncCompletionKind::PhaseEnd && (staging || vector) &&
             operations.insert(phase.operation).second;
         if (!supported) {
             return std::nullopt;
@@ -100,11 +106,16 @@ std::optional<SyncRegionId> mlir::pto::protocol_sync::findIsolatedSyncLoop(
         if (!ordinary || access.slot) {
             return std::nullopt;
         }
-        if (access.storage.space == AddressSpace::VEC) {
+        const auto space = access.storage.space;
+        const bool local =
+            core == SyncPhysicalCore::Vector ?
+                space == AddressSpace::VEC :
+                space == AddressSpace::MAT || space == AddressSpace::LEFT || space == AddressSpace::RIGHT;
+        if (local) {
             if (recoverLocalAccessRegion(access).precision == SyncRegionPrecision::Unknown) {
                 return std::nullopt;
             }
-        } else if (access.storage.space != AddressSpace::GM) {
+        } else if (space != AddressSpace::GM) {
             return std::nullopt;
         }
     }

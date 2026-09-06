@@ -160,6 +160,7 @@ FailureOr<SyncSelectedWorld> mlir::pto::protocol_sync::reconstructSelectiveLoop(
     }
     auto loop = cast<scf::ForOp>(schedule.findRegion(*carrier)->operation);
     const auto target = ProtocolSyncTarget::resolve(schedule.getFunction());
+    const auto core = schedule.getPhases().front().core;
     std::map<Key, Channel> channels;
     SmallVector<Action, 8> barriers;
     SmallVector<Action, 16> actions;
@@ -185,7 +186,7 @@ FailureOr<SyncSelectedWorld> mlir::pto::protocol_sync::reconstructSelectiveLoop(
             const PIPE pipe = barrier.getPipe().getPipe();
             if (operation == tail && pipe == PIPE::PIPE_ALL) {
                 exitDrain = true;
-            } else if (target.supportsPipeBarrier({SyncPhysicalCore::Vector, pipe})) {
+            } else if (target.supportsPipeBarrier({core, pipe})) {
                 barriers.push_back(action);
             } else {
                 invalid = true;
@@ -197,8 +198,8 @@ FailureOr<SyncSelectedWorld> mlir::pto::protocol_sync::reconstructSelectiveLoop(
         const PIPE p = set ? set.getSrcPipe().getPipe() : wait.getSrcPipe().getPipe();
         const PIPE q = set ? set.getDstPipe().getPipe() : wait.getDstPipe().getPipe();
         const unsigned id = static_cast<unsigned>(set ? set.getEventId().getEvent() : wait.getEventId().getEvent());
-        const bool supported = target.supportsEvent({SyncPhysicalCore::Vector, p}, {SyncPhysicalCore::Vector, q}) &&
-                               llvm::is_contained(target.getCompilerEventIds(), id);
+        const bool supported =
+            target.supportsEvent({core, p}, {core, q}) && llvm::is_contained(target.getCompilerEventIds(), id);
         if (!supported) {
             invalid = true;
             return;

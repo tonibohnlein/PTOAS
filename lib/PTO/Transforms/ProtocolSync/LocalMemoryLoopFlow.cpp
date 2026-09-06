@@ -90,12 +90,16 @@ const SyncRegion* findCarrier(const StructuredSyncIR& schedule)
 bool hasSupportedPhases(const StructuredSyncIR& schedule, const SyncRegion& carrier)
 {
     auto loop = cast<scf::ForOp>(carrier.operation);
+    SyncPhysicalCore core = SyncPhysicalCore::Unknown;
     for (const SyncPhase& phase : schedule.getPhases()) {
-        const bool ordinary = phase.operation && phase.core == SyncPhysicalCore::Vector && !phase.macroPhase &&
-                              phase.guard.empty() && phase.completion == SyncCompletionKind::PhaseEnd;
+        const bool sameCore = core == SyncPhysicalCore::Unknown || phase.core == core;
+        const bool ordinary = phase.operation && phase.core != SyncPhysicalCore::Unknown && sameCore &&
+                              !phase.macroPhase && phase.guard.empty() &&
+                              phase.completion == SyncCompletionKind::PhaseEnd;
         if (!ordinary) {
             return false;
         }
+        core = phase.core;
         const bool inBody = phase.operation->getBlock() == loop.getBody();
         if (inBody) {
             if (phase.iterationDomain.loops != SmallVector<SyncRegionId, 2>{carrier.id}) {

@@ -49,12 +49,12 @@ bool hazard(const SyncPhase& first, const SyncPhase& second, const StructuredSyn
 {
     for (SyncAccessId a : first.accesses) {
         const SyncAccess* left = schedule.findAccess(a);
-        if (!left || left->storage.space != AddressSpace::VEC) {
+        if (!left || left->storage.space == AddressSpace::GM) {
             continue;
         }
         for (SyncAccessId b : second.accesses) {
             const SyncAccess* right = schedule.findAccess(b);
-            const bool local = right && right->storage.space == AddressSpace::VEC &&
+            const bool local = right && right->storage.space == left->storage.space && first.core == second.core &&
                                (left->mode != SyncAccessMode::Read || right->mode != SyncAccessMode::Read);
             if (!local) {
                 continue;

@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a3.pto
+// RUN: FileCheck %s --input-file=%t.a3.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a2.pto
+// RUN: FileCheck %s --input-file=%t.a2.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.disjoint.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.disjoint.a2.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a3.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFY
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a2.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFY
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail %s -o %t.cpp
+// VERIFY: concrete-verification function=@cube_staging status=accepted
+
+// Reduced input-staging dependency structure from the frozen markov_logits
+// example: independent MAT loads feed LEFT/RIGHT transfers before reuse.
+// Geometry is reduced to complete 16x16 boxes; this is not full GEMM admission.
+// CHECK-LABEL: func.func @cube_staging
+// CHECK: scf.for
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>,
+// CHECK-NOT: pto.barrier
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>,
+// CHECK: pto.tmov
+// CHECK: pto.tmov
+// CHECK: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: return
+
+module {
+  func.func @cube_staging(%n: index, %x: !pto.partition_tensor_view<16x16xf16>,
+                         %y: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %base = arith.constant 0 : i64
+    %other = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %base : !pto.tile_buf<mat, 16x16xf16>
+    %b = pto.alloc_tile addr = %other : !pto.tile_buf<mat, 16x16xf16>
+    %left = pto.alloc_tile addr = %base : !pto.tile_buf<left, 16x16xf16>
+    %right = pto.alloc_tile addr = %base : !pto.tile_buf<right, 16x16xf16>
+    scf.for %i = %zero to %n step %one {
+      pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<mat, 16x16xf16>)
+      pto.tload ins(%y : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<mat, 16x16xf16>)
+      pto.tmov ins(%a : !pto.tile_buf<mat, 16x16xf16>) outs(%left : !pto.tile_buf<left, 16x16xf16>)
+      pto.tmov ins(%b : !pto.tile_buf<mat, 16x16xf16>) outs(%right : !pto.tile_buf<right, 16x16xf16>)
+    }
+    return
+  }
+}

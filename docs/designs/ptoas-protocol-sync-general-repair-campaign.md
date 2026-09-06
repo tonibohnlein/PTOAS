@@ -157,6 +157,35 @@ qualified. Exhausted search budgets are not semantic counterexamples.
 
 ## Progress ledger
 
+### R3c — selective cube input staging
+
+The ordinary-loop transfer and selective repair path now use the admitted
+physical core instead of hard-coding Vector. Cube input staging uses the same
+canonical requirements, positive/bypass supply, logical allocator, recurring
+token proof and concrete reconstruction as UB loops. Its bounded native scope
+is MTE2/MTE1/MTE3 with MAT/LEFT/RIGHT and qualified GM effects. ACC accesses,
+M/FIX compute, unknown or mixed cores, sections, slots and nested control remain
+outside this extension. Existing target event/barrier qualifications are reused;
+no new target effect is inferred from event-direction legality.
+
+The regression reduces the input-staging dependency structure of frozen
+`markov_logits` to complete 16x16 boxes: independent MAT loads feed separate
+LEFT/RIGHT transfers, followed by actual same-storage reuse. It is explicitly
+not full GEMM admission or a run of the original kernel. The independent
+instruction issue/completion oracle distinguishes storage spaces and cores,
+checks zero-trip token cleanup, and requires an execution with load B and the
+transfer of A outstanding concurrently. Deleting a wait fails both concrete
+reconstruction and the final fresh verifier. Explicit ACC-compute and unknown/
+mixed-core negatives preserve the admission boundary.
+
+Both independent source reviews accepted this bounded extension. On 2026-09-06,
+fresh targeted two-worker builds/relinks and all 59 focused ProtocolSync tests
+pass in 86.06 seconds (`build/protocol-sync-cube-staging-suite.json`). The native
+staging fixture passes A2/A3 with both GM contracts, patterns off and fallback
+fail, plus fresh concrete verification and C++ emission. The changed-code
+prefilter checks five files with zero errors/warnings and `git diff --check`
+passes. No new full-corpus or device performance claim is made for this slice.
+
 ### R3b — scope-local descriptor definitions
 
 Direct descriptor allocations can now live in supported `scf.for` and `scf.if`

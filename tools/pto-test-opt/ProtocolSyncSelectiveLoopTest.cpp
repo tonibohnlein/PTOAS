@@ -98,7 +98,40 @@ bool materializePlan(const StructuredSyncIR& schedule, SyncSelectiveLoopPlan& pl
     return allocatePlan(schedule, plan) && succeeded(materializeSelectiveLoopRepair(schedule.getFunction(), plan));
 }
 
-bool testIndependentLoopReadiness(MLIRContext& context)
+bool checkCubeScopeRefusals(MLIRContext& context, StringRef original)
+{
+    for (unsigned variant = 0; variant < 3; ++variant) {
+        std::string text = original.str();
+        if (variant == 0) {
+            const auto loop = text.find("  scf.for");
+            text.insert(loop, "  %acc = pto.alloc_tile addr = %base : !pto.tile_buf<acc, 16x16xf32>\n");
+            const auto end = text.find("  }", text.find("  scf.for"));
+            text.insert(
+                end, "   pto.tmatmul ins(%left, %right : !pto.tile_buf<left, 16x16xf16>, "
+                     "!pto.tile_buf<right, 16x16xf16>) outs(%acc : !pto.tile_buf<acc, 16x16xf32>)\n");
+        } else {
+            const std::string kind = "#pto.kernel_kind<cube>";
+            if (variant == 1) {
+                text.replace(text.find(kind), kind.size(), "#pto.kernel_kind<vector>");
+            } else {
+                const std::string attribute = "pto.kernel_kind = " + kind + ", ";
+                text.erase(text.find(attribute), attribute.size());
+            }
+        }
+        auto module = parseSourceString<ModuleOp>(text, ParserConfig(&context, false));
+        if (!module) {
+            return false;
+        }
+        auto schedule = extract(*module);
+        const bool rejected = !schedule || !findIsolatedSyncLoop(*schedule, false);
+        if (!check(rejected, "ACC compute and mixed/unknown core remain outside selective staging")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool testIndependentLoopReadiness(MLIRContext& context, bool cube = false)
 {
     std::string text = kFixture.str();
     const auto start = text.find("   pto.tadd");
@@ -107,6 +140,25 @@ bool testIndependentLoopReadiness(MLIRContext& context)
         start, end - start,
         "   pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)\n"
         "   pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)\n");
+    if (cube) {
+        const std::string oldKind = "#pto.kernel_kind<vector>";
+        text.replace(text.find(oldKind), oldKind.size(), "#pto.kernel_kind<cube>");
+        const std::string oldSpace = "tile_buf<vec,";
+        for (std::size_t pos = text.find(oldSpace); pos != std::string::npos; pos = text.find(oldSpace, pos + 1)) {
+            text.replace(pos, oldSpace.size(), "tile_buf<mat,");
+        }
+        text.insert(
+            text.find("  scf.for"), "  %left = pto.alloc_tile addr = %base : !pto.tile_buf<left, 16x16xf16>\n"
+                                    "  %right = pto.alloc_tile addr = %base : !pto.tile_buf<right, 16x16xf16>\n");
+        const auto first = text.find("   pto.tabs");
+        text.replace(
+            first, text.find("  }", first) - first,
+            "   pto.tmov ins(%a : !pto.tile_buf<mat, 16x16xf16>) outs(%left : !pto.tile_buf<left, 16x16xf16>)\n"
+            "   pto.tmov ins(%b : !pto.tile_buf<mat, 16x16xf16>) outs(%right : !pto.tile_buf<right, 16x16xf16>)\n");
+        if (!checkCubeScopeRefusals(context, text)) {
+            return false;
+        }
+    }
     auto module = parseSourceString<ModuleOp>(text, &context);
     auto schedule = module ? extract(*module) : nullptr;
     if (!schedule) {
@@ -128,6 +180,20 @@ bool testIndependentLoopReadiness(MLIRContext& context)
         bool overlap = false;
         const bool safe = checkSelectiveLoopInterleavings(*concrete, trips, &overlap);
         if (!check(safe && overlap, "consumer A overlaps independent load B")) {
+            return false;
+        }
+    }
+    if (cube) {
+        if (!check(checkSelectiveLoopInterleavings(*concrete, 0, nullptr), "cube zero-trip credit drain")) {
+            return false;
+        }
+        auto loop = *concrete->getFunction().getOps<scf::ForOp>().begin();
+        auto wait = *loop.getBody()->getOps<WaitFlagOp>().begin();
+        wait.erase();
+        auto removed = extract(*module);
+        const bool rejected = removed && failed(reconstructSelectiveLoop(*removed)) &&
+                              failed(verifyFreshConcreteSyncSemantics(removed->getFunction()));
+        if (!check(rejected, "cube event-consumption mutation")) {
             return false;
         }
     }
@@ -278,8 +344,8 @@ bool testConcreteBudget(MLIRContext& context)
 
 bool testSelectiveLoopRepair(MLIRContext& context)
 {
-    const bool initial = testIndependentLoopReadiness(context) && testSinglePhaseBarrier(context) &&
-                         testConcreteBudget(context) && testResourceRefusal(context);
+    const bool initial = testIndependentLoopReadiness(context) && testIndependentLoopReadiness(context, true) &&
+                         testSinglePhaseBarrier(context) && testConcreteBudget(context) && testResourceRefusal(context);
     if (!initial) {
         return false;
     }
