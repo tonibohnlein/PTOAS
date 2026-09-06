@@ -318,6 +318,48 @@ the next collection uses a fresh disk-backed result directory and the same
 frozen frontend source commits. Static seeds are not the complete parameterized
 kernel acceptance population.
 
+### P3b — source-driver samples and completed static collection
+
+The completed, source/tool-stable `build/protocol-sync-native-corpus/static-p3a/`
+collection used the frozen frontend commits above and the collector snapshot at
+PTOAS `13c19d818`. Its **349 static seeds** comprise 213 collected, 102 failed,
+17 declared drafts and 17 requiring construction adapters. It retained **9,754
+raw PTO files**, with 9,563 distinct file hashes (390,470,335 raw input bytes).
+No failed seed in this run produced partial PTO. These are not the historical
+152 kernels and are not native compiler admission results. Parameterized tests
+and unresolved factories still require separate adapters.
+
+The failed seeds comprise 81 TypeError, 16 ValueError, three ModuleNotFoundError
+and two RuntimeError records. Examples include bare tensor signatures, frontend
+UB capacity failures, a `contract` import collision and absent CANN devkit headers.
+These are collection/frontend blockers, not ProtocolSync rejection categories.
+No frontend memory-planning or runtime contract was changed to hide them.
+
+Artifact SHA-256 values:
+
+- `manifest.tsv`: `8d7fa280b832f49723e68d970a35994cedca5322f7bbc29281ef8c909245b44a`.
+- `collection.json`: `2fcdf4e425e162b2f587a103417d091187f424f1563813827fd092ca958d2745`.
+- `summary.json`: `756908937f22881c52ab373886332e4ae2d6ade3a1cbc8d4e66a62f6a6b9577e`.
+- `run.json`: `88fb338b1074f21d8f79fc839c49fd01e00a752ce75e6ae52701a52f957dac94`.
+- `hashes.json`: `df7b4ae192cdc733c4843faa558e10bce2c4b6328124f308521bbaadf8516fd3`.
+
+The separate `--adapter driver` now recovers explicit source-backed samples for
+bare signatures without executing drivers. It uses bounded AST interpretation,
+explicit dtypes, source-order bindings, per-call provenance and worker-side source
+revalidation. Unknown mutations, imports/rebindings, definition-time effects and
+control retain unresolved records. Meta tensors preserve repeated-argument
+identity but imply no disjointness; literal scalars remain specialized. The
+campaign's fixed compiler settings explicitly override recorded RunConfig input.
+
+Independent algorithm and compiler reviews accepted after correcting stale
+bindings and failed/nested call accounting. On 2026-09-06, `taskset -c 0
+.venv/bin/python -m unittest discover -s test/experiments/protocol_sync
+-p 'test_*.py'` passed **55 tests**; the changed-code prefilter and diff check
+passed. A frozen-frontend hello-world meta specialization emitted raw PTO under
+`driver-p3b-smoke/`, using one CPU and all codegen/BLAS worker counts set to one.
+No compiler rebuild or device execution was needed. Full driver collection and
+native acceptance remain subsequent work, not results implied by this smoke.
+
 ### Historical N0 progress
 
 - N0 in progress: source heads resolved; added general-only mixed-mode selection

@@ -182,3 +182,23 @@ Collection is serial, with explicitly bounded codegen/BLAS worker counts.
 Artifacts include source commits/trees/submodules, extension/Python/CMake hashes,
 runtime package versions, script snapshots, per-seed commands and logs, unchanged
 raw PTO, and a hash manifest. No NPU correctness claim follows from collection.
+
+`--adapter driver` uses a **separate** population of source call sites in explicit
+`if __name__ == "__main__"` drivers. It extracts a bounded unconditional prefix
+of literal tensor shapes/dtypes and scalar arguments; it does not execute the
+driver. Only explicitly typed contiguous torch constructors are supported.
+Arguments become fixed `torch.empty(..., device="meta")` samples for public
+`specialize()`, retaining repeated-argument identity. This supplies no GM noalias
+contract. Scalar literals stay specialized; this path does not inject `RUNTIME`.
+The source call and exact sample record are revalidated before specialization.
+
+Unknown mutation/control/definition-time effects stop inference, while all
+encountered recognized calls remain unresolved records. Nested factories,
+parameterized tests and drivers inside functions remain outside this adapter.
+Source-inventory failure placeholders are counted separately from discovered
+call sites. Supported assertions describe their successful path; no reference
+tensor computation is run. A no-argument `RunConfig` is recorded but deliberately
+replaced by the campaign's fixed backend, memory-planner and skip-PTOAS policy.
+Do not interpret these samples as a reproduction of device runtime configuration.
+Use a fresh result directory for each adapter, keeping the original static
+failures rather than replacing them with successfully collected call sites.

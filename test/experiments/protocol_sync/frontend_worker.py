@@ -48,7 +48,7 @@ def load_entry_module(root, source):
     return module
 
 
-def collect_entry(root, source, name, kind, output):
+def collect_entry(root, source, name, kind, output, samples=None):
     # Also bound direct smoke invocations, not only launches by the collector.
     for key in ("PYPTO_CODEGEN_MAX_WORKERS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
                 "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
@@ -61,7 +61,10 @@ def collect_entry(root, source, name, kind, output):
     # Module import must see no collector flags in any module-local parser.
     module = load_entry_module(root, source)
     entry = getattr(module, name)
-    if kind == "jit":
+    if samples is not None:
+        arguments, keywords = materialize_samples(samples)
+        program = entry.specialize(*arguments, **keywords)
+    elif kind == "jit":
         program = entry.specialize(**runtime_scalars(entry, pl))
     else:
         program = entry
@@ -75,6 +78,34 @@ def collect_entry(root, source, name, kind, output):
             "frontend_extension": pypto_core.__file__, "python": sys.version}
 
 
+def materialize_samples(samples):
+    """Allocate only meta tensors; shared source identities stay shared objects."""
+    import torch
+    from frontend_samples import DTYPES
+
+    if samples.get("status") != "source-samples":
+        raise ValueError("driver arguments were not resolved")
+    tensors = {}
+
+    def materialize(value):
+        if not isinstance(value, dict):
+            if type(value) not in (int, float, bool):
+                raise ValueError("unsupported scalar sample")
+            return value
+        identity = value["identity"]
+        if value["dtype"] not in DTYPES:
+            raise ValueError("unsupported tensor dtype")
+        if identity not in tensors:
+            tensors[identity] = (value, torch.empty(tuple(value["shape"]), dtype=getattr(torch, value["dtype"]),
+                                                   device="meta"))
+        if tensors[identity][0] != value:
+            raise ValueError("conflicting tensor identity")
+        return tensors[identity][1]
+
+    return ([materialize(value) for value in samples["arguments"]],
+            {name: materialize(value) for name, value in samples["keywords"].items()})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
@@ -82,6 +113,7 @@ def main():
     parser.add_argument("--entry", required=True)
     parser.add_argument("--kind", choices=("jit", "program"), required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--samples", type=Path)
     args = parser.parse_args()
     root = args.root.resolve(strict=True)
     source = (root / args.source).resolve(strict=True)
@@ -92,7 +124,18 @@ def main():
     result = {"status": "collected", "skip_ptoas": True, "memory_planner": "PYPTO",
               "backend": "Ascend910B", "level": "level3"}
     try:
-        result.update(collect_entry(root, source.relative_to(root), args.entry, args.kind, output))
+        samples = json.loads(args.samples.read_text(encoding="utf-8")) if args.samples else None
+        if samples is not None:
+            from frontend_inventory import discover_entries
+            from frontend_samples import discover_driver_calls
+
+            source_text = source.read_text(encoding="utf-8")
+            names = {entry["entry"] for entry in discover_entries(source_text)
+                     if entry["kind"] == "jit" and entry["top_level"]}
+            if samples.get("entry") != args.entry or samples not in discover_driver_calls(source_text, names):
+                raise ValueError("sample record does not match the frozen source call")
+        result["samples"] = samples
+        result.update(collect_entry(root, source.relative_to(root), args.entry, args.kind, output, samples))
     except Exception as error:
         result.update(status="collection-failed", error_type=type(error).__name__, error=str(error))
         traceback.print_exc()

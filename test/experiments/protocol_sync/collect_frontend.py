@@ -30,6 +30,7 @@ from pathlib import Path
 
 from campaign import write_json
 from frontend_inventory import inventory_source, source_revision
+from frontend_samples import discover_driver_calls
 from provenance import artifact, sha256
 
 
@@ -40,6 +41,7 @@ def arguments():
     parser.add_argument("--python", type=Path, required=True)
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--adapter", choices=("static", "driver"), default="static")
     args = parser.parse_args()
     if args.timeout < 1 or args.timeout > 600:
         parser.error("--timeout must be between 1 and 600 seconds")
@@ -68,11 +70,17 @@ def run_entry(args, entry):
         return dict(record, status="declared-draft", inputs=[])
     if not entry["top_level"]:
         return dict(record, status="needs-construction-adapter", inputs=[])
+    if entry.get("samples", {}).get("status") == "needs-driver-adapter":
+        return dict(record, status="needs-driver-adapter", inputs=[])
     root = args.pypto_root if entry["family"] == "pypto" else args.lib_root
     output = args.results / "outputs" / entry["case_id"]
     command = [str(args.python), str(args.results / "scripts/frontend_worker.py"),
                "--root", str(root), "--source", entry["source"], "--entry", entry["entry"],
                "--kind", entry["kind"], "--output", str(output)]
+    if "samples" in entry:
+        sample_path = args.results / "samples" / f"{entry['case_id']}.json"
+        write_json(sample_path, entry["samples"])
+        command.extend(("--samples", str(sample_path)))
     try:
         process = subprocess.run(command, env=worker_environment(args), cwd=args.results,
                                  capture_output=True, timeout=args.timeout, check=False)
@@ -108,6 +116,8 @@ def prepare(args):
     sources, entries = {}, []
     for family, root in roots.items():
         sources[family], found = inventory_source(root, family)
+        if args.adapter == "driver":
+            found = driver_entries(root, found)
         entries.extend(found)
     extensions = sorted((args.pypto_root / "python/pypto").glob("pypto_core*.so"))
     if len(extensions) != 1:
@@ -127,15 +137,42 @@ def prepare(args):
                                                   "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS",
                                                   "PYPTO_CODEGEN_MAX_WORKERS", "PYPTO_PROG_BUILD_DIR"}},
                 "cpu_affinity": sorted(os.sched_getaffinity(0)),
-                "scope": "static example/model entry points; parameterized tests require a separate adapter"}
+                "adapter": args.adapter,
+                "scope": ("static example/model entry points; parameterized tests require a separate adapter"
+                          if args.adapter == "static" else
+                          "explicit main-driver calls; unresolved calls retained; no parameterized test execution")}
     args.results.mkdir(parents=True, exist_ok=False)
-    for child in ("logs", "inputs", "outputs", "scripts"):
+    for child in ("logs", "inputs", "outputs", "scripts", "samples"):
         (args.results / child).mkdir()
     for path in Path(__file__).parent.glob("*.py"):
         (args.results / "scripts" / path.name).write_bytes(path.read_bytes())
     write_json(args.results / "run.json", metadata)
     write_json(args.results / "inventory.json", entries)
     return metadata, entries
+
+
+def driver_entries(root, entries):
+    """Keep each call site's source and parent static-seed identity."""
+    import hashlib
+
+    by_source = {}
+    for entry in entries:
+        if entry["kind"] == "jit" and entry["top_level"] and not entry["draft"]:
+            by_source.setdefault(entry["source"], {})[entry["entry"]] = entry
+    result = []
+    for source, names in sorted(by_source.items()):
+        try:
+            calls = discover_driver_calls((root / source).read_text(encoding="utf-8"), names)
+        except (ValueError, SyntaxError, RecursionError, ArithmeticError) as error:
+            calls = [{"entry": name, "line": parent["line"], "column": 0,
+                      "status": "needs-driver-adapter", "detail": str(error), "source_inventory_failed": True}
+                     for name, parent in names.items()]
+        for samples in calls:
+            parent = names[samples["entry"]]
+            identity = f"{parent['case_id']}:driver:{samples['line']}:{samples['column']}"
+            result.append(dict(parent, case_id=hashlib.sha256(identity.encode()).hexdigest()[:20],
+                               parent_static_seed=parent["case_id"], samples=samples))
+    return result
 
 
 def main():
@@ -160,6 +197,9 @@ def main():
     summary = {"source_stable": stable, "seeds": len(entries), "inputs": len(inputs),
                "completed_utc": datetime.now(timezone.utc).isoformat(),
                "seed_status": dict(Counter(row["status"] for row in rows)), "scope": metadata["scope"]}
+    if args.adapter == "driver":
+        failures = sum(bool(row["samples"].get("source_inventory_failed")) for row in rows)
+        summary.update(driver_call_sites=len(rows) - failures, source_inventory_failure_placeholders=failures)
     write_json(args.results / "summary.json", summary)
     write_json(args.results / "hashes.json", {str(path.relative_to(args.results)): sha256(path)
                for path in sorted(args.results.rglob("*")) if path.is_file()})
