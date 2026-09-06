@@ -60,6 +60,7 @@ struct AbstractState {
 
 class CompletionGraph {
 public:
+    void setSelectiveSupply(SyncSelectiveLoopSupply value) { selectiveSupply = std::move(value); }
     bool hasAcknowledgements() const { return !acknowledged.empty(); }
     void setAcknowledgements(const StructuredSyncIR& value, ArrayRef<SyncPhaseId> phases)
     {
@@ -100,6 +101,13 @@ public:
             directSameIteration[completion.source].push_back(completion.target);
             return success();
         }
+        const auto kind = completion.iteration.kind;
+        if (kind == SyncIterationRelationKind::LoopEntry || kind == SyncIterationRelationKind::LoopExit ||
+            kind == SyncIterationRelationKind::LoopBypass) {
+            // Boundary facts are interpreted only by the explicit selective
+            // supply model; never flatten them into unconditional graph edges.
+            return success();
+        }
         if (completion.iteration.kind != SyncIterationRelationKind::LoopCarried || completion.iteration.distance == 0 ||
             completion.iteration.carrier == kInvalidSyncId) {
             return failure();
@@ -128,6 +136,9 @@ public:
 
     bool covers(SyncPhaseId source, SyncPhaseId target, const SyncIterationRelation& relation) const
     {
+        if (selectiveSupply) {
+            return selectiveSupply->covers(source, target, relation);
+        }
         if (schedule && structuredFrontierOrders(*schedule, acknowledged, source, target, relation)) {
             return true;
         }
@@ -147,6 +158,7 @@ public:
     }
 
 private:
+    std::optional<SyncSelectiveLoopSupply> selectiveSupply;
     SmallVector<SyncPhaseId, 16> acknowledged;
     const StructuredSyncIR* schedule = nullptr;
     SyncRegionId orderedLoop = kInvalidSyncId;
@@ -444,6 +456,15 @@ LogicalResult validateSelectedCompletion(const StructuredSyncIR& schedule, const
     }
     const bool carrierContainsSource = llvm::is_contained(source->iterationDomain.loops, completion.iteration.carrier);
     const bool carrierContainsTarget = llvm::is_contained(target->iterationDomain.loops, completion.iteration.carrier);
+    const bool forwardBoundary =
+        source->id < target->id && completion.iteration.distance == 0 && completion.iteration.carrier != kInvalidSyncId;
+    const bool entry = completion.iteration.kind == SyncIterationRelationKind::LoopEntry &&
+                       source->iterationDomain.loops.empty() && carrierContainsTarget;
+    const bool exit = completion.iteration.kind == SyncIterationRelationKind::LoopExit && carrierContainsSource &&
+                      target->iterationDomain.loops.empty();
+    if (forwardBoundary && (entry || exit)) {
+        return success();
+    }
     const bool recurring = completion.iteration.kind == SyncIterationRelationKind::LoopCarried &&
                            completion.iteration.distance > 0 && !source->iterationDomain.loops.empty() &&
                            completion.iteration.carrier != kInvalidSyncId && carrierContainsSource &&
@@ -1358,6 +1379,13 @@ FailureOr<SyncInterpretationResult> mlir::pto::protocol_sync::interpretSelectedW
     CompletionGraph visibilityGraph(schedule.getPhases().size());
     if (failed(validateWorld(schedule, channels, effectiveWorld, completionGraph, visibilityGraph))) {
         return failure();
+    }
+    if (options.isolatedLoopIsModeled) {
+        auto supply = buildSelectiveLoopSupply(schedule, effectiveWorld);
+        if (failed(supply)) {
+            return failure();
+        }
+        completionGraph.setSelectiveSupply(std::move(*supply));
     }
 
     AbstractState state;

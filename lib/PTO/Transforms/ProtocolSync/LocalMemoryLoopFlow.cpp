@@ -54,7 +54,11 @@ const SyncRegion* findCarrier(const StructuredSyncIR& schedule)
 {
     const SyncRegion* carrier = nullptr;
     for (const SyncRegion& region : schedule.getRegions()) {
-        if (region.kind == SyncRegionKind::Choice || region.kind == SyncRegionKind::PhysicalSection) {
+        const bool physicalChoice =
+            region.kind == SyncRegionKind::Choice && llvm::any_of(schedule.getPhases(), [&](const auto& phase) {
+                return region.operation->isAncestor(phase.operation);
+            });
+        if (physicalChoice || region.kind == SyncRegionKind::PhysicalSection) {
             return nullptr;
         }
         if (region.kind != SyncRegionKind::Loop) {
@@ -73,7 +77,7 @@ const SyncRegion* findCarrier(const StructuredSyncIR& schedule)
             return nullptr;
         }
         for (Operation& operation : *loop.getBody()) {
-            const bool structuredBody = operation.getNumRegions() != 0;
+            const bool structuredBody = operation.getNumRegions() != 0 && !isa<scf::IfOp>(operation);
             if (structuredBody) {
                 return nullptr;
             }

@@ -157,6 +157,91 @@ qualified. Exhausted search budgets are not semantic counterexamples.
 
 ## Progress ledger
 
+### R2b — selective ordinary-loop boundaries
+
+The selective constructor now composes physical prefix and suffix accesses with
+one unconditional, fixed-footprint ordinary loop. It retains distinct entry,
+same-iteration, carried, exit and zero-trip requirements. Boundary event keys
+are once-only logical resources allocated through the common allocator and
+conservatively reserved independently of recurring body channels. No serialized
+phase cycle or V completion hub is selected.
+
+Entry publication is immediately after its prefix source, guarded by
+`lower < upper`; acquisition is immediately before its body target, guarded by
+`iv == lower`. Exit publication is immediately after its body source on the
+last iteration; acquisition is immediately before its suffix target, guarded
+by the same nonempty condition. The last-iteration predicate compares unsigned
+`upper - iv` with the positive step, without signed-overflow flags. This handles
+non-dividing steps without overflowing an auxiliary `iv + step` expression;
+the original loop must still have valid iteration arithmetic. Publication also
+requires the guard operands to dominate its early placement. Missing scalar
+availability is unsupported, not permission to delay publication.
+
+Recurring credits are primed before physical prefix work and drained after all
+suffix work and its boundary acquisitions. Thus an empty loop cannot make an
+independent suffix consumer acquire an unrelated prefix load through a primed
+credit. Genuine prefix-to-suffix hazards remain unconditional requirements.
+Mandatory function-exit completion remains separate.
+
+The supply interpreter keeps positive-trip and bypass relations separate.
+Its two body-instance copies instantiate universally quantified entry/exit and
+same-iteration certificates plus distance-one carried certificates; the copies
+are not a bounded-unrolling proof. For the admitted unconditional fixed-address
+subset, writer recurrence composes the remaining positive distances. Read-only
+histories retain their outgoing completion requirements. The concrete checker
+enumerates access pairs independently of sparse requirement construction and
+reconstructs actual first/last/nonempty predicates, including commuted equivalent
+comparisons introduced by canonicalization. It does not trust planner tags.
+
+Progress has two cooperating arguments. The existing recurring action graph
+proves the body's consumption-before-rearm invariant. Once-only boundary edges
+advance from prefix to first body use, from the final relevant body source to
+suffix, or forward within the once-only schedule. Matching participation guards
+produce and consume each boundary token exactly once on nonempty execution and
+neither on bypass. Their separately reserved keys cannot rearm a body key.
+No body action relies on suffix work to unblock it; late cleanup cannot create
+a feedback dependency into the body. Boundary composition therefore does not
+replace the recurring invariant with a whole-function serialization argument.
+
+The new regression spans A2/A3, both GM contracts, optional suffix storage reuse,
+unit/nonunit steps, and zero/one/two/three/four/seven trips. Its execution oracle
+evaluates raw scalar arithmetic and branch predicates separately from production
+guard recognition. On the zero-trip path it requires an execution with the
+independent suffix use of B and the unrelated prefix load of A outstanding
+together. Guard changes, missing boundary actions, boundary/body key collisions,
+misplaced primes, premature cleanup and malformed logical endpoints are rejected.
+These are host model checks, not device measurements or a general loop proof.
+
+Scope remains ordinary Vector-core MTE2/V/MTE3 phases with understood bounded
+UB footprints and qualified GM effects. Physical choices, nested loops, iterated
+SSA arguments, slot selectors, macros, queues, descriptor effects and pre-existing
+fixed synchronization are not admitted by this constructor. Shared analysis and
+target-specific cube support remain campaign work; this is not corpus closure.
+
+Validation on 2026-09-06:
+
+- Targeted `ninja -C build -j2` builds/relinks `PTOASCompiler`, `pto-test-opt`
+  and the affected ProtocolSync unit callers. LLVM is unchanged.
+- Focused boundary/selective tests pass 5/5. The complete ProtocolSync invocation
+  reports 55/56, with only the obsolete boundary-rejection assertion failing;
+  after changing it to require `world=selective-loop`, its focused rerun passes
+  1/1. Records: `build/protocol-sync-r2b-tests.json` and
+  `build/protocol-sync-r2b-boundary-rerun.json`. No production changes followed
+  that complete invocation.
+- The frozen 18-row driver remains 16/18 in may-alias and 17/18 in disjoint-GM,
+  on both A2 and A3 with patterns off and fallback fail. All 132 fresh concrete
+  verification/C++ emission follow-ups pass. Results are under
+  `build/protocol-sync-native-corpus/acceptance-r2b-{a2,a3}-{may-alias,assume-disjoint-arguments}`
+  and `followup-r2b`. All four runs report stable source, based on commit
+  `55c4f1649d6f2662d185f0c2c872a90afe6ab941` plus tracked patch SHA-256
+  `9095bb1b9d7241c854d0ea645ea61fdf843906b84467ac3dab6432326d6c90f0`;
+  each run also records hashes of the three new untracked source/test files.
+  This ledger addition follows the frozen runs and changes no compiler behavior.
+- Changed-code compliance: 16 checked code files, zero errors/warnings;
+  `git diff --check` passes. Independent algorithm and compiler-integration
+  re-reviews accept this subset after the endpoint and CLI guard fixes.
+- No new device, full-system, or full 9,754-output corpus campaign is claimed.
+
 ### P0/P1 — independent readiness policy accepted
 
 This slice over `58bad1ba37570711ccea8c0a3b0006d79e2cd4a3` replaces greedy

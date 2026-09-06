@@ -19,6 +19,7 @@
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/ADT/DenseMap.h"
 
 #include <map>
 #include <optional>
@@ -384,4 +385,152 @@ bool checkSelectiveLoopInterleavings(const StructuredSyncIR& schedule, unsigned 
 bool checkLoopFrontierInterleavings(const StructuredSyncIR& schedule, unsigned trips)
 {
     return checkSelectiveLoopInterleavings(schedule, trips, nullptr);
+}
+
+namespace {
+// Evaluate raw scalar instructions instead of recognizing the planner's guard
+// templates. APInt models fixed-width wrap without host signed overflow.
+class BoundaryExpansion {
+public:
+    BoundaryExpansion(ExecutionOracle& oracle, scf::ForOp loop, unsigned trips)
+        : oracle(oracle), loop(loop), trips(trips)
+    {}
+
+    bool initialize()
+    {
+        auto lower = loop.getLowerBound().getDefiningOp<arith::ConstantOp>();
+        auto step = loop.getStep().getDefiningOp<arith::ConstantOp>();
+        if (!lower || !step) {
+            return false;
+        }
+        const auto low = cast<IntegerAttr>(lower.getValue()).getValue().sextOrTrunc(64);
+        const auto stride = cast<IntegerAttr>(step.getValue()).getValue().sextOrTrunc(64);
+        values[loop.getUpperBound()] = low + stride * trips;
+        if (trips != 0) {
+            // Non-dividing upper bounds exercise the final partial step.
+            values[loop.getUpperBound()] -= stride - 1;
+        }
+        return true;
+    }
+
+    bool expand(Block& block)
+    {
+        for (Operation& operation : block) {
+            if (auto constant = dyn_cast<arith::ConstantOp>(operation)) {
+                if (auto value = dyn_cast<IntegerAttr>(constant.getValue())) {
+                    values[constant.getResult()] = value.getValue().sextOrTrunc(64);
+                }
+            } else if (auto subtract = dyn_cast<arith::SubIOp>(operation)) {
+                const bool operands = values.contains(subtract.getLhs()) && values.contains(subtract.getRhs());
+                if (!operands) {
+                    return false;
+                }
+                values[subtract.getResult()] = values[subtract.getLhs()] - values[subtract.getRhs()];
+            } else if (auto compare = dyn_cast<arith::CmpIOp>(operation)) {
+                if (!comparison(compare)) {
+                    return false;
+                }
+            } else if (auto choice = dyn_cast<scf::IfOp>(operation)) {
+                auto found = values.find(choice.getCondition());
+                if (found == values.end()) {
+                    return false;
+                }
+                Region& arm = found->second.isZero() ? choice.getElseRegion() : choice.getThenRegion();
+                const bool validArm = arm.empty() || expand(arm.front());
+                if (!validArm) {
+                    return false;
+                }
+            } else if (auto recurring = dyn_cast<scf::ForOp>(operation)) {
+                const bool supported =
+                    recurring == loop && values.contains(loop.getLowerBound()) && values.contains(loop.getStep());
+                if (!supported) {
+                    return false;
+                }
+                auto iv = values[loop.getLowerBound()];
+                for (unsigned iteration = 0; iteration < trips; ++iteration) {
+                    if (!iv.slt(values[loop.getUpperBound()])) {
+                        return false;
+                    }
+                    values[loop.getInductionVar()] = iv;
+                    if (!expand(*loop.getBody())) {
+                        return false;
+                    }
+                    iv += values[loop.getStep()];
+                }
+                if (iv.slt(values[loop.getUpperBound()])) {
+                    return false;
+                }
+            } else {
+                oracle.append(operation);
+            }
+        }
+        return true;
+    }
+
+private:
+    bool comparison(arith::CmpIOp operation)
+    {
+        const bool operands = values.contains(operation.getLhs()) && values.contains(operation.getRhs());
+        if (!operands) {
+            return false;
+        }
+        const auto a = values[operation.getLhs()];
+        const auto b = values[operation.getRhs()];
+        bool result = false;
+        switch (operation.getPredicate()) {
+            case arith::CmpIPredicate::eq:
+                result = a == b;
+                break;
+            case arith::CmpIPredicate::ne:
+                result = a != b;
+                break;
+            case arith::CmpIPredicate::slt:
+                result = a.slt(b);
+                break;
+            case arith::CmpIPredicate::sle:
+                result = a.sle(b);
+                break;
+            case arith::CmpIPredicate::sgt:
+                result = a.sgt(b);
+                break;
+            case arith::CmpIPredicate::sge:
+                result = a.sge(b);
+                break;
+            case arith::CmpIPredicate::ult:
+                result = a.ult(b);
+                break;
+            case arith::CmpIPredicate::ule:
+                result = a.ule(b);
+                break;
+            case arith::CmpIPredicate::ugt:
+                result = a.ugt(b);
+                break;
+            case arith::CmpIPredicate::uge:
+                result = a.uge(b);
+                break;
+            default:
+                return false;
+        }
+        values[operation.getResult()] = llvm::APInt(64, result);
+        return true;
+    }
+    ExecutionOracle& oracle;
+    scf::ForOp loop;
+    unsigned trips;
+    llvm::DenseMap<Value, llvm::APInt> values;
+};
+} // namespace
+
+bool checkSelectiveBoundaryInterleavings(const StructuredSyncIR& schedule, unsigned trips, bool* overlapWitness)
+{
+    ExecutionOracle oracle(schedule);
+    auto loop = *schedule.getFunction().getOps<scf::ForOp>().begin();
+    BoundaryExpansion expansion(oracle, loop, trips);
+    const bool expanded = expansion.initialize() && expansion.expand(schedule.getFunction().getBody().front());
+    if (!expanded) {
+        return false;
+    }
+    // Prefix A is phase 1, independent suffix use of B is phase 4.
+    const auto overlap = overlapWitness ? std::optional<std::pair<SyncPhaseId, SyncPhaseId>>({1, 4}) : std::nullopt;
+    return oracle.run(nullptr, overlap, overlapWitness);
 }

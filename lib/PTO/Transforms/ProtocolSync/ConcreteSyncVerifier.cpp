@@ -846,7 +846,7 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
         }
     }
     const SyncInterpretationOptions options{/*fixedSynchronizationIsModeled=*/true,
-                                             /*isolatedLoopIsModeled=*/selectiveLoop};
+                                            /*isolatedLoopIsModeled=*/selectiveLoop};
     FailureOr<SyncInterpretationResult> result =
         interpretSelectedWorld(schedule, *stages, timelines, channels, state.world, nullptr, options);
     if (statistics) {
@@ -865,8 +865,10 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
     if (!result->isComplete()) {
         return rejectAtStage("residual-obligations", firstFailedStage);
     }
-    // The loop checker establishes total dynamic phase order, including all
-    // boundary paths. The straight-line scoreboard cannot interpret recurrence.
+    // Structured checkers establish their own occurrence coverage and token
+    // contracts. Selective repair does not impose total phase order; only the
+    // serialized reference checkers do. The straight-line scoreboard cannot
+    // interpret recurrence or conditional boundary supply.
     const bool straightLine = !selectiveLoop && !loopFrontier && !structuredFrontier;
     if (straightLine && failed(verifyLocalMemoryCoverage(schedule, state.world))) {
         return rejectAtStage("local-memory-coverage", firstFailedStage);

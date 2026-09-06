@@ -37,7 +37,10 @@ LogicalResult mlir::pto::protocol_sync::appendSelectiveLoopEventGenerations(
 {
     for (const auto& edge : plan.edges) {
         const auto* phase = schedule.findPhase(edge.completion.source);
-        const bool validPhase = phase && phase->iterationDomain.loops.size() == 1;
+        const auto* target = schedule.findPhase(edge.completion.target);
+        const bool validPhase = phase && target && edge.placement.source && edge.placement.target &&
+                                phase->operation == edge.placement.source &&
+                                target->operation == edge.placement.target && phase->iterationDomain.loops.size() <= 1;
         if (!validPhase) {
             return failure();
         }
@@ -55,8 +58,14 @@ LogicalResult mlir::pto::protocol_sync::appendSelectiveLoopEventGenerations(
         generation.targetPipe = edge.placement.targetPipe;
         generation.setAnchor = edge.placement.source;
         generation.waitAnchor = edge.placement.target;
-        generation.recurrenceOwner = phase->iterationDomain.loops.front();
-        generation.recurring = true;
+        generation.recurring =
+            edge.placement.source->getParentOp() == plan.loop && edge.placement.target->getParentOp() == plan.loop;
+        const bool missingRecurrence = generation.recurring && phase->iterationDomain.loops.size() != 1;
+        if (missingRecurrence) {
+            return failure();
+        }
+        generation.recurrenceOwner = generation.recurring ? phase->iterationDomain.loops.front() : kInvalidSyncId;
+        generation.persistentReservation = !generation.recurring;
         generation.eventId = edge.placement.eventId;
         generations.push_back(generation);
     }
@@ -166,6 +175,9 @@ LogicalResult mlir::pto::protocol_sync::verifyMixedSelectiveLoopPlan(
                            y.placement.source, y.placement.target, y.placement.sourcePipe, y.placement.targetPipe) &&
                    key(x.completion) == key(y.completion);
         });
+    if (!edges || a.loop != b.loop) {
+        return failure();
+    }
     SmallVector<SyncEventGeneration, 16> generations;
     const bool validAssignment = succeeded(appendSelectiveLoopEventGenerations(schedule, a, generations)) &&
                                  succeeded(verifySyncEventGenerationAssignment(

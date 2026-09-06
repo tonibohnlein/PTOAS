@@ -50,7 +50,7 @@ bool generationsInterfere(
     if (differentDomain) {
         return false;
     }
-    if (first.recurring || second.recurring) {
+    if (first.recurring || second.recurring || first.persistentReservation || second.persistentReservation) {
         return true;
     }
     if (controlsAreMutuallyExclusive(first.guard, second.guard)) {

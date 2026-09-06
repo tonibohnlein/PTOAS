@@ -30,8 +30,18 @@ std::optional<SyncRegionId> mlir::pto::protocol_sync::findIsolatedSyncLoop(
     }
     const SyncRegion* carrier = nullptr;
     for (const SyncRegion& region : schedule.getRegions()) {
-        if (region.kind == SyncRegionKind::Choice || region.kind == SyncRegionKind::PhysicalSection) {
+        if (region.kind == SyncRegionKind::PhysicalSection) {
             return std::nullopt;
+        }
+        if (region.kind == SyncRegionKind::Choice) {
+            // Concrete boundary guards contain synchronization only. Their
+            // predicates and token participation are checked by reconstruction.
+            const bool physical = llvm::any_of(schedule.getPhases(), [&](const SyncPhase& phase) {
+                return region.operation->isAncestor(phase.operation);
+            });
+            if (!allowFixed || physical) {
+                return std::nullopt;
+            }
         }
         if (region.kind == SyncRegionKind::Loop) {
             if (carrier) {
@@ -61,9 +71,10 @@ std::optional<SyncRegionId> mlir::pto::protocol_sync::findIsolatedSyncLoop(
     llvm::DenseSet<Operation*> operations;
     for (const SyncPhase& phase : schedule.getPhases()) {
         const bool supported =
-            phase.operation && phase.operation->getBlock() == loop.getBody() && phase.operation->getNumResults() == 0 &&
-            phase.guard.empty() && phase.core == SyncPhysicalCore::Vector && !phase.macroPhase &&
-            phase.completion == SyncCompletionKind::PhaseEnd &&
+            phase.operation &&
+            (phase.operation->getBlock() == loop.getBody() || phase.operation->getBlock() == loop->getBlock()) &&
+            phase.operation->getNumResults() == 0 && phase.guard.empty() && phase.core == SyncPhysicalCore::Vector &&
+            !phase.macroPhase && phase.completion == SyncCompletionKind::PhaseEnd &&
             (phase.pipe == PIPE::PIPE_MTE2 || phase.pipe == PIPE::PIPE_V || phase.pipe == PIPE::PIPE_MTE3) &&
             operations.insert(phase.operation).second;
         if (!supported) {
@@ -106,37 +117,17 @@ LogicalResult mlir::pto::protocol_sync::verifySelectiveLoopMemory(
     if (unsupported) {
         return failure();
     }
-    const unsigned count = schedule.getPhases().size();
-    SmallVector<llvm::BitVector, 16> reaches(2 * count, llvm::BitVector(2 * count));
-    for (const auto& edge : world.completions) {
-        const bool endpoints =
-            edge.source < count && edge.target < count && edge.control == SyncControlRelation::MustExecute;
-        if (!endpoints) {
-            return failure();
-        }
-        if (edge.iteration.kind == SyncIterationRelationKind::SameIteration && edge.iteration.distance == 0) {
-            if (edge.source >= edge.target) {
-                return failure();
-            }
-            reaches[edge.source].set(edge.target);
-            reaches[count + edge.source].set(count + edge.target);
-        } else if (
-            edge.iteration.kind == SyncIterationRelationKind::LoopCarried && edge.iteration.distance == 1 &&
-            edge.iteration.carrier == *carrier) {
-            reaches[edge.source].set(count + edge.target);
-        } else {
-            return failure();
-        }
-    }
-    for (unsigned middle = 0; middle < 2 * count; ++middle) {
-        for (auto& targets : reaches) {
-            if (targets.test(middle)) {
-                targets |= reaches[middle];
-            }
-        }
+    auto supply = buildSelectiveLoopSupply(schedule, world);
+    if (failed(supply)) {
+        return failure();
     }
     for (const SyncAccess& first : schedule.getAccesses()) {
         for (const SyncAccess& second : schedule.getAccesses()) {
+            const bool sourceBody = supply->body.test(first.phase);
+            const bool targetBody = supply->body.test(second.phase);
+            if (first.phase >= second.phase && !(sourceBody && targetBody)) {
+                continue;
+            }
             const bool readRead = first.mode == SyncAccessMode::Read && second.mode == SyncAccessMode::Read;
             if (readRead || first.storage.space != second.storage.space) {
                 continue;
@@ -158,9 +149,19 @@ LogicalResult mlir::pto::protocol_sync::verifySelectiveLoopMemory(
                     continue;
                 }
             }
-            const bool sameIteration = first.phase < second.phase;
-            const bool missing = (sameIteration && !reaches[first.phase].test(second.phase)) ||
-                                 !reaches[first.phase].test(count + second.phase);
+            // Only body occurrences repeat. Once-only prefix/suffix accesses
+            // must never create fictitious carried pairs or reverse GM hazards.
+            bool missing = false;
+            if (first.phase < second.phase) {
+                const auto kind = sourceBody == targetBody ? SyncIterationRelationKind::SameIteration :
+                                  targetBody               ? SyncIterationRelationKind::LoopEntry :
+                                                             SyncIterationRelationKind::LoopExit;
+                missing = !supply->covers(first.phase, second.phase, {kind, 0, *carrier});
+            }
+            if (sourceBody && targetBody) {
+                missing |=
+                    !supply->covers(first.phase, second.phase, {SyncIterationRelationKind::LoopCarried, 1, *carrier});
+            }
             if (missing) {
                 return failure();
             }

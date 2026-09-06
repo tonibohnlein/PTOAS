@@ -116,6 +116,7 @@ add_mlir_dialect_library(PTOTransforms
   ProtocolSync/DescriptorState.cpp
   ProtocolSync/RecurringEventLifetime.cpp
   ProtocolSync/SelectiveLoopMemory.cpp
+  ProtocolSync/SelectiveLoopSupply.cpp
   ProtocolSync/SelectiveLoopRepair.cpp
   ProtocolSync/ConcreteSelectiveLoop.cpp
   ProtocolSync/MixedSelectiveLoop.cpp

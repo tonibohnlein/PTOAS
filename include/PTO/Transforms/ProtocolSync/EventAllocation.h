@@ -52,6 +52,9 @@ struct SyncEventGeneration {
     SyncRegionId recurrenceOwner = kInvalidSyncId;
     bool recurring = false;
     std::optional<unsigned> eventId;
+    /// Reserve a once-only boundary key through its enclosing region lifetime.
+    /// This is allocation conservatism, not a claim of repeated execution.
+    bool persistentReservation = false;
 };
 
 enum class SyncEventAllocationStatus : std::uint8_t {

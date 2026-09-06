@@ -8,16 +8,15 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// RUN: not ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
-// RUN: not ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
-// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
-// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
 
-// Normal synthesis must not silently select the serialized reference recipe.
-// Its positive concrete, path and token-mutation tests remain in
-// pto-protocol-sync-loop-memory-test through the explicit reference builders.
-// CHECK: mixed-plan function=@loop_boundaries status=unsupported
-// CHECK: ProtocolSync mixed mode found no complete supported plan
+// These boundaries now use selective repair, never the serialized reference.
+// Independent path/token and overlap tests remain in the loop-memory unit.
+// CHECK: mixed-plan function=@loop_boundaries status=ready world=selective-loop
+// CHECK: mixed-plan function=@same_pipe_loop_boundaries status=ready world=selective-loop
 
 module {
   func.func @loop_boundaries(%n: index,

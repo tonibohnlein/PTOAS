@@ -8,7 +8,7 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// Selective, hazard-derived handoffs for an isolated unconditional loop.
+// Selective handoffs for one unconditional loop and its once-only boundaries.
 #ifndef PTO_TRANSFORMS_PROTOCOLSYNC_SELECTIVELOOPREPAIR_H
 #define PTO_TRANSFORMS_PROTOCOLSYNC_SELECTIVELOOPREPAIR_H
 #include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
@@ -44,6 +44,19 @@ struct SyncSelectiveLoopAttempt {
     SyncRecurringEventProof tokenProof;
     std::optional<SyncSelectiveLoopPlan> plan;
 };
+
+/// Certified supply has separate positive-trip and zero-trip interpretations.
+/// The second copy contains only recurring body occurrences. Entry/exit facts
+/// quantify over all body occurrences, not just a chosen unrolling.
+struct SyncSelectiveLoopSupply {
+    llvm::SmallVector<llvm::BitVector, 16> positive;
+    llvm::SmallVector<llvm::BitVector, 16> bypass;
+    llvm::BitVector body;
+    SyncRegionId carrier = kInvalidSyncId;
+    bool covers(SyncPhaseId source, SyncPhaseId target, const SyncIterationRelation& relation) const;
+};
+FailureOr<SyncSelectiveLoopSupply> buildSelectiveLoopSupply(
+    const StructuredSyncIR& schedule, const SyncSelectedWorld& world);
 
 /// Structural scope only, independent of selected synchronization supply.
 std::optional<SyncRegionId> findIsolatedSyncLoop(const StructuredSyncIR& schedule, bool allowFixed);

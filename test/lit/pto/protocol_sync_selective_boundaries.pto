@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias --protocol-sync-dump=plan %s -o %t.a3.pto 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: FileCheck %s --input-file=%t.a3.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a2.pto
+// RUN: FileCheck %s --input-file=%t.a2.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.disjoint.a3.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.disjoint.a2.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a3.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFY
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a2.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFY
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.cpp
+// PLAN: mixed-plan function=@selective_boundary status=ready world=selective-loop
+// VERIFY: concrete-verification function=@selective_boundary status=accepted
+// CHECK-LABEL: func.func @selective_boundary
+// CHECK: pto.set_flag[<PIPE_MTE3>, <PIPE_V>,
+// CHECK: pto.tload
+// CHECK-NOT: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: pto.tload
+// CHECK-NEXT: {{.*}}arith.cmpi slt
+// CHECK-NEXT: scf.if
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: scf.for
+// CHECK: arith.cmpi eq
+// CHECK: pto.tabs
+// CHECK: pto.tstore
+// CHECK-NOT: pto.tabs
+// CHECK: {{.*}}arith.subi
+// CHECK-NEXT: {{.*}}arith.cmpi ule
+// CHECK-NEXT: scf.if
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_V>,
+// CHECK: pto.tabs
+// CHECK: arith.cmpi slt
+// CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>,
+// CHECK: pto.tabs
+// CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>,
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: return
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @selective_boundary(%n: index, %x: !pto.partition_tensor_view<16x16xf16>,
+      %y: !pto.partition_tensor_view<16x16xf16>, %z: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %base = arith.constant 0 : i64
+    %other = arith.constant 512 : i64
+    %output = arith.constant 1024 : i64
+    %a = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %other : !pto.tile_buf<vec, 16x16xf16>
+    %c = pto.alloc_tile addr = %output : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%y : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    scf.for %i = %zero to %n step %one {
+      pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%c : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%c : !pto.tile_buf<vec, 16x16xf16>) outs(%z : !pto.partition_tensor_view<16x16xf16>)
+    }
+    pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%c : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}

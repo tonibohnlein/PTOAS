@@ -38,6 +38,7 @@ using namespace mlir::pto::protocol_sync;
 bool checkLoopFrontierInterleavings(const StructuredSyncIR& schedule, unsigned trips);
 bool runStructuredFrontierTests(MLIRContext& context);
 bool testSelectiveLoopRepair(MLIRContext& context);
+bool testSelectiveLoopBoundaries(MLIRContext& context);
 
 namespace {
 
@@ -579,7 +580,8 @@ bool testNativeBoundaryWorlds(MLIRContext& context)
         auto channels = analyzeChannels(fixture.schedule, *stages, timelines);
         auto normal = buildMixedProtocolPlan(fixture.schedule, *stages, timelines, channels, false);
         if (!check(
-                succeeded(normal) && !normal->isComplete() && !normal->loopFrontier,
+                succeeded(normal) && !normal->loopFrontier && !normal->structuredFrontier &&
+                    (!normal->isComplete() || normal->selectiveLoop.has_value()),
                 "normal repair must not silently select a serialized cycle")) {
             return false;
         }
@@ -693,7 +695,8 @@ int main()
     return testOracle(context) && testMutationsAndLimits(context) && testSelfPhaseAndBoundaries(context) &&
                    testConcreteCycles(context) && testCyclePlacementAndResources(context) &&
                    testNativeBoundaryWorlds(context) && testOracleExitCompletion(context) &&
-                   runStructuredFrontierTests(context) && testSelectiveLoopRepair(context) ?
+                   runStructuredFrontierTests(context) && testSelectiveLoopRepair(context) &&
+                   testSelectiveLoopBoundaries(context) ?
                0 :
                1;
 }
