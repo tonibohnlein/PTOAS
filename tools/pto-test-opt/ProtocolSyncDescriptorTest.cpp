@@ -116,8 +116,8 @@ bool compareLexicalOracle(const StructuredSyncIR& schedule)
                 continue;
             }
             const auto& state = schedule.getDescriptorStates()[*action.descriptorState];
-            const bool mismatch = !dimensions.contains(state.handle) ||
-                                  dimensions.lookup(state.handle) != std::make_pair(state.rows, state.columns);
+            const bool mismatch = !dimensions.contains(state.handle) || !state.rows || !state.columns ||
+                                  dimensions.lookup(state.handle) != std::make_pair(*state.rows, *state.columns);
             if (mismatch) {
                 return false;
             }
@@ -132,8 +132,8 @@ bool compareLexicalOracle(const StructuredSyncIR& schedule)
             }
             const auto& state = schedule.getDescriptorStates()[*access.descriptorState];
             const auto region = recoverLocalAccessRegion(access);
-            const bool mismatch = !dimensions.contains(access.value) ||
-                                  dimensions.lookup(access.value) != std::make_pair(state.rows, state.columns) ||
+            const bool mismatch = !dimensions.contains(access.value) || !state.rows || !state.columns ||
+                                  dimensions.lookup(access.value) != std::make_pair(*state.rows, *state.columns) ||
                                   region.interval.size != 128 || region.precision != SyncRegionPrecision::Conservative;
             if (mismatch) {
                 return false;
@@ -218,7 +218,6 @@ bool testVersions(MLIRContext& context)
 bool testRejected(MLIRContext& context)
 {
     const char* additions[] = {
-        "pto.set_validshape %a, %dynamic, %c16 : !tile",
         "pto.set_validshape %a, %r0, %s0 : !tile",
         "%loaded = pto.load_scalar %scalar[%c0] : !pto.ptr<i32, gm> -> i32\n"
         "%bound = arith.index_cast %loaded : i32 to index\npto.set_validshape %a, %bound, %c16 : !tile",
@@ -238,18 +237,114 @@ bool testRejected(MLIRContext& context)
             return false;
         }
     }
-    std::string unknownInitialization = program(4, 2);
-    const std::string original = "valid_row = %initial";
-    unknownInitialization.replace(unknownInitialization.find(original), original.size(), "valid_row = %dynamic");
-    auto module = parseSourceString<ModuleOp>(unknownInitialization, &context);
-    auto schedule = module ? extract(*module) : nullptr;
-    if (!check(
-            schedule && !schedule->getFailures().empty(),
-            "unresolved initialization cannot be hidden by later update")) {
-        return false;
-    }
     llvm::outs() << "protocol-sync unsupported descriptor state: pass\n";
     return true;
+}
+
+bool testSymbolicDimensions(MLIRContext& context)
+{
+    std::string source = program(
+        4, 2,
+        "%difference = arith.subi %dynamic, %c1 : index\n"
+        "%bounded = arith.minsi %difference, %c4 : index\n"
+        "pto.set_validshape %a, %bounded, %c16 : !tile\n"
+        "pto.tabs ins(%a : !tile) outs(%a : !tile)");
+    const std::string original = "valid_row = %initial";
+    source.replace(source.find(original), original.size(), "valid_row = %dynamic");
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    auto schedule = module ? extract(*module) : nullptr;
+    if (!check(
+            schedule && schedule->getFailures().empty() && succeeded(verifySyncDescriptorBindings(*schedule)),
+            "symbolic descriptor provenance")) {
+        return false;
+    }
+    unsigned symbolic = 0;
+    for (auto& state : StructuredSyncIRTestPeer::states(*schedule)) {
+        if (state.scalarProvenance != SyncDescriptorScalarProvenance::NonphysicalExpression) {
+            continue;
+        }
+        ++symbolic;
+        if (!check(
+                !state.rows && state.columns == 16 && state.rowSource,
+                "symbolic range remains unknown, including a possibly negative min")) {
+            return false;
+        }
+        state.rows = 0;
+        const bool fabricatedBound = failed(verifySyncDescriptorBindings(*schedule));
+        state.rows.reset();
+        state.scalarProvenance = SyncDescriptorScalarProvenance::Constant;
+        const bool fabricatedProvenance = failed(verifySyncDescriptorBindings(*schedule));
+        state.scalarProvenance = SyncDescriptorScalarProvenance::NonphysicalExpression;
+        Value savedSource = state.rowSource;
+        state.rowSource = state.columnSource;
+        const bool changedSource = failed(verifySyncDescriptorBindings(*schedule));
+        state.rowSource = savedSource;
+        if (!check(fabricatedBound && fabricatedProvenance && changedSource, "symbolic binding mutations rejected")) {
+            return false;
+        }
+    }
+    for (const auto& access : schedule->getAccesses()) {
+        if (access.storage.space != AddressSpace::VEC) {
+            continue;
+        }
+        const auto region = recoverLocalAccessRegion(access);
+        if (!check(
+                region.interval.size == 128 && region.precision == SyncRegionPrecision::Conservative,
+                "symbolic metadata never shrinks physical bounds")) {
+            return false;
+        }
+    }
+    auto setter = *schedule->getFunction().getOps<SetValidShapeOp>().begin();
+    Value savedRow = setter.getValidRow();
+    setter.getValidRowMutable().assign(setter.getValidCol());
+    const bool liveSourceRejected = failed(verifySyncDescriptorBindings(*schedule));
+    setter.getValidRowMutable().assign(savedRow);
+    auto getter = *schedule->getFunction().getOps<GetValidShapeOp>().begin();
+    Value savedHandle = getter.getSource();
+    getter.getSourceMutable().assign(schedule->getDescriptorStates()[1].handle);
+    const bool liveHandleRejected = failed(verifySyncDescriptorBindings(*schedule));
+    getter.getSourceMutable().assign(savedHandle);
+    return check(
+        symbolic == 2 && liveSourceRejected && liveHandleRejected && succeeded(verifySyncDescriptorBindings(*schedule)),
+        "symbolic initialization and update preserve exact SSA sources");
+}
+
+bool testScalarProvenanceLimits(MLIRContext& context)
+{
+    for (unsigned count : {4u, 257u}) {
+        std::string extra;
+        std::string previous = "%dynamic";
+        for (unsigned i = 0; i < count; ++i) {
+            const std::string name = "%chain" + std::to_string(i);
+            extra += name + " = arith.minsi " + previous + ", %c4 : index\n";
+            previous = name;
+        }
+        extra += "pto.set_validshape %a, " + previous + ", %c16 : !tile";
+        auto module = parseSourceString<ModuleOp>(program(4, 2, extra), &context);
+        auto schedule = module ? extract(*module) : nullptr;
+        if (!check(
+                schedule && schedule->getFailures().empty() == (count == 4), "bounded scalar provenance traversal")) {
+            return false;
+        }
+    }
+    auto module = parseSourceString<ModuleOp>(
+        program(4, 2, R"mlir(
+      %loaded = pto.load_scalar %scalar[%c0] : !pto.ptr<i32, gm> -> i32
+      %bound = arith.index_cast %loaded : i32 to index
+      scf.for %i = %c0 to %bound step %c1 {
+        %local = pto.alloc_tile addr = %base valid_row = %i valid_col = %c16 : !tile
+        %lr, %lc = pto.get_validshape %local : !tile
+      }
+    )mlir"),
+        &context);
+    auto schedule = module ? extract(*module) : nullptr;
+    return check(
+        schedule && llvm::any_of(
+                        schedule->getFailures(),
+                        [](const SyncFailure& failure) {
+                            return failure.reason == SyncFailureReason::UnsupportedDescriptorState;
+                        }),
+        "induction variable cannot hide a physical scalar bound");
 }
 
 bool testNestedReads(MLIRContext& context)
@@ -470,6 +565,7 @@ bool testScopedDefinitions(MLIRContext& context)
 
 bool testProtocolSyncDescriptorState(MLIRContext& context)
 {
-    return testVersions(context) && testRejected(context) && testNestedReads(context) &&
-           testDescriptorDomains(context) && testScopedDefinitions(context);
+    return testVersions(context) && testRejected(context) && testSymbolicDimensions(context) &&
+           testScalarProvenanceLimits(context) && testNestedReads(context) && testDescriptorDomains(context) &&
+           testScopedDefinitions(context);
 }

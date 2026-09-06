@@ -11,24 +11,24 @@
 // RUN: pto-test-opt --pto-protocol-sync='dump=schedule' %s -o /dev/null 2>&1 | FileCheck %s
 // RUN: not ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail %s -o %t.pto 2>&1 | FileCheck %s --check-prefix=FAIL
 // FAIL: ProtocolSync mixed mode found no complete supported plan (unsupported)
-// CHECK: schedule function=@unknown_dimension
-// CHECK: rejected reason=unsupported-descriptor-state op=pto.set_validshape
-// CHECK-SAME: dimensions need bounded constants
-// CHECK: schedule function=@unresolved_getter_consumer
-// CHECK: rejected reason=unsupported-descriptor-state op=pto.alloc_tile
-// CHECK-SAME: dimensions need bounded constants
+// CHECK: schedule function=@symbolic_dimension
+// CHECK: valid=?x16 scalar-provenance=nonphysical-expression footprint=conservative range=unknown runtime-contract=valid-dimensions
+// CHECK-NOT: rejected reason=unsupported-descriptor-state
+// CHECK: schedule function=@symbolic_getter_consumer
+// CHECK: valid=?x16 scalar-provenance=nonphysical-expression
+// CHECK-NOT: rejected reason=unsupported-descriptor-state
 // CHECK-NOT: failed internally
 // CHECK: schedule function=@conditional_update
 // CHECK: rejected reason=unsupported-descriptor-state
 // CHECK-SAME: descriptor updates in choices or loops require version merges
 // CHECK: schedule function=@physical_scalar_dimension
 // CHECK: rejected reason=unsupported-descriptor-state op=pto.set_validshape
-// CHECK-SAME: dimensions need bounded constants
+// CHECK-SAME: dimensions need valid constants or supported nonphysical scalar provenance
 
 !tile = !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=16, v_row=?, v_col=?,
                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
 module attributes {pto.target_arch = "a3"} {
-  func.func @unknown_dimension(%rows: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @symbolic_dimension(%rows: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %base = arith.constant 0 : i64
     %c4 = arith.constant 4 : index
     %c16 = arith.constant 16 : index
@@ -36,7 +36,7 @@ module attributes {pto.target_arch = "a3"} {
     pto.set_validshape %tile, %rows, %c16 : !tile
     return
   }
-  func.func @unresolved_getter_consumer(%rows: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @symbolic_getter_consumer(%rows: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %base = arith.constant 0 : i64
     %c16 = arith.constant 16 : index
     %tile = pto.alloc_tile addr = %base valid_row = %rows valid_col = %c16 : !tile

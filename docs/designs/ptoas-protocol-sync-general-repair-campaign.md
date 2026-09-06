@@ -157,6 +157,47 @@ qualified. Exhausted search budgets are not semantic counterexamples.
 
 ## Progress ledger
 
+### R3d — symbolic descriptor provenance
+
+Scope-local descriptor versions now preserve integer/index scalar expressions
+rooted in function arguments, constants, and ordinary induction variables.
+Induction-variable bounds must have the same nonphysical provenance. Arithmetic
+traversal is bounded to 256 values; physical scalar loads, getter-derived setters,
+region results, and loop-carried arguments remain unsupported. Allocation-owner
+and update-block restrictions from R3b are unchanged.
+
+Numeric dimensions are optional: a symbolic dimension has **unknown range**, not
+a fabricated zero or a proven upper/lower bound. Accesses retain conservative
+physical-allocation bounds. In particular, a `min(remaining, tile_rows)` expression
+does not prove nonnegativity. Acceptance retains the existing valid-runtime-
+dimension precondition described in the PTO IR manual; it neither validates
+invalid caller dimensions nor treats dynamic compact layouts as fixed footprints.
+
+The scalar-readiness trust boundary is compiler-managed ordinary scalar
+expressions, not a new PIPE_S completion rule. The pinned PTO-ISA tile setter
+contract (a8040450238f162985d8b596fbebeb54bfba2bf5,
+`include/pto/common/pto_tile.hpp`, SetValidShape) requires dimensions within the
+physical shape and notes PIPE_S readiness. This change excludes asynchronous
+physical scalar producers instead of erasing that prerequisite. A descriptor
+update still supplies no payload completion, visibility, or token ordering.
+
+The binding verifier compares live allocation/setter/getter operands and roles
+with the recorded summary before checking version and scalar provenance. Tests
+mutate live SSA sources, descriptor handles, numeric bounds, and provenance;
+symbolic accesses must retain the same full conservative footprint. The native
+symbolic-descriptor loop checks separate readiness publications on A2/A3 and
+both GM contracts, with patterns and fallback disabled.
+
+Validation: freshly rebuilt affected compiler/test callers with `ninja -j2`;
+60/60 ProtocolSync lit tests passed in 71.24 seconds
+(`build/protocol-sync-r3d-suite.json`). The initial focused run was 4/5: the new
+physical-IV-bound negative had an unobserved allocation, so it never entered
+descriptor analysis. Adding a getter corrected the fixture; the final full
+ProtocolSync run includes that negative and the bounded-provenance tests.
+Changed-code checks report zero errors/warnings. Algorithm and compiler source
+reviews accepted the scoped change. No new native-corpus or device campaign was
+run for this slice; prior corpus counts remain the latest measurements.
+
 ### R3c — selective cube input staging
 
 The ordinary-loop transfer and selective repair path now use the admitted

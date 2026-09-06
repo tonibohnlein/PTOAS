@@ -1065,11 +1065,14 @@ LogicalResult traceSSAProducers(
         }
         if (isa<GetValidShapeOp>(definingOperation)) {
             const bool certified = llvm::any_of(schedule.getSemanticActions(), [&](const SyncSemanticAction& action) {
-                return action.operation == definingOperation && action.descriptorState.has_value();
+                return action.operation == definingOperation && action.descriptorState &&
+                       *action.descriptorState < schedule.getDescriptorStates().size() &&
+                       schedule.getDescriptorStates()[*action.descriptorState].scalarProvenance !=
+                           SyncDescriptorScalarProvenance::Unresolved;
             });
-            // Only constant-provenance descriptor reads terminate this trace.
-            // Dynamic/physical scalar prerequisites need action-endpoint
-            // obligations and are deliberately unsupported by this slice.
+            // Only independently certified nonphysical scalar provenance can
+            // terminate this trace. A symbolic version alone is insufficient;
+            // physical producers still need action-endpoint obligations.
             const bool missingCertificate = !certified && schedule.getFailures().empty();
             if (missingCertificate) {
                 return failure();
@@ -1137,12 +1140,14 @@ LogicalResult evaluateOpaqueEffects(
     const StructuredSyncIR& schedule, const SyncInterpretationOptions& options, ResidualAccumulator& accumulator)
 {
     for (const SyncSemanticAction& action : schedule.getSemanticActions()) {
-        // A bound descriptor version certifies constant scalar provenance and
+        // A bound descriptor certifies nonphysical scalar provenance and
         // handle-local mutation/read semantics. It supplies no payload order.
         const auto& summary = schedule.getSummaries()[action.summary];
         const bool certifiedDescriptor =
             summary.provider == SyncSummaryProvider::Descriptor && summary.descriptor && action.descriptorState &&
             *action.descriptorState < schedule.getDescriptorStates().size() &&
+            schedule.getDescriptorStates()[*action.descriptorState].scalarProvenance !=
+                SyncDescriptorScalarProvenance::Unresolved &&
             schedule.getDescriptorStates()[*action.descriptorState].handle == summary.descriptor->handle;
         if (certifiedDescriptor) {
             continue;

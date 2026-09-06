@@ -117,14 +117,18 @@ struct SyncSemanticAction {
 
 /// Immutable, handle-local metadata observed by an access. Equal physical
 /// addresses do not merge descriptors. Bounds never shrink payload footprints.
+enum class SyncDescriptorScalarProvenance : std::uint8_t { Unresolved, Constant, NonphysicalExpression };
 struct SyncDescriptorState {
     std::uint32_t id = kInvalidSyncId;
     Value handle;
     SyncSemanticActionId definition = kInvalidSyncId;
-    std::uint64_t rows = 0;
-    std::uint64_t columns = 0;
+    // Missing numeric values retain the runtime valid-dimension precondition;
+    // they are not zero, a proven range, or an exact footprint.
+    std::optional<std::uint64_t> rows;
+    std::optional<std::uint64_t> columns;
     Value rowSource;
     Value columnSource;
+    SyncDescriptorScalarProvenance scalarProvenance = SyncDescriptorScalarProvenance::Unresolved;
 };
 
 struct SyncPhase {

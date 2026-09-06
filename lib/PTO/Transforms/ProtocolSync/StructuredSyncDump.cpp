@@ -181,8 +181,7 @@ void printRegion(const SyncRegion& region, raw_ostream& output)
     output << "] op=" << (region.operation ? region.operation->getName().getStringRef() : "none") << '\n';
 }
 
-void printSemanticAction(
-    const StructuredSyncIR& schedule, const SyncSemanticAction& action, raw_ostream& output)
+void printSemanticAction(const StructuredSyncIR& schedule, const SyncSemanticAction& action, raw_ostream& output)
 {
     const SyncOpSummary& summary = schedule.getSummaries()[action.summary];
     output << "  semantic-action #" << action.id << " region=#" << action.region
@@ -295,8 +294,29 @@ void mlir::pto::protocol_sync::printStructuredSyncIR(const StructuredSyncIR& sch
     for (const SyncDescriptorState& descriptor : schedule.getDescriptorStates()) {
         output << "  descriptor-state #" << descriptor.id << " handle=";
         printValue(descriptor.handle, state, output);
-        output << " definition=action#" << descriptor.definition << " valid=" << descriptor.rows << 'x'
-               << descriptor.columns << " scalar-provenance=constant footprint=conservative\n";
+        output << " definition=action#" << descriptor.definition << " valid=";
+        if (descriptor.rows) {
+            output << *descriptor.rows;
+        } else {
+            output << '?';
+        }
+        output << 'x';
+        if (descriptor.columns) {
+            output << *descriptor.columns;
+        } else {
+            output << '?';
+        }
+        const bool constant = descriptor.scalarProvenance == SyncDescriptorScalarProvenance::Constant;
+        const bool symbolic = descriptor.scalarProvenance == SyncDescriptorScalarProvenance::NonphysicalExpression;
+        output << " scalar-provenance="
+               << (constant ? "constant" :
+                   symbolic ? "nonphysical-expression" :
+                              "unresolved")
+               << " footprint=conservative";
+        if (symbolic) {
+            output << " range=unknown runtime-contract=valid-dimensions";
+        }
+        output << '\n';
     }
     for (const SyncPhase& phase : schedule.getPhases()) {
         printPhase(schedule, phase, state, output);

@@ -8,12 +8,13 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-//===- DescriptorState.cpp - Constant bounded tile metadata flow -----------===//
+//===- DescriptorState.cpp - Scope-local tile metadata provenance ----------===//
 
 #include "PTO/Transforms/ProtocolSync/LocalMemoryAnalysis.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 
@@ -22,6 +23,23 @@ using namespace mlir::pto;
 using namespace mlir::pto::protocol_sync;
 
 namespace {
+
+bool matchesLiveDescriptor(Operation* operation, const SyncDescriptorEffect& effect)
+{
+    if (auto allocation = dyn_cast<AllocTileOp>(operation)) {
+        return effect.role == SyncDescriptorRole::Initialize && effect.handle == allocation.getResult() &&
+               effect.rows == allocation.getValidRow() && effect.columns == allocation.getValidCol();
+    }
+    if (auto update = dyn_cast<SetValidShapeOp>(operation)) {
+        return effect.role == SyncDescriptorRole::Update && effect.handle == update.getSource() &&
+               effect.rows == update.getValidRow() && effect.columns == update.getValidCol();
+    }
+    if (auto read = dyn_cast<GetValidShapeOp>(operation)) {
+        return effect.role == SyncDescriptorRole::Read && effect.handle == read.getSource() && !effect.rows &&
+               !effect.columns;
+    }
+    return false;
+}
 
 std::optional<std::uint64_t> constantDimension(Value value, std::int64_t fallback)
 {
@@ -35,6 +53,67 @@ std::optional<std::uint64_t> constantDimension(Value value, std::int64_t fallbac
         return std::nullopt;
     }
     return attribute.getValue().getZExtValue();
+}
+
+bool nonphysicalScalar(Value value, Operation* use, DominanceInfo& dominance)
+{
+    SmallVector<std::pair<Value, Operation*>, 16> work{{value, use}};
+    llvm::DenseSet<Value> visited;
+    while (!work.empty()) {
+        const auto [current, consumer] = work.pop_back_val();
+        const bool unavailable =
+            !current || !consumer || !current.getType().isIntOrIndex() || !dominance.dominates(current, consumer);
+        if (unavailable) {
+            return false;
+        }
+        if (!visited.insert(current).second) {
+            continue;
+        }
+        constexpr unsigned MAX_SCALAR_PROVENANCE_VALUES = 256;
+        const bool exhausted = visited.size() > MAX_SCALAR_PROVENANCE_VALUES;
+        if (exhausted) {
+            return false;
+        }
+        if (auto argument = dyn_cast<BlockArgument>(current)) {
+            Operation* owner = argument.getOwner()->getParentOp();
+            if (isa<func::FuncOp>(owner)) {
+                continue;
+            }
+            auto loop = dyn_cast<scf::ForOp>(owner);
+            const bool induction = loop && loop.getInductionVar() == current;
+            if (!induction) {
+                return false;
+            }
+            for (Value bound : {loop.getLowerBound(), loop.getUpperBound(), loop.getStep()}) {
+                work.push_back({bound, loop});
+            }
+            continue;
+        }
+        Operation* definition = current.getDefiningOp();
+        const bool arithmetic = definition && definition->getName().getDialectNamespace() == "arith" &&
+                                definition->getNumRegions() == 0 && isMemoryEffectFree(definition);
+        if (!arithmetic) {
+            return false;
+        }
+        for (Value operand : definition->getOperands()) {
+            work.push_back({operand, definition});
+        }
+    }
+    return true;
+}
+
+bool supportedDimension(
+    Value value, std::optional<std::uint64_t> constant, std::int64_t bound, Operation* use, DominanceInfo& dominance)
+{
+    if (constant) {
+        return *constant <= static_cast<std::uint64_t>(bound) && (!value || dominance.dominates(value, use));
+    }
+    IntegerAttr literal;
+    // A negative/oversized literal must not masquerade as a symbolic value.
+    if (!value || matchPattern(value, m_Constant(&literal))) {
+        return false;
+    }
+    return nonphysicalScalar(value, use, dominance);
 }
 
 bool supportedAllocation(Value handle)
@@ -89,7 +168,9 @@ namespace mlir::pto::protocol_sync {
 
 class SyncDescriptorStateBuilder {
 public:
-    explicit SyncDescriptorStateBuilder(StructuredSyncIR& schedule) : schedule(schedule) {}
+    explicit SyncDescriptorStateBuilder(StructuredSyncIR& schedule)
+        : schedule(schedule), dominance(schedule.getFunction())
+    {}
     LogicalResult build();
 
 private:
@@ -98,6 +179,7 @@ private:
     void transfer(SyncSemanticAction& action);
 
     StructuredSyncIR& schedule;
+    DominanceInfo dominance;
     llvm::DenseMap<Value, std::uint32_t> current;
     llvm::DenseSet<Value> invalid;
     llvm::DenseSet<Value> validated;
@@ -165,17 +247,21 @@ void SyncDescriptorStateBuilder::transfer(SyncSemanticAction& action)
     const auto rows = constantDimension(effect->rows, type.getValidShape()[0]);
     const auto columns = constantDimension(effect->columns, type.getValidShape()[1]);
     const bool missingInput = effect->role == SyncDescriptorRole::Update && found == current.end();
-    const bool unsupportedBounds = !rows || !columns || *rows > static_cast<std::uint64_t>(type.getShape()[0]) ||
-                                   *columns > static_cast<std::uint64_t>(type.getShape()[1]);
+    const bool unsupportedBounds =
+        !supportedDimension(effect->rows, rows, type.getShape()[0], action.operation, dominance) ||
+        !supportedDimension(effect->columns, columns, type.getShape()[1], action.operation, dominance);
     if (missingInput || unsupportedBounds) {
-        reject(action.operation, "descriptor dimensions need bounded constants and supported initialization");
+        reject(
+            action.operation, "descriptor dimensions need valid constants or supported nonphysical scalar provenance");
         invalid.insert(effect->handle);
         current.erase(effect->handle);
         return;
     }
     const std::uint32_t id = schedule.descriptorStates.size();
+    const auto provenance = rows && columns ? SyncDescriptorScalarProvenance::Constant :
+                                              SyncDescriptorScalarProvenance::NonphysicalExpression;
     schedule.descriptorStates.push_back(
-        {id, effect->handle, action.id, *rows, *columns, effect->rows, effect->columns});
+        {id, effect->handle, action.id, rows, columns, effect->rows, effect->columns, provenance});
     current[effect->handle] = id;
     action.descriptorState = id;
 }
@@ -288,6 +374,9 @@ LogicalResult verifySyncDescriptorBindings(const StructuredSyncIR& schedule)
             if (!action.descriptorState || *action.descriptorState >= states.size()) {
                 return failure();
             }
+            if (!matchesLiveDescriptor(action.operation, *effect)) {
+                return failure();
+            }
             const SyncDescriptorState& state = states[*action.descriptorState];
             if (state.id != *action.descriptorState || state.handle != effect->handle) {
                 return failure();
@@ -302,14 +391,17 @@ LogicalResult verifySyncDescriptorBindings(const StructuredSyncIR& schedule)
                 const auto type = cast<TileBufType>(effect->handle.getType());
                 const auto rows = constantDimension(effect->rows, type.getValidShape()[0]);
                 const auto columns = constantDimension(effect->columns, type.getValidShape()[1]);
-                const bool wrongBounds = !rows || !columns || *rows > static_cast<std::uint64_t>(type.getShape()[0]) ||
-                                         *columns > static_cast<std::uint64_t>(type.getShape()[1]);
+                const bool wrongBounds =
+                    !supportedDimension(effect->rows, rows, type.getShape()[0], action.operation, dominance) ||
+                    !supportedDimension(effect->columns, columns, type.getShape()[1], action.operation, dominance);
+                const auto provenance = rows && columns ? SyncDescriptorScalarProvenance::Constant :
+                                                          SyncDescriptorScalarProvenance::NonphysicalExpression;
                 const bool wrongPredecessor = effect->role == SyncDescriptorRole::Initialize ?
                                                   latest.contains(effect->handle) :
                                                   !latest.contains(effect->handle);
-                if (state.definition != action.id || wrongBounds || wrongPredecessor || state.rows != *rows ||
-                    state.columns != *columns || state.rowSource != effect->rows ||
-                    state.columnSource != effect->columns) {
+                if (state.definition != action.id || wrongBounds || wrongPredecessor || state.rows != rows ||
+                    state.columns != columns || state.scalarProvenance != provenance ||
+                    state.rowSource != effect->rows || state.columnSource != effect->columns) {
                     return failure();
                 }
                 latest[effect->handle] = state.id;
