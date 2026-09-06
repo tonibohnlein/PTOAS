@@ -61,12 +61,14 @@ public:
             if (outsideBlock) {
                 continue;
             }
-            const bool ordinary = phase.core == SyncPhysicalCore::Vector && !phase.macroPhase &&
+            const bool sameCore = core == SyncPhysicalCore::Unknown || phase.core == core;
+            const bool ordinary = phase.core != SyncPhysicalCore::Unknown && sameCore && !phase.macroPhase &&
                                   phase.completion == SyncCompletionKind::PhaseEnd &&
                                   phase.iterationDomain.loops.empty();
             if (!ordinary) {
                 return success(); // Outside this supplementary verifier's subset.
             }
+            core = phase.core;
             const bool uniquePhase = phases.try_emplace(phase.operation, &phase).second;
             if (!uniquePhase) {
                 return success(); // Multiple physical phases need macro modeling.
@@ -107,7 +109,8 @@ private:
             const bool readRead = source->mode == SyncAccessMode::Read && access.mode == SyncAccessMode::Read;
             const bool overlaps = previous.interval.begin < region.interval.begin + region.interval.size &&
                                   region.interval.begin < previous.interval.begin + previous.interval.size;
-            if (source->phase == access.phase || readRead || !overlaps || known.test(source->id)) {
+            if (previous.space != region.space || source->phase == access.phase || readRead || !overlaps ||
+                known.test(source->id)) {
                 continue;
             }
             if (uncoveredSource) {
@@ -142,9 +145,8 @@ private:
 
     LogicalResult event(PIPE source, PIPE target, unsigned id, bool set)
     {
-        const bool legal =
-            targetModel.supportsEvent({SyncPhysicalCore::Vector, source}, {SyncPhysicalCore::Vector, target}) &&
-            llvm::is_contained(targetModel.getCompilerEventIds(), id);
+        const bool legal = targetModel.supportsEvent({core, source}, {core, target}) &&
+                           llvm::is_contained(targetModel.getCompilerEventIds(), id);
         if (!legal) {
             return failure();
         }
@@ -183,7 +185,7 @@ private:
                 // Do not grant a body-wide completion edge here.
                 return success();
             }
-            if (!targetModel.supportsPipeBarrier({SyncPhysicalCore::Vector, pipe})) {
+            if (!targetModel.supportsPipeBarrier({core, pipe})) {
                 return failure();
             }
             PipeState& local = pipeState(pipe);
@@ -194,6 +196,7 @@ private:
 
     const StructuredSyncIR& schedule;
     ProtocolSyncTarget targetModel;
+    SyncPhysicalCore core = SyncPhysicalCore::Unknown;
     SyncAccessId* uncoveredSource;
     SyncAccessId* uncoveredTarget;
     llvm::DenseMap<Operation*, const SyncPhase*> phases;

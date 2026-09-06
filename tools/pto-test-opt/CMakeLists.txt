@@ -128,6 +128,7 @@ add_llvm_executable(pto-protocol-sync-mixed-test
 add_llvm_executable(pto-protocol-sync-local-memory-test
   pto-protocol-sync-local-memory-test.cpp
   ProtocolSyncDescriptorTest.cpp
+  ProtocolSyncLocalDomainTest.cpp
   PARTIAL_SOURCES_INTENDED
 )
 target_link_libraries(pto-protocol-sync-local-memory-test PRIVATE

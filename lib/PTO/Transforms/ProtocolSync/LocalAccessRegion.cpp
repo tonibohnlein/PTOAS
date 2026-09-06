@@ -23,11 +23,60 @@ using namespace mlir::pto::protocol_sync;
 
 namespace {
 
+bool supportedCubeLayout(TileBufType type, std::uint64_t bytes)
+{
+    const auto shape = type.getShape();
+    const bool ordinaryElement = type.getElementType().isIntOrFloat() &&
+                                 type.getElementType().getIntOrFloatBitWidth() == 8 * bytes && bytes <= 4;
+    const bool ordinaryShape = shape.size() == 2 && shape[0] > 0 && shape[1] > 0;
+    if (!ordinaryElement || !ordinaryShape || bytes == 0) {
+        return false;
+    }
+    if (32 % bytes != 0) {
+        return false;
+    }
+    const auto outer = type.getBLayoutValueI32();
+    const auto inner = type.getSLayoutValueI32();
+    const bool rowOuter = outer == static_cast<int32_t>(BLayout::RowMajor);
+    const bool colOuter = outer == static_cast<int32_t>(BLayout::ColMajor);
+    if (!rowOuter && !colOuter) {
+        return false;
+    }
+    if (inner == static_cast<int32_t>(SLayout::NoneBox)) {
+        const auto minor = static_cast<std::uint64_t>(rowOuter ? shape[1] : shape[0]);
+        return minor % (32 / bytes) == 0 && type.getCompactModeI32() == static_cast<int32_t>(CompactMode::Null);
+    }
+    const bool rowInner = inner == static_cast<int32_t>(SLayout::RowMajor);
+    const bool colInner = inner == static_cast<int32_t>(SLayout::ColMajor);
+    // Qualified complete-box layouts are permutations of a dense allocation.
+    // Reject partial boxes, MX/sub-byte packing and unqualified layout variants.
+    const bool ordinaryBox = rowInner || (rowOuter && colInner);
+    const auto fractal = type.getSFractalSizeI32();
+    if (!ordinaryBox || (fractal != 512 && fractal != 1024)) {
+        return false;
+    }
+    // C-fractal qualification is limited to the ordinary four-byte layout.
+    if (fractal == 1024 && bytes != 4) {
+        return false;
+    }
+    const std::uint64_t rows = fractal == 1024 || rowInner ? 16 : 32 / bytes;
+    const std::uint64_t columns = fractal == 1024 || colInner ? 16 : 32 / bytes;
+    const bool fullCompact =
+        type.getCompactModeI32() == static_cast<int32_t>(CompactMode::Normal) && type.getValidShape() == shape;
+    const bool compact = type.getCompactModeI32() == static_cast<int32_t>(CompactMode::Null) || fullCompact;
+    return compact && static_cast<std::uint64_t>(shape[0]) % rows == 0 &&
+           static_cast<std::uint64_t>(shape[1]) % columns == 0;
+}
+
 SyncLocalAccessRegion recoverAllocationRegion(const SyncAccess& access, AllocTileOp allocation)
 {
     SyncLocalAccessRegion region;
     region.access = access.id;
-    if (!allocation || access.slot || access.storage.space != AddressSpace::VEC) {
+    const auto storageSpace = access.storage.space;
+    const bool local = storageSpace == AddressSpace::VEC || storageSpace == AddressSpace::MAT ||
+                       storageSpace == AddressSpace::LEFT || storageSpace == AddressSpace::RIGHT ||
+                       storageSpace == AddressSpace::ACC;
+    if (!allocation || access.slot || !local) {
         return region;
     }
     auto type = allocation.getResult().getType();
@@ -37,12 +86,16 @@ SyncLocalAccessRegion recoverAllocationRegion(const SyncAccess& access, AllocTil
     const bool validAddress =
         knownAddress && address.getValue().getBitWidth() <= 64 && !address.getValue().isNegative();
     const bool packedStride = type.getCompactModeI32() == static_cast<int32_t>(CompactMode::RowPlusOne);
-    const bool vectorSpace = space && space.getAddressSpace() == AddressSpace::VEC;
-    if (!vectorSpace || !validAddress || packedStride) {
+    const bool matchingSpace = space && space.getAddressSpace() == storageSpace;
+    if (!matchingSpace || !validAddress || packedStride) {
         return region;
     }
     std::uint64_t bytes = getPTOStorageElemByteSize(type.getElementType());
     if (bytes == 0) {
+        return region;
+    }
+    const bool unsupportedLayout = storageSpace != AddressSpace::VEC && !supportedCubeLayout(type, bytes);
+    if (unsupportedLayout) {
         return region;
     }
     constexpr std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
@@ -57,6 +110,7 @@ SyncLocalAccessRegion recoverAllocationRegion(const SyncAccess& access, AllocTil
         return region;
     }
     region.interval = {begin, bytes};
+    region.space = storageSpace;
     // MemoryEffectOpInterface identifies a tile, not exactly which of its bytes
     // the instruction touches. Even a static allocation is only an upper bound.
     region.precision = SyncRegionPrecision::Conservative;

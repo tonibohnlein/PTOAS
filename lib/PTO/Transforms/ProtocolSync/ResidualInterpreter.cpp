@@ -1473,7 +1473,12 @@ FailureOr<SyncInterpretationResult> mlir::pto::protocol_sync::interpretSelectedW
         }
         const bool canonicalCoverage =
             !timeline.accesses.empty() && llvm::all_of(timeline.accesses, [&](SyncAccessId id) {
-                return id < local->coveredAccesses.size() && local->coveredAccesses.test(id);
+                const auto* access = schedule.findAccess(id);
+                // Spatial ACC recovery does not qualify accumulator/proxy
+                // effects. Preserve their existing semantic protection.
+                return access && access->storage.space != AddressSpace::ACC &&
+                       access->mode != SyncAccessMode::Ordered && id < local->coveredAccesses.size() &&
+                       local->coveredAccesses.test(id);
             });
         // A selected atomic protocol must still prove its own complete
         // certificate. Native residual repair must not mask a broken selection.

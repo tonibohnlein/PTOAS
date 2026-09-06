@@ -32,6 +32,7 @@ using namespace mlir::pto;
 using namespace mlir::pto::protocol_sync;
 
 bool testProtocolSyncDescriptorState(MLIRContext& context);
+bool testProtocolSyncLocalDomains(MLIRContext& context);
 
 namespace {
 
@@ -710,7 +711,7 @@ int main()
     context.disableMultithreading();
     return testSparseChains(context) && testConcreteMutations(context) && testUnknownAndOverflow(context) &&
                    testStaticRowViews(context) && testUnsupportedViews(context) && testConcreteViewMutation(context) &&
-                   testProtocolSyncDescriptorState(context) &&
+                   testProtocolSyncDescriptorState(context) && testProtocolSyncLocalDomains(context) &&
                    testCompositionalRegions(context) && testExpansionLimits(context) ?
                0 :
                1;

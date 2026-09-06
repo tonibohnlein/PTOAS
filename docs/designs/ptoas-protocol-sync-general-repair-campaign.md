@@ -157,6 +157,62 @@ qualified. Exhausted search budgets are not semantic counterexamples.
 
 ## Progress ledger
 
+### R3a — shared local storage domains
+
+The canonical spatial and outstanding-access analysis now covers VEC, MAT,
+LEFT, RIGHT and ACC through the same transfer machinery. Atoms are partitioned
+by core and address space before their endpoint sweep. Equal numeric addresses
+in LEFT, RIGHT and ACC are distinct; different MAT handles at overlapping
+addresses share atoms. The initial domain remains one known physical-core
+context without physical sections. This is not a proof that core kind alone
+identifies an owner across sections, queues or cross-core execution.
+
+Ordinary complete-box cube allocations use overflow-checked conservative
+allocation bounds. The layout rules are grounded in PTO-ISA revision
+`a8040450238f162985d8b596fbebeb54bfba2bf5`,
+[Tile geometry and coordinate mapping](https://github.com/hw-native-sys/pto-isa/blob/a8040450238f162985d8b596fbebeb54bfba2bf5/include/pto/common/pto_tile.hpp):
+`getInnerRow/getInnerCol`, shape constraints and `GetTileOffset`. The admitted
+subset excludes partial boxes, sub-byte/MX packing, RowPlusOne, unqualified
+layout combinations, non-four-byte C-fractals, and CompactNormal with partial
+or dynamic valid shape. NoneBox bounds require aligned minor dimensions.
+Unsupported geometry remains Unknown. Views retain their existing narrower
+recovery contract.
+
+Spatial recovery and semantic completeness remain distinct. ACC atoms and
+ordinary hazardous access pairs are available for reasoning, but ACC timeline
+and ordered/proxy protection cannot be suppressed merely because their bytes
+were recovered. No new ACC/proxy or GM-publication target claim is introduced.
+Independent pair verification and the concrete local scoreboard compare the
+same physical domain before testing overlap; the scoreboard infers the actual
+core instead of assuming Vector. Phase-free blocks do not invoke that
+supplementary scoreboard and retain full fixed-sync verification.
+
+The native cube reuse fixture deliberately shares one MAT address between
+successive logical tiles while LEFT, RIGHT and ACC use the same numeric base in
+their separate spaces. It requires selective readiness and reclamation with
+patterns and fallback disabled in both GM modes on A2/A3. A separate fixture
+retains unresolved ACC accumulation protection. The byte-set oracle enumerates
+8/16/32-bit complete-box coordinate permutations; it checks the implementation
+under the cited geometry, not independent hardware behavior. Negative cases
+exercise unsupported layouts, unknown addresses, mismatched spaces and owners,
+and physical-section scope. Early extraction rejection is a valid fail-closed
+outcome for owner tests, not evidence that every case reached atom analysis.
+
+The clean R2b-head broader sample is also frozen at
+`40bce34b55fcbca1eed33e5cbf8510828119c569`: A3/disjoint, patterns off,
+14 admitted / 194 rejected / 5 pre-ProtocolSync failures across 213 rows.
+All 28 admitted-row concrete/C++ follow-ups pass. Artifacts are
+`build/protocol-sync-native-corpus/acceptance-r2b-static-a3-disjoint/` and
+`followup-r2b-static/`. This first-per-static-seed sample is not the full
+9,754-output collection and establishes no new admission gain for R3a.
+
+Both independent reviewers accepted the bounded slice. Validation on
+2026-09-06: targeted two-worker builds and fresh relinks of the compiler and
+affected unit callers pass; the complete focused ProtocolSync suite passes
+57/57 in 62.28 seconds (`build/protocol-sync-shared-domains-suite.json`). The
+changed-code prefilter checks nine code files with zero errors/warnings;
+`git diff --check` passes. No full system or device campaign was run.
+
 ### R2b — selective ordinary-loop boundaries
 
 The selective constructor now composes physical prefix and suffix accesses with

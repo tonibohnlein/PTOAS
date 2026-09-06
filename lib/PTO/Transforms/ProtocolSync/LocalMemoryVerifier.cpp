@@ -28,7 +28,7 @@ bool hasSameExecution(const SyncPhase& source, const SyncPhase& target)
                            llvm::equal(source.guard, target.guard, [](const auto& first, const auto& second) {
                                return first.choice == second.choice && first.arm == second.arm;
                            });
-    return source.operation && target.operation && source.core == SyncPhysicalCore::Vector &&
+    return source.operation && target.operation && source.core != SyncPhysicalCore::Unknown &&
            target.core == source.core && source.operation->getBlock() == target.operation->getBlock() &&
            source.id < target.id && source.iterationDomain.loops.empty() && target.iterationDomain.loops.empty() &&
            sameGuard;
@@ -92,7 +92,7 @@ LogicalResult mlir::pto::protocol_sync::verifyLocalMemoryCoverage(
         for (const SyncAccess& target : schedule.getAccesses()) {
             const SyncLocalAccessRegion& second = regions[target.id];
             const bool readRead = source.mode == SyncAccessMode::Read && target.mode == SyncAccessMode::Read;
-            if (second.precision == SyncRegionPrecision::Unknown || readRead) {
+            if (second.precision == SyncRegionPrecision::Unknown || first.space != second.space || readRead) {
                 continue;
             }
             const SyncPhase* sourcePhase = schedule.findPhase(source.phase);

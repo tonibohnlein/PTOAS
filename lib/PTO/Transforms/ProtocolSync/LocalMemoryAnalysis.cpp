@@ -34,12 +34,19 @@ bool sameGuard(ArrayRef<SyncControlAtom> first, ArrayRef<SyncControlAtom> second
 bool collectRegions(const StructuredSyncIR& schedule, SyncLocalMemoryAnalysis& result, bool allowLoop)
 {
     const SyncPhase* first = nullptr;
+    const bool sections = llvm::any_of(
+        schedule.getRegions(), [](const SyncRegion& region) { return region.kind == SyncRegionKind::PhysicalSection; });
     for (const SyncAccess& access : schedule.getAccesses()) {
-        if (access.storage.space != AddressSpace::VEC) {
+        const auto space = access.storage.space;
+        const bool local = space == AddressSpace::VEC || space == AddressSpace::MAT || space == AddressSpace::LEFT ||
+                           space == AddressSpace::RIGHT || space == AddressSpace::ACC;
+        if (!local) {
             continue;
         }
         const SyncPhase* phase = schedule.findPhase(access.phase);
-        const bool exactPhase = phase && phase->operation && phase->core == SyncPhysicalCore::Vector &&
+        const auto expectedCore = space == AddressSpace::VEC ? SyncPhysicalCore::Vector : SyncPhysicalCore::Cube;
+        const bool owner = !sections && (!first || first->core == expectedCore);
+        const bool exactPhase = owner && phase && phase->operation && phase->core == expectedCore &&
                                 !phase->macroPhase && phase->completion == SyncCompletionKind::PhaseEnd;
         const bool ordinaryPhase =
             exactPhase && (allowLoop || phase->iterationDomain.loops.empty()) && access.mode != SyncAccessMode::Ordered;
@@ -64,40 +71,51 @@ bool collectRegions(const StructuredSyncIR& schedule, SyncLocalMemoryAnalysis& r
     return true;
 }
 
-LogicalResult buildAtoms(SyncLocalMemoryAnalysis& result)
+LogicalResult buildAtoms(const StructuredSyncIR& schedule, SyncLocalMemoryAnalysis& result)
 {
     // Endpoint sweep: do not form overlap-connected equivalence classes.
     using Endpoint = std::pair<SyncAccessId, bool>;
-    std::map<std::uint64_t, SmallVector<Endpoint, 2>> endpoints;
+    using Domain = std::pair<SyncPhysicalCore, AddressSpace>;
+    std::map<Domain, std::map<std::uint64_t, SmallVector<Endpoint, 2>>> domains;
     for (const SyncLocalAccessRegion& region : result.regions) {
+        const auto* access = schedule.findAccess(region.access);
+        const auto* phase = access ? schedule.findPhase(access->phase) : nullptr;
+        if (!phase) {
+            return failure();
+        }
+        auto& endpoints = domains[{phase->core, region.space}];
         endpoints[region.interval.begin].push_back({region.access, true});
         endpoints[region.interval.begin + region.interval.size].push_back({region.access, false});
     }
-    std::set<SyncAccessId> active;
-    for (auto point = endpoints.begin(); point != endpoints.end(); ++point) {
-        for (const auto& [access, starts] : point->second) {
-            if (starts) {
-                active.insert(access);
-            } else {
-                active.erase(access);
+    for (auto& [domain, endpoints] : domains) {
+        std::set<SyncAccessId> active;
+        for (auto point = endpoints.begin(); point != endpoints.end(); ++point) {
+            for (const auto& [access, starts] : point->second) {
+                if (starts) {
+                    active.insert(access);
+                } else {
+                    active.erase(access);
+                }
             }
+            auto next = std::next(point);
+            const bool emptySegment = next == endpoints.end() || active.empty();
+            if (emptySegment) {
+                continue;
+            }
+            const bool atomIdsExhausted = result.atoms.size() >= kInvalidSyncId;
+            if (atomIdsExhausted) {
+                return failure();
+            }
+            SyncLocalStorageAtom atom;
+            atom.id = static_cast<std::uint32_t>(result.atoms.size());
+            atom.core = domain.first;
+            atom.space = domain.second;
+            atom.interval = {point->first, next->first - point->first};
+            for (SyncAccessId access : active) {
+                atom.accesses.push_back(access);
+            }
+            result.atoms.push_back(std::move(atom));
         }
-        auto next = std::next(point);
-        const bool emptySegment = next == endpoints.end() || active.empty();
-        if (emptySegment) {
-            continue;
-        }
-        const bool atomIdsExhausted = result.atoms.size() >= kInvalidSyncId;
-        if (atomIdsExhausted) {
-            return failure();
-        }
-        SyncLocalStorageAtom atom;
-        atom.id = static_cast<std::uint32_t>(result.atoms.size());
-        atom.interval = {point->first, next->first - point->first};
-        for (SyncAccessId access : active) {
-            atom.accesses.push_back(access);
-        }
-        result.atoms.push_back(std::move(atom));
     }
     return success();
 }
@@ -123,7 +141,7 @@ FailureOr<SyncLocalMemoryAnalysis> mlir::pto::protocol_sync::analyzeLocalMemory(
         result.regions.clear();
         return result;
     }
-    if (failed(buildAtoms(result))) {
+    if (failed(buildAtoms(schedule, result))) {
         return failure();
     }
     if (options.analyzeStructured) {
@@ -160,7 +178,9 @@ FailureOr<SyncLocalMemoryAnalysis> mlir::pto::protocol_sync::analyzeLocalMemory(
         }
     }
     for (const SyncLocalAccessRegion& region : result.regions) {
-        if (result.boundary.empty()) {
+        // Spatial recovery is not an ACC/proxy effect-completeness proof.
+        const bool completeEffects = region.space != AddressSpace::ACC && result.boundary.empty();
+        if (completeEffects) {
             result.coveredAccesses.set(region.access);
         }
     }

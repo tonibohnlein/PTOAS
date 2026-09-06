@@ -10,8 +10,8 @@
 
 //===- LocalMemoryAnalysis.h - Canonical ordinary local effects -*- C++ -*-===//
 //
-// Production, pattern-independent requirements over a shared vector UB atom
-// partition. Region transfers retain incoming/outgoing outstanding effects.
+// Production, pattern-independent requirements over per-storage-domain atom
+// partitions. Region transfers retain incoming/outgoing outstanding effects.
 // A domain is admitted atomically: no timeline protection is removed if
 // an access, alias, control instance, or completion frontier is unmodeled.
 // Conservative accesses create may-definitions, never definite generation kills.
@@ -47,12 +47,15 @@ struct SyncLocalAccessRegion {
     SyncAccessId access = kInvalidSyncId;
     SyncByteInterval interval;
     SyncRegionPrecision precision = SyncRegionPrecision::Unknown;
+    AddressSpace space = AddressSpace::Zero;
 };
 
 struct SyncLocalStorageAtom {
     std::uint32_t id = kInvalidSyncId;
     SyncByteInterval interval;
     llvm::SmallVector<SyncAccessId, 4> accesses;
+    AddressSpace space = AddressSpace::Zero;
+    SyncPhysicalCore core = SyncPhysicalCore::Unknown;
 };
 
 struct SyncLocalMemoryState {
