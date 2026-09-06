@@ -36,6 +36,18 @@ def runtime_scalars(entry, language):
     return values
 
 
+def load_entry_module(root, source):
+    """Preserve the sibling imports used by source-backed example drivers."""
+    module_name = source.with_suffix("").as_posix().replace("/", ".")
+    sys.path.insert(0, str(root))
+    sys.path.insert(0, str((root / source).parent))
+    sys.argv = [str(root / source)]
+    module = importlib.import_module(module_name)
+    if Path(module.__file__).resolve(strict=True) != (root / source).resolve(strict=True):
+        raise ValueError("imported entry module does not match the inventoried source")
+    return module
+
+
 def collect_entry(root, source, name, kind, output):
     # Also bound direct smoke invocations, not only launches by the collector.
     for key in ("PYPTO_CODEGEN_MAX_WORKERS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
@@ -46,13 +58,8 @@ def collect_entry(root, source, name, kind, output):
     from pypto.backend import BackendType
     from pypto.pypto_core import passes
 
-    module_name = source.with_suffix("").as_posix().replace("/", ".")
-    sys.path.insert(0, str(root))
     # Module import must see no collector flags in any module-local parser.
-    sys.argv = [str(root / source)]
-    module = importlib.import_module(module_name)
-    if Path(module.__file__).resolve(strict=True) != (root / source).resolve(strict=True):
-        raise ValueError("imported entry module does not match the inventoried source")
+    module = load_entry_module(root, source)
     entry = getattr(module, name)
     if kind == "jit":
         program = entry.specialize(**runtime_scalars(entry, pl))

@@ -12,15 +12,31 @@
 
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from collect_frontend import harvest_inputs, run_entry, worker_environment
 from frontend_inventory import discover_entries
-from frontend_worker import runtime_scalars
+from frontend_worker import load_entry_module, runtime_scalars
 
 
 class FrontendCollectionTests(unittest.TestCase):
+    def test_source_driver_sibling_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "collection_fixture"
+            package.mkdir()
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            (package / "entry.py").write_text("from collection_sibling import value\n", encoding="utf-8")
+            (package / "collection_sibling.py").write_text("value = 7\n", encoding="utf-8")
+            with patch.object(sys, "path", list(sys.path)), patch.object(sys, "argv", list(sys.argv)):
+                with patch.dict(sys.modules):
+                    module = load_entry_module(root, Path("collection_fixture/entry.py"))
+                    self.assertEqual(module.value, 7)
+                    self.assertEqual(sys.argv, [str(package / "entry.py")])
+
     def test_codegen_and_math_workers_are_bounded(self):
         args = SimpleNamespace(pypto_root=Path("pypto"), lib_root=Path("lib"), results=Path("results"))
         environment = worker_environment(args)

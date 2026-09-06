@@ -299,6 +299,25 @@ domain cap, successful bounded minimization, forged attribution and cleared
 assignments. Certified physical-pressure recovery remains deferred; proceed
 with P3 corpus collection and semantic facts without enabling serialization.
 
+### P3a — preserve source-backed frontend imports
+
+The static collector now places an example driver's directory on its import
+path, matching its absolute sibling imports, while still checking that the
+loaded entry is exactly the inventoried source file. Collector arguments remain
+hidden from module-local parsers. This is collection infrastructure only: it
+does not change compiler admission or invoke a kernel/device runtime. Trusted
+module top-level Python still executes. Failed seeds and partial PTO outputs
+retain their separate records.
+
+Both independent algorithm and compiler reviews accepted the bounded change.
+On 2026-09-06, `taskset -c 0 .venv/bin/python -m unittest discover
+-s test/experiments/protocol_sync -p 'test_*.py'` passed all **38 tests**.
+The changed-code prefilter and `git diff --check` passed. No compiler rebuild
+was needed. The previous interrupted `static-n0` collection remains untouched;
+the next collection uses a fresh disk-backed result directory and the same
+frozen frontend source commits. Static seeds are not the complete parameterized
+kernel acceptance population.
+
 ### Historical N0 progress
 
 - N0 in progress: source heads resolved; added general-only mixed-mode selection
