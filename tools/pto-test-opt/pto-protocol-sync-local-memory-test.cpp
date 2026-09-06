@@ -31,6 +31,8 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::protocol_sync;
 
+bool testProtocolSyncDescriptorState(MLIRContext& context);
+
 namespace {
 
 constexpr StringLiteral kPrelude = R"mlir(
@@ -708,6 +710,7 @@ int main()
     context.disableMultithreading();
     return testSparseChains(context) && testConcreteMutations(context) && testUnknownAndOverflow(context) &&
                    testStaticRowViews(context) && testUnsupportedViews(context) && testConcreteViewMutation(context) &&
+                   testProtocolSyncDescriptorState(context) &&
                    testCompositionalRegions(context) && testExpansionLimits(context) ?
                0 :
                1;

@@ -258,6 +258,10 @@ LogicalResult StructuredSyncIR::freeze()
             return failure();
         }
     }
+    const bool invalidDescriptorBindings = failures.empty() && failed(verifySyncDescriptorBindings(*this));
+    if (invalidDescriptorBindings) {
+        return failure();
+    }
     frozen = true;
     return success();
 }

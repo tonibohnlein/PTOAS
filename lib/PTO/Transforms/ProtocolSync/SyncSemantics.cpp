@@ -129,6 +129,8 @@ StringRef mlir::pto::protocol_sync::stringifySyncSummaryProvider(SyncSummaryProv
     switch (provider) {
         case SyncSummaryProvider::FixedSynchronization:
             return "fixed-sync";
+        case SyncSummaryProvider::Descriptor:
+            return "descriptor";
         case SyncSummaryProvider::Queue:
             return "queue";
         case SyncSummaryProvider::Macro:
@@ -162,6 +164,8 @@ StringRef mlir::pto::protocol_sync::stringifySyncFailureReason(SyncFailureReason
             return "unsupported-memory-effect-kind";
         case SyncFailureReason::UnsupportedEffectfulOperation:
             return "unsupported-effectful-operation";
+        case SyncFailureReason::UnsupportedDescriptorState:
+            return "unsupported-descriptor-state";
         case SyncFailureReason::UnsupportedRegion:
             return "unsupported-region";
         case SyncFailureReason::UnsupportedCFG:

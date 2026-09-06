@@ -1041,6 +1041,22 @@ LogicalResult traceSSAProducers(
             worklist.push_back({loop.getYieldedValues()[index], SSATraceKind::LoopExit, carrier});
             continue;
         }
+        if (isa<GetValidShapeOp>(definingOperation)) {
+            const bool certified = llvm::any_of(schedule.getSemanticActions(), [&](const SyncSemanticAction& action) {
+                return action.operation == definingOperation && action.descriptorState.has_value();
+            });
+            // Only constant-provenance descriptor reads terminate this trace.
+            // Dynamic/physical scalar prerequisites need action-endpoint
+            // obligations and are deliberately unsupported by this slice.
+            const bool missingCertificate = !certified && schedule.getFailures().empty();
+            if (missingCertificate) {
+                return failure();
+            }
+            // Diagnostic extraction may retain unsupported descriptor reads.
+            // Their semantic failure and opaque action remain uncovered below;
+            // do not turn this expected rejection into an internal error.
+            continue;
+        }
         if (!isMemoryEffectFree(definingOperation)) {
             continue;
         }
@@ -1099,6 +1115,16 @@ LogicalResult evaluateOpaqueEffects(
     const StructuredSyncIR& schedule, const SyncInterpretationOptions& options, ResidualAccumulator& accumulator)
 {
     for (const SyncSemanticAction& action : schedule.getSemanticActions()) {
+        // A bound descriptor version certifies constant scalar provenance and
+        // handle-local mutation/read semantics. It supplies no payload order.
+        const auto& summary = schedule.getSummaries()[action.summary];
+        const bool certifiedDescriptor =
+            summary.provider == SyncSummaryProvider::Descriptor && summary.descriptor && action.descriptorState &&
+            *action.descriptorState < schedule.getDescriptorStates().size() &&
+            schedule.getDescriptorStates()[*action.descriptorState].handle == summary.descriptor->handle;
+        if (certifiedDescriptor) {
+            continue;
+        }
         const bool modeledFixedSynchronization =
             options.fixedSynchronizationIsModeled && action.summary < schedule.getSummaries().size() &&
             schedule.getSummaries()[action.summary].provider == SyncSummaryProvider::FixedSynchronization;

@@ -74,6 +74,7 @@ enum class SyncQueueRole : std::uint8_t {
 
 enum class SyncSummaryProvider : std::uint8_t {
     FixedSynchronization,
+    Descriptor,
     Queue,
     Macro,
     Helper,
@@ -90,6 +91,7 @@ enum class SyncFailureReason : std::uint8_t {
     UnscopedMemoryEffect,
     UnsupportedMemoryEffectKind,
     UnsupportedEffectfulOperation,
+    UnsupportedDescriptorState,
     UnsupportedRegion,
     UnsupportedCFG,
     LegacyStructureMismatch,
@@ -192,6 +194,16 @@ struct SyncQueueSemantics {
     Value peerEndpoint;
 };
 
+/// Descriptor state, not a payload memory effect or completion guarantee.
+enum class SyncDescriptorRole : std::uint8_t { Initialize, Update, Read };
+
+struct SyncDescriptorEffect {
+    SyncDescriptorRole role = SyncDescriptorRole::Read;
+    Value handle;
+    Value rows;
+    Value columns;
+};
+
 struct SyncOpSummary {
     Operation* operation = nullptr;
     SyncSummaryProvider provider = SyncSummaryProvider::None;
@@ -200,6 +212,7 @@ struct SyncOpSummary {
     llvm::SmallVector<SyncEventReservation, 2> eventReservations;
     SyncCompletionContract completion;
     std::optional<SyncQueueSemantics> queue;
+    std::optional<SyncDescriptorEffect> descriptor;
     SyncFailureReason failure = SyncFailureReason::None;
     std::string failureDetail;
 

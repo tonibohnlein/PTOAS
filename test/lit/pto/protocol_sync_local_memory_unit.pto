@@ -14,5 +14,7 @@
 // CHECK-NEXT: protocol-sync static row-view byte oracle: 36 intervals pass
 // CHECK-NEXT: protocol-sync unsupported view bounds: pass
 // CHECK-NEXT: protocol-sync concrete row-view address mutation: pass
+// CHECK-NEXT: protocol-sync descriptor versions: 25 programs and binding mutations pass
+// CHECK-NEXT: protocol-sync unsupported descriptor state: pass
 // CHECK-NEXT: protocol-sync compositional branch oracle: 162 programs, 324 paths pass
 // CHECK-NEXT: protocol-sync expansion limits: 1600-write baseline and branch budget pass

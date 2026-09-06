@@ -411,7 +411,8 @@ void StructuredSyncIRConstruction::addSummary(
     const SyncOpSummary& stored = schedule.summaries.back();
     const bool fixedProtocolWithoutPhase = stored.phases.empty() && !stored.suppliedProtocols.empty();
     const bool needsOrderedSemanticAction =
-        stored.queue.has_value() || (stored.isSupported() && fixedProtocolWithoutPhase);
+        stored.queue.has_value() || stored.descriptor.has_value() ||
+        (stored.isSupported() && fixedProtocolWithoutPhase);
     if (needsOrderedSemanticAction) {
         SyncSemanticActionId actionId = schedule.semanticActions.size();
         SyncSemanticAction action;
@@ -517,6 +518,13 @@ LogicalResult StructuredSyncIRConstruction::build()
         buildBlock(function.getBody().front(), root, {}, {});
     }
     finishRegion(root);
+    const auto failuresBeforeDescriptors = schedule.failures.size();
+    if (failed(buildSyncDescriptorStates(schedule))) {
+        return failure();
+    }
+    if (statistics) {
+        statistics->rejectedOperations += schedule.failures.size() - failuresBeforeDescriptors;
+    }
     return schedule.freeze();
 }
 

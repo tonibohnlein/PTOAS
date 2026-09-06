@@ -452,6 +452,71 @@ Earlier failures were a missing output expectation and malformed raw-IR type
 syntax in the new test; both were corrected before this clean checkpoint.
 Changed-code prefilter and `git diff --check` passed. No system/device suite ran.
 
+### P3d — constant bounded descriptor-state flow
+
+`set_validshape` and `get_validshape` now have descriptor-effect summaries,
+separate from physical payload effects and fixed synchronization supply.
+Observed direct allocations supply initialization actions. The immutable
+schedule retains each descriptor version's exact handle, defining action,
+constant row/column provenance and dimensions; accesses and metadata reads bind
+to the version at their own lexical point. Same-address handles do not share
+descriptor state.
+
+The first native subset requires direct addressed ordinary UB allocations,
+literal non-negative dimensions within the physical shape, and all descriptor
+and payload users in one unconditional non-recurring block. Successful handle
+validation is cached. Aliases, forwarding, escapes, helper/macro users,
+conditional/recurring updates and unresolved scalar dimensions remain explicit
+`unsupported-descriptor-state` failures. A later constant update cannot conceal
+an unsupported initialization. Getter-to-setter feedback is also outside this
+literal-only slice, even if a future constant-state analysis could resolve it.
+
+Payload footprints remain full conservative allocation bounds: valid extents
+do not establish exact byte effects, definite overwrites, or absence of padding
+writes. Zero valid dimensions therefore do not erase memory obligations. A
+metadata mutation supplies no completion edge, publication or payload WAW.
+
+The binding verifier rejects non-descriptor actions carrying state IDs,
+wrong-handle and missing/stale access versions, reads of future versions, and
+corrupted defining actions/constants/bounds. Fresh concrete verification rebuilds
+the descriptor state from emitted IR. The residual interpreter exempts only
+bound descriptor effects; scalar tracing terminates at a certified constant
+metadata read. Physically produced dimensions need prerequisites ending before
+the metadata action and stay unsupported rather than silently losing that edge.
+
+The test oracle independently interprets raw allocation/set/get operations and
+compares per-handle dimensions at each metadata read and physical access over
+25 initial/update combinations, including zero extents. It also moves a read
+across an update and tests forged state bindings. Moving a legal read can change
+the observed version without causing a race; the test requires reconstruction
+of that change, not indiscriminate mutation rejection.
+
+The native test preserves independent load readiness in A2/A3 and both GM modes,
+with patterns and fallback disabled. It includes a getter/cast/physical-scalar
+consumer chain, fresh concrete verification, and A3 C++ emission. Negative
+cases retain dynamic, physically produced and conditional descriptor failures.
+These are targeted semantic tests, not an updated corpus-admission count or
+hardware/performance campaign. The source basis is `PTOOps.td`'s descriptor
+contract and `PTOToEmitC.cpp`'s tile SetValidShape/GetValidRow/GetValidCol lowering;
+no new target ordering or visibility rule is inferred from those definitions.
+
+Independent algorithm and compiler reviews accepted this slice after adding
+binding replay, cached handle validation and the physical scalar-consumer test.
+On 2026-09-06, the targeted compiler/test-driver/seven-unit build completed
+with the aggregate two-worker limit. Changing shared semantic records required
+refreshing their ProtocolSync consumers; LLVM was not rebuilt. The first build
+found an invalid ordered-map key in the new test oracle; it was corrected to a
+Value-keyed map and the interrupted build resumed. A subsequent two-TU rebuild
+and relink covered the final diagnostic and provider-binding changes.
+
+The final configured LLVM lit invocation used the venv on PATH, `.venv/bin/python`,
+`taskset -c 0,1`, and `-v -j1 build/test/lit --filter protocol_sync_ -o
+build/protocol-sync-p3d-final.json`: **52/52 passed**, 84.13 s. An earlier
+52-test pass preceded the final diagnostic regression; the final result includes
+it. Initial focused lit failures were an invalid pass-level option spelling,
+not failed native emission. Changed-code prefilter: 13 code/build files,
+zero errors/warnings; `git diff --check` passed. No full system/device suite ran.
+
 ### Historical N0 progress
 
 - N0 in progress: source heads resolved; added general-only mixed-mode selection

@@ -112,6 +112,19 @@ struct SyncSemanticAction {
     SyncIterationDomain iterationDomain;
     SyncProgramPointId before = kInvalidSyncId;
     SyncProgramPointId after = kInvalidSyncId;
+    std::optional<std::uint32_t> descriptorState;
+};
+
+/// Immutable, handle-local metadata observed by an access. Equal physical
+/// addresses do not merge descriptors. Bounds never shrink payload footprints.
+struct SyncDescriptorState {
+    std::uint32_t id = kInvalidSyncId;
+    Value handle;
+    SyncSemanticActionId definition = kInvalidSyncId;
+    std::uint64_t rows = 0;
+    std::uint64_t columns = 0;
+    Value rowSource;
+    Value columnSource;
 };
 
 struct SyncPhase {
@@ -153,6 +166,7 @@ struct SyncAccess {
     SyncAccessMode mode = SyncAccessMode::ReadWrite;
     std::optional<SyncSlotExpression> slot;
     SyncVisibilityClass visibility = SyncVisibilityClass::Unknown;
+    std::optional<std::uint32_t> descriptorState;
 };
 
 struct SyncProgramPoint {
@@ -179,6 +193,7 @@ public:
     llvm::ArrayRef<SyncRegion> getRegions() const { return regions; }
     llvm::ArrayRef<SyncOpSummary> getSummaries() const { return summaries; }
     llvm::ArrayRef<SyncSemanticAction> getSemanticActions() const { return semanticActions; }
+    llvm::ArrayRef<SyncDescriptorState> getDescriptorStates() const { return descriptorStates; }
     llvm::ArrayRef<SyncPhase> getPhases() const { return phases; }
     llvm::ArrayRef<SyncStorageFamily> getStorageFamilies() const { return storageFamilies; }
     llvm::ArrayRef<SyncAccess> getAccesses() const { return accesses; }
@@ -195,12 +210,14 @@ private:
     friend class StructuredSyncIRBuilder;
     friend class StructuredSyncIRConstruction;
     friend class StructuredSyncIRTestPeer;
+    friend class SyncDescriptorStateBuilder;
     func::FuncOp function;
     bool frozen = false;
     SyncGMAliasMode gmAliasMode = SyncGMAliasMode::MayAlias;
     llvm::SmallVector<SyncRegion, 16> regions;
     llvm::SmallVector<SyncOpSummary, 32> summaries;
     llvm::SmallVector<SyncSemanticAction, 8> semanticActions;
+    llvm::SmallVector<SyncDescriptorState, 8> descriptorStates;
     llvm::SmallVector<SyncPhase, 32> phases;
     llvm::SmallVector<SyncStorageFamily, 16> storageFamilies;
     llvm::SmallVector<SyncAccess, 64> accesses;
@@ -222,6 +239,9 @@ private:
 };
 
 void printStructuredSyncIR(const StructuredSyncIR& schedule, llvm::raw_ostream& output);
+/// Construction-only: validate and bind constant descriptor state before freeze.
+LogicalResult buildSyncDescriptorStates(StructuredSyncIR& schedule);
+LogicalResult verifySyncDescriptorBindings(const StructuredSyncIR& schedule);
 llvm::StringRef stringifySyncRegionKind(SyncRegionKind kind);
 llvm::StringRef stringifySyncCardinality(SyncCardinality cardinality);
 llvm::StringRef stringifySyncStorageRole(SyncStorageRole role);

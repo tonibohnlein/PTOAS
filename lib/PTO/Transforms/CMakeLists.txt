@@ -113,6 +113,7 @@ add_mlir_dialect_library(PTOTransforms
   ProtocolSync/ConcreteStructuredFrontier.cpp
   ProtocolSync/MixedStructuredFrontier.cpp
   ProtocolSync/DirectRepair.cpp
+  ProtocolSync/DescriptorState.cpp
   ProtocolSync/DirectRepairDump.cpp
   ProtocolSync/DirectRepairMaterialization.cpp
   ProtocolSync/DirectRepairVerifier.cpp

@@ -191,7 +191,11 @@ void printSemanticAction(
     printGuard(action.guard, output);
     output << " loops=";
     printIds(action.iterationDomain.loops, output);
-    output << " before=pp" << action.before << " after=pp" << action.after << '\n';
+    output << " before=pp" << action.before << " after=pp" << action.after;
+    if (action.descriptorState) {
+        output << " descriptor-state=#" << *action.descriptorState;
+    }
+    output << '\n';
 }
 
 void printPhase(const StructuredSyncIR& schedule, const SyncPhase& phase, AsmState& state, raw_ostream& output)
@@ -237,6 +241,9 @@ void printPhase(const StructuredSyncIR& schedule, const SyncPhase& phase, AsmSta
             output << " gm-roots=[";
             llvm::interleaveComma(roots.roots, output, [&](mlir::Value root) { printValue(root, state, output); });
             output << "] gm-roots-complete=" << (roots.complete ? "yes" : "no");
+        }
+        if (access->descriptorState) {
+            output << " descriptor-state=#" << *access->descriptorState;
         }
         output << '\n';
     }
@@ -284,6 +291,12 @@ void mlir::pto::protocol_sync::printStructuredSyncIR(const StructuredSyncIR& sch
     }
     for (const SyncSemanticAction& action : schedule.getSemanticActions()) {
         printSemanticAction(schedule, action, output);
+    }
+    for (const SyncDescriptorState& descriptor : schedule.getDescriptorStates()) {
+        output << "  descriptor-state #" << descriptor.id << " handle=";
+        printValue(descriptor.handle, state, output);
+        output << " definition=action#" << descriptor.definition << " valid=" << descriptor.rows << 'x'
+               << descriptor.columns << " scalar-provenance=constant footprint=conservative\n";
     }
     for (const SyncPhase& phase : schedule.getPhases()) {
         printPhase(schedule, phase, state, output);

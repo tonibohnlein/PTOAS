@@ -198,6 +198,27 @@ bool isSyncStructuralOperation(Operation* operation)
         StructGetOp, StructSetOp, arith::SelectOp>(operation);
 }
 
+std::optional<SyncDescriptorEffect> getDescriptorEffect(Operation* operation)
+{
+    if (auto update = dyn_cast<SetValidShapeOp>(operation)) {
+        return SyncDescriptorEffect{
+            SyncDescriptorRole::Update, update.getSource(), update.getValidRow(), update.getValidCol()};
+    }
+    if (auto read = dyn_cast<GetValidShapeOp>(operation)) {
+        return SyncDescriptorEffect{SyncDescriptorRole::Read, read.getSource(), {}, {}};
+    }
+    if (auto allocation = dyn_cast<AllocTileOp>(operation)) {
+        const bool observed = llvm::any_of(allocation.getResult().getUsers(), [](Operation* user) {
+            return isa<SetValidShapeOp, GetValidShapeOp>(user);
+        });
+        if (observed) {
+            return SyncDescriptorEffect{SyncDescriptorRole::Initialize, allocation.getResult(),
+                                        allocation.getValidRow(), allocation.getValidCol()};
+        }
+    }
+    return std::nullopt;
+}
+
 void markProvider(SyncOpSummary& summary, SyncSummaryProvider provider, ProtocolSyncStatistics* statistics)
 {
     summary.provider = provider;
@@ -346,6 +367,12 @@ SyncOpSummary SyncSemanticExtractor::summarize(Operation* operation) const
         if (statistics) {
             ++statistics->fixedSuppliedProtocols;
         }
+        return summary;
+    }
+    tryProvider();
+    if (auto descriptor = getDescriptorEffect(operation)) {
+        markProvider(summary, SyncSummaryProvider::Descriptor, statistics);
+        summary.descriptor = *descriptor;
         return summary;
     }
     tryProvider();

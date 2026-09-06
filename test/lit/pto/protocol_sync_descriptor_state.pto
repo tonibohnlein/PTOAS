@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a3.pto
+// RUN: FileCheck %s --input-file=%t.a3.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.a3.disjoint.pto
+// RUN: FileCheck %s --input-file=%t.a3.disjoint.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a2.pto
+// RUN: FileCheck %s --input-file=%t.a2.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.a2.disjoint.pto
+// RUN: FileCheck %s --input-file=%t.a2.disjoint.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a3.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFIED
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a2.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFIED
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail %s -o %t.cpp
+// RUN: pto-test-opt --pto-protocol-sync='dump=schedule' %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=STATE
+
+// Descriptor updates do not create payload dependencies. Independent loads
+// retain separate readiness frontiers even when valid dimensions change.
+// CHECK-LABEL: func.func @descriptor_readiness
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[A:[0-9]+]]>]
+// CHECK-NEXT: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[B:[0-9]+]]>]
+// CHECK: pto.set_validshape
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[A]]>]
+// CHECK-NEXT: pto.tadds
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[B]]>]
+// CHECK-NEXT: pto.tabs
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: return
+// VERIFIED: concrete-verification function=@descriptor_readiness status=accepted
+// STATE: op=pto.set_validshape provider=descriptor phases=0
+// STATE: op=pto.get_validshape provider=descriptor phases=0
+// STATE: descriptor-state #0 {{.*}} valid=4x16 scalar-provenance=constant footprint=conservative
+// STATE: descriptor-state #1 {{.*}} valid=4x16 scalar-provenance=constant footprint=conservative
+// STATE: descriptor-state #2 {{.*}} valid=2x16 scalar-provenance=constant footprint=conservative
+// STATE: descriptor-state #3 {{.*}} valid=1x16 scalar-provenance=constant footprint=conservative
+// STATE: descriptor-state #4 {{.*}} valid=1x16 scalar-provenance=constant footprint=conservative
+// STATE-NOT: rejected reason=
+
+!tile = !pto.tile_buf<loc=vec, dtype=f16, rows=4, cols=16, v_row=?, v_col=?,
+                     blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @descriptor_readiness(%in0: !pto.partition_tensor_view<4x16xf16>,
+                                  %in1: !pto.partition_tensor_view<4x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %base0 = arith.constant 0 : i64
+    %base1 = arith.constant 128 : i64
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %a = pto.alloc_tile addr = %base0 valid_row = %c4 valid_col = %c16 : !tile
+    %b = pto.alloc_tile addr = %base1 valid_row = %c4 valid_col = %c16 : !tile
+    pto.set_validshape %a, %c2, %c16 : !tile
+    pto.set_validshape %b, %c1, %c16 : !tile
+    pto.tload ins(%in0 : !pto.partition_tensor_view<4x16xf16>) outs(%a : !tile)
+    pto.tload ins(%in1 : !pto.partition_tensor_view<4x16xf16>) outs(%b : !tile)
+    pto.set_validshape %a, %c1, %c16 : !tile
+    %rows, %columns = pto.get_validshape %a : !tile
+    %integer = arith.index_cast %rows : index to i32
+    %scalar = arith.sitofp %integer : i32 to f16
+    pto.tadds ins(%a, %scalar : !tile, f16) outs(%a : !tile)
+    pto.tabs ins(%b : !tile) outs(%b : !tile)
+    return
+  }
+}
