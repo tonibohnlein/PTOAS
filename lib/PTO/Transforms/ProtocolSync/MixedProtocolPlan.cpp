@@ -263,6 +263,11 @@ LogicalResult reverseDeleteCandidates(
 
 void clearEventIds(SyncMixedProtocolPlan& plan)
 {
+    if (plan.selectiveLoop) {
+        for (auto& edge : plan.selectiveLoop->edges) {
+            edge.placement.eventId.reset();
+        }
+    }
     if (plan.oneShot) {
         for (SyncOneShotPublishCandidate& candidate : plan.oneShot->candidates) {
             candidate.eventId.reset();
@@ -290,13 +295,26 @@ bool hasAllocatedEvent(const SyncMixedProtocolPlan& plan)
         });
     const bool directAllocated =
         llvm::any_of(plan.directRepair.candidates, [](const auto& candidate) { return candidate.eventId.has_value(); });
-    return oneShotAllocated || readyReleaseAllocated || directAllocated;
+    const bool selectiveAllocated = plan.selectiveLoop && llvm::any_of(plan.selectiveLoop->edges, [](const auto& edge) {
+                                        return edge.placement.eventId.has_value();
+                                    });
+    return oneShotAllocated || readyReleaseAllocated || directAllocated || selectiveAllocated;
 }
 
 LogicalResult buildMixedEventGenerations(
     const StructuredSyncIR& schedule, SyncMixedProtocolPlan& plan, SmallVectorImpl<SyncEventGeneration>& generations,
     SmallVectorImpl<std::optional<unsigned>*>& assignmentSlots)
 {
+    if (plan.selectiveLoop) {
+        if (failed(appendSelectiveLoopEventGenerations(schedule, *plan.selectiveLoop, generations))) {
+            return failure();
+        }
+        for (auto& edge : plan.selectiveLoop->edges) {
+            if (edge.isEvent()) {
+                assignmentSlots.push_back(&edge.placement.eventId);
+            }
+        }
+    }
     const auto appendGeneration = [&](SyncEventGenerationKind kind, SyncPhysicalCore core, PIPE sourcePipe,
                                       PIPE targetPipe, Operation* setAnchor, Operation* waitAnchor,
                                       ArrayRef<SyncControlAtom> guard, SyncRegionId recurrenceOwner, bool recurring,
@@ -362,6 +380,11 @@ LogicalResult buildMixedEventGenerations(
 
 void recordSelectedStatistics(const SyncMixedProtocolPlan& plan, ProtocolSyncStatistics& statistics)
 {
+    if (plan.selectiveLoop) {
+        statistics.selectedDirectRepairs += plan.selectiveLoop->edges.size();
+        statistics.logicalActions += plan.selectedCost.staticActions;
+        statistics.selectedTailDrains += plan.selectedCost.fixedExitDrains;
+    }
     if (plan.oneShot) {
         statistics.selectedOneShotProtocols += plan.oneShot->candidates.size();
         for (const SyncOneShotPublishCandidate& candidate : plan.oneShot->candidates) {
@@ -591,10 +614,27 @@ FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPla
         if (failed(selective)) {
             return failure();
         }
-        if (*selective) {
-            best = std::move(**selective);
-            best->protocolsEnabled = enableProtocols;
-            ++worldsFeasible;
+        if (*selective && (**selective).isComplete()) {
+            if (statistics) {
+                statistics->mixedSelectionCandidates += (**selective).candidateCountBeforeDeletion;
+                statistics->reverseDeletionAttempts += (**selective).reverseDeletionAttempts;
+                statistics->reverseDeletionRemoved += (**selective).reverseDeletionRemoved;
+            }
+            auto allocated = **selective;
+            ProtocolSyncStatistics allocationStatistics;
+            if (failed(allocateMixedProtocolEvents(schedule, allocated, &allocationStatistics))) {
+                return failure();
+            }
+            recordSelectionAllocationWork(allocationStatistics, statistics);
+            if (allocated.isComplete()) {
+                best = std::move(**selective);
+                best->protocolsEnabled = enableProtocols;
+                ++worldsFeasible;
+            } else {
+                resourceInfeasible = std::move(allocated);
+            }
+        } else if (*selective) {
+            unsupported = std::move(**selective);
         }
     }
     // The total-phase loop cycle and V-hub packages are reference/recovery
@@ -685,7 +725,7 @@ LogicalResult mlir::pto::protocol_sync::selectMixedProtocolCandidates(
 LogicalResult mlir::pto::protocol_sync::allocateMixedProtocolEvents(
     const StructuredSyncIR& schedule, SyncMixedProtocolPlan& plan, ProtocolSyncStatistics* statistics)
 {
-    if (plan.loopFrontier || plan.structuredFrontier || plan.selectiveLoop) {
+    if (plan.loopFrontier || plan.structuredFrontier) {
         // Atomic builders allocate before publishing a complete alternative.
         // Serial loops use distinct static keys; balanced structured packages
         // reuse keys only after an acknowledged consuming round trip.
@@ -693,17 +733,6 @@ LogicalResult mlir::pto::protocol_sync::allocateMixedProtocolEvents(
         if (statistics) {
             statistics->maxEventDomainPressure =
                 std::max(statistics->maxEventDomainPressure, plan.selectedCost.eventPressure);
-            if (plan.selectiveLoop) {
-                std::set<std::pair<PIPE, PIPE>> domains;
-                for (const auto& edge : plan.selectiveLoop->edges) {
-                    if (edge.placement.eventId) {
-                        domains.emplace(edge.placement.sourcePipe, edge.placement.targetPipe);
-                        statistics->maximumEventIdPlusOne = std::max<std::uint64_t>(
-                            statistics->maximumEventIdPlusOne, *edge.placement.eventId + 1);
-                    }
-                }
-                statistics->eventDomains += domains.size();
-            }
         }
         return success(plan.status == SyncMixedPlanStatus::Ready);
     }
@@ -811,6 +840,10 @@ StringRef mlir::pto::protocol_sync::stringifySyncMixedPlanRejection(SyncMixedPla
             return "event-capacity";
         case SyncMixedPlanRejection::InternalInvariant:
             return "internal-invariant";
+        case SyncMixedPlanRejection::SelectiveAnalysisLimit:
+            return "selective-analysis-limit";
+        case SyncMixedPlanRejection::UnprovedTokenContract:
+            return "unproved-token-contract";
     }
     return "internal-invariant";
 }

@@ -72,6 +72,32 @@ bool check(bool result, StringRef detail)
     return result;
 }
 
+bool allocatePlan(const StructuredSyncIR& schedule, SyncSelectiveLoopPlan& plan)
+{
+    SmallVector<SyncEventGeneration, 16> generations;
+    if (failed(appendSelectiveLoopEventGenerations(schedule, plan, generations))) {
+        return false;
+    }
+    auto allocation =
+        allocateSyncEventGenerations(ProtocolSyncTarget::resolve(schedule.getFunction()), {}, generations);
+    const bool allocated = succeeded(allocation) && allocation->status == SyncEventAllocationStatus::Allocated;
+    if (!allocated) {
+        return false;
+    }
+    unsigned index = 0;
+    for (auto& edge : plan.edges) {
+        if (edge.isEvent()) {
+            edge.placement.eventId = allocation->eventIds[index++];
+        }
+    }
+    return true;
+}
+
+bool materializePlan(const StructuredSyncIR& schedule, SyncSelectiveLoopPlan& plan)
+{
+    return allocatePlan(schedule, plan) && succeeded(materializeSelectiveLoopRepair(schedule.getFunction(), plan));
+}
+
 bool testIndependentLoopReadiness(MLIRContext& context)
 {
     std::string text = kFixture.str();
@@ -87,11 +113,11 @@ bool testIndependentLoopReadiness(MLIRContext& context)
         return false;
     }
     auto plan = buildSelectiveLoopRepair(*schedule);
-    const bool planned = succeeded(plan) && *plan;
+    const bool planned = succeeded(plan) && plan->plan;
     if (!check(planned, "independent loop plan")) {
         return false;
     }
-    if (failed(materializeSelectiveLoopRepair(schedule->getFunction(), **plan))) {
+    if (!materializePlan(*schedule, *plan->plan)) {
         return false;
     }
     auto concrete = extract(*module);
@@ -120,13 +146,13 @@ bool testSinglePhaseBarrier(MLIRContext& context)
         return false;
     }
     auto plan = buildSelectiveLoopRepair(*schedule);
-    const bool planned = succeeded(plan) && *plan && (**plan).edges.size() == 1 &&
-                         !(**plan).edges.front().placement.eventId &&
-                         (**plan).edges.front().completion.iteration.distance == 1;
+    const bool planned = succeeded(plan) && plan->plan && plan->plan->edges.size() == 1 &&
+                         !plan->plan->edges.front().isEvent() &&
+                         plan->plan->edges.front().completion.iteration.distance == 1;
     if (!check(planned, "one-phase carried barrier")) {
         return false;
     }
-    if (failed(materializeSelectiveLoopRepair(schedule->getFunction(), **plan))) {
+    if (!materializePlan(*schedule, *plan->plan)) {
         return false;
     }
     auto concrete = extract(*module);
@@ -160,7 +186,69 @@ bool testPlanMutations(const StructuredSyncIR& schedule)
     selected.allocationFailure = SyncEventAllocationFailure::AnalysisLimit;
     const bool failureKind = failed(verifyMixedSelectiveLoopPlan(schedule, *stages, timelines, channels, selected));
     selected.allocationFailure = SyncEventAllocationFailure::None;
-    return check(cost && failureKind, "forged native cost/allocation result");
+    const bool checked = check(cost && failureKind, "forged native cost/allocation result") &&
+                         succeeded(allocateMixedProtocolEvents(schedule, selected));
+    if (!checked) {
+        return false;
+    }
+    if (!check(
+            succeeded(verifyMixedProtocolPlan(schedule, *stages, timelines, channels, selected)),
+            "allocated loop uses shared verification")) {
+        return false;
+    }
+    auto& edges = selected.selectiveLoop->edges;
+    const auto saved = edges.front().placement.eventId;
+    edges.front().placement.eventId.reset();
+    const bool partial = failed(verifyMixedProtocolPlan(schedule, *stages, timelines, channels, selected));
+    edges.front().placement.eventId = saved;
+    const auto second = edges[1].placement.eventId;
+    edges[1].placement.eventId = saved;
+    const bool collision = failed(verifyMixedProtocolPlan(schedule, *stages, timelines, channels, selected));
+    edges[1].placement.eventId = second;
+    return check(partial && collision, "partial and colliding recurring assignments");
+}
+
+bool checkMixedRejection(const StructuredSyncIR& schedule, SyncMixedPlanRejection reason)
+{
+    auto stages = analyzePipelineStages(schedule);
+    if (failed(stages)) {
+        return false;
+    }
+    auto timelines = analyzeStorageTimelines(schedule, *stages);
+    auto channels = analyzeChannels(schedule, *stages, timelines);
+    auto plan = buildMixedProtocolPlan(schedule, *stages, timelines, channels, false);
+    const bool rejected = succeeded(plan) && !plan->isComplete() &&
+                          llvm::any_of(plan->failures, [&](const auto& item) { return item.reason == reason; });
+    return check(
+        rejected && succeeded(verifyMixedProtocolPlan(schedule, *stages, timelines, channels, *plan)),
+        "native refusal remains a verified refusal, not an internal error");
+}
+
+bool testResourceRefusal(MLIRContext& context)
+{
+    std::string text = kFixture.str();
+    std::string producers;
+    std::string consumers;
+    for (unsigned id = 0; id < 7; ++id) {
+        const auto suffix = std::to_string(id);
+        producers += "   %addr" + suffix + " = arith.constant " + std::to_string(512 * id) + " : i64\n";
+        producers +=
+            "   %tile" + suffix + " = pto.alloc_tile addr = %addr" + suffix + " : !pto.tile_buf<vec, 16x16xf16>\n";
+        producers += "   pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%tile" + suffix +
+                     " : !pto.tile_buf<vec, 16x16xf16>)\n";
+        consumers += "   pto.tabs ins(%tile" + suffix + " : !pto.tile_buf<vec, 16x16xf16>) outs(%tile" + suffix +
+                     " : !pto.tile_buf<vec, 16x16xf16>)\n";
+    }
+    const auto start = text.find("   pto.tload");
+    text.replace(start, text.find("  }", start) - start, producers + consumers);
+    auto module = parseSourceString<ModuleOp>(text, &context);
+    auto schedule = module ? extract(*module) : nullptr;
+    if (!schedule) {
+        return false;
+    }
+    auto logical = buildSelectiveLoopRepair(*schedule);
+    return check(succeeded(logical) && logical->plan.has_value(), "logical plan survives seven-channel domain") &&
+           checkMixedRejection(*schedule, SyncMixedPlanRejection::EventCapacity);
 }
 
 bool testConcreteBudget(MLIRContext& context)
@@ -182,15 +270,16 @@ bool testConcreteBudget(MLIRContext& context)
         return false;
     }
     auto plan = buildSelectiveLoopRepair(*schedule);
-    const bool unsupported = succeeded(plan) && !*plan;
-    return check(unsupported, "concrete budget rejected before materialization");
+    const bool unsupported = succeeded(plan) && !plan->plan && plan->status == SyncSelectiveLoopStatus::AnalysisLimit;
+    return check(unsupported, "concrete budget rejected before materialization") &&
+           checkMixedRejection(*schedule, SyncMixedPlanRejection::SelectiveAnalysisLimit);
 }
 } // namespace
 
 bool testSelectiveLoopRepair(MLIRContext& context)
 {
-    const bool initial =
-        testIndependentLoopReadiness(context) && testSinglePhaseBarrier(context) && testConcreteBudget(context);
+    const bool initial = testIndependentLoopReadiness(context) && testSinglePhaseBarrier(context) &&
+                         testConcreteBudget(context) && testResourceRefusal(context);
     if (!initial) {
         return false;
     }
@@ -203,23 +292,33 @@ bool testSelectiveLoopRepair(MLIRContext& context)
         return false;
     }
     auto plan = buildSelectiveLoopRepair(*schedule);
-    const bool planned = succeeded(plan) && *plan;
+    const bool planned = succeeded(plan) && plan->plan;
     if (!check(planned, "hazard-derived plan")) {
         return false;
     }
-    auto broken = (**plan).world;
+    const bool logical = llvm::none_of(plan->plan->edges, [](const auto& edge) { return edge.placement.eventId; });
+    if (!check(
+            logical && plan->plan->candidateCountBeforeDeletion == 6 && plan->plan->edges.size() == 5 &&
+                plan->plan->deletionRemoved == 1,
+            "six-to-five complete channel deletion before allocation")) {
+        return false;
+    }
+    auto broken = plan->plan->world;
     llvm::erase_if(broken.completions, [](const auto& edge) { return edge.iteration.distance == 1; });
     if (!check(failed(verifySelectiveLoopMemory(*schedule, broken)), "missing carried memory coverage")) {
         return false;
     }
-    if (!check(succeeded(materializeSelectiveLoopRepair(schedule->getFunction(), **plan)), "materialization")) {
+    if (!check(
+            allocatePlan(*schedule, *plan->plan) &&
+                succeeded(materializeSelectiveLoopRepair(schedule->getFunction(), *plan->plan)),
+            "materialization")) {
         return false;
     }
     auto concrete = extract(*module);
     if (!check(concrete && succeeded(reconstructSelectiveLoop(*concrete)), "concrete reconstruction")) {
         return false;
     }
-    for (unsigned trips : {0U, 1U, 2U, 3U, 4U}) {
+    for (unsigned trips : {0U, 1U, 2U, 3U, 4U, 7U, 11U}) {
         const bool safe = checkSelectiveLoopInterleavings(*concrete, trips, nullptr);
         if (!check(safe, "independent memory/token execution")) {
             return false;

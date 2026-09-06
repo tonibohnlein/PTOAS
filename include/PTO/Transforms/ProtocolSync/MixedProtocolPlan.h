@@ -40,6 +40,8 @@ enum class SyncMixedPlanRejection : std::uint8_t {
     IncompleteDirectRepair,
     EventCapacity,
     InternalInvariant,
+    SelectiveAnalysisLimit,
+    UnprovedTokenContract,
 };
 
 struct SyncMixedPlanFailure {

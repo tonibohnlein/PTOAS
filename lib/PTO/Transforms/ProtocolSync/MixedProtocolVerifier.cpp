@@ -514,7 +514,7 @@ LogicalResult mlir::pto::protocol_sync::verifyMixedProtocolPlan(
     if (!plan.selectedWorld.acknowledgedPhases.empty()) {
         return failure();
     }
-    if (plan.selectiveLoop) {
+    if (plan.selectiveLoop || plan.selectedWorldKind == SyncMixedWorldKind::SelectiveLoop) {
         return verifyMixedSelectiveLoopPlan(schedule, stages, timelines, channels, plan);
     }
     if (plan.loopFrontier) {

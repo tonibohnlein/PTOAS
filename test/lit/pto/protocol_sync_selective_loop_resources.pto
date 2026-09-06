@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-dump=plan %s -o /dev/null 2>&1 | FileCheck %s
+// Seven logical channels reach the shared allocator. Conservative recurring
+// interference is a refusal, not a proof authorizing serialization.
+// CHECK: mixed-plan function=@seven_channels status=resource-infeasible world=selective-loop
+// CHECK-SAME: allocation-failure=event-interference-unresolved
+// CHECK: reason=event-capacity
+// CHECK: ProtocolSync mixed mode found no complete supported plan (event-interference-unresolved)
+
+module {
+  func.func @seven_channels(%n: index, %x: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %tile0 = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf16>
+    %addr1 = arith.constant 512 : i64
+    %tile1 = pto.alloc_tile addr = %addr1 : !pto.tile_buf<vec, 16x16xf16>
+    %addr2 = arith.constant 1024 : i64
+    %tile2 = pto.alloc_tile addr = %addr2 : !pto.tile_buf<vec, 16x16xf16>
+    %addr3 = arith.constant 1536 : i64
+    %tile3 = pto.alloc_tile addr = %addr3 : !pto.tile_buf<vec, 16x16xf16>
+    %addr4 = arith.constant 2048 : i64
+    %tile4 = pto.alloc_tile addr = %addr4 : !pto.tile_buf<vec, 16x16xf16>
+    %addr5 = arith.constant 2560 : i64
+    %tile5 = pto.alloc_tile addr = %addr5 : !pto.tile_buf<vec, 16x16xf16>
+    %addr6 = arith.constant 3072 : i64
+    %tile6 = pto.alloc_tile addr = %addr6 : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %i = %zero to %n step %one {
+      pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%tile0 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%tile1 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%tile2 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%tile3 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%tile4 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%tile5 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%tile6 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%tile0 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile0 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%tile1 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile1 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%tile2 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile2 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%tile3 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile3 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%tile4 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile4 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%tile5 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile5 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%tile6 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile6 : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    return
+  }
+}

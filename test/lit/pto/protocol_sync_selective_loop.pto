@@ -16,7 +16,14 @@
 // RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a2.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFY
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.cpp
 // RUN: not ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SAFE
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments --protocol-sync-statistics %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=STATS
 // PLAN: mixed-plan function=@selective_loop status=ready world=selective-loop
+// PLAN-SAME: candidates-before-deletion=6 reverse-attempts=6 reverse-removed=1
+// PLAN-SAME: event-pairs=5 targeted-barriers=0
+// STATS-DAG: "logical_actions":15
+// STATS-DAG: "mixed_selection_candidates":6
+// STATS-DAG: "reverse_deletion_attempts":6
+// STATS-DAG: "reverse_deletion_removed":1
 // VERIFY: concrete-verification function=@selective_loop status=accepted
 // SAFE: ProtocolSync mixed mode found no complete supported plan (unsupported)
 // CHECK-LABEL: func.func @selective_loop

@@ -12,6 +12,8 @@
 #ifndef PTO_TRANSFORMS_PROTOCOLSYNC_SELECTIVELOOPREPAIR_H
 #define PTO_TRANSFORMS_PROTOCOLSYNC_SELECTIVELOOPREPAIR_H
 #include "PTO/Transforms/ProtocolSync/LoopFrontierRepair.h"
+#include "PTO/Transforms/ProtocolSync/EventAllocation.h"
+#include "PTO/Transforms/ProtocolSync/RecurringEventLifetime.h"
 
 namespace mlir::pto::protocol_sync {
 inline constexpr unsigned kSelectiveLoopMaximumPhases = 128;
@@ -23,16 +25,35 @@ inline constexpr std::uint64_t kSelectiveLoopMaximumCompletions = 65536;
 struct SyncSelectiveLoopEdge {
     SyncLoopFrontierEdge placement;
     SyncSelectedCompletion completion;
+    /// Mechanism identity is independent of concrete event assignment.
+    bool isEvent() const { return placement.sourcePipe != placement.targetPipe; }
 };
 struct SyncSelectiveLoopPlan {
     Operation* loop = nullptr;
     llvm::SmallVector<SyncSelectiveLoopEdge, 16> edges;
     SyncSelectedWorld world;
+    unsigned candidateCountBeforeDeletion = 0;
+    unsigned deletionAttempts = 0;
+    unsigned deletionRemoved = 0;
+};
+
+enum class SyncSelectiveLoopStatus : std::uint8_t { Ready, Unsupported, AnalysisLimit, UnprovedTokenContract };
+struct SyncSelectiveLoopAttempt {
+    SyncSelectiveLoopStatus status = SyncSelectiveLoopStatus::Unsupported;
+    std::string detail;
+    SyncRecurringEventProof tokenProof;
+    std::optional<SyncSelectiveLoopPlan> plan;
 };
 
 /// Structural scope only, independent of selected synchronization supply.
 std::optional<SyncRegionId> findIsolatedSyncLoop(const StructuredSyncIR& schedule, bool allowFixed);
-FailureOr<std::optional<SyncSelectiveLoopPlan>> buildSelectiveLoopRepair(const StructuredSyncIR& schedule);
+/// Returns a certified logical plan with no concrete event IDs.
+FailureOr<SyncSelectiveLoopAttempt> buildSelectiveLoopRepair(const StructuredSyncIR& schedule);
+/// Append recurring resources to the common allocator input. Channels remain
+/// conservatively interfering within each domain; this does not prove scarcity.
+LogicalResult appendSelectiveLoopEventGenerations(
+    const StructuredSyncIR& schedule, const SyncSelectiveLoopPlan& plan,
+    llvm::SmallVectorImpl<SyncEventGeneration>& generations);
 LogicalResult materializeSelectiveLoopRepair(func::FuncOp function, const SyncSelectiveLoopPlan& plan);
 /// Re-extract actual events, boundaries, action order and completion prefixes.
 FailureOr<SyncSelectedWorld> reconstructSelectiveLoop(const StructuredSyncIR& schedule);

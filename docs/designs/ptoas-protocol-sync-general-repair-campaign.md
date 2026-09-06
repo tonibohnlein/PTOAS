@@ -36,6 +36,30 @@ honestly rather than counting serialized coverage as campaign completion.
 
 ### Revised implementation order
 
+The continuation agreed after P4b requires full general-only corpus coverage:
+cube kernels may not depend on adding new pattern recognizers to satisfy this
+gate. UB, L1, L0A/L0B and ACC share storage/descriptor/occurrence analysis, with
+separately qualified target effects. Pattern optimization follows completion of
+the general baseline. The concrete continuation is:
+
+1. Consolidate logical handoffs, typed synthesis refusals, common allocation,
+   and memory-plus-token checked whole-channel deletion.
+2. Generalize shared provenance, descriptor versions, outstanding effects and
+   storage-specific non-draining region transfer interfaces across domains.
+3. Qualify remaining cube/scalar/GM/fixed/communication/queue effects alongside
+   structured synthesis, rather than deferring their semantics to patterns.
+4. Compose selective entry, exit and zero-trip boundaries, then guarded choices,
+   nested consumers and actual same-slot reuse with persistent channel scope.
+5. Complete non-serializing supply reuse and explicitly attributed resource
+   recovery, then close the full frozen corpus in the four target/GM settings.
+
+Real acceptance anchors include `chunked_add`, `lookup_embedding`, `pack_x_hc`,
+`lm_head_combine_gather`, `rms_norm`, `markov_logits`, and communication-wait
+fragments. Synthetic fixtures retain the boundary, guard, selector and overlap
+counterexamples; they are not measurements of frontend coverage or throughput.
+
+The P0--P7 sequence below records the foundation for this continuation:
+
 1. **P0/P1 — readiness policy:** independent direct frontiers, matching policy
    verification and overlap regression; fold normal OneShot selection into direct
    repair; remove count-first and serialized normal-world selection.
@@ -729,6 +753,64 @@ SHA-256 anchors (per-file diagnostic/emission hashes remain in each archive):
 | A3 disjoint driver rows | `406e6bb5a50429c66529e847d8e6de1c6d62685dc23a72708fb0ef9b005aa3c3` |
 | First-per-seed rows | `cb82ff35ac4e9659837ac7e42e35c676720ed90fd41e7880e49d9f1fc2623b5a` |
 | Driver follow-up summary | `67503132deecd3f6eb593b1e8f30d9ed5611ac5cf45f7b3a9f77f5b2c23a7664` |
+
+### R1 — logical selective channels and checked deletion
+
+The selective builder now returns unallocated logical handoffs. Event identity
+is determined independently of ID assignment, so an unassigned cross-lane
+handoff remains present in token proofs and cost/budget accounting. Selected
+channels enter the same allocator as direct and protocol resources. Recurring
+channels still conservatively interfere within each directed domain; failure
+to color that graph is not permission to add serialization.
+
+Builder attempts distinguish unsupported scope/effects, analysis limits and
+unproved token contracts. Mixed-plan verification reconstructs both successful
+plans and refused attempts, including replay of resource failure. An internal
+certificate contradiction remains a failure, not ordinary unsupported synthesis.
+
+A bounded reverse sweep attempts deletion of whole event channels, including
+their prime/body/drain actions. Each accepted deletion must pass the independent
+occurrence-pair memory check and a newly constructed recurring-token proof.
+The original accesses are unchanged. This is not an optimality or even general
+deletion-minimality claim. Same-pipe cuts and independent readiness positions
+are not broadened or moved.
+
+The fork/join regression and real frozen `chunked_add` both reduce from six
+event pairs to five. The latter retains zero targeted body barriers, one
+mandatory exit drain and event pressure two. Its removed compute-to-next-load-A
+relation remains supplied through compute-to-store-to-next-load-A. The updated
+execution oracle checks zero, one, two, three, four, seven and eleven trips;
+the existing separate acknowledged-token tests retain negative rearm witnesses.
+
+Additional tests exercise a seven-channel directed domain reaching allocation,
+verified mixed resource/analysis refusals, partial and colliding assignments,
+and selected deletion/action statistics. The full focused invocation passed
+54/55 tests; the new resource test expected the enum name instead of the public
+`event-interference-unresolved` diagnostic. After correcting that assertion,
+all three selective CLI tests passed. No production change followed that run.
+The changed-code prefilter reports zero errors/warnings; no full static-analysis,
+device or performance campaign was run.
+
+Four patch-frozen 18-row driver runs used patterns off and fallback fail. Both
+A2 and A3 retain 16/18 native rows in may-alias mode and 17/18 in disjoint mode.
+All 132 fresh concrete/C++ follow-ups pass. This slice improves representation,
+verification and emitted synchronization; it does not broaden admission.
+
+Evidence is under `build/protocol-sync-native-corpus/acceptance-r1-{arch}-{contract}`
+and `followup-r1`. Each acceptance `run.json` records source `c26c5ece3`, the
+tracked patch hash `ca791fdbdd3a22ffb70c05c05371cca1c8e099d2178686ad76dcc7b4882e0374`,
+the untracked regression hash, toolchain/compiler hashes, exact commands and
+`source_stable=true`. The follow-up reports `compiler_stable=true`. The ledger
+addition itself follows those frozen runs. Commands use the checkout venv in
+PATH, `campaign.py --mode acceptance --workers 2 --expected-rows 18 --patterns off
+--allow-dirty`, the driver manifest and each architecture/GM contract; the
+follow-up consumes all four campaign directories with `--workers 2`.
+
+Algorithm and compiler-integration reviewers accepted the bounded slice after
+failure routing, optional-plan handling and statistics findings were resolved.
+Selective scope still rejects fixed/hidden synchronization and reservations;
+composition must import and verify those before relaxing that gate. No new
+control scope, cube qualification or pattern family is claimed here.
 
 ### Next boundary proof gate
 

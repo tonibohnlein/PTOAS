@@ -31,6 +31,38 @@ bool sameWorld(const SyncSelectedWorld& a, const SyncSelectedWorld& b)
 }
 } // namespace
 
+LogicalResult mlir::pto::protocol_sync::appendSelectiveLoopEventGenerations(
+    const StructuredSyncIR& schedule, const SyncSelectiveLoopPlan& plan,
+    SmallVectorImpl<SyncEventGeneration>& generations)
+{
+    for (const auto& edge : plan.edges) {
+        const auto* phase = schedule.findPhase(edge.completion.source);
+        const bool validPhase = phase && phase->iterationDomain.loops.size() == 1;
+        if (!validPhase) {
+            return failure();
+        }
+        if (!edge.isEvent()) {
+            if (edge.placement.eventId) {
+                return failure();
+            }
+            continue;
+        }
+        SyncEventGeneration generation;
+        generation.id = generations.size();
+        generation.kind = SyncEventGenerationKind::DirectRepair;
+        generation.core = phase->core;
+        generation.sourcePipe = edge.placement.sourcePipe;
+        generation.targetPipe = edge.placement.targetPipe;
+        generation.setAnchor = edge.placement.source;
+        generation.waitAnchor = edge.placement.target;
+        generation.recurrenceOwner = phase->iterationDomain.loops.front();
+        generation.recurring = true;
+        generation.eventId = edge.placement.eventId;
+        generations.push_back(generation);
+    }
+    return success();
+}
+
 FailureOr<std::optional<SyncMixedProtocolPlan>> mlir::pto::protocol_sync::buildMixedSelectiveLoopPlan(
     const StructuredSyncIR& schedule, const PipelineStageAnalysisResult& stages,
     const StorageTimelineAnalysisResult& timelines, const ChannelAnalysisResult& channels)
@@ -39,12 +71,21 @@ FailureOr<std::optional<SyncMixedProtocolPlan>> mlir::pto::protocol_sync::buildM
     if (failed(repair)) {
         return failure();
     }
-    if (!*repair) {
-        return std::optional<SyncMixedProtocolPlan>{};
+    if (!repair->plan) {
+        SyncMixedProtocolPlan rejected;
+        rejected.status = SyncMixedPlanStatus::Unsupported;
+        rejected.selectedWorldKind = SyncMixedWorldKind::SelectiveLoop;
+        const auto reason = repair->status == SyncSelectiveLoopStatus::AnalysisLimit ?
+                                SyncMixedPlanRejection::SelectiveAnalysisLimit :
+                            repair->status == SyncSelectiveLoopStatus::UnprovedTokenContract ?
+                                SyncMixedPlanRejection::UnprovedTokenContract :
+                                SyncMixedPlanRejection::IncompleteDirectRepair;
+        rejected.failures.push_back({reason, repair->detail});
+        return std::optional<SyncMixedProtocolPlan>(std::move(rejected));
     }
     SyncInterpretationOptions options;
     options.isolatedLoopIsModeled = true;
-    auto result = interpretSelectedWorld(schedule, stages, timelines, channels, (**repair).world, nullptr, options);
+    auto result = interpretSelectedWorld(schedule, stages, timelines, channels, repair->plan->world, nullptr, options);
     if (failed(result)) {
         return failure();
     }
@@ -54,13 +95,15 @@ FailureOr<std::optional<SyncMixedProtocolPlan>> mlir::pto::protocol_sync::buildM
     SyncMixedProtocolPlan plan;
     plan.status = SyncMixedPlanStatus::Ready;
     plan.selectedWorldKind = SyncMixedWorldKind::SelectiveLoop;
-    plan.selectiveLoop = std::move(**repair);
+    plan.selectiveLoop = std::move(*repair->plan);
     plan.selectedWorld = plan.selectiveLoop->world;
     plan.initialResidualCount = result->localRequirements;
-    plan.candidateCountBeforeDeletion = plan.selectiveLoop->edges.size();
+    plan.candidateCountBeforeDeletion = plan.selectiveLoop->candidateCountBeforeDeletion;
+    plan.reverseDeletionAttempts = plan.selectiveLoop->deletionAttempts;
+    plan.reverseDeletionRemoved = plan.selectiveLoop->deletionRemoved;
     std::map<std::pair<pto::PIPE, pto::PIPE>, unsigned> domains;
     for (const auto& edge : plan.selectiveLoop->edges) {
-        if (edge.placement.eventId) {
+        if (edge.isEvent()) {
             ++plan.selectedCost.generatedEventPairs;
             plan.selectedCost.staticActions += edge.completion.iteration.distance == 1 ? 4 : 2;
             const auto pressure = ++domains[{edge.placement.sourcePipe, edge.placement.targetPipe}];
@@ -81,35 +124,57 @@ LogicalResult mlir::pto::protocol_sync::verifyMixedSelectiveLoopPlan(
     const SyncMixedProtocolPlan& plan)
 {
     auto rebuilt = buildMixedSelectiveLoopPlan(schedule, stages, timelines, channels);
-    const bool valid = succeeded(rebuilt) && *rebuilt && plan.selectiveLoop && !plan.hasProtocol() &&
-                       !plan.loopFrontier && !plan.structuredFrontier && plan.directObligations.empty() &&
-                       plan.directRepair.candidates.empty() && plan.failures.empty();
+    const bool valid = succeeded(rebuilt) && *rebuilt && !plan.hasProtocol() && !plan.loopFrontier &&
+                       !plan.structuredFrontier && plan.directObligations.empty() &&
+                       plan.directRepair.candidates.empty();
     if (!valid) {
         return failure();
     }
-    const auto& expected = **rebuilt;
-    const auto& a = *plan.selectiveLoop;
-    const auto& b = *expected.selectiveLoop;
+    auto expected = **rebuilt;
+    const bool resourceFailure = plan.status == SyncMixedPlanStatus::ResourceInfeasible ||
+                                 plan.status == SyncMixedPlanStatus::AllocationAnalysisLimit;
+    if (resourceFailure && failed(allocateMixedProtocolEvents(schedule, expected))) {
+        return failure();
+    }
     const auto& x = plan.selectedCost;
     const auto& y = expected.selectedCost;
     const bool cost =
         std::tie(x.generatedEventPairs, x.targetedBarriers, x.fixedExitDrains, x.eventPressure, x.staticActions) ==
         std::tie(y.generatedEventPairs, y.targetedBarriers, y.fixedExitDrains, y.eventPressure, y.staticActions);
+    const bool failuresMatch = plan.failures.size() == expected.failures.size() &&
+                               llvm::equal(plan.failures, expected.failures, [](const auto& a, const auto& b) {
+                                   return a.reason == b.reason && a.detail == b.detail;
+                               });
+    const bool common = cost && failuresMatch && plan.status == expected.status &&
+                        plan.allocationFailure == expected.allocationFailure &&
+                        plan.selectedWorldKind == expected.selectedWorldKind &&
+                        plan.initialResidualCount == expected.initialResidualCount &&
+                        plan.candidateCountBeforeDeletion == expected.candidateCountBeforeDeletion &&
+                        plan.reverseDeletionAttempts == expected.reverseDeletionAttempts &&
+                        plan.reverseDeletionRemoved == expected.reverseDeletionRemoved &&
+                        plan.selectiveLoop.has_value() == expected.selectiveLoop.has_value() &&
+                        sameWorld(plan.selectedWorld, expected.selectedWorld);
+    if (!common || !expected.selectiveLoop) {
+        return success(common);
+    }
+    const auto& a = *plan.selectiveLoop;
+    const auto& b = *expected.selectiveLoop;
     const bool edges =
         a.edges.size() == b.edges.size() && llvm::equal(a.edges, b.edges, [](const auto& x, const auto& y) {
-            return std::tie(
-                       x.placement.source, x.placement.target, x.placement.sourcePipe, x.placement.targetPipe,
-                       x.placement.eventId) ==
+            return std::tie(x.placement.source, x.placement.target, x.placement.sourcePipe, x.placement.targetPipe) ==
                        std::tie(
-                           y.placement.source, y.placement.target, y.placement.sourcePipe, y.placement.targetPipe,
-                           y.placement.eventId) &&
+                           y.placement.source, y.placement.target, y.placement.sourcePipe, y.placement.targetPipe) &&
                    key(x.completion) == key(y.completion);
         });
+    SmallVector<SyncEventGeneration, 16> generations;
+    const bool validAssignment = succeeded(appendSelectiveLoopEventGenerations(schedule, a, generations)) &&
+                                 succeeded(verifySyncEventGenerationAssignment(
+                                     ProtocolSyncTarget::resolve(schedule.getFunction()), {}, generations));
+    if (!validAssignment) {
+        return failure();
+    }
     return success(
-        plan.status == expected.status && plan.selectedWorldKind == expected.selectedWorldKind && a.loop == b.loop &&
-        edges && cost && plan.allocationFailure == SyncEventAllocationFailure::None &&
-        plan.initialResidualCount == expected.initialResidualCount &&
-        plan.candidateCountBeforeDeletion == expected.candidateCountBeforeDeletion &&
-        plan.reverseDeletionAttempts == 0 && plan.reverseDeletionRemoved == 0 && sameWorld(a.world, b.world) &&
-        sameWorld(plan.selectedWorld, b.world));
+        a.loop == b.loop && edges && a.candidateCountBeforeDeletion == b.candidateCountBeforeDeletion &&
+        a.deletionAttempts == b.deletionAttempts && a.deletionRemoved == b.deletionRemoved &&
+        sameWorld(a.world, b.world) && sameWorld(plan.selectedWorld, b.world));
 }

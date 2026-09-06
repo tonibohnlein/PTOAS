@@ -15,7 +15,6 @@
 #include "PTO/Transforms/ProtocolSync/GMAliasPolicy.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/STLExtras.h"
-#include <map>
 #include <set>
 #include <tuple>
 
@@ -58,12 +57,12 @@ void emitEvent(OpBuilder& builder, const SyncLoopFrontierEdge& edge, Location lo
         EventAttr::get(builder.getContext(), static_cast<EVENT>(*edge.eventId)));
 }
 
-bool proveTokens(const SyncSelectiveLoopPlan& plan)
+SyncRecurringEventProof proveTokens(const SyncSelectiveLoopPlan& plan)
 {
     SmallVector<SyncRecurringEventChannel, 16> channels;
     const unsigned stride = 2 * plan.edges.size() + 1;
     for (auto [id, edge] : llvm::enumerate(plan.edges)) {
-        if (!edge.placement.eventId) {
+        if (!edge.isEvent()) {
             continue;
         }
         const auto& completion = edge.completion;
@@ -73,30 +72,31 @@ bool proveTokens(const SyncSelectiveLoopPlan& plan)
              completion.source * stride + static_cast<unsigned>(plan.edges.size() + id),
              completion.target * stride + static_cast<unsigned>(id), completion.iteration.distance, carried, carried});
     }
-    return proveRecurringEventLifetimes(channels).status == SyncRecurringEventStatus::Proven;
+    return proveRecurringEventLifetimes(channels);
 }
 
 bool fitsConcreteBudget(const StructuredSyncIR& schedule, const SyncSelectiveLoopPlan& plan)
 {
     unsigned operations = 0;
     schedule.getFunction().walk([&](Operation*) { ++operations; });
-    const auto barriers = llvm::count_if(plan.edges, [](const auto& edge) { return !edge.placement.eventId; });
+    const auto barriers = llvm::count_if(plan.edges, [](const auto& edge) { return !edge.isEvent(); });
     // Conservative pre-emission bound: each body cut contributes at most two
     // full phase-pair products. Never publish a candidate that can exceed the
     // concrete checker's expansion budget after materialization.
     const std::uint64_t phases = schedule.getPhases().size();
     const std::uint64_t expansion = 2 * plan.edges.size() * phases * phases;
-    return barriers <= kSelectiveLoopMaximumBarriers && expansion <= kSelectiveLoopMaximumCompletions &&
+    return plan.edges.size() - barriers <= kSelectiveLoopMaximumChannels && barriers <= kSelectiveLoopMaximumBarriers &&
+           expansion <= kSelectiveLoopMaximumCompletions &&
            operations + 4 * plan.edges.size() + 1 <= kSelectiveLoopMaximumOperations;
 }
 } // namespace
 
-FailureOr<std::optional<SyncSelectiveLoopPlan>> mlir::pto::protocol_sync::buildSelectiveLoopRepair(
-    const StructuredSyncIR& schedule)
+FailureOr<SyncSelectiveLoopAttempt> mlir::pto::protocol_sync::buildSelectiveLoopRepair(const StructuredSyncIR& schedule)
 {
     const auto carrier = findIsolatedSyncLoop(schedule, false);
     if (!carrier) {
-        return std::optional<SyncSelectiveLoopPlan>{};
+        return SyncSelectiveLoopAttempt{
+            SyncSelectiveLoopStatus::Unsupported, "requires an isolated unconditional loop"};
     }
     SyncLocalFlowOptions options;
     options.analyzeSingleLoop = true;
@@ -105,7 +105,10 @@ FailureOr<std::optional<SyncSelectiveLoopPlan>> mlir::pto::protocol_sync::buildS
         return failure();
     }
     if (local->loopStatus != SyncLocalLoopStatus::Complete) {
-        return std::optional<SyncSelectiveLoopPlan>{};
+        return SyncSelectiveLoopAttempt{
+            local->loopStatus == SyncLocalLoopStatus::LimitExceeded ? SyncSelectiveLoopStatus::AnalysisLimit :
+                                                                      SyncSelectiveLoopStatus::Unsupported,
+            "local loop memory analysis did not complete"};
     }
     std::set<std::tuple<SyncPhaseId, SyncPhaseId, unsigned>> pairs;
     for (const auto& requirement : local->requirements) {
@@ -114,7 +117,7 @@ FailureOr<std::optional<SyncSelectiveLoopPlan>> mlir::pto::protocol_sync::buildS
         const bool carried = requirement.iteration.kind == SyncIterationRelationKind::LoopCarried &&
                              requirement.iteration.distance == 1 && requirement.iteration.carrier == *carrier;
         if (!within && !carried) {
-            return std::optional<SyncSelectiveLoopPlan>{};
+            return SyncSelectiveLoopAttempt{SyncSelectiveLoopStatus::Unsupported, "unsupported occurrence relation"};
         }
         pairs.emplace(requirement.source, requirement.target, carried ? 1 : 0);
     }
@@ -128,7 +131,7 @@ FailureOr<std::optional<SyncSelectiveLoopPlan>> mlir::pto::protocol_sync::buildS
                 continue;
             }
             if (first.mode != SyncAccessMode::Read && second.mode != SyncAccessMode::Write) {
-                return std::optional<SyncSelectiveLoopPlan>{};
+                return SyncSelectiveLoopAttempt{SyncSelectiveLoopStatus::Unsupported, "GM publication is unqualified"};
             }
             if (first.phase < second.phase) {
                 pairs.emplace(first.phase, second.phase, 0);
@@ -138,15 +141,14 @@ FailureOr<std::optional<SyncSelectiveLoopPlan>> mlir::pto::protocol_sync::buildS
     }
     const bool bounded = pairs.size() <= 256;
     if (!bounded) {
-        return std::optional<SyncSelectiveLoopPlan>{};
+        return SyncSelectiveLoopAttempt{SyncSelectiveLoopStatus::AnalysisLimit, "requirement pair budget exceeded"};
     }
     const auto target = ProtocolSyncTarget::resolve(schedule.getFunction());
     if (!target.supportsDirectRepairEmission()) {
-        return std::optional<SyncSelectiveLoopPlan>{};
+        return SyncSelectiveLoopAttempt{SyncSelectiveLoopStatus::Unsupported, "target does not support direct repair"};
     }
     SyncSelectiveLoopPlan plan;
     plan.loop = schedule.findRegion(*carrier)->operation;
-    std::map<std::pair<PIPE, PIPE>, unsigned> used;
     SmallVector<std::tuple<SyncPhaseId, SyncPhaseId, unsigned>, 16> ordered(pairs.begin(), pairs.end());
     const auto samePipe = [&](const auto& pair) {
         return schedule.findPhase(std::get<0>(pair))->pipe == schedule.findPhase(std::get<1>(pair))->pipe;
@@ -164,17 +166,12 @@ FailureOr<std::optional<SyncSelectiveLoopPlan>> mlir::pto::protocol_sync::buildS
                 continue;
             }
             if (!target.supportsPipeBarrier({source.core, source.pipe})) {
-                return std::optional<SyncSelectiveLoopPlan>{};
+                return SyncSelectiveLoopAttempt{SyncSelectiveLoopStatus::Unsupported, "unqualified same-pipe barrier"};
             }
         } else {
-            const unsigned idIndex = used[{source.pipe, destination.pipe}]++;
-            const bool available =
-                idIndex < target.getCompilerEventIds().size() &&
-                target.supportsEvent({source.core, source.pipe}, {destination.core, destination.pipe});
-            if (!available) {
-                return std::optional<SyncSelectiveLoopPlan>{};
+            if (!target.supportsEvent({source.core, source.pipe}, {destination.core, destination.pipe})) {
+                return SyncSelectiveLoopAttempt{SyncSelectiveLoopStatus::Unsupported, "unqualified event direction"};
             }
-            placement.eventId = target.getCompilerEventIds()[idIndex];
         }
         const SyncIterationRelation relation{
             distance == 0 ? SyncIterationRelationKind::SameIteration : SyncIterationRelationKind::LoopCarried, distance,
@@ -186,19 +183,51 @@ FailureOr<std::optional<SyncSelectiveLoopPlan>> mlir::pto::protocol_sync::buildS
     for (const auto& phase : schedule.getPhases()) {
         plan.world.exitCompletedPhases.push_back(phase.id);
     }
-    const bool certified = fitsConcreteBudget(schedule, plan) && proveTokens(plan) &&
-                           succeeded(verifySelectiveLoopMemory(schedule, plan.world));
-    if (!certified) {
-        return std::optional<SyncSelectiveLoopPlan>{};
+    if (!fitsConcreteBudget(schedule, plan)) {
+        return SyncSelectiveLoopAttempt{
+            SyncSelectiveLoopStatus::AnalysisLimit, "concrete verification budget exceeded"};
     }
-    return std::optional<SyncSelectiveLoopPlan>(std::move(plan));
+    const auto proof = proveTokens(plan);
+    if (proof.status != SyncRecurringEventStatus::Proven) {
+        return SyncSelectiveLoopAttempt{
+            proof.status == SyncRecurringEventStatus::AnalysisLimit ? SyncSelectiveLoopStatus::AnalysisLimit :
+                                                                      SyncSelectiveLoopStatus::UnprovedTokenContract,
+            "recurring event consumption contract not proved", proof};
+    }
+    if (failed(verifySelectiveLoopMemory(schedule, plan.world))) {
+        return failure();
+    }
+    plan.candidateCountBeforeDeletion = plan.edges.size();
+    for (unsigned index = plan.edges.size(); index > 0; --index) {
+        if (!plan.edges[index - 1].isEvent()) {
+            continue;
+        }
+        auto trial = plan;
+        trial.edges.erase(trial.edges.begin() + index - 1);
+        trial.world.completions.erase(trial.world.completions.begin() + index - 1);
+        ++plan.deletionAttempts;
+        if (proveTokens(trial).status == SyncRecurringEventStatus::Proven &&
+            succeeded(verifySelectiveLoopMemory(schedule, trial.world))) {
+            plan.edges = std::move(trial.edges);
+            plan.world = std::move(trial.world);
+            ++plan.deletionRemoved;
+        }
+    }
+    SyncSelectiveLoopAttempt attempt;
+    attempt.status = SyncSelectiveLoopStatus::Ready;
+    attempt.tokenProof = proveTokens(plan);
+    attempt.plan = std::move(plan);
+    return attempt;
 }
 
 LogicalResult mlir::pto::protocol_sync::materializeSelectiveLoopRepair(
     func::FuncOp function, const SyncSelectiveLoopPlan& plan)
 {
     auto loop = dyn_cast_or_null<scf::ForOp>(plan.loop);
-    const bool valid = loop && loop->getParentOp() == function && proveTokens(plan);
+    const bool assigned =
+        llvm::all_of(plan.edges, [](const auto& edge) { return edge.isEvent() == edge.placement.eventId.has_value(); });
+    const bool valid = loop && loop->getParentOp() == function && assigned &&
+                       proveTokens(plan).status == SyncRecurringEventStatus::Proven;
     if (!valid) {
         return failure();
     }
