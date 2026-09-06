@@ -39,6 +39,8 @@ config.test_source_root = os.path.dirname(__file__)
 
 # test_exec_root: The root path where tests should be run.
 config.test_exec_root = os.path.join(config.ptoir_obj_root, 'test/lit')
+if lit_config.params.get('insert_sync_staged') == '1':
+    config.test_exec_root += '-staged'
 config.ptoir_tools_dir = os.path.join(config.ptoir_obj_root, 'tools/ptoas')
 config.ptoir_test_tools_dir = os.path.join(config.ptoir_obj_root,
                                            'tools/pto-test-opt')
@@ -74,7 +76,8 @@ llvm_config.with_environment('PATH', config.llvm_tools_dir, append_path=True)
 tool_dirs = [config.ptoir_tools_dir, config.ptoir_test_tools_dir,
              config.llvm_tools_dir]
 tools = [
-    'ptoas',
+    ToolSubst('ptoas', extra_args=['--insert-sync-defer-same-pipe']
+              if lit_config.params.get('insert_sync_staged') == '1' else []),
     'pto-test-opt',
     'pto-vpto-scheduler-tracker-test',
 ]
