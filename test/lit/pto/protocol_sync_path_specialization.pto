@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a3.pto
+// RUN: FileCheck %s --input-file=%t.a3.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.a2.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a3.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFY
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a2.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFY
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail %s -o %t.cpp
+// RUN: sed '/pto.wait_flag\[<PIPE_MTE2>, <PIPE_V>,/d' %t.a3.pto > %t.missing.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.missing.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
+// REJECT: concrete-verification function=@branch_readiness status=rejected
+// VERIFY: concrete-verification function=@branch_readiness status=accepted
+// VERIFY: concrete-verification function=@branch_cube_loop status=accepted
+// CHECK-LABEL: func.func @branch_readiness
+// CHECK: scf.if
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: pto.tload
+// CHECK: pto.tadds
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK-NEXT: pto.tabs
+// CHECK: pto.barrier <PIPE_ALL>
+// CHECK: } else {
+// CHECK: pto.tload
+// CHECK: pto.tabs
+// CHECK-LABEL: func.func @branch_cube_loop
+// CHECK: scf.if
+// CHECK: scf.for
+// CHECK: pto.tload
+// CHECK: pto.tmov
+// CHECK: } else {
+// CHECK: scf.for
+// CHECK: pto.tload
+// CHECK: pto.tmov
+
+module {
+  func.func @branch_readiness(%choose: i1, %x: !pto.partition_tensor_view<16x16xf16>,
+                             %y: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %base = arith.constant 0 : i64
+    %other = arith.constant 512 : i64
+    %third = arith.constant 1024 : i64
+    %one = arith.constant 1.0 : f16
+    %a = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %other : !pto.tile_buf<vec, 16x16xf16>
+    %u = pto.alloc_tile addr = %third : !pto.tile_buf<vec, 16x16xf16>
+    scf.if %choose {
+      pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tload ins(%y : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    } else {
+      pto.tload ins(%y : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    pto.tadds ins(%u, %one : !pto.tile_buf<vec, 16x16xf16>, f16) outs(%u : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+  func.func @branch_cube_loop(%choose: i1, %n: index, %x: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %base = arith.constant 0 : i64
+    scf.if %choose {
+      %a = pto.alloc_tile addr = %base : !pto.tile_buf<mat, 16x16xf16>
+      %l = pto.alloc_tile addr = %base : !pto.tile_buf<left, 16x16xf16>
+      scf.for %i = %zero to %n step %one {
+        pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<mat, 16x16xf16>)
+        pto.tmov ins(%a : !pto.tile_buf<mat, 16x16xf16>) outs(%l : !pto.tile_buf<left, 16x16xf16>)
+      }
+    } else {
+      %a = pto.alloc_tile addr = %base : !pto.tile_buf<mat, 16x16xf16>
+      %r = pto.alloc_tile addr = %base : !pto.tile_buf<right, 16x16xf16>
+      scf.for %i = %zero to %n step %one {
+        pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<mat, 16x16xf16>)
+        pto.tmov ins(%a : !pto.tile_buf<mat, 16x16xf16>) outs(%r : !pto.tile_buf<right, 16x16xf16>)
+      }
+    }
+    return
+  }
+}

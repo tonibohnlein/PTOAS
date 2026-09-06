@@ -9,6 +9,7 @@
 // for the full text of the License.
 //===- PTOProtocolSync.cpp - Protocol-first synchronization pass --------===//
 #include "PTO/Transforms/Passes.h"
+#include "StructuredNormalization.h"
 
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
@@ -25,6 +26,7 @@
 #include "PTO/Transforms/ProtocolSync/StructuredSyncIR.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/JSON.h"
 
@@ -401,8 +403,7 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
         }
         const bool validDumpMode = dumpMode == "none" || dumpMode == "schedule" || dumpMode == "channels" ||
                                    dumpMode == "lane-frontiers" || dumpMode == "storage-tracks" ||
-                                   dumpMode == "concrete-verification" || dumpMode == "residuals" ||
-                                   dumpMode == "plan";
+                                   dumpMode == "concrete-verification" || dumpMode == "residuals" || dumpMode == "plan";
         if (!validDumpMode) {
             getOperation().emitError("unknown ProtocolSync dump mode '")
                 << dumpMode
@@ -446,6 +447,23 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
             if (function.isDeclaration()) {
                 continue;
             }
+            if (emitMixed && findSyncPathChoice(function)) {
+                if (failed(emitPathPlans(function))) {
+                    flushStatistics(false);
+                    signalPassFailure();
+                    return;
+                }
+                continue;
+            }
+            if (emitMixed) {
+                const auto normalized = expandSyncInnerOccurrences(function);
+                if (dumpMode == "plan" && (normalized.loops != 0 || normalized.restrictedDomains != 0)) {
+                    llvm::errs() << "protocol-sync-normalization function=@" << function.getSymName()
+                                 << " expanded-inner-loops=" << normalized.loops
+                                 << " expanded-iterations=" << normalized.iterations
+                                 << " restricted-loop-domains=" << normalized.restrictedDomains << '\n';
+                }
+            }
             if (failed(analyzeFunction(function, emitOneShot, emitReadyRelease, emitDirectRepair, emitMixed))) {
                 flushStatistics(false);
                 signalPassFailure();
@@ -488,6 +506,63 @@ struct PTOProtocolSyncPass : public impl::PTOProtocolSyncBase<PTOProtocolSyncPas
     }
 
 private:
+    LogicalResult emitPathPlans(func::FuncOp function)
+    {
+        auto choice = findSyncPathChoice(function);
+        SmallVector<OwningOpRef<ModuleOp>, 2> paths;
+        SmallVector<func::FuncOp, 2> planned;
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            IRMapping mapping;
+            auto module = function->getParentOfType<ModuleOp>();
+            OwningOpRef<ModuleOp> path = cast<ModuleOp>(module->clone(mapping));
+            auto pathFunction = cast<func::FuncOp>(mapping.lookup(function.getOperation()));
+            auto pathChoice = cast<scf::IfOp>(mapping.lookup(choice.getOperation()));
+            specializeSyncPath(pathChoice, arm == 0);
+            // Keep path diagnostics distinct; these symbols never escape the
+            // disposable module, nor become calls in the emitted program.
+            std::string pathName = (function.getSymName() + ".__sync_path" + Twine(arm)).str();
+            while (path->lookupSymbol(pathName)) {
+                pathName += "_";
+            }
+            pathFunction.setSymName(pathName);
+            expandSyncInnerOccurrences(pathFunction);
+            if (failed(analyzeFunction(pathFunction, false, false, false, true))) {
+                return failure();
+            }
+            planned.push_back(pathFunction);
+            paths.push_back(std::move(path));
+        }
+        OpBuilder builder = OpBuilder::atBlockBegin(&function.getBody().front());
+        Value condition = materializeSyncPathCondition(builder, choice);
+        if (!condition) {
+            return failure();
+        }
+        auto dispatch = builder.create<scf::IfOp>(choice.getLoc(), condition, true);
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            Block* block = arm == 0 ? dispatch.thenBlock() : dispatch.elseBlock();
+            builder.setInsertionPoint(block->getTerminator());
+            IRMapping mapping;
+            mapping.map(planned[arm].getArguments(), function.getArguments());
+            for (Operation& operation : planned[arm].getBody().front().without_terminator()) {
+                builder.clone(operation, mapping);
+            }
+        }
+        // Both arms contain the complete original physical prefix and suffix,
+        // in their original order. Only the selected copy executes. The only
+        // hoisted work is the checked pure, speculatable scalar condition DAG.
+        auto* terminator = function.getBody().front().getTerminator();
+        while (terminator->getPrevNode() != dispatch) {
+            terminator->getPrevNode()->erase();
+        }
+        if (!gmAliasMode.empty()) {
+            function->setAttr(kSyncGMAliasContract, builder.getStringAttr(gmAliasMode));
+        }
+        if (failed(verifyFreshConcreteSyncSemantics(function))) {
+            return function.emitError("ProtocolSync path-composed output failed concrete verification");
+        }
+        return success();
+    }
+
     void recordStatistics(
         func::FuncOp function, const ProtocolSyncStatistics& result, StringRef status, StringRef failureStage,
         ProtocolSyncProducer producer = ProtocolSyncProducer::AnalysisOnly, StringRef plannerResult = "analysis-only",
@@ -817,9 +892,9 @@ private:
             function.emitError("ProtocolSync mixed allocated plan failed independent verification");
             return failure();
         }
-        FailureOr<SyncInterpretationResult> final =
-            evaluateWorld(function, schedule, stages, timelines, channels, plan->selectedWorld, result, true,
-                          plan->selectiveLoop.has_value());
+        FailureOr<SyncInterpretationResult> final = evaluateWorld(
+            function, schedule, stages, timelines, channels, plan->selectedWorld, result, true,
+            plan->selectiveLoop.has_value());
         const bool finalWorldComplete = succeeded(final) && final->isComplete();
         if (!finalWorldComplete) {
             result.totalUs = elapsedMicroseconds(totalStart);
@@ -1106,11 +1181,10 @@ private:
             return success();
         }
         const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(function);
-        const bool targetSupportsEmission =
-            (emitOneShot && target.supportsOneShotEmission()) ||
-            (emitReadyRelease && target.supportsReadyReleaseEmission()) ||
-            (emitDirectRepair && target.supportsDirectRepairEmission()) ||
-            (emitMixed && target.supportsMixedEmission());
+        const bool targetSupportsEmission = (emitOneShot && target.supportsOneShotEmission()) ||
+                                            (emitReadyRelease && target.supportsReadyReleaseEmission()) ||
+                                            (emitDirectRepair && target.supportsDirectRepairEmission()) ||
+                                            (emitMixed && target.supportsMixedEmission());
         if (diagnosticRejected && targetSupportsEmission) {
             return handleUnsupported(function, result, "semantic-diagnostics", "unsupported", true, totalStart);
         }

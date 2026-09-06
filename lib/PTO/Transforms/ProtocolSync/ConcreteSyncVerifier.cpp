@@ -11,6 +11,7 @@
 //===- ConcreteSyncVerifier.cpp - Verify emitted synchronization -------===//
 
 #include "PTO/Transforms/ProtocolSync/ConcreteSyncVerifier.h"
+#include "StructuredNormalization.h"
 #include "PTO/Transforms/ProtocolSync/StructuredFrontier.h"
 
 #include "PTO/IR/PTO.h"
@@ -25,6 +26,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -808,6 +810,38 @@ LogicalResult mlir::pto::protocol_sync::verifyConcreteSyncSemantics(
     }
     if (!function || failed(mlir::verify(function))) {
         return rejectAtStage("ir-verification", firstFailedStage);
+    }
+    if (auto choice = findSyncPathChoice(function)) {
+        // Reconstruct both paths from actual emitted IR. No planner tag, event
+        // recipe, or recorded coverage is used. Each path retains all its
+        // prefix/suffix effects and must retire its own tokens at function exit.
+        auto module = function->getParentOfType<ModuleOp>();
+        if (!module) {
+            return rejectAtStage("choice-module", firstFailedStage);
+        }
+        ProtocolSyncStatistics pathStatistics = statistics ? *statistics : ProtocolSyncStatistics{};
+        bool allPathsVerified = true;
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            IRMapping mapping;
+            OwningOpRef<ModuleOp> path = cast<ModuleOp>(module->clone(mapping));
+            auto pathFunction = cast<func::FuncOp>(mapping.lookup(function.getOperation()));
+            specializeSyncPath(cast<scf::IfOp>(mapping.lookup(choice.getOperation())), arm == 0);
+            if (failed(verifyFreshConcreteSyncSemantics(pathFunction, statistics ? &pathStatistics : nullptr))) {
+                allPathsVerified = false;
+                break;
+            }
+        }
+        if (allPathsVerified) {
+            if (statistics) {
+                *statistics = pathStatistics;
+            }
+            return success();
+        }
+        // Path expansion is an additional complete proof, not a replacement
+        // for the existing guarded/structured certificates. Flattening a path
+        // may leave their supported reconstruction domain. In that case the
+        // original IR must still pass every check below; no partial path proof
+        // or statistics are imported into that attempt.
     }
     StructuredSyncIR schedule(function);
     StructuredSyncIRBuilder builder(context);

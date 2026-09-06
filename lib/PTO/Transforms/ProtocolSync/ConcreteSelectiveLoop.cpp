@@ -13,6 +13,7 @@
 #include "PTO/Transforms/ProtocolSync/ProtocolSyncTarget.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include <map>
@@ -50,6 +51,17 @@ Action readAction(Operation* operation, scf::ForOp loop)
     const bool singleton = choice.getNumResults() == 0 && choice.getElseRegion().empty() &&
                            &choice.getThenRegion().front() == operation->getBlock() &&
                            choice.thenBlock()->getOperations().size() == 2;
+    IntegerAttr constant;
+    const bool always =
+        singleton && matchPattern(choice.getCondition(), m_Constant(&constant)) && constant.getValue().isOne();
+    if (always) {
+        // Scalar folding may replace a statically nonempty boundary predicate
+        // with true while retaining the if. This action really is unconditional
+        // at its anchor; do not infer first/last-iteration participation.
+        const bool ordinary = choice->getBlock() == loop.getBody() || choice->getBlock() == loop->getBlock();
+        result.guard = ordinary ? Guard::None : Guard::Invalid;
+        return result;
+    }
     auto comparison = choice.getCondition().getDefiningOp<arith::CmpIOp>();
     if (!singleton || !comparison) {
         return result;

@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-dump=plan %s -o %t.pto 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: FileCheck %s --input-file=%t.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail %s -o %t.a2.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFY
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail %s -o %t.cpp
+// PLAN: protocol-sync-normalization function=@finite_inner expanded-inner-loops=2 expanded-iterations=2
+// PLAN: mixed-plan function=@finite_inner status=ready world=selective-loop
+// VERIFY: concrete-verification function=@finite_inner status=accepted
+// CHECK-LABEL: func.func @finite_inner
+// CHECK: scf.for
+// CHECK-NOT: scf.for
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: pto.tadds
+// CHECK-NOT: scf.for
+// CHECK: pto.tadds
+// CHECK-NOT: scf.for
+// CHECK: pto.tabs
+// CHECK: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: return
+
+module {
+  func.func @finite_inner(%n: index, %x: !pto.partition_tensor_view<16x16xf16>,
+                         %y: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %five = arith.constant 5 : index
+    %scalar = arith.constant 1.0 : f16
+    %base = arith.constant 0 : i64
+    %other = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %other : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %i = %zero to %n step %one {
+      pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tload ins(%y : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+      %unchanged = scf.for %empty = %five to %one step %two iter_args(%value = %scalar) -> f16 {
+        pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+        scf.yield %value : f16
+      }
+      scf.for %j = %one to %five step %two {
+        pto.tadds ins(%a, %unchanged : !pto.tile_buf<vec, 16x16xf16>, f16) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      }
+      pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    return
+  }
+}

@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+
+// Restrict a signed unit-step domain to its guarded prefix. Non-unit steps
+// must not be changed by max/min bounds without a lattice-alignment proof.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-dump=plan %s -o %t.pto 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: FileCheck %s --input-file=%t.pto --check-prefix=IR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFY
+// RUN: sed 's/arith.constant 1 : index/arith.constant 2 : index/' %s > %t.step2.pto
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-dump=plan %t.step2.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
+// PLAN: protocol-sync-normalization function=@prefix_domain
+// PLAN-SAME: restricted-loop-domains=1
+// PLAN: mixed-plan function=@prefix_domain status=ready world=selective-loop
+// IR-LABEL: func.func @prefix_domain
+// IR: %[[END:.*]] = arith.minsi
+// IR: scf.for {{.*}} to %[[END]] step
+// IR: pto.barrier <PIPE_MTE2>
+// IR: pto.tload
+// IR: pto.barrier <PIPE_ALL>
+// VERIFY: concrete-verification function=@prefix_domain status=accepted
+// REJECT-NOT: restricted-loop-domains=1
+// REJECT: mixed-plan function=@prefix_domain status=unsupported
+
+module {
+  func.func @prefix_domain(%lower: index, %upper: index, %cutoff: index,
+                          %input: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %one = arith.constant 1 : index
+    %base = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %i = %lower to %upper step %one {
+      %active = arith.cmpi slt, %i, %cutoff : index
+      scf.if %active {
+        pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      }
+    }
+    return
+  }
+}

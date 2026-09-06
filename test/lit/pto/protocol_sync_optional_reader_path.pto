@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.pto
+// RUN: FileCheck %s --input-file=%t.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.a2.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFY
+// RUN: sed '/pto.wait_flag\[<PIPE_MTE3>, <PIPE_MTE2>,/d' %t.pto > %t.missing.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.missing.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=SAFE
+// VERIFY: concrete-verification function=@optional_reader status=accepted
+// REJECT: concrete-verification function=@optional_reader status=rejected
+// SAFE: no complete supported plan
+// CHECK-LABEL: func.func @optional_reader
+// CHECK: scf.if
+// CHECK: pto.tload
+// CHECK: pto.tabs
+// CHECK-NOT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
+// CHECK: pto.tstore
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>,
+// CHECK: pto.tload
+// CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>,
+// CHECK-NEXT: pto.tload
+// CHECK: } else {
+// CHECK-NOT: <PIPE_MTE3>, <PIPE_MTE2>
+// CHECK: pto.tabs
+// CHECK-NOT: pto.tstore
+// CHECK: return
+
+module {
+  func.func @optional_reader(%save: i1, %x: !pto.partition_tensor_view<16x16xf16>,
+                            %z: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %base = arith.constant 0 : i64
+    %other = arith.constant 512 : i64
+    %third = arith.constant 1024 : i64
+    %a = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %other : !pto.tile_buf<vec, 16x16xf16>
+    %c = pto.alloc_tile addr = %third : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    scf.if %save {
+      pto.tstore ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%z : !pto.partition_tensor_view<16x16xf16>)
+    }
+    pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%c : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}

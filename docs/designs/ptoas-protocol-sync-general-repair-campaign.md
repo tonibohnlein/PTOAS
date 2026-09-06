@@ -34,6 +34,164 @@ must not win normal selection by having fewer event pairs. Removing them from
 normal selection can temporarily lower native admission. Report that regression
 honestly rather than counting serialized coverage as campaign completion.
 
+### Native structured prototype: exact expansion and whole-path composition
+
+The September 6 continuation adds three **bounded native synthesis routes**,
+not another diagnostic-only recognizer. They reuse ordinary direct/selective
+planning, allocation and concrete checking; neither invokes InsertSync when
+fallback is disabled.
+
+- Small constant-trip inner loops are expanded into their exact occurrences
+  before schedule extraction in the disposable emission module. Limits are
+  eight trips, 32 expanded loops and a conservative 2,048-operation expansion
+  budget. Nonzero lower bounds, non-unit positive steps, scalar/handle yields
+  and zero-trip identity transfers are preserved. Arithmetic is widened before
+  trip-count computation, including a check on the final induction increment.
+  Only scalar arithmetic is folded; physical operations and allocation addresses
+  are not reordered. The resulting IR contains expanded inner bodies, so this
+  deliberately trades bounded code growth for immediate prototype capability.
+  A remaining dynamic outer loop still requires the existing arbitrary-trip
+  memory and event-lifetime certificates. This is **not** verification by a few
+  sample iterations of an unbounded loop.
+- A single once-executed, result-free function-level choice can be specialized
+  into two complete planning problems. Each contains the full physical prefix,
+  selected arm and suffix. Its condition must be a bounded pure, speculatable
+  integer/index expression rooted in function arguments, not a physical load,
+  descriptor read or asynchronous result. The emitter may compute that scalar
+  condition at entry and place each complete path under the corresponding arm.
+  Physical work executes once and in its original path order. A join does not
+  introduce a completion hub or drain; each path's mandatory drain remains at
+  its function exit, after its suffix.
+- A unit-step loop whose only effectful work is inside `if iv >= bound` or
+  `if iv < bound` can instead execute precisely that intersection of its
+  iteration domain. Signed max/min changes the lower/upper bound; reversed
+  operand forms are equivalent. Empty intersections execute no physical work.
+  No increment/decrement of the bound is synthesized, and non-unit steps are
+  excluded rather than guessing lattice alignment. The bound must have the same
+  pure, speculatable argument-rooted provenance as path conditions. A nonempty
+  else arm, loop-carried results, or effects outside the choice prevent this
+  transformation. The actual frontend `attn_out_seed` uses this route to reach
+  ordinary selective recurring repair. This is exact iteration-domain
+  normalization, not a ready/free protocol on skipped iterations.
+
+The concrete verifier independently specializes the **actual emitted** dispatch
+and freshly extracts both paths. It does not trust planner tags, recorded
+coverage, or the path's temporary symbol name. Both paths must satisfy complete
+memory, effect, event-consumption and exit checks. Event keys can occur in both
+exclusive arms because only one complete path executes. This does not authorize
+reusing a key across repeated, independently chosen loop iterations.
+
+The native tests exercise branch-selected readiness without capturing unrelated
+prefetch, an optional MTE3 reader whose completion is acquired only before the
+overwrite, cube staging loops in alternative arms, exact finite inner expansion,
+and deletion of required waits. They also retain the distinction between GM
+contracts: may-alias publication remains unsupported where no qualified mechanism
+exists, even if the disjoint-argument variant compiles.
+
+Path reconstruction is an additional complete verifier proof. If flattening
+falls outside that checker's domain, the original IR must still pass the full
+existing guarded/structured verifier; partial path results are not imported.
+
+Real frontend evidence is separate from the constructed tests:
+
+- `c4a4680038f89102666c_139`, `decode_fwd_csa_attn_pack`, now compiles natively;
+  its true arm loads/stores a 4x4096 tile and its false arm fills/stores it.
+  The checked-in regression preserves the frontend program, removing only
+  source locations.
+- `c4a4680038f89102666c_140`, `decode_fwd_embedding_active_mask`, also compiles
+  natively; its empty arm needs no invented producer or event.
+- These rows belong to the full 9,754-output collection, **not** the historical
+  213-row first-per-seed sample. Both the expansion-only run and the initial
+  path-composition run retain **14 admitted / 194 rejected / 5 pre-pass failures**
+  on that sample, A3/disjoint GM, patterns and fallback off. Expansion affected
+  68 sample rows but did not by itself remove their remaining blockers.
+  Patch-frozen records are in `acceptance-inner-expansion-a3-disjoint` and
+  `acceptance-path-expansion-a3-disjoint` under the native corpus build directory.
+
+The final targeted population is frozen in
+`test/experiments/protocol_sync/structured_native_manifest.tsv` (SHA-256
+`c56c58a7287529bdb23676501eb4b9a03f57efd093626981d1db45439b938bec`).
+Selection was made before the runs: from the full collection, retain rows with
+one textual `scf.if`, at most one `scf.for`, and none of `pto.comm.`, `tmatmul`,
+`load_scalar`, `tgetval`, `tpush`, or `tpop`; retain the first row for each kernel
+name after stripping its trailing numeric suffix. This selected 32 names from
+580 eligible rows. It is a targeted, non-random population, not the full corpus;
+communication represented as helper calls was not excluded retroactively.
+
+| Final configuration, patterns/fallback off | Native | Rejected | Pre-pass failures |
+| --- | ---: | ---: | ---: |
+| A2, may-alias | 13 | 19 | 0 |
+| A2, disjoint arguments | 14 | 18 | 0 |
+| A3, may-alias | 13 | 19 | 0 |
+| A3, disjoint arguments | 14 | 18 | 0 |
+
+The final acceptance records live under `build/protocol-sync-real-paths/` in
+`verified-a2-may`, `verified-a2-disjoint`, `verified-a3-may`, and `verified-a3-disjoint`.
+Each contains the exact command vectors, source commit plus patch/untracked
+source snapshot, toolchain hashes, per-row diagnostics, emitted IR and hashes.
+All four runs recorded stable sources and zero failed acceptance probes.
+Sources remain PyPTO `9f657f37ed20ce148b46fb7229c267a152a0644e` and PyPTO-Lib
+`57e9d6a9294d9c38edd042f1edb5bdc50b4622bb`.
+
+Admitted names include attention-pack variants, active-mask/active-trim,
+`dspark_attention_pad`, `dspark_head_unpad`, `build_bias`,
+`prefill_moe_output_store`, and the newly normalized `attn_out_seed`.
+`shared_routed` admits in both modes; `build_bias` needs the disjoint contract. The initial
+path-only run admitted 13 disjoint/12 may-alias rows; exact guarded-domain
+normalization accounts for the additional row. The 18 final disjoint refusals
+split at the first gate into ten semantic/helper-call failures and eight
+selection failures. These first-gate counts do not replace the overlapping
+blocker records. No device execution or performance result is claimed.
+
+The initial follow-up in `final-native-followup` passed all 54 C++ emissions
+but rejected `shared_routed` after re-parsing in all four modes. Scalar folding
+had changed a constant nonempty-loop comparison to `true` while retaining the
+`if`. Concrete action reconstruction now treats an exactly true singleton
+guard as unconditional at its actual anchor, without inferring first/last
+iteration participation. The full frontend program is a new regression,
+including fresh re-verification and rejection after deleting its exit drain.
+The historical failed results remain archived rather than overwritten.
+The corrected build retained the same admissions in all four `verified-*`
+runs and passed **108/108** follow-up checks in `verified-native-followup`:
+54 fresh concrete-verification verdicts and 54 C++ generations. The compiler
+fingerprint remained stable throughout. These are host compiler checks, not
+device C++ compilation or numerical validation.
+
+Validation uses the existing LLVM 19 build, with only PTOTransforms and its
+callers rebuilt/relinked, at `-j2`. The focused suite before the round-trip
+guard correction reports **66/66** in
+`build/protocol-sync-structured-native-final-lit.json`; the suite includes
+independent memory/token execution checks and overlap witnesses. A separate
+enumeration of lower/upper/cutoff values in `[-4,4]` compared the original
+guarded iteration sequence with both min/max-domain forms: 1,458 comparisons,
+including empty and negative domains, passed. This checks normalization, not
+hardware execution. `git diff --check` passed. The changed-code prefilter
+reported ten `G.FMT.11-CPP` matches; each was inspected and has a braced body.
+Its regex backtracks to parentheses inside compound conditions and mistakes
+the remaining condition for an unbraced statement. No suppression or checker
+change was made; full static-analysis compliance is not claimed.
+After the guard correction and fresh relinking, the final run is **67/67** in
+`build/protocol-sync-structured-native-verified-lit.json`. Only this evidence
+record was updated after the final source-frozen campaign; implementation and
+test code were unchanged.
+
+This is not yet compact general guarded/loop state. Multiple physical choices,
+iteration-dependent participation, variable-trip nested consumers, persistent
+slot credits, scalar-load prerequisites, communication, queues and unqualified
+cube effects remain work. The next implementation should replace duplication
+with storage-specific summaries where useful, while using these complete paths
+as differential references. Do not count hypothetical admission from removal of
+one overlapping blocker, or count manually synchronized reference inputs as
+native synthesis.
+
+The earlier benchmark ladder remains the performance/reference track: official
+one/two-buffer examples, depth three, decimated release, stationary accumulator,
+GEMM L1/L0 microkernels, Conv2D/full GEMM, FlashAttention, then TopK/triangular
+inverse. Use manual synchronization as a differential reference, not as native
+admission evidence. The shared normalization and storage analysis apply to cube
+and vector alike; admitting cube staging does not qualify M/FIX/ACC semantics.
+Collective and remote-signaling examples remain a distinct target-contract track.
+
 ### Revised implementation order
 
 The continuation agreed after P4b requires full general-only corpus coverage:

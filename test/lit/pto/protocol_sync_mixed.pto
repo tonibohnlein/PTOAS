@@ -72,7 +72,7 @@ module attributes {pto.target_arch = "a3"} {
 // ONE-SHOT-SAME: "selected_world_fixed_exit_drains":1
 // ONE-SHOT-SAME: "selected_world_targeted_barriers":1
 
-// DIRECT: PROTOCOL-SYNC mixed-plan function=@guarded_direct status=ready world=direct-only
+// DIRECT: PROTOCOL-SYNC mixed-plan function=@guarded_direct.__sync_path0 status=ready world=direct-only
 // The serialized structured reference is not a normal selection alternative.
 // DIRECT-SAME: direct-candidates=3 candidates-before-deletion=4 reverse-attempts=4 reverse-removed=1 worlds-attempted=1 worlds-feasible=1 event-pairs=2 targeted-barriers=0 fixed-exit-drains=1
 

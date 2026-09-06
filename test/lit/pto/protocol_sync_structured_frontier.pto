@@ -16,7 +16,10 @@
 // Normal synthesis must not silently select the serialized reference recipe.
 // Its positive concrete, path and token-mutation tests remain in
 // pto-protocol-sync-loop-memory-test through the explicit reference builders.
-// CHECK: mixed-plan function=@choice_frontier status=unsupported
+// Once-only paths now use selective repair; the recurring choice is still
+// unsupported rather than falling back to a serialized completion hub.
+// CHECK: mixed-plan function=@choice_frontier.__sync_path0 status=ready
+// CHECK: mixed-plan function=@loop_choice_frontier status=unsupported
 // CHECK: ProtocolSync mixed mode found no complete supported plan
 
 module {
