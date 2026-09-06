@@ -12,6 +12,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
+#include "PTO/Transforms/InsertSync/SyncPlanningPrimitives.h"
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/Support/Debug.h"
@@ -142,13 +143,14 @@ static bool isLocalBufferOverlapCrossRoot(const BaseMemInfo *a,
 
   for (uint64_t addrA : a->baseAddresses) {
     for (uint64_t addrB : b->baseAddresses) {
-      uint64_t aStart = rootBaseA + addrA;
-      uint64_t bStart = rootBaseB + addrB;
-      uint64_t aEnd = aStart + a->allocateSize;
-      uint64_t bEnd = bStart + b->allocateSize;
-      uint64_t maxStart = std::max(aStart, bStart);
-      uint64_t minEnd = std::min(aEnd, bEnd);
-      if (maxStart < minEnd) {
+      uint64_t aStart = 0;
+      uint64_t bStart = 0;
+      if (!insert_sync_detail::checkedAddressAdd(rootBaseA, addrA, aStart) ||
+          !insert_sync_detail::checkedAddressAdd(rootBaseB, addrB, bStart)) {
+        return true;
+      }
+      if (insert_sync_detail::addressRangesMayOverlap(
+              aStart, a->allocateSize, bStart, b->allocateSize)) {
         return true;
       }
     }
@@ -325,13 +327,7 @@ bool MemoryDependentAnalyzer::isBufferAddressRangeOverlap(
 bool MemoryDependentAnalyzer::isBufferOverlap(const BaseMemInfo *a,
                                               const BaseMemInfo *b, int aIndex,
                                               int bIndex) {
-  uint64_t aStart = a->baseAddresses[aIndex];
-  uint64_t bStart = b->baseAddresses[bIndex];
-  uint64_t aEnd = aStart + a->allocateSize;
-  uint64_t bEnd = bStart + b->allocateSize;
- 
-  uint64_t maxStart = std::max(aStart, bStart);
-  uint64_t minEnd = std::min(aEnd, bEnd);
- 
-  return maxStart < minEnd;
+  return insert_sync_detail::addressRangesMayOverlap(
+      a->baseAddresses[aIndex], a->allocateSize,
+      b->baseAddresses[bIndex], b->allocateSize);
 }

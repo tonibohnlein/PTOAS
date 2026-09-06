@@ -16,6 +16,7 @@
  
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
+#include "PTO/Transforms/InsertSync/SyncPlanningPrimitives.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include <array>
  
@@ -53,7 +54,9 @@ public:
  
   /// 入口函数：执行分析并注入同步
   /// insertBarAllAtLast: 是否在最后插入一个全局 Barrier (通常需要)
-  void Run(bool insertBarAllAtLast = true);
+  // Experimental staged traversal is opt-in. Existing callers keep the
+  // combined order; BLOCKSYNC never uses the new intra-core staging policy.
+  void Run(bool insertBarAllAtLast = true, bool deferSamePipeRepair = false);
  
 private:
   // --- Data Members ---
@@ -62,6 +65,8 @@ private:
   SyncOperations &syncOperations_;
   func::FuncOp func_;
   SyncAnalysisMode syncAnalysisMode_;
+  insert_sync_detail::RepairStage repairStage_{
+      insert_sync_detail::RepairStage::Combined};
   
   // 全局同步索引计数
   unsigned syncIndex_{0};

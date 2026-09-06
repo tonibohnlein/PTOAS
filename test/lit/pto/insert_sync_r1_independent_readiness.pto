@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --enable-insert-sync %s -o %t.a2.0.pto
+// RUN: FileCheck %s --input-file=%t.a2.0.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --enable-insert-sync --insert-sync-defer-same-pipe %s -o %t.a2.1.pto
+// RUN: FileCheck %s --input-file=%t.a2.1.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --enable-insert-sync %s -o %t.a3.0.pto
+// RUN: FileCheck %s --input-file=%t.a3.0.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --enable-insert-sync --insert-sync-defer-same-pipe %s -o %t.a3.1.pto
+// RUN: FileCheck %s --input-file=%t.a3.1.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-defer-same-pipe %s -o %t.cpp
+
+// Source-derived independent-readiness fixture. This catches merging the
+// publication after load A with the publication after independent load B.
+// CHECK-LABEL: func.func @insert_sync_independent
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[A:[0-9]+]]>]
+// CHECK-NEXT: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[B:[0-9]+]]>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[A]]>]
+// CHECK-NEXT: pto.tabs
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[B]]>]
+// CHECK-NEXT: pto.tabs
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: return
+
+module {
+  func.func @insert_sync_independent(%x: !pto.partition_tensor_view<16x16xf16>,
+                                    %y: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c512 = arith.constant 512 : i64
+    %c1024 = arith.constant 1024 : i64
+    %c1536 = arith.constant 1536 : i64
+    %a = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x16xf16>
+    %o0 = pto.alloc_tile addr = %c1024 : !pto.tile_buf<vec, 16x16xf16>
+    %o1 = pto.alloc_tile addr = %c1536 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%y : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%o0 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%o1 : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}

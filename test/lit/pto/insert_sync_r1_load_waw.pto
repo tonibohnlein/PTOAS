@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --enable-insert-sync %s -o %t.a2.0.pto
+// RUN: FileCheck %s --input-file=%t.a2.0.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --enable-insert-sync --insert-sync-defer-same-pipe %s -o %t.a2.1.pto
+// RUN: FileCheck %s --input-file=%t.a2.1.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --enable-insert-sync %s -o %t.a3.0.pto
+// RUN: FileCheck %s --input-file=%t.a3.0.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --enable-insert-sync --insert-sync-defer-same-pipe %s -o %t.a3.1.pto
+// RUN: FileCheck %s --input-file=%t.a3.1.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-defer-same-pipe %s -o %t.cpp
+
+// Test the required WAW edge, not a blanket barrier after every load.
+// Fresh InsertSync sees no user events in this input. The final ABI drain is
+// separate from the body barrier protecting overlapping destinations.
+
+module {
+  // CHECK-LABEL: func.func @same_handle_waw
+  // CHECK: pto.tload
+  // CHECK: pto.barrier <PIPE_MTE2>
+  // CHECK: pto.tload
+  // CHECK: pto.barrier <PIPE_ALL>
+  // CHECK: return
+  func.func @same_handle_waw(%x: !pto.partition_tensor_view<16x16xf16>, %y: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%y : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+  // CHECK-LABEL: func.func @partial_cross_root_waw
+  // CHECK: pto.tload
+  // CHECK: pto.barrier <PIPE_MTE2>
+  // CHECK: pto.tload
+  // CHECK: pto.barrier <PIPE_ALL>
+  // CHECK: return
+  func.func @partial_cross_root_waw(%x: !pto.partition_tensor_view<16x16xf16>, %y: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+    %offset = arith.constant 256 : i64
+    %b = pto.alloc_tile addr = %offset : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%y : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+  // CHECK-LABEL: func.func @disjoint_loads
+  // CHECK: pto.tload
+  // CHECK-NOT: pto.barrier <PIPE_MTE2>
+  // CHECK: pto.tload
+  // CHECK: pto.barrier <PIPE_ALL>
+  // CHECK: return
+  func.func @disjoint_loads(%x: !pto.partition_tensor_view<16x16xf16>, %y: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+    %offset = arith.constant 512 : i64
+    %b = pto.alloc_tile addr = %offset : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%y : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}

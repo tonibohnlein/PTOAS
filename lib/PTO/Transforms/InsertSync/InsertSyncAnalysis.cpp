@@ -212,38 +212,36 @@ static bool isValidPipeIndex(PipelineType pipe) {
   return static_cast<unsigned>(pipe) < kPipeStateSize;
 }
 
-static bool isTLoadCompound(const CompoundInstanceElement *compound) {
-  return compound && compound->elementOp && isa<pto::TLoadOp>(compound->elementOp);
-}
-
-static bool isTLoadToTLoadWAWExempt(const CompoundInstanceElement *nowCompound,
-                                    const CompoundInstanceElement *frontCompound) {
-  return isTLoadCompound(nowCompound) && isTLoadCompound(frontCompound) &&
-         nowCompound->kPipeValue == PipelineType::PIPE_MTE2 &&
-         frontCompound->kPipeValue == PipelineType::PIPE_MTE2;
-}
-
 // ==============================================================================
 // 1. Entry Point
 // ==============================================================================
 
-void InsertSyncAnalysis::Run(bool insertBarAllAtLast) {
+void InsertSyncAnalysis::Run(bool insertBarAllAtLast,
+                             bool deferSamePipeRepair) {
   syncIndex_ = syncOperations_.size();
+  const bool staged = deferSamePipeRepair &&
+                      syncAnalysisMode_ == SyncAnalysisMode::NORMALSYNC;
 
-  for (auto &nowElement : syncIR_) {
-    if (auto *nowCompound =
-            dyn_cast<CompoundInstanceElement>(nowElement.get())) {
-      DealWithCompoundSync(nowCompound);
-    } else if (auto *loopElement =
-                   dyn_cast<LoopInstanceElement>(nowElement.get())) {
-      DealWithLoopSync(loopElement);
-    } else if (isa<BranchInstanceElement>(nowElement.get())) {
-      continue;
-    } else if (isa<PlaceHolderInstanceElement>(nowElement.get())) {
-      continue;
+  // This is a change in analysis order, not a new schedule. Finish required
+  // cross-pipe handoffs first. On the second walk, the existing backward
+  // supply query can use those handoffs before requesting a same-pipe cut.
+  // Keep IDs, inserted actions and stable SyncIR indices across both walks.
+  insert_sync_detail::forEachRepairStage(staged, [&](auto stage) {
+    repairStage_ = stage;
+    for (auto &nowElement : syncIR_) {
+      if (auto *nowCompound =
+              dyn_cast<CompoundInstanceElement>(nowElement.get())) {
+        DealWithCompoundSync(nowCompound);
+      } else if (auto *loopElement =
+                     dyn_cast<LoopInstanceElement>(nowElement.get())) {
+        DealWithLoopSync(loopElement);
+      }
     }
-  }
+  });
+  repairStage_ = insert_sync_detail::RepairStage::Combined;
 
+  // A function-exit obligation is not evidence for suppressing body hazards.
+  // In particular, never insert it between the two analysis walks.
   if (insertBarAllAtLast) {
     InsertLastPipeAll();
   }
@@ -464,6 +462,10 @@ void InsertSyncAnalysis::InsertSync(
     CompoundInstanceElement *nowCompound, CompoundInstanceElement *frontCompound,
     SyncRecordList &syncRecordList,
     const std::optional<unsigned> &forEndIndex) {
+  const bool samePipe = nowCompound->kPipeValue == frontCompound->kPipeValue;
+  if (!insert_sync_detail::shouldAnalyzePair(repairStage_, samePipe)) {
+    return;
+  }
   if (IsNoNeedToInsertSync(nowCompound, frontCompound, forEndIndex.has_value())) {
     return;
   }
@@ -552,10 +554,12 @@ bool InsertSyncAnalysis::IsMemInfoHasDependency(
                                           depBaseMemInfosVec);
   hasDependency |= memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->useVec,
                                           depBaseMemInfosVec);
-  if (!isTLoadToTLoadWAWExempt(nowCompound, frontCompound)) {
-    hasDependency |= memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->defVec,
-                                            depBaseMemInfosVec);
-  }
+  // A load is also a local-memory writer. Two overlapping transfer
+  // destinations require WAW ordering even when both operations use MTE2.
+  // Alias/slot analysis and established completion may discharge the hazard;
+  // an operation-name exemption cannot. Do not insert barriers unconditionally.
+  hasDependency |= memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->defVec,
+                                          depBaseMemInfosVec);
 
   // Special hazard: ACC (L0C) read/read cross-pipe ordering.
   //

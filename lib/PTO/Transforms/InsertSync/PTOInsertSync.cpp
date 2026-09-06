@@ -20,6 +20,7 @@
 #include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "llvm/Support/CommandLine.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h" // [FIX] 确保 FuncOp 定义可见
 
 // [CRITICAL FIX] 必须在包含 .inc 之前设置好命名空间环境
@@ -41,6 +42,15 @@ using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
+
+// Rollout is explicit: the native full-suite/corpus gate must pass before
+// changing the default. This option is registered in the same linked TU as
+// InsertSync, so ptoas and pto-test-opt use one spelling and implementation.
+static llvm::cl::opt<bool> deferSamePipeRepair(
+    "insert-sync-defer-same-pipe",
+    llvm::cl::desc("Experimental InsertSync: establish cross-pipe handoffs "
+                   "before repairing remaining same-pipe hazards"),
+    llvm::cl::init(false));
 
 // ==============================================================================
 // Main Pass Implementation
@@ -110,7 +120,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // 2. Analyzer: 依赖分析与插入逻辑 Sync
     InsertSyncAnalysis analyzer(syncIR, memAnalyzer, syncOpsStorage, func,
                                 SyncAnalysisMode::NORMALSYNC);
-    analyzer.Run(/*insertBarAllAtLast=*/true);
+    analyzer.Run(/*insertBarAllAtLast=*/true,
+                 /*deferSamePipeRepair=*/deferSamePipeRepair);
 
     dumpInsertSyncPhase("After Analysis", syncIR, syncOpsStorage,
                         func.getOperation());

@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --enable-insert-sync --insert-sync-defer-same-pipe %s -o %t.a2.pto
+// RUN: FileCheck %s --input-file=%t.a2.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --enable-insert-sync --insert-sync-defer-same-pipe %s -o %t.a3.pto
+// RUN: FileCheck %s --input-file=%t.a3.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-defer-same-pipe %s -o %t.cpp
+
+// CHECK-LABEL: func.func @staged_inputs
+// CHECK: scf.for
+// CHECK-NOT: pto.barrier <PIPE_MTE2>
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[A:[0-9]+]]>]
+// CHECK-NOT: pto.barrier <PIPE_MTE2>
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[B:[0-9]+]]>]
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[A]]>]
+// CHECK-NEXT: pto.tabs
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[B]]>]
+// CHECK-NEXT: pto.tabs
+// CHECK: return
+
+module {
+  func.func @staged_inputs(%n: index,
+                          %x: !pto.partition_tensor_view<16x16xf16>,
+                          %y: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %addr1 : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %i = %zero to %n step %one {
+      pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tload ins(%y : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    return
+  }
+}
