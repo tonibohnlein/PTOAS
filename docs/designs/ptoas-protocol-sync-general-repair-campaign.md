@@ -645,6 +645,110 @@ Final validation on 2026-09-06:
 The next implementation scope is selective entry/exit/bypass composition, then
 choices; the campaign and full-corpus objective remain incomplete.
 
+### P4b follow-up — clean native rebaseline and broader seed sample
+
+All runs below used clean implementation commit
+`10cc08cf2325f6fba39a9ab9e869f9414894767f`, unchanged compiler fingerprints,
+patterns disabled, native fallback disabled, and at most two aggregate workers.
+No source or compiler changed while a campaign or concrete/C++ follow-up ran.
+Each acceptance campaign directory records `run.json`, `rows.jsonl`, aggregate `summary.json`,
+per-probe compressed diagnostics, emitted IR and `hashes.json`. Commands and
+toolchain revisions are recorded in `run.json`. Follow-up directories instead
+record input campaign provenance in `provenance.json`, with per-probe records,
+summaries and hashes. An independent read-only compiler review checked the
+counts, sampling rule, extraction split and all hash anchors below and accepted
+this evidence record; no extra build was needed for the documentation update.
+
+The frozen 18-row driver population now gives:
+
+| Target | GM contract | Native | Rejected |
+|---|---|---:|---:|
+| A2 | may-alias | 16 | 2 |
+| A2 | disjoint arguments | 17 | 1 |
+| A3 | may-alias | 16 | 2 |
+| A3 | disjoint arguments | 17 | 1 |
+
+The newly admitted disjoint-mode row is `chunked_add`; the ACC example remains
+rejected in every mode, and `chunked_add` remains rejected in may-alias mode.
+All **132/132** follow-up probes passed: fresh concrete verification and C++
+emission for each admitted row in each configuration. These are compiler/host
+checks, not device execution or performance results.
+
+Run commands used `.venv/bin/python test/experiments/protocol_sync/campaign.py`
+under `taskset -c 0,1`, with `--mode acceptance --workers 2 --expected-rows 18`,
+`--input-root build/protocol-sync-native-corpus/driver-p3b`, its `manifest.tsv`,
+`--patterns off`, each explicit architecture/GM contract, and result directories
+`build/protocol-sync-native-corpus/acceptance-p4b-{arch}-{contract}`. All four
+campaign commands exited zero. `native_followup.py --workers 2` with all four
+`--campaign` paths and `--results .../followup-p4b` exited zero.
+
+To avoid treating that small sample as broad coverage, a second bounded sample
+takes the **first manifest row of each successful static parent seed**, in
+the frozen manifest's order. This produces 213 rows with 186 distinct input
+hashes. It is intentionally not topology-stratified, randomly sampled, or a
+deduplicated/full-corpus denominator. The remaining outputs from those seeds
+and the 136 unsuccessful/draft/adapter-required seeds stay outside this run,
+not outside the campaign's unresolved collection population.
+
+With A3/disjoint arguments, that sample gives **14 admitted, 194 rejected and
+5 pre-ProtocolSync failures**. Of the rejected rows, 104 have reported semantic
+extraction failures and 90 have no reported extraction failure. All five
+pre-pass failures report `pto.tci` requiring explicit temporary storage when
+PlanMemory is skipped. They are preserved as
+`incomplete-or-invocation-error`, not counted as safe planner rejection or
+silently removed. The campaign exits one because of those five rows (ten failed
+acceptance probes: five empty-world and five strict), despite completing all
+213 records. Source
+stability is true; no crash or timeout exit code occurred. All **28/28** concrete
+and C++ follow-up probes for the 14 admitted rows passed.
+
+Overlapping observed blockers include unsupported descriptor state on
+`pto.alloc_tile` in 61 rows, communication `twait` in 35 and `tnotify` in 33,
+unsupported recurring direct repair in 64, and unsupported direct control in
+17. These are exposed diagnostic counts, not a disjoint partition or a promise
+of admissions after each fix. Timeline rejection and empty-world obligation
+counts can also occur in admitted rows; they are not actual uncovered-plan
+hazard counts.
+
+The broader command used the same runner with `--expected-rows 213`,
+`--input-root .../static-p3a`, `--manifest .../static-p3a/first-per-seed-p4b.tsv`,
+`--arch a3 --gm-alias assume-disjoint-arguments --patterns off`, and
+`--results .../acceptance-p4b-first-per-seed-a3-disjoint`. The follow-up directory
+is `.../followup-p4b-first-per-seed`. Here `...` denotes
+`build/protocol-sync-native-corpus` in all paths.
+
+SHA-256 anchors (per-file diagnostic/emission hashes remain in each archive):
+
+| Artifact | SHA-256 |
+|---|---|
+| Driver manifest | `9e1906b6cb091d4487fc5a380c0a17025769ab049b95706b75baba179471b37a` |
+| First-per-seed manifest | `a08791b3255bf7944ac8cf6b0bf2f0168a4718d35666711b930792309613adf2` |
+| A2 may-alias driver rows | `68e06d96230928ba0e6ce408e93dbcfab022b4b17ee3547d637fd4b5aedbe091` |
+| A2 disjoint driver rows | `a3fcdc492fb00ef374c306bd44465be86bd44fb499f7db23adf54a124a4f2189` |
+| A3 may-alias driver rows | `f3c8a975252cafbb276e04d0a1db27717e856196f6081863e4d7265ca978bc68` |
+| A3 disjoint driver rows | `406e6bb5a50429c66529e847d8e6de1c6d62685dc23a72708fb0ef9b005aa3c3` |
+| First-per-seed rows | `cb82ff35ac4e9659837ac7e42e35c676720ed90fd41e7880e49d9f1fc2623b5a` |
+| Driver follow-up summary | `67503132deecd3f6eb593b1e8f30d9ed5611ac5cf45f7b3a9f77f5b2c23a7664` |
+
+### Next boundary proof gate
+
+The algorithm review recommends first/last relevant occurrence handoffs, not
+unconditional outside-loop waits. Even when an entry consumer is first on its
+lane, moving its wait before a zero-trip loop can block unrelated suffix work:
+prefix B is ready, independent prefix A is slow, the body would consume A,
+but the suffix only consumes B. Covering required bypass hazards does not prove
+that this added A-to-suffix order is harmless.
+
+The next slice should preserve the selective recurring body while giving entry,
+exit and bypass separate occurrence relations and initially distinct once-only
+event keys. First/last-iteration guarded actions need independent participation
+and zero-trip verification. Existing canonical shared-atom boundary requirements
+can be reused; the old serialized boundary-edge chain cannot. Post-loop drains
+must not become an indiscriminate completion hub that delays independent suffix
+work. This gate is a design review outcome, **not implemented native boundary
+support**. The full 9,754-output campaign, general choices/nesting, broader
+descriptor provenance and communication/ACC target qualification remain open.
+
 ### Historical N0 progress
 
 - N0 in progress: source heads resolved; added general-only mixed-mode selection
