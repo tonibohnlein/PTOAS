@@ -157,6 +157,44 @@ qualified. Exhausted search budgets are not semantic counterexamples.
 
 ## Progress ledger
 
+### R3b — scope-local descriptor definitions
+
+Direct descriptor allocations can now live in supported `scf.for` and `scf.if`
+blocks, not only the function entry. Every setter remains in its allocation's
+exact block; readers may be nested below it. Opposite choice arms are distinct
+owners even when they have the same parent operation. Forwarded/yielded handles,
+escaping users and outer allocations mutated in inner regions remain outside
+this transfer. Each dynamic invocation initializes a fresh descriptor instance;
+this does not initialize, retire or privatize the physical payload storage.
+
+Dimensions remain bounded constants in this slice. The existing getter terminal
+in scalar-producer tracing therefore retains its nonphysical-provenance contract.
+Dynamic values, particularly physically produced values, cannot be admitted by
+merely attaching a descriptor version. The real `markov_logits` row expression
+`minsi(arg5 - tileIndex, 16)` alone proves no nonnegative lower bound; symbolic
+identity, range evidence and readiness remain separate follow-up requirements.
+
+Selective ordinary-loop synthesis now accepts descriptor summaries only after
+independent live-IR binding verification. It uses full conservative payload
+footprints and unchanged memory/event proofs, not valid-shape metadata as a
+completion edge. The native fixture preserves separate readiness for two loads
+with loop-local allocations and a valid-shape update. Five-domain unit cases
+check pre-update and post-update reads, nested consumers, moved setters,
+allocation-owner changes and opposite-arm readers. Zero-trip and skipped-arm
+execution instantiate no descriptor or token just because the static definition
+exists. General persistent mutable descriptor merges remain unsupported.
+
+Both independent reviewers accepted this constants-only slice. Fresh targeted
+builds/relinks and the focused ProtocolSync suite pass 58/58 in 85.40 seconds
+(`build/protocol-sync-scoped-descriptor-suite.json`); the changed-code prefilter
+checks three files with zero errors/warnings. The patch-frozen 213-row A3/disjoint
+sample remains 14 admitted / 194 rejected / 5 pre-pass failures, with all 28
+concrete/C++ follow-ups passing. Source stability was verified. Allocation-site
+descriptor rejections decrease from 21 to 2 rows, but overlapping setter,
+dimension and synchronization blockers prevent admission gains. Artifacts:
+`build/protocol-sync-native-corpus/acceptance-r3-scoped-static-a3-disjoint/`
+and `followup-r3-scoped-static/`. No device campaign was run.
+
 ### R3a — shared local storage domains
 
 The canonical spatial and outstanding-access analysis now covers VEC, MAT,

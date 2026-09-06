@@ -28,6 +28,9 @@ std::optional<SyncRegionId> mlir::pto::protocol_sync::findIsolatedSyncLoop(
     if (!bounded) {
         return std::nullopt;
     }
+    if (failed(verifySyncDescriptorBindings(schedule))) {
+        return std::nullopt;
+    }
     const SyncRegion* carrier = nullptr;
     for (const SyncRegion& region : schedule.getRegions()) {
         if (region.kind == SyncRegionKind::PhysicalSection) {
@@ -82,11 +85,11 @@ std::optional<SyncRegionId> mlir::pto::protocol_sync::findIsolatedSyncLoop(
         }
     }
     for (const auto& summary : schedule.getSummaries()) {
-        const bool ordinary =
-            summary.provider == SyncSummaryProvider::Pipeline || summary.provider == SyncSummaryProvider::Structural;
+        const bool ordinary = summary.provider == SyncSummaryProvider::Pipeline ||
+                              summary.provider == SyncSummaryProvider::Structural ||
+                              summary.provider == SyncSummaryProvider::Descriptor;
         const bool fixed = allowFixed && isa<SetFlagOp, WaitFlagOp, BarrierOp>(summary.operation);
-        const bool unsupported =
-            (!ordinary && !fixed) || !summary.eventReservations.empty() || summary.queue || summary.descriptor;
+        const bool unsupported = (!ordinary && !fixed) || !summary.eventReservations.empty() || summary.queue;
         if (unsupported) {
             return std::nullopt;
         }

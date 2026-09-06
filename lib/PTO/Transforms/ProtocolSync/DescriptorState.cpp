@@ -52,22 +52,31 @@ bool supportedAllocation(Value handle)
     return type.getRank() == 2 && type.getShape()[0] >= 0 && type.getShape()[1] >= 0;
 }
 
-bool isEntryDefinition(Operation* operation)
+bool isDescriptorScope(Operation* operation)
 {
     if (!operation) {
         return false;
     }
-    auto function = dyn_cast_or_null<func::FuncOp>(operation->getParentOp());
-    return function && operation->getBlock() == &function.getBody().front();
+    for (Operation* parent = operation->getParentOp(); parent; parent = parent->getParentOp()) {
+        if (auto function = dyn_cast<func::FuncOp>(parent)) {
+            return function.getBody().hasOneBlock();
+        }
+        if (!isa_and_nonnull<scf::ForOp, scf::IfOp>(parent)) {
+            return false;
+        }
+    }
+    return false;
 }
 
 bool isStructuredRead(Operation* operation, Operation* allocation)
 {
-    for (Operation* parent = operation->getParentOp(); parent; parent = parent->getParentOp()) {
-        if (parent == allocation->getParentOp()) {
+    for (Operation* current = operation; current; current = current->getParentOp()) {
+        const bool sameBlock = current->getBlock() == allocation->getBlock();
+        if (sameBlock) {
             return true;
         }
-        if (!isa<scf::ForOp, scf::IfOp>(parent)) {
+        Operation* parent = current->getParentOp();
+        if (!isa_and_nonnull<scf::ForOp, scf::IfOp>(parent)) {
             return false;
         }
     }
@@ -111,8 +120,8 @@ bool SyncDescriptorStateBuilder::validateHandle(const SyncSemanticAction& action
         return false;
     }
     Operation* allocation = handle.getDefiningOp();
-    if (!isEntryDefinition(allocation)) {
-        reject(action.operation, "descriptor allocation must execute once in the function entry block");
+    if (!isDescriptorScope(allocation)) {
+        reject(action.operation, "descriptor allocation needs a supported structured lifetime scope");
         return false;
     }
     if (validated.contains(handle)) {
@@ -121,7 +130,7 @@ bool SyncDescriptorStateBuilder::validateHandle(const SyncSemanticAction& action
     for (Operation* user : handle.getUsers()) {
         const bool metadata = isa<SetValidShapeOp, GetValidShapeOp>(user);
         const bool payload = payloadOperations.lookup(user) == 1 && user->getNumResults() == 0;
-        const bool nestedUpdate = isa<SetValidShapeOp>(user) && !isEntryDefinition(user);
+        const bool nestedUpdate = isa<SetValidShapeOp>(user) && user->getBlock() != allocation->getBlock();
         if (nestedUpdate) {
             reject(user, "descriptor updates in choices or loops require version merges");
             return false;
@@ -187,8 +196,9 @@ LogicalResult SyncDescriptorStateBuilder::build()
             invalid.insert(descriptor->handle);
         }
     }
-    // Definitions execute once in the entry block. Nested reads preserve the
-    // incoming version, including zero-trip loops and either choice arm.
+    // Definitions execute in the allocation's block. Each dynamic invocation
+    // of that scope initializes its own descriptor; handles cannot escape.
+    // Nested reads preserve that version and empty regions do no transfer.
     for (const SyncProgramPoint& point : schedule.points) {
         if (point.kind == SyncProgramPointKind::SemanticActionBefore) {
             transfer(schedule.semanticActions[point.action]);
@@ -221,20 +231,22 @@ LogicalResult verifySyncDescriptorBindings(const StructuredSyncIR& schedule)
     const auto states = schedule.getDescriptorStates();
     DominanceInfo dominance(schedule.getFunction());
     // Validate the live IR, not cached program-point order or guard metadata.
-    // In particular, moving an update into a loop cannot preserve a certificate.
+    // Moving an update away from its allocation's block cannot preserve a
+    // certificate. Scope-local descriptors do not carry state across invocations.
     for (const SyncDescriptorState& state : states) {
         if (!state.handle) {
             return failure();
         }
         const auto* definition = schedule.findSemanticAction(state.definition);
         Operation* allocation = state.handle.getDefiningOp();
-        const bool invalidDefinition = !definition || !supportedAllocation(state.handle) ||
-                                       !isEntryDefinition(allocation) || !isEntryDefinition(definition->operation);
+        const bool invalidDefinition = !definition || !definition->operation || !supportedAllocation(state.handle) ||
+                                       !isDescriptorScope(allocation) ||
+                                       definition->operation->getBlock() != allocation->getBlock();
         if (invalidDefinition) {
             return failure();
         }
         for (Operation* user : state.handle.getUsers()) {
-            const bool misplacedUpdate = isa<SetValidShapeOp>(user) && !isEntryDefinition(user);
+            const bool misplacedUpdate = isa<SetValidShapeOp>(user) && user->getBlock() != allocation->getBlock();
             if (misplacedUpdate || !isStructuredRead(user, allocation)) {
                 return failure();
             }

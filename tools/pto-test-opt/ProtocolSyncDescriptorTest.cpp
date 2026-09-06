@@ -378,9 +378,98 @@ bool testDescriptorDomains(MLIRContext& context)
     return true;
 }
 
+bool testScopedDefinitions(MLIRContext& context)
+{
+    for (StringRef space : {"vec", "mat", "left", "right", "acc"}) {
+        for (bool choice : {false, true}) {
+            const std::string layout =
+                space == "vec" ? "blayout=row_major, slayout=none_box" : "blayout=col_major, slayout=row_major";
+            const std::string source = "!tile = !pto.tile_buf<loc=" + space.str() +
+                                       ", dtype=f16, rows=16, cols=16, v_row=?, v_col=?, " + layout +
+                                       R"mlir(, fractal=512, pad=0>
+                module {
+                  func.func @scoped(%n: index, %b: i1) {
+                    %c0 = arith.constant 0 : index
+                    %c1 = arith.constant 1 : index
+                    %c16 = arith.constant 16 : index
+                    scf.for %i = %c0 to %n step %c1 {
+                )mlir" + (choice ? "scf.if %b {\n" : "") +
+                                       R"mlir(
+                      %a = pto.alloc_tile valid_row = %c16 valid_col = %c16 : !tile
+                      %before_r, %before_c = pto.get_validshape %a : !tile
+                      pto.set_validshape %a, %c1, %c16 : !tile
+                      scf.if %b {
+                        %after_r, %after_c = pto.get_validshape %a : !tile
+                      }
+                )mlir" + (choice ? "} else {}\n" : "") +
+                                       "}\nreturn } }";
+            auto module = parseSourceString<ModuleOp>(source, &context);
+            auto schedule = module ? extract(*module) : nullptr;
+            const bool valid =
+                schedule && schedule->getFailures().empty() && succeeded(verifySyncDescriptorBindings(*schedule));
+            if (!check(valid, "scope-local descriptor initialization and update")) {
+                return false;
+            }
+            unsigned reads = 0;
+            SetValidShapeOp update;
+            GetValidShapeOp before;
+            for (const auto& action : schedule->getSemanticActions()) {
+                if (auto read = dyn_cast<GetValidShapeOp>(action.operation)) {
+                    const auto& state = schedule->getDescriptorStates()[*action.descriptorState];
+                    if (!check(state.rows == (reads == 0 ? 16 : 1), "fresh initialization then scoped update")) {
+                        return false;
+                    }
+                    if (reads == 0) {
+                        before = read;
+                    }
+                    ++reads;
+                }
+                if (auto candidate = dyn_cast<SetValidShapeOp>(action.operation)) {
+                    update = candidate;
+                }
+            }
+            if (!check(reads == 2 && update && before, "both scoped observations present")) {
+                return false;
+            }
+            Operation* next = update->getNextNode();
+            update->moveBefore(before);
+            const bool staleRejected = failed(verifySyncDescriptorBindings(*schedule));
+            update->moveBefore(next);
+            if (!check(staleRejected && succeeded(verifySyncDescriptorBindings(*schedule)), "scoped order mutation")) {
+                return false;
+            }
+            auto allocation = schedule->getDescriptorStates().front().handle.getDefiningOp();
+            Operation* allocationNext = allocation->getNextNode();
+            auto loop = *schedule->getFunction().getOps<scf::ForOp>().begin();
+            allocation->moveBefore(loop);
+            const bool ownerRejected = failed(verifySyncDescriptorBindings(*schedule));
+            allocation->moveBefore(allocationNext);
+            if (!check(ownerRejected, "moving allocation must invalidate owner-bound updates")) {
+                return false;
+            }
+            if (choice) {
+                auto branch = cast<scf::IfOp>(allocation->getParentOp());
+                Operation* readNext = before->getNextNode();
+                before->moveBefore(branch.elseBlock()->getTerminator());
+                const bool oppositeRejected = failed(verifySyncDescriptorBindings(*schedule));
+                before->moveBefore(readNext);
+                if (!check(oppositeRejected, "opposite arms are not the same owner block")) {
+                    return false;
+                }
+            }
+            if (!check(succeeded(verifySyncDescriptorBindings(*schedule)), "restored descriptor scope")) {
+                return false;
+            }
+        }
+    }
+    llvm::outs() << "protocol-sync scoped descriptor definitions: five domains and order mutations pass\n";
+    return true;
+}
+
 } // namespace
 
 bool testProtocolSyncDescriptorState(MLIRContext& context)
 {
-    return testVersions(context) && testRejected(context) && testNestedReads(context) && testDescriptorDomains(context);
+    return testVersions(context) && testRejected(context) && testNestedReads(context) &&
+           testDescriptorDomains(context) && testScopedDefinitions(context);
 }

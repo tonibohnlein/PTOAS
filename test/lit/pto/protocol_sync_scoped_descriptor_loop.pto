@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a3.pto
+// RUN: FileCheck %s --input-file=%t.a3.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=may-alias %s -o %t.a2.pto
+// RUN: FileCheck %s --input-file=%t.a2.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.disjoint.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail --protocol-sync-gm-alias=assume-disjoint-arguments %s -o %t.disjoint.a2.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a3.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFY
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --emit-pto-ir --protocol-sync-analysis-only --protocol-sync-dump=concrete-verification %t.a2.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VERIFY
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --protocol-sync-mixed --protocol-sync-patterns=off --protocol-sync-fallback=fail %s -o %t.cpp
+// VERIFY: concrete-verification function=@scoped_descriptor_loop status=accepted
+// CHECK-LABEL: func.func @scoped_descriptor_loop
+// CHECK: scf.for
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: pto.set_validshape
+// CHECK: pto.tadds
+// CHECK: pto.tabs
+// CHECK: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: return
+
+!tile = !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=?, v_col=?,
+                     blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @scoped_descriptor_loop(%n: index,
+      %x: !pto.partition_tensor_view<16x16xf16>, %y: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %eight = arith.constant 8 : index
+    %sixteen = arith.constant 16 : index
+    %scalar = arith.constant 1.0 : f16
+    %base = arith.constant 0 : i64
+    %other = arith.constant 512 : i64
+    scf.for %i = %zero to %n step %one {
+      %a = pto.alloc_tile addr = %base valid_row = %sixteen valid_col = %sixteen : !tile
+      %b = pto.alloc_tile addr = %other valid_row = %sixteen valid_col = %sixteen : !tile
+      pto.tload ins(%x : !pto.partition_tensor_view<16x16xf16>) outs(%a : !tile)
+      pto.tload ins(%y : !pto.partition_tensor_view<16x16xf16>) outs(%b : !tile)
+      pto.set_validshape %a, %eight, %sixteen : !tile
+      pto.tadds ins(%a, %scalar : !tile, f16) outs(%a : !tile)
+      pto.tabs ins(%b : !tile) outs(%b : !tile)
+    }
+    return
+  }
+}
