@@ -517,6 +517,62 @@ it. Initial focused lit failures were an invalid pass-level option spelling,
 not failed native emission. Changed-code prefilter: 13 code/build files,
 zero errors/warnings; `git diff --check` passed. No full system/device suite ran.
 
+### P4a — selective recurring event-lifetime proof foundation
+
+The next native loop target is the frozen driver's `chunked_add`: two independent
+MTE2 loads, a V read/read/write join, and an MTE3 store. Its actual local hazards
+provide forward readiness plus store-to-next-load and vector-to-next-load
+reclamation. They do not require a load-to-load completion barrier. Native
+selection/materialization and concrete memory verification are still pending;
+this foundation does not enable the old serialized loop alternative.
+
+`RecurringEventLifetime` checks a closed unconditional event-action schedule,
+with one set/wait per logical channel per iteration and distance zero or one.
+Same-lane action order carries distance zero, lane wrap carries distance one,
+and set-to-wait causality carries the channel's declared distance. These are
+event-action edges, never implicit completion of physical accesses.
+
+The proof rejects zero-distance cycles. For a distance-d channel it requires a
+path from its consuming wait to the next set of exactly distance 1-d. Zero
+closure plus at most one carried edge answers that query without bounded
+unrolling. Nonnegative causal distances and the acyclic zero-distance graph
+establish progress; consumption-before-rearm preserves the one-token invariant.
+Distance-one channels require a source-lane prime before the body and a
+destination-lane drain afterward, including the zero-trip path. Distance-zero
+channels start and end empty. The caller must independently reconstruct these
+boundaries, complete participation and action ordering, unique concrete keys,
+and target legality. All lanes need equal trip counts and no unmodeled blocking
+operations. Eventual physical completion remains a target assumption.
+
+This API alone certifies neither memory coverage nor visibility, and does not
+allow different channels to share IDs. It currently has no production caller.
+An immutable 64-channel budget returns `AnalysisLimit`, never a safety proof or
+resource-scarcity certificate.
+
+The independent test interpreter executes binary tokens and enumerates lane
+interleavings rather than using the production closure. Tests cover the
+five-channel selective fork/join at zero, one, two, three, four and seven trips;
+384 two-channel order encodings (64 distinct direction/distance/lane-order
+configurations); and explicit deadlock, missing acknowledgement, initial-credit
+rearm, wrong-distance, missing boundary and ambiguous-position failures.
+Bounded tests support the regression claim, not the arbitrary-trip proof.
+
+Algorithm and compiler reviewers accepted this foundation. The targeted
+`cmake --build build --parallel 2 --target pto-protocol-sync-direct-repair-test`
+build passed; no existing production caller was changed. On 2026-09-06 the
+configured lit invocation (`-v -j1`, filter `protocol_sync_direct_repair_unit`)
+passed, 0.07 s, including the existing direct-repair and overlap checks plus
+the new token oracle. Valid 64-channel and invalid 65-channel inputs, same-lane
+channels and unsupported distances are tested explicitly. The changed-code
+prefilter checked six code/build files with zero errors or warnings, and
+`git diff --check` passed. No full suite, native corpus or device run is claimed
+for this proof-only slice. Results: `build/protocol-sync-p4a-lit.json`.
+
+The first native acceptance expectation is the declared disjoint-GM contract.
+In safe GM mode, possible output/input aliasing across iterations can require
+publication that these completion events do not qualify. That remains an
+explicit blocker, not permission to waive the visibility obligation.
+
 ### Historical N0 progress
 
 - N0 in progress: source heads resolved; added general-only mixed-mode selection

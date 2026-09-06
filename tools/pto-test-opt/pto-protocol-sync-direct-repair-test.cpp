@@ -36,6 +36,8 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::protocol_sync;
 
+bool testProtocolSyncRecurringEvents();
+
 bool checkIndependentReadinessInterleavings(
     const StructuredSyncIR& schedule, SyncPhaseId first, SyncPhaseId second, bool& overlapWitness);
 bool checkStructuredFrontierInterleavings(
@@ -877,6 +879,7 @@ int main()
     passed &= testModuleAtomicity(context);
     passed &= testAcknowledgedEventReuse(context);
     passed &= testEventLoopAncestry(context);
+    passed &= testProtocolSyncRecurringEvents();
     if (passed) {
         llvm::outs() << "protocol-sync direct independent readiness and overlap witness: pass\n";
         llvm::outs() << "protocol-sync direct full-world interpretation: pass\n";

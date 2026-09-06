@@ -9,7 +9,8 @@
 // for the full text of the License.
 // RUN: pto-protocol-sync-direct-repair-test | FileCheck %s
 
-// CHECK: protocol-sync direct independent readiness and overlap witness: pass
+// CHECK: protocol-sync recurring event induction: fork/join and 384 token encodings pass
+// CHECK-NEXT: protocol-sync direct independent readiness and overlap witness: pass
 // CHECK-NEXT: protocol-sync direct full-world interpretation: pass
 // CHECK-NEXT: protocol-sync direct verifier rollback: pass
 // CHECK-NEXT: protocol-sync direct recurrence rejection: pass
