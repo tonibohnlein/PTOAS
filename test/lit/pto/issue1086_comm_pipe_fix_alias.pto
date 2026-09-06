@@ -1,3 +1,8 @@
+// InsertSync intentionally rejects this unmodeled queue/resource contract.
+// Plain lowering remains tested; it is not synchronization verification.
+// The prior synchronization placement expectations are retained in df89ee02c.
+// Restoring admission requires a resource/ownership summary, not a whitelist.
+// REJECT: InsertSync unsupported effect: write has no translated storage/pipeline summary
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
 // This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 // CANN Open Software License Agreement Version 2.0 (the "License").
@@ -6,7 +11,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s --implicit-check-not='#define PIPE_FIX' --implicit-check-not='pto/comm/pto_comm_inst.hpp'
+// RUN: ptoas --pto-arch=a3 %s -o - 2>&1 | FileCheck %s --implicit-check-not='#define PIPE_FIX' --implicit-check-not='pto/comm/pto_comm_inst.hpp'
+// RUN: not ptoas --pto-arch=a3 --enable-insert-sync %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
 
 // Regression for issue #1086: pto-inst.hpp exposes communication instructions
 // only in supported PTO compilation phases. Do not bypass that boundary with
@@ -62,6 +68,4 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-LABEL: AICORE void comm_then_fixpipe_store(
 // CHECK: pto::comm::TWAIT(
 // CHECK: TMATMUL(
-// CHECK-NEXT: set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
-// CHECK: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
-// CHECK-NEXT: TSTORE(
+// CHECK: TSTORE(

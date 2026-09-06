@@ -21,6 +21,7 @@
 #include "PTO/Transforms/BufferizableOpInterfaceImpl.h"
 #include "PTO/Transforms/CppPostprocess.h"
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
 #include "VPTOHostStubEmission.h"
 #include "mlir/AsmParser/AsmParserState.h"
@@ -670,6 +671,15 @@ static SmallVector<func::FuncOp> collectSharedPipelineFunctions(ModuleOp module)
   return functions;
 }
 
+static InsertSyncOptions makeInsertSyncOptions()
+{
+    InsertSyncOptions options;
+    options.deferSamePipe = insertSyncDeferSamePipe;
+    options.gmAlias = insertSyncGMAlias;
+    options.audit = insertSyncAudit;
+    return options;
+}
+
 struct SerialAutoSyncPass
     : public PassWrapper<SerialAutoSyncPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SerialAutoSyncPass)
@@ -683,8 +693,8 @@ struct SerialAutoSyncPass
     OpPassManager functionPM(func::FuncOp::getOperationName());
     switch (mode) {
     case Mode::InsertSync:
-      functionPM.addPass(pto::createPTOInsertSyncPass());
-      break;
+        functionPM.addPass(pto::createPTOInsertSyncPass(makeInsertSyncOptions()));
+        break;
     case Mode::Bufid: {
       PTOBufidSyncOptions options;
       options.enableBufidSyncDebug = enableBufidDebug;
@@ -1390,7 +1400,7 @@ static void appendAutoSyncPasses(PassManager &pm) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::InsertSync, false));
     } else {
-      pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
+        pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass(makeInsertSyncOptions()));
     }
   }
   else if (enableBufidSync) {

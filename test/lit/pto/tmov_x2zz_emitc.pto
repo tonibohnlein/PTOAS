@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %s 2>&1 | FileCheck %s
 // RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync --emit-pto-ir \
 // RUN:   --mlir-print-ir-after=pto-insert-sync %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=EFFECT
@@ -53,13 +53,19 @@ module {
 
   func.func @dn_x2zz_tmp_none_source_read_control(
       %tmp_input: !pto.partition_tensor_view<1x1x!pto.f8E8M0>,
-      %src_sink: !pto.partition_tensor_view<2x16x!pto.f8E8M0>,
-      %src: !pto.tile_buf<vec, 2x16x!pto.f8E8M0>,
-      %tmp: !pto.tile_buf<vec, 1x1x!pto.f8E8M0>,
-      %dst: !pto.tile_buf<vec, 2x16x!pto.f8E8M0, slayout=row_major>) {
+      %src_sink: !pto.partition_tensor_view<2x32x!pto.f8E8M0>) {
+    // Negative effect assertions require physically disjoint local buffers.
+    %zero = arith.constant 0 : index
+    %c0 = arith.constant 0 : i64
+    %c4096 = arith.constant 4096 : i64
+    %c8192 = arith.constant 8192 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 2x32x!pto.f8E8M0>
+    %tmp_backing = pto.alloc_tile addr = %c4096 : !pto.tile_buf<vec, 1x32x!pto.f8E8M0>
+    %tmp = pto.subview %tmp_backing[%zero, %zero] sizes [1, 1] : !pto.tile_buf<vec, 1x32x!pto.f8E8M0> -> !pto.tile_buf<vec, 1x1x!pto.f8E8M0>
+    %dst = pto.alloc_tile addr = %c8192 : !pto.tile_buf<vec, 16x32x!pto.f8E8M0, valid=2x32, slayout=row_major>
     pto.tload ins(%tmp_input : !pto.partition_tensor_view<1x1x!pto.f8E8M0>) outs(%tmp : !pto.tile_buf<vec, 1x1x!pto.f8E8M0>)
-    pto.tmov ins(%src : !pto.tile_buf<vec, 2x16x!pto.f8E8M0>, %tmp : !pto.tile_buf<vec, 1x1x!pto.f8E8M0>) outs(%dst : !pto.tile_buf<vec, 2x16x!pto.f8E8M0, slayout=row_major>) {grpAxis = #pto<mx_group_axis axis0>}
-    pto.tstore ins(%src : !pto.tile_buf<vec, 2x16x!pto.f8E8M0>) outs(%src_sink : !pto.partition_tensor_view<2x16x!pto.f8E8M0>)
+    pto.tmov ins(%src : !pto.tile_buf<vec, 2x32x!pto.f8E8M0>, %tmp : !pto.tile_buf<vec, 1x1x!pto.f8E8M0>) outs(%dst : !pto.tile_buf<vec, 16x32x!pto.f8E8M0, valid=2x32, slayout=row_major>) {grpAxis = #pto<mx_group_axis axis0>}
+    pto.tstore ins(%src : !pto.tile_buf<vec, 2x32x!pto.f8E8M0>) outs(%src_sink : !pto.partition_tensor_view<2x32x!pto.f8E8M0>)
     return
   }
 }

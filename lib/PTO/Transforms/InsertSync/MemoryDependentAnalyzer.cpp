@@ -277,6 +277,11 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   // byte ranges overlap. Re-derive the absolute address and check overlap so
   // a cross-pipe hazard (e.g. MTE3 tstore vs a V-pipe write into an
   // overlapping region) is not silently dropped (issue #934).
+  if (gmFunction && (!hasKnownLocalAbsoluteAddress(a) || !hasKnownLocalAbsoluteAddress(b))) {
+      // In the contract-aware InsertSync path, unknown addresses cannot prove
+      // independent physical storage merely because their handles differ.
+      return true;
+  }
   bool crossRootOverlap = isLocalBufferOverlapCrossRoot(a, b);
   if (isTraceEnabled()) {
     llvm::errs() << "      -> Cross-root overlap check: "
@@ -287,6 +292,13 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
  
 bool MemoryDependentAnalyzer::isGMBufferOverlap(const BaseMemInfo *a,
                                                 const BaseMemInfo *b) {
+    if (gmFunction && a->rootBuffer != b->rootBuffer) {
+        // Offsets relative to unrelated bases cannot prove physical disjointness.
+        // The caller promise applies only to fully traced, nonintersecting sets of
+        // function arguments, never arbitrary unequal SSA values.
+        return gmMode != InsertSyncGMAliasMode::DisjointArguments ||
+               !disjointInsertSyncGMRoots(gmFunction, a->rootBuffer, b->rootBuffer);
+    }
   if (a->baseAddresses.empty() || b->baseAddresses.empty()) {
     return true;
   }

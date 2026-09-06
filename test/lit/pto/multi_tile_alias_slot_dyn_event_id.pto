@@ -6,7 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --enable-insert-sync --mlir-print-ir-after=pto-insert-sync \
+// This placement fixture promises disjoint GM arguments explicitly.
+// RUN: ptoas --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --mlir-print-ir-after=pto-insert-sync \
 // RUN:   %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=INSERT
 
 // The producer/consumer slots are hidden behind tile alias ops. The sync

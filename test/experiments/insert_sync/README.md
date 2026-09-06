@@ -61,9 +61,9 @@ invocations. It uses a separate execution directory, allowing one serial run
 per mode without temporary-file collisions. Two earlier runs shared a directory
 and are invalid evidence; use only the subsequent isolated runs.
 
-## Contract-aware dependency and checking work (subsequent patch)
+## Contract-aware dependency and independent local checking (R2–R3)
 
-The next patch introduces:
+This checkpoint introduces:
 
 - `--insert-sync-gm-alias=may-alias|assume-disjoint-arguments` and the equivalent
   `pto.gm_alias` function attribute. Without either, different arguments may
@@ -90,13 +90,79 @@ Their exclusion is not evidence of correctness or failure. Conservative-footprin
 overlap without supply is reported as uncovered, not as a device-race witness.
 
 The supported-domain mutations remove waits, remove a signal from one branch,
-and remove terminal completion. Further event-rearm and structured-loop gates
-must be established before calling the full independent checker complete.
+remove terminal completion, remove a zero-trip WAW barrier, and remove the
+acknowledgement protecting reuse of a still-live event key. The last mutation
+retains the two independent memory handoffs: it tests event lifetime separately
+from memory coverage. Symbolic-loop induction and wider target/resource
+contracts remain required before calling the full checker complete.
+
+### Regression changes are not admission parity
+
+The stricter effect check intentionally rejects eight formerly accepted lit
+inputs: issue1086, issue1251, issue481, issue489, issue564, issue622, the queue
+frontend fixture, and the format-two merge-sort fixture. Seven contain
+communication/queue state without a complete InsertSync ownership/resource
+summary. Merge-sort writes an executed-count vector that is not represented by
+the payload-only translator. The new checks assert those errors; they do not
+assert that those kernels are invalid.
+
+Plain C++/IR lowering of these original bodies is still tested separately.
+Old synchronization expectations for the queue-dependent regressions are
+available at baseline commit `df89ee02c`. They must be restored with actual
+contracts, not by treating an unmodeled resource as irrelevant. Passing these
+negative tests must not be counted as successful autosynchronization.
+
+Placement fixtures that relied on disjoint GM arguments now declare that
+contract. Quantization and TMOV negative-effect controls now use explicitly
+disjoint physical local allocations rather than implicitly disjoint tile
+arguments. Their absence-of-extra-sync assertions remain enabled.
+
+Outlined PTODSL compute helpers use their materialized section and complete
+atomic helper ABI; caller effects remain checked. Their raw instruction bodies
+are not silently treated as ordinary high-level tile operations. Local auditing
+of that wider instruction domain remains unsupported.
+
+### Frozen corpus checkpoint
+
+The A3 staged traversal, with either GM contract, is measured on the same
+213-row/186-unique-input population, not the full generated collection.
+The final native library fingerprint is
+`879c0705280ced29a0dd43617d3fab6e7b5b0d0419051921ef7cabc8bf2c3ab3`.
+Each GM mode compiles **165/213** to both PTO IR and C++, with analysis and
+allocation executed for all 165. **43** additional rows now fail the semantic
+contract gate; the original **5** pre-InsertSync temporary failures remain.
+This is an explicit admission loss from R1's 208/213, not a coverage gain.
+
+For those 165 outputs the independent checker reports **9 verified-local**
+and **156 unsupported**, with no uncovered/invalid-token verdict in its
+supported domain. Nine local verdicts are not nine fully hardware-qualified
+kernels: GM publication and device execution are not checked.
+
+Both combined and staged broad InsertSync lit selections pass **141/141**.
+This includes the eight newly explicit unsupported-contract expectations
+described above; it must not be presented as 141 accepted native kernels.
+The original, unchanged `add_rank` corpus body also passes A3 strict local
+checking and a missing-wait mutation, plus A2 C++ emission. The full system and
+device suites were not run. Builds were targeted at `PTOASCompiler` and
+`pto-test-opt`, with at most two total workers.
+
+The changed-code compliance scan reports a license finding in uncommitted
+workspace-owned `env.sh` and 37 brace-pattern findings. The latter were
+inspected: all corresponding control bodies have braces; the line-only regex
+misparses conditions containing calls, templates, or multiline expressions.
+Neither the unrelated environment file nor the checker was changed to suppress
+these findings. Scoped `git diff --check` passes.
+
+Artifacts are under `insertsync-builds/campaign/213/r2-final-may` and
+`r2-final-disjoint`; each row preserves source hash, commands, errors, emitted
+IR/C++, actual pass participation, and local verdict. The two earlier
+`r2-staged-*-native` snapshots are separate measurements. Directories lacking
+the `-native` suffix from the initial failed runner invocation are invalid
+evidence.
 
 ## Remaining acceptance work
 
-Finish native validation of the contract/checker patch, then replace boundary
-motion using actual corpus witnesses. Preserve publications after their required
+Replace boundary motion using actual corpus witnesses. Preserve publications after their required
 source and acquisitions at executing consumers, with explicit bypass/token
 handling. Finally harden deletion/allocation with completion and consumption-
 before-rearm proofs. Additional serialization belongs only to attributed finite-

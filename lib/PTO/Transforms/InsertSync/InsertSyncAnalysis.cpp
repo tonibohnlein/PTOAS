@@ -21,6 +21,7 @@
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
+#include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/SlotAffineAnalysis.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -480,9 +481,9 @@ void InsertSyncAnalysis::InsertSync(
 // the dep is kept and the existing conservative path runs.
 static bool isForwardDepDroppableBySlotAffine(const BaseMemInfo *a,
                                               const BaseMemInfo *b) {
-  if (!a || !b) {
-    return false;
-  }
+    if (!haveCompatibleInsertSyncSlots(a, b)) {
+        return false;
+    }
   size_t aN = a->baseAddresses.size();
   size_t bN = b->baseAddresses.size();
   size_t n = std::max(aN, bN);
@@ -902,40 +903,34 @@ SmallVector<Value> InsertSyncAnalysis::GetMemInfoBuffers(
 
 int InsertSyncAnalysis::GetEventIdNum(
     const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
-  // A back-edge dependency benefits from N dynamic event IDs whenever at
-  // least one side is a multi-buffer access. We detect that from the
-  // BaseMemInfo's `baseAddresses` size, which the translator and alias
-  // propagation keep aligned with the represented slot set:
-  //   - kSingle / const-slot              : size == 1
-  //   - dyn-slot (PTOIRTranslator default) : size == N (all slots, conservative)
-  // For the alias to even reach this point both sides share a root, so the
-  // slot count derived from either side's full address set should be the
-  // same N. We pick the max to be robust against accidental narrowing.
-  int eventIdNum = 1;
-  for (const auto &pair : depBaseMemInfosVec) {
-    bool isLocalA =
-        pair.first && (pair.first->scope == pto::AddressSpace::MAT ||
-                       pair.first->scope == pto::AddressSpace::VEC);
-    bool isLocalB =
-        pair.second && (pair.second->scope == pto::AddressSpace::MAT ||
-                        pair.second->scope == pto::AddressSpace::VEC);
-    if (!isLocalA && !isLocalB) {
-      continue;
-    }
-    size_t aN = pair.first ? pair.first->baseAddresses.size() : 1;
-    size_t bN = pair.second ? pair.second->baseAddresses.size() : 1;
-    int pairN = static_cast<int>(std::max(aN, bN));
-    if (pairN <= 1) {
-      continue;
-    }
-    if (eventIdNum == 1) {
-      eventIdNum = pairN;
-    } else if (eventIdNum != pairN) {
-      // Multiple dep pairs disagreeing on N: fall back to single event id
-      // for safety. With more work this could be relaxed by per-pair
-      // multi-buffer reasoning.
-      return 1;
-    }
+    // Dynamic event selectors must denote the same physical slot partition.
+    // Cross-root aliases can reach this point; equal capacity is not a proof.
+    int eventIdNum = 1;
+    for (const auto& pair : depBaseMemInfosVec) {
+        bool isLocalA =
+            pair.first && (pair.first->scope == pto::AddressSpace::MAT || pair.first->scope == pto::AddressSpace::VEC);
+        bool isLocalB = pair.second &&
+                        (pair.second->scope == pto::AddressSpace::MAT || pair.second->scope == pto::AddressSpace::VEC);
+        if (!isLocalA && !isLocalB) {
+            continue;
+        }
+        size_t aN = pair.first ? pair.first->baseAddresses.size() : 1;
+        size_t bN = pair.second ? pair.second->baseAddresses.size() : 1;
+        int pairN = static_cast<int>(std::max(aN, bN));
+        if (pairN <= 1) {
+            continue;
+        }
+        if (!haveCompatibleInsertSyncSlots(pair.first, pair.second)) {
+            return 1;
+        }
+        if (eventIdNum == 1) {
+            eventIdNum = pairN;
+        } else if (eventIdNum != pairN) {
+            // Multiple dep pairs disagreeing on N: fall back to single event id
+            // for safety. With more work this could be relaxed by per-pair
+            // multi-buffer reasoning.
+            return 1;
+        }
   }
   return eventIdNum;
 }

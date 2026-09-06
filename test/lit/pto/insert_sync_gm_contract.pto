@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-sync="gm-alias=may-alias" %s | FileCheck %s --check-prefix=MAY
+// RUN: pto-test-opt --pto-insert-sync="gm-alias=assume-disjoint-arguments" %s | FileCheck %s --check-prefix=DISJOINT
+// RUN: not pto-test-opt --pto-insert-sync="gm-alias=invalid" %s 2>&1 | FileCheck %s --check-prefix=INVALID
+// INVALID: GM mode must be may-alias or assume-disjoint-arguments
+//
+// The store's GM destination may be the following load's source. Unequal
+// function arguments do not themselves establish noalias.
+// MAY-LABEL: func.func @gm_contract
+// MAY: pto.tstore
+// MAY: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>
+// MAY: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>
+// MAY: pto.tload
+// DISJOINT-LABEL: func.func @gm_contract
+// DISJOINT: pto.tstore
+// DISJOINT-NOT: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>
+// DISJOINT-NOT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>
+// DISJOINT: pto.tload
+module attributes {pto.target_arch = "a3"} {
+  func.func @gm_contract(%out: !pto.partition_tensor_view<16x16xf16>,
+                         %input: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %offset = arith.constant 512 : i64
+    %source = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+    %target = pto.alloc_tile addr = %offset : !pto.tile_buf<vec, 16x16xf16>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%target : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}

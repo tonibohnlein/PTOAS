@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-audit-insert-sync %s 2>&1 | FileCheck %s --check-prefix=GOOD
+// RUN: sed '/ACKNOWLEDGEMENT/d' %s | not pto-test-opt --pto-audit-insert-sync 2>&1 | FileCheck %s --check-prefix=BAD
+// GOOD: InsertSync audit: verified-local
+// BAD: InsertSync audit: invalid-token: event consumption before rearm is unproved
+//
+// The two dataflows use disjoint storage. Removing the reverse handoff leaves
+// their RAW requirements covered, but makes reuse of ready event zero unsafe.
+// Lexically seeing the first wait does not prove that V consumed it before
+// MTE2 rearms the key.
+module attributes {pto.target_arch = "a3"} {
+  func.func @acknowledged_key_reuse(%input: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %p0 = arith.constant 0 : i64
+    %p1 = arith.constant 512 : i64
+    %p2 = arith.constant 1024 : i64
+    %p3 = arith.constant 1536 : i64
+    %a = pto.alloc_tile addr = %p0 : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %p1 : !pto.tile_buf<vec, 16x16xf16>
+    %c = pto.alloc_tile addr = %p2 : !pto.tile_buf<vec, 16x16xf16>
+    %d = pto.alloc_tile addr = %p3 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>] // ACKNOWLEDGEMENT
+    pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>] // ACKNOWLEDGEMENT
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%c : !pto.tile_buf<vec, 16x16xf16>)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.tabs ins(%c : !pto.tile_buf<vec, 16x16xf16>) outs(%d : !pto.tile_buf<vec, 16x16xf16>)
+    pto.barrier <PIPE_ALL>
+    return
+  }
+}

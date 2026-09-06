@@ -1,34 +1,18 @@
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s | FileCheck %s
+// InsertSync intentionally rejects this unmodeled queue/resource contract.
+// Plain lowering remains tested; it is not synchronization verification.
+// The prior synchronization placement expectations are retained in df89ee02c.
+// Restoring admission requires a resource/ownership summary, not a whitelist.
+// REJECT: InsertSync unsupported effect: read has no translated storage/pipeline summary
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 %s | FileCheck %s --check-prefix=NATIVE
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
+// NATIVE: TMATMUL_ACC(
+// NATIVE: TPUSH
 //
 // Regression guard for issue #564:
 // - The K-loop must keep the MTE1/MTE2 waits in front of each TLOAD.
 // - TPUSH must still be preceded by the PIPE_M / PIPE_FIX handshake and the
 //   tail must drain the outstanding events before return.
 //
-// CHECK-LABEL: AICORE void scope3_incore_0_aic(
-// CHECK: TMATMUL_ACC(
-// CHECK-NEXT: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID[[CARRY:[0-9]+]]);
-// CHECK-NEXT: wait_flag(PIPE_MTE1, PIPE_MTE2, EVENT_ID[[PRE0:[0-9]+]]);
-// CHECK-NEXT: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID[[CARRY]]);
-// CHECK-NEXT: for (int64_t
-// CHECK: wait_flag(PIPE_MTE1, PIPE_MTE2, EVENT_ID[[LOAD0:[0-9]+]]);
-// CHECK-NEXT: TLOAD(
-// CHECK: wait_flag(PIPE_MTE1, PIPE_MTE2, EVENT_ID[[LOAD1:[0-9]+]]);
-// CHECK-NEXT: TLOAD(
-// CHECK: wait_flag(PIPE_MTE1, PIPE_MTE2, EVENT_ID[[LOAD2:[0-9]+]]);
-// CHECK-NEXT: TLOAD(
-// CHECK: wait_flag(PIPE_MTE1, PIPE_MTE2, EVENT_ID[[LOAD3:[0-9]+]]);
-// CHECK-NEXT: TLOAD(
-// CHECK: set_flag(PIPE_M, PIPE_FIX, EVENT_ID[[PUSH:[0-9]+]]);
-// CHECK-NEXT: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID[[POST:[0-9]+]]);
-// CHECK-NEXT: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID[[PUSH]]);
-// CHECK-NEXT: TPUSH
-// CHECK: wait_flag(PIPE_MTE1, PIPE_MTE2, EVENT_ID[[LOAD0]]);
-// CHECK: wait_flag(PIPE_MTE1, PIPE_MTE2, EVENT_ID[[LOAD1]]);
-// CHECK: wait_flag(PIPE_MTE1, PIPE_MTE2, EVENT_ID[[LOAD2]]);
-// CHECK: wait_flag(PIPE_MTE1, PIPE_MTE2, EVENT_ID[[LOAD3]]);
-// CHECK: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
-// CHECK-NEXT: return;
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @scope3_incore_0_aic(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<bf16>, %arg2: !pto.ptr<bf16>, %arg3: !pto.ptr<bf16>, %arg4: !pto.ptr<f32>, %arg5: index, %arg6: index) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {

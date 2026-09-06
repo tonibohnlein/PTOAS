@@ -19,8 +19,11 @@
 #include "PTO/Transforms/InsertSync/RemoveRedundantSync.h"
 #include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
+#include "PTO/Transforms/InsertSync/SyncAudit.h"
+#include "PTO/Transforms/InsertSync/SyncEffectCoverage.h"
+#include "PTO/Transforms/InsertSync/SyncGMAlias.h"
+#include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
-#include "llvm/Support/CommandLine.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h" // [FIX] 确保 FuncOp 定义可见
 
 // [CRITICAL FIX] 必须在包含 .inc 之前设置好命名空间环境
@@ -43,14 +46,52 @@ using namespace mlir::pto;
 
 namespace {
 
-// Rollout is explicit: the native full-suite/corpus gate must pass before
-// changing the default. This option is registered in the same linked TU as
-// InsertSync, so ptoas and pto-test-opt use one spelling and implementation.
-static llvm::cl::opt<bool> deferSamePipeRepair(
-    "insert-sync-defer-same-pipe",
-    llvm::cl::desc("Experimental InsertSync: establish cross-pipe handoffs "
-                   "before repairing remaining same-pipe hazards"),
-    llvm::cl::init(false));
+// PTOMaterializeTileOpSections establishes an atomic compute-helper ABI:
+// one V/M lane, no DMA, no pipe events and complete argument effects.
+// InsertSync orders callers using that ABI; it must not independently run
+// tile-level synchronization inside the helper's lower-level instruction body.
+static bool hasAtomicTileOpContract(func::FuncOp function)
+{
+    if (!function->hasAttr("pto.tileop.helper") || function.getNumResults()) {
+        return false;
+    }
+    auto kind = function->getAttrOfType<StringAttr>("pto.tileop.kind");
+    auto effects = function->getAttrOfType<ArrayAttr>("pto.tileop.effects");
+    if (!kind || (kind.getValue() != "vector" && kind.getValue() != "cube") || !effects ||
+        effects.size() != function.getNumArguments()) {
+        return false;
+    }
+    if (!llvm::all_of(effects, [](Attribute attribute) {
+            auto effect = dyn_cast<StringAttr>(attribute);
+            return effect && (effect.getValue() == "none" || effect.getValue() == "read" ||
+                              effect.getValue() == "write" || effect.getValue() == "readwrite");
+        })) {
+        return false;
+    }
+    // Require the materialized compute section as well as the ABI. Bare
+    // attributes on an arbitrary function are not a reason to skip analysis.
+    bool section = false;
+    bool compatible = true;
+    function.getBody().walk([&](Operation* op) {
+        if (isa<SectionVectorOp>(op)) {
+            section = true;
+            compatible &= kind.getValue() == "vector";
+        } else if (isa<SectionCubeOp>(op)) {
+            section = true;
+            compatible &= kind.getValue() == "cube";
+        } else if (auto pipe = dyn_cast<OpPipeInterface>(op)) {
+            compatible &= pipe.getPipe() == (kind.getValue() == "vector" ? PIPE::PIPE_V : PIPE::PIPE_M);
+        } else if (isa<func::CallOp, SetFlagOp, WaitFlagOp, RecordEventOp, WaitEventOp, BarrierOp>(op)) {
+            compatible = false;
+        }
+    });
+    for (auto [type, effect] : llvm::zip(function.getArgumentTypes(), effects)) {
+        if (!isa<TileBufType>(type) && cast<StringAttr>(effect).getValue() != "none") {
+            compatible = false;
+        }
+    }
+    return section && compatible;
+}
 
 // ==============================================================================
 // Main Pass Implementation
@@ -70,6 +111,45 @@ static bool hasGatherScatterLikeOps(func::FuncOp func) {
 }
 
 struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSyncPass> {
+    PTOInsertSyncPass() = default;
+    explicit PTOInsertSyncPass(const InsertSyncOptions& options)
+    {
+        deferSamePipe = options.deferSamePipe;
+        gmAlias = options.gmAlias;
+        audit = options.audit;
+    }
+    PTOInsertSyncPass(const PTOInsertSyncPass& other) : PTOInsertSyncBase(other)
+    {
+        deferSamePipe = other.deferSamePipe;
+        gmAlias = other.gmAlias;
+        audit = other.audit;
+    }
+
+    Option<bool> deferSamePipe{
+        *this, "defer-same-pipe", llvm::cl::init(false),
+        llvm::cl::desc("Establish cross-pipe supply before same-pipe repair")};
+    Option<std::string> gmAlias{
+        *this, "gm-alias", llvm::cl::init(""), llvm::cl::desc("GM contract: may-alias or assume-disjoint-arguments")};
+    Option<std::string> audit{
+        *this, "audit", llvm::cl::init("off"), llvm::cl::desc("Independent local audit: off, report, or strict")};
+
+    void auditOutput(func::FuncOp function)
+    {
+        if (audit == "off") {
+            return;
+        }
+        auto result = auditInsertSyncLocal(function);
+        function->setAttr(
+            "pto.insert_sync.audit", StringAttr::get(&getContext(), stringifyInsertSyncAuditStatus(result.status)));
+        function->setAttr("pto.insert_sync.audit_reason", StringAttr::get(&getContext(), result.reason));
+        function.emitRemark("InsertSync audit: ")
+            << stringifyInsertSyncAuditStatus(result.status) << ": " << result.reason;
+        if (audit == "strict" && result.status != InsertSyncAuditStatus::VerifiedLocal) {
+            function.emitError("InsertSync strict local audit did not establish safety");
+            signalPassFailure();
+        }
+    }
+
   void runOnOperation() override {
     func::FuncOp func = getOperation();
     // Backend-partitioned PTODSL containers carry private func declarations
@@ -78,6 +158,26 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // translator's argument walk must not run on them.
     if (func.isDeclaration()) {
       return;
+    }
+    if (audit != "off" && audit != "report" && audit != "strict") {
+        func.emitError("InsertSync audit must be off, report, or strict");
+        signalPassFailure();
+        return;
+    }
+    auto contract = resolveInsertSyncGMAlias(func, gmAlias);
+    if (failed(contract)) {
+        signalPassFailure();
+        return;
+    }
+    func->setAttr(
+        "pto.gm_alias",
+        StringAttr::get(
+            &getContext(), *contract == InsertSyncGMAliasMode::MayAlias ? "may-alias" : "assume-disjoint-arguments"));
+
+    if (hasAtomicTileOpContract(func)) {
+        func->setAttr("pto.insert_sync.status", StringAttr::get(&getContext(), "atomic-helper-contract"));
+        auditOutput(func);
+        return;
     }
 
     // If the function already contains explicit synchronization ops (either
@@ -96,11 +196,14 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       return WalkResult::advance();
     });
     if (hasExplicitSync) {
-      return;
+        func->setAttr("pto.insert_sync.status", StringAttr::get(&getContext(), "explicit-sync-bypass"));
+        auditOutput(func);
+        return;
     }
 
     // 0. 数据结构准备
     MemoryDependentAnalyzer memAnalyzer;
+    memAnalyzer.setGMContract(func, *contract);
     SyncIRs syncIR;
     SyncOperations syncOpsStorage;
     Buffer2MemInfoMap buffer2MemInfoMap;
@@ -108,10 +211,16 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // 1. Translator: 构建 SyncIR
     PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func, SyncAnalysisMode::NORMALSYNC);
     translator.Build();
+    if (failed(checkInsertSyncEffectCoverage(func, syncIR))) {
+        signalPassFailure();
+        return;
+    }
+    func->setAttr("pto.insert_sync.status", StringAttr::get(&getContext(), "analyzed"));
 
     // 如果 IR 太简单，直接跳过
     if (syncIR.size() <= 1) {
-      return;
+        auditOutput(func);
+        return;
     }
 
     dumpInsertSyncPhase("After Translator", syncIR, syncOpsStorage,
@@ -121,7 +230,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     InsertSyncAnalysis analyzer(syncIR, memAnalyzer, syncOpsStorage, func,
                                 SyncAnalysisMode::NORMALSYNC);
     analyzer.Run(/*insertBarAllAtLast=*/true,
-                 /*deferSamePipeRepair=*/deferSamePipeRepair);
+                 /*deferSamePipeRepair=*/deferSamePipe);
 
     dumpInsertSyncPhase("After Analysis", syncIR, syncOpsStorage,
                         func.getOperation());
@@ -160,11 +269,47 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
     SyncCodegen codegen(syncIR, func, SyncAnalysisMode::NORMALSYNC);
     codegen.Run();
+    auditOutput(func);
   }
 };
 
+struct PTOAuditInsertSyncPass : PassWrapper<PTOAuditInsertSyncPass, OperationPass<func::FuncOp>> {
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOAuditInsertSyncPass)
+    StringRef getArgument() const final { return "pto-audit-insert-sync"; }
+    StringRef getDescription() const final
+    {
+        return "Independently check concrete local synchronization without insertion";
+    }
+    void runOnOperation() override
+    {
+        auto function = getOperation();
+        if (function.isDeclaration()) {
+            return;
+        }
+        auto result = auditInsertSyncLocal(function);
+        function.emitRemark("InsertSync audit: ")
+            << stringifyInsertSyncAuditStatus(result.status) << ": " << result.reason;
+        if (result.status != InsertSyncAuditStatus::VerifiedLocal) {
+            if (result.target) {
+                result.target->emitRemark("audit target");
+            }
+            if (result.source) {
+                result.source->emitRemark("audit outstanding source");
+            }
+            signalPassFailure();
+        }
+    }
+};
+
+// Keep registration in the same linked TU as InsertSync. This is registry
+// metadata, not mutable global configuration; all options belong to a pass.
+PassRegistration<PTOAuditInsertSyncPass> registerAuditPass;
+
 } // namespace
 
-std::unique_ptr<Pass> mlir::pto::createPTOInsertSyncPass() {
-  return std::make_unique<PTOInsertSyncPass>();
+std::unique_ptr<Pass> mlir::pto::createPTOInsertSyncPass(const InsertSyncOptions& options)
+{
+    return std::make_unique<PTOInsertSyncPass>(options);
 }
+
+std::unique_ptr<Pass> mlir::pto::createPTOInsertSyncPass() { return createPTOInsertSyncPass(InsertSyncOptions{}); }

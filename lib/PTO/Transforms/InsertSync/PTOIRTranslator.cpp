@@ -778,7 +778,23 @@ void PTOIRTranslator::UpdateForOpInfo(scf::ForOp forOp) {
   if (!forOp.getInitArgs().empty()) {
     assert(forOp.getInitArgs().size() == forOp.getRegionIterArgs().size());
     for (auto [i, arg] : llvm::enumerate(forOp.getInitArgs())) {
-      UpdateAliasBufferInfo(forOp.getRegionIterArgs()[i], arg);
+        Value carried = forOp.getRegionIterArgs()[i];
+        UpdateAliasBufferInfo(carried, arg);
+        // The result may be the initial value on the zero-trip path.
+        UpdateAliasBufferInfo(forOp.getResult(i), arg);
+        Value yielded = forOp.getYieldedValues()[i];
+        if (yielded != carried && yielded != arg) {
+            // A changing handle is not forever bound to its initial allocation.
+            // Until the complete recurrence is recovered, retain all possible
+            // storage in this domain rather than dropping subsequent-iteration
+            // accesses. Payload contents and descriptor versions are not inferred.
+            auto found = buffer2MemInfoMap_.find(carried);
+            if (found != buffer2MemInfoMap_.end()) {
+                for (auto& info : found->second) {
+                    info->aliasesUnknownRange = true;
+                }
+            }
+        }
     }
   }
 
@@ -802,14 +818,28 @@ void PTOIRTranslator::UpdateWhileOpInfo(scf::WhileOp whileOp) {
   if (!whileOp.getInits().empty()) {
     for (auto [initArg, blockArg] : llvm::zip(whileOp.getInits(), whileOp.getBeforeArguments())) {
       UpdateAliasBufferInfo(blockArg, initArg);
-    }
-    auto conditionOp = whileOp.getConditionOp();
-    for (auto [yieldedArg, blockArg] : llvm::zip(conditionOp.getArgs(), whileOp.getAfterArguments())) {
-      UpdateAliasBufferInfo(blockArg, yieldedArg);
+      // The before region executes again with the after-region yields. A
+      // changed memory handle must not keep the initial allocation's range.
+      // Mark it unknown before translating either region, including their
+      // derived aliases. Scalar induction state has no memory entry.
+      auto found = buffer2MemInfoMap_.find(blockArg);
+      if (found != buffer2MemInfoMap_.end()) {
+          for (auto& info : found->second) {
+              info->aliasesUnknownRange = true;
+          }
+      }
     }
   }
 
   RecursionIR(&whileOp.getBefore());
+  // A condition operand can be a view constructed in the before region.
+  // Recover it only after that region has been translated. These operands
+  // also provide the while results, including its first false condition.
+  auto conditionOp = whileOp.getConditionOp();
+  for (auto [i, yieldedArg] : llvm::enumerate(conditionOp.getArgs())) {
+      UpdateAliasBufferInfo(whileOp.getAfterArguments()[i], yieldedArg);
+      UpdateAliasBufferInfo(whileOp.getResult(i), yieldedArg);
+  }
   RecursionIR(&whileOp.getAfter());
 
   loopBeginPtr->endId = index;

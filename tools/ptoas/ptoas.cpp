@@ -218,6 +218,16 @@ llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
 
+llvm::cl::opt<bool> insertSyncDeferSamePipe(
+    "insert-sync-defer-same-pipe", llvm::cl::desc("Establish cross-pipe handoffs before remaining same-pipe repair"),
+    llvm::cl::init(false));
+llvm::cl::opt<std::string> insertSyncGMAlias(
+    "insert-sync-gm-alias", llvm::cl::desc("InsertSync GM contract: may-alias (default) or assume-disjoint-arguments"),
+    llvm::cl::init(""));
+llvm::cl::opt<std::string> insertSyncAudit(
+    "insert-sync-audit", llvm::cl::desc("Independent InsertSync local audit: off, report, or strict"),
+    llvm::cl::init("off"));
+
 llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",
     llvm::cl::desc("Plan larger local buffers first inside one AddressSpace "

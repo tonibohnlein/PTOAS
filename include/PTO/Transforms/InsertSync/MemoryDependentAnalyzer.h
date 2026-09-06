@@ -15,7 +15,8 @@
 #define MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_MEMORYDEPENDENTANALYZER_H
  
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
- 
+#include "PTO/Transforms/InsertSync/SyncGMAlias.h"
+
 namespace mlir {
 namespace pto {
  
@@ -23,7 +24,13 @@ class MemoryDependentAnalyzer {
 public:
   MemoryDependentAnalyzer() = default;
   ~MemoryDependentAnalyzer() = default;
- 
+
+  void setGMContract(func::FuncOp function, InsertSyncGMAliasMode mode)
+  {
+      gmFunction = function;
+      gmMode = mode;
+  }
+
   // 检查两组内存信息之间是否存在依赖
   bool DepBetween(const SmallVector<const BaseMemInfo *> &a,
                   const SmallVector<const BaseMemInfo *> &b,
@@ -33,12 +40,15 @@ public:
   bool MemAlias(const BaseMemInfo *a, const BaseMemInfo *b);
  
 private:
-  bool isGMBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b);
-  
-  bool isBufferAddressRangeOverlap(const BaseMemInfo *a, const BaseMemInfo *b);
-  
-  bool isBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b, 
-                       int aIndex, int bIndex);
+    // Other consumers retain their existing policy until they opt into an
+    // explicit calling contract. PTOInsertSync always initializes this state.
+    func::FuncOp gmFunction;
+    InsertSyncGMAliasMode gmMode = InsertSyncGMAliasMode::MayAlias;
+    bool isGMBufferOverlap(const BaseMemInfo* a, const BaseMemInfo* b);
+
+    bool isBufferAddressRangeOverlap(const BaseMemInfo* a, const BaseMemInfo* b);
+
+    bool isBufferOverlap(const BaseMemInfo* a, const BaseMemInfo* b, int aIndex, int bIndex);
 };
  
 } // namespace pto

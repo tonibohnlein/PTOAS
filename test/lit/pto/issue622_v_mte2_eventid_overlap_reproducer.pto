@@ -1,4 +1,13 @@
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s | FileCheck %s
+// InsertSync intentionally rejects this unmodeled queue/resource contract.
+// Plain lowering remains tested; it is not synchronization verification.
+// The prior synchronization placement expectations are retained in df89ee02c.
+// Restoring admission requires a resource/ownership summary, not a whitelist.
+// REJECT: InsertSync unsupported effect: read has no translated storage/pipeline summary
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 %s | FileCheck %s --check-prefix=NATIVE
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
+// NATIVE: TPOP<
+// NATIVE: TNEG(
+// NATIVE: TFREE<
 //
 // Reproducer for issue #622:
 // a mixed 256-wide / 128-wide DIR_C2V pipeline with local_slot_num = 2 can
@@ -16,27 +25,6 @@
 // This file is intentionally kept small and readable so we can debug event-id
 // lifetime reuse in isolation.
 //
-// CHECK-LABEL: AICORE void vector_kernel(
-// CHECK: TPOP<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
-// CHECK-NEXT: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[OUTER_CARRY:[0-9]+]]);
-// CHECK-NEXT: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[OUTER_CARRY]]);
-// CHECK-NEXT: TNEG(
-// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[OUTER_TAIL:[0-9]+]]);
-// CHECK-NEXT: TFREE<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
-// CHECK-NEXT: wait_flag(PIPE_MTE3, PIPE_V, EVENT_ID[[OUTER_CARRY]]);
-// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[OUTER_TAIL]]);
-// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[OUTER_CARRY]]);
-// CHECK-NEXT: TPOP<TPipe<2, Direction::DIR_C2V, 32768, 8, 2, false>,
-// CHECK: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[INNER_TAIL:[0-9]+]]);
-// CHECK-NEXT: TPOP<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
-// CHECK: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[INNER_TAIL]]);
-// CHECK-NEXT: TFREE<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
-// CHECK-NEXT: set_flag(PIPE_MTE3, PIPE_V, EVENT_ID[[TAIL_HEAD:[0-9]+]]);
-// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[POST_LOOP:[0-9]+]]);
-// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[POST_LOOP]]);
-// CHECK-NEXT: TPOP<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
-// CHECK: wait_flag(PIPE_MTE3, PIPE_V, EVENT_ID[[TAIL_HEAD]]);
-// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[OUTER_CARRY]]);
 
 module {
   func.func @cube_kernel(%gm0: !pto.ptr<f32>, %gm1: !pto.ptr<f32>, %gm2: !pto.ptr<f32>)

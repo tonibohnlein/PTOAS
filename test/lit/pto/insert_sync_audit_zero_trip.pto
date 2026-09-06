@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-audit-insert-sync %s 2>&1 | FileCheck %s --check-prefix=GOOD
+// RUN: sed '/ZERO-TRIP-WAW/d' %s | not pto-test-opt --pto-audit-insert-sync 2>&1 | FileCheck %s --check-prefix=BAD
+// RUN: sed 's/%zero to %zero/%zero to %n/' %s | not pto-test-opt --pto-audit-insert-sync 2>&1 | FileCheck %s --check-prefix=SYMBOLIC
+// GOOD: InsertSync audit: verified-local
+// BAD: overlapping local bounds lack completion
+// SYMBOLIC: symbolic loop requires an inductive certificate
+module attributes {pto.target_arch = "a3"} {
+  func.func @zero_trip_keeps_writer(%input: !pto.partition_tensor_view<16x16xf16>, %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %addr = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %addr : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    scf.for %i = %zero to %zero step %one {
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    }
+    pto.barrier <PIPE_MTE2> // ZERO-TRIP-WAW
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.barrier <PIPE_ALL>
+    return
+  }
+}

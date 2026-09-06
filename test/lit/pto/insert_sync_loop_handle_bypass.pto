@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+
+// RUN: pto-test-opt --pto-insert-sync %s | FileCheck %s
+// A zero-trip loop returns its incoming handle, not just its lexical yield.
+// CHECK-LABEL: func.func @for_bypass
+// CHECK: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// CHECK: pto.tstore
+// CHECK-LABEL: func.func @while_bypass
+// CHECK: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// CHECK: pto.tstore
+module attributes {pto.target_arch = "a3"} {
+  func.func @for_bypass(%input: !pto.partition_tensor_view<16x16xf16>,
+                       %out: !pto.partition_tensor_view<16x16xf16>) {
+    %zero = arith.constant 0 : i64
+    %offset = arith.constant 512 : i64
+    %lb = arith.constant 0 : index
+    %step = arith.constant 1 : index
+    %a = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %offset : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    %result = scf.for %i = %lb to %lb step %step iter_args(%carried = %a) -> (!pto.tile_buf<vec, 16x16xf16>) {
+      scf.yield %b : !pto.tile_buf<vec, 16x16xf16>
+    }
+    pto.tstore ins(%result : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+  func.func @while_bypass(%input: !pto.partition_tensor_view<16x16xf16>,
+                         %out: !pto.partition_tensor_view<16x16xf16>) {
+    %zero = arith.constant 0 : i64
+    %offset = arith.constant 512 : i64
+    %false = arith.constant false
+    %a = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %offset : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    %result = scf.while (%carried = %a) : (!pto.tile_buf<vec, 16x16xf16>) -> !pto.tile_buf<vec, 16x16xf16> {
+      scf.condition(%false) %carried : !pto.tile_buf<vec, 16x16xf16>
+    } do {
+    ^bb0(%carried: !pto.tile_buf<vec, 16x16xf16>):
+      scf.yield %b : !pto.tile_buf<vec, 16x16xf16>
+    }
+    pto.tstore ins(%result : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+}

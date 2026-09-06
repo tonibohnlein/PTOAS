@@ -6,7 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --enable-insert-sync --pto-level=level2 --pto-arch=a3 --emit-pto-ir --mlir-print-ir-after=pto-insert-sync %s -o /dev/null 2>&1 1>/dev/null | FileCheck %s --implicit-check-not=pto.wait_flag_dyn --implicit-check-not=pto.set_flag_dyn
+// This placement fixture promises disjoint GM arguments explicitly.
+// RUN: ptoas --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --pto-level=level2 --pto-arch=a3 --emit-pto-ir --mlir-print-ir-after=pto-insert-sync %s -o /dev/null 2>&1 1>/dev/null | FileCheck %s --implicit-check-not=pto.wait_flag_dyn --implicit-check-not=pto.set_flag_dyn
 
 // Two dynamic views of the same multi-tile buffer remain live until one vector
 // operation consumes both. A single slot-keyed back-edge event cannot cover the

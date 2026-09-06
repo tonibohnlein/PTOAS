@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --mlir-print-ir-after=pto-insert-sync %s 2>&1 | FileCheck %s
+//
+// A=[0,512], B=[512,1024]. Unequal indices are not disjoint: A[1]
+// overlaps B[0]. This is the existing affine-prefetch case with a shifted
+// physical backing allocation, not a new selector expression family.
+// CHECK-LABEL: func.func @shifted_slot_mapping
+// CHECK: scf.for
+// CHECK: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// CHECK: pto.tstore
+module {
+  func.func @shifted_slot_mapping(%gm: !pto.partition_tensor_view<16x16xf16>,
+                                 %out: !pto.partition_tensor_view<16x16xf16>, %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %base0 = arith.constant 0 : i64
+    %base1 = arith.constant 512 : i64
+    %a = pto.alloc_multi_tile addr = %base0 : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    %b = pto.alloc_multi_tile addr = %base1 : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    scf.for %i = %zero to %n step %one {
+      %next = arith.addi %i, %one : index
+      %producer = arith.remui %next, %two : index
+      %consumer = arith.remui %i, %two : index
+      %x = pto.multi_tile_get %a[%producer] : !pto.multi_tile_buf<vec, 16x16xf16, count=2> -> !pto.tile_buf<vec, 16x16xf16>
+      %y = pto.multi_tile_get %b[%consumer] : !pto.multi_tile_buf<vec, 16x16xf16, count=2> -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%y : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}

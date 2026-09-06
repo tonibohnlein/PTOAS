@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+
+// Original frozen PyPTO distributed/01_hello_rank.py add_rank kernel.
+// Input SHA256: 208cc1665b15af4f28a833d5b901902a6af682c96ef82d22df8031b1a99f1f0d
+// The original IR below is unchanged, including physical address reuse.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-audit=strict --emit-pto-ir %s -o %t.pto
+// RUN: FileCheck %s < %t.pto
+// RUN: pto-test-opt --pto-audit-insert-sync %t.pto > /dev/null
+// RUN: sed '/pto.wait_flag/d' %t.pto | not pto-test-opt --pto-audit-insert-sync 2>&1 | FileCheck %s --check-prefix=MUTATION
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --insert-sync-audit=strict %s -o %t.cpp
+// CHECK: pto.insert_sync.audit = "verified-local"
+// CHECK: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>
+// CHECK: pto.tadds
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE3>
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>
+// CHECK: pto.tstore
+// MUTATION: InsertSync audit: uncovered
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @add_rank(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>, %arg2: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c8_index = arith.constant 8 : index
+  %c1_index = arith.constant 1 : index
+  %c0_index = arith.constant 0 : index
+  %x__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c8_index, %c8_index], strides = [%c8_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32> loc("/home/toni/work/pypto3_sync_more/PTOAS/build/protocol-sync-native-corpus/sources/pypto/examples/distributed/01_hello_rank.py":47:1)
+  %y__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c8_index, %c8_index], strides = [%c8_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32> loc("/home/toni/work/pypto3_sync_more/PTOAS/build/protocol-sync-native-corpus/sources/pypto/examples/distributed/01_hello_rank.py":47:1)
+  %tile__ssa_v0 = pto.alloc_tile addr = %c0_i64 valid_row = %c8_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0> loc("/home/toni/work/pypto3_sync_more/PTOAS/build/protocol-sync-native-corpus/sources/pypto/examples/distributed/01_hello_rank.py":53:5)
+  %x__ssa_v0_pview = pto.partition_view %x__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c8_index, %c8_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<8x8xf32> loc("/home/toni/work/pypto3_sync_more/PTOAS/build/protocol-sync-native-corpus/sources/pypto/examples/distributed/01_hello_rank.py":53:5)
+  pto.tload ins(%x__ssa_v0_pview : !pto.partition_tensor_view<8x8xf32>) outs(%tile__ssa_v0 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) loc("/home/toni/work/pypto3_sync_more/PTOAS/build/protocol-sync-native-corpus/sources/pypto/examples/distributed/01_hello_rank.py":53:5)
+  %0 = arith.sitofp %arg2 : i32 to f32 loc("/home/toni/work/pypto3_sync_more/PTOAS/build/protocol-sync-native-corpus/sources/pypto/examples/distributed/01_hello_rank.py":54:5)
+  %tile_v1__ssa_v0 = pto.alloc_tile addr = %c0_i64 valid_row = %c8_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0> loc("/home/toni/work/pypto3_sync_more/PTOAS/build/protocol-sync-native-corpus/sources/pypto/examples/distributed/01_hello_rank.py":55:5)
+  pto.tadds ins(%tile__ssa_v0, %0 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32) outs(%tile_v1__ssa_v0 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) loc("/home/toni/work/pypto3_sync_more/PTOAS/build/protocol-sync-native-corpus/sources/pypto/examples/distributed/01_hello_rank.py":55:5)
+  %y__ssa_v0_pview = pto.partition_view %y__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c8_index, %c8_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<8x8xf32> loc("/home/toni/work/pypto3_sync_more/PTOAS/build/protocol-sync-native-corpus/sources/pypto/examples/distributed/01_hello_rank.py":56:5)
+  pto.tstore ins(%tile_v1__ssa_v0 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%y__ssa_v0_pview : !pto.partition_tensor_view<8x8xf32>) loc("/home/toni/work/pypto3_sync_more/PTOAS/build/protocol-sync-native-corpus/sources/pypto/examples/distributed/01_hello_rank.py":56:5)
+  return
+  }
+}

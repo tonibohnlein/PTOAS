@@ -6,7 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --enable-insert-sync --mlir-print-ir-after=pto-insert-sync %s 2>&1 1>/dev/null | FileCheck %s
+// This placement fixture promises disjoint GM arguments explicitly.
+// RUN: ptoas --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --mlir-print-ir-after=pto-insert-sync %s 2>&1 1>/dev/null | FileCheck %s
 
 // Affine slot disjoint optimization: producer touches slot `(iv+1) % 2`,
 // consumer touches slot `iv % 2`. The slot SSA expressions are provably

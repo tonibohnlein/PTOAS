@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-audit-insert-sync %s 2>&1 | FileCheck %s --check-prefix=GOOD
+// RUN: sed '/pto.wait_flag/d' %s | not pto-test-opt --pto-audit-insert-sync 2>&1 | FileCheck %s --check-prefix=HAZARD
+// RUN: sed '/pto.barrier/d' %s | not pto-test-opt --pto-audit-insert-sync 2>&1 | FileCheck %s --check-prefix=EXIT
+// RUN: sed '/MUTATE-ELSE-SIGNAL/d' %s | not pto-test-opt --pto-audit-insert-sync 2>&1 | FileCheck %s --check-prefix=BRANCH
+// GOOD: InsertSync audit: verified-local
+// HAZARD: InsertSync audit: uncovered
+// EXIT: outstanding work at return
+// BRANCH: wait has no matching signal on this path
+module attributes {pto.target_arch = "a3"} {
+  func.func @selected_producer(%condition: i1, %input: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %offset = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %offset : !pto.tile_buf<vec, 16x16xf16>
+    scf.if %condition {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    } else {
+      pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>] // MUTATE-ELSE-SIGNAL
+    }
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.barrier <PIPE_ALL>
+    return
+  }
+}

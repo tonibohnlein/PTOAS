@@ -1,7 +1,8 @@
 // Scalar GM pointer accesses execute on PIPE_S and must participate in
 // InsertSync when they touch the same GM payload as async tile stores.
 //
-// RUN: ptoas --pto-arch=a3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s
+// This placement fixture promises disjoint GM arguments explicitly.
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments %s -o - 2>&1 | FileCheck %s
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @tstore_then_store_scalar(%dst: !pto.ptr<ui32, gm>)

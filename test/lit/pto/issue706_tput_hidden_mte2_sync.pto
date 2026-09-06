@@ -10,7 +10,8 @@
 // implementation reads src through MTE2. If a preceding TSTORE writes the same
 // GM buffer through MTE3, insert-sync must emit an MTE3->MTE2 sync before TPUT.
 //
-// RUN: ptoas --pto-arch=a3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s
+// This placement fixture promises disjoint GM arguments explicitly.
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments %s -o - 2>&1 | FileCheck %s
 
 module {
   func.func @tput_waits_for_tstore_src(

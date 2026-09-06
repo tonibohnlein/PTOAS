@@ -1,3 +1,9 @@
+// InsertSync intentionally rejects this unmodeled queue/resource contract.
+// Plain lowering remains tested; it is not synchronization verification.
+// The prior synchronization placement expectations are retained in df89ee02c.
+// Restoring admission requires a resource/ownership summary, not a whitelist.
+// REJECT: InsertSync unsupported effect: resource or memory operand is not modeled
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
 // This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 // CANN Open Software License Agreement Version 2.0 (the "License").
@@ -9,7 +15,7 @@
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 \
 // RUN:   --mlir-print-ir-after=pto-resolve-reserved-buffers %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
-// RUN: ptoas --pto-level=level3 --pto-arch=a3 --enable-insert-sync %s \
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 %s \
 // RUN:   | FileCheck %s --check-prefix=EMITC
 
 module {

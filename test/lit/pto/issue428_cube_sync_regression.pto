@@ -1,4 +1,5 @@
-// RUN: ptoas --pto-arch=a3 --enable-insert-sync %s | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments %s | FileCheck %s
+// This placement fixture promises disjoint GM arguments explicitly.
 //
 // Issue #428 regression guard:
 // - Keep the loop-carried wait/set handshake inside both cube loops.

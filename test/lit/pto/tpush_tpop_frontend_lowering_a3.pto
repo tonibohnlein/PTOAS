@@ -1,5 +1,10 @@
+// InsertSync intentionally rejects this unmodeled queue/resource contract.
+// Plain lowering remains tested; it is not synchronization verification.
+// The prior synchronization placement expectations are retained in df89ee02c.
+// Restoring admission requires a resource/ownership summary, not a whitelist.
+// REJECT: InsertSync unsupported effect: read has no translated storage/pipeline summary
 // RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
-// RUN: ptoas --pto-arch=a3 --enable-insert-sync %s 2>&1 | FileCheck %s --check-prefix=SYNC-A3
+// RUN: not ptoas --pto-arch=a3 --enable-insert-sync %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
 
 module {
   func.func @cube_kernel(%gm_slot_buffer: !pto.ptr<f32>)
@@ -77,17 +82,3 @@ module {
 // A3: Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> {{[_A-Za-z][_A-Za-z0-9]*}};
 // A3: TNEG(
 // A3: TFREE<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4, true>, TileSplitAxis::TILE_NO_SPLIT>(
-
-// SYNC-A3-LABEL: AICORE void cube_kernel(__gm__ float*
-// SYNC-A3: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4, true>, Tile<TileType::Mat, float, 16, 16, BLayout::ColMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_NO_SPLIT>(
-// SYNC-A3: set_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
-// SYNC-A3: Tile<TileType::Left, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null>
-// SYNC-A3: wait_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
-// SYNC-A3: TMOV(
-
-// SYNC-A3-LABEL: AICORE void vector_kernel(__gm__ float*
-// SYNC-A3: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4, true>, Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_NO_SPLIT>(
-// SYNC-A3: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
-// SYNC-A3: Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>
-// SYNC-A3: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
-// SYNC-A3: TNEG(

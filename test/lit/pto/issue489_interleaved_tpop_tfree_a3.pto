@@ -1,4 +1,10 @@
-// RUN: ptoas --pto-arch=a3 --enable-insert-sync %s 2>&1 | FileCheck %s
+// InsertSync intentionally rejects this unmodeled queue/resource contract.
+// Plain lowering remains tested; it is not synchronization verification.
+// The prior synchronization placement expectations are retained in df89ee02c.
+// Restoring admission requires a resource/ownership summary, not a whitelist.
+// REJECT: InsertSync unsupported effect: read has no translated storage/pipeline summary
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
+// RUN: not ptoas --pto-arch=a3 --enable-insert-sync %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
 
 module {
   func.func @vector_pop_interleaved(%gm_slot_buffer: memref<256xf32, #pto.address_space<gm>>,
