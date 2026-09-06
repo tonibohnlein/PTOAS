@@ -812,6 +812,52 @@ Selective scope still rejects fixed/hidden synchronization and reservations;
 composition must import and verify those before relaxing that gate. No new
 control scope, cube qualification or pattern family is claimed here.
 
+### R2a — shared descriptor definitions with nested readers
+
+Descriptor validity no longer depends on an addressed ordinary UB footprint.
+Direct tile handles in UB, L1, L0A, L0B and ACC use the same rank-two, static
+physical-shape and bounded constant dimension checks. Layout and address
+recovery remain separate payload analyses. In particular, known descriptor
+dimensions do not make an unaddressed handle's physical footprint known and do
+not shrink the conservative allocation footprint to the valid shape.
+
+Allocations and updates must execute once in the function entry block. Their
+versions can reach payload accesses and getters nested in `scf.for` and
+`scf.if`. Every handle user is validated before transfer: a conditional or
+repeated update rejects the entire handle, even when an earlier outer version
+dominates the read. Forwarding, aliases, escapes and other region forms remain
+unsupported. Nested readers preserve the incoming version, including the
+zero-trip and skipped-arm identity transfers; no descriptor Phi is invented.
+
+The binding verifier checks live definition placement and dominance as well as
+cached point-order bindings. Mutations move an update into a loop, move a suffix
+update before nested reads and remove a certificate handle. These are checks
+on known extracted definitions, not complete detection of arbitrary subsequent
+IR changes; fresh extraction remains the concrete verification trust boundary.
+
+Tests cover five storage domains with and without addresses, explicit boxed
+cube layouts, nested UB payload bounds and versions, same-address distinct
+handles, and rejection of nested updates. Both independent reviewers accepted
+this bounded analysis extension. It does not qualify native cube completion,
+dynamic dimensions, descriptor merges or new synchronization placement.
+
+Targeted incremental builds freshly linked the compiler and ProtocolSync test
+callers with at most two workers. The focused descriptor tests passed 3/3 and
+the complete ProtocolSync lit invocation passed 55/55 in 55.32 seconds. The
+changed-code prefilter reported two files, zero errors and zero warnings.
+
+Four frozen 18-row driver runs with patterns off and fallback fail retain
+16/18 native rows in may-alias mode and 17/18 in disjoint-argument mode on
+both A2 and A3. No admission increase is claimed. Evidence is under
+`build/protocol-sync-native-corpus/acceptance-r2a-{arch}-{contract}`. The runs
+record source `54ba24cfd`, tracked patch hash
+`2aded6154be021b4baf69d91b268d02a574461a41b73757b5dca26e131c94604`, exact
+invocations and compiler/toolchain fingerprints; all report `source_stable=true`.
+All 132 independent concrete/C++ follow-ups pass under `followup-r2a`, with
+`compiler_stable=true`.
+This ledger addition follows those frozen runs. No broader sample, full-corpus,
+device or throughput measurement was performed for this slice.
+
 ### Next boundary proof gate
 
 The algorithm review recommends first/last relevant occurrence handoffs, not

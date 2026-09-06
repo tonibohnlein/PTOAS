@@ -11,6 +11,7 @@
 #include "PTO/Transforms/InsertSync/LegacySyncIRAdapter.h"
 #include "PTO/Transforms/ProtocolSync/LocalMemoryAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -175,11 +176,15 @@ bool bindingMutations(StructuredSyncIR& schedule)
         }
     }
     auto& state = StructuredSyncIRTestPeer::states(schedule).front();
+    const Value handle = state.handle;
+    state.handle = {};
+    const bool rejectsNull = failed(verifySyncDescriptorBindings(schedule));
+    state.handle = handle;
     const auto rows = state.rows;
     state.rows = 5;
     const bool rejectsBounds = failed(verifySyncDescriptorBindings(schedule));
     state.rows = rows;
-    return rejectsBounds && succeeded(verifySyncDescriptorBindings(schedule));
+    return rejectsNull && rejectsBounds && succeeded(verifySyncDescriptorBindings(schedule));
 }
 
 bool testVersions(MLIRContext& context)
@@ -218,6 +223,7 @@ bool testRejected(MLIRContext& context)
         "%loaded = pto.load_scalar %scalar[%c0] : !pto.ptr<i32, gm> -> i32\n"
         "%bound = arith.index_cast %loaded : i32 to index\npto.set_validshape %a, %bound, %c16 : !tile",
         "scf.if %cond { pto.set_validshape %a, %c1, %c16 : !tile }",
+        "scf.for %i = %c0 to %c4 step %c1 { pto.set_validshape %a, %c1, %c16 : !tile }",
         "%alias = pto.subview %a[%c0, %c0] sizes [4, 16] : !tile -> !tile",
         "%bad = arith.constant 5 : index\npto.set_validshape %a, %bad, %c16 : !tile",
         "%bad = arith.constant -1 : index\npto.set_validshape %a, %bad, %c16 : !tile",
@@ -246,6 +252,135 @@ bool testRejected(MLIRContext& context)
     return true;
 }
 
+bool testNestedReads(MLIRContext& context)
+{
+    auto module = parseSourceString<ModuleOp>(
+        program(4, 2, R"mlir(
+      scf.for %i = %c0 to %dynamic step %c1 {
+        scf.if %cond {
+          %rn, %sn = pto.get_validshape %a : !tile
+          pto.tabs ins(%a : !tile) outs(%a : !tile)
+        }
+      }
+      pto.set_validshape %a, %c4, %c16 : !tile
+      %rf, %sf = pto.get_validshape %a : !tile
+    )mlir"),
+        &context);
+    auto schedule = module ? extract(*module) : nullptr;
+    const bool valid =
+        schedule && schedule->getFailures().empty() && succeeded(verifySyncDescriptorBindings(*schedule));
+    if (!check(valid, "outer versions reach nested reads")) {
+        return false;
+    }
+    auto function = schedule->getFunction();
+    auto loop = *function.getOps<scf::ForOp>().begin();
+    unsigned nestedAccesses = 0;
+    for (const auto& access : schedule->getAccesses()) {
+        if (!loop->isAncestor(schedule->findPhase(access.phase)->operation)) {
+            continue;
+        }
+        const bool bound = access.descriptorState && schedule->getDescriptorStates()[*access.descriptorState].rows == 1;
+        const auto region = recoverLocalAccessRegion(access);
+        if (!check(
+                bound && region.interval.size == 128 && region.precision == SyncRegionPrecision::Conservative,
+                "nested payload keeps version and conservative allocation bounds")) {
+            return false;
+        }
+        ++nestedAccesses;
+    }
+    bool sawNestedRead = false;
+    for (const auto& action : schedule->getSemanticActions()) {
+        const bool nestedRead = isa<GetValidShapeOp>(action.operation) && loop->isAncestor(action.operation);
+        if (!nestedRead) {
+            continue;
+        }
+        const auto& state = schedule->getDescriptorStates()[*action.descriptorState];
+        // Every executing arm observes the last outer update (one row).
+        // A zero-trip path performs no metadata transfer at all.
+        if (!check(state.rows == 1 && state.columns == 16, "nested version is unchanged by participation")) {
+            return false;
+        }
+        sawNestedRead = true;
+    }
+    auto update = *function.getOps<SetValidShapeOp>().begin();
+    Operation* next = update->getNextNode();
+    update->moveBefore(loop.getBody(), loop.getBody()->begin());
+    const bool rejectsMovedUpdate = failed(verifySyncDescriptorBindings(*schedule));
+    update->moveBefore(next);
+    // Keep all cached points unchanged while moving the suffix update before
+    // the loop. The raw dominance check must reject the stale nested binding.
+    SetValidShapeOp suffix;
+    for (auto candidate : function.getOps<SetValidShapeOp>()) {
+        suffix = candidate;
+    }
+    Operation* suffixNext = suffix->getNextNode();
+    suffix->moveBefore(loop);
+    const bool rejectsChangedVersion = failed(verifySyncDescriptorBindings(*schedule));
+    suffix->moveBefore(suffixNext);
+    return check(
+        nestedAccesses != 0 && sawNestedRead && rejectsMovedUpdate && rejectsChangedVersion &&
+            succeeded(verifySyncDescriptorBindings(*schedule)),
+        "live region and version mutations");
+}
+
+bool testDescriptorDomains(MLIRContext& context)
+{
+    for (StringRef space : {"vec", "mat", "left", "right", "acc"}) {
+        for (bool addressed : {false, true}) {
+            const std::string layout =
+                space == "vec" ? "blayout=row_major, slayout=none_box" : "blayout=col_major, slayout=row_major";
+            const std::string type = "!pto.tile_buf<loc=" + space.str() +
+                                     ", dtype=f16, rows=16, cols=16, v_row=?, v_col=?, " + layout +
+                                     ", fractal=512, pad=0>";
+            const std::string source = "!tile = " + type + R"mlir(
+              module attributes {pto.target_arch = "a3"} {
+                func.func @metadata(%n: index, %b: i1) {
+                  %base = arith.constant 0 : i64
+                  %c0 = arith.constant 0 : index
+                  %c1 = arith.constant 1 : index
+                  %c16 = arith.constant 16 : index
+                  %a = pto.alloc_tile )mlir" +
+                                       (addressed ? "addr = %base " : "") +
+                                       R"mlir(valid_row = %c16 valid_col = %c16 : !tile
+                  pto.set_validshape %a, %c1, %c16 : !tile
+                  scf.for %i = %c0 to %n step %c1 {
+                    scf.if %b {
+                      %r, %s = pto.get_validshape %a : !tile
+                    }
+                  }
+                  return
+                }
+              }
+            )mlir";
+            auto module = parseSourceString<ModuleOp>(source, &context);
+            auto schedule = module ? extract(*module) : nullptr;
+            const bool valid = schedule && schedule->getFailures().empty() &&
+                               succeeded(verifySyncDescriptorBindings(*schedule)) &&
+                               schedule->getDescriptorStates().size() == 2;
+            if (!check(valid, "metadata validity is independent of storage domain and physical address")) {
+                return false;
+            }
+            if (!addressed) {
+                SyncAccess access;
+                access.value = schedule->getDescriptorStates().front().handle;
+                access.storage.space =
+                    cast<AddressSpaceAttr>(cast<TileBufType>(access.value.getType()).getMemorySpace())
+                        .getAddressSpace();
+                if (!check(
+                        recoverLocalAccessRegion(access).precision == SyncRegionPrecision::Unknown,
+                        "known metadata does not establish an unknown physical footprint")) {
+                    return false;
+                }
+            }
+        }
+    }
+    llvm::outs() << "protocol-sync nested descriptor reads: five domains, addressed/unaddressed and mutations pass\n";
+    return true;
+}
+
 } // namespace
 
-bool testProtocolSyncDescriptorState(MLIRContext& context) { return testVersions(context) && testRejected(context); }
+bool testProtocolSyncDescriptorState(MLIRContext& context)
+{
+    return testVersions(context) && testRejected(context) && testNestedReads(context) && testDescriptorDomains(context);
+}

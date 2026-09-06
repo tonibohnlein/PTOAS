@@ -20,7 +20,7 @@
 // CHECK-NOT: failed internally
 // CHECK: schedule function=@conditional_update
 // CHECK: rejected reason=unsupported-descriptor-state
-// CHECK-SAME: cross-region users are unsupported
+// CHECK-SAME: descriptor updates in choices or loops require version merges
 // CHECK: schedule function=@physical_scalar_dimension
 // CHECK: rejected reason=unsupported-descriptor-state op=pto.set_validshape
 // CHECK-SAME: dimensions need bounded constants

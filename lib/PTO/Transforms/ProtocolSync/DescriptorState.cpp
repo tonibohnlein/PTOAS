@@ -11,6 +11,8 @@
 //===- DescriptorState.cpp - Constant bounded tile metadata flow -----------===//
 
 #include "PTO/Transforms/ProtocolSync/LocalMemoryAnalysis.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -37,19 +39,39 @@ std::optional<std::uint64_t> constantDimension(Value value, std::int64_t fallbac
 
 bool supportedAllocation(Value handle)
 {
+    if (!handle) {
+        return false;
+    }
     auto allocation = handle.getDefiningOp<AllocTileOp>();
     if (!allocation) {
         return false;
     }
     auto type = allocation.getResult().getType();
-    const bool ordinaryLayout = type.getRank() == 2 &&
-                                type.getBLayoutValueI32() == static_cast<int32_t>(BLayout::RowMajor) &&
-                                type.getSLayoutValueI32() == static_cast<int32_t>(SLayout::NoneBox) &&
-                                type.getCompactModeI32() == static_cast<int32_t>(CompactMode::Null);
-    SyncAccess access;
-    access.value = handle;
-    access.storage.space = AddressSpace::VEC;
-    return ordinaryLayout && recoverLocalAccessRegion(access).precision != SyncRegionPrecision::Unknown;
+    // Descriptor dimensions describe the handle, not its physical footprint.
+    // Cube layouts and unaddressed handles have the same metadata contract.
+    return type.getRank() == 2 && type.getShape()[0] >= 0 && type.getShape()[1] >= 0;
+}
+
+bool isEntryDefinition(Operation* operation)
+{
+    if (!operation) {
+        return false;
+    }
+    auto function = dyn_cast_or_null<func::FuncOp>(operation->getParentOp());
+    return function && operation->getBlock() == &function.getBody().front();
+}
+
+bool isStructuredRead(Operation* operation, Operation* allocation)
+{
+    for (Operation* parent = operation->getParentOp(); parent; parent = parent->getParentOp()) {
+        if (parent == allocation->getParentOp()) {
+            return true;
+        }
+        if (!isa<scf::ForOp, scf::IfOp>(parent)) {
+            return false;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -85,14 +107,12 @@ bool SyncDescriptorStateBuilder::validateHandle(const SyncSemanticAction& action
     }
     const bool supported = handle && (validated.contains(handle) || supportedAllocation(handle));
     if (!supported) {
-        reject(action.operation, "descriptor requires a direct addressed ordinary UB allocation");
+        reject(action.operation, "descriptor requires a direct tile allocation with static rank-two bounds");
         return false;
     }
     Operation* allocation = handle.getDefiningOp();
-    const bool structured = !action.guard.empty() || !action.iterationDomain.loops.empty();
-    const bool wrongBlock = action.operation->getBlock() != allocation->getBlock();
-    if (structured || wrongBlock) {
-        reject(action.operation, "descriptor participation requires one unconditional non-recurring block");
+    if (!isEntryDefinition(allocation)) {
+        reject(action.operation, "descriptor allocation must execute once in the function entry block");
         return false;
     }
     if (validated.contains(handle)) {
@@ -101,9 +121,14 @@ bool SyncDescriptorStateBuilder::validateHandle(const SyncSemanticAction& action
     for (Operation* user : handle.getUsers()) {
         const bool metadata = isa<SetValidShapeOp, GetValidShapeOp>(user);
         const bool payload = payloadOperations.lookup(user) == 1 && user->getNumResults() == 0;
-        const bool unsupportedUser = user->getBlock() != allocation->getBlock() || (!metadata && !payload);
+        const bool nestedUpdate = isa<SetValidShapeOp>(user) && !isEntryDefinition(user);
+        if (nestedUpdate) {
+            reject(user, "descriptor updates in choices or loops require version merges");
+            return false;
+        }
+        const bool unsupportedUser = !isStructuredRead(user, allocation) || (!metadata && !payload);
         if (unsupportedUser) {
-            reject(user, "descriptor forwarding, aliases, escapes or cross-region users are unsupported");
+            reject(user, "descriptor forwarding, aliases, escapes or unsupported regions are unsupported");
             return false;
         }
     }
@@ -162,8 +187,8 @@ LogicalResult SyncDescriptorStateBuilder::build()
             invalid.insert(descriptor->handle);
         }
     }
-    // Point order is authoritative only within each validated block. No
-    // metadata version is propagated through a choice, loop or alias here.
+    // Definitions execute once in the entry block. Nested reads preserve the
+    // incoming version, including zero-trip loops and either choice arm.
     for (const SyncProgramPoint& point : schedule.points) {
         if (point.kind == SyncProgramPointKind::SemanticActionBefore) {
             transfer(schedule.semanticActions[point.action]);
@@ -194,6 +219,45 @@ LogicalResult verifySyncDescriptorBindings(const StructuredSyncIR& schedule)
     llvm::DenseMap<Value, std::uint32_t> latest;
     unsigned definitions = 0;
     const auto states = schedule.getDescriptorStates();
+    DominanceInfo dominance(schedule.getFunction());
+    // Validate the live IR, not cached program-point order or guard metadata.
+    // In particular, moving an update into a loop cannot preserve a certificate.
+    for (const SyncDescriptorState& state : states) {
+        if (!state.handle) {
+            return failure();
+        }
+        const auto* definition = schedule.findSemanticAction(state.definition);
+        Operation* allocation = state.handle.getDefiningOp();
+        const bool invalidDefinition = !definition || !supportedAllocation(state.handle) ||
+                                       !isEntryDefinition(allocation) || !isEntryDefinition(definition->operation);
+        if (invalidDefinition) {
+            return failure();
+        }
+        for (Operation* user : state.handle.getUsers()) {
+            const bool misplacedUpdate = isa<SetValidShapeOp>(user) && !isEntryDefinition(user);
+            if (misplacedUpdate || !isStructuredRead(user, allocation)) {
+                return failure();
+            }
+        }
+    }
+    auto observesLatest = [&](Value handle, std::uint32_t id, Operation* use) {
+        const SyncDescriptorState* selected = nullptr;
+        Operation* selectedDefinition = nullptr;
+        for (const SyncDescriptorState& candidate : states) {
+            if (candidate.handle != handle) {
+                continue;
+            }
+            Operation* definition = schedule.findSemanticAction(candidate.definition)->operation;
+            if (!dominance.properlyDominates(definition, use)) {
+                continue;
+            }
+            if (!selectedDefinition || selectedDefinition->isBeforeInBlock(definition)) {
+                selected = &candidate;
+                selectedDefinition = definition;
+            }
+        }
+        return selected && selected->id == id;
+    };
     for (const SyncProgramPoint& point : schedule.getProgramPoints()) {
         if (point.kind == SyncProgramPointKind::SemanticActionBefore) {
             const SyncSemanticAction& action = *schedule.findSemanticAction(point.action);
@@ -219,7 +283,7 @@ LogicalResult verifySyncDescriptorBindings(const StructuredSyncIR& schedule)
             if (effect->role == SyncDescriptorRole::Read) {
                 auto found = latest.find(effect->handle);
                 const bool wrongVersion = found == latest.end() || found->second != state.id;
-                if (wrongVersion) {
+                if (wrongVersion || !observesLatest(effect->handle, state.id, action.operation)) {
                     return failure();
                 }
             } else {
@@ -247,6 +311,11 @@ LogicalResult verifySyncDescriptorBindings(const StructuredSyncIR& schedule)
                                               access.descriptorState.has_value() :
                                               access.descriptorState != std::optional<std::uint32_t>(found->second);
                 if (wrongVersion) {
+                    return failure();
+                }
+                if (access.descriptorState &&
+                    !observesLatest(
+                        access.value, *access.descriptorState, schedule.findPhase(point.phase)->operation)) {
                     return failure();
                 }
             }
