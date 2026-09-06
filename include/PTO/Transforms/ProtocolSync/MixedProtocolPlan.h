@@ -30,6 +30,7 @@ enum class SyncMixedPlanStatus : std::uint8_t {
     Ready,
     Unsupported,
     ResourceInfeasible,
+    AllocationAnalysisLimit,
 };
 
 enum class SyncMixedPlanRejection : std::uint8_t {
@@ -67,6 +68,7 @@ struct SyncMixedWorldCost {
 /// individual materialized actions.
 struct SyncMixedProtocolPlan {
     SyncMixedPlanStatus status = SyncMixedPlanStatus::Empty;
+    SyncEventAllocationFailure allocationFailure = SyncEventAllocationFailure::None;
     std::optional<SyncOneShotPublishPlan> oneShot;
     std::optional<SyncReadyReleasePlan> readyRelease;
     std::optional<SyncLoopFrontierPlan> loopFrontier;

@@ -34,7 +34,8 @@ void mlir::pto::protocol_sync::printDirectRepairPlan(
 {
     output << "PROTOCOL-SYNC direct-repair function=@" << function.getSymName()
            << " status=" << stringifySyncDirectRepairPlanStatus(plan.status) << " obligations=" << plan.obligationCount
-           << " candidates=" << plan.candidates.size() << " uncovered=" << plan.uncoveredObligations.size() << '\n';
+           << " candidates=" << plan.candidates.size() << " uncovered=" << plan.uncoveredObligations.size()
+           << " allocation-failure=" << stringifySyncEventAllocationFailure(plan.allocationFailure) << '\n';
     for (const SyncDirectRepairCandidate& candidate : plan.candidates) {
         output << "  candidate #" << candidate.id << " kind=" << stringifySyncDirectRepairKind(candidate.kind)
                << " core=" << stringifySyncPhysicalCore(candidate.core)
@@ -114,6 +115,8 @@ StringRef mlir::pto::protocol_sync::stringifySyncDirectRepairPlanStatus(SyncDire
             return "unsupported";
         case SyncDirectRepairPlanStatus::ResourceInfeasible:
             return "resource-infeasible";
+        case SyncDirectRepairPlanStatus::AllocationAnalysisLimit:
+            return "allocation-analysis-limit";
     }
     return "unsupported";
 }

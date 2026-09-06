@@ -14,6 +14,7 @@
 #define PTO_TRANSFORMS_PROTOCOLSYNC_READYRELEASEPROTOCOL_H
 
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
+#include "PTO/Transforms/ProtocolSync/EventAllocation.h"
 #include "PTO/Transforms/ProtocolSync/ProtocolSyncTarget.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Support/LogicalResult.h"
@@ -85,6 +86,7 @@ struct SyncReadyReleasePlanRejection {
 /// exposes independently selectable prime, body, or drain actions.
 struct SyncReadyReleasePlan {
     SyncReadyReleasePlanStatus status = SyncReadyReleasePlanStatus::Empty;
+    SyncEventAllocationFailure allocationFailure = SyncEventAllocationFailure::None;
     SyncChannelId channel = kInvalidSyncId;
     SyncGenerationId generation = kInvalidSyncId;
     unsigned capacity = 0;

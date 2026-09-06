@@ -12,6 +12,7 @@
 #define PTO_TRANSFORMS_PROTOCOLSYNC_ONESHOTPROTOCOL_H
 
 #include "PTO/Transforms/ProtocolSync/ChannelProtocolIR.h"
+#include "PTO/Transforms/ProtocolSync/EventAllocation.h"
 #include "PTO/Transforms/ProtocolSync/ProtocolSyncTarget.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Support/LogicalResult.h"
@@ -82,6 +83,7 @@ struct SyncOneShotPlanRejection {
 /// residual-obligation interpreter.
 struct SyncOneShotPlan {
     SyncOneShotPlanStatus status = SyncOneShotPlanStatus::Empty;
+    SyncEventAllocationFailure allocationFailure = SyncEventAllocationFailure::None;
     /// Requested target is provenance only; compatibility is determined by
     /// capabilityProfile.
     ProtocolSyncTargetKind targetKind = ProtocolSyncTargetKind::Unsupported;

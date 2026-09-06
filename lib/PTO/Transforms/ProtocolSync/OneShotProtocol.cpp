@@ -479,16 +479,13 @@ LogicalResult mlir::pto::protocol_sync::allocateOneShotProtocolEvents(
     if (statistics) {
         recordSyncEventAllocationStatistics(*allocation, *statistics);
     }
-    if (allocation->status == SyncEventAllocationStatus::ResourceInfeasible) {
+    if (allocation->status != SyncEventAllocationStatus::Allocated) {
+        plan.allocationFailure = allocation->failureReason;
         const SyncOneShotProtocol* witness = eventProtocols.empty() ? nullptr : eventProtocols.front();
         reject(
             plan, !witness || witness->channels.empty() ? kInvalidSyncId : witness->channels.front(),
-            SyncOneShotRejection::EventCapacity,
-            "interfering event generations exhaust the compiler event pool in one directed domain");
+            SyncOneShotRejection::EventCapacity, describeSyncEventAllocationFailure(allocation->failureReason));
         return success();
-    }
-    if (allocation->status != SyncEventAllocationStatus::Allocated) {
-        return failure();
     }
     for (auto [protocol, eventId] : llvm::zip_equal(eventProtocols, allocation->eventIds)) {
         protocol->eventId = eventId;
@@ -572,7 +569,8 @@ void mlir::pto::protocol_sync::printOneShotProtocolPlan(
            << " status=" << stringifySyncOneShotPlanStatus(plan.status) << " phases=" << plan.phaseOrder.size()
            << " protocols=" << plan.protocols.size() << " core=" << stringifySyncPhysicalCore(plan.functionCore)
            << " target=" << stringifyProtocolSyncTargetKind(plan.targetKind)
-           << " profile=" << stringifyProtocolSyncCapabilityProfile(plan.capabilityProfile) << '\n';
+           << " profile=" << stringifyProtocolSyncCapabilityProfile(plan.capabilityProfile)
+           << " allocation-failure=" << stringifySyncEventAllocationFailure(plan.allocationFailure) << '\n';
     for (const SyncOneShotProtocol& protocol : plan.protocols) {
         output << "  protocol #" << protocol.id << " kind=" << stringifySyncOneShotProtocolKind(protocol.kind)
                << " phases=#" << protocol.sourcePhase << "->#" << protocol.targetPhase

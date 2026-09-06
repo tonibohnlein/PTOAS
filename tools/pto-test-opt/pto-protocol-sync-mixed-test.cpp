@@ -486,14 +486,24 @@ bool testMixedSelectionAndAllocation(MLIRContext& context)
     }
     ProtocolSyncStatistics limitStatistics;
     const bool analysisLimitPreserved =
-        failed(allocateMixedProtocolEvents(fixture.schedule, analysisLimited, &limitStatistics)) &&
-        analysisLimited.status == SyncMixedPlanStatus::Ready && allEventIdsClear(analysisLimited) &&
-        limitStatistics.allocationGraphVertices >= 1025 && limitStatistics.allocationSearchLimitHits == 1;
+        succeeded(allocateMixedProtocolEvents(fixture.schedule, analysisLimited, &limitStatistics)) &&
+        analysisLimited.status == SyncMixedPlanStatus::AllocationAnalysisLimit &&
+        analysisLimited.allocationFailure == SyncEventAllocationFailure::AnalysisLimit &&
+        allEventIdsClear(analysisLimited) && limitStatistics.allocationGraphVertices >= 1025 &&
+        limitStatistics.allocationSearchLimitHits == 1;
     if (!check(analysisLimitPreserved, "mixed analysis limit lost atomicity or allocation statistics")) {
         return false;
     }
 
     SyncMixedProtocolPlan malformed = *plan;
+    malformed.allocationFailure = SyncEventAllocationFailure::ConservativeInterference;
+    if (!check(
+            failed(verifyMixedProtocolPlan(
+                fixture.schedule, *fixture.stages, fixture.timelines, fixture.channels, malformed)),
+            "mixed verifier accepted forged allocation failure attribution")) {
+        return false;
+    }
+    malformed = *plan;
     malformed.directRepair.candidates.front().eventId = malformed.readyRelease->lanes.front().readyEventId;
     const std::string before = printModule(*module);
     const bool rejectedCollision = failed(

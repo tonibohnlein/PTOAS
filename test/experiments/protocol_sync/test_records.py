@@ -17,7 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from acceptance import classify_strict, summarize_acceptance
+from acceptance import classify_strict, observed_blockers, summarize_acceptance
 from campaign import inputs, probe_command
 from census import classify_track, first_control_gate, population, summarize, topology_hash
 from records import fields, new_function, parse_diagnostics
@@ -32,6 +32,22 @@ def statistics(name, **counts):
 
 class EvidenceTests(unittest.TestCase):
     """Do not let a missing dump or ambiguous scope become positive evidence."""
+
+    def test_terminal_allocation_reasons_stay_distinct(self):
+        for reason in ("event-interference-unresolved", "no-unreserved-event-ids",
+                       "event-allocation-analysis-limit"):
+            function = {"direct_rejections": [], "statistics": {
+                "producer": "fail-closed-policy", "planner_result": reason}}
+            row = {"functions": [], "empty_world": {"functions": []},
+                   "strict_mixed": {"functions": [function]}}
+            self.assertEqual(observed_blockers(row), {f"allocation.{reason}": 1})
+            function["statistics"] = {"producer": "legacy-fallback-unsupported", "fallback": reason}
+            self.assertEqual(observed_blockers(row), {f"allocation.{reason}": 1})
+            function["statistics"] = {"producer": "protocol-plus-direct-residuals",
+                                      "planner_result": "materialized-mixed",
+                                      "counts": {"allocation_conservative_failures": 1,
+                                                 "allocation_analysis_failures": 1}}
+            self.assertEqual(observed_blockers(row), {})
 
     def test_native_followup_requires_concrete_verdict(self):
         functions = [{"verdict": {"status": "rejected"}}]

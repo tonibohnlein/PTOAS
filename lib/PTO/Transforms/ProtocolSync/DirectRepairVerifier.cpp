@@ -477,8 +477,10 @@ LogicalResult mlir::pto::protocol_sync::verifyDirectRepairPlan(
     const bool ready = !obligations.empty() && uncovered.none() && plan.rejections.empty() &&
                        plan.status == SyncDirectRepairPlanStatus::Ready;
     const bool partial = !uncovered.none() && plan.status == SyncDirectRepairPlanStatus::Partial;
-    const bool resourceInfeasible = !obligations.empty() && uncovered.none() && !plan.candidates.empty() &&
-                                    plan.status == SyncDirectRepairPlanStatus::ResourceInfeasible;
+    const bool allocationRejected = plan.status == SyncDirectRepairPlanStatus::ResourceInfeasible ||
+                                    plan.status == SyncDirectRepairPlanStatus::AllocationAnalysisLimit;
+    const bool resourceInfeasible =
+        !obligations.empty() && uncovered.none() && !plan.candidates.empty() && allocationRejected;
     const bool validStatus = empty || ready || partial || resourceInfeasible;
     if (!validStatus) {
         return failure();
@@ -515,6 +517,18 @@ LogicalResult mlir::pto::protocol_sync::verifyDirectRepairPlan(
         if (!oneCapacityRejection || !hasDirectedEvent || !allUnallocated) {
             return failure();
         }
+        SyncDirectRepairPlan replay = plan;
+        replay.status = SyncDirectRepairPlanStatus::Ready;
+        replay.allocationFailure = SyncEventAllocationFailure::None;
+        replay.rejections.clear();
+        const bool failureReproduced = succeeded(allocateDirectRepairEvents(schedule, replay)) &&
+                                       replay.status == plan.status &&
+                                       replay.allocationFailure == plan.allocationFailure;
+        if (!failureReproduced) {
+            return failure();
+        }
+    } else if (plan.allocationFailure != SyncEventAllocationFailure::None) {
+        return failure();
     }
     if (ready) {
         const auto directed = llvm::make_filter_range(plan.candidates, [](const SyncDirectRepairCandidate& candidate) {

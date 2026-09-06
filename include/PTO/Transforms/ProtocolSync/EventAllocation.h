@@ -60,6 +60,17 @@ enum class SyncEventAllocationStatus : std::uint8_t {
     AnalysisLimit,
 };
 
+/// Failure attribution is not a certificate permitting added serialization.
+enum class SyncEventAllocationFailure : std::uint8_t {
+    None,
+    NoUnreservedIds,
+    ConservativeInterference,
+    AnalysisLimit,
+};
+
+llvm::StringRef stringifySyncEventAllocationFailure(SyncEventAllocationFailure reason);
+llvm::StringRef describeSyncEventAllocationFailure(SyncEventAllocationFailure reason);
+
 inline constexpr std::uint64_t kHardMaximumEventBacktrackingNodes = 1000000;
 inline constexpr unsigned kHardMaximumExactEventVertices = 128;
 inline constexpr unsigned kHardMaximumEventGenerationsPerDomain = 1024;
@@ -73,12 +84,19 @@ struct SyncEventAllocationOptions {
 
 struct SyncEventAllocationResult {
     SyncEventAllocationStatus status = SyncEventAllocationStatus::Allocated;
+    SyncEventAllocationFailure failureReason = SyncEventAllocationFailure::None;
+    SyncPhysicalCore failedCore = SyncPhysicalCore::Unknown;
+    PIPE failedSource = PIPE::PIPE_UNASSIGNED;
+    PIPE failedTarget = PIPE::PIPE_UNASSIGNED;
+    unsigned availableIds = 0;
     llvm::SmallVector<unsigned, 8> eventIds;
     std::uint64_t graphVertices = 0;
     std::uint64_t graphEdges = 0;
     std::uint64_t backtrackingNodes = 0;
     std::uint64_t searchLimitHits = 0;
+    std::uint64_t lifetimeLimitHits = 0;
     std::uint64_t eventDomains = 0;
+    /// Colors in the computed assignment, not maximum physical live events.
     std::uint64_t maximumDomainPressure = 0;
     std::uint64_t maximumEventIdPlusOne = 0;
 };

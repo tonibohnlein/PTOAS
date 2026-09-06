@@ -90,6 +90,7 @@ SyncEventConsumptionOrder mlir::pto::protocol_sync::buildEventConsumptionOrder(
     constexpr unsigned maximumGenerations = 128;
     const bool exceedsLimit = generations.size() > maximumGenerations;
     if (exceedsLimit) {
+        result.budgetExceeded = true;
         return result;
     }
     SmallVector<EventPoint, 16> points;

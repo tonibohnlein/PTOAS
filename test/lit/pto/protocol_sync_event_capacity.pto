@@ -7,11 +7,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
-// RUN: not pto-test-opt \
+// RUN: pto-test-opt \
 // RUN:   --pto-protocol-sync='execution-mode=one-shot fallback-mode=fail dump=plan statistics=1' \
-// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=STRICT
-// RUN: pto-test-opt --pto-protocol-sync='execution-mode=one-shot statistics=1' \
-// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=FALLBACK
+// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=REFERENCE
 // RUN: not pto-test-opt \
 // RUN:   --pto-protocol-sync='execution-mode=direct-repair fallback-mode=fail dump=plan statistics=1' \
 // RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=DIRECT-STRICT
@@ -102,38 +100,36 @@ module attributes {pto.target_arch = "a3"} {
   }
 }
 
-// STRICT: PROTOCOL-SYNC one-shot-plan function=@seven_mte2_to_vector_generations status=unsupported
-// STRICT: protocol #0 kind=directed-event phases=#0->#1
-// STRICT-SAME: event-id=none
-// STRICT: protocol #2 kind=directed-event phases=#2->#3
-// STRICT-SAME: event-id=none
-// STRICT: reason=event-capacity
-// STRICT: "max_event_domain_pressure":6
-// STRICT-SAME: "maximum_event_id":-1
-// STRICT-SAME: "planner_result":"unsupported"
-// STRICT-SAME: "status":"unsupported"
-// FALLBACK: "fallback":"resource-infeasible"
-// FALLBACK-SAME: "planner_result":"legacy-fallback-resource-infeasible"
-// FALLBACK-SAME: "producer":"legacy-fallback-resource-infeasible"
-// FALLBACK-SAME: "status":"ok"
+// The historical OneShot reference adds reverse acknowledgements even between
+// disjoint tiles. Its ID reuse is valid, but that serial construction must not
+// become the normal policy for direct or mixed repair.
+// REFERENCE: PROTOCOL-SYNC one-shot-plan function=@seven_mte2_to_vector_generations status=ready
+// REFERENCE: protocol #0 kind=directed-event phases=#0->#1
+// REFERENCE-SAME: event-id=0
+// REFERENCE: protocol #2 kind=directed-event phases=#2->#3
+// REFERENCE-SAME: event-id=0
+// REFERENCE: "planner_result":"materialized"
+// REFERENCE-SAME: "producer":"protocol-plan"
 // DIRECT-STRICT: PROTOCOL-SYNC direct-repair function=@seven_mte2_to_vector_generations
 // DIRECT-STRICT-SAME: status=resource-infeasible
+// DIRECT-STRICT-SAME: allocation-failure=event-interference-unresolved
 // DIRECT-STRICT: candidate #0 kind=directed-event
 // DIRECT-STRICT-SAME: event=unallocated
 // DIRECT-STRICT: candidate #1 kind=directed-event
 // DIRECT-STRICT-SAME: event=unallocated
 // DIRECT-STRICT: reason=event-capacity
-// DIRECT-STRICT: "planner_result":"unsupported"
-// DIRECT-FALLBACK: "fallback":"resource-infeasible"
-// DIRECT-FALLBACK-SAME: "planner_result":"legacy-fallback-resource-infeasible"
-// DIRECT-FALLBACK-SAME: "producer":"legacy-fallback-resource-infeasible"
+// DIRECT-STRICT: "planner_result":"event-interference-unresolved"
+// DIRECT-FALLBACK: "fallback":"event-interference-unresolved"
+// DIRECT-FALLBACK-SAME: "planner_result":"legacy-fallback-event-interference-unresolved"
+// DIRECT-FALLBACK-SAME: "producer":"legacy-fallback-unsupported"
 // MIXED-SCARCITY: PROTOCOL-SYNC mixed-plan function=@seven_mte2_to_vector_generations
 // MIXED-SCARCITY-SAME: status=resource-infeasible world=direct-only
-// MIXED-SCARCITY-SAME: worlds-attempted=16 worlds-feasible=0
+// MIXED-SCARCITY-SAME: worlds-attempted=1 worlds-feasible=0
+// MIXED-SCARCITY-SAME: allocation-failure=event-interference-unresolved
 // MIXED-SCARCITY: reason=event-capacity
 // MIXED-SCARCITY: "allocation_retries":0
-// MIXED-SCARCITY-SAME: "fallback":"resource-infeasible"
-// MIXED-SCARCITY-SAME: "planner_result":"legacy-fallback-resource-infeasible"
+// MIXED-SCARCITY-SAME: "fallback":"event-interference-unresolved"
+// MIXED-SCARCITY-SAME: "planner_result":"legacy-fallback-event-interference-unresolved"
 // MIXED-SCARCITY-SAME: "status":"ok"
 // MIXED-IR-LABEL: func.func @seven_mte2_to_vector_generations
 // MIXED-IR-NOT: pto.protocol_sync.generated

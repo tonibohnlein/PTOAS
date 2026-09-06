@@ -38,6 +38,7 @@ module attributes {pto.target_arch = "a3"} {
 
 // CHECK-LABEL: func.func @same_mte3_waw
 // CHECK: pto.tstore
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID1>]
 // CHECK-NEXT: pto.barrier <PIPE_MTE3>
 // CHECK-NEXT: pto.tstore
 // CHECK-NEXT: pto.barrier <PIPE_ALL>

@@ -14,6 +14,7 @@
 #define PTO_TRANSFORMS_PROTOCOLSYNC_DIRECTREPAIR_H
 
 #include "PTO/Transforms/ProtocolSync/ProtocolSyncTarget.h"
+#include "PTO/Transforms/ProtocolSync/EventAllocation.h"
 #include "PTO/Transforms/ProtocolSync/ResidualObligation.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Support/LogicalResult.h"
@@ -42,6 +43,7 @@ enum class SyncDirectRepairPlanStatus : std::uint8_t {
     Partial,
     Unsupported,
     ResourceInfeasible,
+    AllocationAnalysisLimit,
 };
 
 enum class SyncDirectRepairRejection : std::uint8_t {
@@ -90,6 +92,7 @@ struct SyncDirectRepairPlanRejection {
 
 struct SyncDirectRepairPlan {
     SyncDirectRepairPlanStatus status = SyncDirectRepairPlanStatus::Empty;
+    SyncEventAllocationFailure allocationFailure = SyncEventAllocationFailure::None;
     std::uint32_t obligationCount = 0;
     llvm::SmallVector<SyncDirectRepairCandidate, 8> candidates;
     llvm::SmallVector<SyncObligationId, 8> uncoveredObligations;

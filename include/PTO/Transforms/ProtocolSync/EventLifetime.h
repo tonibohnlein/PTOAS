@@ -23,10 +23,12 @@ namespace mlir::pto::protocol_sync {
 class SyncEventConsumptionOrder {
 public:
     bool provesConsumedBeforeSet(SyncEventGenerationId first, SyncEventGenerationId second) const;
+    bool exceededBudget() const { return budgetExceeded; }
 
 private:
     friend SyncEventConsumptionOrder buildEventConsumptionOrder(llvm::ArrayRef<SyncEventGeneration>);
     llvm::SmallVector<llvm::BitVector, 16> before;
+    bool budgetExceeded = false;
 };
 
 /// Prove only unguarded, non-recurring handoffs in a function's entry block.

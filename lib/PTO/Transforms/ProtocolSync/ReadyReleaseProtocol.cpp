@@ -585,14 +585,12 @@ LogicalResult mlir::pto::protocol_sync::allocateReadyReleaseProtocolEvents(
     if (statistics) {
         recordSyncEventAllocationStatistics(*allocation, *statistics);
     }
-    if (allocation->status == SyncEventAllocationStatus::ResourceInfeasible) {
+    if (allocation->status != SyncEventAllocationStatus::Allocated) {
+        plan.allocationFailure = allocation->failureReason;
         reject(
             plan, plan.channel, SyncReadyReleaseRejection::EventCapacity,
-            "the complete ReadyRelease candidate does not fit the compiler event pool");
+            describeSyncEventAllocationFailure(allocation->failureReason));
         return success();
-    }
-    if (allocation->status != SyncEventAllocationStatus::Allocated) {
-        return failure();
     }
     for (auto [slot, eventId] : llvm::zip_equal(assignmentSlots, allocation->eventIds)) {
         *slot = eventId;
@@ -688,7 +686,8 @@ void mlir::pto::protocol_sync::printReadyReleaseProtocolPlan(
     }
     output << " capacity=" << plan.capacity << " core=" << stringifySyncPhysicalCore(plan.core)
            << " producer-pipe=" << static_cast<unsigned>(plan.producerPipe)
-           << " consumer-pipe=" << static_cast<unsigned>(plan.consumerPipe) << '\n';
+           << " consumer-pipe=" << static_cast<unsigned>(plan.consumerPipe)
+           << " allocation-failure=" << stringifySyncEventAllocationFailure(plan.allocationFailure) << '\n';
     for (const SyncReadyReleaseLane& lane : plan.lanes) {
         output << "  lane #" << lane.logicalLane << " ready-event-id=";
         if (lane.readyEventId) {

@@ -230,6 +230,75 @@ P2a does not finish P2: unknown interference and proof-budget exhaustion still
 need explicit propagation before any pressure-recovery policy is enabled.
 Selective loop/choice synthesis and complete frontend admission remain open.
 
+### P2b — allocation failure attribution
+
+The allocation result now distinguishes:
+
+- `event-interference-unresolved`: the conservative interference graph cannot
+  fit the available colors. This is not a simultaneous-live hardware witness.
+- `no-unreserved-event-ids`: declared reservations leave zero compiler IDs in
+  the affected domain. This does not establish that serialization can help.
+- `event-allocation-analysis-limit`: feasibility search, domain size, or the
+  bounded consumption-order analysis prevents establishing an assignment.
+
+Successful conservative assignments remain accepted when a consumption proof
+or color minimization hits its limit. Failure attribution includes the affected
+core/directed domain and available-ID count in the raw allocator result; plan
+dumps and CLI records currently propagate the typed reason and aggregate counts.
+Those domain details are not yet exposed in the CLI. The historical
+`max_event_domain_pressure` field means colors used by the computed assignment,
+not measured or proven maximum simultaneously live hardware generations.
+
+Direct and mixed plans retain a separate handled allocation-analysis-limit
+status. Explicit reference OneShot/ReadyRelease routes retain unsupported status
+with allocation attribution. An optional protocol's allocation limitation no
+longer aborts mixed selection as an internal error; the direct alternative can
+still be tried. Failed allocations keep all event IDs unassigned, and direct/
+mixed verification reproduces their status and cause. Budget limits must not
+turn into internal-error records merely because verification repeats a bound.
+
+No failure class authorizes serialization. A future pressure certificate needs
+a complete supported event/control model and an independently replayable cut
+with more live generations than available IDs. P2a's under-approximation of
+guaranteed order cannot supply that certificate by an absent path or clique.
+
+Validation correction: P2b inspection found that earlier P0/P1 and P2a checkpoint
+runs used a stale statically linked `pto-test-opt` for several native lit tests.
+The compiler library and affected unit binaries were current, but the reported
+47/47 and 48/48 totals were not entirely current-head validation. P2b rebuilds
+that driver explicitly with every affected unit target and reruns the checkpoint.
+In particular, the old 16-world expectation and the reference OneShot distinct-ID
+expectation must not be interpreted as current normal-planner behavior.
+
+Validation over `95b083310f1caa88ad2c7c981f60ddefa784e7b8`, 2026-09-06:
+
+- Targeted `taskset -c 0,1 cmake --build build --parallel 2 --target
+  PTOASCompiler pto-test-opt pto-protocol-sync-direct-repair-test
+  pto-protocol-sync-mixed-test pto-protocol-sync-loop-memory-test
+  pto-protocol-sync-one-shot-test pto-protocol-sync-ready-release-test
+  pto-protocol-sync-local-memory-test pto-protocol-sync-scoreboard-test` passed.
+  Shared statistics/plan interfaces required dependent PTOAS recompilation;
+  review corrections used incremental builds, with no LLVM rebuild.
+- Fresh-linked `llvm-lit -v -j1 build/test/lit --filter 'protocol_sync_'
+  -o build/protocol-sync-p2b-tests.json`, using the same venv/affinity command
+  as P2a: **49/49 passed**, 66.71 seconds. SHA-256:
+  `9447defe08b9b491348c1e33d5e551e53a855b146c318eeebede538e4cc6cce4`.
+  This supersedes the stale-driver totals above. Corrected the old same-pipe
+  fixture to retain its second late acquisition before the required WAW barrier.
+- `.venv/bin/python -m unittest discover -s test/experiments/protocol_sync
+  -p test_records.py`: **28 passed**. The corpus blocker matrix retains all
+  three terminal allocation reasons, without treating failed optional
+  alternatives inside admitted functions as terminal blockers.
+- Changed-code prefilter: 24 code files in the worktree, zero errors/warnings;
+  `git diff --check` passed. Independent algorithm and compiler-integration
+  reviews accepted. No new device or frontend acceptance campaign in this slice.
+
+The new native 129-generation fixture checks handled analysis limits in A2/A3
+and both GM contracts. Unit regressions cover zero reserved IDs even above the
+domain cap, successful bounded minimization, forged attribution and cleared
+assignments. Certified physical-pressure recovery remains deferred; proceed
+with P3 corpus collection and semantic facts without enabling serialization.
+
 ### Historical N0 progress
 
 - N0 in progress: source heads resolved; added general-only mixed-mode selection

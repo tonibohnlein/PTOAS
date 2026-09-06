@@ -282,15 +282,15 @@ LogicalResult allocateDirectRepairEventsImpl(
     if (statistics) {
         recordSyncEventAllocationStatistics(*allocation, *statistics);
     }
-    if (allocation->status == SyncEventAllocationStatus::ResourceInfeasible) {
-        plan.status = SyncDirectRepairPlanStatus::ResourceInfeasible;
+    if (allocation->status != SyncEventAllocationStatus::Allocated) {
+        plan.allocationFailure = allocation->failureReason;
+        plan.status = allocation->status == SyncEventAllocationStatus::AnalysisLimit ?
+                          SyncDirectRepairPlanStatus::AllocationAnalysisLimit :
+                          SyncDirectRepairPlanStatus::ResourceInfeasible;
         plan.rejections.push_back(
             {kInvalidSyncId, SyncDirectRepairRejection::EventCapacity,
-             "interfering direct event generations exhaust the compiler event pool"});
+             describeSyncEventAllocationFailure(allocation->failureReason).str()});
         return success();
-    }
-    if (allocation->status != SyncEventAllocationStatus::Allocated) {
-        return failure();
     }
     for (auto [candidate, eventId] : llvm::zip_equal(eventCandidates, allocation->eventIds)) {
         candidate->eventId = eventId;

@@ -285,6 +285,7 @@ FailureOr<SyncEventAllocationResult> mlir::pto::protocol_sync::allocateSyncEvent
 
     SyncEventAllocationResult result;
     const auto consumptionOrder = buildEventConsumptionOrder(generations);
+    result.lifetimeLimitHits = consumptionOrder.exceededBudget() ? 1 : 0;
     result.graphVertices = generations.size();
     result.eventIds.assign(generations.size(), 0);
     std::map<EventDomain, SmallVector<unsigned, 8>> domainVertices;
@@ -294,10 +295,29 @@ FailureOr<SyncEventAllocationResult> mlir::pto::protocol_sync::allocateSyncEvent
     result.eventDomains = domainVertices.size();
     for (const auto& domainEntry : domainVertices) {
         const SmallVector<unsigned, 8>& vertices = domainEntry.second;
+        const auto& representative = generations[vertices.front()];
+        const SmallVector<unsigned, 6> colors = availableColors(target, reservations, representative);
+        const auto rejectAllocation = [&](SyncEventAllocationFailure reason) {
+            result.failureReason = reason;
+            result.status = reason == SyncEventAllocationFailure::AnalysisLimit ?
+                                SyncEventAllocationStatus::AnalysisLimit :
+                                SyncEventAllocationStatus::ResourceInfeasible;
+            result.failedCore = representative.core;
+            result.failedSource = representative.sourcePipe;
+            result.failedTarget = representative.targetPipe;
+            result.availableIds = colors.size();
+            result.eventIds.clear();
+        };
+        if (colors.empty()) {
+            rejectAllocation(SyncEventAllocationFailure::NoUnreservedIds);
+            return result;
+        }
+        const auto interferenceFailure = consumptionOrder.exceededBudget() ?
+                                             SyncEventAllocationFailure::AnalysisLimit :
+                                             SyncEventAllocationFailure::ConservativeInterference;
         const bool exceedsDomainLimit = vertices.size() > options.maximumGenerationsPerDomain;
         if (exceedsDomainLimit) {
-            result.status = SyncEventAllocationStatus::AnalysisLimit;
-            result.eventIds.clear();
+            rejectAllocation(SyncEventAllocationFailure::AnalysisLimit);
             ++result.searchLimitHits;
             return result;
         }
@@ -315,12 +335,6 @@ FailureOr<SyncEventAllocationResult> mlir::pto::protocol_sync::allocateSyncEvent
             }
         }
         result.graphEdges += domainEdges;
-        const SmallVector<unsigned, 6> colors = availableColors(target, reservations, generations[vertices.front()]);
-        if (colors.empty()) {
-            result.status = SyncEventAllocationStatus::ResourceInfeasible;
-            result.eventIds.clear();
-            return result;
-        }
         const std::uint64_t completeEdgeCount = static_cast<std::uint64_t>(vertices.size()) * (vertices.size() - 1) / 2;
         if (domainEdges == 0) {
             for (unsigned vertex : vertices) {
@@ -332,8 +346,7 @@ FailureOr<SyncEventAllocationResult> mlir::pto::protocol_sync::allocateSyncEvent
         if (domainEdges == completeEdgeCount) {
             const bool exceedsEventPool = vertices.size() > colors.size();
             if (exceedsEventPool) {
-                result.status = SyncEventAllocationStatus::ResourceInfeasible;
-                result.eventIds.clear();
+                rejectAllocation(interferenceFailure);
                 return result;
             }
             for (auto [position, vertex] : llvm::enumerate(vertices)) {
@@ -352,20 +365,17 @@ FailureOr<SyncEventAllocationResult> mlir::pto::protocol_sync::allocateSyncEvent
         }
         result.backtrackingNodes += feasibilityNodes;
         if (!solved && feasible.exhaustedBudget()) {
-            result.status = SyncEventAllocationStatus::AnalysisLimit;
-            result.eventIds.clear();
+            rejectAllocation(SyncEventAllocationFailure::AnalysisLimit);
             ++result.searchLimitHits;
             return result;
         }
         if (!solved && !exactSearchAllowed) {
-            result.status = SyncEventAllocationStatus::AnalysisLimit;
-            result.eventIds.clear();
+            rejectAllocation(SyncEventAllocationFailure::AnalysisLimit);
             ++result.searchLimitHits;
             return result;
         }
         if (!solved) {
-            result.status = SyncEventAllocationStatus::ResourceInfeasible;
-            result.eventIds.clear();
+            rejectAllocation(interferenceFailure);
             return result;
         }
         unsigned bestColorCount = feasible.usedColorCount();
@@ -460,6 +470,36 @@ LogicalResult mlir::pto::protocol_sync::verifySyncEventGenerationAssignment(
     return success();
 }
 
+StringRef mlir::pto::protocol_sync::stringifySyncEventAllocationFailure(SyncEventAllocationFailure reason)
+{
+    switch (reason) {
+        case SyncEventAllocationFailure::None:
+            return "none";
+        case SyncEventAllocationFailure::NoUnreservedIds:
+            return "no-unreserved-event-ids";
+        case SyncEventAllocationFailure::ConservativeInterference:
+            return "event-interference-unresolved";
+        case SyncEventAllocationFailure::AnalysisLimit:
+            return "event-allocation-analysis-limit";
+    }
+    return "unknown";
+}
+
+StringRef mlir::pto::protocol_sync::describeSyncEventAllocationFailure(SyncEventAllocationFailure reason)
+{
+    switch (reason) {
+        case SyncEventAllocationFailure::None:
+            return "no allocation failure";
+        case SyncEventAllocationFailure::NoUnreservedIds:
+            return "declared reservations leave no compiler event IDs in the selected domain";
+        case SyncEventAllocationFailure::ConservativeInterference:
+            return "conservative event interference cannot be colored; simultaneous physical liveness is unproven";
+        case SyncEventAllocationFailure::AnalysisLimit:
+            return "event feasibility or consumption-order proof exceeded its analysis bound";
+    }
+    return "unknown allocation failure";
+}
+
 void mlir::pto::protocol_sync::recordSyncEventAllocationStatistics(
     const SyncEventAllocationResult& allocation, ProtocolSyncStatistics& statistics)
 {
@@ -467,6 +507,12 @@ void mlir::pto::protocol_sync::recordSyncEventAllocationStatistics(
     statistics.allocationGraphEdges += allocation.graphEdges;
     statistics.allocationBacktrackingNodes += allocation.backtrackingNodes;
     statistics.allocationSearchLimitHits += allocation.searchLimitHits;
+    statistics.allocationLifetimeLimitHits += allocation.lifetimeLimitHits;
+    statistics.allocationConservativeFailures +=
+        allocation.failureReason == SyncEventAllocationFailure::ConservativeInterference;
+    statistics.allocationReservedPoolFailures +=
+        allocation.failureReason == SyncEventAllocationFailure::NoUnreservedIds;
+    statistics.allocationAnalysisFailures += allocation.failureReason == SyncEventAllocationFailure::AnalysisLimit;
     statistics.eventDomains += allocation.eventDomains;
     statistics.maxEventDomainPressure = std::max(statistics.maxEventDomainPressure, allocation.maximumDomainPressure);
     statistics.maximumEventIdPlusOne = std::max(statistics.maximumEventIdPlusOne, allocation.maximumEventIdPlusOne);

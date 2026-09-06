@@ -414,15 +414,18 @@ LogicalResult verifyAllocationState(const StructuredSyncIR& schedule, const Sync
     }
     FailureOr<SyncEventAllocationResult> authoritative =
         allocateSyncEventGenerations(target, reservations, unallocated);
-    const bool expectsResourceInfeasible = plan.status == SyncMixedPlanStatus::ResourceInfeasible;
-    const bool authoritativeStatusMatches =
-        succeeded(authoritative) &&
-        (expectsResourceInfeasible ? authoritative->status == SyncEventAllocationStatus::ResourceInfeasible :
-                                     authoritative->status == SyncEventAllocationStatus::Allocated) &&
-        authoritative->maximumDomainPressure == plan.selectedCost.eventPressure;
+    const bool allocationRejected = plan.status == SyncMixedPlanStatus::ResourceInfeasible ||
+                                    plan.status == SyncMixedPlanStatus::AllocationAnalysisLimit;
+    const auto expectedStatus = plan.status == SyncMixedPlanStatus::AllocationAnalysisLimit ?
+                                    SyncEventAllocationStatus::AnalysisLimit :
+                                allocationRejected ? SyncEventAllocationStatus::ResourceInfeasible :
+                                                     SyncEventAllocationStatus::Allocated;
+    const bool authoritativeStatusMatches = succeeded(authoritative) && authoritative->status == expectedStatus &&
+                                            authoritative->failureReason == plan.allocationFailure &&
+                                            authoritative->maximumDomainPressure == plan.selectedCost.eventPressure;
     return success(
         succeeded(verifySyncEventGenerationAssignment(target, reservations, generations)) &&
-        (plan.status != SyncMixedPlanStatus::ResourceInfeasible || !anyAllocated) && authoritativeStatusMatches);
+        (!allocationRejected || !anyAllocated) && authoritativeStatusMatches);
 }
 
 LogicalResult verifyGeneratedOwnership(const StructuredSyncIR& schedule, const SyncMixedProtocolPlan& plan)
@@ -560,7 +563,8 @@ LogicalResult mlir::pto::protocol_sync::verifyMixedProtocolPlan(
             !plan.directRepair.isComplete() && hasOnlyFailure(plan, SyncMixedPlanRejection::IncompleteDirectRepair));
     }
     if (plan.status != SyncMixedPlanStatus::Ready && plan.status != SyncMixedPlanStatus::Empty &&
-        plan.status != SyncMixedPlanStatus::ResourceInfeasible) {
+        plan.status != SyncMixedPlanStatus::ResourceInfeasible &&
+        plan.status != SyncMixedPlanStatus::AllocationAnalysisLimit) {
         return failure();
     }
     if (!plan.directRepair.isComplete()) {
@@ -575,7 +579,8 @@ LogicalResult mlir::pto::protocol_sync::verifyMixedProtocolPlan(
     if (!validDeletionAccounting) {
         return failure();
     }
-    if (plan.status == SyncMixedPlanStatus::ResourceInfeasible) {
+    if (plan.status == SyncMixedPlanStatus::ResourceInfeasible ||
+        plan.status == SyncMixedPlanStatus::AllocationAnalysisLimit) {
         const bool malformedResourceFailure =
             !hasOnlyFailure(plan, SyncMixedPlanRejection::EventCapacity) || !infeasibleCostMatches(plan);
         if (malformedResourceFailure) {
@@ -584,7 +589,8 @@ LogicalResult mlir::pto::protocol_sync::verifyMixedProtocolPlan(
         FailureOr<SyncMixedProtocolPlan> authoritative =
             buildMixedProtocolPlan(schedule, stages, timelines, channels, plan.protocolsEnabled, nullptr);
         const bool authoritativeResourceFailure =
-            succeeded(authoritative) && authoritative->status == SyncMixedPlanStatus::ResourceInfeasible &&
+            succeeded(authoritative) && authoritative->status == plan.status &&
+            authoritative->allocationFailure == plan.allocationFailure &&
             authoritative->selectedWorldKind == plan.selectedWorldKind &&
             authoritative->selectedCost.generatedEventPairs == plan.selectedCost.generatedEventPairs &&
             authoritative->selectedCost.targetedBarriers == plan.selectedCost.targetedBarriers &&

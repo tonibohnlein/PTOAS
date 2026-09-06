@@ -56,6 +56,18 @@ def observed_blockers(row):
     for function in row["strict_mixed"]["functions"]:
         for rejection in function["direct_rejections"]:
             blockers[f"direct-repair.{rejection['reason']}"] += 1
+        stats = function.get("statistics", {})
+        producer = stats.get("producer", "")
+        reason = None
+        if producer == "fail-closed-policy":
+            reason = stats.get("planner_result")
+        elif producer.startswith("legacy-fallback-"):
+            reason = stats.get("fallback")
+        if reason in {"event-interference-unresolved", "no-unreserved-event-ids",
+                      "event-allocation-analysis-limit"}:
+            # Aggregate counters also include rejected optional alternatives.
+            # Only the final function outcome is a terminal allocation blocker.
+            blockers[f"allocation.{reason}"] += 1
     return dict(blockers)
 
 

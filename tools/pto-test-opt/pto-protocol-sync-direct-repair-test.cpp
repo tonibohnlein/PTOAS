@@ -792,7 +792,8 @@ bool testEventCapacity(MLIRContext& context)
     capacityPlan.candidates.push_back(std::move(seventh));
     passed &= check(
         succeeded(allocateDirectRepairEvents(fixture.schedule, capacityPlan)) &&
-            capacityPlan.status == SyncDirectRepairPlanStatus::ResourceInfeasible,
+            capacityPlan.status == SyncDirectRepairPlanStatus::ResourceInfeasible &&
+            capacityPlan.allocationFailure == SyncEventAllocationFailure::ConservativeInterference,
         "seventh direct event did not fail closed");
     passed &= check(
         llvm::none_of(
@@ -803,6 +804,20 @@ bool testEventCapacity(MLIRContext& context)
         capacityPlan.rejections.size() == 1 &&
             capacityPlan.rejections.front().reason == SyncDirectRepairRejection::EventCapacity,
         "resource-infeasible allocation has no canonical capacity rejection");
+
+    capacityPlan.status = SyncDirectRepairPlanStatus::Ready;
+    capacityPlan.rejections.clear();
+    capacityPlan.allocationFailure = SyncEventAllocationFailure::None;
+    capacityPlan.candidates.resize(129, *event);
+    for (auto [id, candidate] : llvm::enumerate(capacityPlan.candidates)) {
+        candidate.id = id;
+        candidate.eventId.reset();
+    }
+    passed &= check(
+        succeeded(allocateDirectRepairEvents(fixture.schedule, capacityPlan)) &&
+            capacityPlan.status == SyncDirectRepairPlanStatus::AllocationAnalysisLimit &&
+            capacityPlan.allocationFailure == SyncEventAllocationFailure::AnalysisLimit,
+        "consumption-proof limit was not preserved as a handled direct allocation outcome");
 
     OwningOpRef<ModuleOp> reservationModule = parseFixture(context, kReservationFixture);
     if (!check(static_cast<bool>(reservationModule), "cannot parse reservation fixture")) {

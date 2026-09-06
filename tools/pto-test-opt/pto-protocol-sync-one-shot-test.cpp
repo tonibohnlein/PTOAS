@@ -758,6 +758,9 @@ bool testEventAllocation(MLIRContext& context)
         check(succeeded(allocateOneShotProtocolEvents(fixture.schedule, seven)), "exhaustion was an internal error");
     passed &= check(seven.status == SyncOneShotPlanStatus::Unsupported, "seventh generation did not fail closed");
     passed &= check(
+        seven.allocationFailure == SyncEventAllocationFailure::ConservativeInterference,
+        "unknown interference was reported as physical scarcity");
+    passed &= check(
         !seven.rejections.empty() && seven.rejections.back().reason == SyncOneShotRejection::EventCapacity,
         "seventh generation did not report event capacity");
 
@@ -831,6 +834,15 @@ bool testControlExclusiveEventAllocation(MLIRContext& context)
         exclusive.push_back(std::move(generation));
     }
     const ProtocolSyncTarget target = ProtocolSyncTarget::resolve(function);
+    SyncEventReservation reservedPool{PIPE::PIPE_MTE2, PIPE::PIPE_V, {0, 1, 2, 3, 4, 5}};
+    auto noIds = allocateSyncEventGenerations(target, {reservedPool}, exclusive);
+    const bool emptyPoolReported =
+        succeeded(noIds) && noIds->failureReason == SyncEventAllocationFailure::NoUnreservedIds &&
+        noIds->availableIds == 0 && noIds->failedCore == SyncPhysicalCore::Vector &&
+        noIds->failedSource == PIPE::PIPE_MTE2 && noIds->failedTarget == PIPE::PIPE_V && noIds->eventIds.empty();
+    if (!check(emptyPoolReported, "reserved compiler pool lost its exact failure attribution")) {
+        return false;
+    }
     FailureOr<SyncEventAllocationResult> exclusiveAllocation = allocateSyncEventGenerations(target, {}, exclusive);
     bool passed = check(
         succeeded(exclusiveAllocation) && exclusiveAllocation->status == SyncEventAllocationStatus::Allocated &&
@@ -895,8 +907,14 @@ bool testControlExclusiveEventAllocation(MLIRContext& context)
     }
     FailureOr<SyncEventAllocationResult> limitedAllocation =
         allocateSyncEventGenerations(target, {}, overLimit);
+    auto reservedAndLimited = allocateSyncEventGenerations(target, {reservedPool}, overLimit);
+    passed &= check(
+        succeeded(reservedAndLimited) &&
+            reservedAndLimited->failureReason == SyncEventAllocationFailure::NoUnreservedIds,
+        "known empty compiler pool was hidden by an unrelated graph-size limit");
     passed &= check(
         succeeded(limitedAllocation) && limitedAllocation->status == SyncEventAllocationStatus::AnalysisLimit &&
+            limitedAllocation->failureReason == SyncEventAllocationFailure::AnalysisLimit &&
             limitedAllocation->eventIds.empty() && limitedAllocation->searchLimitHits == 1,
         "generation-domain input limit was not reported as an analysis limit");
     SyncEventAllocationOptions invalidRaisedLimit;
@@ -924,6 +942,7 @@ bool testControlExclusiveEventAllocation(MLIRContext& context)
         allocateSyncEventGenerations(target, {}, boundedSearch, lowBudget);
     passed &= check(
         succeeded(boundedAllocation) && boundedAllocation->status == SyncEventAllocationStatus::Allocated &&
+            boundedAllocation->failureReason == SyncEventAllocationFailure::None &&
             boundedAllocation->eventIds.size() == 3 &&
             boundedAllocation->eventIds[0] == boundedAllocation->eventIds[2] &&
             boundedAllocation->eventIds[0] != boundedAllocation->eventIds[1] &&
@@ -957,8 +976,10 @@ bool testControlExclusiveEventAllocation(MLIRContext& context)
         allocateSyncEventGenerations(target, {}, aboveExactLimit);
     passed &= check(
         succeeded(aboveExactAllocation) && aboveExactAllocation->status == SyncEventAllocationStatus::Allocated &&
-            aboveExactAllocation->graphEdges == 128 && aboveExactAllocation->maximumDomainPressure == 2 &&
-            aboveExactAllocation->searchLimitHits == 1 && aboveExactAllocation->backtrackingNodes == 0,
+            aboveExactAllocation->failureReason == SyncEventAllocationFailure::None &&
+            aboveExactAllocation->lifetimeLimitHits == 1 && aboveExactAllocation->graphEdges == 128 &&
+            aboveExactAllocation->maximumDomainPressure == 2 && aboveExactAllocation->searchLimitHits == 1 &&
+            aboveExactAllocation->backtrackingNodes == 0,
         "above-cap nontrivial graph entered recursive minimization or lost its feasible coloring");
     return passed;
 }

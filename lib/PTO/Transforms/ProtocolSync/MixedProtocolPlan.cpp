@@ -433,6 +433,10 @@ void recordSelectionAllocationWork(const ProtocolSyncStatistics& source, Protoco
     destination->allocationGraphEdges += source.allocationGraphEdges;
     destination->allocationBacktrackingNodes += source.allocationBacktrackingNodes;
     destination->allocationSearchLimitHits += source.allocationSearchLimitHits;
+    destination->allocationLifetimeLimitHits += source.allocationLifetimeLimitHits;
+    destination->allocationConservativeFailures += source.allocationConservativeFailures;
+    destination->allocationReservedPoolFailures += source.allocationReservedPoolFailures;
+    destination->allocationAnalysisFailures += source.allocationAnalysisFailures;
     destination->eventDomains += source.eventDomains;
     destination->maxEventDomainPressure = std::max(destination->maxEventDomainPressure, source.maxEventDomainPressure);
     destination->maximumEventIdPlusOne = std::max(destination->maximumEventIdPlusOne, source.maximumEventIdPlusOne);
@@ -558,7 +562,7 @@ FailureOr<SyncMixedProtocolPlan> mlir::pto::protocol_sync::buildMixedProtocolPla
             return failure();
         }
         recordSelectionAllocationWork(allocationStatistics, statistics);
-        if (allocated.status == SyncMixedPlanStatus::ResourceInfeasible) {
+        if (!allocated.isComplete()) {
             allocated.selectedCost = computeWorldCost(*candidate, allocationStatistics.maxEventDomainPressure);
             if (!resourceInfeasible) {
                 resourceInfeasible = std::move(allocated);
@@ -711,16 +715,16 @@ LogicalResult mlir::pto::protocol_sync::allocateMixedProtocolEvents(
     if (statistics) {
         recordSyncEventAllocationStatistics(*allocation, *statistics);
     }
-    if (allocation->status == SyncEventAllocationStatus::ResourceInfeasible) {
+    if (allocation->status != SyncEventAllocationStatus::Allocated) {
         clearEventIds(plan);
-        plan.status = SyncMixedPlanStatus::ResourceInfeasible;
+        plan.allocationFailure = allocation->failureReason;
+        plan.status = allocation->status == SyncEventAllocationStatus::AnalysisLimit ?
+                          SyncMixedPlanStatus::AllocationAnalysisLimit :
+                          SyncMixedPlanStatus::ResourceInfeasible;
         plan.failures.push_back(
             {SyncMixedPlanRejection::EventCapacity,
-             "interfering mixed-protocol event generations exhaust a selected event domain"});
+             describeSyncEventAllocationFailure(allocation->failureReason).str()});
         return success();
-    }
-    if (allocation->status != SyncEventAllocationStatus::Allocated) {
-        return failure();
     }
     for (auto [slot, eventId] : llvm::zip_equal(assignmentSlots, allocation->eventIds)) {
         *slot = eventId;
@@ -743,6 +747,8 @@ StringRef mlir::pto::protocol_sync::stringifySyncMixedPlanStatus(SyncMixedPlanSt
             return "unsupported";
         case SyncMixedPlanStatus::ResourceInfeasible:
             return "resource-infeasible";
+        case SyncMixedPlanStatus::AllocationAnalysisLimit:
+            return "allocation-analysis-limit";
     }
     return "unsupported";
 }
@@ -797,7 +803,8 @@ void mlir::pto::protocol_sync::printMixedProtocolPlan(
            << " event-pairs=" << plan.selectedCost.generatedEventPairs
            << " targeted-barriers=" << plan.selectedCost.targetedBarriers
            << " fixed-exit-drains=" << plan.selectedCost.fixedExitDrains
-           << " event-pressure=" << plan.selectedCost.eventPressure << '\n';
+           << " event-pressure=" << plan.selectedCost.eventPressure
+           << " allocation-failure=" << stringifySyncEventAllocationFailure(plan.allocationFailure) << '\n';
     for (const SyncMixedPlanFailure& failure : plan.failures) {
         output << "  reason=" << stringifySyncMixedPlanRejection(failure.reason) << " detail=\"" << failure.detail
                << "\"\n";

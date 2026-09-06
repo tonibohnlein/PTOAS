@@ -263,6 +263,10 @@ void printStatistics(
     counts["allocation_graph_edges"] = static_cast<std::int64_t>(statistics.allocationGraphEdges);
     counts["allocation_backtracking_nodes"] = static_cast<std::int64_t>(statistics.allocationBacktrackingNodes);
     counts["allocation_search_limit_hits"] = static_cast<std::int64_t>(statistics.allocationSearchLimitHits);
+    counts["allocation_lifetime_limit_hits"] = static_cast<std::int64_t>(statistics.allocationLifetimeLimitHits);
+    counts["allocation_conservative_failures"] = static_cast<std::int64_t>(statistics.allocationConservativeFailures);
+    counts["allocation_reserved_pool_failures"] = static_cast<std::int64_t>(statistics.allocationReservedPoolFailures);
+    counts["allocation_analysis_failures"] = static_cast<std::int64_t>(statistics.allocationAnalysisFailures);
     counts["materialization_transitions"] = static_cast<std::int64_t>(statistics.materializationTransitions);
     counts["verifier_transitions"] = static_cast<std::int64_t>(statistics.verifierTransitions);
     record["counts"] = std::move(counts);
@@ -537,10 +541,14 @@ private:
             return success();
         }
         result.totalUs = elapsedMicroseconds(totalStart);
+        const bool allocationRejection = fallbackReason == "event-interference-unresolved" ||
+                                         fallbackReason == "no-unreserved-event-ids" ||
+                                         fallbackReason == "event-allocation-analysis-limit";
         recordStatistics(
-            function, result, "unsupported", failureStage, ProtocolSyncProducer::FailClosedPolicy, "unsupported",
-            allowFallback ? "disabled" : "not-permitted");
-        function.emitError("ProtocolSync ") << executionMode << " mode found no complete supported plan";
+            function, result, "unsupported", failureStage, ProtocolSyncProducer::FailClosedPolicy,
+            allocationRejection ? fallbackReason : "unsupported", allowFallback ? "disabled" : "not-permitted");
+        function.emitError("ProtocolSync ")
+            << executionMode << " mode found no complete supported plan (" << fallbackReason << ")";
         return failure();
     }
 
@@ -645,11 +653,12 @@ private:
         if (dumpMode == "plan") {
             printDirectRepairPlan(function, *plan, llvm::errs());
         }
-        if (plan->status == SyncDirectRepairPlanStatus::ResourceInfeasible) {
+        if (!plan->isComplete()) {
             ++result.protocolPlansRejected;
             result.totalUs = elapsedMicroseconds(totalStart);
             return handleUnsupported(
-                function, result, "direct-repair-allocation", "resource-infeasible", true, totalStart);
+                function, result, "direct-repair-allocation",
+                stringifySyncEventAllocationFailure(plan->allocationFailure), true, totalStart);
         }
 
         SmallVector<SyncDirectCandidateId, 8> selected;
@@ -739,8 +748,8 @@ private:
         }
 
         start = ProtocolSyncClock::now();
-        const bool selectionProvedResourceInfeasible = plan->status == SyncMixedPlanStatus::ResourceInfeasible;
-        if (!selectionProvedResourceInfeasible && failed(allocateMixedProtocolEvents(schedule, *plan, &result))) {
+        const bool selectionAllocationFailed = !plan->isComplete();
+        if (!selectionAllocationFailed && failed(allocateMixedProtocolEvents(schedule, *plan, &result))) {
             result.allocationUs = elapsedMicroseconds(start);
             result.totalUs = elapsedMicroseconds(totalStart);
             ++result.protocolPlansRejected;
@@ -750,9 +759,7 @@ private:
             function.emitError("ProtocolSync mixed allocation failed internally");
             return failure();
         }
-        const bool retryAfterResourceFailure = !selectionProvedResourceInfeasible &&
-                                               plan->status == SyncMixedPlanStatus::ResourceInfeasible &&
-                                               plan->hasProtocol();
+        const bool retryAfterResourceFailure = !selectionAllocationFailed && !plan->isComplete() && plan->hasProtocol();
         if (retryAfterResourceFailure) {
             ++result.allocationRetries;
             ++result.protocolPlansRejected;
@@ -793,9 +800,9 @@ private:
             }
             ++result.protocolPlansRejected;
             result.totalUs = elapsedMicroseconds(totalStart);
-            const bool resourceInfeasible =
-                retryAfterResourceFailure || plan->status == SyncMixedPlanStatus::ResourceInfeasible;
-            const StringRef reason = resourceInfeasible ? "resource-infeasible" : "unsupported";
+            const StringRef reason = plan->allocationFailure == SyncEventAllocationFailure::None ?
+                                         "unsupported" :
+                                         stringifySyncEventAllocationFailure(plan->allocationFailure);
             return handleUnsupported(function, result, "mixed-allocation", reason, true, totalStart);
         }
         if (failed(verifyMixedProtocolPlan(schedule, stages, timelines, channels, *plan, &result))) {
@@ -930,7 +937,8 @@ private:
             }
             return handleUnsupported(
                 function, result, allocationFailure ? "allocation" : "planning",
-                allocationFailure ? "resource-infeasible" : "unsupported", !targetRejection, totalStart);
+                allocationFailure ? stringifySyncEventAllocationFailure(plan->allocationFailure) : "unsupported",
+                !targetRejection, totalStart);
         }
         if (plan->status == SyncReadyReleasePlanStatus::Empty) {
             ++result.protocolPlansAdmitted;
@@ -1194,7 +1202,8 @@ private:
             }
             return handleUnsupported(
                 function, result, allocationFailure ? "allocation" : "planning",
-                allocationFailure ? "resource-infeasible" : "unsupported", !targetRejection, totalStart);
+                allocationFailure ? stringifySyncEventAllocationFailure(plan->allocationFailure) : "unsupported",
+                !targetRejection, totalStart);
         }
         if (plan->status == SyncOneShotPlanStatus::Empty) {
             ++result.protocolPlansAdmitted;

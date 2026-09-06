@@ -351,6 +351,10 @@ struct ProtocolSyncStatistics {
     std::uint64_t allocationGraphEdges = 0;
     std::uint64_t allocationBacktrackingNodes = 0;
     std::uint64_t allocationSearchLimitHits = 0;
+    std::uint64_t allocationLifetimeLimitHits = 0;
+    std::uint64_t allocationConservativeFailures = 0;
+    std::uint64_t allocationReservedPoolFailures = 0;
+    std::uint64_t allocationAnalysisFailures = 0;
     std::uint64_t materializationTransitions = 0;
     std::uint64_t verifierTransitions = 0;
     std::uint64_t semanticExtractionUs = 0;
