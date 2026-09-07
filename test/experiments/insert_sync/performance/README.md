@@ -210,6 +210,12 @@ MMAD-chain analysis off/on, keeping pairs, each named pipe and PIPE_ALL
 separate. Use `run.py --mmad-chains` to opt in; it still runs manual,
 combined and staged arms for the selected manifest.
 
+[FRONTIER_R4_COUNTS.md](FRONTIER_R4_COUNTS.md) records the matched r4
+frontier-refinement off/on campaign over all eleven fixtures, on A2 and A3 and
+with MMAD analysis both off and on. Use `run.py --frontier-refinement` to opt
+in. The current supported proof domain changes no static synchronization
+inventory in these fixtures; all replay and cross-configuration checks pass.
+
 [device/README.md](device/README.md) supplies launch adapters and numerical
 goldens for Conv2D, FlashAttention, GDN and KDA. Those adapters require their
 first device compilation/validation. The FlashAttention pair's entry-aware

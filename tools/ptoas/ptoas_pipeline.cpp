@@ -681,6 +681,7 @@ static InsertSyncOptions makeInsertSyncOptions()
     options.pruneCompletedBarriers = insertSyncPruneCompletedBarriers;
     options.mmadChains = insertSyncMmadChains;
     options.frontierRefinement = insertSyncFrontierRefinement;
+    options.frontierPlacement = insertSyncFrontierPlacement;
     return options;
 }
 

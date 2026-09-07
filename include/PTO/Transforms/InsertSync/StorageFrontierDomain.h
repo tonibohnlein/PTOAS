@@ -54,19 +54,22 @@ public:
     void clear() { std::fill(words_.begin(), words_.end(), 0); }
     void unite(const Bits& other)
     {
-        for (unsigned i = 0; i < words_.size(); ++i) {
+        for (
+            unsigned i = 0; i < words_.size(); ++i) {
             words_[i] |= other.words_[i];
         }
     }
     void intersect(const Bits& other)
     {
-        for (unsigned i = 0; i < words_.size(); ++i) {
+        for (
+            unsigned i = 0; i < words_.size(); ++i) {
             words_[i] &= other.words_[i];
         }
     }
     bool contains(const Bits& other) const
     {
-        for (unsigned i = 0; i < words_.size(); ++i) {
+        for (
+            unsigned i = 0; i < words_.size(); ++i) {
             if (
                 other.words_[i] & ~words_[i]) {
                 return false;
@@ -100,6 +103,9 @@ struct Node {
 };
 struct RegionScope {
     unsigned entry = 0, exit = 0;
+    enum class Kind { Sequence, Choice, Loop, Function };
+    Kind kind = Kind::Sequence;
+    unsigned parent = kInvalid;
 };
 struct Program {
     unsigned lanes = 0;
@@ -107,6 +113,7 @@ struct Program {
     std::vector<EventKey> keys;
     std::vector<Node> nodes;
     std::vector<RegionScope> regions;
+    bool allowUnrepresentedPhases = false; // only for a proved guard partition
 };
 struct Budget {
     uint64_t left = 8000000;
@@ -125,35 +132,40 @@ struct Budget {
 inline bool valid(const Program& p)
 {
     if (
-        !p.lanes || p.lanes > 8 || p.nodes.empty() || p.nodes.size() > 2048 || p.phaseLane.size() > 256 ||
+        !p.lanes || p.lanes > 8 || p.nodes.empty() || p.nodes.size() > 8192 || p.phaseLane.size() > 256 ||
         p.keys.size() > 64) {
         return false;
     }
-    for (const auto& r : p.regions) {
+    for (
+        const auto& r : p.regions) {
         if (
             r.entry >= p.nodes.size() || r.exit >= p.nodes.size()) {
             return false;
         }
     }
     std::vector<unsigned> definitions(p.phaseLane.size(), 0);
-    for (unsigned lane : p.phaseLane) {
+    for (
+        unsigned lane : p.phaseLane) {
         if (
             lane >= p.lanes) {
             return false;
         }
     }
-    for (const auto& key : p.keys) {
+    for (
+        const auto& key : p.keys) {
         if (
             key.source >= p.lanes || key.target >= p.lanes || key.source == key.target) {
             return false;
         }
     }
-    for (const auto& n : p.nodes) {
+    for (
+        const auto& n : p.nodes) {
         if (
             n.lane >= p.lanes) {
             return false;
         }
-        for (unsigned next : n.next) {
+        for (
+            unsigned next : n.next) {
             if (
                 next >= p.nodes.size()) {
                 return false;
@@ -172,7 +184,8 @@ inline bool valid(const Program& p)
             return false;
         }
     }
-    return std::all_of(definitions.begin(), definitions.end(), [](unsigned n) { return n == 1; });
+    return p.allowUnrepresentedPhases ||
+           std::all_of(definitions.begin(), definitions.end(), [](unsigned n) { return n >= 1; });
 }
 
 struct CompletionState {
@@ -196,11 +209,13 @@ struct CompletionState {
     }
     void meet(const CompletionState& s)
     {
-        for (unsigned i = 0; i < known.size(); ++i) {
+        for (
+            unsigned i = 0; i < known.size(); ++i) {
             known[i].intersect(s.known[i]);
             causal[i].intersect(s.causal[i]);
         }
-        for (unsigned i = 0; i < published.size(); ++i) {
+        for (
+            unsigned i = 0; i < published.size(); ++i) {
             published[i].intersect(s.published[i]);
             eventCause[i].intersect(s.eventCause[i]);
             marking[i] |= s.marking[i];
@@ -226,10 +241,12 @@ inline CompletionState transfer(
 {
     switch (n.kind) {
         case Node::Kind::Issue:
-            for (auto& known : s.known) {
+            for (
+                auto& known : s.known) {
                 known.reset(n.phase);
             }
-            for (auto& published : s.published) {
+            for (
+                auto& published : s.published) {
                 published.reset(n.phase);
             }
             break;
@@ -246,10 +263,12 @@ inline CompletionState transfer(
             unsigned target = p.keys[n.key].target;
             s.known[target].unite(s.published[n.key]);
             // Latest consumption is a new causal generation, separate from payload.
-            for (auto& clock : s.causal) {
+            for (
+                auto& clock : s.causal) {
                 clock.reset(n.key);
             }
-            for (auto& clock : s.eventCause) {
+            for (
+                auto& clock : s.eventCause) {
                 clock.reset(n.key);
             }
             s.causal[target].unite(s.eventCause[n.key]);
@@ -267,7 +286,8 @@ inline CompletionState transfer(
             break;
         case Node::Kind::All:
             // Never selectable for deletion. All lanes in this Program have one owner.
-            for (auto& known : s.known) {
+            for (
+                auto& known : s.known) {
                 known = Bits(p.phaseLane.size(), true);
             }
             break;
@@ -286,7 +306,8 @@ inline CompletionResult completion(const Program& p, const Bits& omitted, Budget
     }
     const unsigned phases = p.phaseLane.size(), keys = p.keys.size();
     std::vector<Bits> lanePhases(p.lanes, Bits(phases));
-    for (unsigned s = 0; s < phases; ++s) {
+    for (
+        unsigned s = 0; s < phases; ++s) {
         lanePhases[p.phaseLane[s]].set(s);
     }
     r.before.resize(p.nodes.size());
@@ -313,7 +334,8 @@ inline CompletionResult completion(const Program& p, const Bits& omitted, Budget
             continue;
         }
         after[id] = next;
-        for (unsigned succ : p.nodes[id].next) {
+        for (
+            unsigned succ : p.nodes[id].next) {
             CompletionState merged = r.before[succ] ? *r.before[succ] : next;
             if (
                 r.before[succ]) {
@@ -332,7 +354,8 @@ inline CompletionResult completion(const Program& p, const Bits& omitted, Budget
         }
     }
     r.eventsProved = true;
-    for (unsigned id = 0; id < p.nodes.size(); ++id) {
+    for (
+        unsigned id = 0; id < p.nodes.size(); ++id) {
         if (
             !r.before[id]) {
             continue;
@@ -375,26 +398,30 @@ inline Coverage covers(const Program& p, const CompletionResult& s, const std::v
         s.status != CompletionResult::Status::Complete || !s.eventsProved) {
         return {};
     }
-    std::vector<unsigned> at(p.phaseLane.size(), kInvalid);
-    for (unsigned n = 0; n < p.nodes.size(); ++n) {
+    // One original phase can occur at several guard-partitioned CFG nodes.
+    // Every reachable representation of the target must satisfy the requirement.
+    for (
+        const auto& req : requirements) {
         if (
-            p.nodes[n].kind == Node::Kind::Issue) {
-            at[p.nodes[n].phase] = n;
-        }
-    }
-    for (const auto& req : requirements) {
-        if (
-            req.source >= at.size() || req.target >= at.size()) {
+            req.source >= p.phaseLane.size() || req.target >= p.phaseLane.size()) {
             return {};
         }
-        unsigned node = at[req.target];
-        if (
-            node == kInvalid) {
-            return {};
+        bool represented = false;
+        for (
+            unsigned node = 0; node < p.nodes.size(); ++node) {
+            if (
+                p.nodes[node].kind != Node::Kind::Issue || p.nodes[node].phase != req.target) {
+                continue;
+            }
+            represented = true;
+            if (
+                s.before[node] && !s.before[node]->known[p.phaseLane[req.target]].test(req.source)) {
+                return {false, req.source, req.target};
+            }
         }
         if (
-            s.before[node] && !s.before[node]->known[p.phaseLane[req.target]].test(req.source)) {
-            return {false, req.source, req.target};
+            !represented && !p.allowUnrepresentedPhases) {
+            return {};
         }
     }
     return {true, kInvalid, kInvalid};
@@ -444,14 +471,16 @@ inline LifecycleResult lifecycles(const Program& p, const std::vector<Atom>& ato
         return r;
     }
     const unsigned count = p.phaseLane.size();
-    for (const auto& a : atoms) {
+    for (
+        const auto& a : atoms) {
         if (
             a.reads.size() != count || a.writes.size() != count) {
             return r;
         }
     }
     r.atoms = atoms.size();
-    for (unsigned atom = 0; atom < atoms.size(); ++atom) {
+    for (
+        unsigned atom = 0; atom < atoms.size(); ++atom) {
         const auto& a = atoms[atom];
         std::vector<std::optional<AtomState>> in(p.nodes.size()), out(p.nodes.size());
         std::vector<bool> queued(p.nodes.size(), false);
@@ -488,7 +517,8 @@ inline LifecycleResult lifecycles(const Program& p, const std::vector<Atom>& ato
                 continue;
             }
             out[n] = next;
-            for (unsigned succ : node.next) {
+            for (
+                unsigned succ : node.next) {
                 auto merged = in[succ] ? *in[succ] : next;
                 if (
                     in[succ]) {
@@ -507,7 +537,8 @@ inline LifecycleResult lifecycles(const Program& p, const std::vector<Atom>& ato
             }
         }
         Bits first(count);
-        for (unsigned n = 0; n < p.nodes.size(); ++n) {
+        for (
+            unsigned n = 0; n < p.nodes.size(); ++n) {
             if (
                 !in[n] || p.nodes[n].kind != Node::Kind::Issue) {
                 continue;
@@ -522,7 +553,8 @@ inline LifecycleResult lifecycles(const Program& p, const std::vector<Atom>& ato
                 in[n]->mayHaveNoPriorWrite) {
                 first.set(t);
             }
-            for (unsigned s = 0; s < count; ++s) {
+            for (
+                unsigned s = 0; s < count; ++s) {
                 if (
                     in[n]->writers.test(s)) {
                     r.requirements.push_back(
@@ -534,7 +566,8 @@ inline LifecycleResult lifecycles(const Program& p, const std::vector<Atom>& ato
                 }
             }
         }
-        for (unsigned region = 0; region < p.regions.size(); ++region) {
+        for (
+            unsigned region = 0; region < p.regions.size(); ++region) {
             const auto& scope = p.regions[region];
             if (
                 in[scope.entry] && in[scope.exit]) {
@@ -605,7 +638,8 @@ inline Refinement refine(
         return r;
     }
     // Complete barrier deletions, never moving or merging event handoffs.
-    for (unsigned id = 0; id < p.nodes.size(); ++id) {
+    for (
+        unsigned id = 0; id < p.nodes.size(); ++id) {
         if (
             !candidates.test(id) || p.nodes[id].kind != Node::Kind::Barrier) {
             continue;

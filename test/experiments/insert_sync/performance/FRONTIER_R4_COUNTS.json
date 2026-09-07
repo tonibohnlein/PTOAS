@@ -1,0 +1,1086 @@
+{
+  "measurement": "Static IR and scalar replay; no device numerical/asynchronous validation or timing",
+  "compiler_source": "ca2647e71f0a069aa300c9ed9af3b498b35e741c",
+  "rows": [
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "one_buffer",
+      "arm": "manual",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 6,
+        "waits": 6,
+        "pair_inventory": 6,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-controls/one_buffer/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "one_buffer",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 6,
+        "waits": 6,
+        "pair_inventory": 6,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-controls/one_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "two_buffer",
+      "arm": "manual",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 12,
+        "waits": 12,
+        "pair_inventory": 12,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-controls/two_buffer/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "two_buffer",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 12,
+        "waits": 12,
+        "pair_inventory": 12,
+        "named_barriers": {
+          "PIPE_MTE3": 2
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-controls/two_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "three_buffer",
+      "arm": "manual",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 18,
+        "waits": 18,
+        "pair_inventory": 18,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-controls/three_buffer/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "three_buffer",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 18,
+        "waits": 18,
+        "pair_inventory": 18,
+        "named_barriers": {
+          "PIPE_MTE3": 3
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-controls/three_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "four_use",
+      "arm": "manual",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 24,
+        "waits": 24,
+        "pair_inventory": 24,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-controls/four_use/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "four_use",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 24,
+        "waits": 24,
+        "pair_inventory": 24,
+        "named_barriers": {
+          "PIPE_MTE3": 2
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-controls/four_use/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "historical_gemm",
+      "arm": "manual",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 53,
+        "waits": 53,
+        "pair_inventory": 53,
+        "named_barriers": {},
+        "PIPE_ALL": 0
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-controls/historical_gemm/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "historical_gemm",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 44,
+        "waits": 44,
+        "pair_inventory": 44,
+        "named_barriers": {
+          "PIPE_FIX": 1,
+          "PIPE_M": 18,
+          "PIPE_MTE1": 2,
+          "PIPE_MTE2": 3
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-controls/historical_gemm/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "topk_128",
+      "arm": "manual",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 10,
+        "waits": 10,
+        "pair_inventory": 10,
+        "named_barriers": {
+          "PIPE_V": 22
+        },
+        "PIPE_ALL": 0
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-kernels/topk_128/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "topk_128",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 15,
+        "waits": 15,
+        "pair_inventory": 15,
+        "named_barriers": {
+          "PIPE_MTE3": 2,
+          "PIPE_V": 14
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-kernels/topk_128/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "conv2d_interior",
+      "arm": "manual",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 24,
+        "waits": 24,
+        "pair_inventory": 24,
+        "named_barriers": {},
+        "PIPE_ALL": 0
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-kernels/conv2d_interior/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "conv2d_interior",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 0,
+        "waits": 0,
+        "pair_inventory": 0,
+        "named_barriers": {
+          "PIPE_M": 8
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-kernels/conv2d_interior/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "flash_attention_cube",
+      "arm": "manual",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 18,
+        "waits": 18,
+        "pair_inventory": 18,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-kernels/flash_attention_cube/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "flash_attention_cube",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 15,
+        "waits": 15,
+        "pair_inventory": 15,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-kernels/flash_attention_cube/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "triangular_inverse_16",
+      "arm": "manual",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 278,
+        "waits": 278,
+        "pair_inventory": 278,
+        "named_barriers": {
+          "PIPE_V": 105
+        },
+        "PIPE_ALL": 0
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-kernels/triangular_inverse_16/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "triangular_inverse_16",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 277,
+        "waits": 277,
+        "pair_inventory": 277,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-kernels/triangular_inverse_16/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "gdn_wy",
+      "arm": "manual",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 16,
+        "waits": 16,
+        "pair_inventory": 16,
+        "named_barriers": {
+          "PIPE_V": 6
+        },
+        "PIPE_ALL": 2
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-kernels/gdn_wy/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "gdn_wy",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 32,
+        "waits": 32,
+        "pair_inventory": 32,
+        "named_barriers": {
+          "PIPE_MTE1": 1,
+          "PIPE_V": 13
+        },
+        "PIPE_ALL": 2
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-kernels/gdn_wy/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "kda_wy",
+      "arm": "manual",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 17,
+        "waits": 17,
+        "pair_inventory": 17,
+        "named_barriers": {
+          "PIPE_V": 7
+        },
+        "PIPE_ALL": 2
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-kernels/kda_wy/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": false,
+      "case": "kda_wy",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 35,
+        "waits": 35,
+        "pair_inventory": 35,
+        "named_barriers": {
+          "PIPE_MTE1": 1,
+          "PIPE_MTE2": 2,
+          "PIPE_MTE3": 1,
+          "PIPE_V": 10
+        },
+        "PIPE_ALL": 2
+      },
+      "recorded_output": "a3-mmad-off-frontier-off-kernels/kda_wy/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": true,
+      "case": "one_buffer",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 6,
+        "waits": 6,
+        "pair_inventory": 6,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-controls/one_buffer/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": true,
+      "case": "two_buffer",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 12,
+        "waits": 12,
+        "pair_inventory": 12,
+        "named_barriers": {
+          "PIPE_MTE3": 2
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-controls/two_buffer/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": true,
+      "case": "three_buffer",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 18,
+        "waits": 18,
+        "pair_inventory": 18,
+        "named_barriers": {
+          "PIPE_MTE3": 3
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-controls/three_buffer/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": true,
+      "case": "four_use",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 24,
+        "waits": 24,
+        "pair_inventory": 24,
+        "named_barriers": {
+          "PIPE_MTE3": 2
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-controls/four_use/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": true,
+      "case": "historical_gemm",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 44,
+        "waits": 44,
+        "pair_inventory": 44,
+        "named_barriers": {
+          "PIPE_FIX": 1,
+          "PIPE_M": 18,
+          "PIPE_MTE1": 2,
+          "PIPE_MTE2": 3
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-controls/historical_gemm/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": true,
+      "case": "topk_128",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 15,
+        "waits": 15,
+        "pair_inventory": 15,
+        "named_barriers": {
+          "PIPE_MTE3": 2,
+          "PIPE_V": 14
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-kernels/topk_128/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": true,
+      "case": "conv2d_interior",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 0,
+        "waits": 0,
+        "pair_inventory": 0,
+        "named_barriers": {
+          "PIPE_M": 8
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-kernels/conv2d_interior/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": true,
+      "case": "flash_attention_cube",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 15,
+        "waits": 15,
+        "pair_inventory": 15,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-kernels/flash_attention_cube/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": true,
+      "case": "triangular_inverse_16",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 277,
+        "waits": 277,
+        "pair_inventory": 277,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-off-kernels/triangular_inverse_16/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": true,
+      "case": "gdn_wy",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 32,
+        "waits": 32,
+        "pair_inventory": 32,
+        "named_barriers": {
+          "PIPE_MTE1": 1,
+          "PIPE_V": 13
+        },
+        "PIPE_ALL": 2
+      },
+      "recorded_output": "a3-mmad-off-kernels/gdn_wy/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": false,
+      "frontier_refinement": true,
+      "case": "kda_wy",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 35,
+        "waits": 35,
+        "pair_inventory": 35,
+        "named_barriers": {
+          "PIPE_MTE1": 1,
+          "PIPE_MTE2": 2,
+          "PIPE_MTE3": 1,
+          "PIPE_V": 10
+        },
+        "PIPE_ALL": 2
+      },
+      "recorded_output": "a3-mmad-off-kernels/kda_wy/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": false,
+      "case": "one_buffer",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 6,
+        "waits": 6,
+        "pair_inventory": 6,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-frontier-off-controls/one_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": false,
+      "case": "two_buffer",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 12,
+        "waits": 12,
+        "pair_inventory": 12,
+        "named_barriers": {
+          "PIPE_MTE3": 2
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-frontier-off-controls/two_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": false,
+      "case": "three_buffer",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 18,
+        "waits": 18,
+        "pair_inventory": 18,
+        "named_barriers": {
+          "PIPE_MTE3": 3
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-frontier-off-controls/three_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": false,
+      "case": "four_use",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 24,
+        "waits": 24,
+        "pair_inventory": 24,
+        "named_barriers": {
+          "PIPE_MTE3": 2
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-frontier-off-controls/four_use/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": false,
+      "case": "historical_gemm",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 44,
+        "waits": 44,
+        "pair_inventory": 44,
+        "named_barriers": {
+          "PIPE_FIX": 1,
+          "PIPE_M": 4,
+          "PIPE_MTE1": 2,
+          "PIPE_MTE2": 3
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-frontier-off-controls/historical_gemm/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": false,
+      "case": "topk_128",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 15,
+        "waits": 15,
+        "pair_inventory": 15,
+        "named_barriers": {
+          "PIPE_MTE3": 2,
+          "PIPE_V": 14
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-frontier-off-kernels/topk_128/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": false,
+      "case": "conv2d_interior",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 0,
+        "waits": 0,
+        "pair_inventory": 0,
+        "named_barriers": {
+          "PIPE_M": 8
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-frontier-off-kernels/conv2d_interior/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": false,
+      "case": "flash_attention_cube",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 15,
+        "waits": 15,
+        "pair_inventory": 15,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-frontier-off-kernels/flash_attention_cube/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": false,
+      "case": "triangular_inverse_16",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 277,
+        "waits": 277,
+        "pair_inventory": 277,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-frontier-off-kernels/triangular_inverse_16/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": false,
+      "case": "gdn_wy",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 32,
+        "waits": 32,
+        "pair_inventory": 32,
+        "named_barriers": {
+          "PIPE_MTE1": 1,
+          "PIPE_V": 13
+        },
+        "PIPE_ALL": 2
+      },
+      "recorded_output": "a3-mmad-on-frontier-off-kernels/gdn_wy/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": false,
+      "case": "kda_wy",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 35,
+        "waits": 35,
+        "pair_inventory": 35,
+        "named_barriers": {
+          "PIPE_MTE1": 1,
+          "PIPE_MTE2": 2,
+          "PIPE_MTE3": 1,
+          "PIPE_V": 10
+        },
+        "PIPE_ALL": 2
+      },
+      "recorded_output": "a3-mmad-on-frontier-off-kernels/kda_wy/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": true,
+      "case": "one_buffer",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 6,
+        "waits": 6,
+        "pair_inventory": 6,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-controls/one_buffer/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": true,
+      "case": "two_buffer",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 12,
+        "waits": 12,
+        "pair_inventory": 12,
+        "named_barriers": {
+          "PIPE_MTE3": 2
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-controls/two_buffer/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": true,
+      "case": "three_buffer",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 18,
+        "waits": 18,
+        "pair_inventory": 18,
+        "named_barriers": {
+          "PIPE_MTE3": 3
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-controls/three_buffer/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": true,
+      "case": "four_use",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 24,
+        "waits": 24,
+        "pair_inventory": 24,
+        "named_barriers": {
+          "PIPE_MTE3": 2
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-controls/four_use/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": true,
+      "case": "historical_gemm",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 44,
+        "waits": 44,
+        "pair_inventory": 44,
+        "named_barriers": {
+          "PIPE_FIX": 1,
+          "PIPE_M": 4,
+          "PIPE_MTE1": 2,
+          "PIPE_MTE2": 3
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-controls/historical_gemm/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": true,
+      "case": "topk_128",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 15,
+        "waits": 15,
+        "pair_inventory": 15,
+        "named_barriers": {
+          "PIPE_MTE3": 2,
+          "PIPE_V": 14
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-kernels/topk_128/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": true,
+      "case": "conv2d_interior",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 0,
+        "waits": 0,
+        "pair_inventory": 0,
+        "named_barriers": {
+          "PIPE_M": 8
+        },
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-kernels/conv2d_interior/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": true,
+      "case": "flash_attention_cube",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 15,
+        "waits": 15,
+        "pair_inventory": 15,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-kernels/flash_attention_cube/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": true,
+      "case": "triangular_inverse_16",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 277,
+        "waits": 277,
+        "pair_inventory": 277,
+        "named_barriers": {},
+        "PIPE_ALL": 1
+      },
+      "recorded_output": "a3-mmad-on-kernels/triangular_inverse_16/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": true,
+      "case": "gdn_wy",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 32,
+        "waits": 32,
+        "pair_inventory": 32,
+        "named_barriers": {
+          "PIPE_MTE1": 1,
+          "PIPE_V": 13
+        },
+        "PIPE_ALL": 2
+      },
+      "recorded_output": "a3-mmad-on-kernels/gdn_wy/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    },
+    {
+      "arch": "a3",
+      "mmad_chains": true,
+      "frontier_refinement": true,
+      "case": "kda_wy",
+      "arm": "combined",
+      "status": "pass",
+      "mechanisms": {
+        "sets": 35,
+        "waits": 35,
+        "pair_inventory": 35,
+        "named_barriers": {
+          "PIPE_MTE1": 1,
+          "PIPE_MTE2": 2,
+          "PIPE_MTE3": 1,
+          "PIPE_V": 10
+        },
+        "PIPE_ALL": 2
+      },
+      "recorded_output": "a3-mmad-on-kernels/kda_wy/combined/output.pto",
+      "frontier_attribution": {
+        "removed": 0,
+        "guarded": 0
+      }
+    }
+  ],
+  "failures": [],
+  "native_sha256": [
+    "584f330df079bc6c9e3bee144ee129ec3b65d5c67138d80e4e9cd88ec070885c"
+  ],
+  "static_frontier_changes": 0,
+  "frontier_barriers_removed": 0,
+  "frontier_barriers_guarded": 0,
+  "validated_case_arm_rows": 264
+}

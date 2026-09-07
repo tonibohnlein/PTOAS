@@ -82,6 +82,8 @@ def campaign(args):
         "python_root": str(runtime),
         "gm_alias": manifest["gm_alias"],
         "mmad_chains": getattr(args, "mmad_chains", False),
+        "frontier_refinement": getattr(args, "frontier_refinement", False),
+        "frontier_placement": getattr(args, "frontier_placement", False),
         "measurement": "host scalar replay; no completion/latency simulation",
         "device_runtime": "not-run",
         "rows": {},
@@ -120,6 +122,10 @@ def campaign(args):
                     command += ["--enable-insert-sync", f"--insert-sync-gm-alias={manifest['gm_alias']}"]
                     if getattr(args, "mmad_chains", False):
                         command.append("--insert-sync-mmad-chains")
+                    if getattr(args, "frontier_refinement", False):
+                        command.append("--insert-sync-frontier-refinement")
+                    if getattr(args, "frontier_placement", False):
+                        command.append("--insert-sync-frontier-placement")
                     if arm == "staged":
                         command.append("--insert-sync-defer-same-pipe")
                 if kind == "pto":
@@ -269,6 +275,16 @@ def main():
     parser.add_argument("--output", type=Path, required=True, help="New disk-backed results directory")
     parser.add_argument("--baseline", type=Path, help="Earlier results.json; any metric change requires review")
     parser.add_argument("--mmad-chains", action="store_true", help="Enable MMAD chain analysis for both automatic arms")
+    parser.add_argument(
+        "--frontier-refinement",
+        action="store_true",
+        help="Enable storage-frontier refinement for both automatic arms",
+    )
+    parser.add_argument(
+        "--frontier-placement",
+        action="store_true",
+        help="Enable lifecycle-guided event placement and storage-frontier refinement",
+    )
     parser.add_argument("--timeout", type=int, default=120)
     args = parser.parse_args()
     return campaign(args)

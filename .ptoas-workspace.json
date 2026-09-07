@@ -1,0 +1,14 @@
+{
+  "base_python": "/home/toni/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/bin/python3.12",
+  "base_ref": "origin/main",
+  "branch": "codex/insertsync-revision-r1",
+  "build_dir": "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1",
+  "cann_env": null,
+  "ccache_dir": null,
+  "llvm_build_dir": "/home/toni/work/llvm19/llvm-project/build-shared",
+  "python_bin": "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+  "repo": "/home/toni/work/pypto3_sync_more/PTOAS",
+  "system_site_packages": true,
+  "version": 1,
+  "workspace": "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1"
+}

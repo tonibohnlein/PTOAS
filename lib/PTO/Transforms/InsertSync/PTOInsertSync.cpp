@@ -124,6 +124,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         pruneCompletedBarriers = options.pruneCompletedBarriers;
         mmadChains = options.mmadChains;
         frontierRefinement = options.frontierRefinement;
+        frontierPlacement = options.frontierPlacement;
     }
     PTOInsertSyncPass(const PTOInsertSyncPass& other) : PTOInsertSyncBase(other)
     {
@@ -134,6 +135,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         pruneCompletedBarriers = other.pruneCompletedBarriers;
         mmadChains = other.mmadChains;
         frontierRefinement = other.frontierRefinement;
+        frontierPlacement = other.frontierPlacement;
     }
 
     Option<bool> deferSamePipe{
@@ -155,6 +157,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     Option<bool> frontierRefinement{
         *this, "frontier-refinement", llvm::cl::init(false),
         llvm::cl::desc("Refine generated named barriers using storage/lane frontiers; experimental")};
+    Option<bool> frontierPlacement{
+        *this, "frontier-placement", llvm::cl::init(false),
+        llvm::cl::desc("Place generated handoffs at proved storage frontiers; includes refinement; experimental")};
 
     void auditOutput(func::FuncOp function)
     {
@@ -303,7 +308,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // Capture identities before code generation; do not infer ownership from
     // the absence of a user tag after emission.
     llvm::SmallPtrSet<Operation *, 32> fixedInputBarriers;
-    if (frontierRefinement && *coverage) {
+    if (
+        (frontierRefinement || frontierPlacement) && *coverage) {
         func.walk([&](BarrierOp barrier) { fixedInputBarriers.insert(barrier.getOperation()); });
     }
     SyncCodegen codegen(syncIR, func, SyncAnalysisMode::NORMALSYNC);
@@ -317,7 +323,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         func.emitRemark("InsertSync completed-prefix pruning: ")
             << result.removed << " barriers removed; " << result.reason;
     }
-    if (frontierRefinement && *coverage) {
+    if (
+        (frontierRefinement || frontierPlacement) && *coverage) {
         SmallVector<Operation *> candidates;
         func.walk([&](BarrierOp barrier) {
             if (
@@ -326,15 +333,34 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
                 candidates.push_back(barrier.getOperation());
             }
         });
-        auto result = refineInsertSyncStorageFrontiers(func, syncIR, candidates, mmadChains);
+        SmallVector<Operation *> ownedEvents;
+        if (frontierPlacement) {
+            func.walk([&](Operation *op) {
+                // Production has already bypassed authored local sync before
+                // insertion. Only the newly emitted static events reach this path.
+                if (isa<SetFlagOp, WaitFlagOp>(op)) {
+                    ownedEvents.push_back(op);
+                }
+            });
+        }
+        auto result = refineInsertSyncStorageFrontiers(
+            func, syncIR, candidates, mmadChains, frontierPlacement, ownedEvents);
         auto i64 = IntegerType::get(&getContext(), 64);
         func->setAttr("pto.insert_sync.frontier_barriers_removed", IntegerAttr::get(i64, result.removed));
         func->setAttr("pto.insert_sync.frontier_barriers_guarded", IntegerAttr::get(i64, result.guarded));
         func->setAttr("pto.insert_sync.frontier_requirements", IntegerAttr::get(i64, result.requirements));
         func->setAttr("pto.insert_sync.frontier_work", IntegerAttr::get(i64, result.work));
+        func->setAttr(
+            "pto.insert_sync.frontier_signals_advanced", IntegerAttr::get(i64, result.signalsAdvanced));
+        func->setAttr("pto.insert_sync.frontier_waits_delayed", IntegerAttr::get(i64, result.waitsDelayed));
+        func->setAttr(
+            "pto.insert_sync.frontier_boundary_handoffs", IntegerAttr::get(i64, result.boundaryHandoffs));
+        func->setAttr("pto.insert_sync.frontier_generations", IntegerAttr::get(i64, result.generations));
         func.emitRemark("InsertSync frontier refinement: ")
             << result.removed << " named barriers removed, " << result.guarded
-            << " overflow-guarded; " << result.reason;
+            << " overflow-guarded; " << result.signalsAdvanced << " signals advanced, "
+            << result.waitsDelayed << " waits delayed, " << result.boundaryHandoffs
+            << " boundary constructions; " << result.reason;
         if (result.internalError) {
             func.emitError(result.reason);
             signalPassFailure();

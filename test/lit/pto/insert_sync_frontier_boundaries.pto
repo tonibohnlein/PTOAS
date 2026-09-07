@@ -1,0 +1,145 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt --pto-refine-storage-frontiers="placement=true" %s | FileCheck %s
+// CHECK-LABEL: func.func @first_use
+// CHECK: scf.for
+// CHECK: pto.tabs
+// CHECK: arith.cmpi eq
+// CHECK: scf.if
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK: pto.tabs
+// CHECK: arith.cmpi sge
+// CHECK: pto.tabs
+// CHECK: scf.if
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK: pto.barrier <PIPE_ALL>
+// CHECK-LABEL: func.func @last_use
+// CHECK: scf.for
+// CHECK: pto.tabs
+// CHECK: arith.subi
+// CHECK: arith.cmpi sle
+// CHECK: scf.if
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>
+// CHECK: pto.tabs
+// CHECK: arith.cmpi sge
+// CHECK: scf.if
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>
+// CHECK: pto.tload
+// CHECK-LABEL: func.func @unknown_step_unchanged
+// CHECK: scf.for
+// CHECK-NOT: frontier_boundary
+// CHECK: pto.tabs
+// CHECK: pto.tabs
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>
+// CHECK-NOT: frontier_boundary
+// CHECK: pto.barrier <PIPE_ALL>
+!V = !pto.tile_buf<vec, 16x16xf16>
+!G = !pto.tensor_view<?x?xf16>
+!P = !pto.partition_tensor_view<16x16xf16>
+module attributes {pto.target_arch = "a3"} {
+  func.func @first_use(%src: !pto.ptr<f16>, %trips: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.gm_alias = "assume-disjoint-arguments"} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %s = arith.constant 16 : index
+    %addra = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %addra : !V
+    %addrb = arith.constant 512 : i64
+    %b = pto.alloc_tile addr = %addrb : !V
+    %addrc = arith.constant 1024 : i64
+    %c = pto.alloc_tile addr = %addrc : !V
+    %addrd = arith.constant 1536 : i64
+    %d = pto.alloc_tile addr = %addrd : !V
+    %addre = arith.constant 2048 : i64
+    %e = pto.alloc_tile addr = %addre : !V
+    %view = pto.make_tensor_view %src, shape = [%s, %s], strides = [%s, %one] : !G
+    %input = pto.partition_view %view, offsets = [%z, %z], sizes = [%s, %s] : !G -> !P
+    pto.tload ins(%input : !P) outs(%c : !V)
+    "pto.set_flag"() {src_pipe = #pto.pipe<PIPE_MTE2>, dst_pipe = #pto.pipe<PIPE_V>, event_id = #pto.event<EVENT_ID1>} : () -> ()
+    pto.tload ins(%input : !P) outs(%a : !V)
+    "pto.set_flag"() {src_pipe = #pto.pipe<PIPE_MTE2>, dst_pipe = #pto.pipe<PIPE_V>, event_id = #pto.event<EVENT_ID0>} : () -> ()
+    "pto.wait_flag"() {src_pipe = #pto.pipe<PIPE_MTE2>, dst_pipe = #pto.pipe<PIPE_V>, event_id = #pto.event<EVENT_ID1>} : () -> ()
+    "pto.wait_flag"() {src_pipe = #pto.pipe<PIPE_MTE2>, dst_pipe = #pto.pipe<PIPE_V>, event_id = #pto.event<EVENT_ID0>, pto.insert_sync.frontier_candidate} : () -> ()
+    scf.for %i = %z to %trips step %one {
+      pto.barrier <PIPE_V>
+      pto.tabs ins(%c : !V) outs(%d : !V)
+      pto.tabs ins(%a : !V) outs(%b : !V)
+    }
+    pto.tabs ins(%c : !V) outs(%e : !V)
+    pto.barrier <PIPE_ALL>
+    return
+  }
+  func.func @last_use(%src: !pto.ptr<f16>, %trips: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.gm_alias = "assume-disjoint-arguments"} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %s = arith.constant 16 : index
+    %addra = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %addra : !V
+    %addrb = arith.constant 512 : i64
+    %b = pto.alloc_tile addr = %addrb : !V
+    %addrc = arith.constant 1024 : i64
+    %c = pto.alloc_tile addr = %addrc : !V
+    %addrd = arith.constant 1536 : i64
+    %d = pto.alloc_tile addr = %addrd : !V
+    %addre = arith.constant 2048 : i64
+    %e = pto.alloc_tile addr = %addre : !V
+    %view = pto.make_tensor_view %src, shape = [%s, %s], strides = [%s, %one] : !G
+    %input = pto.partition_view %view, offsets = [%z, %z], sizes = [%s, %s] : !G -> !P
+    pto.tload ins(%input : !P) outs(%a : !V)
+    pto.tload ins(%input : !P) outs(%c : !V)
+    "pto.set_flag"() {src_pipe = #pto.pipe<PIPE_MTE2>, dst_pipe = #pto.pipe<PIPE_V>, event_id = #pto.event<EVENT_ID0>} : () -> ()
+    "pto.wait_flag"() {src_pipe = #pto.pipe<PIPE_MTE2>, dst_pipe = #pto.pipe<PIPE_V>, event_id = #pto.event<EVENT_ID0>} : () -> ()
+    scf.for %i = %z to %trips step %one {
+      pto.barrier <PIPE_V>
+      pto.tabs ins(%a : !V) outs(%b : !V)
+      pto.tabs ins(%c : !V) outs(%d : !V)
+    }
+    "pto.set_flag"() {src_pipe = #pto.pipe<PIPE_V>, dst_pipe = #pto.pipe<PIPE_MTE2>, event_id = #pto.event<EVENT_ID0>, pto.insert_sync.frontier_candidate} : () -> ()
+    "pto.wait_flag"() {src_pipe = #pto.pipe<PIPE_V>, dst_pipe = #pto.pipe<PIPE_MTE2>, event_id = #pto.event<EVENT_ID0>} : () -> ()
+    pto.tload ins(%input : !P) outs(%a : !V)
+    pto.barrier <PIPE_ALL>
+    return
+  }
+  func.func @unknown_step_unchanged(%src: !pto.ptr<f16>, %trips: index, %step: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.gm_alias = "assume-disjoint-arguments"} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %s = arith.constant 16 : index
+    %addra = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %addra : !V
+    %addrb = arith.constant 512 : i64
+    %b = pto.alloc_tile addr = %addrb : !V
+    %addrc = arith.constant 1024 : i64
+    %c = pto.alloc_tile addr = %addrc : !V
+    %addrd = arith.constant 1536 : i64
+    %d = pto.alloc_tile addr = %addrd : !V
+    %addre = arith.constant 2048 : i64
+    %e = pto.alloc_tile addr = %addre : !V
+    %view = pto.make_tensor_view %src, shape = [%s, %s], strides = [%s, %one] : !G
+    %input = pto.partition_view %view, offsets = [%z, %z], sizes = [%s, %s] : !G -> !P
+    pto.tload ins(%input : !P) outs(%a : !V)
+    pto.tload ins(%input : !P) outs(%c : !V)
+    "pto.set_flag"() {src_pipe = #pto.pipe<PIPE_MTE2>, dst_pipe = #pto.pipe<PIPE_V>, event_id = #pto.event<EVENT_ID0>} : () -> ()
+    "pto.wait_flag"() {src_pipe = #pto.pipe<PIPE_MTE2>, dst_pipe = #pto.pipe<PIPE_V>, event_id = #pto.event<EVENT_ID0>} : () -> ()
+    scf.for %i = %z to %trips step %step {
+      pto.barrier <PIPE_V>
+      pto.tabs ins(%a : !V) outs(%b : !V)
+      pto.tabs ins(%c : !V) outs(%d : !V)
+    }
+    "pto.set_flag"() {src_pipe = #pto.pipe<PIPE_V>, dst_pipe = #pto.pipe<PIPE_MTE2>, event_id = #pto.event<EVENT_ID0>, pto.insert_sync.frontier_candidate} : () -> ()
+    "pto.wait_flag"() {src_pipe = #pto.pipe<PIPE_V>, dst_pipe = #pto.pipe<PIPE_MTE2>, event_id = #pto.event<EVENT_ID0>} : () -> ()
+    pto.tload ins(%input : !P) outs(%a : !V)
+    pto.barrier <PIPE_ALL>
+    return
+  }
+}

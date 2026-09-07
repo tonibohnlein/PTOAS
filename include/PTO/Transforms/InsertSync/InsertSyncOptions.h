@@ -23,6 +23,7 @@ struct InsertSyncOptions {
     bool pruneCompletedBarriers = false;
     bool mmadChains = false;
     bool frontierRefinement = false;
+    bool frontierPlacement = false;
 };
 std::unique_ptr<Pass> createPTOInsertSyncPass(const InsertSyncOptions& options);
 } // namespace mlir::pto

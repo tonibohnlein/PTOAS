@@ -19,31 +19,34 @@
 #include <vector>
 
 namespace mlir::pto::insert_sync_frontier {
-struct BoundGuard { Value upper; uint64_t limit = 0; };
+struct BoundGuard {
+    Value upper;
+    uint64_t limit = 0;
+};
 struct GlobalSlice {
-  Value root;
-  Operation *carrier = nullptr;
-  AffineSlice affine;
-  std::optional<BoundGuard> guard;
-  bool known = false;
+    Value root;
+    Operation* carrier = nullptr;
+    AffineSlice affine;
+    std::optional<BoundGuard> guard;
+    bool known = false;
 };
 struct AccessInfo {
-  const BaseMemInfo *legacy = nullptr;
-  bool write = false;
-  GlobalSlice global;
+    const BaseMemInfo* legacy = nullptr;
+    bool write = false;
+    GlobalSlice global;
+    unsigned identity = kInvalid;
 };
 struct PhaseInfo {
-  const CompoundInstanceElement *legacy = nullptr;
-  std::vector<AccessInfo> accesses;
+    const CompoundInstanceElement* legacy = nullptr;
+    std::vector<AccessInfo> accesses;
 };
 struct OccurrenceProof {
-  bool disjoint = false;
-  std::vector<BoundGuard> guards;
+    bool disjoint = false;
+    std::vector<BoundGuard> guards;
 };
-GlobalSlice recoverFrontierGlobalSlice(Value value, Operation *access,
-                                       func::FuncOp function);
-OccurrenceProof compareFrontierOccurrences(const GlobalSlice &a, Operation *source,
-                                           const GlobalSlice &b, Operation *target);
-bool localFrontierOverlap(const BaseMemInfo &a, const BaseMemInfo &b);
+GlobalSlice recoverFrontierGlobalSlice(Value value, Operation* access, func::FuncOp function);
+OccurrenceProof compareFrontierOccurrences(
+    const GlobalSlice& a, Operation* source, const GlobalSlice& b, Operation* target);
+bool localFrontierOverlap(const BaseMemInfo& a, const BaseMemInfo& b);
 } // namespace mlir::pto::insert_sync_frontier
 #endif
