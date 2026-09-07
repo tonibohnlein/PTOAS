@@ -15,40 +15,29 @@ architecture. The original compiler also emits both forms for all 11 inputs.
 
 ## Static local synchronization
 
-A barrier includes `PIPE_ALL`. “Hand-tuned” means synchronization explicitly
-present in the manual fixture; InsertSync does not process that arm.
+Each cell is **set/wait pairs / named-pipe barriers / PIPE_ALL**. These
+are three separate inventories, never a summed performance score. All displayed
+set and wait counts balance; the pair count is the count on either side, not
+a count of distinct event IDs or a proof of event-lifetime correctness.
 
-### Totals
+| Fixture | Hand | Original | Follow-up v2 |
+| --- | ---: | ---: | ---: |
+| One buffer | 6 / 0 / 1 | 6 / 0 / 1 | 6 / 0 / 1 |
+| Two buffers | 12 / 0 / 1 | 12 / 2 / 1 | 12 / 2 / 1 |
+| Three buffers | 18 / 0 / 1 | 18 / 3 / 1 | 18 / 3 / 1 |
+| Four-use producer | 24 / 0 / 1 | 24 / 2 / 1 | 24 / 2 / 1 |
+| GEMM | 53 / 0 / 0 | 44 / 21 / 1 | 44 / 24 / 1 |
+| TopK | 10 / 22 / 0 | 15 / 16 / 1 | 15 / 16 / 1 |
+| Conv2D | 24 / 0 / 0 | 0 / 8 / 1 | 0 / 8 / 1 |
+| FlashAttention | 18 / 0 / 1 | 27 / 0 / 1 | 13 / 0 / 1 |
+| Triangular inverse | 278 / 105 / 0 | 277 / 0 / 1 | 277 / 0 / 1 |
+| GDN | 16 / 6 / 2 | 32 / 14 / 2 | 32 / 14 / 2 |
+| KDA | 17 / 7 / 2 | 35 / 12 / 2 | 35 / 14 / 2 |
 
-| Fixture | Hand | Original | v2 | v2 − hand |
-| --- | ---: | ---: | ---: | ---: |
-| One-buffer control | 13 | 13 | 13 | 0 |
-| Two-buffer control | 25 | 27 | 27 | +2 |
-| Three-buffer control | 37 | 40 | 40 | +3 |
-| Four-use producer | 49 | 51 | 51 | +2 |
-| GEMM | 106 | 110 | 113 | +7 |
-| TopK | 42 | 47 | 47 | +5 |
-| Conv2D interior | 48 | 9 | 9 | −39 |
-| FlashAttention cube | 37 | 55 | 27 | −10 |
-| Triangular inverse | 661 | 555 | 555 | −106 |
-| GDN WY | 40 | 80 | 80 | +40 |
-| KDA WY | 43 | 84 | 86 | +43 |
-
-### Set / wait / barrier breakdown
-
-| Fixture | Hand | Follow-up v2 |
-| --- | ---: | ---: |
-| One-buffer control | 6 / 6 / 1 | 6 / 6 / 1 |
-| Two-buffer control | 12 / 12 / 1 | 12 / 12 / 3 |
-| Three-buffer control | 18 / 18 / 1 | 18 / 18 / 4 |
-| Four-use producer | 24 / 24 / 1 | 24 / 24 / 3 |
-| GEMM | 53 / 53 / 0 | 44 / 44 / 25 |
-| TopK | 10 / 10 / 22 | 15 / 15 / 17 |
-| Conv2D interior | 24 / 24 / 0 | 0 / 0 / 9 |
-| FlashAttention cube | 18 / 18 / 1 | 13 / 13 / 1 |
-| Triangular inverse | 278 / 278 / 105 | 277 / 277 / 1 |
-| GDN WY | 16 / 16 / 8 | 32 / 32 / 16 |
-| KDA WY | 17 / 17 / 9 | 35 / 35 / 16 |
+All v2 `PIPE_ALL` sites carry `pto.auto_sync_tail_barrier` and are outside
+loops: one per function, or two static sites for the vector/cube functions in
+GDN/KDA. There are no in-loop `PIPE_ALL` sites in these automatic outputs.
+The manual GDN/KDA `PIPE_ALL` sites are inside their vector work loops.
 
 Conv2D, FlashAttention, triangular inverse, GDN, and KDA carry
 `pto.insert_sync.effect_coverage = "gap-legacy-retained"`. This is a result from
@@ -72,33 +61,19 @@ local synchronization operations; they do not model latency or device time.
 GDN and KDA totals combine one cube peer and both vector stripes for 16 full
 chunks.
 
-### Executed totals
+Each cell is **executed pairs / named-pipe barriers / PIPE_ALL**.
 
-| Fixture / scenario | Hand | Original | v2 | v2 − hand |
-| --- | ---: | ---: | ---: | ---: |
-| One buffer, 16 trips | 133 | 133 | 133 | 0 |
-| Two buffers, 16 trips | 137 | 153 | 153 | +16 |
-| Three buffers, 16 trips | 141 | 157 | 157 | +16 |
-| Four-use producer, 16 trips | 329 | 345 | 345 | +16 |
-| GEMM, 4096³ core 0 | 7842 | 8481 | 8657 | +815 |
-| TopK, 16 groups | 612 | 617 | 617 | +5 |
-| Triangular inverse, 16 matrices | 10516 | 8805 | 8805 | −1711 |
-| GDN, 16 chunks, all peers | 864 | 1323 | 1323 | +459 |
-| KDA, 16 chunks, all peers | 928 | 1419 | 1451 | +523 |
-
-### Executed set / wait / barrier breakdown
-
-| Fixture / scenario | Hand | Follow-up v2 |
-| --- | ---: | ---: |
-| One buffer, 16 trips | 66 / 66 / 1 | 66 / 66 / 1 |
-| Two buffers, 16 trips | 68 / 68 / 1 | 68 / 68 / 17 |
-| Three buffers, 16 trips | 70 / 70 / 1 | 70 / 70 / 17 |
-| Four-use producer, 16 trips | 164 / 164 / 1 | 164 / 164 / 17 |
-| GEMM, 4096³ core 0 | 3921 / 3921 / 0 | 3437 / 3437 / 1783 |
-| TopK, 16 groups | 130 / 130 / 352 | 180 / 180 / 257 |
-| Triangular inverse, 16 matrices | 4418 / 4418 / 1680 | 4402 / 4402 / 1 |
-| GDN, 16 chunks, all peers | 320 / 320 / 224 | 476 / 476 / 371 |
-| KDA, 16 chunks, all peers | 352 / 352 / 224 | 572 / 572 / 307 |
+| Fixture / scenario | Hand | Original | Follow-up v2 |
+| --- | ---: | ---: | ---: |
+| One buffer, 16 trips | 66 / 0 / 1 | 66 / 0 / 1 | 66 / 0 / 1 |
+| Two buffers, 16 trips | 68 / 0 / 1 | 68 / 16 / 1 | 68 / 16 / 1 |
+| Three buffers, 16 trips | 70 / 0 / 1 | 70 / 16 / 1 | 70 / 16 / 1 |
+| Four-use producer, 16 trips | 164 / 0 / 1 | 164 / 16 / 1 | 164 / 16 / 1 |
+| GEMM, 4096³ core 0 | 3921 / 0 / 0 | 3437 / 1606 / 1 | 3437 / 1782 / 1 |
+| TopK, 16 groups | 130 / 352 / 0 | 180 / 256 / 1 | 180 / 256 / 1 |
+| Triangular inverse, 16 matrices | 4418 / 1680 / 0 | 4402 / 0 / 1 | 4402 / 0 / 1 |
+| GDN, 16 full chunks, all peers | 320 / 160 / 64 | 476 / 368 / 3 | 476 / 368 / 3 |
+| KDA, 16 full chunks, all peers | 352 / 160 / 64 | 572 / 272 / 3 | 572 / 304 / 3 |
 
 Conv2D and FlashAttention have static-only measurements because their helper
 and FIFO domains are outside the bounded replay interpreter. Across all other
@@ -122,19 +97,43 @@ distort the local synchronization comparison.
 
 ## Interpretation
 
-On GEMM and TopK, follow-up v2 does not reduce the number of synchronization
-operations relative to the original compiler. GEMM becomes worse by three
-static barriers and by 176 executed barriers in the 4096³ core-0 scenario.
-Compared with hand tuning, it executes 815 more local synchronization operations
-in that scenario. TopK remains five operations over the hand-tuned plan.
+The first revision objective is to reduce `PIPE_ALL` where the completion
+obligation can be established with narrower synchronization or is already
+satisfied. Distinguish body barriers from the exit drain; deleting a drain
+without proving completion is not an optimization. This ladder has no automatic
+in-loop `PIPE_ALL` fallback to remove. The existing optional pruner only targets
+named barriers and explicitly retains `PIPE_ALL`, so it does not address that
+objective.
 
-The results support the compatibility goal of the follow-up: all paired inputs
-compile again. They do not demonstrate the desired synchronization reduction.
-Lower operation counts in Conv2D, FlashAttention, and triangular inverse are
-valid count reductions. Like every result in this host benchmark, they are not
-device performance measurements. Establishing whether they are wins requires
-device correctness and timing; the coverage-checker status alone is
-not a reason to declare production InsertSync incomplete.
+For GEMM, hand tuning uses 53 static pairs and no barriers. Both automatic
+versions use 44 pairs and one exit `PIPE_ALL`. Original InsertSync has 21 named
+barriers; v2 has 24. The difference is exactly three MTE2 sites, not more
+`PIPE_ALL` or more pairs:
+
+| GEMM barrier type | Original sites | v2 sites | Original executions | v2 executions |
+| --- | ---: | ---: | ---: | ---: |
+| PIPE_MTE2 | 0 | 3 | 0 | 176 |
+| PIPE_M | 18 | 18 | 1408 | 1408 |
+| PIPE_MTE1 | 2 | 2 | 176 | 176 |
+| PIPE_FIX | 1 | 1 | 22 | 22 |
+| PIPE_ALL, exit | 1 | 1 | 1 | 1 |
+
+Executions refer to 4096³/core 0. The hand-tuned arm has zero in every barrier
+row. Its 3921 executed pairs compare with 3437 in each automatic arm. These
+mechanisms cannot be added to decide which schedule is faster.
+
+GDN/KDA further illustrate why placement matters: their 64 executed manual
+`PIPE_ALL` barriers occur in vector loops; automatic output has three exit
+barriers across one cube and two vector peers. The fixed cross-core protocol
+is retained. The count difference alone does not prove equivalent completion
+or a device speedup.
+
+The results establish restored compiler admission and identify synchronization
+changes worth investigating. They do not establish performance rankings or
+show that fewer pairs compensate for extra barriers. Prioritize proving the
+exit-drain requirement for this ladder, and investigate GEMM's MTE2 barriers
+separately; retain a fallback reproducer when studying allocation-induced
+in-loop `PIPE_ALL`.
 
 Machine-readable artifacts are under
 `insertsync-builds/campaign/manual-vs-followup-v2-counts`: `comparison.json`

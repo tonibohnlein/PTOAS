@@ -1,6 +1,6 @@
 # InsertSync follow-up v2: native validation
 
-Validated on 2026-09-07 in `PTOAS-insertsync-r1`, on top of `60db1026a1de8f1bd0154f9bdcb21e0f6d944a7b`. The package at `../insertsync_followup_v2` was applied after checking all 28 package hashes, the exact contents of 20 existing files, and the absence of the 10 addition paths. Changes are uncommitted.
+Validated on 2026-09-07 in `PTOAS-insertsync-r1`, on top of `60db1026a1de8f1bd0154f9bdcb21e0f6d944a7b`. The package at `../insertsync_followup_v2` was applied after checking all 28 package hashes, the exact contents of 20 existing files, and the absence of the 10 addition paths. Native integration and benchmark fixtures are recorded in commit `a7df3d925`.
 
 ## Native integration fixes
 
@@ -25,39 +25,34 @@ The corpus retains all 213 rows / 186 distinct input hashes; its manifest SHA256
 
 ## Benchmark synchronization counts
 
-Counts are static local `set_flag + wait_flag + barrier` sites, including `PIPE_ALL` barriers and excluding fixed cross-core/FIFO operations. The three report configurations have identical counts on both architectures.
+Counts distinguish set/wait pairs, named-pipe barriers, and `PIPE_ALL`; they
+exclude fixed cross-core/FIFO operations. The three report configurations agree
+on A2/A3. Detailed executed counts and the GEMM pipe breakdown are in
+[the mechanism analysis](performance/MANUAL_VS_FOLLOWUP_V2.md).
 
-### Totals
+Each cell is **set/wait pairs / named-pipe barriers / PIPE_ALL**. These
+are three separate inventories, never a summed performance score. All displayed
+set and wait counts balance; the pair count is the count on either side, not
+a count of distinct event IDs or a proof of event-lifetime correctness.
 
-| Fixture | Hand | Original | v2 | v2 − hand |
-| --- | ---: | ---: | ---: | ---: |
-| One buffer | 13 | 13 | 13 | 0 |
-| Two buffers | 25 | 27 | 27 | +2 |
-| Three buffers | 37 | 40 | 40 | +3 |
-| Four-use producer | 49 | 51 | 51 | +2 |
-| GEMM | 106 | 110 | 113 | +7 |
-| TopK | 42 | 47 | 47 | +5 |
-| Conv2D | 48 | 9 | 9 | −39 |
-| FlashAttention | 37 | 55 | 27 | −10 |
-| Triangular inverse | 661 | 555 | 555 | −106 |
-| GDN | 40 | 80 | 80 | +40 |
-| KDA | 43 | 84 | 86 | +43 |
+| Fixture | Hand | Original | Follow-up v2 |
+| --- | ---: | ---: | ---: |
+| One buffer | 6 / 0 / 1 | 6 / 0 / 1 | 6 / 0 / 1 |
+| Two buffers | 12 / 0 / 1 | 12 / 2 / 1 | 12 / 2 / 1 |
+| Three buffers | 18 / 0 / 1 | 18 / 3 / 1 | 18 / 3 / 1 |
+| Four-use producer | 24 / 0 / 1 | 24 / 2 / 1 | 24 / 2 / 1 |
+| GEMM | 53 / 0 / 0 | 44 / 21 / 1 | 44 / 24 / 1 |
+| TopK | 10 / 22 / 0 | 15 / 16 / 1 | 15 / 16 / 1 |
+| Conv2D | 24 / 0 / 0 | 0 / 8 / 1 | 0 / 8 / 1 |
+| FlashAttention | 18 / 0 / 1 | 27 / 0 / 1 | 13 / 0 / 1 |
+| Triangular inverse | 278 / 105 / 0 | 277 / 0 / 1 | 277 / 0 / 1 |
+| GDN | 16 / 6 / 2 | 32 / 14 / 2 | 32 / 14 / 2 |
+| KDA | 17 / 7 / 2 | 35 / 12 / 2 | 35 / 14 / 2 |
 
-### Set / wait / barrier breakdown
-
-| Fixture | Hand | Follow-up v2 |
-| --- | ---: | ---: |
-| One buffer | 6 / 6 / 1 | 6 / 6 / 1 |
-| Two buffers | 12 / 12 / 1 | 12 / 12 / 3 |
-| Three buffers | 18 / 18 / 1 | 18 / 18 / 4 |
-| Four-use producer | 24 / 24 / 1 | 24 / 24 / 3 |
-| GEMM | 53 / 53 / 0 | 44 / 44 / 25 |
-| TopK | 10 / 10 / 22 | 15 / 15 / 17 |
-| Conv2D | 24 / 24 / 0 | 0 / 0 / 9 |
-| FlashAttention | 18 / 18 / 1 | 13 / 13 / 1 |
-| Triangular inverse | 278 / 278 / 105 | 277 / 277 / 1 |
-| GDN | 16 / 16 / 8 | 32 / 32 / 16 |
-| KDA | 17 / 17 / 9 | 35 / 35 / 16 |
+All v2 `PIPE_ALL` sites carry `pto.auto_sync_tail_barrier` and are outside
+loops: one per function, or two static sites for the vector/cube functions in
+GDN/KDA. There are no in-loop `PIPE_ALL` sites in these automatic outputs.
+The manual GDN/KDA `PIPE_ALL` sites are inside their vector work loops.
 
 The count differences from the original compiler include earlier revision changes. **The new pruning option makes no additional reduction in these 11 inputs:** every pruning count is zero. Conv2D, FlashAttention, triangular inverse, GDN, and KDA carry `gap-legacy-retained`, which is the outcome of the translator-coverage check added inside the revised InsertSync pass by commit `60db1026a`. It says that this additional check did not certify the production translator's existing summaries. It does not establish that production InsertSync omitted required synchronization. The table therefore reports their measured counts without marking them as failed results.
 
