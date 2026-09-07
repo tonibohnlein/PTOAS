@@ -680,6 +680,7 @@ static InsertSyncOptions makeInsertSyncOptions()
     options.effectCoverage = insertSyncEffectCoverage;
     options.pruneCompletedBarriers = insertSyncPruneCompletedBarriers;
     options.mmadChains = insertSyncMmadChains;
+    options.frontierRefinement = insertSyncFrontierRefinement;
     return options;
 }
 

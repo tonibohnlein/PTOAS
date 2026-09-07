@@ -24,6 +24,8 @@
 #include "PTO/Transforms/InsertSync/SyncGMAlias.h"
 #include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
 #include "PTO/Transforms/InsertSync/PruneCompletedBarriers.h"
+#include "PTO/Transforms/InsertSync/StorageFrontierAnalysis.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h" // [FIX] 确保 FuncOp 定义可见
 
@@ -121,6 +123,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         effectCoverage = options.effectCoverage;
         pruneCompletedBarriers = options.pruneCompletedBarriers;
         mmadChains = options.mmadChains;
+        frontierRefinement = options.frontierRefinement;
     }
     PTOInsertSyncPass(const PTOInsertSyncPass& other) : PTOInsertSyncBase(other)
     {
@@ -130,6 +133,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         effectCoverage = other.effectCoverage;
         pruneCompletedBarriers = other.pruneCompletedBarriers;
         mmadChains = other.mmadChains;
+        frontierRefinement = other.frontierRefinement;
     }
 
     Option<bool> deferSamePipe{
@@ -148,6 +152,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     Option<bool> mmadChains{
         *this, "mmad-chains", llvm::cl::init(false),
         llvm::cl::desc("Use qualified A2/A3 structured accumulator ordering; experimental")};
+    Option<bool> frontierRefinement{
+        *this, "frontier-refinement", llvm::cl::init(false),
+        llvm::cl::desc("Refine generated named barriers using storage/lane frontiers; experimental")};
 
     void auditOutput(func::FuncOp function)
     {
@@ -292,6 +299,13 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     dumpInsertSyncPhase("After EventId Allocation", syncIR, syncOpsStorage,
                         func.getOperation());
 
+    // Existing fixed barriers are never owned by this optional refinement.
+    // Capture identities before code generation; do not infer ownership from
+    // the absence of a user tag after emission.
+    llvm::SmallPtrSet<Operation *, 32> fixedInputBarriers;
+    if (frontierRefinement && *coverage) {
+        func.walk([&](BarrierOp barrier) { fixedInputBarriers.insert(barrier.getOperation()); });
+    }
     SyncCodegen codegen(syncIR, func, SyncAnalysisMode::NORMALSYNC);
     codegen.Run();
     if (pruneCompletedBarriers && *coverage) {
@@ -302,6 +316,32 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
                       IntegerAttr::get(IntegerType::get(&getContext(), 64), result.removed));
         func.emitRemark("InsertSync completed-prefix pruning: ")
             << result.removed << " barriers removed; " << result.reason;
+    }
+    if (frontierRefinement && *coverage) {
+        SmallVector<Operation *> candidates;
+        func.walk([&](BarrierOp barrier) {
+            if (
+                barrier.getPipe().getPipe() != PIPE::PIPE_ALL &&
+                !fixedInputBarriers.contains(barrier.getOperation())) {
+                candidates.push_back(barrier.getOperation());
+            }
+        });
+        auto result = refineInsertSyncStorageFrontiers(func, syncIR, candidates, mmadChains);
+        auto i64 = IntegerType::get(&getContext(), 64);
+        func->setAttr("pto.insert_sync.frontier_barriers_removed", IntegerAttr::get(i64, result.removed));
+        func->setAttr("pto.insert_sync.frontier_barriers_guarded", IntegerAttr::get(i64, result.guarded));
+        func->setAttr("pto.insert_sync.frontier_requirements", IntegerAttr::get(i64, result.requirements));
+        func->setAttr("pto.insert_sync.frontier_work", IntegerAttr::get(i64, result.work));
+        func.emitRemark("InsertSync frontier refinement: ")
+            << result.removed << " named barriers removed, " << result.guarded
+            << " overflow-guarded; " << result.reason;
+        if (result.internalError) {
+            func.emitError(result.reason);
+            signalPassFailure();
+            return;
+        }
+        // On a successful clone commit, old SyncIR operation pointers are
+        // intentionally stale. No later stage may dereference them.
     }
     auditOutput(func);
   }

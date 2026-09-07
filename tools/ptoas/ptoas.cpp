@@ -236,6 +236,9 @@ llvm::cl::opt<bool> insertSyncPruneCompletedBarriers(
 llvm::cl::opt<bool> insertSyncMmadChains(
     "insert-sync-mmad-chains", llvm::cl::desc("Use qualified A2/A3 structured accumulator ordering (experimental)"),
     llvm::cl::init(false));
+llvm::cl::opt<bool> insertSyncFrontierRefinement(
+    "insert-sync-frontier-refinement", llvm::cl::desc("Refine generated named barriers using storage/lane frontiers"),
+    llvm::cl::init(false));
 
 llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",

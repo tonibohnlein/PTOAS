@@ -66,6 +66,7 @@ extern llvm::cl::opt<std::string> insertSyncAudit;
 extern llvm::cl::opt<std::string> insertSyncEffectCoverage;
 extern llvm::cl::opt<bool> insertSyncPruneCompletedBarriers;
 extern llvm::cl::opt<bool> insertSyncMmadChains;
+extern llvm::cl::opt<bool> insertSyncFrontierRefinement;
 extern llvm::cl::opt<bool> enableBufidSync;
 extern llvm::cl::opt<bool> enableBufidSyncDebug;
 extern llvm::cl::opt<bool> enableInjectBarrierAllSync;

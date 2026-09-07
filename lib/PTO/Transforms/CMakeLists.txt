@@ -145,6 +145,8 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/SyncCommon.cpp
   InsertSync/InsertSyncAnalysis.cpp
   InsertSync/MmadChainAnalysis.cpp
+  InsertSync/StorageFrontierAnalysis.cpp
+  InsertSync/StorageFrontierAccess.cpp
   InsertSync/MemoryDependentAnalyzer.cpp
   InsertSync/SyncGMAlias.cpp
   InsertSync/SyncEffectCoverage.cpp
