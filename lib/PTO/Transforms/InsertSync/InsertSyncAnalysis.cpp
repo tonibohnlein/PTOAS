@@ -22,6 +22,7 @@
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
 #include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
+#include "PTO/Transforms/InsertSync/MmadChainAnalysis.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/SlotAffineAnalysis.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -218,7 +219,16 @@ static bool isValidPipeIndex(PipelineType pipe) {
 // ==============================================================================
 
 void InsertSyncAnalysis::Run(bool insertBarAllAtLast,
-                             bool deferSamePipeRepair) {
+                             bool deferSamePipeRepair, bool useMmadChains) {
+  // This optional analysis preserves IR/control and publishes no completion.
+  // An unsupported domain leaves every existing dependency decision intact.
+  std::optional<MmadChainAnalysis> matrixChains;
+  intrinsicMmadGroups_ = 0;
+  mmadChains_ = nullptr;
+  if (useMmadChains && syncAnalysisMode_ == SyncAnalysisMode::NORMALSYNC) {
+    matrixChains.emplace(func_);
+    mmadChains_ = &*matrixChains;
+  }
   syncIndex_ = syncOperations_.size();
   const bool staged = deferSamePipeRepair &&
                       syncAnalysisMode_ == SyncAnalysisMode::NORMALSYNC;
@@ -246,6 +256,18 @@ void InsertSyncAnalysis::Run(bool insertBarAllAtLast,
   if (insertBarAllAtLast) {
     InsertLastPipeAll();
   }
+  if (mmadChains_) {
+    auto i64 = IntegerType::get(func_.getContext(), 64);
+    func_->setAttr("pto.insert_sync.mmad_chain_targets",
+                   IntegerAttr::get(i64, mmadChains_->getEligibleTargets()));
+    func_->setAttr("pto.insert_sync.mmad_dependency_groups_elided",
+                   IntegerAttr::get(i64, intrinsicMmadGroups_));
+    func_.emitRemark("InsertSync MMAD chains: ")
+        << mmadChains_->getEligibleTargets() << " eligible targets, "
+        << intrinsicMmadGroups_ << " ACC dependency groups elided; "
+        << mmadChains_->getReason();
+  }
+  mmadChains_ = nullptr;
 }
 
 // ==============================================================================
@@ -526,6 +548,13 @@ void InsertSyncAnalysis::MemAnalyze(
     if (depVec.empty()) {
       return;
     }
+  }
+
+  if (mmadChains_ && mmadChains_->discharges(frontCompound, nowCompound, depVec)) {
+    ++intrinsicMmadGroups_;
+    // Do NOT call UpdateSyncRecordInfo or set alreadySync[PIPE_M]. This is
+    // intrinsic ACC ordering, not completion of matrix work or operand reads.
+    return;
   }
 
   if (CanPrunePipeVBarrier(nowCompound, frontCompound, depVec, forEndIndex)) {

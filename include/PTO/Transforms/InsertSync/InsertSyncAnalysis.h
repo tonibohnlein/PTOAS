@@ -19,6 +19,8 @@
 #include "PTO/Transforms/InsertSync/SyncPlanningPrimitives.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include <array>
+
+namespace mlir::pto { class MmadChainAnalysis; }
  
 namespace mlir {
 namespace pto {
@@ -56,7 +58,8 @@ public:
   /// insertBarAllAtLast: 是否在最后插入一个全局 Barrier (通常需要)
   // Experimental staged traversal is opt-in. Existing callers keep the
   // combined order; BLOCKSYNC never uses the new intra-core staging policy.
-  void Run(bool insertBarAllAtLast = true, bool deferSamePipeRepair = false);
+  void Run(bool insertBarAllAtLast = true, bool deferSamePipeRepair = false,
+           bool useMmadChains = false);
  
 private:
   // --- Data Members ---
@@ -70,6 +73,8 @@ private:
   
   // 全局同步索引计数
   unsigned syncIndex_{0};
+  const MmadChainAnalysis *mmadChains_{nullptr};
+  unsigned intrinsicMmadGroups_{0};
  
 private:
   // --- Core Logic Methods ---

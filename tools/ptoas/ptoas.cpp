@@ -233,6 +233,9 @@ llvm::cl::opt<std::string> insertSyncEffectCoverage(
 llvm::cl::opt<bool> insertSyncPruneCompletedBarriers(
     "insert-sync-prune-completed-barriers", llvm::cl::desc("Remove proven redundant named barriers without motion"),
     llvm::cl::init(false));
+llvm::cl::opt<bool> insertSyncMmadChains(
+    "insert-sync-mmad-chains", llvm::cl::desc("Use qualified A2/A3 structured accumulator ordering (experimental)"),
+    llvm::cl::init(false));
 
 llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",

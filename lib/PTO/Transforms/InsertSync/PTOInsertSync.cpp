@@ -120,6 +120,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         audit = options.audit;
         effectCoverage = options.effectCoverage;
         pruneCompletedBarriers = options.pruneCompletedBarriers;
+        mmadChains = options.mmadChains;
     }
     PTOInsertSyncPass(const PTOInsertSyncPass& other) : PTOInsertSyncBase(other)
     {
@@ -128,6 +129,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         audit = other.audit;
         effectCoverage = other.effectCoverage;
         pruneCompletedBarriers = other.pruneCompletedBarriers;
+        mmadChains = other.mmadChains;
     }
 
     Option<bool> deferSamePipe{
@@ -143,6 +145,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     Option<bool> pruneCompletedBarriers{
         *this, "prune-completed-barriers", llvm::cl::init(false),
         llvm::cl::desc("Remove only named barriers whose whole source prefix is already complete")};
+    Option<bool> mmadChains{
+        *this, "mmad-chains", llvm::cl::init(false),
+        llvm::cl::desc("Use qualified A2/A3 structured accumulator ordering; experimental")};
 
     void auditOutput(func::FuncOp function)
     {
@@ -249,7 +254,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     InsertSyncAnalysis analyzer(syncIR, memAnalyzer, syncOpsStorage, func,
                                 SyncAnalysisMode::NORMALSYNC);
     analyzer.Run(/*insertBarAllAtLast=*/true,
-                 /*deferSamePipeRepair=*/deferSamePipe);
+                 /*deferSamePipeRepair=*/deferSamePipe,
+                 /*useMmadChains=*/mmadChains);
 
     dumpInsertSyncPhase("After Analysis", syncIR, syncOpsStorage,
                         func.getOperation());

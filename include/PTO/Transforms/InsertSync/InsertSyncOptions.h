@@ -21,6 +21,7 @@ struct InsertSyncOptions {
     std::string audit = "off";
     std::string effectCoverage = "report";
     bool pruneCompletedBarriers = false;
+    bool mmadChains = false;
 };
 std::unique_ptr<Pass> createPTOInsertSyncPass(const InsertSyncOptions& options);
 } // namespace mlir::pto

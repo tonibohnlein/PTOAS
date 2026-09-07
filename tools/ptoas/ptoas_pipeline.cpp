@@ -679,6 +679,7 @@ static InsertSyncOptions makeInsertSyncOptions()
     options.audit = insertSyncAudit;
     options.effectCoverage = insertSyncEffectCoverage;
     options.pruneCompletedBarriers = insertSyncPruneCompletedBarriers;
+    options.mmadChains = insertSyncMmadChains;
     return options;
 }
 
