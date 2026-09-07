@@ -1,9 +1,10 @@
-// InsertSync intentionally rejects this unmodeled queue/resource contract.
-// Plain lowering remains tested; it is not synchronization verification.
-// The prior synchronization placement expectations are retained in df89ee02c.
-// Restoring admission requires a resource/ownership summary, not a whitelist.
+// Compatibility rollout: retain legacy translation for a missing new summary.
+// The explicit strict-mode run still diagnoses the unresolved contract.
+// A passing positive run is compilation/placement evidence, not a device or
+// whole-function safety certificate. The original non-sync body is unchanged.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s --check-prefix=EMITC
 // REJECT: InsertSync unsupported effect: read has no translated storage/pipeline summary
-// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-effect-coverage=strict %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
 // This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 // CANN Open Software License Agreement Version 2.0 (the "License").

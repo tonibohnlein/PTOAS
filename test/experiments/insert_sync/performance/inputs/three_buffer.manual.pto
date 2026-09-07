@@ -1,0 +1,113 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+module {
+  func.func @pipeline(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>, %trip: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %depth = arith.constant 3 : index
+    %uses = arith.constant 1 : index
+    %rows = arith.muli %trip, %c16 : index
+    %outrows = arith.muli %rows, %uses : index
+    %source = pto.make_tensor_view %src, shape = [%rows, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %target = pto.make_tensor_view %dst, shape = [%outrows, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %slot0 = arith.constant 0 : index
+    %ia0 = arith.constant 0 : i64
+    %oa0 = arith.constant 1536 : i64
+    %in0 = pto.alloc_tile addr = %ia0 : !pto.tile_buf<vec, 16x16xf16>
+    %out0 = pto.alloc_tile addr = %oa0 : !pto.tile_buf<vec, 16x16xf16>
+    pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+    pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+    %slot1 = arith.constant 1 : index
+    %ia1 = arith.constant 512 : i64
+    %oa1 = arith.constant 2048 : i64
+    %in1 = pto.alloc_tile addr = %ia1 : !pto.tile_buf<vec, 16x16xf16>
+    %out1 = pto.alloc_tile addr = %oa1 : !pto.tile_buf<vec, 16x16xf16>
+    pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+    pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+    %slot2 = arith.constant 2 : index
+    %ia2 = arith.constant 1024 : i64
+    %oa2 = arith.constant 2560 : i64
+    %in2 = pto.alloc_tile addr = %ia2 : !pto.tile_buf<vec, 16x16xf16>
+    %out2 = pto.alloc_tile addr = %oa2 : !pto.tile_buf<vec, 16x16xf16>
+    pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID2>]
+    pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID2>]
+    scf.for %iv = %c0 to %trip step %c1 {
+      %selector = arith.remui %iv, %depth : index
+      %row = arith.muli %iv, %c16 : index
+      %input = pto.partition_view %source, offsets = [%row, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+      %active0 = arith.cmpi eq, %selector, %slot0 : index
+      scf.if %active0 {
+        pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+        pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%in0 : !pto.tile_buf<vec, 16x16xf16>)
+        pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+        %u0_0 = arith.constant 0 : index
+        %base0_0 = arith.muli %iv, %uses : index
+        %oi0_0 = arith.addi %base0_0, %u0_0 : index
+        %or0_0 = arith.muli %oi0_0, %c16 : index
+        %output0_0 = pto.partition_view %target, offsets = [%or0_0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+        pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+        pto.tabs ins(%in0 : !pto.tile_buf<vec, 16x16xf16>) outs(%out0 : !pto.tile_buf<vec, 16x16xf16>)
+        pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+        pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+        pto.tstore ins(%out0 : !pto.tile_buf<vec, 16x16xf16>) outs(%output0_0 : !pto.partition_tensor_view<16x16xf16>)
+        pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+      }
+      %active1 = arith.cmpi eq, %selector, %slot1 : index
+      scf.if %active1 {
+        pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+        pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%in1 : !pto.tile_buf<vec, 16x16xf16>)
+        pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+        %u1_0 = arith.constant 0 : index
+        %base1_0 = arith.muli %iv, %uses : index
+        %oi1_0 = arith.addi %base1_0, %u1_0 : index
+        %or1_0 = arith.muli %oi1_0, %c16 : index
+        %output1_0 = pto.partition_view %target, offsets = [%or1_0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+        pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+        pto.tabs ins(%in1 : !pto.tile_buf<vec, 16x16xf16>) outs(%out1 : !pto.tile_buf<vec, 16x16xf16>)
+        pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+        pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID1>]
+        pto.tstore ins(%out1 : !pto.tile_buf<vec, 16x16xf16>) outs(%output1_0 : !pto.partition_tensor_view<16x16xf16>)
+        pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+      }
+      %active2 = arith.cmpi eq, %selector, %slot2 : index
+      scf.if %active2 {
+        pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID2>]
+        pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%in2 : !pto.tile_buf<vec, 16x16xf16>)
+        pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID2>]
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID2>]
+        %u2_0 = arith.constant 0 : index
+        %base2_0 = arith.muli %iv, %uses : index
+        %oi2_0 = arith.addi %base2_0, %u2_0 : index
+        %or2_0 = arith.muli %oi2_0, %c16 : index
+        %output2_0 = pto.partition_view %target, offsets = [%or2_0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+        pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID2>]
+        pto.tabs ins(%in2 : !pto.tile_buf<vec, 16x16xf16>) outs(%out2 : !pto.tile_buf<vec, 16x16xf16>)
+        pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID2>]
+        pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID2>]
+        pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID2>]
+        pto.tstore ins(%out2 : !pto.tile_buf<vec, 16x16xf16>) outs(%output2_0 : !pto.partition_tensor_view<16x16xf16>)
+        pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID2>]
+      }
+    }
+    pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+    pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID1>]
+    pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID2>]
+    pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID2>]
+    pto.barrier <PIPE_ALL>
+    return
+  }
+}

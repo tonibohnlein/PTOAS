@@ -1,0 +1,126 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+module {
+  func.func @topk_128(%src: !pto.ptr<f32>, %scores: !pto.ptr<f32>, %indices: !pto.ptr<ui32>, %inidx: !pto.ptr<ui32>, %groups: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c64_i32 = arith.constant 64 : i32
+    %c2_index = arith.constant 2 : index
+    %c9728_i64 = arith.constant 9728 : i64
+    %c14336_i64 = arith.constant 14336 : i64
+    %c12288_i64 = arith.constant 12288 : i64
+    %c7168_i64 = arith.constant 7168 : i64
+    %c3072_i64 = arith.constant 3072 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %c13824_i64 = arith.constant 13824 : i64
+    %c11776_i64 = arith.constant 11776 : i64
+    %c6144_i64 = arith.constant 6144 : i64
+    %c2048_i64 = arith.constant 2048 : i64
+    %c15872_i64 = arith.constant 15872 : i64
+    %c8704_i64 = arith.constant 8704 : i64
+    %c13312_i64 = arith.constant 13312 : i64
+    %c11264_i64 = arith.constant 11264 : i64
+    %c5120_i64 = arith.constant 5120 : i64
+    %c1024_i64 = arith.constant 1024 : i64
+    %c15360_i64 = arith.constant 15360 : i64
+    %c12800_i64 = arith.constant 12800 : i64
+    %c10752_i64 = arith.constant 10752 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %c14848_i64 = arith.constant 14848 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c128_index = arith.constant 128 : index
+    %c64_index = arith.constant 64 : index
+    %c4_index = arith.constant 4 : index
+    %c1_index = arith.constant 1 : index
+    %c0_index = arith.constant 0 : index
+    %srcview = pto.make_tensor_view %src, shape = [%c64_index, %c128_index], strides = [%c128_index, %c1_index] : !pto.tensor_view<64x128xf32>
+    %scoreview = pto.make_tensor_view %scores, shape = [%c64_index, %c128_index], strides = [%c128_index, %c1_index] : !pto.tensor_view<64x128xf32>
+    %indexview = pto.make_tensor_view %indices, shape = [%c64_index, %c128_index], strides = [%c128_index, %c1_index] : !pto.tensor_view<64x128xui32>
+    %idxview = pto.make_tensor_view %inidx, shape = [%c1_index, %c128_index], strides = [%c128_index, %c1_index] : !pto.tensor_view<1x128xui32>
+    %idxpart = pto.partition_view %idxview, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c128_index] : !pto.tensor_view<1x128xui32> -> !pto.partition_tensor_view<1x128xui32>
+    %idx = pto.alloc_tile addr = %c8192_i64 : !pto.tile_buf<vec, 1x128xui32>
+    %src0_0 = pto.alloc_tile addr = %c14848_i64 : !pto.tile_buf<vec, 1x256xf32, valid=1x128>
+    %sort0_0 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 1x256xf32>
+    %merge0_0 = pto.alloc_tile addr = %c4096_i64 : !pto.tile_buf<vec, 1x256xf32>
+    %data0_0 = pto.alloc_tile addr = %c10752_i64 : !pto.tile_buf<vec, 1x128xf32>
+    %index0_0 = pto.alloc_tile addr = %c12800_i64 : !pto.tile_buf<vec, 1x128xui32>
+    %src0_1 = pto.alloc_tile addr = %c15360_i64 : !pto.tile_buf<vec, 1x256xf32, valid=1x128>
+    %sort0_1 = pto.alloc_tile addr = %c1024_i64 : !pto.tile_buf<vec, 1x256xf32>
+    %merge0_1 = pto.alloc_tile addr = %c5120_i64 : !pto.tile_buf<vec, 1x256xf32>
+    %data0_1 = pto.alloc_tile addr = %c11264_i64 : !pto.tile_buf<vec, 1x128xf32>
+    %index0_1 = pto.alloc_tile addr = %c13312_i64 : !pto.tile_buf<vec, 1x128xui32>
+    %tmp0 = pto.alloc_tile addr = %c8704_i64 : !pto.tile_buf<vec, 1x256xf32>
+    %sorttmp0 = pto.alloc_tile addr = %c8704_i64 : !pto.tile_buf<vec, 1x256xf32, valid=1x128>
+    %src1_0 = pto.alloc_tile addr = %c15872_i64 : !pto.tile_buf<vec, 1x256xf32, valid=1x128>
+    %sort1_0 = pto.alloc_tile addr = %c2048_i64 : !pto.tile_buf<vec, 1x256xf32>
+    %merge1_0 = pto.alloc_tile addr = %c6144_i64 : !pto.tile_buf<vec, 1x256xf32>
+    %data1_0 = pto.alloc_tile addr = %c11776_i64 : !pto.tile_buf<vec, 1x128xf32>
+    %index1_0 = pto.alloc_tile addr = %c13824_i64 : !pto.tile_buf<vec, 1x128xui32>
+    %src1_1 = pto.alloc_tile addr = %c16384_i64 : !pto.tile_buf<vec, 1x256xf32, valid=1x128>
+    %sort1_1 = pto.alloc_tile addr = %c3072_i64 : !pto.tile_buf<vec, 1x256xf32>
+    %merge1_1 = pto.alloc_tile addr = %c7168_i64 : !pto.tile_buf<vec, 1x256xf32>
+    %data1_1 = pto.alloc_tile addr = %c12288_i64 : !pto.tile_buf<vec, 1x128xf32>
+    %index1_1 = pto.alloc_tile addr = %c14336_i64 : !pto.tile_buf<vec, 1x128xui32>
+    %tmp1 = pto.alloc_tile addr = %c9728_i64 : !pto.tile_buf<vec, 1x256xf32>
+    %sorttmp1 = pto.alloc_tile addr = %c9728_i64 : !pto.tile_buf<vec, 1x256xf32, valid=1x128>
+    pto.tload ins(%idxpart : !pto.partition_tensor_view<1x128xui32>) outs(%idx : !pto.tile_buf<vec, 1x128xui32>)
+    scf.for %group = %c0_index to %groups step %c1_index {
+      %base = arith.muli %group, %c4_index : index
+      %load0 = pto.alloc_tile addr = %c14848_i64 : !pto.tile_buf<vec, 2x128xf32>
+      %row0 = arith.addi %base, %c0_index : index
+      %loadpart0 = pto.partition_view %srcview, offsets = [%row0, %c0_index], sizes = [%c2_index, %c128_index] : !pto.tensor_view<64x128xf32> -> !pto.partition_tensor_view<2x128xf32>
+      pto.tload ins(%loadpart0 : !pto.partition_tensor_view<2x128xf32>) outs(%load0 : !pto.tile_buf<vec, 2x128xf32>)
+      pto.tsort32 ins(%src0_0, %idx, %sorttmp0 : !pto.tile_buf<vec, 1x256xf32, valid=1x128>, !pto.tile_buf<vec, 1x128xui32>, !pto.tile_buf<vec, 1x256xf32, valid=1x128>) outs(%sort0_0 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tsort32 ins(%src0_1, %idx, %sorttmp0 : !pto.tile_buf<vec, 1x256xf32, valid=1x128>, !pto.tile_buf<vec, 1x128xui32>, !pto.tile_buf<vec, 1x256xf32, valid=1x128>) outs(%sort0_1 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tmrgsort ins(%sort0_0, %c64_i32 : !pto.tile_buf<vec, 1x256xf32>, i32) outs(%tmp0 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tmov ins(%tmp0 : !pto.tile_buf<vec, 1x256xf32>) outs(%sort0_0 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tmov ins(%sort0_0 : !pto.tile_buf<vec, 1x256xf32>) outs(%merge0_0 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tmrgsort ins(%sort0_1, %c64_i32 : !pto.tile_buf<vec, 1x256xf32>, i32) outs(%tmp0 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tmov ins(%tmp0 : !pto.tile_buf<vec, 1x256xf32>) outs(%sort0_1 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tmov ins(%sort0_1 : !pto.tile_buf<vec, 1x256xf32>) outs(%merge0_1 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tgather ins(%merge0_0, {maskPattern = #pto.mask_pattern<P0101>} : !pto.tile_buf<vec, 1x256xf32>, "row") outs(%data0_0 : !pto.tile_buf<vec, 1x128xf32>)
+      pto.tgather ins(%merge0_1, {maskPattern = #pto.mask_pattern<P0101>} : !pto.tile_buf<vec, 1x256xf32>, "row") outs(%data0_1 : !pto.tile_buf<vec, 1x128xf32>)
+      %merge0_0_bits = pto.bitcast %merge0_0 : !pto.tile_buf<vec, 1x256xf32> -> !pto.tile_buf<vec, 1x256xui32>
+      pto.tgather ins(%merge0_0_bits, {maskPattern = #pto.mask_pattern<P1010>} : !pto.tile_buf<vec, 1x256xui32>, "row") outs(%index0_0 : !pto.tile_buf<vec, 1x128xui32>)
+      %merge0_1_bits = pto.bitcast %merge0_1 : !pto.tile_buf<vec, 1x256xf32> -> !pto.tile_buf<vec, 1x256xui32>
+      pto.tgather ins(%merge0_1_bits, {maskPattern = #pto.mask_pattern<P1010>} : !pto.tile_buf<vec, 1x256xui32>, "row") outs(%index0_1 : !pto.tile_buf<vec, 1x128xui32>)
+      %datastore0 = pto.alloc_tile addr = %c10752_i64 : !pto.tile_buf<vec, 2x128xf32>
+      %datapart0 = pto.partition_view %scoreview, offsets = [%row0, %c0_index], sizes = [%c2_index, %c128_index] : !pto.tensor_view<64x128xf32> -> !pto.partition_tensor_view<2x128xf32>
+      pto.tstore ins(%datastore0 : !pto.tile_buf<vec, 2x128xf32>) outs(%datapart0 : !pto.partition_tensor_view<2x128xf32>)
+      %indexstore0 = pto.alloc_tile addr = %c12800_i64 : !pto.tile_buf<vec, 2x128xui32>
+      %indexpart0 = pto.partition_view %indexview, offsets = [%row0, %c0_index], sizes = [%c2_index, %c128_index] : !pto.tensor_view<64x128xui32> -> !pto.partition_tensor_view<2x128xui32>
+      pto.tstore ins(%indexstore0 : !pto.tile_buf<vec, 2x128xui32>) outs(%indexpart0 : !pto.partition_tensor_view<2x128xui32>)
+      %load1 = pto.alloc_tile addr = %c15872_i64 : !pto.tile_buf<vec, 2x128xf32>
+      %row1 = arith.addi %base, %c2_index : index
+      %loadpart1 = pto.partition_view %srcview, offsets = [%row1, %c0_index], sizes = [%c2_index, %c128_index] : !pto.tensor_view<64x128xf32> -> !pto.partition_tensor_view<2x128xf32>
+      pto.tload ins(%loadpart1 : !pto.partition_tensor_view<2x128xf32>) outs(%load1 : !pto.tile_buf<vec, 2x128xf32>)
+      pto.tsort32 ins(%src1_0, %idx, %sorttmp1 : !pto.tile_buf<vec, 1x256xf32, valid=1x128>, !pto.tile_buf<vec, 1x128xui32>, !pto.tile_buf<vec, 1x256xf32, valid=1x128>) outs(%sort1_0 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tsort32 ins(%src1_1, %idx, %sorttmp1 : !pto.tile_buf<vec, 1x256xf32, valid=1x128>, !pto.tile_buf<vec, 1x128xui32>, !pto.tile_buf<vec, 1x256xf32, valid=1x128>) outs(%sort1_1 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tmrgsort ins(%sort1_0, %c64_i32 : !pto.tile_buf<vec, 1x256xf32>, i32) outs(%tmp1 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tmov ins(%tmp1 : !pto.tile_buf<vec, 1x256xf32>) outs(%sort1_0 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tmov ins(%sort1_0 : !pto.tile_buf<vec, 1x256xf32>) outs(%merge1_0 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tmrgsort ins(%sort1_1, %c64_i32 : !pto.tile_buf<vec, 1x256xf32>, i32) outs(%tmp1 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tmov ins(%tmp1 : !pto.tile_buf<vec, 1x256xf32>) outs(%sort1_1 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tmov ins(%sort1_1 : !pto.tile_buf<vec, 1x256xf32>) outs(%merge1_1 : !pto.tile_buf<vec, 1x256xf32>)
+      pto.tgather ins(%merge1_0, {maskPattern = #pto.mask_pattern<P0101>} : !pto.tile_buf<vec, 1x256xf32>, "row") outs(%data1_0 : !pto.tile_buf<vec, 1x128xf32>)
+      pto.tgather ins(%merge1_1, {maskPattern = #pto.mask_pattern<P0101>} : !pto.tile_buf<vec, 1x256xf32>, "row") outs(%data1_1 : !pto.tile_buf<vec, 1x128xf32>)
+      %merge1_0_bits = pto.bitcast %merge1_0 : !pto.tile_buf<vec, 1x256xf32> -> !pto.tile_buf<vec, 1x256xui32>
+      pto.tgather ins(%merge1_0_bits, {maskPattern = #pto.mask_pattern<P1010>} : !pto.tile_buf<vec, 1x256xui32>, "row") outs(%index1_0 : !pto.tile_buf<vec, 1x128xui32>)
+      %merge1_1_bits = pto.bitcast %merge1_1 : !pto.tile_buf<vec, 1x256xf32> -> !pto.tile_buf<vec, 1x256xui32>
+      pto.tgather ins(%merge1_1_bits, {maskPattern = #pto.mask_pattern<P1010>} : !pto.tile_buf<vec, 1x256xui32>, "row") outs(%index1_1 : !pto.tile_buf<vec, 1x128xui32>)
+      %datastore1 = pto.alloc_tile addr = %c11776_i64 : !pto.tile_buf<vec, 2x128xf32>
+      %datapart1 = pto.partition_view %scoreview, offsets = [%row1, %c0_index], sizes = [%c2_index, %c128_index] : !pto.tensor_view<64x128xf32> -> !pto.partition_tensor_view<2x128xf32>
+      pto.tstore ins(%datastore1 : !pto.tile_buf<vec, 2x128xf32>) outs(%datapart1 : !pto.partition_tensor_view<2x128xf32>)
+      %indexstore1 = pto.alloc_tile addr = %c13824_i64 : !pto.tile_buf<vec, 2x128xui32>
+      %indexpart1 = pto.partition_view %indexview, offsets = [%row1, %c0_index], sizes = [%c2_index, %c128_index] : !pto.tensor_view<64x128xui32> -> !pto.partition_tensor_view<2x128xui32>
+      pto.tstore ins(%indexstore1 : !pto.tile_buf<vec, 2x128xui32>) outs(%indexpart1 : !pto.partition_tensor_view<2x128xui32>)
+    }
+    return
+  }
+}

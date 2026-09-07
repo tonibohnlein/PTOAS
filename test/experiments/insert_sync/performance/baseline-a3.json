@@ -1,0 +1,2331 @@
+{
+  "version": 1,
+  "arch": "a3",
+  "manifest_sha256": "a5427e8b7eb8a8d8e838f6cdb0dadc8e83448ba091707da3789c813b95cba09f",
+  "native_sha256": "879c0705280ced29a0dd43617d3fab6e7b5b0d0419051921ef7cabc8bf2c3ab3",
+  "cli_sha256": "87f4944ba496372730cba7a45c86671bc7a6cbb17e37fdb2cdb7f257e2d4d9a7",
+  "gm_alias": "assume-disjoint-arguments",
+  "source_commit": "60db1026a",
+  "rows": {
+    "one_buffer/manual": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 6,
+            "pto.wait_flag": 6,
+            "pto.barrier": 1,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>"
+            ]
+          },
+          "placement_sha256": "e2b3d867932691a532b0210262236a80ee033a2adb97ed304a0118a96c0b665b"
+        },
+        "scenarios": {
+          "trips_0": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 2,
+              "pto.wait_flag": 2,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "67b2435f53e584fae446b8fb5b09e9f049c6867e59169e4816da1c9c7886dd78",
+            "action_trace_sha256": "f871c7398e30e700beb8d222983370d0f0440feae0e436791a82b6464a49fa69",
+            "scalar_steps": 18
+          },
+          "trips_1": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 6,
+              "pto.partition_view": 2,
+              "pto.wait_flag": 6,
+              "pto.tload": 1,
+              "pto.tabs": 1,
+              "pto.tstore": 1,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "94eecea40b00cc3f80fccd0de7118b23cdbbd5c61385cd62577f1bf394dbae69",
+            "action_trace_sha256": "3cfa6b716a078c4e1a01332adaec8abae47333a63092f582bf7426f7e5e2b177",
+            "scalar_steps": 36
+          },
+          "trips_2": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 10,
+              "pto.partition_view": 4,
+              "pto.wait_flag": 10,
+              "pto.tload": 2,
+              "pto.tabs": 2,
+              "pto.tstore": 2,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "52df812e0e019d2e23517e8d27c0477c71fd5b288e47b44e4123a9705b5fa8a5",
+            "action_trace_sha256": "e5c6ff94409bd069c61b9378311cadde31ef74374bfd36b30772c24634de2a5a",
+            "scalar_steps": 54
+          },
+          "trips_3": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 14,
+              "pto.partition_view": 6,
+              "pto.wait_flag": 14,
+              "pto.tload": 3,
+              "pto.tabs": 3,
+              "pto.tstore": 3,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "84cc43e83984e74739c41e9d8d88e57ecd1e6968e2ee57926793d3c162fc90c8",
+            "action_trace_sha256": "1e78c29dfa99b0ddc881a338648cf20d454c8c37b35e47c5cd28a1c499608a2b",
+            "scalar_steps": 72
+          },
+          "trips_16": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 66,
+              "pto.partition_view": 32,
+              "pto.wait_flag": 66,
+              "pto.tload": 16,
+              "pto.tabs": 16,
+              "pto.tstore": 16,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "56420698011087c49ecee4b7e7531298d1b39dc63bf9e3779c49d1200009ac27",
+            "action_trace_sha256": "6bdd8f04f9c3b52b2b020c04858ef48a72f315fd4f6260a2074dd1615ffa6cbf",
+            "scalar_steps": 306
+          }
+        }
+      },
+      "audit_verdicts": []
+    },
+    "one_buffer/combined": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 6,
+            "pto.wait_flag": 6,
+            "pto.barrier": 1,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>"
+            ]
+          },
+          "placement_sha256": "28f4bf0748ee29a3ee98da1b28339ff864dee0321fbca75951b1b1a5168e4052"
+        },
+        "scenarios": {
+          "trips_0": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 2,
+              "pto.wait_flag": 2,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "67b2435f53e584fae446b8fb5b09e9f049c6867e59169e4816da1c9c7886dd78",
+            "action_trace_sha256": "c753211d2ef46d0f466410705541b95d6d13b9d4218d1c9449c3a2a3040f2334",
+            "scalar_steps": 18
+          },
+          "trips_1": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 6,
+              "pto.partition_view": 2,
+              "pto.wait_flag": 6,
+              "pto.tload": 1,
+              "pto.tabs": 1,
+              "pto.tstore": 1,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "94eecea40b00cc3f80fccd0de7118b23cdbbd5c61385cd62577f1bf394dbae69",
+            "action_trace_sha256": "7bab90e587fb02c1935f06f20fb4b870e8bea93dbece64bbf9194dc294718889",
+            "scalar_steps": 36
+          },
+          "trips_2": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 10,
+              "pto.partition_view": 4,
+              "pto.wait_flag": 10,
+              "pto.tload": 2,
+              "pto.tabs": 2,
+              "pto.tstore": 2,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "52df812e0e019d2e23517e8d27c0477c71fd5b288e47b44e4123a9705b5fa8a5",
+            "action_trace_sha256": "13e84afa42040f989d9a5f92dad65e553f5bf0263ab225001d3c58e57878b0b0",
+            "scalar_steps": 54
+          },
+          "trips_3": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 14,
+              "pto.partition_view": 6,
+              "pto.wait_flag": 14,
+              "pto.tload": 3,
+              "pto.tabs": 3,
+              "pto.tstore": 3,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "84cc43e83984e74739c41e9d8d88e57ecd1e6968e2ee57926793d3c162fc90c8",
+            "action_trace_sha256": "c28ab8d48342152ca9c1920fab8518feb198abb434c07b0a7656b8e244abbeaa",
+            "scalar_steps": 72
+          },
+          "trips_16": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 66,
+              "pto.partition_view": 32,
+              "pto.wait_flag": 66,
+              "pto.tload": 16,
+              "pto.tabs": 16,
+              "pto.tstore": 16,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "56420698011087c49ecee4b7e7531298d1b39dc63bf9e3779c49d1200009ac27",
+            "action_trace_sha256": "421caa7736ccff13df2775ec720ebbc636b56e71e2dcfb30a67f2bbcca5cfd0e",
+            "scalar_steps": 306
+          }
+        }
+      },
+      "audit_verdicts": [
+        "unsupported"
+      ]
+    },
+    "one_buffer/staged": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 6,
+            "pto.wait_flag": 6,
+            "pto.barrier": 1,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>"
+            ]
+          },
+          "placement_sha256": "28f4bf0748ee29a3ee98da1b28339ff864dee0321fbca75951b1b1a5168e4052"
+        },
+        "scenarios": {
+          "trips_0": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 2,
+              "pto.wait_flag": 2,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "67b2435f53e584fae446b8fb5b09e9f049c6867e59169e4816da1c9c7886dd78",
+            "action_trace_sha256": "c753211d2ef46d0f466410705541b95d6d13b9d4218d1c9449c3a2a3040f2334",
+            "scalar_steps": 18
+          },
+          "trips_1": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 6,
+              "pto.partition_view": 2,
+              "pto.wait_flag": 6,
+              "pto.tload": 1,
+              "pto.tabs": 1,
+              "pto.tstore": 1,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "94eecea40b00cc3f80fccd0de7118b23cdbbd5c61385cd62577f1bf394dbae69",
+            "action_trace_sha256": "7bab90e587fb02c1935f06f20fb4b870e8bea93dbece64bbf9194dc294718889",
+            "scalar_steps": 36
+          },
+          "trips_2": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 10,
+              "pto.partition_view": 4,
+              "pto.wait_flag": 10,
+              "pto.tload": 2,
+              "pto.tabs": 2,
+              "pto.tstore": 2,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "52df812e0e019d2e23517e8d27c0477c71fd5b288e47b44e4123a9705b5fa8a5",
+            "action_trace_sha256": "13e84afa42040f989d9a5f92dad65e553f5bf0263ab225001d3c58e57878b0b0",
+            "scalar_steps": 54
+          },
+          "trips_3": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 14,
+              "pto.partition_view": 6,
+              "pto.wait_flag": 14,
+              "pto.tload": 3,
+              "pto.tabs": 3,
+              "pto.tstore": 3,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "84cc43e83984e74739c41e9d8d88e57ecd1e6968e2ee57926793d3c162fc90c8",
+            "action_trace_sha256": "c28ab8d48342152ca9c1920fab8518feb198abb434c07b0a7656b8e244abbeaa",
+            "scalar_steps": 72
+          },
+          "trips_16": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 2,
+              "pto.set_flag": 66,
+              "pto.partition_view": 32,
+              "pto.wait_flag": 66,
+              "pto.tload": 16,
+              "pto.tabs": 16,
+              "pto.tstore": 16,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "56420698011087c49ecee4b7e7531298d1b39dc63bf9e3779c49d1200009ac27",
+            "action_trace_sha256": "421caa7736ccff13df2775ec720ebbc636b56e71e2dcfb30a67f2bbcca5cfd0e",
+            "scalar_steps": 306
+          }
+        }
+      },
+      "audit_verdicts": [
+        "unsupported"
+      ]
+    },
+    "two_buffer/manual": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 12,
+            "pto.wait_flag": 12,
+            "pto.barrier": 1,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ]
+          },
+          "placement_sha256": "0e9f520fd87ed8a0dd94642b45c3bff93be6b8b6ea076a608ad3ec4932155bf3"
+        },
+        "scenarios": {
+          "trips_0": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 4,
+              "pto.wait_flag": 4,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "34e606b48215209af9e35c2fc3986ad8417bc6d6138f9fe69bdedd4d07217cdf",
+            "action_trace_sha256": "919622cc1f8653dee3f27a72cb1a532e02859456c2fe67a1305ed13c025195a5",
+            "scalar_steps": 26
+          },
+          "trips_1": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 8,
+              "pto.partition_view": 2,
+              "pto.wait_flag": 8,
+              "pto.tload": 1,
+              "pto.tabs": 1,
+              "pto.tstore": 1,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "e0e67a56eb7de292414b41991e6e021c9c7e1339b71d2d411c84d83497d706a2",
+            "action_trace_sha256": "a4417010cfc07cc4d53e3f4ed3d1925a76afabd4615546d77629ef363874704c",
+            "scalar_steps": 48
+          },
+          "trips_2": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 12,
+              "pto.partition_view": 4,
+              "pto.wait_flag": 12,
+              "pto.tload": 2,
+              "pto.tabs": 2,
+              "pto.tstore": 2,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "3bdc7c6d9bb56b37913211f080220aef5196a41d82fa6d8e559067557076f655",
+            "action_trace_sha256": "a7cfd48e3e02fe1f3c36539b8be6e3095ca1478260de2ff0117244c08f09ed51",
+            "scalar_steps": 70
+          },
+          "trips_3": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 16,
+              "pto.partition_view": 6,
+              "pto.wait_flag": 16,
+              "pto.tload": 3,
+              "pto.tabs": 3,
+              "pto.tstore": 3,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "b50a80990f03afb80b32008f4be4484bad2282e960f8b0a179278848df39c39f",
+            "action_trace_sha256": "f6e34b30202d7fb38447d66a037ca1c9a772b687d081f19f81b9ba3f1debb7a5",
+            "scalar_steps": 92
+          },
+          "trips_5": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 24,
+              "pto.partition_view": 10,
+              "pto.wait_flag": 24,
+              "pto.tload": 5,
+              "pto.tabs": 5,
+              "pto.tstore": 5,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "6980b86e678102775c4f45c3aaeb5ec63f3c73a1195c189650924b3e0684a8b6",
+            "action_trace_sha256": "a6b397e651876b5e059e07adb060364a24e6476046c71dfff6d9264e6c2f613a",
+            "scalar_steps": 136
+          },
+          "trips_16": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 68,
+              "pto.partition_view": 32,
+              "pto.wait_flag": 68,
+              "pto.tload": 16,
+              "pto.tabs": 16,
+              "pto.tstore": 16,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "e222167111993f6cbde0282f8a967d407248c280af744add15fc14276789a80f",
+            "action_trace_sha256": "ee072efca47960aa4d33a59334dac8fbfb7dddb94294a65c680ec0e9262d4a64",
+            "scalar_steps": 378
+          }
+        }
+      },
+      "audit_verdicts": []
+    },
+    "two_buffer/combined": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 12,
+            "pto.wait_flag": 12,
+            "pto.barrier": 3,
+            "barrier:#pto.pipe<PIPE_MTE3>:loop": 2,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ]
+          },
+          "placement_sha256": "320e7692eb4b0bc3c947d5f9d719b125dfaacb4124413c723fd526eae1b6441f"
+        },
+        "scenarios": {
+          "trips_0": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 4,
+              "pto.wait_flag": 4,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "34e606b48215209af9e35c2fc3986ad8417bc6d6138f9fe69bdedd4d07217cdf",
+            "action_trace_sha256": "7344d2752d2dcfb12e37d55e113af745bace1034411449333b8f8917b4da53e2",
+            "scalar_steps": 26
+          },
+          "trips_1": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 8,
+              "pto.partition_view": 2,
+              "pto.wait_flag": 8,
+              "pto.tload": 1,
+              "pto.tabs": 1,
+              "pto.barrier": 2,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 1,
+              "pto.tstore": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "e0e67a56eb7de292414b41991e6e021c9c7e1339b71d2d411c84d83497d706a2",
+            "action_trace_sha256": "00fb7d3cbbbee0f6a1e3d4291283cf00f75f1c497937f32d6b46f2a55efeec59",
+            "scalar_steps": 49
+          },
+          "trips_2": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 12,
+              "pto.partition_view": 4,
+              "pto.wait_flag": 12,
+              "pto.tload": 2,
+              "pto.tabs": 2,
+              "pto.barrier": 3,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 2,
+              "pto.tstore": 2,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "3bdc7c6d9bb56b37913211f080220aef5196a41d82fa6d8e559067557076f655",
+            "action_trace_sha256": "a79c6aac8ad848721a9acb45d1f7a82cefc535ee0c24ff59728ea9c07fd48269",
+            "scalar_steps": 72
+          },
+          "trips_3": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 16,
+              "pto.partition_view": 6,
+              "pto.wait_flag": 16,
+              "pto.tload": 3,
+              "pto.tabs": 3,
+              "pto.barrier": 4,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 3,
+              "pto.tstore": 3,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "b50a80990f03afb80b32008f4be4484bad2282e960f8b0a179278848df39c39f",
+            "action_trace_sha256": "a1734e02cb4f942d62c7aed1872ef6ec00be2d98bd164693d820845cfbdbb2fb",
+            "scalar_steps": 95
+          },
+          "trips_5": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 24,
+              "pto.partition_view": 10,
+              "pto.wait_flag": 24,
+              "pto.tload": 5,
+              "pto.tabs": 5,
+              "pto.barrier": 6,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 5,
+              "pto.tstore": 5,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "6980b86e678102775c4f45c3aaeb5ec63f3c73a1195c189650924b3e0684a8b6",
+            "action_trace_sha256": "3067f6025546b5c6f71954548d360ed4cb74f4a751e4b5544df20c8ef1a14901",
+            "scalar_steps": 141
+          },
+          "trips_16": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 68,
+              "pto.partition_view": 32,
+              "pto.wait_flag": 68,
+              "pto.tload": 16,
+              "pto.tabs": 16,
+              "pto.barrier": 17,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 16,
+              "pto.tstore": 16,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "e222167111993f6cbde0282f8a967d407248c280af744add15fc14276789a80f",
+            "action_trace_sha256": "57d27cbcea48090463a4814ae5c4af630e8dbbb6f58fe2c9bf19bca03d923484",
+            "scalar_steps": 394
+          }
+        }
+      },
+      "audit_verdicts": [
+        "unsupported"
+      ]
+    },
+    "two_buffer/staged": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 12,
+            "pto.wait_flag": 12,
+            "pto.barrier": 3,
+            "barrier:#pto.pipe<PIPE_MTE3>:loop": 2,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ]
+          },
+          "placement_sha256": "320e7692eb4b0bc3c947d5f9d719b125dfaacb4124413c723fd526eae1b6441f"
+        },
+        "scenarios": {
+          "trips_0": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 4,
+              "pto.wait_flag": 4,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "34e606b48215209af9e35c2fc3986ad8417bc6d6138f9fe69bdedd4d07217cdf",
+            "action_trace_sha256": "7344d2752d2dcfb12e37d55e113af745bace1034411449333b8f8917b4da53e2",
+            "scalar_steps": 26
+          },
+          "trips_1": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 8,
+              "pto.partition_view": 2,
+              "pto.wait_flag": 8,
+              "pto.tload": 1,
+              "pto.tabs": 1,
+              "pto.barrier": 2,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 1,
+              "pto.tstore": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "e0e67a56eb7de292414b41991e6e021c9c7e1339b71d2d411c84d83497d706a2",
+            "action_trace_sha256": "00fb7d3cbbbee0f6a1e3d4291283cf00f75f1c497937f32d6b46f2a55efeec59",
+            "scalar_steps": 49
+          },
+          "trips_2": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 12,
+              "pto.partition_view": 4,
+              "pto.wait_flag": 12,
+              "pto.tload": 2,
+              "pto.tabs": 2,
+              "pto.barrier": 3,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 2,
+              "pto.tstore": 2,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "3bdc7c6d9bb56b37913211f080220aef5196a41d82fa6d8e559067557076f655",
+            "action_trace_sha256": "a79c6aac8ad848721a9acb45d1f7a82cefc535ee0c24ff59728ea9c07fd48269",
+            "scalar_steps": 72
+          },
+          "trips_3": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 16,
+              "pto.partition_view": 6,
+              "pto.wait_flag": 16,
+              "pto.tload": 3,
+              "pto.tabs": 3,
+              "pto.barrier": 4,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 3,
+              "pto.tstore": 3,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "b50a80990f03afb80b32008f4be4484bad2282e960f8b0a179278848df39c39f",
+            "action_trace_sha256": "a1734e02cb4f942d62c7aed1872ef6ec00be2d98bd164693d820845cfbdbb2fb",
+            "scalar_steps": 95
+          },
+          "trips_5": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 24,
+              "pto.partition_view": 10,
+              "pto.wait_flag": 24,
+              "pto.tload": 5,
+              "pto.tabs": 5,
+              "pto.barrier": 6,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 5,
+              "pto.tstore": 5,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "6980b86e678102775c4f45c3aaeb5ec63f3c73a1195c189650924b3e0684a8b6",
+            "action_trace_sha256": "3067f6025546b5c6f71954548d360ed4cb74f4a751e4b5544df20c8ef1a14901",
+            "scalar_steps": 141
+          },
+          "trips_16": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 68,
+              "pto.partition_view": 32,
+              "pto.wait_flag": 68,
+              "pto.tload": 16,
+              "pto.tabs": 16,
+              "pto.barrier": 17,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 16,
+              "pto.tstore": 16,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "e222167111993f6cbde0282f8a967d407248c280af744add15fc14276789a80f",
+            "action_trace_sha256": "57d27cbcea48090463a4814ae5c4af630e8dbbb6f58fe2c9bf19bca03d923484",
+            "scalar_steps": 394
+          }
+        }
+      },
+      "audit_verdicts": [
+        "unsupported"
+      ]
+    },
+    "three_buffer/manual": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 18,
+            "pto.wait_flag": 18,
+            "pto.barrier": 1,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ]
+          },
+          "placement_sha256": "fe4d0c1d15c57d0a1331eaa10e8f8656686231ad40c4cb19090b44d44a730494"
+        },
+        "scenarios": {
+          "trips_0": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 6,
+              "pto.wait_flag": 6,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "5ce995e28a5bbe6bed24eaa185ab6a2efc79525d924414b6ec896259ccbb3f25",
+            "action_trace_sha256": "b7bc711a8eed8fda2ee990e6fa8e59e3fab9d2521bac5ffec98d50fd538de92f",
+            "scalar_steps": 35
+          },
+          "trips_1": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 10,
+              "pto.partition_view": 2,
+              "pto.wait_flag": 10,
+              "pto.tload": 1,
+              "pto.tabs": 1,
+              "pto.tstore": 1,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "7c8182f8ad44c0d206558f0bf0c9eae335da6e51e324888dcf75902947275d10",
+            "action_trace_sha256": "30f6c2b2c7822170c16c43435c2086b53e8c2d21638cc9fcf4f38667fd9e4ac8",
+            "scalar_steps": 59
+          },
+          "trips_2": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 14,
+              "pto.partition_view": 4,
+              "pto.wait_flag": 14,
+              "pto.tload": 2,
+              "pto.tabs": 2,
+              "pto.tstore": 2,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "c25ba0cf514a666bb09f7dee3d48f4097501e37c7ea5e6f89c0ec75b8a79b8f8",
+            "action_trace_sha256": "0065565ecacf006750ec7b52eca7e6b61c3172a5774aeb2dbc054cb42e3886f7",
+            "scalar_steps": 83
+          },
+          "trips_3": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 18,
+              "pto.partition_view": 6,
+              "pto.wait_flag": 18,
+              "pto.tload": 3,
+              "pto.tabs": 3,
+              "pto.tstore": 3,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "289d514ee381909be093d0cf20adad7e241145e3784db80adb34d90464a226a8",
+            "action_trace_sha256": "6451916a923ac2986350f772fddfbaf1a56a68875cb86637d7212203a8305888",
+            "scalar_steps": 107
+          },
+          "trips_4": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 22,
+              "pto.partition_view": 8,
+              "pto.wait_flag": 22,
+              "pto.tload": 4,
+              "pto.tabs": 4,
+              "pto.tstore": 4,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "587138dbfe04a15938ccfd0c1edcb50c412feff43588f995966a0b3cd5f15c68",
+            "action_trace_sha256": "d125bcf102738dce6e1008486fb322511de516334c9bdf6907d853516e04f13b",
+            "scalar_steps": 131
+          },
+          "trips_7": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 34,
+              "pto.partition_view": 14,
+              "pto.wait_flag": 34,
+              "pto.tload": 7,
+              "pto.tabs": 7,
+              "pto.tstore": 7,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "0dfb49d97b05f86635a43a43a24462735d9b9e8b3e8fc2b93cf38d11dab94b0c",
+            "action_trace_sha256": "d8ef0711150dddfe72dba475b4efaadf87823f68b53b3b2e4946f2a82d0ccd6e",
+            "scalar_steps": 203
+          },
+          "trips_16": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 70,
+              "pto.partition_view": 32,
+              "pto.wait_flag": 70,
+              "pto.tload": 16,
+              "pto.tabs": 16,
+              "pto.tstore": 16,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "e6dc19a0a80119ac661b7ce5b2c26e6d1d412332cf426adfc36d57c7ca353e04",
+            "action_trace_sha256": "a4abe001e003090a77a0c9010730d441145f2035fd33a5548fcca29de3725c8a",
+            "scalar_steps": 419
+          }
+        }
+      },
+      "audit_verdicts": []
+    },
+    "three_buffer/combined": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 18,
+            "pto.wait_flag": 18,
+            "pto.barrier": 4,
+            "barrier:#pto.pipe<PIPE_MTE3>:loop": 3,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ]
+          },
+          "placement_sha256": "bb38a6b34183750a689a90d5e3b22df89cd3febebc0fcc0ef108ada694294ba3"
+        },
+        "scenarios": {
+          "trips_0": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 6,
+              "pto.wait_flag": 6,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "5ce995e28a5bbe6bed24eaa185ab6a2efc79525d924414b6ec896259ccbb3f25",
+            "action_trace_sha256": "9f31c153a88414994a55eb8f41ff2e974fbaa834e85651aa20a5c92972e82767",
+            "scalar_steps": 35
+          },
+          "trips_1": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 10,
+              "pto.partition_view": 2,
+              "pto.wait_flag": 10,
+              "pto.tload": 1,
+              "pto.tabs": 1,
+              "pto.barrier": 2,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 1,
+              "pto.tstore": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "7c8182f8ad44c0d206558f0bf0c9eae335da6e51e324888dcf75902947275d10",
+            "action_trace_sha256": "eada008539977ab46bdbd24c9e26cfb7751b9aac732cea8e398664b4f13fbd7d",
+            "scalar_steps": 60
+          },
+          "trips_2": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 14,
+              "pto.partition_view": 4,
+              "pto.wait_flag": 14,
+              "pto.tload": 2,
+              "pto.tabs": 2,
+              "pto.barrier": 3,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 2,
+              "pto.tstore": 2,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "c25ba0cf514a666bb09f7dee3d48f4097501e37c7ea5e6f89c0ec75b8a79b8f8",
+            "action_trace_sha256": "c02e1234a2ff0b5a2efca365c83c170a5e43867ab4a895fb92a57f6d0d267d0b",
+            "scalar_steps": 85
+          },
+          "trips_3": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 18,
+              "pto.partition_view": 6,
+              "pto.wait_flag": 18,
+              "pto.tload": 3,
+              "pto.tabs": 3,
+              "pto.barrier": 4,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 3,
+              "pto.tstore": 3,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "289d514ee381909be093d0cf20adad7e241145e3784db80adb34d90464a226a8",
+            "action_trace_sha256": "e3830f2aedb496c946ef47fb6b75824c357d7645f0052edd02b6a69bbd543d97",
+            "scalar_steps": 110
+          },
+          "trips_4": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 22,
+              "pto.partition_view": 8,
+              "pto.wait_flag": 22,
+              "pto.tload": 4,
+              "pto.tabs": 4,
+              "pto.barrier": 5,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 4,
+              "pto.tstore": 4,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "587138dbfe04a15938ccfd0c1edcb50c412feff43588f995966a0b3cd5f15c68",
+            "action_trace_sha256": "1dd28582b62785f3d98967d79883451206fc149763993edf0b09825be4ddac27",
+            "scalar_steps": 135
+          },
+          "trips_7": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 34,
+              "pto.partition_view": 14,
+              "pto.wait_flag": 34,
+              "pto.tload": 7,
+              "pto.tabs": 7,
+              "pto.barrier": 8,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 7,
+              "pto.tstore": 7,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "0dfb49d97b05f86635a43a43a24462735d9b9e8b3e8fc2b93cf38d11dab94b0c",
+            "action_trace_sha256": "85114867f17fead2f1d3902b5ffe872e7fd5cbc0f99c39e54175ed8e2204fa5b",
+            "scalar_steps": 210
+          },
+          "trips_16": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 70,
+              "pto.partition_view": 32,
+              "pto.wait_flag": 70,
+              "pto.tload": 16,
+              "pto.tabs": 16,
+              "pto.barrier": 17,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 16,
+              "pto.tstore": 16,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "e6dc19a0a80119ac661b7ce5b2c26e6d1d412332cf426adfc36d57c7ca353e04",
+            "action_trace_sha256": "eb195c4baa84a04bc2bbadaf52884a3a4da2c9a38669720e0bcc06234db8fb13",
+            "scalar_steps": 435
+          }
+        }
+      },
+      "audit_verdicts": [
+        "unsupported"
+      ]
+    },
+    "three_buffer/staged": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 18,
+            "pto.wait_flag": 18,
+            "pto.barrier": 4,
+            "barrier:#pto.pipe<PIPE_MTE3>:loop": 3,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ]
+          },
+          "placement_sha256": "bb38a6b34183750a689a90d5e3b22df89cd3febebc0fcc0ef108ada694294ba3"
+        },
+        "scenarios": {
+          "trips_0": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 6,
+              "pto.wait_flag": 6,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "5ce995e28a5bbe6bed24eaa185ab6a2efc79525d924414b6ec896259ccbb3f25",
+            "action_trace_sha256": "9f31c153a88414994a55eb8f41ff2e974fbaa834e85651aa20a5c92972e82767",
+            "scalar_steps": 35
+          },
+          "trips_1": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 10,
+              "pto.partition_view": 2,
+              "pto.wait_flag": 10,
+              "pto.tload": 1,
+              "pto.tabs": 1,
+              "pto.barrier": 2,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 1,
+              "pto.tstore": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "7c8182f8ad44c0d206558f0bf0c9eae335da6e51e324888dcf75902947275d10",
+            "action_trace_sha256": "eada008539977ab46bdbd24c9e26cfb7751b9aac732cea8e398664b4f13fbd7d",
+            "scalar_steps": 60
+          },
+          "trips_2": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 14,
+              "pto.partition_view": 4,
+              "pto.wait_flag": 14,
+              "pto.tload": 2,
+              "pto.tabs": 2,
+              "pto.barrier": 3,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 2,
+              "pto.tstore": 2,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "c25ba0cf514a666bb09f7dee3d48f4097501e37c7ea5e6f89c0ec75b8a79b8f8",
+            "action_trace_sha256": "c02e1234a2ff0b5a2efca365c83c170a5e43867ab4a895fb92a57f6d0d267d0b",
+            "scalar_steps": 85
+          },
+          "trips_3": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 18,
+              "pto.partition_view": 6,
+              "pto.wait_flag": 18,
+              "pto.tload": 3,
+              "pto.tabs": 3,
+              "pto.barrier": 4,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 3,
+              "pto.tstore": 3,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "289d514ee381909be093d0cf20adad7e241145e3784db80adb34d90464a226a8",
+            "action_trace_sha256": "e3830f2aedb496c946ef47fb6b75824c357d7645f0052edd02b6a69bbd543d97",
+            "scalar_steps": 110
+          },
+          "trips_4": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 22,
+              "pto.partition_view": 8,
+              "pto.wait_flag": 22,
+              "pto.tload": 4,
+              "pto.tabs": 4,
+              "pto.barrier": 5,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 4,
+              "pto.tstore": 4,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "587138dbfe04a15938ccfd0c1edcb50c412feff43588f995966a0b3cd5f15c68",
+            "action_trace_sha256": "1dd28582b62785f3d98967d79883451206fc149763993edf0b09825be4ddac27",
+            "scalar_steps": 135
+          },
+          "trips_7": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 34,
+              "pto.partition_view": 14,
+              "pto.wait_flag": 34,
+              "pto.tload": 7,
+              "pto.tabs": 7,
+              "pto.barrier": 8,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 7,
+              "pto.tstore": 7,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "0dfb49d97b05f86635a43a43a24462735d9b9e8b3e8fc2b93cf38d11dab94b0c",
+            "action_trace_sha256": "85114867f17fead2f1d3902b5ffe872e7fd5cbc0f99c39e54175ed8e2204fa5b",
+            "scalar_steps": 210
+          },
+          "trips_16": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 6,
+              "pto.set_flag": 70,
+              "pto.partition_view": 32,
+              "pto.wait_flag": 70,
+              "pto.tload": 16,
+              "pto.tabs": 16,
+              "pto.barrier": 17,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 16,
+              "pto.tstore": 16,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "e6dc19a0a80119ac661b7ce5b2c26e6d1d412332cf426adfc36d57c7ca353e04",
+            "action_trace_sha256": "eb195c4baa84a04bc2bbadaf52884a3a4da2c9a38669720e0bcc06234db8fb13",
+            "scalar_steps": 435
+          }
+        }
+      },
+      "audit_verdicts": [
+        "unsupported"
+      ]
+    },
+    "four_use/manual": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 24,
+            "pto.wait_flag": 24,
+            "pto.barrier": 1,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ]
+          },
+          "placement_sha256": "e64fb5ccc344e63f07812fb252971396629ac096d8829d4e568d333f05e65045"
+        },
+        "scenarios": {
+          "trips_0": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 4,
+              "pto.wait_flag": 4,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "34e606b48215209af9e35c2fc3986ad8417bc6d6138f9fe69bdedd4d07217cdf",
+            "action_trace_sha256": "919622cc1f8653dee3f27a72cb1a532e02859456c2fe67a1305ed13c025195a5",
+            "scalar_steps": 29
+          },
+          "trips_1": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 14,
+              "pto.partition_view": 5,
+              "pto.wait_flag": 14,
+              "pto.tload": 1,
+              "pto.tabs": 4,
+              "pto.tstore": 4,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "7d38f34367776a4491c14a876a18ab7b833eaf41698e7e19057ac11eda2ae9f5",
+            "action_trace_sha256": "30ab2066aacc81ae37acba79229bdec82d97705ebff7eff9b8351e8bde346d42",
+            "scalar_steps": 82
+          },
+          "trips_2": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 24,
+              "pto.partition_view": 10,
+              "pto.wait_flag": 24,
+              "pto.tload": 2,
+              "pto.tabs": 8,
+              "pto.tstore": 8,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "0fb2c505e1bb045cb44816ccd5666552699a3e447f0dfbacec2ffc708e58d60c",
+            "action_trace_sha256": "a2e1e08300a9ea065e80739a9184f48cc9d14c975afdae5ee1c5423e1c29485d",
+            "scalar_steps": 135
+          },
+          "trips_3": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 34,
+              "pto.partition_view": 15,
+              "pto.wait_flag": 34,
+              "pto.tload": 3,
+              "pto.tabs": 12,
+              "pto.tstore": 12,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "84b53d92b3d59455f31229d646d5fd215090f9c893535b619efe6dcb0f3393fa",
+            "action_trace_sha256": "404183add04be6a950ed7a2f007e4eb04a8baa9f79a5e97df2a6e22a10888eef",
+            "scalar_steps": 188
+          },
+          "trips_5": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 54,
+              "pto.partition_view": 25,
+              "pto.wait_flag": 54,
+              "pto.tload": 5,
+              "pto.tabs": 20,
+              "pto.tstore": 20,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "5930960e561c08cbb0787c4a77d0e0e748d381d9934bd5a97ab1cdc32bcd4e77",
+            "action_trace_sha256": "b065e625268698399975e8d4832163a1bd6114c4f0e0a6f9c2889fd82555328c",
+            "scalar_steps": 294
+          },
+          "trips_16": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 164,
+              "pto.partition_view": 80,
+              "pto.wait_flag": 164,
+              "pto.tload": 16,
+              "pto.tabs": 64,
+              "pto.tstore": 64,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "1290c23f01c1b1b7872a028426fc12de0fd2694dea9dd94ea511a56712360cab",
+            "action_trace_sha256": "252297085e6cae6c08b47bb473e542e456660b31251ff0ecd47d20bccdccb920",
+            "scalar_steps": 877
+          }
+        }
+      },
+      "audit_verdicts": []
+    },
+    "four_use/combined": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 24,
+            "pto.wait_flag": 24,
+            "pto.barrier": 3,
+            "barrier:#pto.pipe<PIPE_MTE3>:loop": 2,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>",
+              "#pto.event<EVENT_ID6>",
+              "#pto.event<EVENT_ID7>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>",
+              "#pto.event<EVENT_ID6>",
+              "#pto.event<EVENT_ID7>"
+            ]
+          },
+          "placement_sha256": "afa6fc71b29f370b880b93e6fc3776717f953ff3841ea240143e7fe554b6c87b"
+        },
+        "scenarios": {
+          "trips_0": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 4,
+              "pto.wait_flag": 4,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "34e606b48215209af9e35c2fc3986ad8417bc6d6138f9fe69bdedd4d07217cdf",
+            "action_trace_sha256": "4ac2a35953dc39b43cb34eb0dadec6e6b7f88f8b20c478bbe832499d85cff8b7",
+            "scalar_steps": 29
+          },
+          "trips_1": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 14,
+              "pto.partition_view": 5,
+              "pto.wait_flag": 14,
+              "pto.tload": 1,
+              "pto.tabs": 4,
+              "pto.barrier": 2,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 1,
+              "pto.tstore": 4,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "7d38f34367776a4491c14a876a18ab7b833eaf41698e7e19057ac11eda2ae9f5",
+            "action_trace_sha256": "a980e3c0e72f4f1c1a1ae857b834a2e118ca83b975a5e66b635119e20775fff9",
+            "scalar_steps": 83
+          },
+          "trips_2": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 24,
+              "pto.partition_view": 10,
+              "pto.wait_flag": 24,
+              "pto.tload": 2,
+              "pto.tabs": 8,
+              "pto.barrier": 3,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 2,
+              "pto.tstore": 8,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "0fb2c505e1bb045cb44816ccd5666552699a3e447f0dfbacec2ffc708e58d60c",
+            "action_trace_sha256": "7b3941143153eef6c0b4c19c45b07e34bf9b7e8710dc55788790d1dcb31c201b",
+            "scalar_steps": 137
+          },
+          "trips_3": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 34,
+              "pto.partition_view": 15,
+              "pto.wait_flag": 34,
+              "pto.tload": 3,
+              "pto.tabs": 12,
+              "pto.barrier": 4,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 3,
+              "pto.tstore": 12,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "84b53d92b3d59455f31229d646d5fd215090f9c893535b619efe6dcb0f3393fa",
+            "action_trace_sha256": "3061b94abb1285e3f4ff8e254460a1417047eb63f3919b534b438418c6461454",
+            "scalar_steps": 191
+          },
+          "trips_5": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 54,
+              "pto.partition_view": 25,
+              "pto.wait_flag": 54,
+              "pto.tload": 5,
+              "pto.tabs": 20,
+              "pto.barrier": 6,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 5,
+              "pto.tstore": 20,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "5930960e561c08cbb0787c4a77d0e0e748d381d9934bd5a97ab1cdc32bcd4e77",
+            "action_trace_sha256": "83d211ea7ac3270dcbf37052a0544be9f40d1033bf2eda63219205943cf86b77",
+            "scalar_steps": 299
+          },
+          "trips_16": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 164,
+              "pto.partition_view": 80,
+              "pto.wait_flag": 164,
+              "pto.tload": 16,
+              "pto.tabs": 64,
+              "pto.barrier": 17,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 16,
+              "pto.tstore": 64,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "1290c23f01c1b1b7872a028426fc12de0fd2694dea9dd94ea511a56712360cab",
+            "action_trace_sha256": "33cc1033239d4ba9b3c774dfbb370f523b4eb5f8f3d2c5ab05369d815a2c028f",
+            "scalar_steps": 893
+          }
+        }
+      },
+      "audit_verdicts": [
+        "unsupported"
+      ]
+    },
+    "four_use/staged": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 24,
+            "pto.wait_flag": 24,
+            "pto.barrier": 3,
+            "barrier:#pto.pipe<PIPE_MTE3>:loop": 2,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>",
+              "#pto.event<EVENT_ID6>",
+              "#pto.event<EVENT_ID7>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>",
+              "#pto.event<EVENT_ID6>",
+              "#pto.event<EVENT_ID7>"
+            ]
+          },
+          "placement_sha256": "afa6fc71b29f370b880b93e6fc3776717f953ff3841ea240143e7fe554b6c87b"
+        },
+        "scenarios": {
+          "trips_0": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 4,
+              "pto.wait_flag": 4,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "34e606b48215209af9e35c2fc3986ad8417bc6d6138f9fe69bdedd4d07217cdf",
+            "action_trace_sha256": "4ac2a35953dc39b43cb34eb0dadec6e6b7f88f8b20c478bbe832499d85cff8b7",
+            "scalar_steps": 29
+          },
+          "trips_1": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 14,
+              "pto.partition_view": 5,
+              "pto.wait_flag": 14,
+              "pto.tload": 1,
+              "pto.tabs": 4,
+              "pto.barrier": 2,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 1,
+              "pto.tstore": 4,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "7d38f34367776a4491c14a876a18ab7b833eaf41698e7e19057ac11eda2ae9f5",
+            "action_trace_sha256": "a980e3c0e72f4f1c1a1ae857b834a2e118ca83b975a5e66b635119e20775fff9",
+            "scalar_steps": 83
+          },
+          "trips_2": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 24,
+              "pto.partition_view": 10,
+              "pto.wait_flag": 24,
+              "pto.tload": 2,
+              "pto.tabs": 8,
+              "pto.barrier": 3,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 2,
+              "pto.tstore": 8,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "0fb2c505e1bb045cb44816ccd5666552699a3e447f0dfbacec2ffc708e58d60c",
+            "action_trace_sha256": "7b3941143153eef6c0b4c19c45b07e34bf9b7e8710dc55788790d1dcb31c201b",
+            "scalar_steps": 137
+          },
+          "trips_3": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 34,
+              "pto.partition_view": 15,
+              "pto.wait_flag": 34,
+              "pto.tload": 3,
+              "pto.tabs": 12,
+              "pto.barrier": 4,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 3,
+              "pto.tstore": 12,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "84b53d92b3d59455f31229d646d5fd215090f9c893535b619efe6dcb0f3393fa",
+            "action_trace_sha256": "3061b94abb1285e3f4ff8e254460a1417047eb63f3919b534b438418c6461454",
+            "scalar_steps": 191
+          },
+          "trips_5": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 54,
+              "pto.partition_view": 25,
+              "pto.wait_flag": 54,
+              "pto.tload": 5,
+              "pto.tabs": 20,
+              "pto.barrier": 6,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 5,
+              "pto.tstore": 20,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "5930960e561c08cbb0787c4a77d0e0e748d381d9934bd5a97ab1cdc32bcd4e77",
+            "action_trace_sha256": "83d211ea7ac3270dcbf37052a0544be9f40d1033bf2eda63219205943cf86b77",
+            "scalar_steps": 299
+          },
+          "trips_16": {
+            "counts": {
+              "pto.make_tensor_view": 2,
+              "pto.alloc_tile": 4,
+              "pto.set_flag": 164,
+              "pto.partition_view": 80,
+              "pto.wait_flag": 164,
+              "pto.tload": 16,
+              "pto.tabs": 64,
+              "pto.barrier": 17,
+              "barrier:#pto.pipe<PIPE_MTE3>:loop": 16,
+              "pto.tstore": 64,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "1290c23f01c1b1b7872a028426fc12de0fd2694dea9dd94ea511a56712360cab",
+            "action_trace_sha256": "33cc1033239d4ba9b3c774dfbb370f523b4eb5f8f3d2c5ab05369d815a2c028f",
+            "scalar_steps": 893
+          }
+        }
+      },
+      "audit_verdicts": [
+        "unsupported"
+      ]
+    },
+    "historical_gemm/manual": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 53,
+            "pto.wait_flag": 53
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ],
+            "#pto.pipe<PIPE_FIX>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_FIX>": [
+              "#pto.event<EVENT_ID0>"
+            ]
+          },
+          "placement_sha256": "7b4999f045887c42c74654d73af706c225c0728c0177f1e6507ab6c2a5a2753d"
+        },
+        "scenarios": {
+          "empty_core": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 6,
+              "pto.wait_flag": 6
+            },
+            "payload_sha256": "0cbbc222ff606dfad3ee064bbab1a4a84c7dc2911a30f550f0cdae6e4e1cd4cf",
+            "action_trace_sha256": "8fba815b3e748cd9edec2ece7320e31e3e61dd0962db0cc9882c6423be128bf7",
+            "scalar_steps": 59
+          },
+          "one_panel": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 29,
+              "pto.partition_view": 4,
+              "pto.wait_flag": 29,
+              "pto.tload": 3,
+              "pto.textract": 16,
+              "pto.tmatmul": 1,
+              "pto.tmatmul.acc": 7,
+              "pto.tstore": 1
+            },
+            "payload_sha256": "ff593b6552083fbf71ac0e5e91f04ddf53efce934d5d07156fa72d8a25599499",
+            "action_trace_sha256": "ddad32d58fb4c868aca17d78cc808059bbc5eb63e89a8ac3267d9f1934268480",
+            "scalar_steps": 178
+          },
+          "two_panels": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 51,
+              "pto.partition_view": 7,
+              "pto.wait_flag": 51,
+              "pto.tload": 6,
+              "pto.textract": 32,
+              "pto.tmatmul": 1,
+              "pto.tmatmul.acc": 15,
+              "pto.tstore": 1
+            },
+            "payload_sha256": "a9bc75cef07c34edf09aa7ad301d1dcb37cea6c57574a184b97bb454306eee1a",
+            "action_trace_sha256": "294e3396272890cb5e684f232cfde17e77c227f8664997f1fb4891a72c973eb5",
+            "scalar_steps": 267
+          },
+          "three_panels": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 73,
+              "pto.partition_view": 10,
+              "pto.wait_flag": 73,
+              "pto.tload": 9,
+              "pto.textract": 48,
+              "pto.tmatmul": 1,
+              "pto.tmatmul.acc": 23,
+              "pto.tstore": 1
+            },
+            "payload_sha256": "e11e27167396917e26a5b9e2b3f9882d68054fb6ce05ab3c80f0f620cbfc3c27",
+            "action_trace_sha256": "239f05bb0e542c513029ec6a543cb56c243b18dab46670289495838a281cbbf5",
+            "scalar_steps": 356
+          },
+          "outer_reuse": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 185,
+              "pto.partition_view": 26,
+              "pto.wait_flag": 185,
+              "pto.tload": 24,
+              "pto.textract": 128,
+              "pto.tmatmul": 2,
+              "pto.tmatmul.acc": 62,
+              "pto.tstore": 2
+            },
+            "payload_sha256": "57b25e5c3c43e5864e9cb1c78d21009672e01dd9f6a2b3c4a7d88c13a39b6df6",
+            "action_trace_sha256": "b251fb82bbc29616fcbf44446a5182643143da55f747cac4f907822a84c7e07f",
+            "scalar_steps": 835
+          },
+          "primary_core0": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 3921,
+              "pto.partition_view": 550,
+              "pto.wait_flag": 3921,
+              "pto.tload": 528,
+              "pto.textract": 2816,
+              "pto.tmatmul": 22,
+              "pto.tmatmul.acc": 1386,
+              "pto.tstore": 22
+            },
+            "payload_sha256": "9ef2bda7a63a1cba8561951156ab9053a3f57ad156cfd0769c2563971545f7dd",
+            "action_trace_sha256": "9049e56c70b158d3183b2789a2cba532057a5ebbcd4e9edd48d6b30643f36999",
+            "scalar_steps": 16467
+          },
+          "primary_core23": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 3743,
+              "pto.partition_view": 525,
+              "pto.wait_flag": 3743,
+              "pto.tload": 504,
+              "pto.textract": 2688,
+              "pto.tmatmul": 21,
+              "pto.tmatmul.acc": 1323,
+              "pto.tstore": 21
+            },
+            "payload_sha256": "06d1a802be7a5396eab57e636e8d5fe9e2776933a560b59c654cf04d945cc3ef",
+            "action_trace_sha256": "5b2904d7cf8a1b96407a5a453c4dce358802f66db95beee7c4393e6f8ee3aac9",
+            "scalar_steps": 15721
+          },
+          "secondary_core0": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 1963,
+              "pto.partition_view": 275,
+              "pto.wait_flag": 1963,
+              "pto.tload": 264,
+              "pto.textract": 1408,
+              "pto.tmatmul": 11,
+              "pto.tmatmul.acc": 693,
+              "pto.tstore": 11
+            },
+            "payload_sha256": "0be4e2b342295dcdcb099e9c3a534d10d1bb78d038cfce7893d9c7e95602765e",
+            "action_trace_sha256": "d3877ecbb12fa2946205f4efc8e7357dea0e3d47a804bca880f62eb73fc19a2e",
+            "scalar_steps": 8261
+          }
+        }
+      },
+      "audit_verdicts": []
+    },
+    "historical_gemm/combined": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 44,
+            "pto.wait_flag": 44,
+            "pto.barrier": 25,
+            "barrier:#pto.pipe<PIPE_MTE2>:loop": 3,
+            "barrier:#pto.pipe<PIPE_M>:loop": 18,
+            "barrier:#pto.pipe<PIPE_MTE1>:loop": 2,
+            "barrier:#pto.pipe<PIPE_FIX>:loop": 1,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_FIX>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>",
+              "#pto.event<EVENT_ID6>",
+              "#pto.event<EVENT_ID7>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>",
+              "#pto.event<EVENT_ID6>",
+              "#pto.event<EVENT_ID7>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_FIX>": [
+              "#pto.event<EVENT_ID0>"
+            ]
+          },
+          "placement_sha256": "b8ee7cba81b2d4bd364bac8881262b7c820d0c56856f8d429a90bab22b3f8220"
+        },
+        "scenarios": {
+          "empty_core": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 5,
+              "pto.wait_flag": 5,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "0cbbc222ff606dfad3ee064bbab1a4a84c7dc2911a30f550f0cdae6e4e1cd4cf",
+            "action_trace_sha256": "675b9d0ec236061a055b57dcb244c9ea4bab50a8f1584e84ebf50fd9785dcc85",
+            "scalar_steps": 58
+          },
+          "one_panel": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 28,
+              "pto.partition_view": 4,
+              "pto.wait_flag": 28,
+              "pto.barrier": 12,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 1,
+              "pto.tload": 3,
+              "pto.textract": 16,
+              "barrier:#pto.pipe<PIPE_M>:loop": 8,
+              "pto.tmatmul": 1,
+              "pto.tmatmul.acc": 7,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 1,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 1,
+              "pto.tstore": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "ff593b6552083fbf71ac0e5e91f04ddf53efce934d5d07156fa72d8a25599499",
+            "action_trace_sha256": "908740f9aa8c068afd9913bd28ff876dafe2e6c34b4c3bc614421c0d82ab9a99",
+            "scalar_steps": 183
+          },
+          "two_panels": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 47,
+              "pto.partition_view": 7,
+              "pto.wait_flag": 47,
+              "pto.barrier": 22,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 2,
+              "pto.tload": 6,
+              "pto.textract": 32,
+              "barrier:#pto.pipe<PIPE_M>:loop": 16,
+              "pto.tmatmul": 1,
+              "pto.tmatmul.acc": 15,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 2,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 1,
+              "pto.tstore": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "a9bc75cef07c34edf09aa7ad301d1dcb37cea6c57574a184b97bb454306eee1a",
+            "action_trace_sha256": "4f4f48eacb843c48625587e640d3f05af4cf94f8f23fbef86e19451ad835fc20",
+            "scalar_steps": 276
+          },
+          "three_panels": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 66,
+              "pto.partition_view": 10,
+              "pto.wait_flag": 66,
+              "pto.barrier": 32,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 3,
+              "pto.tload": 9,
+              "pto.textract": 48,
+              "barrier:#pto.pipe<PIPE_M>:loop": 24,
+              "pto.tmatmul": 1,
+              "pto.tmatmul.acc": 23,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 3,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 1,
+              "pto.tstore": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "e11e27167396917e26a5b9e2b3f9882d68054fb6ce05ab3c80f0f620cbfc3c27",
+            "action_trace_sha256": "cb239e60e76410dc7206958dd99041119177c99c501b7dbde1876c0648b47107",
+            "scalar_steps": 369
+          },
+          "outer_reuse": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 165,
+              "pto.partition_view": 26,
+              "pto.wait_flag": 165,
+              "pto.barrier": 83,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 8,
+              "pto.tload": 24,
+              "pto.textract": 128,
+              "barrier:#pto.pipe<PIPE_M>:loop": 64,
+              "pto.tmatmul": 2,
+              "pto.tmatmul.acc": 62,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 8,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 2,
+              "pto.tstore": 2,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "57b25e5c3c43e5864e9cb1c78d21009672e01dd9f6a2b3c4a7d88c13a39b6df6",
+            "action_trace_sha256": "84e2d67beeb942b28cbb90a377e5b670283650cb8a99bcdc172f0292565c1202",
+            "scalar_steps": 866
+          },
+          "primary_core0": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 3437,
+              "pto.partition_view": 550,
+              "pto.wait_flag": 3437,
+              "pto.barrier": 1783,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 176,
+              "pto.tload": 528,
+              "pto.textract": 2816,
+              "barrier:#pto.pipe<PIPE_M>:loop": 1408,
+              "pto.tmatmul": 22,
+              "pto.tmatmul.acc": 1386,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 176,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 22,
+              "pto.tstore": 22,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "9ef2bda7a63a1cba8561951156ab9053a3f57ad156cfd0769c2563971545f7dd",
+            "action_trace_sha256": "c5ed2b4ec2c50f3f95bf39fa4474fe9661e117292a705db8c044633f03788b0e",
+            "scalar_steps": 17130
+          },
+          "primary_core23": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 3281,
+              "pto.partition_view": 525,
+              "pto.wait_flag": 3281,
+              "pto.barrier": 1702,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 168,
+              "pto.tload": 504,
+              "pto.textract": 2688,
+              "barrier:#pto.pipe<PIPE_M>:loop": 1344,
+              "pto.tmatmul": 21,
+              "pto.tmatmul.acc": 1323,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 168,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 21,
+              "pto.tstore": 21,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "06d1a802be7a5396eab57e636e8d5fe9e2776933a560b59c654cf04d945cc3ef",
+            "action_trace_sha256": "96ddcfc6c21245f13ef9626d63711e455a3dff912ce179542a9106d5e6db57b1",
+            "scalar_steps": 16354
+          },
+          "secondary_core0": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 1721,
+              "pto.partition_view": 275,
+              "pto.wait_flag": 1721,
+              "pto.barrier": 892,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 88,
+              "pto.tload": 264,
+              "pto.textract": 1408,
+              "barrier:#pto.pipe<PIPE_M>:loop": 704,
+              "pto.tmatmul": 11,
+              "pto.tmatmul.acc": 693,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 88,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 11,
+              "pto.tstore": 11,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "0be4e2b342295dcdcb099e9c3a534d10d1bb78d038cfce7893d9c7e95602765e",
+            "action_trace_sha256": "543307a7690f885521218e66825c809c50189e4ff3380867e555baedfb65b3cb",
+            "scalar_steps": 8594
+          }
+        }
+      },
+      "audit_verdicts": [
+        "unsupported"
+      ]
+    },
+    "historical_gemm/staged": {
+      "status": "pass",
+      "metrics": {
+        "static": {
+          "counts": {
+            "pto.set_flag": 44,
+            "pto.wait_flag": 44,
+            "pto.barrier": 25,
+            "barrier:#pto.pipe<PIPE_MTE2>:loop": 3,
+            "barrier:#pto.pipe<PIPE_M>:loop": 18,
+            "barrier:#pto.pipe<PIPE_MTE1>:loop": 2,
+            "barrier:#pto.pipe<PIPE_FIX>:loop": 1,
+            "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+          },
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_FIX>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>",
+              "#pto.event<EVENT_ID6>",
+              "#pto.event<EVENT_ID7>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>",
+              "#pto.event<EVENT_ID6>",
+              "#pto.event<EVENT_ID7>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_FIX>": [
+              "#pto.event<EVENT_ID0>"
+            ]
+          },
+          "placement_sha256": "b8ee7cba81b2d4bd364bac8881262b7c820d0c56856f8d429a90bab22b3f8220"
+        },
+        "scenarios": {
+          "empty_core": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 5,
+              "pto.wait_flag": 5,
+              "pto.barrier": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "0cbbc222ff606dfad3ee064bbab1a4a84c7dc2911a30f550f0cdae6e4e1cd4cf",
+            "action_trace_sha256": "675b9d0ec236061a055b57dcb244c9ea4bab50a8f1584e84ebf50fd9785dcc85",
+            "scalar_steps": 58
+          },
+          "one_panel": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 28,
+              "pto.partition_view": 4,
+              "pto.wait_flag": 28,
+              "pto.barrier": 12,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 1,
+              "pto.tload": 3,
+              "pto.textract": 16,
+              "barrier:#pto.pipe<PIPE_M>:loop": 8,
+              "pto.tmatmul": 1,
+              "pto.tmatmul.acc": 7,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 1,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 1,
+              "pto.tstore": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "ff593b6552083fbf71ac0e5e91f04ddf53efce934d5d07156fa72d8a25599499",
+            "action_trace_sha256": "908740f9aa8c068afd9913bd28ff876dafe2e6c34b4c3bc614421c0d82ab9a99",
+            "scalar_steps": 183
+          },
+          "two_panels": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 47,
+              "pto.partition_view": 7,
+              "pto.wait_flag": 47,
+              "pto.barrier": 22,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 2,
+              "pto.tload": 6,
+              "pto.textract": 32,
+              "barrier:#pto.pipe<PIPE_M>:loop": 16,
+              "pto.tmatmul": 1,
+              "pto.tmatmul.acc": 15,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 2,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 1,
+              "pto.tstore": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "a9bc75cef07c34edf09aa7ad301d1dcb37cea6c57574a184b97bb454306eee1a",
+            "action_trace_sha256": "4f4f48eacb843c48625587e640d3f05af4cf94f8f23fbef86e19451ad835fc20",
+            "scalar_steps": 276
+          },
+          "three_panels": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 66,
+              "pto.partition_view": 10,
+              "pto.wait_flag": 66,
+              "pto.barrier": 32,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 3,
+              "pto.tload": 9,
+              "pto.textract": 48,
+              "barrier:#pto.pipe<PIPE_M>:loop": 24,
+              "pto.tmatmul": 1,
+              "pto.tmatmul.acc": 23,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 3,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 1,
+              "pto.tstore": 1,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "e11e27167396917e26a5b9e2b3f9882d68054fb6ce05ab3c80f0f620cbfc3c27",
+            "action_trace_sha256": "cb239e60e76410dc7206958dd99041119177c99c501b7dbde1876c0648b47107",
+            "scalar_steps": 369
+          },
+          "outer_reuse": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 165,
+              "pto.partition_view": 26,
+              "pto.wait_flag": 165,
+              "pto.barrier": 83,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 8,
+              "pto.tload": 24,
+              "pto.textract": 128,
+              "barrier:#pto.pipe<PIPE_M>:loop": 64,
+              "pto.tmatmul": 2,
+              "pto.tmatmul.acc": 62,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 8,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 2,
+              "pto.tstore": 2,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "57b25e5c3c43e5864e9cb1c78d21009672e01dd9f6a2b3c4a7d88c13a39b6df6",
+            "action_trace_sha256": "84e2d67beeb942b28cbb90a377e5b670283650cb8a99bcdc172f0292565c1202",
+            "scalar_steps": 866
+          },
+          "primary_core0": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 3437,
+              "pto.partition_view": 550,
+              "pto.wait_flag": 3437,
+              "pto.barrier": 1783,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 176,
+              "pto.tload": 528,
+              "pto.textract": 2816,
+              "barrier:#pto.pipe<PIPE_M>:loop": 1408,
+              "pto.tmatmul": 22,
+              "pto.tmatmul.acc": 1386,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 176,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 22,
+              "pto.tstore": 22,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "9ef2bda7a63a1cba8561951156ab9053a3f57ad156cfd0769c2563971545f7dd",
+            "action_trace_sha256": "c5ed2b4ec2c50f3f95bf39fa4474fe9661e117292a705db8c044633f03788b0e",
+            "scalar_steps": 17130
+          },
+          "primary_core23": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 3281,
+              "pto.partition_view": 525,
+              "pto.wait_flag": 3281,
+              "pto.barrier": 1702,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 168,
+              "pto.tload": 504,
+              "pto.textract": 2688,
+              "barrier:#pto.pipe<PIPE_M>:loop": 1344,
+              "pto.tmatmul": 21,
+              "pto.tmatmul.acc": 1323,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 168,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 21,
+              "pto.tstore": 21,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "06d1a802be7a5396eab57e636e8d5fe9e2776933a560b59c654cf04d945cc3ef",
+            "action_trace_sha256": "96ddcfc6c21245f13ef9626d63711e455a3dff912ce179542a9106d5e6db57b1",
+            "scalar_steps": 16354
+          },
+          "secondary_core0": {
+            "counts": {
+              "pto.make_tensor_view": 3,
+              "pto.alloc_tile": 9,
+              "pto.set_flag": 1721,
+              "pto.partition_view": 275,
+              "pto.wait_flag": 1721,
+              "pto.barrier": 892,
+              "barrier:#pto.pipe<PIPE_MTE2>:loop": 88,
+              "pto.tload": 264,
+              "pto.textract": 1408,
+              "barrier:#pto.pipe<PIPE_M>:loop": 704,
+              "pto.tmatmul": 11,
+              "pto.tmatmul.acc": 693,
+              "barrier:#pto.pipe<PIPE_MTE1>:loop": 88,
+              "barrier:#pto.pipe<PIPE_FIX>:loop": 11,
+              "pto.tstore": 11,
+              "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+            },
+            "payload_sha256": "0be4e2b342295dcdcb099e9c3a534d10d1bb78d038cfce7893d9c7e95602765e",
+            "action_trace_sha256": "543307a7690f885521218e66825c809c50189e4ff3380867e555baedfb65b3cb",
+            "scalar_steps": 8594
+          }
+        }
+      },
+      "audit_verdicts": [
+        "unsupported"
+      ]
+    }
+  }
+}

@@ -11,6 +11,8 @@
 // choices; loop-local predicates are fresh at each dynamic iteration.
 #include "PTO/Transforms/InsertSync/SyncAuditPaths.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include <optional>
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -26,6 +28,8 @@ constexpr unsigned kMaximumDepth = 16;
 struct Path {
     SmallVector<Operation*> operations;
     llvm::DenseMap<Value, bool> predicates;
+    llvm::DenseMap<Value, APInt> scalarValues;
+    bool feasible = true;
 };
 
 class Expander {
@@ -35,6 +39,7 @@ public:
         SmallVector<Path> paths(1);
         if (expand(function.getBody(), paths, 0)) {
             for (auto& path : paths) {
+                result.pathFeasible.push_back(path.feasible);
                 result.paths.push_back(std::move(path.operations));
             }
         }
@@ -49,22 +54,124 @@ private:
         return false;
     }
 
+
+    // Literal-loop audit only. PTOAS's A2/A3 index lowering is 64-bit.
+    // Unhandled or overflowing index expressions remain unknown. Integer
+    // arithmetic retains its explicit bit width; no range is fabricated.
+    std::optional<APInt> scalar(Value value, const Path& path, unsigned depth = 0)
+    {
+        if (!value || depth > 32) {
+            return std::nullopt;
+        }
+        auto known = path.scalarValues.find(value);
+        if (known != path.scalarValues.end()) {
+            return known->second;
+        }
+        auto selected = path.predicates.find(value);
+        if (selected != path.predicates.end()) {
+            return APInt(1, selected->second);
+        }
+        IntegerAttr literal;
+        if (matchPattern(value, m_Constant(&literal))) {
+            return literal.getValue();
+        }
+        Operation* op = value.getDefiningOp();
+        if (!op || op->getNumRegions()) {
+            return std::nullopt;
+        }
+        if (auto cast = dyn_cast<arith::IndexCastOp>(op)) {
+            auto input = scalar(cast.getIn(), path, depth + 1);
+            if (!input) {
+                return std::nullopt;
+            }
+            unsigned width = 64;
+            if (auto type = dyn_cast<IntegerType>(value.getType())) {
+                width = type.getWidth();
+            } else if (!isa<IndexType>(value.getType())) {
+                return std::nullopt;
+            }
+            return input->sextOrTrunc(width);
+        }
+        if (auto select = dyn_cast<arith::SelectOp>(op)) {
+            auto condition = scalar(select.getCondition(), path, depth + 1);
+            if (!condition) {
+                return std::nullopt;
+            }
+            return scalar(condition->isZero() ? select.getFalseValue() : select.getTrueValue(), path, depth + 1);
+        }
+        if (op->getNumOperands() != 2) {
+            return std::nullopt;
+        }
+        auto left = scalar(op->getOperand(0), path, depth + 1);
+        auto right = scalar(op->getOperand(1), path, depth + 1);
+        if (!left || !right || left->getBitWidth() != right->getBitWidth()) {
+            return std::nullopt;
+        }
+        if (auto compare = dyn_cast<arith::CmpIOp>(op)) {
+            bool answer = false;
+            switch (compare.getPredicate()) {
+                case arith::CmpIPredicate::eq: answer = *left == *right; break;
+                case arith::CmpIPredicate::ne: answer = *left != *right; break;
+                case arith::CmpIPredicate::slt: answer = left->slt(*right); break;
+                case arith::CmpIPredicate::sle: answer = left->sle(*right); break;
+                case arith::CmpIPredicate::sgt: answer = left->sgt(*right); break;
+                case arith::CmpIPredicate::sge: answer = left->sge(*right); break;
+                case arith::CmpIPredicate::ult: answer = left->ult(*right); break;
+                case arith::CmpIPredicate::ule: answer = left->ule(*right); break;
+                case arith::CmpIPredicate::ugt: answer = left->ugt(*right); break;
+                case arith::CmpIPredicate::uge: answer = left->uge(*right); break;
+            }
+            return APInt(1, answer);
+        }
+        bool overflow = false;
+        std::optional<APInt> answer;
+        if (isa<arith::AddIOp>(op)) {
+            answer = left->sadd_ov(*right, overflow);
+        } else if (isa<arith::SubIOp>(op)) {
+            answer = left->ssub_ov(*right, overflow);
+        } else if (isa<arith::MulIOp>(op)) {
+            answer = left->smul_ov(*right, overflow);
+        } else if (isa<arith::AndIOp>(op)) {
+            answer = *left & *right;
+        } else if (isa<arith::OrIOp>(op)) {
+            answer = *left | *right;
+        } else if (isa<arith::XOrIOp>(op)) {
+            answer = *left ^ *right;
+        } else if (isa<arith::RemUIOp>(op) && !right->isZero()) {
+            answer = left->urem(*right);
+        }
+        // Also leave signed overflow unknown for integer ops: this avoids
+        // assuming wrapping when the op carries a poison-producing flag.
+        if (overflow) {
+            return std::nullopt;
+        }
+        return answer;
+    }
+
+    bool freeBooleanInput(Value value)
+    {
+        auto argument = dyn_cast<BlockArgument>(value);
+        return argument && isa<func::FuncOp>(argument.getOwner()->getParentOp()) && value.getType().isInteger(1);
+    }
+
     bool choice(scf::IfOp op, SmallVectorImpl<Path>& paths, unsigned depth)
     {
         if (op.getNumResults()) {
             return fail(op, "result-bearing choice requires value interpretation");
         }
         SmallVector<Path> alternatives;
-        IntegerAttr constant;
-        bool fixed = matchPattern(op.getCondition(), m_Constant(&constant));
         for (const Path& path : paths) {
+            auto fixed = scalar(op.getCondition(), path);
             auto previous = path.predicates.find(op.getCondition());
             for (bool takeThen : {true, false}) {
-                if ((fixed && takeThen != !constant.getValue().isZero()) ||
+                if ((fixed && takeThen != !fixed->isZero()) ||
                     (previous != path.predicates.end() && takeThen != previous->second)) {
                     continue;
                 }
                 SmallVector<Path> arm{path};
+                if (!fixed && previous == path.predicates.end() && !freeBooleanInput(op.getCondition())) {
+                    arm.front().feasible = false;
+                }
                 arm.front().predicates[op.getCondition()] = takeThen;
                 Region& region = takeThen ? op.getThenRegion() : op.getElseRegion();
                 if (!region.empty() && !expand(region, arm, depth + 1)) {
@@ -113,6 +220,21 @@ private:
                 for (Value value : localPredicates) {
                     path.predicates.erase(value);
                 }
+                SmallVector<Value> localValues;
+                for (const auto& entry : path.scalarValues) {
+                    Value value = entry.first;
+                    if (op.getRegion().isAncestor(value.getParentRegion())) {
+                        localValues.push_back(value);
+                    }
+                }
+                for (Value value : localValues) {
+                    path.scalarValues.erase(value);
+                }
+                APInt current = lower.getValue().sextOrTrunc(128) + APInt(128, iteration) * increment;
+                if (!current.isSignedIntN(64)) {
+                    return fail(op, "audit induction value exceeds supported index range");
+                }
+                path.scalarValues[op.getInductionVar()] = current.trunc(64);
             }
             if (!expand(op.getRegion(), paths, depth + 1)) {
                 return false;

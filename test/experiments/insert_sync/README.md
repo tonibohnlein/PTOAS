@@ -1,5 +1,19 @@
 # InsertSync native revision campaign
 
+The follow-up v2 application, native integration fixes, and current results are
+recorded in [FOLLOWUP_V2_VALIDATION.md](FOLLOWUP_V2_VALIDATION.md): 147/147
+related fixtures pass in both traversal modes, corpus admission returns to
+208/213, and all 11 performance inputs compile in report mode. The opt-in
+pruning pass removes no additional barriers from those 11 inputs.
+
+The recovered historical GEMM manual/automatic pair and a smaller pipeline
+regression ladder are in [performance/README.md](performance/README.md).
+That runner freezes placement and dynamic action metrics separately from this
+213-row compiler-admission corpus and from eventual device timing.
+Source-derived TopK, Conv2D, FlashAttention, triangular inverse, GDN and KDA manual/automatic pairs are
+documented in [performance/KERNEL_PAIRS.md](performance/KERNEL_PAIRS.md), with
+separate A2/A3 baselines and explicit unsupported-contract results.
+
 The compiler objective is memory/effect correctness while preserving pipeline
 overlap. Compilation, independent local checking, event-lifetime checking, and
 device performance are separate results. A smaller event count is not a

@@ -227,6 +227,12 @@ llvm::cl::opt<std::string> insertSyncGMAlias(
 llvm::cl::opt<std::string> insertSyncAudit(
     "insert-sync-audit", llvm::cl::desc("Independent InsertSync local audit: off, report, or strict"),
     llvm::cl::init("off"));
+llvm::cl::opt<std::string> insertSyncEffectCoverage(
+    "insert-sync-effect-coverage", llvm::cl::desc("Translator coverage rollout: report (default) or strict"),
+    llvm::cl::init("report"));
+llvm::cl::opt<bool> insertSyncPruneCompletedBarriers(
+    "insert-sync-prune-completed-barriers", llvm::cl::desc("Remove proven redundant named barriers without motion"),
+    llvm::cl::init(false));
 
 llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",

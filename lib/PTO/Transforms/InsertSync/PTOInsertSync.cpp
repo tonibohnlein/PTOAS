@@ -23,6 +23,7 @@
 #include "PTO/Transforms/InsertSync/SyncEffectCoverage.h"
 #include "PTO/Transforms/InsertSync/SyncGMAlias.h"
 #include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
+#include "PTO/Transforms/InsertSync/PruneCompletedBarriers.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h" // [FIX] 确保 FuncOp 定义可见
 
@@ -117,12 +118,16 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         deferSamePipe = options.deferSamePipe;
         gmAlias = options.gmAlias;
         audit = options.audit;
+        effectCoverage = options.effectCoverage;
+        pruneCompletedBarriers = options.pruneCompletedBarriers;
     }
     PTOInsertSyncPass(const PTOInsertSyncPass& other) : PTOInsertSyncBase(other)
     {
         deferSamePipe = other.deferSamePipe;
         gmAlias = other.gmAlias;
         audit = other.audit;
+        effectCoverage = other.effectCoverage;
+        pruneCompletedBarriers = other.pruneCompletedBarriers;
     }
 
     Option<bool> deferSamePipe{
@@ -132,6 +137,12 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         *this, "gm-alias", llvm::cl::init(""), llvm::cl::desc("GM contract: may-alias or assume-disjoint-arguments")};
     Option<std::string> audit{
         *this, "audit", llvm::cl::init("off"), llvm::cl::desc("Independent local audit: off, report, or strict")};
+    Option<std::string> effectCoverage{
+        *this, "effect-coverage", llvm::cl::init("report"),
+        llvm::cl::desc("Translator completeness rollout: report (default) or strict")};
+    Option<bool> pruneCompletedBarriers{
+        *this, "prune-completed-barriers", llvm::cl::init(false),
+        llvm::cl::desc("Remove only named barriers whose whole source prefix is already complete")};
 
     void auditOutput(func::FuncOp function)
     {
@@ -161,6 +172,11 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     }
     if (audit != "off" && audit != "report" && audit != "strict") {
         func.emitError("InsertSync audit must be off, report, or strict");
+        signalPassFailure();
+        return;
+    }
+    if (effectCoverage != "report" && effectCoverage != "strict") {
+        func.emitError("InsertSync effect-coverage must be report or strict");
         signalPassFailure();
         return;
     }
@@ -211,10 +227,13 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // 1. Translator: 构建 SyncIR
     PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func, SyncAnalysisMode::NORMALSYNC);
     translator.Build();
-    if (failed(checkInsertSyncEffectCoverage(func, syncIR))) {
+    auto coverage = inspectInsertSyncEffectCoverage(func, syncIR, effectCoverage == "strict");
+    if (failed(coverage)) {
         signalPassFailure();
         return;
     }
+    func->setAttr("pto.insert_sync.effect_coverage",
+                  StringAttr::get(&getContext(), *coverage ? "complete" : "gap-legacy-retained"));
     func->setAttr("pto.insert_sync.status", StringAttr::get(&getContext(), "analyzed"));
 
     // 如果 IR 太简单，直接跳过
@@ -269,6 +288,15 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
     SyncCodegen codegen(syncIR, func, SyncAnalysisMode::NORMALSYNC);
     codegen.Run();
+    if (pruneCompletedBarriers && *coverage) {
+        // Optional refinement never becomes an admission gate. It does not
+        // remove events, move endpoints, or alter allocator/scarcity decisions.
+        auto result = pruneProvenCompletedBarriers(func);
+        func->setAttr("pto.insert_sync.completed_barriers_removed",
+                      IntegerAttr::get(IntegerType::get(&getContext(), 64), result.removed));
+        func.emitRemark("InsertSync completed-prefix pruning: ")
+            << result.removed << " barriers removed; " << result.reason;
+    }
     auditOutput(func);
   }
 };

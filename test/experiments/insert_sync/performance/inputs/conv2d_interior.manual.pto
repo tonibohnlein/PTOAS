@@ -1,0 +1,131 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+module {
+  func.func @conv2d_interior_tile(%fmap: !pto.ptr<f16>, %weight: !pto.ptr<f16>, %out: !pto.ptr<f16>, %panels: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c96_index = arith.constant 96 : index
+    %c48_index = arith.constant 48 : index
+    %c32768_i64 = arith.constant 32768 : i64
+    %c204800_i64 = arith.constant 204800 : i64
+    %c18432_i64 = arith.constant 18432 : i64
+    %c131072_i64 = arith.constant 131072 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %c3_index = arith.constant 3 : index
+    %c2_index = arith.constant 2 : index
+    %c1_index = arith.constant 1 : index
+    %c0_index = arith.constant 0 : index
+    %fmap0 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<mat, 128x48xf16, blayout=col_major, slayout=row_major>
+    %weight0 = pto.alloc_tile addr = %c131072_i64 : !pto.tile_buf<mat, 144x256xf16, blayout=col_major, slayout=row_major>
+    %left0 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>
+    %right0 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>
+    %fmap1 = pto.alloc_tile addr = %c18432_i64 : !pto.tile_buf<mat, 128x48xf16, blayout=col_major, slayout=row_major>
+    %weight1 = pto.alloc_tile addr = %c204800_i64 : !pto.tile_buf<mat, 144x256xf16, blayout=col_major, slayout=row_major>
+    %left1 = pto.alloc_tile addr = %c32768_i64 : !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>
+    %right1 = pto.alloc_tile addr = %c32768_i64 : !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>
+    %acc = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>
+    func.call @benchmark_conv_setfmatrix() : () -> ()
+    pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+    pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+    pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+    pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+    scf.for %panel = %c0_index to %panels step %c1_index {
+      %pslot = arith.remui %panel, %c2_index : index
+      %pactive0 = arith.cmpi eq, %pslot, %c0_index : index
+      scf.if %pactive0 {
+        pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+        func.call @benchmark_conv_load_fmap(%fmap, %fmap0, %panel) : (!pto.ptr<f16>, !pto.tile_buf<mat, 128x48xf16, blayout=col_major, slayout=row_major>, index) -> ()
+        pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+        func.call @benchmark_conv_load_weight(%weight, %weight0, %panel) : (!pto.ptr<f16>, !pto.tile_buf<mat, 144x256xf16, blayout=col_major, slayout=row_major>, index) -> ()
+        pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+        func.call @benchmark_conv_img2col(%fmap0, %left0, %c0_index) : (!pto.tile_buf<mat, 128x48xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, index) -> ()
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+        func.call @benchmark_conv_extract_weight(%weight0, %right0, %c0_index) : (!pto.tile_buf<mat, 144x256xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>, index) -> ()
+        pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+        %first0 = arith.cmpi eq, %panel, %c0_index : index
+        scf.if %first0 {
+          pto.tmatmul ins(%left0, %right0 : !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>) outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>)
+        } else {
+          pto.tmatmul.acc ins(%acc, %left0, %right0 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>) outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>)
+        }
+        pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+        func.call @benchmark_conv_img2col(%fmap0, %left1, %c48_index) : (!pto.tile_buf<mat, 128x48xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, index) -> ()
+        func.call @benchmark_conv_extract_weight(%weight0, %right1, %c48_index) : (!pto.tile_buf<mat, 144x256xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>, index) -> ()
+        pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+          pto.tmatmul.acc ins(%acc, %left1, %right1 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>) outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>)
+        pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+        func.call @benchmark_conv_img2col(%fmap0, %left0, %c96_index) : (!pto.tile_buf<mat, 128x48xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, index) -> ()
+        func.call @benchmark_conv_extract_weight(%weight0, %right0, %c96_index) : (!pto.tile_buf<mat, 144x256xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>, index) -> ()
+        pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+        pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+          pto.tmatmul.acc ins(%acc, %left0, %right0 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>) outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>)
+        pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+      }
+      %pactive1 = arith.cmpi eq, %pslot, %c1_index : index
+      scf.if %pactive1 {
+        pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+        func.call @benchmark_conv_load_fmap(%fmap, %fmap1, %panel) : (!pto.ptr<f16>, !pto.tile_buf<mat, 128x48xf16, blayout=col_major, slayout=row_major>, index) -> ()
+        pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+        func.call @benchmark_conv_load_weight(%weight, %weight1, %panel) : (!pto.ptr<f16>, !pto.tile_buf<mat, 144x256xf16, blayout=col_major, slayout=row_major>, index) -> ()
+        pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+        func.call @benchmark_conv_img2col(%fmap1, %left1, %c0_index) : (!pto.tile_buf<mat, 128x48xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, index) -> ()
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+        func.call @benchmark_conv_extract_weight(%weight1, %right1, %c0_index) : (!pto.tile_buf<mat, 144x256xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>, index) -> ()
+        pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+        %first1 = arith.cmpi eq, %panel, %c0_index : index
+        scf.if %first1 {
+          pto.tmatmul ins(%left1, %right1 : !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>) outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>)
+        } else {
+          pto.tmatmul.acc ins(%acc, %left1, %right1 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>) outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>)
+        }
+        pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+        func.call @benchmark_conv_img2col(%fmap1, %left0, %c48_index) : (!pto.tile_buf<mat, 128x48xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, index) -> ()
+        func.call @benchmark_conv_extract_weight(%weight1, %right0, %c48_index) : (!pto.tile_buf<mat, 144x256xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>, index) -> ()
+        pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+          pto.tmatmul.acc ins(%acc, %left0, %right0 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>) outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>)
+        pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+        func.call @benchmark_conv_img2col(%fmap1, %left1, %c96_index) : (!pto.tile_buf<mat, 128x48xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, index) -> ()
+        func.call @benchmark_conv_extract_weight(%weight1, %right1, %c96_index) : (!pto.tile_buf<mat, 144x256xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>, index) -> ()
+        pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+        pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID1>]
+          pto.tmatmul.acc ins(%acc, %left1, %right1 : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>) outs(%acc : !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>)
+        pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+      }
+    }
+    pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+    func.call @benchmark_conv_store(%out, %acc) : (!pto.ptr<f16>, !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>) -> ()
+    pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+    pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+    return
+  }
+  func.func private @benchmark_conv_setfmatrix()
+  func.func private @benchmark_conv_load_fmap(!pto.ptr<f16>, !pto.tile_buf<mat, 128x48xf16, blayout=col_major, slayout=row_major>, index)
+  func.func private @benchmark_conv_load_weight(!pto.ptr<f16>, !pto.tile_buf<mat, 144x256xf16, blayout=col_major, slayout=row_major>, index)
+  func.func private @benchmark_conv_img2col(!pto.tile_buf<mat, 128x48xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<left, 128x48xf16, blayout=row_major, slayout=row_major>, index)
+  func.func private @benchmark_conv_extract_weight(!pto.tile_buf<mat, 144x256xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 48x256xf16, blayout=row_major, slayout=col_major>, index)
+  func.func private @benchmark_conv_store(!pto.ptr<f16>, !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>)
+}

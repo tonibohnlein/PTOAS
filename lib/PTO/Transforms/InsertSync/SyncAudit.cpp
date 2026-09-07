@@ -13,6 +13,7 @@
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/InsertSync/SyncAuditPaths.h"
+#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -147,6 +148,10 @@ private:
 
     bool issue(Operation& op, PIPE pipe)
     {
+        if (getSyncMacroModel(&op)) {
+            return fail(InsertSyncAuditStatus::Unsupported, nullptr, &op,
+                        "multi-phase macro or hidden events require a dedicated audit summary");
+        }
         if (!ordinaryPipe(pipe) || drained) {
             return fail(InsertSyncAuditStatus::Unsupported, nullptr, &op, "unsupported pipeline or nonterminal drain");
         }
@@ -268,15 +273,36 @@ InsertSyncAuditResult mlir::pto::auditInsertSyncLocal(func::FuncOp function)
     if (!paths.unsupported.empty()) {
         return {InsertSyncAuditStatus::Unsupported, nullptr, paths.witness, paths.unsupported};
     }
-    for (const auto& path : paths.paths) {
+    if (paths.paths.size() != paths.pathFeasible.size()) {
+        return {InsertSyncAuditStatus::Unsupported, nullptr, function, "audit path metadata mismatch"};
+    }
+    InsertSyncAuditResult unresolved;
+    bool hasUnresolved = false;
+    for (auto [path, feasible] : llvm::zip(paths.paths, paths.pathFeasible)) {
         auto result = Scoreboard(path.size() + 1).run(path, function.getBody().front().getTerminator());
-        if (result.status != InsertSyncAuditStatus::VerifiedLocal) {
+        if (result.status == InsertSyncAuditStatus::VerifiedLocal) {
+            continue;
+        }
+        if (feasible && result.status != InsertSyncAuditStatus::Unsupported) {
             return result;
         }
+        // A counterexample along an uninterpreted predicate assignment is
+        // not yet an executable counterexample. Keep searching exact paths.
+        if (!feasible && result.status != InsertSyncAuditStatus::Unsupported) {
+            result.status = InsertSyncAuditStatus::Unsupported;
+            result.reason = "abstract control path lacks a feasibility witness: " + result.reason;
+        }
+        if (!hasUnresolved) {
+            unresolved = std::move(result);
+            hasUnresolved = true;
+        }
+    }
+    if (hasUnresolved) {
+        return unresolved;
     }
     return {
         InsertSyncAuditStatus::VerifiedLocal, nullptr, nullptr,
-        "all feasible finite paths: local bounds and event generations; GM excluded"};
+        "all enumerated finite paths: local bounds and event generations; GM excluded"};
 }
 
 StringRef mlir::pto::stringifyInsertSyncAuditStatus(InsertSyncAuditStatus status)

@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+module {
+  func.func @flash_attention_cube(%q: !pto.ptr<f16>, %k: !pto.ptr<f16>, %v: !pto.ptr<f16>, %qk_fifo: !pto.ptr<f32>, %p_fifo: !pto.ptr<f16>, %pv_fifo: !pto.ptr<f32>, %tiles: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c32768_i64 = arith.constant 32768 : i64
+    %c1536_i64 = arith.constant 1536 : i64
+    %c1024_i64 = arith.constant 1024 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %c256_index = arith.constant 256 : index
+    %c16_index = arith.constant 16 : index
+    %c1_index = arith.constant 1 : index
+    %c0_index = arith.constant 0 : index
+    %qview = pto.make_tensor_view %q, shape = [%c16_index, %c16_index], strides = [%c16_index, %c1_index] : !pto.tensor_view<16x16xf16>
+    %kview = pto.make_tensor_view %k, shape = [%c16_index, %c256_index], strides = [%c1_index, %c16_index] {layout = #pto.layout<dn>} : !pto.tensor_view<16x256xf16>
+    %vview = pto.make_tensor_view %v, shape = [%c256_index, %c16_index], strides = [%c16_index, %c1_index] : !pto.tensor_view<256x16xf16>
+    %qkdesc = pto.make_tensor_view %qk_fifo, shape = [%c16_index, %c16_index], strides = [%c16_index, %c1_index] : !pto.tensor_view<16x16xf32>
+    %qkpipe = "pto.initialize_l2g2l_pipe"(%qkdesc) <{dir_mask = 1 : i8, slot_size = 1024 : i32, slot_num = 8 : i32, flag_base = 0 : i32, operandSegmentSizes = array<i32: 1, 0, 0>}> : (!pto.tensor_view<16x16xf32>) -> !pto.pipe
+    %qkentry = pto.declare_global -> !pto.tensor_view<16x16xf32>
+    %pdesc = pto.make_tensor_view %p_fifo, shape = [%c16_index, %c16_index], strides = [%c16_index, %c1_index] : !pto.tensor_view<16x16xf16>
+    %ppipe = "pto.initialize_l2g2l_pipe"(%pdesc) <{dir_mask = 2 : i8, slot_size = 512 : i32, slot_num = 8 : i32, flag_base = 2 : i32, operandSegmentSizes = array<i32: 1, 0, 0>}> : (!pto.tensor_view<16x16xf16>) -> !pto.pipe
+    %pentry = pto.declare_global -> !pto.tensor_view<16x16xf16>
+    %pvdesc = pto.make_tensor_view %pv_fifo, shape = [%c16_index, %c16_index], strides = [%c16_index, %c1_index] : !pto.tensor_view<16x16xf32>
+    %pvpipe = "pto.initialize_l2g2l_pipe"(%pvdesc) <{dir_mask = 1 : i8, slot_size = 1024 : i32, slot_num = 8 : i32, flag_base = 4 : i32, operandSegmentSizes = array<i32: 1, 0, 0>}> : (!pto.tensor_view<16x16xf32>) -> !pto.pipe
+    %pventry = pto.declare_global -> !pto.tensor_view<16x16xf32>
+    %qmat = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+    %kmat = pto.alloc_tile addr = %c512_i64 : !pto.tile_buf<mat, 16x16xf16, blayout=row_major, slayout=col_major>
+    %pmat = pto.alloc_tile addr = %c1024_i64 : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>
+    %vmat = pto.alloc_tile addr = %c1536_i64 : !pto.tile_buf<mat, 16x16xf16, blayout=row_major, slayout=col_major>
+    %left0 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<left, 16x16xf16, blayout=row_major, slayout=row_major>
+    %right0 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<right, 16x16xf16, blayout=row_major, slayout=col_major>
+    %left1 = pto.alloc_tile addr = %c32768_i64 : !pto.tile_buf<left, 16x16xf16, blayout=row_major, slayout=row_major>
+    %right1 = pto.alloc_tile addr = %c32768_i64 : !pto.tile_buf<right, 16x16xf16, blayout=row_major, slayout=col_major>
+    %qkacc = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+    %pvacc = pto.alloc_tile addr = %c1024_i64 : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+    scf.for %it = %c0_index to %tiles step %c1_index {
+      %off = arith.muli %it, %c16_index : index
+      pto.talloc(%qkentry, %qkpipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
+      %first = arith.cmpi eq, %it, %c0_index : index
+      scf.if %first {
+      %qpart = pto.partition_view %qview, offsets = [%c0_index, %c0_index], sizes = [%c16_index, %c16_index] : !pto.tensor_view<16x16xf16> -> !pto.partition_tensor_view<16x16xf16>
+      pto.tload ins(%qpart : !pto.partition_tensor_view<16x16xf16>) outs(%qmat : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
+      }
+      %kpart = pto.partition_view %kview, offsets = [%c0_index, %off], sizes = [%c16_index, %c16_index] : !pto.tensor_view<16x256xf16> -> !pto.partition_tensor_view<16x16xf16>
+      pto.tload ins(%kpart : !pto.partition_tensor_view<16x16xf16>) outs(%kmat : !pto.tile_buf<mat, 16x16xf16, blayout=row_major, slayout=col_major>)
+      pto.textract ins(%qmat, %c0_index, %c0_index : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>, index, index) outs(%left0 : !pto.tile_buf<left, 16x16xf16, blayout=row_major, slayout=row_major>)
+      pto.textract ins(%kmat, %c0_index, %c0_index : !pto.tile_buf<mat, 16x16xf16, blayout=row_major, slayout=col_major>, index, index) outs(%right0 : !pto.tile_buf<right, 16x16xf16, blayout=row_major, slayout=col_major>)
+      pto.tmatmul ins(%left0, %right0 : !pto.tile_buf<left, 16x16xf16, blayout=row_major, slayout=row_major>, !pto.tile_buf<right, 16x16xf16, blayout=row_major, slayout=col_major>) outs(%qkacc : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      %qkout = pto.partition_view %qkentry, offsets = [%c0_index, %c0_index], sizes = [%c16_index, %c16_index] : !pto.tensor_view<16x16xf32> -> !pto.partition_tensor_view<16x16xf32>
+      pto.tstore ins(%qkacc : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>) outs(%qkout : !pto.partition_tensor_view<16x16xf32>)
+      pto.tpush(%qkentry, %qkpipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
+      pto.tpop(%pentry, %ppipe : !pto.tensor_view<16x16xf16>, !pto.pipe) {split = 1}
+      %vpart = pto.partition_view %vview, offsets = [%off, %c0_index], sizes = [%c16_index, %c16_index] : !pto.tensor_view<256x16xf16> -> !pto.partition_tensor_view<16x16xf16>
+      pto.tload ins(%vpart : !pto.partition_tensor_view<16x16xf16>) outs(%vmat : !pto.tile_buf<mat, 16x16xf16, blayout=row_major, slayout=col_major>)
+      %ppart = pto.partition_view %pentry, offsets = [%c0_index, %c0_index], sizes = [%c16_index, %c16_index] : !pto.tensor_view<16x16xf16> -> !pto.partition_tensor_view<16x16xf16>
+      pto.tload ins(%ppart : !pto.partition_tensor_view<16x16xf16>) outs(%pmat : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
+      pto.tfree(%ppipe : !pto.pipe) {split = 1}
+      pto.textract ins(%pmat, %c0_index, %c0_index : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>, index, index) outs(%left1 : !pto.tile_buf<left, 16x16xf16, blayout=row_major, slayout=row_major>)
+      pto.textract ins(%vmat, %c0_index, %c0_index : !pto.tile_buf<mat, 16x16xf16, blayout=row_major, slayout=col_major>, index, index) outs(%right1 : !pto.tile_buf<right, 16x16xf16, blayout=row_major, slayout=col_major>)
+      pto.tmatmul ins(%left1, %right1 : !pto.tile_buf<left, 16x16xf16, blayout=row_major, slayout=row_major>, !pto.tile_buf<right, 16x16xf16, blayout=row_major, slayout=col_major>) outs(%pvacc : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+      pto.talloc(%pventry, %pvpipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
+      %pvout = pto.partition_view %pventry, offsets = [%c0_index, %c0_index], sizes = [%c16_index, %c16_index] : !pto.tensor_view<16x16xf32> -> !pto.partition_tensor_view<16x16xf32>
+      pto.tstore ins(%pvacc : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>) outs(%pvout : !pto.partition_tensor_view<16x16xf32>)
+      pto.tpush(%pventry, %pvpipe : !pto.tensor_view<16x16xf32>, !pto.pipe) {split = 1}
+    }
+    return
+  }
+}

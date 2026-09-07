@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-prune-completed-sync-barriers %s -o %t.pto 2> %t.log
+// RUN: FileCheck %s < %t.pto
+// RUN: FileCheck %s --check-prefix=STATS < %t.log
+// RUN: pto-test-opt --pto-audit-insert-sync %t.pto -o /dev/null
+// STATS-DAG: 1 barriers removed
+// STATS-DAG: 0 barriers removed
+// CHECK-LABEL: func.func @remove_completed
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// CHECK-NEXT: pto.tload
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-LABEL: func.func @keep_new_write
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// CHECK-NEXT: pto.tload
+// CHECK-NEXT: pto.barrier <PIPE_MTE2>
+// CHECK-NEXT: pto.tload
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// The return handoff completes the original MTE2 prefix. The first barrier is
+// therefore redundant. New MTE2 work after that handoff makes the second
+// function's barrier necessary. Neither pair of event sites is moved/deleted.
+module attributes {pto.target_arch = "a3"} {
+  func.func @remove_completed(%in0: !pto.partition_tensor_view<16x16xf16>,
+                              %in1: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %offset = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %offset : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%in0 : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+    pto.barrier <PIPE_MTE2>
+    pto.tload ins(%in1 : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.barrier <PIPE_ALL>
+    return
+  }
+  func.func @keep_new_write(%in0: !pto.partition_tensor_view<16x16xf16>,
+                            %in1: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %offset = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %offset : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%in0 : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+    pto.tload ins(%in1 : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.barrier <PIPE_MTE2>
+    pto.tload ins(%in0 : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    pto.barrier <PIPE_ALL>
+    return
+  }
+}

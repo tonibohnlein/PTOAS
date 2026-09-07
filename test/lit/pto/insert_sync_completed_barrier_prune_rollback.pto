@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-prune-completed-sync-barriers %s -o %t.pto 2> %t.log
+// RUN: FileCheck %s < %t.pto
+// RUN: FileCheck %s --check-prefix=STATS < %t.log
+// STATS-DAG: 0 barriers removed; unchanged: structured, macro, or over-budget domain
+// STATS-DAG: 0 barriers removed; unchanged: unmatched event at boundary
+// STATS-DAG: 0 barriers removed; unchanged: signal domain or consumption-before-rearm unproved
+// Every second barrier is initially eligible for deletion. A later failure
+// must discard the proposal and preserve both barriers, plus all event sites.
+// The unmatched/unsafe-rearm programs deliberately lie outside the supported
+// event protocol; preserving them does not certify them as executable kernels.
+module attributes {pto.target_arch = "a3"} {
+  // CHECK-LABEL: func.func @later_unsupported_region(
+  // CHECK: pto.barrier <PIPE_MTE2>
+  // CHECK-NEXT: pto.barrier <PIPE_MTE2>
+  // CHECK-NEXT: scf.if
+  func.func @later_unsupported_region(%condition: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    pto.barrier <PIPE_MTE2>
+    pto.barrier <PIPE_MTE2>
+    scf.if %condition {
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @unmatched_event(
+  // CHECK: pto.barrier <PIPE_MTE2>
+  // CHECK-NEXT: pto.barrier <PIPE_MTE2>
+  // CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+  // CHECK-NEXT: return
+  func.func @unmatched_event()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    pto.barrier <PIPE_MTE2>
+    pto.barrier <PIPE_MTE2>
+    pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    return
+  }
+
+  // CHECK-LABEL: func.func @unsafe_rearm(
+  // CHECK: pto.barrier <PIPE_MTE2>
+  // CHECK-NEXT: pto.barrier <PIPE_MTE2>
+  // CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+  // CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+  // CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+  // CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+  // CHECK-NEXT: return
+  // A lexically prior wait on V supplies no V-to-MTE2 causal handoff before
+  // MTE2 rearms that event. Matching set/wait counts alone are insufficient.
+  func.func @unsafe_rearm()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    pto.barrier <PIPE_MTE2>
+    pto.barrier <PIPE_MTE2>
+    pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    return
+  }
+}

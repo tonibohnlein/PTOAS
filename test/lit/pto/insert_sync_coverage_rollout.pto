@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-sync %s -o %t.report.pto 2> %t.report.log
+// RUN: FileCheck %s --check-prefix=REPORT < %t.report.pto
+// RUN: FileCheck %s --check-prefix=GAP < %t.report.log
+// RUN: not pto-test-opt --pto-insert-sync="effect-coverage=strict" %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=STRICT
+// REPORT-LABEL: func.func @legacy_caller(
+// REPORT-SAME: pto.insert_sync.effect_coverage = "gap-legacy-retained"
+// REPORT: call @legacy_helper
+// REPORT-LABEL: func.func @complete_caller(
+// REPORT-SAME: pto.insert_sync.effect_coverage = "complete"
+// REPORT-LABEL: func.func @second_legacy_caller(
+// REPORT-SAME: pto.insert_sync.effect_coverage = "gap-legacy-retained"
+// REPORT: call @legacy_helper
+// GAP: InsertSync coverage gap (legacy translation retained, not verified)
+// STRICT: InsertSync unsupported helper: complete pto.tileop.effects contract required
+// This tests the rollout distinction, not correctness of an opaque helper.
+module {
+  func.func private @legacy_helper(!pto.tile_buf<vec, 16x16xf16>)
+      attributes {pto.tileop.kind = "vector"}
+  func.func @legacy_caller(%tile: !pto.tile_buf<vec, 16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    func.call @legacy_helper(%tile) : (!pto.tile_buf<vec, 16x16xf16>) -> ()
+    return
+  }
+  // Function passes can run concurrently in the same diagnostic engine.
+  // A gap in another function must not contaminate this complete query.
+  func.func @complete_caller()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    return
+  }
+  func.func @second_legacy_caller(%tile: !pto.tile_buf<vec, 16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    func.call @legacy_helper(%tile) : (!pto.tile_buf<vec, 16x16xf16>) -> ()
+    return
+  }
+}

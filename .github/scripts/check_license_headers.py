@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -34,6 +35,26 @@ SLASH_FILE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx",
 HASH_FILE_BASENAMES = {"CMakeLists.txt"}
 SHEBANG_SUFFIXES = {".py", ".sh"}
 ZERO_SHA = "0" * 40
+BENCHMARK_ROOT = Path("test/experiments/insert_sync/performance")
+# Preserve upstream licensing and byte-for-byte provenance for these reviewed
+# imports. Adding a reference to the benchmark manifest alone grants no exception.
+PINNED_REFERENCE_NAMES = frozenset(
+    {
+        "conv2d_forward_kernel.cpp",
+        "fa_performance_kernel.cpp",
+        "pto_macro_matmul.hpp",
+        "topk_kernel.cpp",
+        "kernel_tri_inv_col_sweep.cpp",
+        "kernel_gdn_wy_fast.cpp",
+        "kernel_kda_wy.cpp",
+        "pto-kernels-kernel_utils.h",
+        "test_tri_inv_col_sweep.py",
+    }
+)
+THIRD_PARTY_PATHS = frozenset(
+    (BENCHMARK_ROOT / "references" / name).as_posix() for name in PINNED_REFERENCE_NAMES
+)
+DERIVED_BSD_PATH = (BENCHMARK_ROOT / "generate_recurrence_pairs.py").as_posix()
 
 
 def parse_args() -> argparse.Namespace:
@@ -127,10 +148,52 @@ def header_start_index(path: Path, lines: list[str]) -> int:
     return 0
 
 
-def has_expected_header(path_str: str, style: str) -> bool:
-    path = Path(path_str)
+def pinned_reference_bytes(repo_root: Path, name: str) -> bytes | None:
+    """Read an exact reference only when its unique manifest entry matches."""
+    benchmark = repo_root / BENCHMARK_ROOT
+    try:
+        manifest = json.loads((benchmark / "kernel-pairs-manifest.json").read_text(encoding="utf-8"))
+        entries = manifest.get("reference_files") if isinstance(manifest, dict) else None
+        if not isinstance(entries, list):
+            return None
+        matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("path") == f"references/{name}"]
+        if len(matches) != 1:
+            return None
+        data = (benchmark / "references" / name).read_bytes()
+    except (OSError, ValueError):
+        return None
+    return data if hashlib.sha256(data).hexdigest() == matches[0].get("sha256") else None
+
+
+def third_party_header_valid(path_str: str, repo_root: Path) -> bool | None:
+    """Validate approved upstream notices; None means ordinary header policy."""
+    if path_str in THIRD_PARTY_PATHS:
+        return pinned_reference_bytes(repo_root, Path(path_str).name) is not None
+    if path_str != DERIVED_BSD_PATH:
+        return None
+    license_bytes = pinned_reference_bytes(repo_root, "pto-kernels-LICENSE")
+    if license_bytes is None:
+        return False
+    try:
+        license_lines = license_bytes.decode("utf-8").splitlines()
+    except UnicodeError:
+        return False
+    if not license_lines or license_lines[0] != "The Clear BSD License":
+        return False
+    expected = [f"# {line}" if line else "#" for line in license_lines]
+    path = repo_root / path_str
+    lines = normalize_lines(path)
+    start = header_start_index(path, lines)
+    return lines[start : start + len(expected)] == expected
+
+
+def has_expected_header(path_str: str, style: str, repo_root: Path = Path(".")) -> bool:
+    path = repo_root / path_str
     if not path.exists():
         return True
+    third_party = third_party_header_valid(path_str, repo_root)
+    if third_party is not None:
+        return third_party
     lines = normalize_lines(path)
     start = header_start_index(path, lines)
     expected = expected_header(style)
@@ -168,14 +231,17 @@ def main() -> int:
             missing.append((path_str, style))
 
     if missing:
-        print("Missing PR386 license header in changed files:", file=sys.stderr)
+        print("Missing required license header or invalid third-party source pin in changed files:", file=sys.stderr)
         for path_str, style in missing:
             print(f"- {path_str}", file=sys.stderr)
+            if path_str in THIRD_PARTY_PATHS or path_str == DERIVED_BSD_PATH:
+                print("    Preserve the upstream notice and match the benchmark reference pins.", file=sys.stderr)
+                continue
             for line in expected_header(style):
                 print(f"    {line}", file=sys.stderr)
         return 1
 
-    print(f"Checked {len(relevant_files)} changed source/script files: all headers present.")
+    print(f"Checked {len(relevant_files)} changed source/script files: all required licenses valid.")
     return 0
 
 

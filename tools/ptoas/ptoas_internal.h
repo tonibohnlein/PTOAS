@@ -63,6 +63,8 @@ extern llvm::cl::opt<bool> enableInsertSync;
 extern llvm::cl::opt<bool> insertSyncDeferSamePipe;
 extern llvm::cl::opt<std::string> insertSyncGMAlias;
 extern llvm::cl::opt<std::string> insertSyncAudit;
+extern llvm::cl::opt<std::string> insertSyncEffectCoverage;
+extern llvm::cl::opt<bool> insertSyncPruneCompletedBarriers;
 extern llvm::cl::opt<bool> enableBufidSync;
 extern llvm::cl::opt<bool> enableBufidSyncDebug;
 extern llvm::cl::opt<bool> enableInjectBarrierAllSync;

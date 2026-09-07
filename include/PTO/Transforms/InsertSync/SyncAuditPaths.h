@@ -17,6 +17,9 @@ namespace mlir::pto {
 // Dynamic loops are unsupported, never "verified" by sampling trip counts.
 struct InsertSyncAuditPaths {
     SmallVector<SmallVector<Operation*>> paths;
+    // Aligned with paths. False means at least one branch decision came from
+    // an uninterpreted scalar expression; a failure is not a feasible witness.
+    SmallVector<bool> pathFeasible;
     Operation* witness = nullptr;
     std::string unsupported;
 };

@@ -11,6 +11,13 @@
 
 [default.extend-identifiers]
 CANN = "CANN"
+# Exact upstream FIFO names and generated IR identifiers in pinned benchmarks.
+RingFiFo = "RingFiFo"
+FiFoDepth = "FiFoDepth"
+pFiFo = "pFiFo"
+pvFiFo = "pvFiFo"
+TASSIGNed = "TASSIGNed"
+vview = "vview"
 
 [default.extend-words]
 CANN = "CANN"

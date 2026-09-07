@@ -677,6 +677,8 @@ static InsertSyncOptions makeInsertSyncOptions()
     options.deferSamePipe = insertSyncDeferSamePipe;
     options.gmAlias = insertSyncGMAlias;
     options.audit = insertSyncAudit;
+    options.effectCoverage = insertSyncEffectCoverage;
+    options.pruneCompletedBarriers = insertSyncPruneCompletedBarriers;
     return options;
 }
 

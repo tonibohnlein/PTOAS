@@ -1,0 +1,31 @@
+{
+  "local_checkout": "/home/toni/work/pypto3/pto-isa-main",
+  "commit": "1216c55831fcc4ed2f096e4ca582ff75a633fbb6",
+  "status": "reference inventory only; not runnable InsertSync PTO pairs",
+  "files": [
+    {
+      "path": "kernels/manual/a2a3/gemm_performance/gemm_performance_kernel.cpp",
+      "sha256": "a151acf87aafa28333a1087a824a941b4ab8cc7d5e52ff8b40a4f5ca7346404a"
+    },
+    {
+      "path": "kernels/manual/a2a3/conv2d_forward/conv2d_forward_kernel.cpp",
+      "sha256": "fe2689bef646a2ec4bebe874923b23561983ac60818932fd19a2a0bb8de8fafd"
+    },
+    {
+      "path": "kernels/manual/common/flash_atten/fa_performance_kernel.cpp",
+      "sha256": "f8af1f5efbea26eee43c6790660a3a69906b67d9882be4563c44a3e0d0d023e9"
+    },
+    {
+      "path": "kernels/manual/common/flash_atten/fa_performance_kernel.h",
+      "sha256": "19ca982124c888606071715f4f87aa4ca689a0f0c3b494b7909787b4ba9534c1"
+    },
+    {
+      "path": "kernels/manual/common/flash_atten/pto_macro_matmul.hpp",
+      "sha256": "7325cf398b02f4e36181c88c6f2188f997135057194dd6dff6d25d2ddbe379ad"
+    },
+    {
+      "path": "kernels/manual/a2a3/topk/topk_kernel.cpp",
+      "sha256": "e938123d4a9d992cdbb56489e2d5b004f7bdb24cddfc3dbdf94f5d2bebcbe3b1"
+    }
+  ]
+}

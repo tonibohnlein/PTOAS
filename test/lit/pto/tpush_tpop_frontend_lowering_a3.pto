@@ -1,10 +1,32 @@
-// InsertSync intentionally rejects this unmodeled queue/resource contract.
-// Plain lowering remains tested; it is not synchronization verification.
-// The prior synchronization placement expectations are retained in df89ee02c.
-// Restoring admission requires a resource/ownership summary, not a whitelist.
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Compatibility rollout: retain legacy translation for a missing new summary.
+// The explicit strict-mode run still diagnoses the unresolved contract.
+// A passing positive run is compilation/placement evidence, not a device or
+// whole-function safety certificate. The original non-sync body is unchanged.
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments %s | FileCheck %s --check-prefix=SYNC-A3
+// Restored synchronization checks from df89ee02.
+// SYNC-A3-LABEL: AICORE void cube_kernel(__gm__ float*
+// SYNC-A3: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4, true>, Tile<TileType::Mat, float, 16, 16, BLayout::ColMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_NO_SPLIT>(
+// SYNC-A3: set_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
+// SYNC-A3: Tile<TileType::Left, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null>
+// SYNC-A3: wait_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
+// SYNC-A3: TMOV(
+// SYNC-A3-LABEL: AICORE void vector_kernel(__gm__ float*
+// SYNC-A3: TPOP<TPipe<0, Direction::DIR_BOTH, 1024, 4, 4, true>, Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_NO_SPLIT>(
+// SYNC-A3: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// SYNC-A3: Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>
+// SYNC-A3: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// SYNC-A3: TNEG(
 // REJECT: InsertSync unsupported effect: read has no translated storage/pipeline summary
 // RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
-// RUN: not ptoas --pto-arch=a3 --enable-insert-sync %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
+// RUN: not ptoas --pto-arch=a3 --enable-insert-sync --insert-sync-effect-coverage=strict %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=REJECT
 
 module {
   func.func @cube_kernel(%gm_slot_buffer: !pto.ptr<f32>)

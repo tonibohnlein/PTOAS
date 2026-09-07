@@ -1,0 +1,1410 @@
+{
+  "version": 1,
+  "gm_alias": "assume-disjoint-arguments",
+  "source_commit": "1216c55831fcc4ed2f096e4ca582ff75a633fbb6",
+  "reference_files": [
+    {
+      "path": "references/conv2d_forward_kernel.cpp",
+      "upstream_path": "kernels/manual/a2a3/conv2d_forward/conv2d_forward_kernel.cpp",
+      "sha256": "fe2689bef646a2ec4bebe874923b23561983ac60818932fd19a2a0bb8de8fafd"
+    },
+    {
+      "path": "references/topk_kernel.cpp",
+      "upstream_path": "kernels/manual/a2a3/topk/topk_kernel.cpp",
+      "sha256": "e938123d4a9d992cdbb56489e2d5b004f7bdb24cddfc3dbdf94f5d2bebcbe3b1"
+    },
+    {
+      "path": "references/fa_performance_kernel.cpp",
+      "upstream_path": "kernels/manual/common/flash_atten/fa_performance_kernel.cpp",
+      "sha256": "f8af1f5efbea26eee43c6790660a3a69906b67d9882be4563c44a3e0d0d023e9"
+    },
+    {
+      "path": "references/pto_macro_matmul.hpp",
+      "upstream_path": "kernels/manual/common/flash_atten/pto_macro_matmul.hpp",
+      "sha256": "7325cf398b02f4e36181c88c6f2188f997135057194dd6dff6d25d2ddbe379ad"
+    },
+    {
+      "path": "references/pto-kernels-LICENSE",
+      "repository": "https://github.com/huawei-csl/pto-kernels",
+      "commit": "e118ec71ed0f170111d4f3380a7a93550c8c22ed",
+      "upstream_path": "LICENSE",
+      "sha256": "5c9d3a2293e762a51f5451c1fda9fad9befae362c0ab00b3e127d8105e0c68b3"
+    },
+    {
+      "path": "references/kernel_tri_inv_col_sweep.cpp",
+      "repository": "https://github.com/huawei-csl/pto-kernels",
+      "commit": "e118ec71ed0f170111d4f3380a7a93550c8c22ed",
+      "upstream_path": "csrc/kernel/kernel_tri_inv_col_sweep.cpp",
+      "sha256": "2e56a1212e9013f727b60b042cbe2ebcd043ceb5e3d1e6416e5b05c4b704533a"
+    },
+    {
+      "path": "references/kernel_gdn_wy_fast.cpp",
+      "repository": "https://github.com/huawei-csl/pto-kernels",
+      "commit": "e118ec71ed0f170111d4f3380a7a93550c8c22ed",
+      "upstream_path": "csrc/kernel/kernel_gdn_wy_fast.cpp",
+      "sha256": "b150b6170c7dedd3c241d04474a2dc2deb78341c43b38656739ad6db05a2812d"
+    },
+    {
+      "path": "references/kernel_kda_wy.cpp",
+      "repository": "https://github.com/huawei-csl/pto-kernels",
+      "commit": "e118ec71ed0f170111d4f3380a7a93550c8c22ed",
+      "upstream_path": "csrc/kernel/kernel_kda_wy.cpp",
+      "sha256": "42589dd743a48c49164240e735ced80006c3cc5c5e2719ccecc687e376a22266"
+    },
+    {
+      "path": "references/pto-kernels-kernel_utils.h",
+      "repository": "https://github.com/huawei-csl/pto-kernels",
+      "commit": "e118ec71ed0f170111d4f3380a7a93550c8c22ed",
+      "upstream_path": "csrc/kernel/kernel_utils.h",
+      "sha256": "36f2c363345773ea01f384cc3d47a45f977dc03cf958366708964e0d097f4b4f"
+    },
+    {
+      "path": "references/test_tri_inv_col_sweep.py",
+      "repository": "https://github.com/huawei-csl/pto-kernels",
+      "commit": "e118ec71ed0f170111d4f3380a7a93550c8c22ed",
+      "upstream_path": "tests/test_tri_inv_col_sweep.py",
+      "sha256": "e680622ff7c1bf7beb8af6d31b6d2210e6f89573581fec9159cbe64ead45afe7"
+    }
+  ],
+  "support_files": [
+    {
+      "path": "conv2d_helpers.h",
+      "sha256": "e9b564b58a6234600ff7e08388560fa70c2bb64fdb4777b14efcfb461c794ad5"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "topk_128",
+      "level": "level3",
+      "pair_contract": "remove-local-sync-only",
+      "sources": {
+        "auto": {
+          "path": "inputs/topk_128.auto.pto",
+          "sha256": "2133a75988b5ac9488ee58a50f9ae103158f4a084c5ee30e1d1e38a596e3076f"
+        },
+        "manual": {
+          "path": "inputs/topk_128.manual.pto",
+          "sha256": "bd648b9abe890c8be13eeffcaf3f1bef0c55b25bb38dd6242ef34c74e37cf136"
+        }
+      },
+      "scenarios": [
+        {
+          "name": "groups_0",
+          "arguments": [
+            "src",
+            "scores",
+            "indices",
+            "inidx",
+            0
+          ]
+        },
+        {
+          "name": "groups_1",
+          "arguments": [
+            "src",
+            "scores",
+            "indices",
+            "inidx",
+            1
+          ]
+        },
+        {
+          "name": "groups_2",
+          "arguments": [
+            "src",
+            "scores",
+            "indices",
+            "inidx",
+            2
+          ]
+        },
+        {
+          "name": "groups_3",
+          "arguments": [
+            "src",
+            "scores",
+            "indices",
+            "inidx",
+            3
+          ]
+        },
+        {
+          "name": "groups_16",
+          "arguments": [
+            "src",
+            "scores",
+            "indices",
+            "inidx",
+            16
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "conv2d_interior",
+      "level": "level3",
+      "pair_contract": "remove-local-sync-only",
+      "sources": {
+        "auto": {
+          "path": "inputs/conv2d_interior.auto.pto",
+          "sha256": "ce006bf27475e42b7deb80bed751c5acf81f07886ef60d3ca9671cf2d378b667"
+        },
+        "manual": {
+          "path": "inputs/conv2d_interior.manual.pto",
+          "sha256": "54f6f9cf59638d7b15dca2894e1f35524616d248576d3e1f033629aada874611"
+        }
+      },
+      "scenarios": [],
+      "measurement": "static",
+      "expected_autosync_rejection": "InsertSync unsupported helper: complete pto.tileop.effects contract required"
+    },
+    {
+      "case_id": "flash_attention_cube",
+      "level": "level3",
+      "pair_contract": "remove-local-sync-only",
+      "sources": {
+        "auto": {
+          "path": "inputs/flash_attention_cube.auto.pto",
+          "sha256": "82296f899a702614ff5e26add392c47797dbc3d585cb0c4d759355d4be27b581"
+        },
+        "manual": {
+          "path": "inputs/flash_attention_cube.manual.pto",
+          "sha256": "0b1627a4c8b21bca4f826cc0782a3b2b64caeaabb3846aa87a2a3e3e75fb2d0b"
+        }
+      },
+      "scenarios": [],
+      "measurement": "static",
+      "expected_autosync_rejection": "InsertSync unsupported effect:",
+      "normalize_gm_pipe_assembly": true
+    },
+    {
+      "case_id": "triangular_inverse_16",
+      "level": "level3",
+      "pair_contract": "remove-local-sync-only",
+      "provenance": {
+        "repository": "https://github.com/huawei-csl/pto-kernels",
+        "commit": "e118ec71ed0f170111d4f3380a7a93550c8c22ed"
+      },
+      "sources": {
+        "auto": {
+          "path": "inputs/triangular_inverse_16.auto.pto",
+          "sha256": "c654e7414e455622eebb4154feee343128734dcc6b0005de6977527fc3628cf8"
+        },
+        "manual": {
+          "path": "inputs/triangular_inverse_16.manual.pto",
+          "sha256": "31041dd1a54dcc0373e18a747e7cde4aa99f650de4dfe6e4b20f93160f25a2ab"
+        }
+      },
+      "scenarios": [
+        {
+          "name": "matrices_0",
+          "arguments": [
+            "src",
+            "dst",
+            0
+          ]
+        },
+        {
+          "name": "matrices_1",
+          "arguments": [
+            "src",
+            "dst",
+            1
+          ]
+        },
+        {
+          "name": "matrices_2",
+          "arguments": [
+            "src",
+            "dst",
+            2
+          ]
+        },
+        {
+          "name": "matrices_3",
+          "arguments": [
+            "src",
+            "dst",
+            3
+          ]
+        },
+        {
+          "name": "matrices_16",
+          "arguments": [
+            "src",
+            "dst",
+            16
+          ]
+        }
+      ],
+      "expected_autosync_rejection": "InsertSync unsupported effect: resource or memory operand is not modeled",
+      "replay_plain_lowering": true
+    },
+    {
+      "case_id": "gdn_wy",
+      "level": "level3",
+      "pair_contract": "remove-local-sync-only",
+      "provenance": {
+        "repository": "https://github.com/huawei-csl/pto-kernels",
+        "commit": "e118ec71ed0f170111d4f3380a7a93550c8c22ed"
+      },
+      "sources": {
+        "auto": {
+          "path": "inputs/gdn_wy.auto.pto",
+          "sha256": "63686b9d638c821a327798c0a65bb7070294eb990ea853a6f90a05eed7ac5e3b"
+        },
+        "manual": {
+          "path": "inputs/gdn_wy.manual.pto",
+          "sha256": "6f8d24a928b13b1e26530f37113f7b0f0455c5623489f5a7295a5c3b727f4688"
+        }
+      },
+      "scenarios": [
+        {
+          "name": "cube_chunks_0_tail_0",
+          "function": "gdn_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            0,
+            false
+          ]
+        },
+        {
+          "name": "vector0_chunks_0_tail_0",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            0,
+            false,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_0_tail_0",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            0,
+            false,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_0_tail_1",
+          "function": "gdn_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            0,
+            true
+          ]
+        },
+        {
+          "name": "vector0_chunks_0_tail_1",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            0,
+            true,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_0_tail_1",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            0,
+            true,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_1_tail_0",
+          "function": "gdn_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            1,
+            false
+          ]
+        },
+        {
+          "name": "vector0_chunks_1_tail_0",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            1,
+            false,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_1_tail_0",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            1,
+            false,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_1_tail_1",
+          "function": "gdn_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            1,
+            true
+          ]
+        },
+        {
+          "name": "vector0_chunks_1_tail_1",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            1,
+            true,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_1_tail_1",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            1,
+            true,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_2_tail_0",
+          "function": "gdn_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            2,
+            false
+          ]
+        },
+        {
+          "name": "vector0_chunks_2_tail_0",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            2,
+            false,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_2_tail_0",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            2,
+            false,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_2_tail_1",
+          "function": "gdn_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            2,
+            true
+          ]
+        },
+        {
+          "name": "vector0_chunks_2_tail_1",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            2,
+            true,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_2_tail_1",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            2,
+            true,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_3_tail_0",
+          "function": "gdn_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            3,
+            false
+          ]
+        },
+        {
+          "name": "vector0_chunks_3_tail_0",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            3,
+            false,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_3_tail_0",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            3,
+            false,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_3_tail_1",
+          "function": "gdn_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            3,
+            true
+          ]
+        },
+        {
+          "name": "vector0_chunks_3_tail_1",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            3,
+            true,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_3_tail_1",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            3,
+            true,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_16_tail_0",
+          "function": "gdn_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            16,
+            false
+          ]
+        },
+        {
+          "name": "vector0_chunks_16_tail_0",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            16,
+            false,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_16_tail_0",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            16,
+            false,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_16_tail_1",
+          "function": "gdn_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            16,
+            true
+          ]
+        },
+        {
+          "name": "vector0_chunks_16_tail_1",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            16,
+            true,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_16_tail_1",
+          "function": "gdn_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            16,
+            true,
+            1
+          ]
+        }
+      ],
+      "expected_autosync_rejection": "InsertSync unsupported effect: resource or memory operand is not modeled",
+      "replay_plain_lowering": true
+    },
+    {
+      "case_id": "kda_wy",
+      "level": "level3",
+      "pair_contract": "remove-local-sync-only",
+      "provenance": {
+        "repository": "https://github.com/huawei-csl/pto-kernels",
+        "commit": "e118ec71ed0f170111d4f3380a7a93550c8c22ed"
+      },
+      "sources": {
+        "auto": {
+          "path": "inputs/kda_wy.auto.pto",
+          "sha256": "4d553fcd9a3df801115339a04666e3c1d8c5f8f5e0b7b034bcbc806560f2d675"
+        },
+        "manual": {
+          "path": "inputs/kda_wy.manual.pto",
+          "sha256": "ff2fcbd15a996aaeec4c817154604378e30a774809f1b60c74f8b25e96d493e4"
+        }
+      },
+      "scenarios": [
+        {
+          "name": "cube_chunks_0_tail_0",
+          "function": "kda_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            0,
+            false
+          ]
+        },
+        {
+          "name": "vector0_chunks_0_tail_0",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            0,
+            false,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_0_tail_0",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            0,
+            false,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_0_tail_1",
+          "function": "kda_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            0,
+            true
+          ]
+        },
+        {
+          "name": "vector0_chunks_0_tail_1",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            0,
+            true,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_0_tail_1",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            0,
+            true,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_1_tail_0",
+          "function": "kda_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            1,
+            false
+          ]
+        },
+        {
+          "name": "vector0_chunks_1_tail_0",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            1,
+            false,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_1_tail_0",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            1,
+            false,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_1_tail_1",
+          "function": "kda_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            1,
+            true
+          ]
+        },
+        {
+          "name": "vector0_chunks_1_tail_1",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            1,
+            true,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_1_tail_1",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            1,
+            true,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_2_tail_0",
+          "function": "kda_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            2,
+            false
+          ]
+        },
+        {
+          "name": "vector0_chunks_2_tail_0",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            2,
+            false,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_2_tail_0",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            2,
+            false,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_2_tail_1",
+          "function": "kda_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            2,
+            true
+          ]
+        },
+        {
+          "name": "vector0_chunks_2_tail_1",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            2,
+            true,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_2_tail_1",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            2,
+            true,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_3_tail_0",
+          "function": "kda_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            3,
+            false
+          ]
+        },
+        {
+          "name": "vector0_chunks_3_tail_0",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            3,
+            false,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_3_tail_0",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            3,
+            false,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_3_tail_1",
+          "function": "kda_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            3,
+            true
+          ]
+        },
+        {
+          "name": "vector0_chunks_3_tail_1",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            3,
+            true,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_3_tail_1",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            3,
+            true,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_16_tail_0",
+          "function": "kda_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            16,
+            false
+          ]
+        },
+        {
+          "name": "vector0_chunks_16_tail_0",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            16,
+            false,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_16_tail_0",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            16,
+            false,
+            1
+          ]
+        },
+        {
+          "name": "cube_chunks_16_tail_1",
+          "function": "kda_wy_cube",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            16,
+            true
+          ]
+        },
+        {
+          "name": "vector0_chunks_16_tail_1",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            16,
+            true,
+            0
+          ]
+        },
+        {
+          "name": "vector1_chunks_16_tail_1",
+          "function": "kda_wy_vector",
+          "arguments": [
+            "k",
+            "v",
+            "beta",
+            "g",
+            "a",
+            "ws2",
+            "ws1",
+            "u",
+            "w",
+            "ffts",
+            16,
+            true,
+            1
+          ]
+        }
+      ],
+      "expected_autosync_rejection": "InsertSync unsupported effect: resource or memory operand is not modeled",
+      "replay_plain_lowering": true
+    }
+  ]
+}

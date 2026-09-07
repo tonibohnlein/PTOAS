@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-audit-insert-sync %s -o /dev/null 2>&1 | FileCheck %s
+// CHECK: InsertSync audit: verified-local
+// Exactly one wait executes: comparison of a literal-loop induction value is
+// interpreted, not treated as a fresh independent coin flip on each iteration.
+module attributes {pto.target_arch = "a3"} {
+  func.func @first_use(%input: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %addr1 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    scf.for %i = %zero to %two step %one {
+      %first = arith.cmpi eq, %i, %zero : index
+      scf.if %first {
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+      }
+      pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+      pto.barrier <PIPE_V>
+    }
+    pto.barrier <PIPE_ALL>
+    return
+  }
+}

@@ -15,5 +15,13 @@ namespace mlir::pto {
 // Verify translator completeness, not scheduling correctness. A missing
 // summary or discarded memory operand is an explicit unsupported diagnostic.
 LogicalResult checkInsertSyncEffectCoverage(func::FuncOp function, const SyncIRs& syncIR);
+
+// A missing model is not a demonstrated code-generation defect. Report mode
+// preserves legacy translation and diagnoses the gap; strict mode gates it.
+// Explicitly malformed helper contracts fail in either mode. A successful
+// return contains true only when the translator coverage check was complete;
+// it is not a safety or device-correctness certificate.
+FailureOr<bool> inspectInsertSyncEffectCoverage(
+    func::FuncOp function, const SyncIRs& syncIR, bool strict);
 } // namespace mlir::pto
 #endif

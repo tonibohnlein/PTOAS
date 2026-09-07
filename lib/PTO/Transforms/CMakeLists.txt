@@ -149,6 +149,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/SyncEffectCoverage.cpp
   InsertSync/SyncAudit.cpp
   InsertSync/SyncAuditPaths.cpp
+  InsertSync/PruneCompletedBarriers.cpp
   InsertSync/MoveSyncState.cpp
   InsertSync/RemoveRedundantSync.cpp
   InsertSync/SyncEventIdAllocation.cpp

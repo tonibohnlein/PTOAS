@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt --pto-audit-insert-sync %s -o /dev/null 2>&1 | FileCheck %s
+// CHECK: InsertSync audit: unsupported
+// CHECK-SAME: abstract control path lacks a feasibility witness
+// CHECK-NOT: InsertSync audit: invalid-token
+// EQ and NE are correlated, but %n is unknown to this bounded interpreter.
+// The actual program produces and consumes exactly one event when n == 0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @correlated(%n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %eq = arith.cmpi eq, %n, %zero : index
+    %ne = arith.cmpi ne, %n, %zero : index
+    scf.if %eq {
+      pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    }
+    scf.if %ne {
+    } else {
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    }
+    pto.barrier <PIPE_ALL>
+    return
+  }
+}

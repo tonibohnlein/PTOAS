@@ -13,6 +13,9 @@
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Diagnostics.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Threading.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -211,4 +214,88 @@ LogicalResult mlir::pto::checkInsertSyncEffectCoverage(func::FuncOp function, co
         return failed(checkOperation(operations, op)) ? WalkResult::interrupt() : WalkResult::advance();
     });
     return failure(result.wasInterrupted());
+}
+
+namespace {
+// Validate only authored contracts here, not the existence of a new summary.
+// Missing contracts remain coverage gaps. A present malformed contract must
+// never become a promise used by the translator or a reason to bypass checks.
+LogicalResult validateExplicitEffectContracts(func::FuncOp function)
+{
+    auto result = function.getBody().walk([&](func::CallOp call) {
+        auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(call, call.getCalleeAttr());
+        if (!callee) {
+            return WalkResult::advance();
+        }
+        Attribute raw = callee->getAttr("pto.tileop.effects");
+        if (!raw) {
+            return WalkResult::advance();
+        }
+        auto effects = dyn_cast<ArrayAttr>(raw);
+        if (!effects || effects.size() != call.getNumOperands()) {
+            call.emitError("InsertSync invalid helper contract: operand effect arity/type mismatch");
+            return WalkResult::interrupt();
+        }
+        for (Attribute attribute : effects) {
+            auto text = dyn_cast<StringAttr>(attribute);
+            if (!text || (text.getValue() != "none" && text.getValue() != "read" &&
+                          text.getValue() != "write" && text.getValue() != "readwrite")) {
+                call.emitError("InsertSync unsupported helper: invalid operand effect");
+                return WalkResult::interrupt();
+            }
+        }
+        return WalkResult::advance();
+    });
+    return failure(result.wasInterrupted());
+}
+} // namespace
+
+FailureOr<bool> mlir::pto::inspectInsertSyncEffectCoverage(
+    func::FuncOp function, const SyncIRs& syncIR, bool strict)
+{
+    if (failed(validateExplicitEffectContracts(function))) {
+        return failure();
+    }
+    if (strict) {
+        if (failed(checkInsertSyncEffectCoverage(function, syncIR))) {
+            return failure();
+        }
+        return true;
+    }
+
+    // Scope the handler to this read-only completeness query. It does not wrap
+    // translation, planning, allocation, code generation, or their errors.
+    // Preserve source locations and the original reason. No exception/assertion
+    // is caught, and no missing operation is classified as pure.
+    SmallVector<std::pair<Location, std::string>> gaps;
+    LogicalResult checked = success();
+    {
+        // The diagnostic engine is shared by parallel function passes. Only
+        // intercept this query's thread; another function's errors must keep
+        // reaching its own handler (including hard contract diagnostics).
+        const uint64_t checkingThread = llvm::get_threadid();
+        ScopedDiagnosticHandler handler(function.getContext(), [&](Diagnostic& diagnostic) {
+            if (llvm::get_threadid() != checkingThread ||
+                diagnostic.getSeverity() != DiagnosticSeverity::Error) {
+                return failure();
+            }
+            std::string message;
+            llvm::raw_string_ostream stream(message);
+            diagnostic.print(stream);
+            stream.flush();
+            gaps.emplace_back(diagnostic.getLocation(), std::move(message));
+            return success();
+        });
+        checked = checkInsertSyncEffectCoverage(function, syncIR);
+    }
+    for (const auto& gap : gaps) {
+        emitRemark(gap.first) << "InsertSync coverage gap (legacy translation retained, not verified): " << gap.second;
+    }
+    if (failed(checked) && gaps.empty()) {
+        // An unclassified checker failure is not the expected missing-summary
+        // outcome and is not silently converted to compatibility success.
+        function.emitError("InsertSync coverage query failed without a diagnostic");
+        return failure();
+    }
+    return succeeded(checked) && gaps.empty();
 }
