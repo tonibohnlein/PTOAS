@@ -356,7 +356,7 @@ def flash_cube():
             b.unary("tload", "vpart", "vmat")
             b.part("ppart", "pentry", z, z, 16, 16, "f16")
             b.unary("tload", "ppart", "pmat")
-            b.add("pto.tfree(%ppipe : !pto.pipe) {split = 1}")
+            b.add("pto.tfree(%pentry, %ppipe : !pto.tensor_view<16x16xf16>, !pto.pipe) {split = 1}")
         b.flag("set", "MTE2", "MTE1", 0)
         b.flag("wait", "MTE2", "MTE1", 0)
         b.flag("wait", "FIX", "M", slot)

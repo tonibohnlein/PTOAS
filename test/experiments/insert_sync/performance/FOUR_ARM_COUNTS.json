@@ -1,0 +1,1130 @@
+{
+  "source_population": "Frozen fixtures at 9e061dcf; before the separate FlashAttention entry-aware TFREE repair",
+  "measurement": "Previously recorded static counts; no compiler or benchmark rerun",
+  "rows": [
+    {
+      "arch": "a2",
+      "case": "one_buffer",
+      "arm": "hand_tuned",
+      "sets": 6,
+      "waits": 6,
+      "pairs": 6,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-controls/one_buffer/manual/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "one_buffer",
+      "arm": "original_insert_sync",
+      "sets": 6,
+      "waits": 6,
+      "pairs": 6,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a2-original/one_buffer/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "one_buffer",
+      "arm": "revised_mmad_off",
+      "sets": 6,
+      "waits": 6,
+      "pairs": 6,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-controls/one_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "one_buffer",
+      "arm": "revised_mmad_on",
+      "sets": 6,
+      "waits": 6,
+      "pairs": 6,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-on-controls/one_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "two_buffer",
+      "arm": "hand_tuned",
+      "sets": 12,
+      "waits": 12,
+      "pairs": 12,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-controls/two_buffer/manual/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "two_buffer",
+      "arm": "original_insert_sync",
+      "sets": 12,
+      "waits": 12,
+      "pairs": 12,
+      "named_barriers": {
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a2-original/two_buffer/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "two_buffer",
+      "arm": "revised_mmad_off",
+      "sets": 12,
+      "waits": 12,
+      "pairs": 12,
+      "named_barriers": {
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-controls/two_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "two_buffer",
+      "arm": "revised_mmad_on",
+      "sets": 12,
+      "waits": 12,
+      "pairs": 12,
+      "named_barriers": {
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-on-controls/two_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "three_buffer",
+      "arm": "hand_tuned",
+      "sets": 18,
+      "waits": 18,
+      "pairs": 18,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-controls/three_buffer/manual/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "three_buffer",
+      "arm": "original_insert_sync",
+      "sets": 18,
+      "waits": 18,
+      "pairs": 18,
+      "named_barriers": {
+        "PIPE_MTE3": 3
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a2-original/three_buffer/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "three_buffer",
+      "arm": "revised_mmad_off",
+      "sets": 18,
+      "waits": 18,
+      "pairs": 18,
+      "named_barriers": {
+        "PIPE_MTE3": 3
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-controls/three_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "three_buffer",
+      "arm": "revised_mmad_on",
+      "sets": 18,
+      "waits": 18,
+      "pairs": 18,
+      "named_barriers": {
+        "PIPE_MTE3": 3
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-on-controls/three_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "four_use",
+      "arm": "hand_tuned",
+      "sets": 24,
+      "waits": 24,
+      "pairs": 24,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-controls/four_use/manual/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "four_use",
+      "arm": "original_insert_sync",
+      "sets": 24,
+      "waits": 24,
+      "pairs": 24,
+      "named_barriers": {
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a2-original/four_use/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "four_use",
+      "arm": "revised_mmad_off",
+      "sets": 24,
+      "waits": 24,
+      "pairs": 24,
+      "named_barriers": {
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-controls/four_use/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "four_use",
+      "arm": "revised_mmad_on",
+      "sets": 24,
+      "waits": 24,
+      "pairs": 24,
+      "named_barriers": {
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-on-controls/four_use/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "historical_gemm",
+      "arm": "hand_tuned",
+      "sets": 53,
+      "waits": 53,
+      "pairs": 53,
+      "named_barriers": {},
+      "PIPE_ALL": 0,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-controls/historical_gemm/manual/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "historical_gemm",
+      "arm": "original_insert_sync",
+      "sets": 44,
+      "waits": 44,
+      "pairs": 44,
+      "named_barriers": {
+        "PIPE_M": 18,
+        "PIPE_MTE1": 2,
+        "PIPE_FIX": 1
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a2-original/historical_gemm/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "historical_gemm",
+      "arm": "revised_mmad_off",
+      "sets": 44,
+      "waits": 44,
+      "pairs": 44,
+      "named_barriers": {
+        "PIPE_MTE2": 3,
+        "PIPE_M": 18,
+        "PIPE_MTE1": 2,
+        "PIPE_FIX": 1
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-controls/historical_gemm/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "historical_gemm",
+      "arm": "revised_mmad_on",
+      "sets": 44,
+      "waits": 44,
+      "pairs": 44,
+      "named_barriers": {
+        "PIPE_MTE2": 3,
+        "PIPE_M": 4,
+        "PIPE_MTE1": 2,
+        "PIPE_FIX": 1
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-on-controls/historical_gemm/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "topk_128",
+      "arm": "hand_tuned",
+      "sets": 10,
+      "waits": 10,
+      "pairs": 10,
+      "named_barriers": {
+        "PIPE_V": 22
+      },
+      "PIPE_ALL": 0,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-kernels/topk_128/manual/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "topk_128",
+      "arm": "original_insert_sync",
+      "sets": 15,
+      "waits": 15,
+      "pairs": 15,
+      "named_barriers": {
+        "PIPE_V": 14,
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a2-original/topk_128/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "topk_128",
+      "arm": "revised_mmad_off",
+      "sets": 15,
+      "waits": 15,
+      "pairs": 15,
+      "named_barriers": {
+        "PIPE_V": 14,
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-kernels/topk_128/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "topk_128",
+      "arm": "revised_mmad_on",
+      "sets": 15,
+      "waits": 15,
+      "pairs": 15,
+      "named_barriers": {
+        "PIPE_V": 14,
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-on-kernels/topk_128/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "conv2d_interior",
+      "arm": "hand_tuned",
+      "sets": 24,
+      "waits": 24,
+      "pairs": 24,
+      "named_barriers": {},
+      "PIPE_ALL": 0,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-kernels/conv2d_interior/manual/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "conv2d_interior",
+      "arm": "original_insert_sync",
+      "sets": 0,
+      "waits": 0,
+      "pairs": 0,
+      "named_barriers": {
+        "PIPE_M": 8
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a2-original/conv2d_interior/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "conv2d_interior",
+      "arm": "revised_mmad_off",
+      "sets": 0,
+      "waits": 0,
+      "pairs": 0,
+      "named_barriers": {
+        "PIPE_M": 8
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-kernels/conv2d_interior/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "conv2d_interior",
+      "arm": "revised_mmad_on",
+      "sets": 0,
+      "waits": 0,
+      "pairs": 0,
+      "named_barriers": {
+        "PIPE_M": 8
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-on-kernels/conv2d_interior/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "flash_attention_cube",
+      "arm": "hand_tuned",
+      "sets": 18,
+      "waits": 18,
+      "pairs": 18,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-kernels/flash_attention_cube/manual/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "flash_attention_cube",
+      "arm": "original_insert_sync",
+      "sets": 27,
+      "waits": 27,
+      "pairs": 27,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a2-original/flash_attention_cube/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "flash_attention_cube",
+      "arm": "revised_mmad_off",
+      "sets": 13,
+      "waits": 13,
+      "pairs": 13,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-kernels/flash_attention_cube/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "flash_attention_cube",
+      "arm": "revised_mmad_on",
+      "sets": 13,
+      "waits": 13,
+      "pairs": 13,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-on-kernels/flash_attention_cube/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "triangular_inverse_16",
+      "arm": "hand_tuned",
+      "sets": 278,
+      "waits": 278,
+      "pairs": 278,
+      "named_barriers": {
+        "PIPE_V": 105
+      },
+      "PIPE_ALL": 0,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-kernels/triangular_inverse_16/manual/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "triangular_inverse_16",
+      "arm": "original_insert_sync",
+      "sets": 277,
+      "waits": 277,
+      "pairs": 277,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a2-original/triangular_inverse_16/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "triangular_inverse_16",
+      "arm": "revised_mmad_off",
+      "sets": 277,
+      "waits": 277,
+      "pairs": 277,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-kernels/triangular_inverse_16/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "triangular_inverse_16",
+      "arm": "revised_mmad_on",
+      "sets": 277,
+      "waits": 277,
+      "pairs": 277,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-on-kernels/triangular_inverse_16/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "gdn_wy",
+      "arm": "hand_tuned",
+      "sets": 16,
+      "waits": 16,
+      "pairs": 16,
+      "named_barriers": {
+        "PIPE_V": 6
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-kernels/gdn_wy/manual/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "gdn_wy",
+      "arm": "original_insert_sync",
+      "sets": 32,
+      "waits": 32,
+      "pairs": 32,
+      "named_barriers": {
+        "PIPE_V": 13,
+        "PIPE_MTE1": 1
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a2-original/gdn_wy/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "gdn_wy",
+      "arm": "revised_mmad_off",
+      "sets": 32,
+      "waits": 32,
+      "pairs": 32,
+      "named_barriers": {
+        "PIPE_V": 13,
+        "PIPE_MTE1": 1
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-kernels/gdn_wy/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "gdn_wy",
+      "arm": "revised_mmad_on",
+      "sets": 32,
+      "waits": 32,
+      "pairs": 32,
+      "named_barriers": {
+        "PIPE_V": 13,
+        "PIPE_MTE1": 1
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-on-kernels/gdn_wy/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "kda_wy",
+      "arm": "hand_tuned",
+      "sets": 17,
+      "waits": 17,
+      "pairs": 17,
+      "named_barriers": {
+        "PIPE_V": 7
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-kernels/kda_wy/manual/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "kda_wy",
+      "arm": "original_insert_sync",
+      "sets": 35,
+      "waits": 35,
+      "pairs": 35,
+      "named_barriers": {
+        "PIPE_V": 10,
+        "PIPE_MTE3": 1,
+        "PIPE_MTE1": 1
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a2-original/kda_wy/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "kda_wy",
+      "arm": "revised_mmad_off",
+      "sets": 35,
+      "waits": 35,
+      "pairs": 35,
+      "named_barriers": {
+        "PIPE_MTE2": 2,
+        "PIPE_V": 10,
+        "PIPE_MTE3": 1,
+        "PIPE_MTE1": 1
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-off-kernels/kda_wy/combined/output.pto"
+    },
+    {
+      "arch": "a2",
+      "case": "kda_wy",
+      "arm": "revised_mmad_on",
+      "sets": 35,
+      "waits": 35,
+      "pairs": 35,
+      "named_barriers": {
+        "PIPE_MTE2": 2,
+        "PIPE_V": 10,
+        "PIPE_MTE3": 1,
+        "PIPE_MTE1": 1
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a2-on-kernels/kda_wy/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "one_buffer",
+      "arm": "hand_tuned",
+      "sets": 6,
+      "waits": 6,
+      "pairs": 6,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-controls/one_buffer/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "one_buffer",
+      "arm": "original_insert_sync",
+      "sets": 6,
+      "waits": 6,
+      "pairs": 6,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a3-original/one_buffer/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "one_buffer",
+      "arm": "revised_mmad_off",
+      "sets": 6,
+      "waits": 6,
+      "pairs": 6,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-controls/one_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "one_buffer",
+      "arm": "revised_mmad_on",
+      "sets": 6,
+      "waits": 6,
+      "pairs": 6,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-on-controls/one_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "two_buffer",
+      "arm": "hand_tuned",
+      "sets": 12,
+      "waits": 12,
+      "pairs": 12,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-controls/two_buffer/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "two_buffer",
+      "arm": "original_insert_sync",
+      "sets": 12,
+      "waits": 12,
+      "pairs": 12,
+      "named_barriers": {
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a3-original/two_buffer/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "two_buffer",
+      "arm": "revised_mmad_off",
+      "sets": 12,
+      "waits": 12,
+      "pairs": 12,
+      "named_barriers": {
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-controls/two_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "two_buffer",
+      "arm": "revised_mmad_on",
+      "sets": 12,
+      "waits": 12,
+      "pairs": 12,
+      "named_barriers": {
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-on-controls/two_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "three_buffer",
+      "arm": "hand_tuned",
+      "sets": 18,
+      "waits": 18,
+      "pairs": 18,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-controls/three_buffer/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "three_buffer",
+      "arm": "original_insert_sync",
+      "sets": 18,
+      "waits": 18,
+      "pairs": 18,
+      "named_barriers": {
+        "PIPE_MTE3": 3
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a3-original/three_buffer/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "three_buffer",
+      "arm": "revised_mmad_off",
+      "sets": 18,
+      "waits": 18,
+      "pairs": 18,
+      "named_barriers": {
+        "PIPE_MTE3": 3
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-controls/three_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "three_buffer",
+      "arm": "revised_mmad_on",
+      "sets": 18,
+      "waits": 18,
+      "pairs": 18,
+      "named_barriers": {
+        "PIPE_MTE3": 3
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-on-controls/three_buffer/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "four_use",
+      "arm": "hand_tuned",
+      "sets": 24,
+      "waits": 24,
+      "pairs": 24,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-controls/four_use/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "four_use",
+      "arm": "original_insert_sync",
+      "sets": 24,
+      "waits": 24,
+      "pairs": 24,
+      "named_barriers": {
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a3-original/four_use/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "four_use",
+      "arm": "revised_mmad_off",
+      "sets": 24,
+      "waits": 24,
+      "pairs": 24,
+      "named_barriers": {
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-controls/four_use/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "four_use",
+      "arm": "revised_mmad_on",
+      "sets": 24,
+      "waits": 24,
+      "pairs": 24,
+      "named_barriers": {
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-on-controls/four_use/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "historical_gemm",
+      "arm": "hand_tuned",
+      "sets": 53,
+      "waits": 53,
+      "pairs": 53,
+      "named_barriers": {},
+      "PIPE_ALL": 0,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-controls/historical_gemm/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "historical_gemm",
+      "arm": "original_insert_sync",
+      "sets": 44,
+      "waits": 44,
+      "pairs": 44,
+      "named_barriers": {
+        "PIPE_M": 18,
+        "PIPE_MTE1": 2,
+        "PIPE_FIX": 1
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a3-original/historical_gemm/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "historical_gemm",
+      "arm": "revised_mmad_off",
+      "sets": 44,
+      "waits": 44,
+      "pairs": 44,
+      "named_barriers": {
+        "PIPE_MTE2": 3,
+        "PIPE_M": 18,
+        "PIPE_MTE1": 2,
+        "PIPE_FIX": 1
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-controls/historical_gemm/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "historical_gemm",
+      "arm": "revised_mmad_on",
+      "sets": 44,
+      "waits": 44,
+      "pairs": 44,
+      "named_barriers": {
+        "PIPE_MTE2": 3,
+        "PIPE_M": 4,
+        "PIPE_MTE1": 2,
+        "PIPE_FIX": 1
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-on-controls/historical_gemm/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "topk_128",
+      "arm": "hand_tuned",
+      "sets": 10,
+      "waits": 10,
+      "pairs": 10,
+      "named_barriers": {
+        "PIPE_V": 22
+      },
+      "PIPE_ALL": 0,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-kernels/topk_128/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "topk_128",
+      "arm": "original_insert_sync",
+      "sets": 15,
+      "waits": 15,
+      "pairs": 15,
+      "named_barriers": {
+        "PIPE_V": 14,
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a3-original/topk_128/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "topk_128",
+      "arm": "revised_mmad_off",
+      "sets": 15,
+      "waits": 15,
+      "pairs": 15,
+      "named_barriers": {
+        "PIPE_V": 14,
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-kernels/topk_128/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "topk_128",
+      "arm": "revised_mmad_on",
+      "sets": 15,
+      "waits": 15,
+      "pairs": 15,
+      "named_barriers": {
+        "PIPE_V": 14,
+        "PIPE_MTE3": 2
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-on-kernels/topk_128/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "conv2d_interior",
+      "arm": "hand_tuned",
+      "sets": 24,
+      "waits": 24,
+      "pairs": 24,
+      "named_barriers": {},
+      "PIPE_ALL": 0,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-kernels/conv2d_interior/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "conv2d_interior",
+      "arm": "original_insert_sync",
+      "sets": 0,
+      "waits": 0,
+      "pairs": 0,
+      "named_barriers": {
+        "PIPE_M": 8
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a3-original/conv2d_interior/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "conv2d_interior",
+      "arm": "revised_mmad_off",
+      "sets": 0,
+      "waits": 0,
+      "pairs": 0,
+      "named_barriers": {
+        "PIPE_M": 8
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-kernels/conv2d_interior/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "conv2d_interior",
+      "arm": "revised_mmad_on",
+      "sets": 0,
+      "waits": 0,
+      "pairs": 0,
+      "named_barriers": {
+        "PIPE_M": 8
+      },
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-on-kernels/conv2d_interior/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "flash_attention_cube",
+      "arm": "hand_tuned",
+      "sets": 18,
+      "waits": 18,
+      "pairs": 18,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-kernels/flash_attention_cube/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "flash_attention_cube",
+      "arm": "original_insert_sync",
+      "sets": 27,
+      "waits": 27,
+      "pairs": 27,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a3-original/flash_attention_cube/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "flash_attention_cube",
+      "arm": "revised_mmad_off",
+      "sets": 13,
+      "waits": 13,
+      "pairs": 13,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-kernels/flash_attention_cube/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "flash_attention_cube",
+      "arm": "revised_mmad_on",
+      "sets": 13,
+      "waits": 13,
+      "pairs": 13,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-on-kernels/flash_attention_cube/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "triangular_inverse_16",
+      "arm": "hand_tuned",
+      "sets": 278,
+      "waits": 278,
+      "pairs": 278,
+      "named_barriers": {
+        "PIPE_V": 105
+      },
+      "PIPE_ALL": 0,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-kernels/triangular_inverse_16/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "triangular_inverse_16",
+      "arm": "original_insert_sync",
+      "sets": 277,
+      "waits": 277,
+      "pairs": 277,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a3-original/triangular_inverse_16/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "triangular_inverse_16",
+      "arm": "revised_mmad_off",
+      "sets": 277,
+      "waits": 277,
+      "pairs": 277,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-kernels/triangular_inverse_16/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "triangular_inverse_16",
+      "arm": "revised_mmad_on",
+      "sets": 277,
+      "waits": 277,
+      "pairs": 277,
+      "named_barriers": {},
+      "PIPE_ALL": 1,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-on-kernels/triangular_inverse_16/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "gdn_wy",
+      "arm": "hand_tuned",
+      "sets": 16,
+      "waits": 16,
+      "pairs": 16,
+      "named_barriers": {
+        "PIPE_V": 6
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-kernels/gdn_wy/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "gdn_wy",
+      "arm": "original_insert_sync",
+      "sets": 32,
+      "waits": 32,
+      "pairs": 32,
+      "named_barriers": {
+        "PIPE_V": 13,
+        "PIPE_MTE1": 1
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a3-original/gdn_wy/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "gdn_wy",
+      "arm": "revised_mmad_off",
+      "sets": 32,
+      "waits": 32,
+      "pairs": 32,
+      "named_barriers": {
+        "PIPE_V": 13,
+        "PIPE_MTE1": 1
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-kernels/gdn_wy/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "gdn_wy",
+      "arm": "revised_mmad_on",
+      "sets": 32,
+      "waits": 32,
+      "pairs": 32,
+      "named_barriers": {
+        "PIPE_V": 13,
+        "PIPE_MTE1": 1
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-on-kernels/gdn_wy/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "kda_wy",
+      "arm": "hand_tuned",
+      "sets": 17,
+      "waits": 17,
+      "pairs": 17,
+      "named_barriers": {
+        "PIPE_V": 7
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-kernels/kda_wy/manual/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "kda_wy",
+      "arm": "original_insert_sync",
+      "sets": 35,
+      "waits": 35,
+      "pairs": 35,
+      "named_barriers": {
+        "PIPE_V": 10,
+        "PIPE_MTE3": 1,
+        "PIPE_MTE1": 1
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/manual-vs-followup-v2-counts/a3-original/kda_wy/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "kda_wy",
+      "arm": "revised_mmad_off",
+      "sets": 35,
+      "waits": 35,
+      "pairs": 35,
+      "named_barriers": {
+        "PIPE_MTE2": 2,
+        "PIPE_V": 10,
+        "PIPE_MTE3": 1,
+        "PIPE_MTE1": 1
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-off-kernels/kda_wy/combined/output.pto"
+    },
+    {
+      "arch": "a3",
+      "case": "kda_wy",
+      "arm": "revised_mmad_on",
+      "sets": 35,
+      "waits": 35,
+      "pairs": 35,
+      "named_barriers": {
+        "PIPE_MTE2": 2,
+        "PIPE_V": 10,
+        "PIPE_MTE3": 1,
+        "PIPE_MTE1": 1
+      },
+      "PIPE_ALL": 2,
+      "recorded_output": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/mmad-r3-all/a3-on-kernels/kda_wy/combined/output.pto"
+    }
+  ]
+}

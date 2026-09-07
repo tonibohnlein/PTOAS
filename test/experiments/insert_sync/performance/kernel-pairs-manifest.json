@@ -165,17 +165,18 @@
       "sources": {
         "auto": {
           "path": "inputs/flash_attention_cube.auto.pto",
-          "sha256": "82296f899a702614ff5e26add392c47797dbc3d585cb0c4d759355d4be27b581"
+          "sha256": "60bea5535aef602e292b804eee79a10e4ad9c3bb3b8a9e090aff5f38ec64a76c"
         },
         "manual": {
           "path": "inputs/flash_attention_cube.manual.pto",
-          "sha256": "0b1627a4c8b21bca4f826cc0782a3b2b64caeaabb3846aa87a2a3e3e75fb2d0b"
+          "sha256": "6e93bbdb7be53ea48b0cce3ec1f5d93734159ef05a8a73c47c1aee091c894480"
         }
       },
       "scenarios": [],
       "measurement": "static",
       "expected_autosync_rejection": "InsertSync unsupported effect:",
-      "normalize_gm_pipe_assembly": true
+      "normalize_gm_pipe_assembly": true,
+      "device_protocol_revision": "r3-entry-aware-free: release the GlobalTensor consumer slot; entry-less TFREE is a device no-op in pinned pto-isa. Both members changed identically."
     },
     {
       "case_id": "triangular_inverse_16",

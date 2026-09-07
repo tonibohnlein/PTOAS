@@ -202,3 +202,20 @@ interleaved warmed timing samples with the same toolchain/device. Record
 compiler/ISA/runtime/device pins and numerical results separately from timing.
 No device run, hardware latency model or peak event-liveness proof is included
 in the host checkpoint.
+
+## MMAD r3 and device follow-up
+
+[MMAD_R3_COUNTS.md](MMAD_R3_COUNTS.md) records the complete A2/A3 rerun with
+MMAD-chain analysis off/on, keeping pairs, each named pipe and PIPE_ALL
+separate. Use `run.py --mmad-chains` to opt in; it still runs manual,
+combined and staged arms for the selected manifest.
+
+[device/README.md](device/README.md) supplies launch adapters and numerical
+goldens for Conv2D, FlashAttention, GDN and KDA. Those adapters require their
+first device compilation/validation. The FlashAttention pair's entry-aware
+FIFO release is an intentional source-population repair, applied to both
+members and reflected in the manifest hashes; historical baseline JSON files
+remain historical, not updated expected outputs for this repaired population.
+
+The follow-up instructions are in
+[DEVICE_TASK_INSERTSYNC_MMAD_R3_WALLTIME.md](../../../../DEVICE_TASK_INSERTSYNC_MMAD_R3_WALLTIME.md).

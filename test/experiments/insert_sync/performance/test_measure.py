@@ -55,6 +55,16 @@ class AccountingTests(unittest.TestCase):
             self.assertEqual(before["fixed_queue_operations"], expected)
             self.assertEqual(after["fixed_queue_operations"], expected)
             self.assertEqual(after["counts"], {})
+            # A slot-entry release selects the device credit-return overload;
+            # the entry-less TFREE implementation in the pinned ISA is a no-op.
+            module = ir.Module.parse(automatic)
+            def descendants(op):
+                yield op
+                for child in children(op):
+                    yield from descendants(child)
+            free = next(op for op in descendants(module.operation) if op.name == "pto.tfree")
+            self.assertEqual(len(free.operands), 2)
+            self.assertIn("tensor_view", str(free.operands[0].type))
 
     def test_fifo_assembly_bridge_preserves_operation_attributes(self):
         with ir.Context() as context:

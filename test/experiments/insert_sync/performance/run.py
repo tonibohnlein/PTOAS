@@ -81,6 +81,7 @@ def campaign(args):
         "cli_sha256": digest(cli),
         "python_root": str(runtime),
         "gm_alias": manifest["gm_alias"],
+        "mmad_chains": getattr(args, "mmad_chains", False),
         "measurement": "host scalar replay; no completion/latency simulation",
         "device_runtime": "not-run",
         "rows": {},
@@ -117,6 +118,8 @@ def campaign(args):
                 command = prefix + [f"--pto-arch={args.arch}", f"--pto-level={case['level']}"]
                 if arm != "manual":
                     command += ["--enable-insert-sync", f"--insert-sync-gm-alias={manifest['gm_alias']}"]
+                    if getattr(args, "mmad_chains", False):
+                        command.append("--insert-sync-mmad-chains")
                     if arm == "staged":
                         command.append("--insert-sync-defer-same-pipe")
                 if kind == "pto":
@@ -236,14 +239,20 @@ def campaign(args):
         "",
         "Counts describe static IR and concrete scalar replay, not device performance.",
         "",
-        "| Case / arm | Status | Static set / wait | Static barriers |",
-        "| --- | --- | ---: | ---: |",
+        "| Case / arm | Status | Sets | Waits | Named barriers by pipe | PIPE_ALL |",
+        "| --- | --- | ---: | ---: | --- | ---: |",
     ]
     for key, row in report["rows"].items():
         counts = row.get("metrics", {}).get("static", {}).get("counts", {})
+        pipes = {}
+        for name, count in counts.items():
+            if name.startswith("barrier:"):
+                pipe = re.search(r"PIPE_[A-Z0-9]+", name).group()
+                pipes[pipe] = pipes.get(pipe, 0) + count
+        named = ", ".join(f"{p}: {n}" for p, n in sorted(pipes.items()) if p != "PIPE_ALL") or "0"
         lines.append(
-            f"| {key} | {row['status']} | {counts.get('pto.set_flag', '-')} / "
-            f"{counts.get('pto.wait_flag', '-')} | {counts.get('pto.barrier', '-')} |"
+            f"| {key} | {row['status']} | {counts.get('pto.set_flag', 0)} | "
+            f"{counts.get('pto.wait_flag', 0)} | {named} | {pipes.get('PIPE_ALL', 0)} |"
         )
     lines += ["", "Failures / baseline changes:", ""] + report["failures"] + report["baseline_changes"]
     (args.output / "summary.md").write_text("\n".join(lines) + "\n")
@@ -259,6 +268,7 @@ def main():
     parser.add_argument("--arch", choices=("a2", "a3"), default="a3")
     parser.add_argument("--output", type=Path, required=True, help="New disk-backed results directory")
     parser.add_argument("--baseline", type=Path, help="Earlier results.json; any metric change requires review")
+    parser.add_argument("--mmad-chains", action="store_true", help="Enable MMAD chain analysis for both automatic arms")
     parser.add_argument("--timeout", type=int, default=120)
     args = parser.parse_args()
     return campaign(args)

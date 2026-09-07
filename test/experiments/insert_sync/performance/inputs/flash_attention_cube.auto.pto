@@ -61,7 +61,7 @@ module {
       pto.tload ins(%vpart : !pto.partition_tensor_view<16x16xf16>) outs(%vmat : !pto.tile_buf<mat, 16x16xf16, blayout=row_major, slayout=col_major>)
       %ppart = pto.partition_view %pentry, offsets = [%c0_index, %c0_index], sizes = [%c16_index, %c16_index] : !pto.tensor_view<16x16xf16> -> !pto.partition_tensor_view<16x16xf16>
       pto.tload ins(%ppart : !pto.partition_tensor_view<16x16xf16>) outs(%pmat : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>)
-      pto.tfree(%ppipe : !pto.pipe) {split = 1}
+      pto.tfree(%pentry, %ppipe : !pto.tensor_view<16x16xf16>, !pto.pipe) {split = 1}
       pto.textract ins(%pmat, %c0_index, %c0_index : !pto.tile_buf<mat, 16x16xf16, blayout=col_major, slayout=row_major>, index, index) outs(%left1 : !pto.tile_buf<left, 16x16xf16, blayout=row_major, slayout=row_major>)
       pto.textract ins(%vmat, %c0_index, %c0_index : !pto.tile_buf<mat, 16x16xf16, blayout=row_major, slayout=col_major>, index, index) outs(%right1 : !pto.tile_buf<right, 16x16xf16, blayout=row_major, slayout=col_major>)
       pto.tmatmul ins(%left1, %right1 : !pto.tile_buf<left, 16x16xf16, blayout=row_major, slayout=row_major>, !pto.tile_buf<right, 16x16xf16, blayout=row_major, slayout=col_major>) outs(%pvacc : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>)

@@ -1,0 +1,21 @@
+{
+  "repository": "https://gitcode.com/cann/pto-isa",
+  "commit": "1216c55831fcc4ed2f096e4ca582ff75a633fbb6",
+  "files": [
+    {
+      "path": "references/fa_performance_kernel.h",
+      "source": "kernels/manual/common/flash_atten/fa_performance_kernel.h",
+      "sha256": "19ca982124c888606071715f4f87aa4ca689a0f0c3b494b7909787b4ba9534c1"
+    },
+    {
+      "path": "references/pto_macro_fa_softmax.hpp",
+      "source": "kernels/manual/common/flash_atten/pto_macro_fa_softmax.hpp",
+      "sha256": "4a6ca987ec4d3537cec97e78b01e47156818e8aa5addf7742a19f170138a58d8"
+    },
+    {
+      "path": "references/pto_macro_fa_gu.hpp",
+      "source": "kernels/manual/common/flash_atten/pto_macro_fa_gu.hpp",
+      "sha256": "8bd1075306bcfc3d4ef31cc5b26b31dca06c8f90cd1148bf44e8325d05733501"
+    }
+  ]
+}
