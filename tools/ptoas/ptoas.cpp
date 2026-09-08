@@ -243,6 +243,10 @@ llvm::cl::opt<bool> insertSyncBufferGenerations(
     "insert-sync-buffer-generations",
     llvm::cl::desc("Construct synchronization from per-buffer reaching generations; experimental"),
     llvm::cl::init(false));
+llvm::cl::opt<bool> insertSyncHandoffPlanning(
+    "insert-sync-handoff-planning",
+    llvm::cl::desc("Plan guarded prefix handoffs with combined completion (experimental)"),
+    llvm::cl::init(false));
 llvm::cl::opt<std::string> insertSyncHandoffFactsDirectory(
     "insert-sync-handoff-facts-dir",
     llvm::cl::desc("Export qualified InsertSync pass-entry facts into this directory"),

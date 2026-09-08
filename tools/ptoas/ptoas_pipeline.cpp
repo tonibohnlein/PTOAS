@@ -685,6 +685,7 @@ static InsertSyncOptions makeInsertSyncOptions()
     options.lifecycleSynthesis = insertSyncLifecycleSynthesis;
     options.bufferGenerations = insertSyncBufferGenerations;
     options.handoffFactsDirectory = insertSyncHandoffFactsDirectory;
+    options.handoffPlanning = insertSyncHandoffPlanning;
     return options;
 }
 

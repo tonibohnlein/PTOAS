@@ -1,12 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under
-// the terms and conditions of CANN Open Software License Agreement Version 2.0
-// (the "License"). Please refer to the License for details. You may not use
-// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-// for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 #ifndef PTO_TRANSFORMS_INSERTSYNC_STORAGEFRONTIERQUERIES_H
 #define PTO_TRANSFORMS_INSERTSYNC_STORAGEFRONTIERQUERIES_H
@@ -58,78 +56,6 @@ struct CompletionWitness {
     std::vector<unsigned> supportingSyncNodes;
     bool includesLoopInduction = false;
 };
-
-// First experimental demand transfer: one finite, linear execution, unique
-// static phase occurrences and one publication/acquisition per logical key.
-// Keep requirement IDs and their original first-demand targets while following
-// transitive supply backwards. These are proposal facts, never proof witnesses.
-struct LinearHandoffNeeds {
-    bool supported = false;
-    std::vector<unsigned> order;
-    std::vector<Bits> served; // requirement IDs at each publication/acquisition
-};
-inline LinearHandoffNeeds backwardHandoffNeeds(
-    const Program& p, const CompletionResult& supply,
-    const std::vector<Requirement>& requirements, Budget& budget)
-{
-    LinearHandoffNeeds result;
-    if (!valid(p) || !covers(p, supply, requirements).proved) return result;
-    Bits visited(p.nodes.size()), phases(p.phaseLane.size());
-    std::vector<unsigned> signals(p.keys.size()), waits(p.keys.size());
-    for (unsigned n = 0;;) {
-        if (!budget.spend() || visited.test(n)) return result;
-        visited.set(n);
-        result.order.push_back(n);
-        const auto& node = p.nodes[n];
-        if (node.kind == Node::Kind::Issue) {
-            if (phases.test(node.phase)) return result;
-            phases.set(node.phase);
-        }
-        if (node.kind == Node::Kind::Signal && ++signals[node.key] != 1) return result;
-        if (node.kind == Node::Kind::Wait && ++waits[node.key] != 1) return result;
-        if (node.next.empty()) break;
-        if (node.next.size() != 1) return result;
-        n = node.next.front();
-    }
-    if (result.order.size() != p.nodes.size() || signals != waits ||
-        phases != Bits(p.phaseLane.size(), true)) return result;
-    result.served.assign(p.nodes.size(), Bits(requirements.size()));
-    std::vector<Bits> needs(p.lanes, Bits(requirements.size()));
-    std::vector<Bits> messages(p.keys.size(), Bits(requirements.size()));
-    for (auto position = result.order.rbegin(); position != result.order.rend(); ++position) {
-        unsigned n = *position;
-        if (!budget.spend(1 + requirements.size() * p.lanes)) return result;
-        const auto& node = p.nodes[n];
-        const auto& before = *supply.before[n];
-        for (unsigned r = 0; r < requirements.size(); ++r) {
-            const auto& requirement = requirements[r];
-            if (node.kind == Node::Kind::Issue && node.phase == requirement.target)
-                needs[node.lane].set(r);
-            if (node.kind == Node::Kind::All) {
-                for (auto& lane : needs) lane.reset(r);
-            } else if (node.kind == Node::Kind::Barrier && p.phaseLane[requirement.source] == node.lane) {
-                needs[node.lane].reset(r);
-            } else if (node.kind == Node::Kind::Wait) {
-                unsigned target = p.keys[node.key].target;
-                if (needs[target].test(r) && !before.known[target].test(requirement.source) &&
-                    before.published[node.key].test(requirement.source)) {
-                    result.served[n].set(r);
-                    messages[node.key].set(r);
-                    needs[target].reset(r);
-                }
-            } else if (node.kind == Node::Kind::Signal && messages[node.key].test(r)) {
-                unsigned source = p.keys[node.key].source;
-                result.served[n].set(r);
-                // A source-prefix publication completes its own lane. Facts
-                // imported from another lane retain their earlier supplier.
-                if (p.phaseLane[requirement.source] != source) needs[source].set(r);
-                messages[node.key].reset(r);
-            }
-        }
-    }
-    result.supported = true;
-    return result;
-}
 
 struct ExitCompletion {
     bool proved = false;

@@ -27,6 +27,7 @@
 #include "PTO/Transforms/InsertSync/StorageFrontierAnalysis.h"
 #include "PTO/Transforms/InsertSync/LifecycleSynthesis.h"
 #include "PTO/Transforms/InsertSync/HandoffFacts.h"
+#include "PTO/Transforms/InsertSync/HandoffPlanning.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h" // [FIX] 确保 FuncOp 定义可见
@@ -130,6 +131,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         lifecycleSynthesis = options.lifecycleSynthesis;
         bufferGenerations = options.bufferGenerations;
         handoffFactsDirectory = options.handoffFactsDirectory;
+        handoffPlanning = options.handoffPlanning;
     }
     PTOInsertSyncPass(const PTOInsertSyncPass& other) : PTOInsertSyncBase(other)
     {
@@ -144,6 +146,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         lifecycleSynthesis = other.lifecycleSynthesis;
         bufferGenerations = other.bufferGenerations;
         handoffFactsDirectory = other.handoffFactsDirectory;
+        handoffPlanning = other.handoffPlanning;
     }
 
     Option<bool> deferSamePipe{
@@ -180,6 +183,33 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     Option<std::string> handoffFactsDirectory{
         *this, "handoff-facts-dir", llvm::cl::init(""),
         llvm::cl::desc("Export qualified pass-entry handoff facts without changing synchronization")};
+
+    Option<bool> handoffPlanning{
+        *this, "handoff-planning", llvm::cl::init(false),
+        llvm::cl::desc("Plan guarded prefix handoffs with combined completion; experimental")};
+
+    LogicalResult planHandoffs(func::FuncOp function) {
+        if (!handoffPlanning) return success();
+        SmallVector<Operation*> events;
+        // Authored events bypass InsertSync before this finalization. Keep
+        // barriers fixed here: their ownership can include authored sites.
+        function.walk([&](Operation* op) { if (isa<SetFlagOp, WaitFlagOp>(op)) events.push_back(op); });
+        insert_sync_frontier::Budget budget;
+        auto result = planInsertSyncHandoffs(function, events, {}, bool(mmadChains), budget);
+        auto i64 = IntegerType::get(&getContext(), 64);
+        function->setAttr("pto.insert_sync.handoff_advanced", IntegerAttr::get(i64, result.advanced));
+        function->setAttr("pto.insert_sync.handoff_delayed", IntegerAttr::get(i64, result.delayed));
+        function->setAttr("pto.insert_sync.handoff_split", IntegerAttr::get(i64, result.split));
+        function->setAttr("pto.insert_sync.handoff_sets_removed", IntegerAttr::get(i64, result.setsRemoved));
+        function->setAttr("pto.insert_sync.handoff_waits_removed", IntegerAttr::get(i64, result.waitsRemoved));
+        function->setAttr("pto.insert_sync.handoff_work", IntegerAttr::get(i64, result.work));
+        function->setAttr("pto.insert_sync.handoff_reason", StringAttr::get(&getContext(), result.reason));
+        function.emitRemark("InsertSync handoff planning: ") << result.advanced << " advanced, " << result.delayed
+            << " delayed, " << result.split << " split, " << result.setsRemoved << " sets / " << result.waitsRemoved
+            << " waits removed; attempts=" << result.attempts << "; " << result.reason;
+        if (result.internalError) { function.emitError(result.reason); return failure(); }
+        return success();
+    }
 
     void auditOutput(func::FuncOp function)
     {
@@ -309,6 +339,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
             func->setAttr("pto.insert_sync.lifecycle_consumer_regions", IntegerAttr::get(type, result.consumerRegions));
             func->setAttr("pto.insert_sync.lifecycle_guarded_actions", IntegerAttr::get(type, result.guardedActions));
             func->setAttr("pto.insert_sync.lifecycle_supplied_pairs", IntegerAttr::get(type, result.suppliedPairs));
+            if (failed(planHandoffs(func))) { signalPassFailure(); return; }
             auditOutput(func);
             return;
         }
@@ -507,6 +538,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         // On a successful clone commit, old SyncIR operation pointers are
         // intentionally stale. No later stage may dereference them.
     }
+    if (failed(planHandoffs(func))) { signalPassFailure(); return; }
     auditOutput(func);
   }
 };
