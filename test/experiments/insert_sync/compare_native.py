@@ -169,6 +169,7 @@ def compile_arm(args):
               "arm": args.arm, "arch": args.arch, "rows": [],
               "gm_alias": args.gm_alias, "audit_mode": args.audit,
               "buffer_generations": args.buffer_generations, "mmad_chains": args.mmad_chains,
+              "handoff_planning": args.handoff_planning,
               "effect_coverage": args.effect_coverage,
               "execution_mode": "isolated-fork-with-preloaded-runtime" if cli else "fresh-process",
               "semantic_verification": "not-run", "device_execution": "not-run"}
@@ -186,6 +187,8 @@ def compile_arm(args):
                 command.append(f"--insert-sync-gm-alias={args.gm_alias}")
             if args.buffer_generations:
                 command.append("--insert-sync-buffer-generations")
+            if args.handoff_planning:
+                command.append("--insert-sync-handoff-planning")
             if args.mmad_chains:
                 command.append("--insert-sync-mmad-chains")
             if args.effect_coverage:
@@ -266,6 +269,7 @@ def main():
     parser.add_argument("--warm-process", action="store_true",
                         help="Preload the runtime and fork each isolated invocation (Linux, one worker)")
     parser.add_argument("--buffer-generations", action="store_true")
+    parser.add_argument("--handoff-planning", action="store_true")
     parser.add_argument("--mmad-chains", action="store_true")
     parser.add_argument("--effect-coverage", choices=("report", "strict"))
     parser.add_argument("--gm-alias", choices=("may-alias", "assume-disjoint-arguments"))

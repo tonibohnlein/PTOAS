@@ -86,6 +86,7 @@ def campaign(args):
         "frontier_placement": getattr(args, "frontier_placement", False),
         "lifecycle_synthesis": getattr(args, "lifecycle_synthesis", False),
         "buffer_generations": getattr(args, "buffer_generations", False),
+        "handoff_planning": getattr(args, "handoff_planning", False),
         "measurement": "host scalar replay; no completion/latency simulation",
         "device_runtime": "not-run",
         "rows": {},
@@ -137,6 +138,8 @@ def campaign(args):
                         command.append("--insert-sync-lifecycle-synthesis")
                     if getattr(args, "buffer_generations", False):
                         command.append("--insert-sync-buffer-generations")
+                    if getattr(args, "handoff_planning", False):
+                        command.append("--insert-sync-handoff-planning")
                     if arm == "staged":
                         command.append("--insert-sync-defer-same-pipe")
                 if kind == "pto":
@@ -298,6 +301,7 @@ def main():
     )
     parser.add_argument("--lifecycle-synthesis", action="store_true", help="Enable the earlier lifecycle constructor")
     parser.add_argument("--buffer-generations", action="store_true", help="Construct events from per-buffer generations")
+    parser.add_argument("--handoff-planning", action="store_true", help="Refine handoffs with guarded whole-plan completion")
     parser.add_argument("--timeout", type=int, default=120)
     args = parser.parse_args()
     return campaign(args)

@@ -14,6 +14,8 @@ dialect operations, alias promises, or Python IR builders are introduced. The
 existing Python CLI forwards the same native flag.
 
 See [native bridge contracts, results and reproduction](../../test/experiments/insert_sync/event_model/NATIVE_BRIDGE.md).
+The [nineteen-input native regression runner](../../test/experiments/insert_sync/performance/NATIVE_HANDOFFS.md)
+records end-to-end acceptance, independent observer coverage and separate mechanisms.
 
 ## Native planning experiment
 

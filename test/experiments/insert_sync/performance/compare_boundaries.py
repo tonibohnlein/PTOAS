@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under
-# the terms and conditions of CANN Open Software License Agreement Version 2.0
-# (the "License"). Please refer to the License for details. You may not use
-# this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
-# AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
-# FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
-# for the full text of the License.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 
 """Compare concrete handoff boundaries, independent of event-ID spelling.
 
@@ -21,7 +19,11 @@ import json
 from pathlib import Path
 import re
 
-from measure import SYNC, attrs, children, replay
+from measure import SYNC, FIXED_PROTOCOL, attrs, children, replay
+
+
+class ObserverUnsupported(ValueError):
+    """Missing observer semantics, distinct from invalid concrete event flow."""
 
 
 class Boundaries:
@@ -86,7 +88,7 @@ class Boundaries:
         if op.name == "pto.tstore":
             lane = "PIPE_FIX" if "tile_buf<acc," in str(op.operands[0].type) else "PIPE_MTE3"
         if op.name == "pto.textract" and "tile_buf<mat," not in str(op.operands[0].type):
-            raise ValueError("boundary observer only qualifies MAT operand extraction")
+            raise ObserverUnsupported("boundary observer only qualifies MAT operand extraction")
         if op.name == "pto.tmov":
             # Qualified by TMovOp::getPipe: MAT -> LEFT/RIGHT uses MTE1.
             # Other TMOV directions have different physical completion domains.
@@ -96,7 +98,7 @@ class Boundaries:
             elif all("tile_buf<vec," in str(v.type) for v in op.operands):
                 lane = "PIPE_V"
         if op.name not in SYNC and op.name.startswith("pto.t") and lane is None:
-            raise ValueError(f"no qualified physical lane in boundary observer: {op.name}")
+            raise ObserverUnsupported(f"no qualified physical lane in boundary observer: {op.name}")
         self.action(op.name, attrs(op), lane, signature)
 
 
@@ -126,7 +128,32 @@ def run(path, scenario):
         context.enable_multithreading(False)
         pto.register_dialect(context, load=True)
         module = ir.Module.parse(path.read_text())
-        function = next(op for op in children(module.operation) if op.name == "func.func")
+        functions = [op for op in children(module.operation) if op.name == "func.func"]
+        if "function" in scenario:
+            selected = [op for op in functions if ir.StringAttr(op.attributes["sym_name"]).value == scenario["function"]]
+            if len(selected) != 1:
+                raise ValueError("unknown or ambiguous scenario function")
+            function = selected[0]
+        elif len(functions) == 1:
+            function = functions[0]
+        else:
+            raise ValueError("multi-function observation requires an explicit scenario function")
+        def walk(op):
+            yield op
+            for child in children(op):
+                yield from walk(child)
+        operations = list(walk(function))
+        unsupported = FIXED_PROTOCOL | {"func.call", "pto.set_flag_dyn", "pto.wait_flag_dyn",
+            "pto.record_event", "pto.wait_event", "pto.barrier_sync", "pto.syncall", "pto.tsync",
+            "pto.get_buf", "pto.rls_buf", "pto.set_cross_block", "pto.wait_cross_block",
+            "pto.set_intra_block", "pto.wait_intra_block", "pto.fence.barrier_all",
+            "pto.talloc", "pto.tpush", "pto.tpop", "pto.tfree", "pto.initialize_l2g2l_pipe"}
+        for op in operations:
+            if op.name in unsupported or op.name.startswith("pto.comm."):
+                raise ObserverUnsupported("unqualified helper/peer/resource operation: " + op.name)
+        sections = {op.name for op in operations if op.name in ("pto.section.cube", "pto.section.vector")}
+        if len(sections) > 1:
+            raise ObserverUnsupported("multiple physical lane contexts")
         result = Boundaries()
         metric = replay(function, scenario["arguments"], scenario.get("block_idx", 0),
                         scenario.get("block_num", 1), observer=result.observe)
