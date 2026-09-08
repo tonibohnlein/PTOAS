@@ -1,0 +1,113 @@
+{
+  "name": "known_expensive_nested_three_slot_scaled",
+  "parameters": [
+    "O",
+    "N"
+  ],
+  "context": "0<=O<=8 and 0<=N<=8",
+  "statements": [
+    {
+      "id": "L",
+      "lane": "MTE2",
+      "iterators": [
+        "tile",
+        "slot_iteration"
+      ],
+      "domain": "0<=tile<O and 0<=slot_iteration<N",
+      "schedule": [
+        "tile",
+        "slot_iteration",
+        "0"
+      ],
+      "reads": [
+        {
+          "space": "GM",
+          "address": "16*(32*tile+slot_iteration)",
+          "size": 2
+        }
+      ],
+      "writes": [
+        {
+          "space": "VEC",
+          "address": "8192 + 3*(4*(slot_iteration%3))",
+          "size": 2
+        }
+      ]
+    },
+    {
+      "id": "C",
+      "lane": "V",
+      "iterators": [
+        "tile",
+        "slot_iteration"
+      ],
+      "domain": "0<=tile<O and 0<=slot_iteration<N",
+      "schedule": [
+        "tile",
+        "slot_iteration",
+        "1"
+      ],
+      "reads": [
+        {
+          "space": "VEC",
+          "address": "8192 + 3*(4*(slot_iteration%3))",
+          "size": 2
+        }
+      ],
+      "writes": [
+        {
+          "space": "VEC",
+          "address": "8192 + 3*(64+4*(slot_iteration%3))",
+          "size": 2
+        }
+      ]
+    },
+    {
+      "id": "S",
+      "lane": "MTE3",
+      "iterators": [
+        "tile",
+        "slot_iteration"
+      ],
+      "domain": "0<=tile<O and 0<=slot_iteration<N",
+      "schedule": [
+        "tile",
+        "slot_iteration",
+        "2"
+      ],
+      "reads": [
+        {
+          "space": "VEC",
+          "address": "8192 + 3*(64+4*(slot_iteration%3))",
+          "size": 2
+        }
+      ],
+      "writes": [
+        {
+          "space": "GM",
+          "address": "100000000+16*(32*tile+slot_iteration)",
+          "size": 2
+        }
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "O": 0,
+      "N": 3
+    },
+    {
+      "O": 1,
+      "N": 0
+    },
+    {
+      "O": 2,
+      "N": 1
+    },
+    {
+      "O": 2,
+      "N": 3
+    }
+  ],
+  "provenance": "Hand-authored physical-facts reduction; not a native PTO benchmark capture"
+}

@@ -243,6 +243,10 @@ llvm::cl::opt<bool> insertSyncBufferGenerations(
     "insert-sync-buffer-generations",
     llvm::cl::desc("Construct synchronization from per-buffer reaching generations; experimental"),
     llvm::cl::init(false));
+llvm::cl::opt<std::string> insertSyncHandoffFactsDirectory(
+    "insert-sync-handoff-facts-dir",
+    llvm::cl::desc("Export qualified InsertSync pass-entry facts into this directory"),
+    llvm::cl::init(""));
 llvm::cl::opt<bool> insertSyncLifecycleSynthesis(
     "insert-sync-lifecycle-synthesis",
     llvm::cl::desc("Construct exact-slot lifecycle protocols before residual insertion (experimental)"),

@@ -1,0 +1,7 @@
+{
+  "v01_zip_sha256": "3ff28e1bf810d349986b6d167e77c3f2fb780ca340786e766e87cba0966b0fb3",
+  "v01_review_zip_sha256": "8686c929a56321426c612fead3384c629ebae8bd0964a2a4faff34475f2b4ccd",
+  "v01_repo_patch_sha256": "3619ba57e1cb6bbe9ac337f1253c6dee0de9f6a38bb5d9e55076c53b945b0f90",
+  "native_import_or_emission": "NOT_IMPLEMENTED",
+  "repository_checkout": "not used; experiment-only source revision"
+}

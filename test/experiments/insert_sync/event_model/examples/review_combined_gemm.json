@@ -1,0 +1,268 @@
+{
+  "name": "review_combined_gemm_reduction",
+  "parameters": [
+    "O",
+    "K"
+  ],
+  "context": "0<=O<=3 and 0<=K<=4",
+  "statements": [
+    {
+      "id": "APreload",
+      "lane": "MTE2",
+      "iterators": [
+        "o"
+      ],
+      "domain": "0<=o<O",
+      "schedule": [
+        "o",
+        "-1",
+        "0",
+        "0"
+      ],
+      "reads": [],
+      "writes": [
+        {
+          "space": "MAT",
+          "address": "0",
+          "size": 2
+        }
+      ]
+    },
+    {
+      "id": "BLoad",
+      "lane": "MTE2",
+      "iterators": [
+        "o",
+        "k"
+      ],
+      "domain": "0<=o<O and 0<=k<K",
+      "schedule": [
+        "o",
+        "k",
+        "0",
+        "0"
+      ],
+      "reads": [],
+      "writes": [
+        {
+          "space": "MAT",
+          "address": "16+4*(k%2)",
+          "size": 2
+        }
+      ]
+    },
+    {
+      "id": "ANext",
+      "lane": "MTE2",
+      "iterators": [
+        "o",
+        "k"
+      ],
+      "domain": "0<=o<O and 0<=k<K and k+1<K",
+      "schedule": [
+        "o",
+        "k",
+        "1",
+        "0"
+      ],
+      "reads": [],
+      "writes": [
+        {
+          "space": "MAT",
+          "address": "4*((k+1)%2)",
+          "size": 2
+        }
+      ]
+    },
+    {
+      "id": "XL",
+      "lane": "MTE1",
+      "iterators": [
+        "o",
+        "k",
+        "j"
+      ],
+      "domain": "0<=o<O and 0<=k<K and 0<=j<2",
+      "schedule": [
+        "o",
+        "k",
+        "2",
+        "3*j"
+      ],
+      "reads": [
+        {
+          "space": "MAT",
+          "address": "4*(k%2)+j",
+          "size": 1
+        }
+      ],
+      "writes": [
+        {
+          "space": "LEFT",
+          "address": "4*(j%2)",
+          "size": 1
+        }
+      ]
+    },
+    {
+      "id": "XR",
+      "lane": "MTE1",
+      "iterators": [
+        "o",
+        "k",
+        "j"
+      ],
+      "domain": "0<=o<O and 0<=k<K and 0<=j<2",
+      "schedule": [
+        "o",
+        "k",
+        "2",
+        "3*j+1"
+      ],
+      "reads": [
+        {
+          "space": "MAT",
+          "address": "16+4*(k%2)+j",
+          "size": 1
+        }
+      ],
+      "writes": [
+        {
+          "space": "RIGHT",
+          "address": "4*(j%2)",
+          "size": 1
+        }
+      ]
+    },
+    {
+      "id": "MInit",
+      "lane": "M",
+      "iterators": [
+        "o",
+        "k",
+        "j"
+      ],
+      "domain": "0<=o<O and 0<=k<K and 0<=j<2 and k=0 and j=0",
+      "schedule": [
+        "o",
+        "k",
+        "2",
+        "3*j+2"
+      ],
+      "reads": [
+        {
+          "space": "LEFT",
+          "address": "4*(j%2)",
+          "size": 1
+        },
+        {
+          "space": "RIGHT",
+          "address": "4*(j%2)",
+          "size": 1
+        }
+      ],
+      "writes": [
+        {
+          "space": "ACC",
+          "address": "0",
+          "size": 1
+        }
+      ]
+    },
+    {
+      "id": "MUpdate",
+      "lane": "M",
+      "iterators": [
+        "o",
+        "k",
+        "j"
+      ],
+      "domain": "0<=o<O and 0<=k<K and 0<=j<2 and (k>0 or j>0)",
+      "schedule": [
+        "o",
+        "k",
+        "2",
+        "3*j+2"
+      ],
+      "reads": [
+        {
+          "space": "LEFT",
+          "address": "4*(j%2)",
+          "size": 1
+        },
+        {
+          "space": "RIGHT",
+          "address": "4*(j%2)",
+          "size": 1
+        },
+        {
+          "space": "ACC",
+          "address": "0",
+          "size": 1
+        }
+      ],
+      "writes": [
+        {
+          "space": "ACC",
+          "address": "0",
+          "size": 1
+        }
+      ]
+    },
+    {
+      "id": "Store",
+      "lane": "FIX",
+      "iterators": [
+        "o"
+      ],
+      "domain": "0<=o<O",
+      "schedule": [
+        "o",
+        "K",
+        "0",
+        "0"
+      ],
+      "reads": [
+        {
+          "space": "ACC",
+          "address": "0",
+          "size": 1
+        }
+      ],
+      "writes": [
+        {
+          "space": "GM",
+          "address": "16*o",
+          "size": 1
+        }
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "O": 0,
+      "K": 0
+    },
+    {
+      "O": 1,
+      "K": 0
+    },
+    {
+      "O": 1,
+      "K": 1
+    },
+    {
+      "O": 2,
+      "K": 1
+    },
+    {
+      "O": 2,
+      "K": 2
+    },
+    {
+      "O": 2,
+      "K": 3
+    }
+  ],
+  "provenance": "Hand-authored physical-facts reduction; not a native PTO benchmark capture"
+}

@@ -1,0 +1,16 @@
+{
+  "status": "PASS_WITH_EXPLICIT_UNPROVED_CASE",
+  "version": "0.2.0",
+  "isl": "isl-0.27-GMP",
+  "review_model_specializations": 19,
+  "combined_model_symbolic_domains_proved": 12,
+  "exhaustive_positive_checks": 15,
+  "exhaustive_positive_states": 14295,
+  "new_unsafe_mutation_checks": 1,
+  "known_unproved_cases": 1,
+  "native_import_and_emission": "NOT_IMPLEMENTED",
+  "native_PTOAS": "NOT_RUN",
+  "device_correctness": "NOT_RUN",
+  "device_timing": "NOT_RUN",
+  "elapsed_seconds": 15.57
+}

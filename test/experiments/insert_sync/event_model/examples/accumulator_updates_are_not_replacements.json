@@ -1,0 +1,105 @@
+{
+  "name": "accumulator_updates_are_not_replacements",
+  "parameters": [
+    "O",
+    "K"
+  ],
+  "context": "0<=O<=8 and 0<=K<=8",
+  "statements": [
+    {
+      "id": "Init",
+      "lane": "M",
+      "iterators": [
+        "o"
+      ],
+      "domain": "0<=o<O",
+      "schedule": [
+        "o",
+        "0",
+        "0"
+      ],
+      "reads": [],
+      "writes": [
+        {
+          "space": "ACC",
+          "address": "0",
+          "size": 4
+        }
+      ]
+    },
+    {
+      "id": "Update",
+      "lane": "M",
+      "iterators": [
+        "o",
+        "k"
+      ],
+      "domain": "0<=o<O and 0<=k<K",
+      "schedule": [
+        "o",
+        "1",
+        "k"
+      ],
+      "reads": [
+        {
+          "space": "ACC",
+          "address": "0",
+          "size": 4
+        }
+      ],
+      "writes": [
+        {
+          "space": "ACC",
+          "address": "0",
+          "size": 4
+        }
+      ]
+    },
+    {
+      "id": "Store",
+      "lane": "FIX",
+      "iterators": [
+        "o"
+      ],
+      "domain": "0<=o<O",
+      "schedule": [
+        "o",
+        "2",
+        "0"
+      ],
+      "reads": [
+        {
+          "space": "ACC",
+          "address": "0",
+          "size": 4
+        }
+      ],
+      "writes": [
+        {
+          "space": "GM",
+          "address": "32*o",
+          "size": 4
+        }
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "O": 0,
+      "K": 2
+    },
+    {
+      "O": 2,
+      "K": 0
+    },
+    {
+      "O": 1,
+      "K": 1
+    },
+    {
+      "O": 2,
+      "K": 2
+    }
+  ],
+  "provenance": "Hand-authored physical-facts reduction; not a native PTO benchmark capture"
+}

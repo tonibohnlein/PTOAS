@@ -1,0 +1,16 @@
+{
+  "name": "two_slot_pipeline", "parameters": ["N"], "context": "0 <= N <= 1000000",
+  "provenance": "Hand-authored physical-facts model, not the frozen PTO benchmark",
+  "statements": [
+    {"id":"L", "lane":"MTE2", "iterators":["i"], "domain":"0<=i<N", "schedule":["i","0"],
+     "reads":[{"space":"GM", "address":"16*i", "size":4}],
+     "writes":[{"space":"VEC", "address":"4*(i%2)", "size":4}]},
+    {"id":"C", "lane":"V", "iterators":["i"], "domain":"0<=i<N", "schedule":["i","1"],
+     "reads":[{"space":"VEC", "address":"4*(i%2)", "size":4}],
+     "writes":[{"space":"VEC", "address":"32+4*(i%2)", "size":4}]},
+    {"id":"S", "lane":"MTE3", "iterators":["i"], "domain":"0<=i<N", "schedule":["i","2"],
+     "reads":[{"space":"VEC", "address":"32+4*(i%2)", "size":4}],
+     "writes":[{"space":"GM", "address":"100000000+16*i", "size":4}]}
+  ],
+  "scenarios":[{"N":0},{"N":1},{"N":2},{"N":3},{"N":5}]
+}

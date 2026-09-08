@@ -1,0 +1,6 @@
+{
+  "case": "nested_three_slot_scaled.json",
+  "max_isl_operations": 100000,
+  "status": "UNPROVED_AT_CONFIGURED_BUDGET",
+  "reason": "maximal number of operations exceeded"
+}

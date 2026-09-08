@@ -1,0 +1,80 @@
+{
+  "name": "partial_writes",
+  "parameters": [],
+  "context": "true",
+  "statements": [
+    {
+      "id": "Low",
+      "lane": "MTE2",
+      "iterators": [],
+      "domain": "true",
+      "schedule": [
+        "0"
+      ],
+      "reads": [],
+      "writes": [
+        {
+          "space": "MAT",
+          "address": "0",
+          "size": 4
+        }
+      ]
+    },
+    {
+      "id": "ReadLow",
+      "lane": "MTE1",
+      "iterators": [],
+      "domain": "true",
+      "schedule": [
+        "1"
+      ],
+      "reads": [
+        {
+          "space": "MAT",
+          "address": "0",
+          "size": 4
+        }
+      ],
+      "writes": []
+    },
+    {
+      "id": "High",
+      "lane": "MTE2",
+      "iterators": [],
+      "domain": "true",
+      "schedule": [
+        "2"
+      ],
+      "reads": [],
+      "writes": [
+        {
+          "space": "MAT",
+          "address": "4",
+          "size": 4,
+          "definite": true
+        }
+      ]
+    },
+    {
+      "id": "ReadAll",
+      "lane": "MTE1",
+      "iterators": [],
+      "domain": "true",
+      "schedule": [
+        "3"
+      ],
+      "reads": [
+        {
+          "space": "MAT",
+          "address": "0",
+          "size": 8
+        }
+      ],
+      "writes": []
+    }
+  ],
+  "scenarios": [
+    {}
+  ],
+  "provenance": "Hand-authored physical-facts reduction; not a native PTO benchmark capture"
+}

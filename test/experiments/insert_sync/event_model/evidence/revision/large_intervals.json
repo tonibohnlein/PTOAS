@@ -1,0 +1,63 @@
+{
+  "scope": "geometry/complexity test; one-terabyte extent is not a valid Ascend capacity claim",
+  "specializations": [
+    {
+      "bytes": 131072,
+      "represented_intervals": 2,
+      "metrics": {
+        "payload_operations": 2,
+        "sets": 1,
+        "waits": 1,
+        "named_barriers": {},
+        "exit_policy": "separate abstract completion drain; no target ABI claim",
+        "missing_memory_requirements": []
+      },
+      "asynchronous_check": {
+        "status": "PASS",
+        "states": 9,
+        "terminal_states": 1,
+        "failure": null,
+        "max_active_lanes": 1,
+        "active_lane_examples": {
+          "": [],
+          "MTE2": [
+            0
+          ],
+          "MTE1": [
+            1
+          ]
+        },
+        "scope": "exhaustive for this finite specialization and stated abstract target only"
+      }
+    },
+    {
+      "bytes": 1099511627776,
+      "represented_intervals": 2,
+      "metrics": {
+        "payload_operations": 2,
+        "sets": 1,
+        "waits": 1,
+        "named_barriers": {},
+        "exit_policy": "separate abstract completion drain; no target ABI claim",
+        "missing_memory_requirements": []
+      },
+      "asynchronous_check": {
+        "status": "PASS",
+        "states": 9,
+        "terminal_states": 1,
+        "failure": null,
+        "max_active_lanes": 1,
+        "active_lane_examples": {
+          "": [],
+          "MTE2": [
+            0
+          ],
+          "MTE1": [
+            1
+          ]
+        },
+        "scope": "exhaustive for this finite specialization and stated abstract target only"
+      }
+    }
+  ]
+}

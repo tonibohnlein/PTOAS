@@ -1,0 +1,67 @@
+{
+  "name": "compatible_operand_bundle",
+  "parameters": [],
+  "context": "true",
+  "statements": [
+    {
+      "id": "Left",
+      "lane": "MTE1",
+      "iterators": [],
+      "domain": "true",
+      "schedule": [
+        "0"
+      ],
+      "reads": [],
+      "writes": [
+        {
+          "space": "LEFT",
+          "address": "0",
+          "size": 4
+        }
+      ]
+    },
+    {
+      "id": "Right",
+      "lane": "MTE1",
+      "iterators": [],
+      "domain": "true",
+      "schedule": [
+        "2"
+      ],
+      "reads": [],
+      "writes": [
+        {
+          "space": "RIGHT",
+          "address": "0",
+          "size": 4
+        }
+      ]
+    },
+    {
+      "id": "Matmul",
+      "lane": "M",
+      "iterators": [],
+      "domain": "true",
+      "schedule": [
+        "3"
+      ],
+      "reads": [
+        {
+          "space": "LEFT",
+          "address": "0",
+          "size": 4
+        },
+        {
+          "space": "RIGHT",
+          "address": "0",
+          "size": 4
+        }
+      ],
+      "writes": []
+    }
+  ],
+  "scenarios": [
+    {}
+  ],
+  "provenance": "Hand-authored physical-facts reduction; not a native PTO benchmark capture"
+}

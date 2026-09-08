@@ -26,6 +26,7 @@
 #include "PTO/Transforms/InsertSync/PruneCompletedBarriers.h"
 #include "PTO/Transforms/InsertSync/StorageFrontierAnalysis.h"
 #include "PTO/Transforms/InsertSync/LifecycleSynthesis.h"
+#include "PTO/Transforms/InsertSync/HandoffFacts.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h" // [FIX] 确保 FuncOp 定义可见
@@ -128,6 +129,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         frontierPlacement = options.frontierPlacement;
         lifecycleSynthesis = options.lifecycleSynthesis;
         bufferGenerations = options.bufferGenerations;
+        handoffFactsDirectory = options.handoffFactsDirectory;
     }
     PTOInsertSyncPass(const PTOInsertSyncPass& other) : PTOInsertSyncBase(other)
     {
@@ -141,6 +143,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         frontierPlacement = other.frontierPlacement;
         lifecycleSynthesis = other.lifecycleSynthesis;
         bufferGenerations = other.bufferGenerations;
+        handoffFactsDirectory = other.handoffFactsDirectory;
     }
 
     Option<bool> deferSamePipe{
@@ -174,6 +177,10 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         *this, "buffer-generations", llvm::cl::init(false),
         llvm::cl::desc("Construct synchronization from per-buffer reaching generations; experimental")};
 
+    Option<std::string> handoffFactsDirectory{
+        *this, "handoff-facts-dir", llvm::cl::init(""),
+        llvm::cl::desc("Export qualified pass-entry handoff facts without changing synchronization")};
+
     void auditOutput(func::FuncOp function)
     {
         if (audit == "off") {
@@ -198,6 +205,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // funcs have a function type but no entry block arguments, so the
     // translator's argument walk must not run on them.
     if (func.isDeclaration()) {
+      if (!handoffFactsDirectory.empty() && failed(exportInsertSyncHandoffFacts(
+              func, handoffFactsDirectory, 8000000, "function declaration"))) signalPassFailure();
       return;
     }
     if (audit != "off" && audit != "report" && audit != "strict") {
@@ -221,6 +230,11 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
             &getContext(), *contract == InsertSyncGMAliasMode::MayAlias ? "may-alias" : "assume-disjoint-arguments"));
 
     if (hasAtomicTileOpContract(func)) {
+        if (!handoffFactsDirectory.empty() && failed(exportInsertSyncHandoffFacts(
+                func, handoffFactsDirectory, 8000000, "atomic helper contract"))) {
+            signalPassFailure();
+            return;
+        }
         func->setAttr("pto.insert_sync.status", StringAttr::get(&getContext(), "atomic-helper-contract"));
         auditOutput(func);
         return;
@@ -242,8 +256,18 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       return WalkResult::advance();
     });
     if (hasExplicitSync) {
+        if (!handoffFactsDirectory.empty() && failed(exportInsertSyncHandoffFacts(
+                func, handoffFactsDirectory, 8000000, "explicit synchronization"))) {
+            signalPassFailure();
+            return;
+        }
         func->setAttr("pto.insert_sync.status", StringAttr::get(&getContext(), "explicit-sync-bypass"));
         auditOutput(func);
+        return;
+    }
+
+    if (!handoffFactsDirectory.empty() && failed(exportInsertSyncHandoffFacts(func, handoffFactsDirectory))) {
+        signalPassFailure();
         return;
     }
 

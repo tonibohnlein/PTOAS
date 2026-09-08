@@ -26,6 +26,7 @@ struct InsertSyncOptions {
     bool frontierPlacement = false;
     bool lifecycleSynthesis = false;
     bool bufferGenerations = false;
+    std::string handoffFactsDirectory;
 };
 std::unique_ptr<Pass> createPTOInsertSyncPass(const InsertSyncOptions& options);
 } // namespace mlir::pto

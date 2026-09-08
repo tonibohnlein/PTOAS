@@ -684,6 +684,7 @@ static InsertSyncOptions makeInsertSyncOptions()
     options.frontierPlacement = insertSyncFrontierPlacement;
     options.lifecycleSynthesis = insertSyncLifecycleSynthesis;
     options.bufferGenerations = insertSyncBufferGenerations;
+    options.handoffFactsDirectory = insertSyncHandoffFactsDirectory;
     return options;
 }
 

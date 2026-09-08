@@ -1,0 +1,55 @@
+{
+  "independent_preloads": {
+    "precise": {
+      "payload_operations": 4,
+      "sets": 2,
+      "waits": 2,
+      "named_barriers": {},
+      "exit_policy": "separate abstract completion drain; no target ABI claim",
+      "missing_memory_requirements": []
+    },
+    "broad": {
+      "payload_operations": 4,
+      "sets": 1,
+      "waits": 1,
+      "named_barriers": {},
+      "exit_policy": "separate abstract completion drain; no target ABI claim",
+      "missing_memory_requirements": []
+    },
+    "quality": {
+      "new_payload_order": [
+        [
+          1,
+          2
+        ]
+      ],
+      "removed_payload_order": [],
+      "missing_memory_requirements": [],
+      "no_additional_payload_blocking": false
+    }
+  },
+  "compatible_bundle": {
+    "before": {
+      "payload_operations": 3,
+      "sets": 2,
+      "waits": 2,
+      "named_barriers": {},
+      "exit_policy": "separate abstract completion drain; no target ABI claim",
+      "missing_memory_requirements": []
+    },
+    "after": {
+      "payload_operations": 3,
+      "sets": 1,
+      "waits": 1,
+      "named_barriers": {},
+      "exit_policy": "separate abstract completion drain; no target ABI claim",
+      "missing_memory_requirements": []
+    },
+    "quality": {
+      "new_payload_order": [],
+      "removed_payload_order": [],
+      "missing_memory_requirements": [],
+      "no_additional_payload_blocking": true
+    }
+  }
+}

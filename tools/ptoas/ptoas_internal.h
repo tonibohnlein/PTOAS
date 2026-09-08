@@ -70,6 +70,7 @@ extern llvm::cl::opt<bool> insertSyncFrontierRefinement;
 extern llvm::cl::opt<bool> insertSyncFrontierPlacement;
 extern llvm::cl::opt<bool> insertSyncLifecycleSynthesis;
 extern llvm::cl::opt<bool> insertSyncBufferGenerations;
+extern llvm::cl::opt<std::string> insertSyncHandoffFactsDirectory;
 extern llvm::cl::opt<bool> enableBufidSync;
 extern llvm::cl::opt<bool> enableBufidSyncDebug;
 extern llvm::cl::opt<bool> enableInjectBarrierAllSync;

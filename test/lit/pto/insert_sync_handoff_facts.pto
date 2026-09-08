@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0; see LICENSE.
+// RUN: %python %S/Inputs/check_handoff_facts.py pto-test-opt %s %t
+
+!V = !pto.tile_buf<vec, 16x16xf16>
+!G = !pto.tensor_view<?x?xf16>
+!P = !pto.partition_tensor_view<16x16xf16>
+module attributes {pto.target_arch = "a3"} {
+  func.func @looping_readiness(%src: !pto.ptr<f16>, %n: index, %read: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %s = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %a0 : !V
+    %b = pto.alloc_tile addr = %a1 : !V
+    %view = pto.make_tensor_view %src, shape = [%s, %s], strides = [%s, %one] : !G
+    %input = pto.partition_view %view, offsets = [%z, %z], sizes = [%s, %s] : !G -> !P
+    pto.tload ins(%input : !P) outs(%a : !V)
+    scf.for %i = %z to %n step %one {
+      scf.if %read {
+        pto.tabs ins(%a : !V) outs(%b : !V)
+      }
+      pto.tload ins(%input : !P) outs(%a : !V)
+    }
+    return
+  }
+}

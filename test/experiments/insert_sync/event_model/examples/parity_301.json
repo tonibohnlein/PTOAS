@@ -1,0 +1,84 @@
+{
+  "name": "parity_301",
+  "parameters": [
+    "N"
+  ],
+  "context": "0<=N<=8",
+  "statements": [
+    {
+      "id": "P",
+      "lane": "MTE2",
+      "iterators": [
+        "i"
+      ],
+      "domain": "0<=i<N",
+      "schedule": [
+        "i",
+        "0"
+      ],
+      "reads": [],
+      "writes": [
+        {
+          "space": "MAT",
+          "address": "8*(i%2)",
+          "size": 4
+        }
+      ]
+    },
+    {
+      "id": "Even",
+      "lane": "MTE1",
+      "iterators": [
+        "i"
+      ],
+      "domain": "0<=i<N and (i%2=0)",
+      "schedule": [
+        "i",
+        "1"
+      ],
+      "reads": [
+        {
+          "space": "MAT",
+          "address": "8*(i%2)",
+          "size": 4
+        }
+      ],
+      "writes": []
+    },
+    {
+      "id": "Odd",
+      "lane": "MTE1",
+      "iterators": [
+        "i"
+      ],
+      "domain": "0<=i<N and not (i%2=0)",
+      "schedule": [
+        "i",
+        "2"
+      ],
+      "reads": [
+        {
+          "space": "MAT",
+          "address": "8*(i%2)",
+          "size": 4
+        }
+      ],
+      "writes": []
+    }
+  ],
+  "scenarios": [
+    {
+      "N": 0
+    },
+    {
+      "N": 1
+    },
+    {
+      "N": 3
+    },
+    {
+      "N": 4
+    }
+  ],
+  "provenance": "Hand-authored physical-facts reduction; not a native PTO benchmark capture"
+}

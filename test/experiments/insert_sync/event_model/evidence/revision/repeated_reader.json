@@ -1,0 +1,334 @@
+{
+  "plan": {
+    "scope": "symbolic affine/presburger facts, fixed payload schedule",
+    "isl_version": "isl-0.27-GMP",
+    "RAW": "[N] -> { W[] -> R[i] : N <= 1000000 and 0 <= i < N }",
+    "WAR": "[N] -> {  }",
+    "WAW": "[N] -> {  }",
+    "live_in_reads": "[N] -> {  }",
+    "live_in_read_precision": "exact flow result",
+    "handoffs": {},
+    "barriers_before": {
+      "V": "[N] -> { R[i = 0] -> R[i' = 0] : 0 < N <= 1000000 }"
+    },
+    "all_memory_requirements_proved": true,
+    "supply_fixed_point_reached": false,
+    "audit": [
+      {
+        "action": "remove_redundant_barrier_occurrences",
+        "lane": "V",
+        "removed": "[N] -> { R[i] -> R[i' = i] : N <= 1000000 and 0 < i < N }",
+        "reason": "earlier selected cuts already supply these demands",
+        "all_dense_requirements_rechecked": true,
+        "no_added_primitive_order": true
+      },
+      {
+        "action": "barrier_refinement_summary",
+        "attempts": 2,
+        "budget": 64,
+        "scope": "symbolic deletion only; allocation is re-proved later"
+      },
+      {
+        "action": "accept_symbolic_payload_order",
+        "reason": "all dense memory hazards are implied, for the whole parameter context",
+        "scope": "completion order, not physical reusable-token proof"
+      }
+    ],
+    "not_proved": [
+      "PTO native effect extraction",
+      "instruction-specific target legality and effect contracts",
+      "arbitrary non-affine control",
+      "complete search over all finite-key realizations",
+      "hardware visibility beyond the qualified local model",
+      "device timing"
+    ]
+  },
+  "specializations": [
+    {
+      "N": 0,
+      "before": {
+        "payload_operations": 1,
+        "sets": 0,
+        "waits": 0,
+        "named_barriers": {},
+        "exit_policy": "separate abstract completion drain; no target ABI claim",
+        "missing_memory_requirements": []
+      },
+      "after": {
+        "payload_operations": 1,
+        "sets": 0,
+        "waits": 0,
+        "named_barriers": {},
+        "exit_policy": "separate abstract completion drain; no target ABI claim",
+        "missing_memory_requirements": []
+      },
+      "quality": {
+        "new_payload_order": [],
+        "removed_payload_order": [],
+        "missing_memory_requirements": [],
+        "no_additional_payload_blocking": true
+      },
+      "async": {
+        "status": "PASS",
+        "states": 3,
+        "terminal_states": 1,
+        "failure": null,
+        "max_active_lanes": 1,
+        "active_lane_examples": {
+          "": [],
+          "V": [
+            0
+          ]
+        },
+        "scope": "exhaustive for this finite specialization and stated abstract target only"
+      }
+    },
+    {
+      "N": 1,
+      "before": {
+        "payload_operations": 2,
+        "sets": 0,
+        "waits": 0,
+        "named_barriers": {
+          "V": 1
+        },
+        "exit_policy": "separate abstract completion drain; no target ABI claim",
+        "missing_memory_requirements": []
+      },
+      "after": {
+        "payload_operations": 2,
+        "sets": 0,
+        "waits": 0,
+        "named_barriers": {
+          "V": 1
+        },
+        "exit_policy": "separate abstract completion drain; no target ABI claim",
+        "missing_memory_requirements": []
+      },
+      "quality": {
+        "new_payload_order": [],
+        "removed_payload_order": [],
+        "missing_memory_requirements": [],
+        "no_additional_payload_blocking": true
+      },
+      "async": {
+        "status": "PASS",
+        "states": 6,
+        "terminal_states": 1,
+        "failure": null,
+        "max_active_lanes": 1,
+        "active_lane_examples": {
+          "": [],
+          "V": [
+            0
+          ]
+        },
+        "scope": "exhaustive for this finite specialization and stated abstract target only"
+      }
+    },
+    {
+      "N": 2,
+      "before": {
+        "payload_operations": 3,
+        "sets": 0,
+        "waits": 0,
+        "named_barriers": {
+          "V": 2
+        },
+        "exit_policy": "separate abstract completion drain; no target ABI claim",
+        "missing_memory_requirements": []
+      },
+      "after": {
+        "payload_operations": 3,
+        "sets": 0,
+        "waits": 0,
+        "named_barriers": {
+          "V": 1
+        },
+        "exit_policy": "separate abstract completion drain; no target ABI claim",
+        "missing_memory_requirements": []
+      },
+      "quality": {
+        "new_payload_order": [],
+        "removed_payload_order": [
+          [
+            1,
+            2
+          ]
+        ],
+        "missing_memory_requirements": [],
+        "no_additional_payload_blocking": true
+      },
+      "async": {
+        "status": "PASS",
+        "states": 10,
+        "terminal_states": 1,
+        "failure": null,
+        "max_active_lanes": 1,
+        "active_lane_examples": {
+          "": [],
+          "V": [
+            0
+          ]
+        },
+        "scope": "exhaustive for this finite specialization and stated abstract target only"
+      }
+    },
+    {
+      "N": 8,
+      "before": {
+        "payload_operations": 9,
+        "sets": 0,
+        "waits": 0,
+        "named_barriers": {
+          "V": 8
+        },
+        "exit_policy": "separate abstract completion drain; no target ABI claim",
+        "missing_memory_requirements": []
+      },
+      "after": {
+        "payload_operations": 9,
+        "sets": 0,
+        "waits": 0,
+        "named_barriers": {
+          "V": 1
+        },
+        "exit_policy": "separate abstract completion drain; no target ABI claim",
+        "missing_memory_requirements": []
+      },
+      "quality": {
+        "new_payload_order": [],
+        "removed_payload_order": [
+          [
+            1,
+            2
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            1,
+            4
+          ],
+          [
+            1,
+            5
+          ],
+          [
+            1,
+            6
+          ],
+          [
+            1,
+            7
+          ],
+          [
+            1,
+            8
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            2,
+            6
+          ],
+          [
+            2,
+            7
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            3,
+            5
+          ],
+          [
+            3,
+            6
+          ],
+          [
+            3,
+            7
+          ],
+          [
+            3,
+            8
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            4,
+            6
+          ],
+          [
+            4,
+            7
+          ],
+          [
+            4,
+            8
+          ],
+          [
+            5,
+            6
+          ],
+          [
+            5,
+            7
+          ],
+          [
+            5,
+            8
+          ],
+          [
+            6,
+            7
+          ],
+          [
+            6,
+            8
+          ],
+          [
+            7,
+            8
+          ]
+        ],
+        "missing_memory_requirements": [],
+        "no_additional_payload_blocking": true
+      },
+      "async": {
+        "status": "PASS",
+        "states": 514,
+        "terminal_states": 1,
+        "failure": null,
+        "max_active_lanes": 1,
+        "active_lane_examples": {
+          "": [],
+          "V": [
+            0
+          ]
+        },
+        "scope": "exhaustive for this finite specialization and stated abstract target only"
+      }
+    }
+  ]
+}

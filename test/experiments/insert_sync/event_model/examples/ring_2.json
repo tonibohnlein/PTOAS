@@ -1,0 +1,105 @@
+{
+  "name": "ring_2",
+  "parameters": [
+    "N"
+  ],
+  "context": "0<=N<=1000000",
+  "statements": [
+    {
+      "id": "L",
+      "lane": "MTE2",
+      "iterators": [
+        "i"
+      ],
+      "domain": "0<=i<N",
+      "schedule": [
+        "i",
+        "0"
+      ],
+      "reads": [
+        {
+          "space": "GM",
+          "address": "16*i",
+          "size": 2
+        }
+      ],
+      "writes": [
+        {
+          "space": "VEC",
+          "address": "4*(i%2)",
+          "size": 2
+        }
+      ]
+    },
+    {
+      "id": "C",
+      "lane": "V",
+      "iterators": [
+        "i"
+      ],
+      "domain": "0<=i<N",
+      "schedule": [
+        "i",
+        "1"
+      ],
+      "reads": [
+        {
+          "space": "VEC",
+          "address": "4*(i%2)",
+          "size": 2
+        }
+      ],
+      "writes": [
+        {
+          "space": "VEC",
+          "address": "64+4*(i%2)",
+          "size": 2
+        }
+      ]
+    },
+    {
+      "id": "S",
+      "lane": "MTE3",
+      "iterators": [
+        "i"
+      ],
+      "domain": "0<=i<N",
+      "schedule": [
+        "i",
+        "2"
+      ],
+      "reads": [
+        {
+          "space": "VEC",
+          "address": "64+4*(i%2)",
+          "size": 2
+        }
+      ],
+      "writes": [
+        {
+          "space": "GM",
+          "address": "100000000+16*i",
+          "size": 2
+        }
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "N": 0
+    },
+    {
+      "N": 1
+    },
+    {
+      "N": 2
+    },
+    {
+      "N": 3
+    },
+    {
+      "N": 4
+    }
+  ],
+  "provenance": "Hand-authored physical-facts reduction; not a native PTO benchmark capture"
+}

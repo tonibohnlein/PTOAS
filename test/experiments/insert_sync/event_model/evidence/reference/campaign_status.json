@@ -1,0 +1,17 @@
+{
+  "status": "PASS",
+  "python": "3.13.5",
+  "isl": "isl-0.27-GMP",
+  "semantic_fixture_models": 14,
+  "finite_specializations": 50,
+  "symbolic_key_domains_proved": 34,
+  "positive_async_checks": 62,
+  "positive_async_states": 10842,
+  "negative_controls": 5,
+  "scope": "symbolic input facts plus finite target-model realizations",
+  "native_import_and_emission": "NOT_IMPLEMENTED",
+  "native_compiler": "NOT_RUN",
+  "device_correctness": "NOT_RUN",
+  "device_timing": "NOT_RUN",
+  "elapsed_seconds": 7.792
+}

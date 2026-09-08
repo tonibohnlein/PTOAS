@@ -1,0 +1,109 @@
+{
+  "name": "independent_preload_boundaries",
+  "parameters": [
+    "J",
+    "K"
+  ],
+  "context": "0<=J<=8 and 0<=K<=8",
+  "statements": [
+    {
+      "id": "A",
+      "lane": "MTE2",
+      "iterators": [],
+      "domain": "true",
+      "schedule": [
+        "0",
+        "0"
+      ],
+      "reads": [],
+      "writes": [
+        {
+          "space": "MAT",
+          "address": "0",
+          "size": 4
+        }
+      ]
+    },
+    {
+      "id": "B",
+      "lane": "MTE2",
+      "iterators": [],
+      "domain": "true",
+      "schedule": [
+        "1",
+        "0"
+      ],
+      "reads": [],
+      "writes": [
+        {
+          "space": "MAT",
+          "address": "16",
+          "size": 4
+        }
+      ]
+    },
+    {
+      "id": "UseA",
+      "lane": "MTE1",
+      "iterators": [
+        "j"
+      ],
+      "domain": "0<=j<J",
+      "schedule": [
+        "2",
+        "j"
+      ],
+      "reads": [
+        {
+          "space": "MAT",
+          "address": "0",
+          "size": 4
+        }
+      ],
+      "writes": []
+    },
+    {
+      "id": "UseB",
+      "lane": "MTE1",
+      "iterators": [
+        "j"
+      ],
+      "domain": "0<=j<K",
+      "schedule": [
+        "3",
+        "j"
+      ],
+      "reads": [
+        {
+          "space": "MAT",
+          "address": "16",
+          "size": 4
+        }
+      ],
+      "writes": []
+    }
+  ],
+  "scenarios": [
+    {
+      "J": 0,
+      "K": 0
+    },
+    {
+      "J": 0,
+      "K": 2
+    },
+    {
+      "J": 2,
+      "K": 0
+    },
+    {
+      "J": 1,
+      "K": 1
+    },
+    {
+      "J": 2,
+      "K": 3
+    }
+  ],
+  "provenance": "Hand-authored physical-facts reduction; not a native PTO benchmark capture"
+}

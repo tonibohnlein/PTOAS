@@ -1,0 +1,89 @@
+{
+  "scope": "same current code with refinement off/on, not native compiler arms",
+  "before": {
+    "payload_operations": 4,
+    "sets": 0,
+    "waits": 0,
+    "named_barriers": {
+      "V": 2
+    },
+    "exit_policy": "separate abstract completion drain; no target ABI claim",
+    "missing_memory_requirements": []
+  },
+  "after": {
+    "payload_operations": 4,
+    "sets": 0,
+    "waits": 0,
+    "named_barriers": {
+      "V": 1
+    },
+    "exit_policy": "separate abstract completion drain; no target ABI claim",
+    "missing_memory_requirements": []
+  },
+  "quality": {
+    "new_payload_order": [],
+    "removed_payload_order": [
+      [
+        2,
+        3
+      ]
+    ],
+    "missing_memory_requirements": [],
+    "no_additional_payload_blocking": true
+  },
+  "audit": [
+    {
+      "action": "remove_redundant_barrier_occurrences",
+      "lane": "V",
+      "removed": "{ RB[] -> RB[] }",
+      "reason": "earlier selected cuts already supply these demands",
+      "all_dense_requirements_rechecked": true,
+      "no_added_primitive_order": true
+    },
+    {
+      "action": "barrier_refinement_summary",
+      "attempts": 2,
+      "budget": 64,
+      "scope": "symbolic deletion only; allocation is re-proved later"
+    },
+    {
+      "action": "accept_symbolic_payload_order",
+      "reason": "all dense memory hazards are implied, for the whole parameter context",
+      "scope": "completion order, not physical reusable-token proof"
+    }
+  ],
+  "asynchronous_check": {
+    "status": "PASS",
+    "states": 14,
+    "terminal_states": 1,
+    "failure": null,
+    "max_active_lanes": 1,
+    "active_lane_examples": {
+      "": [],
+      "V": [
+        0
+      ]
+    },
+    "scope": "exhaustive for this finite specialization and stated abstract target only"
+  },
+  "missing_barrier_mutation": {
+    "status": "FAIL",
+    "states": 4,
+    "terminal_states": 0,
+    "failure": {
+      "kind": "memory-order",
+      "target": 2,
+      "unfinished_sources": [
+        0
+      ]
+    },
+    "max_active_lanes": 1,
+    "active_lane_examples": {
+      "": [],
+      "V": [
+        0
+      ]
+    },
+    "scope": "exhaustive for this finite specialization and stated abstract target only"
+  }
+}

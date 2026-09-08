@@ -1,0 +1,451 @@
+{
+  "base_commit": "0387c6f17a4a13712a3d606349d0bdabc0c76e99",
+  "build": "reviewed pre-commit worktree",
+  "native_library_sha256": "40b82757f9823d5c314024aa49f13e5ab8559c0558db05d2d93fbca077aaa815",
+  "isl_version": "isl-0.24-GMP",
+  "reference_unit_tests": 60,
+  "reference_revision_campaign": "PASS, retains known unproved nested-three-slot-scaled case",
+  "native_lit": "PASS: loop/skip, context, bypass, signed/unsigned, full/partial/unknown descriptors; unmodeled helper output parity/unsupported",
+  "negative_interchange_mutations_detected": 6,
+  "loop_skip_replays": 8,
+  "rows": [
+    {
+      "case": "one_buffer",
+      "input_sha256": "600c7fa8959c5cfb97660a9a54fb585905434bc332e73ed709274f4dd7700011",
+      "identical_output": true,
+      "compile_seconds": {
+        "off": 0.41651560401078314,
+        "on": 0.4276756990002468
+      },
+      "parity": [
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 0
+          },
+          "physical_occurrences": 0,
+          "dense_requirements": 0,
+          "native_memory_obligation_occurrences_checked": 0,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 2,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 1
+          },
+          "physical_occurrences": 3,
+          "dense_requirements": 2,
+          "native_memory_obligation_occurrences_checked": 2,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 2,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 2
+          },
+          "physical_occurrences": 6,
+          "dense_requirements": 10,
+          "native_memory_obligation_occurrences_checked": 10,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 2,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 16
+          },
+          "physical_occurrences": 48,
+          "dense_requirements": 752,
+          "native_memory_obligation_occurrences_checked": 752,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 2,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        }
+      ]
+    },
+    {
+      "case": "two_buffer",
+      "input_sha256": "1903800616d0505b007c51eaaa8e2bb76ec5a96ff9ce10829d700f24a4af56fd",
+      "identical_output": true,
+      "compile_seconds": {
+        "off": 0.4363934310094919,
+        "on": 0.4262666040158365
+      },
+      "parity": [
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 0
+          },
+          "physical_occurrences": 0,
+          "dense_requirements": 0,
+          "native_memory_obligation_occurrences_checked": 0,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 4,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 1
+          },
+          "physical_occurrences": 3,
+          "dense_requirements": 2,
+          "native_memory_obligation_occurrences_checked": 2,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 4,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 2
+          },
+          "physical_occurrences": 6,
+          "dense_requirements": 4,
+          "native_memory_obligation_occurrences_checked": 4,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 4,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 16
+          },
+          "physical_occurrences": 48,
+          "dense_requirements": 368,
+          "native_memory_obligation_occurrences_checked": 368,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 4,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        }
+      ]
+    },
+    {
+      "case": "three_buffer",
+      "input_sha256": "fd6f6c876a11ed322ebb26ce8687b6ee1ca2fe717a4d53f77b6c4ff37a800eda",
+      "identical_output": true,
+      "compile_seconds": {
+        "off": 0.47467839100863785,
+        "on": 0.46271935300319456
+      },
+      "parity": [
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 0
+          },
+          "physical_occurrences": 0,
+          "dense_requirements": 0,
+          "native_memory_obligation_occurrences_checked": 0,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 6,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 1
+          },
+          "physical_occurrences": 3,
+          "dense_requirements": 2,
+          "native_memory_obligation_occurrences_checked": 2,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 6,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 2
+          },
+          "physical_occurrences": 6,
+          "dense_requirements": 4,
+          "native_memory_obligation_occurrences_checked": 4,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 6,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 16
+          },
+          "physical_occurrences": 48,
+          "dense_requirements": 242,
+          "native_memory_obligation_occurrences_checked": 242,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 6,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        }
+      ]
+    },
+    {
+      "case": "four_use",
+      "input_sha256": "ebb3365784b3f35a51098505ba764f038ea57f670f8ca27c5d77707b19af2128",
+      "identical_output": true,
+      "compile_seconds": {
+        "off": 0.45524832300725393,
+        "on": 0.4624654650106095
+      },
+      "parity": [
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 0
+          },
+          "physical_occurrences": 0,
+          "dense_requirements": 0,
+          "native_memory_obligation_occurrences_checked": 0,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 10,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 1
+          },
+          "physical_occurrences": 9,
+          "dense_requirements": 26,
+          "native_memory_obligation_occurrences_checked": 26,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 10,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 2
+          },
+          "physical_occurrences": 18,
+          "dense_requirements": 52,
+          "native_memory_obligation_occurrences_checked": 52,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 10,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg2": 16
+          },
+          "physical_occurrences": 144,
+          "dense_requirements": 3608,
+          "native_memory_obligation_occurrences_checked": 3608,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 10,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        }
+      ]
+    },
+    {
+      "case": "historical_gemm",
+      "input_sha256": "3db5d353475ee920857d16e5c3533ab23e0c6d2c38e22b57235c0e85a9a6a380",
+      "identical_output": true,
+      "compile_seconds": {
+        "off": 0.5444181829807349,
+        "on": 0.5802749030117411
+      },
+      "parity": [
+        {
+          "status": "UNSUPPORTED",
+          "reason": "occurrence export needs supported bounds and unit step"
+        }
+      ]
+    },
+    {
+      "case": "online_softmax",
+      "input_sha256": "1d67f50a2b7ae1225093444ca010ca46c9d6b726ce0f8f03c529e51889a7c534",
+      "identical_output": true,
+      "compile_seconds": {
+        "off": 0.5261361350130755,
+        "on": 0.5382207630027551
+      },
+      "parity": [
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg4": 0
+          },
+          "physical_occurrences": 12,
+          "dense_requirements": 23,
+          "native_memory_obligation_occurrences_checked": 3,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 14,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg4": 1
+          },
+          "physical_occurrences": 12,
+          "dense_requirements": 23,
+          "native_memory_obligation_occurrences_checked": 3,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 14,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg4": 2
+          },
+          "physical_occurrences": 44,
+          "dense_requirements": 197,
+          "native_memory_obligation_occurrences_checked": 92,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 14,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg4": 16
+          },
+          "physical_occurrences": 492,
+          "dense_requirements": 36863,
+          "native_memory_obligation_occurrences_checked": 20133,
+          "native_resource_obligations_outside_reference": 0,
+          "omitted_gm_effects": 14,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        }
+      ]
+    },
+    {
+      "case": "qk_matmul",
+      "input_sha256": "1f6d0e3a0f44ec4e77b4405fd5990ef3f7738b578acfae3c902545a1eed896cb",
+      "identical_output": true,
+      "compile_seconds": {
+        "off": 0.44040178798604757,
+        "on": 0.4414837770164013
+      },
+      "parity": [
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg4": 0
+          },
+          "physical_occurrences": 2,
+          "dense_requirements": 0,
+          "native_memory_obligation_occurrences_checked": 0,
+          "native_resource_obligations_outside_reference": 8,
+          "omitted_gm_effects": 6,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg4": 1
+          },
+          "physical_occurrences": 18,
+          "dense_requirements": 47,
+          "native_memory_obligation_occurrences_checked": 53,
+          "native_resource_obligations_outside_reference": 8,
+          "omitted_gm_effects": 6,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg4": 2
+          },
+          "physical_occurrences": 34,
+          "dense_requirements": 194,
+          "native_memory_obligation_occurrences_checked": 222,
+          "native_resource_obligations_outside_reference": 8,
+          "omitted_gm_effects": 6,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        },
+        {
+          "status": "PASS",
+          "scope": "conservative-local-ordering-projection",
+          "parameters": {
+            "arg4": 16
+          },
+          "physical_occurrences": 258,
+          "dense_requirements": 12752,
+          "native_memory_obligation_occurrences_checked": 14768,
+          "native_resource_obligations_outside_reference": 8,
+          "omitted_gm_effects": 6,
+          "isl_version": "isl-0.24-GMP",
+          "native_safety_or_device_proof": false
+        }
+      ]
+    },
+    {
+      "case": "q_proj",
+      "input_sha256": "5aa01e4f14bb7db12e44ddf67c66c4887b003d50d6cff85fee7b2d2aa1958f06",
+      "identical_output": true,
+      "compile_seconds": {
+        "off": 0.5012792859924957,
+        "on": 0.507656567991944
+      },
+      "parity": [
+        {
+          "status": "UNSUPPORTED",
+          "reason": "occurrence export needs supported bounds and unit step"
+        }
+      ]
+    }
+  ],
+  "device": "not-run",
+  "reviews": {
+    "software_architect": "ACCEPT",
+    "compiler_expert": "ACCEPT",
+    "algorithms_performance": "ACCEPT"
+  }
+}
