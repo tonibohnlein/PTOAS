@@ -541,11 +541,51 @@ void InsertSyncAnalysis::MemAnalyze(
     return;
   }
 
+  // Required execution order is independent of protocol acceptance. The native
+  // guarded graph includes loop backedges; only an impossible ordered pair can
+  // disappear here. This is neither completion nor a blanket per-pipe fact.
+  if (storageFlow_ && storageFlow_->provesUnordered(frontCompound->elementOp, nowCompound->elementOp)) {
+    return;
+  }
+
+  if (storageFlow_ && nowCompound->elementOp && frontCompound->elementOp) {
+    auto loop = nowCompound->elementOp->getParentOfType<scf::ForOp>();
+    auto sourceLoop = frontCompound->elementOp->getParentOfType<scf::ForOp>();
+    bool qualified = loop && sourceLoop == loop;
+    int64_t distance = 0;
+    if (forEndIndex) {
+      qualified &= *forEndIndex < syncIR_.size() && syncIR_[*forEndIndex]->elementOp == loop.getOperation();
+      // Copied source and target belong to the SAME next iteration. The second
+      // original-slice query alone represents source(i) -> target(i+1).
+      if (nowCompound == syncIR_[nowCompound->GetIndex()].get()) distance = 1;
+    }
+    if (qualified) {
+      insert_sync_frontier::Budget budget;
+      depVec.erase(std::remove_if(depVec.begin(), depVec.end(), [&](const auto& pair) {
+        if (!disjointInsertSyncSlotOccurrences(pair.second, pair.first, loop, distance != 0, budget)) return false;
+        slotRequirements_.push_back({frontCompound->elementOp, nowCompound->elementOp,
+                                     pair.second->baseBuffer, pair.first->baseBuffer, distance != 0});
+        return true;
+      }), depVec.end());
+      if (depVec.empty()) return;
+    }
+  }
+
   if (lifecycleSupply_) {
     lifecycleSupply_->removeSuppliedDependencies(frontCompound, nowCompound, depVec);
     if (depVec.empty()) {
       // The full lifecycle supplies these exact storage relationships. Do not
       // mark alreadySync: unrelated accesses still require ordinary repair.
+      return;
+    }
+  }
+
+  if (mmadChains_ && storageFlow_) {
+    auto predecessors = storageFlow_->immediatePredecessors(nowCompound->elementOp);
+    if (predecessors && mmadChains_->dischargesWithPredecessors(frontCompound, nowCompound, depVec, *predecessors)) {
+      auto witness = std::make_pair(frontCompound->elementOp, nowCompound->elementOp);
+      if (!llvm::is_contained(generationMmadRequirements_, witness)) generationMmadRequirements_.push_back(witness);
+      ++intrinsicMmadGroups_;
       return;
     }
   }

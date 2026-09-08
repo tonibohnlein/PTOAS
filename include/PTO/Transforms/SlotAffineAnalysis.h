@@ -22,6 +22,8 @@
 
 #include "mlir/IR/Value.h"
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 namespace mlir {
 namespace pto {
@@ -52,6 +54,21 @@ mlir::Value findMultiTileSlotExpr(mlir::Value v);
 ///   compareSlotSSA(%iv % 2, %j % 2)          -> kUnknown   // diff symbols
 ///   compareSlotSSA(arith.constant 0, arith.constant 1) -> kDisjoint
 SlotRelation compareSlotSSA(mlir::Value a, mlir::Value b, uint32_t N);
+
+// Qualified selector for occurrence queries. The symbol is an scf.for IV;
+// offset arithmetic is proved nonnegative and nonwrapping from existing bounds.
+// Unknown bounds/forwarding leave the query unavailable.
+struct NormalizedSlotSelector {
+  Value induction;
+  int64_t offset = 0;
+  uint32_t modulus = 0;
+};
+std::optional<NormalizedSlotSelector> normalizeSlotSSA(Value slot, uint32_t modulus);
+struct LoopCarriedSlotPermutation {
+  Operation* loop = nullptr;
+  std::vector<Value> initialSlots;
+};
+std::optional<LoopCarriedSlotPermutation> recoverLoopCarriedSlotPermutation(Value carried);
 
 } // namespace pto
 } // namespace mlir

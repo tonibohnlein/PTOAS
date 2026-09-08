@@ -256,7 +256,24 @@ inline GuardPartitionResult partitionGuards(
                         result.status = GuardPartitionResult::Status::AnalysisLimit;
                         return result;
                     }
-                    result.program.regions.push_back({entry, n, r.kind, kInvalid});
+                    RegionScope region{entry, n, r.kind, kInvalid};
+                    Bits included(result.program.nodes.size());
+                    std::deque<unsigned> members{entry};
+                    while (!members.empty()) {
+                        unsigned member = members.front(); members.pop_front();
+                        if (included.test(member)) continue;
+                        if (!budget.spend(1 + result.program.nodes[member].next.size())) {
+                            result.status = GuardPartitionResult::Status::AnalysisLimit;
+                            return result;
+                        }
+                        included.set(member);
+                        region.members.push_back(member);
+                        if (result.origins[member] == r.exit) continue;
+                        for (unsigned next : result.program.nodes[member].next)
+                            if (result.origins[next] >= r.entry && result.origins[next] <= r.exit)
+                                members.push_back(next);
+                    }
+                    result.program.regions.push_back(std::move(region));
                     continue;
                 }
                 for (

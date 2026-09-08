@@ -18,9 +18,10 @@
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/SyncPlanningPrimitives.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
 #include <array>
 
-namespace mlir::pto { class MmadChainAnalysis; class InsertSyncLifecyclePlan; }
+namespace mlir::pto { class MmadChainAnalysis; class InsertSyncLifecyclePlan; struct InsertSyncStorageFlow; }
  
 namespace mlir {
 namespace pto {
@@ -59,6 +60,9 @@ public:
   void setLifecycleSupply(const InsertSyncLifecyclePlan *plan) {
     lifecycleSupply_ = plan;
   }
+  void setStorageFlow(const InsertSyncStorageFlow *flow) { storageFlow_ = flow; }
+  ArrayRef<std::pair<Operation*, Operation*>> getGenerationMmadRequirements() const { return generationMmadRequirements_; }
+  ArrayRef<InsertSyncSlotRequirement> getSlotRequirements() const { return slotRequirements_; }
  
   /// 入口函数：执行分析并注入同步
   /// insertBarAllAtLast: 是否在最后插入一个全局 Barrier (通常需要)
@@ -81,6 +85,9 @@ private:
   unsigned syncIndex_{0};
   const MmadChainAnalysis *mmadChains_{nullptr};
   const InsertSyncLifecyclePlan *lifecycleSupply_{nullptr};
+  const InsertSyncStorageFlow *storageFlow_{nullptr};
+  SmallVector<std::pair<Operation*, Operation*>> generationMmadRequirements_;
+  SmallVector<InsertSyncSlotRequirement> slotRequirements_;
   unsigned intrinsicMmadGroups_{0};
  
 private:

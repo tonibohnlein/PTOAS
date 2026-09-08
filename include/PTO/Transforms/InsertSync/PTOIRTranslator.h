@@ -44,6 +44,7 @@ public:
  
   // 核心入口：执行 IR 分析和转换
   void Build();
+  void enableGenerationFlow(bool enabled = true) { generationFlow_ = enabled; }
  
   // 获取生成的 SyncIR (指令序列)
   SyncIRs &getSyncIR() { return syncIR_; }
@@ -63,6 +64,7 @@ private:
   Buffer2MemInfoMap &buffer2MemInfoMap_;
   MemoryDependentAnalyzer &memAnalyzer_;
   SyncAnalysisMode mode_;
+  bool generationFlow_ = false;
  
   // --- 递归遍历逻辑 ---
   void RecursionIR(Region *region);

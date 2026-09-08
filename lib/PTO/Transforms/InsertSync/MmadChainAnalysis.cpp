@@ -276,12 +276,30 @@ MmadChainAnalysis::MmadChainAnalysis(func::FuncOp function) {
 bool MmadChainAnalysis::discharges(
     const CompoundInstanceElement *source, const CompoundInstanceElement *target,
     const DepBaseMemInfoPairVec &dependencies) const {
+  return target && eligible.contains(target->elementOp) && qualifiedPair(source, target, dependencies);
+}
+
+bool MmadChainAnalysis::dischargesWithPredecessors(
+    const CompoundInstanceElement *source, const CompoundInstanceElement *target,
+    const DepBaseMemInfoPairVec &dependencies, ArrayRef<Operation*> predecessors) const {
+  if (!target || !isa<TMatmulAccOp>(target->elementOp) || predecessors.empty() ||
+      !qualifiedPair(source, target, dependencies)) return false;
+  auto key = keys.find(target->elementOp);
+  for (Operation* predecessor : predecessors) {
+    auto from = keys.find(predecessor);
+    if (from == keys.end() || from->second != key->second) return false;
+  }
+  return true;
+}
+
+bool MmadChainAnalysis::qualifiedPair(
+    const CompoundInstanceElement *source, const CompoundInstanceElement *target,
+    const DepBaseMemInfoPairVec &dependencies) const {
   if (!complete || !source || !target || dependencies.empty() ||
       source->kPipeValue != PipelineType::PIPE_M ||
       target->kPipeValue != PipelineType::PIPE_M ||
       source->compoundCoreType != TCoreType::CUBE ||
-      target->compoundCoreType != TCoreType::CUBE ||
-      !eligible.contains(target->elementOp))
+      target->compoundCoreType != TCoreType::CUBE)
     return false;
   auto from = keys.find(source->elementOp), to = keys.find(target->elementOp);
   if (from == keys.end() || to == keys.end() || from->second != to->second)

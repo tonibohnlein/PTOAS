@@ -239,6 +239,10 @@ llvm::cl::opt<bool> insertSyncMmadChains(
 llvm::cl::opt<bool> insertSyncFrontierRefinement(
     "insert-sync-frontier-refinement", llvm::cl::desc("Refine generated named barriers using storage/lane frontiers"),
     llvm::cl::init(false));
+llvm::cl::opt<bool> insertSyncBufferGenerations(
+    "insert-sync-buffer-generations",
+    llvm::cl::desc("Construct synchronization from per-buffer reaching generations; experimental"),
+    llvm::cl::init(false));
 llvm::cl::opt<bool> insertSyncLifecycleSynthesis(
     "insert-sync-lifecycle-synthesis",
     llvm::cl::desc("Construct exact-slot lifecycle protocols before residual insertion (experimental)"),

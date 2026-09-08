@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --insert-sync-mmad-chains --insert-sync-buffer-generations --emit-pto-ir %s -o %t
+// RUN: FileCheck %s < %t
+// CHECK: pto.insert_sync.buffer_generations
+// CHECK: pto.insert_sync.status = "lifecycle-plus-residuals"
+// CHECK: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK: scf.for
+// CHECK: pto.tmatmul
+// CHECK: pto.tmatmul.acc
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.tstore
+// CHECK: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+!MA = !pto.tile_buf<loc=mat, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!MB = !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!A = !pto.tile_buf<loc=left, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+!B = !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!C = !pto.tile_buf<loc=acc, dtype=f32, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!G = !pto.tensor_view<?x?xf16>
+!PA = !pto.partition_tensor_view<128x64xf16>
+!PB = !pto.partition_tensor_view<64x256xf16>
+
+!O = !pto.tensor_view<?x?xf32>
+!PO = !pto.partition_tensor_view<128x256xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @accumulator_generation(%ga: !pto.ptr<f16>, %gb: !pto.ptr<f16>, %gc: !pto.ptr<f32>, %trips: index) {
+    pto.section.cube {
+      %z = arith.constant 0 : index
+      %one = arith.constant 1 : index
+      %m = arith.constant 128 : index
+      %k = arith.constant 64 : index
+      %n = arith.constant 256 : index
+      %a0 = arith.constant 0 : i64
+      %aB = arith.constant 131072 : i64
+      %av = pto.make_tensor_view %ga, shape = [%m, %k], strides = [%k, %one] : !G
+      %bv = pto.make_tensor_view %gb, shape = [%k, %n], strides = [%one, %k] {layout = #pto.layout<dn>} : !G
+      %cv = pto.make_tensor_view %gc, shape = [%m, %n], strides = [%n, %one] : !O
+      %ap = pto.partition_view %av, offsets = [%z, %z], sizes = [%m, %k] : !G -> !PA
+      %bp = pto.partition_view %bv, offsets = [%z, %z], sizes = [%k, %n] : !G -> !PB
+      %cp = pto.partition_view %cv, offsets = [%z, %z], sizes = [%m, %n] : !O -> !PO
+      %ma = pto.alloc_tile addr = %a0 : !MA
+      %mb = pto.alloc_tile addr = %aB : !MB
+      %a = pto.alloc_tile addr = %a0 : !A
+      %b = pto.alloc_tile addr = %a0 : !B
+      %c = pto.alloc_tile addr = %a0 : !C
+      pto.tload ins(%ap : !PA) outs(%ma : !MA)
+      pto.tload ins(%bp : !PB) outs(%mb : !MB)
+      pto.textract ins(%ma, %z, %z : !MA, index, index) outs(%a : !A)
+      pto.textract ins(%mb, %z, %z : !MB, index, index) outs(%b : !B)
+      scf.for %i = %z to %trips step %one {
+        pto.tmatmul ins(%a, %b : !A, !B) outs(%c : !C)
+        pto.tmatmul.acc ins(%c, %a, %b : !C, !A, !B) outs(%c : !C)
+        pto.tstore ins(%c : !C) outs(%cp : !PO)
+      }
+    }
+    return
+  }
+}

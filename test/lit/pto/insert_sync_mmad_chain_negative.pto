@@ -10,6 +10,8 @@
 
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --insert-sync-mmad-chains --emit-pto-ir %s -o %t.pto
 // RUN: FileCheck %s < %t.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --insert-sync-mmad-chains --insert-sync-buffer-generations --emit-pto-ir %s -o %t.gen.pto
+// RUN: FileCheck %s --check-prefix=GEN < %t.gen.pto
 // CHECK-LABEL: func.func @small_chain(
 // CHECK: pto.tmatmul ins
 // CHECK: pto.barrier <PIPE_M>
@@ -22,6 +24,20 @@
 // CHECK: pto.tmatmul ins
 // CHECK: pto.barrier <PIPE_M>
 // CHECK: pto.tmatmul ins
+// GEN-LABEL: func.func @small_chain
+// GEN-SAME: generation_mmad_witnesses = 0 : i64
+// GEN: pto.barrier <PIPE_M>
+// GEN-LABEL: func.func @small_valid_large_allocation
+// GEN-SAME: generation_mmad_witnesses = 0 : i64
+// GEN: pto.barrier <PIPE_M>
+// GEN-LABEL: func.func @reinitialize_not_accumulate
+// GEN-SAME: generation_mmad_witnesses = 0 : i64
+// Reinitialization requires ordering. An M/FIX generation round trip can
+// supply full completion, but the qualified MMAD update rule cannot.
+// GEN: pto.tmatmul
+// GEN: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// GEN: pto.wait_flag[<PIPE_FIX>, <PIPE_M>
+// GEN: pto.tmatmul
 module attributes {pto.target_arch = "a3"} {
   func.func @small_chain(%ga: !pto.ptr<f16>, %gb: !pto.ptr<f16>, %gc: !pto.ptr<f16>, %trips: index, %choose: i1)
       attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {

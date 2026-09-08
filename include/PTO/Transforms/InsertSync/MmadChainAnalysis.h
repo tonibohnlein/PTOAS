@@ -28,11 +28,18 @@ public:
                   const CompoundInstanceElement *target,
                   const DepBaseMemInfoPairVec &dependencies) const;
   bool isComplete() const { return complete; }
+  bool dischargesWithPredecessors(const CompoundInstanceElement *source,
+                  const CompoundInstanceElement *target,
+                  const DepBaseMemInfoPairVec &dependencies,
+                  ArrayRef<Operation*> immediatePredecessors) const;
   unsigned getEligibleTargets() const { return eligible.size(); }
   unsigned getTransferCount() const { return transfers; }
   StringRef getReason() const { return reason; }
 
 private:
+  bool qualifiedPair(const CompoundInstanceElement *source,
+                     const CompoundInstanceElement *target,
+                     const DepBaseMemInfoPairVec &dependencies) const;
   bool complete = false;
   unsigned transfers = 0;
   std::string reason;

@@ -65,6 +65,10 @@ int8_t truth(const InsertSyncLifecycleStructure& s, unsigned node, const Lifecyc
 bool performs(const LifecycleRole& role, LifecyclePlacement::Role action)
 {
     switch (action) {
+        case LifecyclePlacement::Role::PublishBefore:
+            return role.publishBefore;
+        case LifecyclePlacement::Role::ReleaseBefore:
+            return role.releaseBefore;
         case LifecyclePlacement::Role::AcquireFree:
             return role.acquireFree;
         case LifecyclePlacement::Role::PublishReady:
@@ -207,7 +211,17 @@ bool mlir::pto::qualifyInsertSyncLifecycleBoundaries(
             }
         }
     }
-    auto cert = recognizeBoundaryLifecycle(s.program, spec, facts, budget);
+    LifecycleCertificate cert;
+    if (channel.bufferGenerations) {
+        Bits boundaries(size);
+        for (unsigned n = 0; n < size; ++n)
+            if (s.blockExits[n] || s.program.nodes[n].kind == Node::Kind::Exit)
+                boundaries.set(n);
+        channel.generations = analyzeBufferGenerations(s.program, spec, boundaries, budget);
+        cert = channel.generations.certificate;
+    } else {
+        cert = recognizeBoundaryLifecycle(s.program, spec, facts, budget);
+    }
     channel.logical.certificate = cert;
     if (cert.status != LifecycleCertificate::Status::Complete) {
         reason = cert.reason;
@@ -253,7 +267,8 @@ bool mlir::pto::qualifyInsertSyncLifecycleBoundaries(
     DominanceInfo dominance(function);
     for (const Point& point : points) {
         for (auto role :
-             {LifecyclePlacement::Role::BypassReady, LifecyclePlacement::Role::AcquireFree,
+             {LifecyclePlacement::Role::PublishBefore, LifecyclePlacement::Role::ReleaseBefore,
+              LifecyclePlacement::Role::BypassReady, LifecyclePlacement::Role::AcquireFree,
               LifecyclePlacement::Role::AcquireReady, LifecyclePlacement::Role::PublishReady,
               LifecyclePlacement::Role::PublishFree}) {
             bool any = false;

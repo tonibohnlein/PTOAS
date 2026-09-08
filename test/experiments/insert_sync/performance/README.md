@@ -1,5 +1,16 @@
 # InsertSync performance regression fixtures
 
+The experimental [per-buffer generation analysis](../../../../docs/designs/ptoas-insertsync-buffer-generations.md)
+is selected with `run.py --buffer-generations`. Use `--lifecycle-synthesis`
+to compare the preceding lifecycle constructor with the same frozen inputs.
+The [generation results](BUFFER_GENERATION_RESULTS.md) record the full 11-fixture comparison.
+The [R8 device results](R8_DEVICE_RESULTS.md) record the preceding device campaign
+and the timing-order issue found during local review. The
+[analysis-utilization follow-up](ANALYSIS_UTILIZATION_FOLLOWUP.md) distinguishes
+the initial generation change's native consumers from the integration gaps.
+The [implementation-status table](../../../../docs/designs/ptoas-insertsync-next-improvements-plan.md)
+records the subsequent shared-flow changes and remaining limits.
+
 Source-derived **TopK, Conv2D, FlashAttention, triangular inverse, GDN and KDA PTO pairs** are available
 in [KERNEL_PAIRS.md](KERNEL_PAIRS.md), using `kernel-pairs-manifest.json`.
 All six compile automatically with follow-up v2's default report mode. The

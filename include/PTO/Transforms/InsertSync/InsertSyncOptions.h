@@ -25,6 +25,7 @@ struct InsertSyncOptions {
     bool frontierRefinement = false;
     bool frontierPlacement = false;
     bool lifecycleSynthesis = false;
+    bool bufferGenerations = false;
 };
 std::unique_ptr<Pass> createPTOInsertSyncPass(const InsertSyncOptions& options);
 } // namespace mlir::pto

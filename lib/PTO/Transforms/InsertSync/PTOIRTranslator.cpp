@@ -12,6 +12,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "PTO/Transforms/SlotAffineAnalysis.h"
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
@@ -779,11 +780,38 @@ void PTOIRTranslator::UpdateForOpInfo(scf::ForOp forOp) {
     assert(forOp.getInitArgs().size() == forOp.getRegionIterArgs().size());
     for (auto [i, arg] : llvm::enumerate(forOp.getInitArgs())) {
         Value carried = forOp.getRegionIterArgs()[i];
-        UpdateAliasBufferInfo(carried, arg);
+        bool recovered = false;
+        if (generationFlow_) {
+            auto permutation = recoverLoopCarriedSlotPermutation(carried);
+            if (permutation && permutation->initialSlots.size() > 1) {
+                SmallVector<uint64_t> addresses;
+                const BaseMemInfo* prototype = nullptr;
+                bool exact = true;
+                for (Value initial : permutation->initialSlots) {
+                    auto found = buffer2MemInfoMap_.find(initial);
+                    if (found == buffer2MemInfoMap_.end() || found->second.size() != 1) { exact = false; break; }
+                    const auto* info = found->second.front().get();
+                    if (info->aliasesUnknownRange || !info->hasKnownPhysicalAddresses || info->baseAddresses.size() != 1 ||
+                        info->scope == AddressSpace::GM || !info->allocateSize ||
+                        (prototype && (prototype->scope != info->scope || prototype->allocateSize != info->allocateSize))) {
+                        exact = false; break;
+                    }
+                    prototype = info;
+                    addresses.push_back(info->baseAddresses.front());
+                }
+                if (exact && prototype) {
+                    auto info = prototype->clone(carried);
+                    info->baseAddresses = std::move(addresses);
+                    buffer2MemInfoMap_[carried].push_back(std::move(info));
+                    recovered = true;
+                }
+            }
+        }
+        if (!recovered) UpdateAliasBufferInfo(carried, arg);
         // The result may be the initial value on the zero-trip path.
         UpdateAliasBufferInfo(forOp.getResult(i), arg);
         Value yielded = forOp.getYieldedValues()[i];
-        if (yielded != carried && yielded != arg) {
+        if (!recovered && yielded != carried && yielded != arg) {
             // A changing handle is not forever bound to its initial allocation.
             // Until the complete recurrence is recovered, retain all possible
             // storage in this domain rather than dropping subsequent-iteration

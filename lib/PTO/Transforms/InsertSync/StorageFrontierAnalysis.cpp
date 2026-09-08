@@ -19,6 +19,7 @@
 #include "PTO/Transforms/InsertSync/SyncGMAlias.h"
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
+#include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Builders.h"
@@ -1107,7 +1108,7 @@ private:
                     program.phaseLane.push_back(*lane);
                 }
                 tails = add(std::move(tails), {Node::Kind::Issue, *lane, id}, &op);
-            } else if (!isa<AllocTileOp>(op) && !isMemoryEffectFree(&op)) {
+            } else if (!isa<AllocTileOp, AllocMultiTileOp>(op) && !isMemoryEffectFree(&op)) {
                 failure = "unmodeled non-payload effect; original translation retained";
                 return {};
             }
@@ -1128,8 +1129,59 @@ private:
 
 } // namespace
 
+StorageFrontierRefinementResult mlir::pto::refineInsertSyncCompletion(
+    func::FuncOp function, const SyncIRs& syncIR, ArrayRef<Operation*> ownedBarriers, Budget& budget)
+{
+    StorageFrontierRefinementResult result;
+    NativeGraph graph(function, syncIR, true);
+    if (graph.failure.empty()) graph.partition(budget);
+    if (!graph.failure.empty()) { result.reason = graph.failure; return result; }
+    auto accepted = graph.program;
+    SmallVector<Operation*> removed;
+    const uint64_t start = budget.left;
+    for (Operation* operation : ownedBarriers) {
+        auto barrier = dyn_cast<BarrierOp>(operation);
+        if (!barrier) continue;
+        bool tail = barrier.getPipe().getPipe() == PIPE::PIPE_ALL;
+        if (tail && !barrier->hasAttr("pto.auto_sync_tail_barrier")) continue;
+        auto trial = accepted;
+        SmallVector<unsigned> copies;
+        for (unsigned n = 0; n < graph.anchors.size(); ++n)
+            if (graph.anchors[n] == operation) {
+                copies.push_back(n);
+                trial.nodes[n].kind = Node::Kind::Pass;
+            }
+        if (copies.empty()) continue;
+        auto facts = completion(trial, Bits(trial.nodes.size()), budget);
+        bool proved = facts.status == CompletionResult::Status::Complete && facts.eventsProved;
+        if (proved && tail) {
+            auto exit = completionAtExits(trial, facts);
+            proved = exit.proved;
+            if (!proved) result.reason = "exit completion unproved: phase " + std::to_string(exit.phase) +
+                                          " at node " + std::to_string(exit.node);
+        } else if (proved) {
+            for (unsigned n : copies) proved &= preservesBarrierCompletion(trial, n, facts, budget);
+        }
+        if (proved) { accepted = std::move(trial); removed.push_back(operation); }
+        if (!budget.left) break;
+    }
+    // Every accepted step was checked on the complete concrete event program,
+    // after previously accepted removals. No certificates or counts substitute
+    // for physical completion. Mutation happens only after successful analysis.
+    for (Operation* op : removed) {
+        bool tail = cast<BarrierOp>(op).getPipe().getPipe() == PIPE::PIPE_ALL;
+        function.emitRemark("InsertSync completion refinement: removed ")
+            << (tail ? "exit PIPE_ALL" : "named barrier") << "; concrete prefix proved";
+        op->erase();
+    }
+    result.removed = removed.size();
+    result.work = start - budget.left;
+    if (result.reason.empty()) result.reason = "concrete completion and event consumption checked";
+    return result;
+}
+
 InsertSyncLifecycleStructure mlir::pto::buildInsertSyncLifecycleStructure(
-    func::FuncOp function, const SyncIRs& syncIR, Budget& budget)
+    func::FuncOp function, const SyncIRs& syncIR, Budget& budget, bool analyzeGenerations)
 {
     InsertSyncLifecycleStructure result;
     NativeGraph graph(function, syncIR, /*allowSingleSection=*/true);
@@ -1163,11 +1215,73 @@ InsertSyncLifecycleStructure mlir::pto::buildInsertSyncLifecycleStructure(
         result.loopExits.push_back(graph.rawLoopExits[original]);
         result.blockExits.push_back(graph.rawBlockExits[original]);
     }
+    if (analyzeGenerations) {
+        auto atoms = graph.atoms(budget);
+        if (graph.failure.empty()) {
+            result.storageFlow.facts = analyzeBufferGenerationFlow(
+                graph.program, atoms, std::vector<Bits>(atoms.size(), Bits(graph.phases.size())), budget);
+            for (unsigned p = 0; p < graph.phases.size(); ++p) {
+                result.storageFlow.phases[graph.phases[p].legacy->elementOp] = p;
+                result.storageFlow.operations.push_back(graph.phases[p].legacy->elementOp);
+            }
+        }
+    }
     result.program = std::move(graph.program);
     result.anchors = std::move(graph.anchors);
     result.status = StorageFrontierSnapshot::Status::Complete;
     result.reason = "R5 physical phases and guarded occurrences, before completion selection";
     return result;
+}
+
+bool mlir::pto::recheckInsertSyncGenerationRequirements(
+    func::FuncOp function, ArrayRef<std::pair<Operation*, Operation*>> requirements,
+    ArrayRef<InsertSyncSlotRequirement> slotRequirements)
+{
+    if (requirements.empty() && slotRequirements.empty()) return true;
+    SyncIRs ir;
+    Buffer2MemInfoMap buffers;
+    MemoryDependentAnalyzer memory;
+    PTOIRTranslator translator(ir, memory, buffers, function, SyncAnalysisMode::NORMALSYNC);
+    translator.enableGenerationFlow();
+    translator.Build();
+    Budget budget;
+    InsertSyncLifecycleStructure structure;
+    if (!requirements.empty()) {
+        structure = buildInsertSyncLifecycleStructure(function, ir, budget, true);
+        if (structure.status != StorageFrontierSnapshot::Status::Complete) return false;
+    }
+    MmadChainAnalysis matrix(function);
+    llvm::DenseMap<Operation*, const CompoundInstanceElement*> phases;
+    for (const auto& element : ir)
+        if (const auto* phase = dyn_cast<CompoundInstanceElement>(element.get())) phases[phase->elementOp] = phase;
+    for (auto [source, target] : requirements) {
+        auto from = phases.lookup(source), to = phases.lookup(target);
+        if (!from || !to) return false;
+        DepBaseMemInfoPairVec dependencies;
+        memory.DepBetween(to->useVec, from->defVec, dependencies);
+        memory.DepBetween(to->defVec, from->defVec, dependencies);
+        memory.DepBetween(to->defVec, from->useVec, dependencies);
+        auto previous = structure.storageFlow.immediatePredecessors(target);
+        if (!previous || !matrix.dischargesWithPredecessors(from, to, dependencies, *previous)) return false;
+    }
+    for (const auto& witness : slotRequirements) {
+        auto from = phases.lookup(witness.source), to = phases.lookup(witness.target);
+        auto loop = witness.target->getParentOfType<scf::ForOp>();
+        if (!from || !to || !loop || witness.source->getParentOfType<scf::ForOp>() != loop) return false;
+        DepBaseMemInfoPairVec dependencies;
+        memory.DepBetween(to->useVec, from->defVec, dependencies);
+        memory.DepBetween(to->defVec, from->defVec, dependencies);
+        memory.DepBetween(to->defVec, from->useVec, dependencies);
+        bool recovered = false;
+        for (const auto& pair : dependencies) {
+            if (pair.second->baseBuffer != witness.sourceBuffer || pair.first->baseBuffer != witness.targetBuffer)
+                continue;
+            recovered = true;
+            if (!disjointInsertSyncSlotOccurrences(pair.second, pair.first, loop, witness.carried, budget)) return false;
+        }
+        if (!recovered) return false;
+    }
+    return true;
 }
 
 StorageFrontierSnapshot mlir::pto::analyzeInsertSyncStorageFrontiers(
@@ -1201,8 +1315,10 @@ StorageFrontierSnapshot mlir::pto::analyzeInsertSyncStorageFrontiers(
                               StorageFrontierSnapshot::Status::Unsupported;
         return snapshot;
     }
-    snapshot.lifecycle = lifecycles(graph.program, snapshot.atoms, budget);
-    snapshot.generations = generationFrontiers(graph.program, snapshot.atoms, budget);
+    snapshot.storageFlow = analyzeBufferGenerationFlow(
+        graph.program, snapshot.atoms, std::vector<Bits>(snapshot.atoms.size(), Bits(graph.phases.size())), budget);
+    snapshot.lifecycle = snapshot.storageFlow.ordering;
+    snapshot.generations = snapshot.storageFlow.frontiers;
     if (
         !snapshot.lifecycle.complete || snapshot.generations.status != GenerationFrontiers::Status::Complete) {
         snapshot.status = snapshot.generations.status == GenerationFrontiers::Status::InvalidInput ?
@@ -1260,7 +1376,8 @@ StorageFrontierSnapshot mlir::pto::analyzeInsertSyncStorageFrontiers(
 }
 
 static StorageFrontierRefinementResult refineStorageBarriers(
-    func::FuncOp function, const SyncIRs& syncIR, ArrayRef<Operation*> candidates, bool useMmadChains)
+    func::FuncOp function, const SyncIRs& syncIR, ArrayRef<Operation*> candidates, bool useMmadChains,
+    bool preserveIdentities = false)
 {
     StorageFrontierRefinementResult result;
     if (
@@ -1394,6 +1511,20 @@ static StorageFrontierRefinementResult refineStorageBarriers(
         return result;
     }
 
+    if (preserveIdentities) {
+        // Lifecycle reconstruction retains original operation and SSA identities.
+        // Do not replace their body or introduce new protocol participation.
+        if (!graph.guards.empty()) {
+            result.reason = "unchanged: residual proof requires overflow guards; lifecycle identities fixed";
+            return result;
+        }
+        for (Operation* candidate : candidates)
+            if (omittedOperations.contains(candidate)) candidate->erase();
+        result.removed = total;
+        result.reason = "proved residual barriers deleted; lifecycle endpoints and payload identities fixed";
+        return result;
+    }
+
     // All overflow predicates refer to immutable function arguments. Their common
     // conjunction selects either the fully proved fast synchronization plan or
     // the original one for the ENTIRE execution, not per-iteration assumptions.
@@ -1489,6 +1620,7 @@ CheckedFrontiers checkPlacement(func::FuncOp function, bool useMmad, Budget& bud
     SyncIRs ir;
     Buffer2MemInfoMap buffers;
     PTOIRTranslator translator(ir, memory, buffers, function, SyncAnalysisMode::NORMALSYNC);
+    translator.enableGenerationFlow();
     translator.Build();
     auto snapshot = analyzeInsertSyncStorageFrontiers(function, ir, useMmad, budget);
     if (
@@ -1874,8 +2006,13 @@ std::vector<Motion> proposeMotions(func::FuncOp f, int64_t eventId, const Checke
 
 StorageFrontierRefinementResult mlir::pto::refineInsertSyncStorageFrontiers(
     func::FuncOp function, const SyncIRs& syncIR, ArrayRef<Operation*> candidates, bool useMmadChains,
-    bool placeFrontiers, ArrayRef<Operation*> ownedEvents)
+    bool placeFrontiers, ArrayRef<Operation*> ownedEvents, bool fixedProtocols)
 {
+    if (fixedProtocols) {
+        auto result = refineStorageBarriers(function, syncIR, candidates, useMmadChains, true);
+        result.reason += "; residual event movement requires protocol identity rebinding";
+        return result;
+    }
     if (
         !placeFrontiers || ownedEvents.empty()) {
         return refineStorageBarriers(function, syncIR, candidates, useMmadChains);
@@ -2023,6 +2160,7 @@ StorageFrontierRefinementResult mlir::pto::refineInsertSyncStorageFrontiers(
     SyncIRs updated;
     Buffer2MemInfoMap buffers;
     PTOIRTranslator translator(updated, memory, buffers, working, SyncAnalysisMode::NORMALSYNC);
+    translator.enableGenerationFlow();
     translator.Build();
     SmallVector<Operation*> barrierCandidates;
     for (
@@ -2093,7 +2231,8 @@ struct PTORefineStorageFrontiersPass : PassWrapper<PTORefineStorageFrontiersPass
         SyncIRs syncIR;
         Buffer2MemInfoMap buffers;
         PTOIRTranslator translator(syncIR, memory, buffers, function, SyncAnalysisMode::NORMALSYNC);
-        translator.Build();
+        translator.enableGenerationFlow();
+    translator.Build();
         SmallVector<Operation*> candidates;
         function.walk([&](BarrierOp barrier) {
             if (

@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %S/../../experiments/insert_sync/performance/inputs/step3_swizzle.pto -o %t.input.pto
+// RUN: %python %S/Inputs/check_buffer_generations.py pto-test-opt %t.input.pto %t
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --insert-sync-defer-same-pipe --insert-sync-mmad-chains --insert-sync-buffer-generations %S/../../experiments/insert_sync/performance/inputs/step3_swizzle.pto -o %t.cpp
+// The input is the unchanged frozen GEMM. The helper checks successful protocol
+// construction and identical mechanisms for three equivalent parity spellings.
+module {}

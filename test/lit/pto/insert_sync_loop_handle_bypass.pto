@@ -8,6 +8,7 @@
 
 
 // RUN: pto-test-opt --pto-insert-sync %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-sync="buffer-generations=true" %s | FileCheck %s
 // A zero-trip loop returns its incoming handle, not just its lexical yield.
 // CHECK-LABEL: func.func @for_bypass
 // CHECK: pto.tload

@@ -20,11 +20,25 @@ from generate_kernel_pairs import conv2d, flash_cube, strip_local_sync, topk
 from generate_recurrence_pairs import GENERATORS, triangular_inverse, wy
 from measure import children, normalize_gm_pipe_assembly, replay, static_metrics
 from run import compare
+from compare_native import participation
 from ptoas.mlir import ir
 from ptoas.mlir.dialects import pto
 
 
 class AccountingTests(unittest.TestCase):
+    def test_lifecycle_participation_requires_new_committed_output(self):
+        before = '// -----// IR Dump Before PTOInsertSync (pto-insert-sync) //----- //\n'
+        after = '// -----// IR Dump After PTOInsertSync (pto-insert-sync) //----- //\n'
+        plain = 'func.func @kernel() { return }\n'
+        committed = ('func.func @kernel() attributes {pto.insert_sync.lifecycle_channels = 2 : i64, '
+                     'pto.insert_sync.status = "lifecycle-plus-residuals"} { return }\n')
+        self.assertTrue(participation(before + plain + after + committed)["lifecycle_committed"])
+        self.assertFalse(participation(before + plain + after + plain)["lifecycle_committed"])
+        self.assertFalse(participation(before + committed + after + committed)["lifecycle_committed"])
+        self.assertFalse(participation(after + committed)["lifecycle_committed"])
+        mixed = before + plain + before + plain.replace('@kernel', '@other') + after + committed
+        self.assertFalse(participation(mixed)["lifecycle_committed"])
+
     def test_kernel_pairs_reproduce_and_only_remove_local_sync(self):
         root = Path(__file__).parent
         manifest = json.loads((root / "kernel-pairs-manifest.json").read_text())

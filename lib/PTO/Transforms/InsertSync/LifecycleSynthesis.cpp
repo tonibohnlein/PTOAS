@@ -146,9 +146,11 @@ std::string channelIdentity(ArrayRef<Slice> slices)
     return result;
 }
 
-std::optional<Channel> makeChannel(const InsertSyncLifecycleStructure& structure, ArrayRef<Slice> slices)
+std::optional<Channel> makeChannel(
+    const InsertSyncLifecycleStructure& structure, ArrayRef<Slice> slices, bool generations = false)
 {
     Channel channel;
+    channel.bufferGenerations = generations;
     channel.members.append(slices.begin(), slices.end());
     channel.identity = channelIdentity(slices);
     auto& spec = channel.logical.spec;
@@ -159,45 +161,39 @@ std::optional<Channel> makeChannel(const InsertSyncLifecycleStructure& structure
         const auto* phase = structure.phases[p];
         auto add = [&](const BaseMemInfo* info, bool write) {
             for (unsigned m = 0; m < slices.size(); ++m) {
-                if (
-                    !mayOverlap(info, slices[m])) {
-                    continue;
-                }
-                // Unknown/partial/multiple-address overlap vetoes this candidate,
-                // rather than pretending the access selects a different slot.
+                if (!mayOverlap(info, slices[m])) continue;
                 auto exact = exactSlice(info);
-                if (
-                    !exact || !(*exact == slices[m])) {
-                    return false;
-                }
-                auto& lane = write ? producer : consumer;
-                unsigned actual = structure.program.phaseLane[p];
-                if (
-                    lane && *lane != actual) {
-                    return false;
-                }
-                lane = actual;
+                if (!exact || !(*exact == slices[m])) return false;
                 (write ? spec.phases[p].writes : spec.phases[p].reads) |= 1u << m;
             }
             return true;
         };
-        for (const auto* read : phase->useVec) {
-            if (
-                !add(read, false)) {
-                return std::nullopt;
-            }
-        }
-        for (const auto* write : phase->defVec) {
-            if (
-                !add(write, true)) {
-                return std::nullopt;
-            }
+        for (const auto* read : phase->useVec)
+            if (!add(read, false)) return std::nullopt;
+        for (const auto* write : phase->defVec)
+            if (!add(write, true)) return std::nullopt;
+        if (spec.phases[p].writes) {
+            unsigned lane = structure.program.phaseLane[p];
+            if (producer && *producer != lane) return std::nullopt;
+            producer = lane;
         }
     }
-    if (
-        !producer || !consumer || !supportedDirection(*producer, *consumer)) {
+    if (!producer) return std::nullopt;
+    for (unsigned p = 0; p < spec.phases.size(); ++p) {
+        auto& t = spec.phases[p];
+        if (!t.reads) continue;
+        unsigned lane = structure.program.phaseLane[p];
+        if (generations && lane == *producer && t.reads == t.writes) {
+            t.updates = t.reads;
+            t.reads = 0;
+            continue;
+        }
+        if (consumer && *consumer != lane) return std::nullopt;
+        consumer = lane;
+    }
+    if (!consumer || !(supportedDirection(*producer, *consumer) ||
+                        (generations && structure.cube && *producer == 2 && *consumer == 3)))
         return std::nullopt;
-    }
     spec.producerLane = *producer;
     spec.consumerLane = *consumer;
     return channel;
@@ -205,7 +201,8 @@ std::optional<Channel> makeChannel(const InsertSyncLifecycleStructure& structure
 
 InsertSyncLifecyclePlan discover(
     const InsertSyncLifecycleStructure& structure, Budget& budget, unsigned& attempted, bool& invalid,
-    func::FuncOp function, const std::set<std::string>& excluded, std::vector<LifecycleDiagnostic>& diagnostics)
+    func::FuncOp function, const std::set<std::string>& excluded, std::vector<LifecycleDiagnostic>& diagnostics,
+    bool generations)
 {
     InsertSyncLifecyclePlan plan;
     plan.cube = structure.cube;
@@ -219,7 +216,8 @@ InsertSyncLifecyclePlan discover(
             auto slice = exactSlice(write);
             if (
                 !slice || (slice->space != AddressSpace::VEC && slice->space != AddressSpace::MAT &&
-                           slice->space != AddressSpace::LEFT && slice->space != AddressSpace::RIGHT)) {
+                           slice->space != AddressSpace::LEFT && slice->space != AddressSpace::RIGHT &&
+                           !(generations && slice->space == AddressSpace::ACC))) {
                 continue;
             }
             if (
@@ -238,7 +236,7 @@ InsertSyncLifecyclePlan discover(
     }
     std::vector<std::optional<Channel>> singles;
     for (const auto& slice : slices) {
-        auto single = makeChannel(structure, ArrayRef<Slice>(&slice, 1));
+        auto single = makeChannel(structure, ArrayRef<Slice>(&slice, 1), generations);
         if (
             !single) {
             diagnostics.push_back(
@@ -259,14 +257,47 @@ InsertSyncLifecyclePlan discover(
         std::string reason;
         bool accepted = qualifyInsertSyncLifecycleBoundaries(structure, channel, function, budget, reason);
         invalid |= channel.logical.certificate.status == LifecycleCertificate::Status::InvalidInput;
-        diagnostics.push_back({channel.identity, "recognition-and-guards", reason, accepted});
+        if (generations) {
+            reason += "; read-associations=" + std::to_string(channel.generations.reads.size()) +
+                      "; readerless-returns=" + std::to_string(channel.generations.readerlessReturns);
+            if (channel.generations.unprovedNode != kInvalid)
+                reason += "; unproved-node=" + std::to_string(channel.generations.unprovedNode);
+        }
+        diagnostics.push_back({channel.identity, generations ? "buffer-generations" : "recognition-and-guards",
+                               reason, accepted});
         return accepted;
     };
+    // Co-consumed slots can share a handoff only if every actual consumer
+    // needs every member, with the same producer/consumer pipeline domain.
+    // Generation checking must additionally prove compatible episodes.
+    if (generations) {
+        for (unsigned a = 0; a < slices.size(); ++a) {
+            if (selected[a] || !singles[a]) continue;
+            SmallVector<Slice, 4> members{slices[a]};
+            SmallVector<unsigned, 4> indices{a};
+            const auto& first = singles[a]->logical.spec;
+            for (unsigned b = a + 1; b < slices.size() && members.size() < 4; ++b) {
+                if (selected[b] || !singles[b]) continue;
+                const auto& other = singles[b]->logical.spec;
+                bool same = first.producerLane == other.producerLane && first.consumerLane == other.consumerLane;
+                for (unsigned p = 0; p < first.phases.size(); ++p)
+                    same &= bool(first.phases[p].reads) == bool(other.phases[p].reads) &&
+                            !first.phases[p].updates && !other.phases[p].updates;
+                if (same) { members.push_back(slices[b]); indices.push_back(b); }
+            }
+            if (members.size() < 2) continue;
+            auto bundle = makeChannel(structure, members, true);
+            if (bundle && qualify(*bundle)) {
+                for (unsigned i : indices) selected[i] = true;
+                plan.channels.push_back(std::move(*bundle));
+            }
+        }
+    }
     // LEFT/RIGHT are bundled only when every consumer reads both members. A
     // consumer of just one side vetoes bundling; grouping never postpones an
     // independent consumer merely to save an event stream.
     if (
-        structure.cube) {
+        structure.cube && !generations) {
         for (unsigned a = 0; a < slices.size(); ++a) {
             if (
                 slices[a].space != AddressSpace::LEFT || !singles[a]) {
@@ -481,9 +512,11 @@ void materialize(func::FuncOp function, const InsertSyncLifecyclePlan& plan, con
             case LifecyclePlacement::Role::AcquireReady:
                 make(builder, false, producer, consumer, allocation.ready[c], loc);
                 break;
+            case LifecyclePlacement::Role::PublishBefore:
             case LifecyclePlacement::Role::PublishReady:
                 make(builder, true, producer, consumer, allocation.ready[c], loc);
                 break;
+            case LifecyclePlacement::Role::ReleaseBefore:
             case LifecyclePlacement::Role::PublishFree:
                 make(builder, true, consumer, producer, allocation.free[c], loc);
                 break;
@@ -599,9 +632,12 @@ bool reconstruct(
                         return false;
                     }
                 }
-                if (
-                    touch.reads && touch.writes) {
-                    return false;
+                if (touch.reads && touch.writes) {
+                    if (!channel.bufferGenerations || touch.reads != touch.writes ||
+                        concrete.program.phaseLane[node.phase] != spec.producerLane)
+                        return false;
+                    touch.updates = touch.reads;
+                    touch.reads = 0;
                 }
                 if (
                     (touch.writes && concrete.program.phaseLane[node.phase] != spec.producerLane) ||
@@ -610,7 +646,7 @@ bool reconstruct(
                 }
                 if (
                     touch.writes) {
-                    nodes[n].action = LifecycleAction::Write;
+                    nodes[n].action = touch.updates ? LifecycleAction::Update : LifecycleAction::Write;
                     nodes[n].members = touch.writes;
                 }
                 if (
@@ -813,6 +849,84 @@ void InsertSyncLifecyclePlan::removeSuppliedDependencies(
 }
 
 namespace {
+// Recolor residual keys using the COMPLETE logical plan before reserving
+// dedicated lifecycle keys. Sharing never changes an endpoint or adds a wait.
+unsigned compactResidualAllocation(func::FuncOp function, SyncOperations& syncs,
+                                   const InsertSyncLifecyclePlan& plan)
+{
+    std::map<std::pair<unsigned, unsigned>, std::set<int>> domains;
+    for (const auto& group : syncs) for (const auto& sync : group)
+        if (!sync->uselessSync && (sync->isSyncSetType() || sync->isSyncWaitType()))
+            for (int id : sync->eventIds)
+                domains[{unsigned(sync->GetActualSrcPipe()), unsigned(sync->GetActualDstPipe())}].insert(id);
+    bool possible = false;
+    for (const auto& [domain, keys] : domains) possible |= keys.size() > 1;
+    if (!possible) return 0;
+    SyncIRs residualIR;
+    Buffer2MemInfoMap buffers;
+    MemoryDependentAnalyzer memory;
+    PTOIRTranslator translator(residualIR, memory, buffers, function, SyncAnalysisMode::NORMALSYNC);
+    translator.enableGenerationFlow(); translator.Build();
+    Budget budget;
+    auto structure = buildInsertSyncLifecycleStructure(function, residualIR, budget);
+    if (structure.status != StorageFrontierSnapshot::Status::Complete) return 0;
+    llvm::DenseMap<Operation*, unsigned> phases;
+    for (unsigned p = 0; p < structure.phases.size(); ++p) phases[structure.phases[p]->elementOp] = p;
+    std::vector<LogicalLifecycle> channels;
+    for (const auto& old : plan.channels) {
+        auto channel = old;
+        channel.placements.clear();
+        channel.logical.spec.phases.assign(structure.phases.size(), {});
+        for (unsigned p = 0; p < old.logical.spec.phases.size(); ++p) {
+            auto current = phases.find(plan.phases[p]);
+            if (current == phases.end()) return 0;
+            channel.logical.spec.phases[current->second] = old.logical.spec.phases[p];
+        }
+        std::string reason;
+        if (!qualifyInsertSyncLifecycleBoundaries(structure, channel, function, budget, reason)) return 0;
+        channels.push_back(std::move(channel.logical));
+    }
+    auto projected = projectLifecycleCompletion(structure.program, channels, {}, budget, true);
+    if (projected.status != LifecycleCompletionProjection::Status::Complete) return 0;
+    Bits eligible(projected.program.keys.size());
+    for (unsigned k = projected.protocolKeys; k < projected.program.keys.size(); ++k) eligible.set(k);
+    auto sharing = shareEventKeys(projected.program, eligible, budget);
+    if (!sharing.merged) return 0;
+    std::vector<unsigned> physicalIds(structure.program.keys.size(), kInvalid);
+    llvm::DenseMap<Operation*, unsigned> eventKeys;
+    for (unsigned n = 0; n < structure.program.nodes.size(); ++n) {
+        const auto& node = structure.program.nodes[n];
+        if (node.kind != Node::Kind::Signal && node.kind != Node::Kind::Wait) continue;
+        Operation* op = structure.anchors[n];
+        if (auto set = dyn_cast_or_null<SetFlagOp>(op)) physicalIds[node.key] = unsigned(set.getEventId().getEvent());
+        else if (auto wait = dyn_cast_or_null<WaitFlagOp>(op)) physicalIds[node.key] = unsigned(wait.getEventId().getEvent());
+        else return 0;
+        eventKeys[op] = node.key;
+    }
+    using PhysicalKey = std::tuple<unsigned, unsigned, int>;
+    std::map<PhysicalKey, int> replacement;
+    for (unsigned k = 0; k < physicalIds.size(); ++k) {
+        unsigned representative = sharing.representative[projected.protocolKeys + k] - projected.protocolKeys;
+        if (representative >= physicalIds.size() || physicalIds[representative] == kInvalid) return 0;
+        const auto& key = structure.program.keys[k];
+        replacement[{unsigned(physicalLane(key.source, plan.cube)), unsigned(physicalLane(key.target, plan.cube)),
+                     int(physicalIds[k])}] = physicalIds[representative];
+    }
+    for (const auto& [op, key] : eventKeys) {
+        unsigned representative = sharing.representative[projected.protocolKeys + key] - projected.protocolKeys;
+        auto id = EventAttr::get(function.getContext(), static_cast<EVENT>(physicalIds[representative]));
+        if (auto set = dyn_cast<SetFlagOp>(op)) set.setEventIdAttr(id);
+        else cast<WaitFlagOp>(op).setEventIdAttr(id);
+    }
+    for (auto& group : syncs) for (auto& sync : group)
+        if (!sync->uselessSync && (sync->isSyncSetType() || sync->isSyncWaitType()))
+            for (int& id : sync->eventIds) {
+                auto where = replacement.find({unsigned(sync->GetActualSrcPipe()), unsigned(sync->GetActualDstPipe()), id});
+                if (where != replacement.end()) id = where->second;
+            }
+    return sharing.merged;
+}
+
 struct RetryRequest {
     std::string identity;
 };
@@ -858,6 +972,7 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
     SyncOperations syncs;
     Buffer2MemInfoMap buffers;
     PTOIRTranslator translator(ir, memory, buffers, cloned, SyncAnalysisMode::NORMALSYNC);
+    translator.enableGenerationFlow(options.bufferGenerations);
     translator.Build();
     auto covered = inspectInsertSyncEffectCoverage(cloned, ir, options.effectCoverage == "strict");
     if (
@@ -873,7 +988,7 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
     }
     cloned->setAttr("pto.insert_sync.effect_coverage", StringAttr::get(cloned.getContext(), "complete"));
     Budget budget;
-    auto structure = buildInsertSyncLifecycleStructure(cloned, ir, budget);
+    auto structure = buildInsertSyncLifecycleStructure(cloned, ir, budget, options.bufferGenerations);
     if (
         structure.status != StorageFrontierSnapshot::Status::Complete) {
         if (
@@ -885,7 +1000,7 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
     }
     bool invalidLifecycle = false;
     auto plan = discover(
-        structure, budget, result.attempted, invalidLifecycle, cloned, excluded, result.diagnostics);
+        structure, budget, result.attempted, invalidLifecycle, cloned, excluded, result.diagnostics, options.bufferGenerations);
     if (
         invalidLifecycle) {
         result.status = InsertSyncLifecycleResult::Status::InternalError;
@@ -949,6 +1064,7 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
     // traversal retains and repairs every dependency not explicitly supplied.
     InsertSyncAnalysis analysis(ir, memory, syncs, cloned, SyncAnalysisMode::NORMALSYNC);
     analysis.setLifecycleSupply(&plan);
+    if (options.bufferGenerations) analysis.setStorageFlow(&structure.storageFlow);
     analysis.Run(true, options.deferSamePipe, options.mmadChains);
     if (plan.completionInternalError) {
         result.status = InsertSyncLifecycleResult::Status::InternalError;
@@ -966,6 +1082,15 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
     redundant.Run();
     SyncEventIdAllocation allocator(ir, syncs);
     allocator.Allocate();
+
+    bool residualEmitted = false;
+    if (options.bufferGenerations) {
+        SyncCodegen codegen(ir, cloned, SyncAnalysisMode::NORMALSYNC);
+        codegen.Run(); residualEmitted = true;
+        unsigned shared = compactResidualAllocation(cloned, syncs, plan);
+        cloned->setAttr("pto.insert_sync.generation_residual_keys_shared",
+                       IntegerAttr::get(IntegerType::get(cloned.getContext(), 64), shared));
+    }
 
     // Keep complete protocols out of legacy motion/redundancy/widening. Their
     // keys are allocated jointly with residual use, conservatively reserving
@@ -1028,8 +1153,10 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
             allocation.failedTarget, allocation.failedIdentity);
         return result;
     }
-    SyncCodegen codegen(ir, cloned, SyncAnalysisMode::NORMALSYNC);
-    codegen.Run();
+    if (!residualEmitted) {
+        SyncCodegen codegen(ir, cloned, SyncAnalysisMode::NORMALSYNC);
+        codegen.Run();
+    }
     unsigned allCount = 0;
     bool bodyAll = false;
     cloned.walk([&](BarrierOp barrier) {
@@ -1046,7 +1173,24 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
         retry("residual-emission", "residual output contains a broad body cut");
         return result;
     }
+    SmallVector<Operation*> residualEvents;
+    if (options.frontierPlacement)
+        cloned.walk([&](Operation* op) { if (isa<SetFlagOp, WaitFlagOp>(op)) residualEvents.push_back(op); });
     materialize(cloned, plan, allocation);
+    if (options.frontierRefinement || options.frontierPlacement) {
+        SmallVector<Operation*> residualBarriers;
+        cloned.walk([&](BarrierOp barrier) {
+            if (barrier.getPipe().getPipe() != PIPE::PIPE_ALL) residualBarriers.push_back(barrier.getOperation());
+        });
+        auto refinement = refineInsertSyncStorageFrontiers(
+            cloned, ir, residualBarriers, options.mmadChains, options.frontierPlacement, residualEvents, true);
+        result.diagnostics.push_back({"residual-plan", "frontier-refinement", refinement.reason, !refinement.internalError});
+        if (refinement.internalError) {
+            result.status = InsertSyncLifecycleResult::Status::InternalError;
+            result.reason = "invalid residual frontier refinement";
+            return result;
+        }
+    }
     if (
         !preserved(cloned, original) || failed(verify(cloned))) {
         result.status = InsertSyncLifecycleResult::Status::InternalError;
@@ -1058,6 +1202,7 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
     SyncIRs checkedIR;
     Buffer2MemInfoMap checkedBuffers;
     PTOIRTranslator checked(checkedIR, memory, checkedBuffers, cloned, SyncAnalysisMode::NORMALSYNC);
+    checked.enableGenerationFlow(options.bufferGenerations);
     checked.Build();
     auto concrete = buildInsertSyncLifecycleStructure(cloned, checkedIR, budget);
     if (
@@ -1214,7 +1359,29 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
              "completion-recheck", "all prior source occurrences complete at every target; emitted plan rechecked",
              true});
     }
+    if (!recheckInsertSyncGenerationRequirements(cloned, analysis.getGenerationMmadRequirements(), analysis.getSlotRequirements())) {
+        result.status = InsertSyncLifecycleResult::Status::InternalError;
+        result.reason = "emitted generation-qualified requirements could not be reconstructed";
+        return result;
+    }
+    cloned->setAttr("pto.insert_sync.generation_mmad_witnesses",
+                   IntegerAttr::get(i64, analysis.getGenerationMmadRequirements().size()));
+    cloned->setAttr("pto.insert_sync.generation_slot_witnesses",
+                   IntegerAttr::get(i64, analysis.getSlotRequirements().size()));
     result.suppliedPairs = plan.suppliedPairs;
+    if (options.bufferGenerations) {
+        SmallVector<Operation*> candidates;
+        cloned.walk([&](BarrierOp barrier) { candidates.push_back(barrier.getOperation()); });
+        Budget cleanupBudget;
+        auto cleanup = refineInsertSyncCompletion(cloned, checkedIR, candidates, cleanupBudget);
+        cloned->setAttr("pto.insert_sync.generation_barriers_removed", IntegerAttr::get(i64, cleanup.removed));
+        result.diagnostics.push_back({"mixed-plan", "completion-refinement", cleanup.reason, true});
+        if (failed(verify(cloned))) {
+            result.status = InsertSyncLifecycleResult::Status::InternalError;
+            result.reason = "completion refinement produced invalid MLIR";
+            return result;
+        }
+    }
     for (const auto& channel : plan.channels) {
         result.diagnostics.push_back(
             {channel.identity, "commit", "complete emitted lifecycle and residuals committed", true});

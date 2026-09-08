@@ -1,0 +1,229 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --mlir-disable-threading --mlir-print-op-on-diagnostic=false --pto-insert-sync="buffer-generations=true defer-same-pipe=true gm-alias=assume-disjoint-arguments" %s | FileCheck %s
+
+// CHECK-LABEL: func.func @selector2
+// CHECK-SAME: pto.insert_sync.generation_slot_witnesses = {{[1-9][0-9]*}} : i64
+// CHECK: scf.for
+// CHECK: pto.tload
+// CHECK: pto.tstore
+// CHECK: pto.barrier <PIPE_ALL>
+module attributes {pto.target_arch = "a3"} {
+ func.func @selector2(%input: !pto.partition_tensor_view<16x16xf16>, %out: !pto.partition_tensor_view<16x16xf16>, %trips: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %depth = arith.constant 2 : index
+ %trips32 = arith.constant 32 : index
+ %base = arith.constant 0 : i64
+ %a = pto.alloc_multi_tile addr = %base : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+ scf.for %i = %z to %trips32 step %one {
+ %next = arith.addi %i, %one : index
+ %producer = arith.remui %next, %depth : index
+ %consumer = arith.remui %i, %depth : index
+ %x = pto.multi_tile_get %a[%producer] : !pto.multi_tile_buf<vec, 16x16xf16, count=2> -> !pto.tile_buf<vec, 16x16xf16>
+ %y = pto.multi_tile_get %a[%consumer] : !pto.multi_tile_buf<vec, 16x16xf16, count=2> -> !pto.tile_buf<vec, 16x16xf16>
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+ pto.tstore ins(%y : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+ }
+ return
+ }
+}
+
+// -----
+// CHECK-LABEL: func.func @selector3
+// CHECK-SAME: pto.insert_sync.generation_slot_witnesses = {{[1-9][0-9]*}} : i64
+// CHECK: scf.for
+// CHECK: pto.tload
+// CHECK: pto.tstore
+// CHECK: pto.barrier <PIPE_ALL>
+module attributes {pto.target_arch = "a3"} {
+ func.func @selector3(%input: !pto.partition_tensor_view<16x16xf16>, %out: !pto.partition_tensor_view<16x16xf16>, %trips: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %depth = arith.constant 3 : index
+ %trips32 = arith.constant 32 : index
+ %base = arith.constant 0 : i64
+ %a = pto.alloc_multi_tile addr = %base : !pto.multi_tile_buf<vec, 16x16xf16, count=3>
+ scf.for %i = %z to %trips32 step %one {
+ %next = arith.addi %i, %one : index
+ %producer = arith.remui %next, %depth : index
+ %consumer = arith.remui %i, %depth : index
+ %x = pto.multi_tile_get %a[%producer] : !pto.multi_tile_buf<vec, 16x16xf16, count=3> -> !pto.tile_buf<vec, 16x16xf16>
+ %y = pto.multi_tile_get %a[%consumer] : !pto.multi_tile_buf<vec, 16x16xf16, count=3> -> !pto.tile_buf<vec, 16x16xf16>
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+ pto.tstore ins(%y : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+ }
+ return
+ }
+}
+
+// -----
+// CHECK-LABEL: func.func @selector5
+// CHECK-SAME: pto.insert_sync.generation_slot_witnesses = {{[1-9][0-9]*}} : i64
+// CHECK: scf.for
+// CHECK: pto.tload
+// CHECK: pto.tstore
+// CHECK: pto.barrier <PIPE_ALL>
+module attributes {pto.target_arch = "a3"} {
+ func.func @selector5(%input: !pto.partition_tensor_view<16x16xf16>, %out: !pto.partition_tensor_view<16x16xf16>, %trips: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %depth = arith.constant 5 : index
+ %trips32 = arith.constant 32 : index
+ %base = arith.constant 0 : i64
+ %a = pto.alloc_multi_tile addr = %base : !pto.multi_tile_buf<vec, 16x16xf16, count=5>
+ scf.for %i = %z to %trips32 step %one {
+ %next = arith.addi %i, %one : index
+ %producer = arith.remui %next, %depth : index
+ %consumer = arith.remui %i, %depth : index
+ %x = pto.multi_tile_get %a[%producer] : !pto.multi_tile_buf<vec, 16x16xf16, count=5> -> !pto.tile_buf<vec, 16x16xf16>
+ %y = pto.multi_tile_get %a[%consumer] : !pto.multi_tile_buf<vec, 16x16xf16, count=5> -> !pto.tile_buf<vec, 16x16xf16>
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+ pto.tstore ins(%y : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+ }
+ return
+ }
+}
+
+// -----
+// CHECK-LABEL: func.func @rotation2
+// CHECK-SAME: pto.insert_sync.generation_slot_witnesses = {{[1-9][0-9]*}} : i64
+// CHECK: scf.for
+// CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>
+// CHECK: pto.tload
+// CHECK-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// CHECK-NOT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// CHECK: pto.tstore
+// CHECK: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>
+// CHECK: scf.yield
+// CHECK: pto.tstore
+// CHECK: pto.barrier <PIPE_ALL>
+module attributes {pto.target_arch = "a3"} {
+ func.func @rotation2(%input: !pto.partition_tensor_view<16x16xf16>, %out: !pto.partition_tensor_view<16x16xf16>, %trips: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %depth = arith.constant 2 : index
+ %trips32 = arith.constant 32 : index
+ %base = arith.constant 0 : i64
+ %base0 = arith.constant 0 : i64
+ %a0 = pto.alloc_tile addr = %base0 : !pto.tile_buf<vec, 16x16xf16>
+ %base1 = arith.constant 512 : i64
+ %a1 = pto.alloc_tile addr = %base1 : !pto.tile_buf<vec, 16x16xf16>
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a0 : !pto.tile_buf<vec, 16x16xf16>)
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a1 : !pto.tile_buf<vec, 16x16xf16>)
+ %r:2 = scf.for %i = %z to %trips step %one iter_args(%v0 = %a0, %v1 = %a1) -> (!pto.tile_buf<vec, 16x16xf16>, !pto.tile_buf<vec, 16x16xf16>) {
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%v0 : !pto.tile_buf<vec, 16x16xf16>)
+ pto.tstore ins(%v1 : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+ scf.yield %v1, %v0 : !pto.tile_buf<vec, 16x16xf16>, !pto.tile_buf<vec, 16x16xf16>
+ }
+ pto.tstore ins(%r#0 : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+ return
+ }
+}
+
+// -----
+// CHECK-LABEL: func.func @rotation3
+// CHECK-SAME: pto.insert_sync.generation_slot_witnesses = {{[1-9][0-9]*}} : i64
+// CHECK: scf.for
+// CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>
+// CHECK: pto.tload
+// CHECK-NOT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// CHECK-NOT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// CHECK: pto.tstore
+// CHECK: pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>
+// CHECK: scf.yield
+// CHECK: pto.tstore
+// CHECK: pto.barrier <PIPE_ALL>
+module attributes {pto.target_arch = "a3"} {
+ func.func @rotation3(%input: !pto.partition_tensor_view<16x16xf16>, %out: !pto.partition_tensor_view<16x16xf16>, %trips: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %depth = arith.constant 3 : index
+ %trips32 = arith.constant 32 : index
+ %base = arith.constant 0 : i64
+ %base0 = arith.constant 0 : i64
+ %a0 = pto.alloc_tile addr = %base0 : !pto.tile_buf<vec, 16x16xf16>
+ %base1 = arith.constant 512 : i64
+ %a1 = pto.alloc_tile addr = %base1 : !pto.tile_buf<vec, 16x16xf16>
+ %base2 = arith.constant 1024 : i64
+ %a2 = pto.alloc_tile addr = %base2 : !pto.tile_buf<vec, 16x16xf16>
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a0 : !pto.tile_buf<vec, 16x16xf16>)
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a1 : !pto.tile_buf<vec, 16x16xf16>)
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a2 : !pto.tile_buf<vec, 16x16xf16>)
+ %r:3 = scf.for %i = %z to %trips step %one iter_args(%v0 = %a0, %v1 = %a1, %v2 = %a2) -> (!pto.tile_buf<vec, 16x16xf16>, !pto.tile_buf<vec, 16x16xf16>, !pto.tile_buf<vec, 16x16xf16>) {
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%v0 : !pto.tile_buf<vec, 16x16xf16>)
+ pto.tstore ins(%v1 : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+ scf.yield %v1, %v2, %v0 : !pto.tile_buf<vec, 16x16xf16>, !pto.tile_buf<vec, 16x16xf16>, !pto.tile_buf<vec, 16x16xf16>
+ }
+ pto.tstore ins(%r#0 : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+ return
+ }
+}
+
+// -----
+// CHECK-LABEL: func.func @selector2_overlap
+// CHECK-SAME: pto.insert_sync.generation_slot_witnesses = 0 : i64
+// CHECK: scf.for
+// CHECK: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>
+// CHECK: pto.tstore
+// CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>
+// CHECK-NOT: pto.barrier <PIPE_ALL>
+// CHECK: return
+module attributes {pto.target_arch = "a3"} {
+ func.func @selector2_overlap(%input: !pto.partition_tensor_view<16x16xf16>, %out: !pto.partition_tensor_view<16x16xf16>, %trips: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %depth = arith.constant 2 : index
+ %trips32 = arith.constant 32 : index
+ %base = arith.constant 0 : i64
+ %a = pto.alloc_multi_tile addr = %base : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+ %shift = arith.constant 512 : i64
+ %b = pto.alloc_multi_tile addr = %shift : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+ scf.for %i = %z to %trips32 step %one {
+ %next = arith.addi %i, %one : index
+ %producer = arith.remui %next, %depth : index
+ %consumer = arith.remui %i, %depth : index
+ %x = pto.multi_tile_get %a[%producer] : !pto.multi_tile_buf<vec, 16x16xf16, count=2> -> !pto.tile_buf<vec, 16x16xf16>
+ %y = pto.multi_tile_get %b[%consumer] : !pto.multi_tile_buf<vec, 16x16xf16, count=2> -> !pto.tile_buf<vec, 16x16xf16>
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+ pto.tstore ins(%y : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+ }
+ return
+ }
+}
+
+// -----
+// CHECK-LABEL: func.func @selector3_unknown_bounds
+// CHECK-SAME: pto.insert_sync.generation_slot_witnesses = 0 : i64
+// CHECK: scf.for
+// CHECK: pto.tload
+// CHECK: pto.tstore
+// CHECK: pto.barrier <PIPE_ALL>
+module attributes {pto.target_arch = "a3"} {
+ func.func @selector3_unknown_bounds(%input: !pto.partition_tensor_view<16x16xf16>, %out: !pto.partition_tensor_view<16x16xf16>, %trips: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %depth = arith.constant 3 : index
+ %trips32 = arith.constant 32 : index
+ %base = arith.constant 0 : i64
+ %a = pto.alloc_multi_tile addr = %base : !pto.multi_tile_buf<vec, 16x16xf16, count=3>
+ scf.for %i = %z to %trips step %one {
+ %next = arith.addi %i, %one : index
+ %producer = arith.remui %next, %depth : index
+ %consumer = arith.remui %i, %depth : index
+ %x = pto.multi_tile_get %a[%producer] : !pto.multi_tile_buf<vec, 16x16xf16, count=3> -> !pto.tile_buf<vec, 16x16xf16>
+ %y = pto.multi_tile_get %a[%consumer] : !pto.multi_tile_buf<vec, 16x16xf16, count=3> -> !pto.tile_buf<vec, 16x16xf16>
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+ pto.tstore ins(%y : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+ }
+ return
+ }
+}

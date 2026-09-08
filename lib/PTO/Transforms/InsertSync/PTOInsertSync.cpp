@@ -127,6 +127,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         frontierRefinement = options.frontierRefinement;
         frontierPlacement = options.frontierPlacement;
         lifecycleSynthesis = options.lifecycleSynthesis;
+        bufferGenerations = options.bufferGenerations;
     }
     PTOInsertSyncPass(const PTOInsertSyncPass& other) : PTOInsertSyncBase(other)
     {
@@ -139,6 +140,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         frontierRefinement = other.frontierRefinement;
         frontierPlacement = other.frontierPlacement;
         lifecycleSynthesis = other.lifecycleSynthesis;
+        bufferGenerations = other.bufferGenerations;
     }
 
     Option<bool> deferSamePipe{
@@ -167,6 +169,10 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     Option<bool> lifecycleSynthesis{
         *this, "lifecycle-synthesis", llvm::cl::init(false),
         llvm::cl::desc("Construct exact-slot lifecycle protocols before residual insertion; experimental")};
+
+    Option<bool> bufferGenerations{
+        *this, "buffer-generations", llvm::cl::init(false),
+        llvm::cl::desc("Construct synchronization from per-buffer reaching generations; experimental")};
 
     void auditOutput(func::FuncOp function)
     {
@@ -241,11 +247,14 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         return;
     }
 
-    if (lifecycleSynthesis) {
+    if (lifecycleSynthesis || bufferGenerations) {
         InsertSyncOptions lifecycleOptions;
         lifecycleOptions.deferSamePipe = deferSamePipe;
         lifecycleOptions.mmadChains = mmadChains;
         lifecycleOptions.effectCoverage = effectCoverage;
+        lifecycleOptions.bufferGenerations = bufferGenerations;
+        lifecycleOptions.frontierRefinement = frontierRefinement;
+        lifecycleOptions.frontierPlacement = frontierPlacement;
         auto result = tryInsertSyncLifecycleSynthesis(func, lifecycleOptions);
         func.emitRemark("InsertSync lifecycle synthesis: ")
             << result.reason << "; attempted=" << result.attempted
@@ -267,6 +276,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         }
         if (result.status == InsertSyncLifecycleResult::Status::Applied) {
             func->setAttr("pto.insert_sync.status", StringAttr::get(&getContext(), "lifecycle-plus-residuals"));
+            if (bufferGenerations)
+                func->setAttr("pto.insert_sync.buffer_generations", UnitAttr::get(&getContext()));
             // Counts are output diagnostics, never input semantic promises.
             auto type = IntegerType::get(&getContext(), 64);
             func->setAttr("pto.insert_sync.lifecycle_channels", IntegerAttr::get(type, result.selected));
@@ -290,6 +301,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
     // 1. Translator: 构建 SyncIR
     PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func, SyncAnalysisMode::NORMALSYNC);
+    translator.enableGenerationFlow(bufferGenerations);
     translator.Build();
     auto coverage = inspectInsertSyncEffectCoverage(func, syncIR, effectCoverage == "strict");
     if (failed(coverage)) {
@@ -312,6 +324,13 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // 2. Analyzer: 依赖分析与插入逻辑 Sync
     InsertSyncAnalysis analyzer(syncIR, memAnalyzer, syncOpsStorage, func,
                                 SyncAnalysisMode::NORMALSYNC);
+    std::optional<InsertSyncLifecycleStructure> generationStructure;
+    if (bufferGenerations) {
+        insert_sync_frontier::Budget budget;
+        generationStructure = buildInsertSyncLifecycleStructure(func, syncIR, budget, true);
+        if (generationStructure->status == StorageFrontierSnapshot::Status::Complete)
+            analyzer.setStorageFlow(&generationStructure->storageFlow);
+    }
     analyzer.Run(/*insertBarAllAtLast=*/true,
                  /*deferSamePipeRepair=*/deferSamePipe,
                  /*useMmadChains=*/mmadChains);
@@ -356,11 +375,31 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // the absence of a user tag after emission.
     llvm::SmallPtrSet<Operation *, 32> fixedInputBarriers;
     if (
-        (frontierRefinement || frontierPlacement) && *coverage) {
+        (frontierRefinement || frontierPlacement || bufferGenerations) && *coverage) {
         func.walk([&](BarrierOp barrier) { fixedInputBarriers.insert(barrier.getOperation()); });
     }
     SyncCodegen codegen(syncIR, func, SyncAnalysisMode::NORMALSYNC);
     codegen.Run();
+    if (!recheckInsertSyncGenerationRequirements(func, analyzer.getGenerationMmadRequirements(), analyzer.getSlotRequirements())) {
+        func.emitError("emitted generation-qualified requirements could not be reconstructed");
+        signalPassFailure();
+        return;
+    }
+    if (bufferGenerations)
+        func->setAttr("pto.insert_sync.generation_mmad_witnesses",
+                      IntegerAttr::get(IntegerType::get(&getContext(), 64), analyzer.getGenerationMmadRequirements().size()));
+    if (bufferGenerations && *coverage) {
+        func->setAttr("pto.insert_sync.generation_slot_witnesses",
+                      IntegerAttr::get(IntegerType::get(&getContext(), 64), analyzer.getSlotRequirements().size()));
+        SmallVector<Operation*> candidates;
+        func.walk([&](BarrierOp barrier) {
+            if (!fixedInputBarriers.contains(barrier.getOperation())) candidates.push_back(barrier.getOperation());
+        });
+        insert_sync_frontier::Budget budget;
+        auto cleanup = refineInsertSyncCompletion(func, syncIR, candidates, budget);
+        func->setAttr("pto.insert_sync.generation_barriers_removed",
+                      IntegerAttr::get(IntegerType::get(&getContext(), 64), cleanup.removed));
+    }
     if (pruneCompletedBarriers && *coverage) {
         // Optional refinement never becomes an admission gate. It does not
         // remove events, move endpoints, or alter allocator/scarcity decisions.

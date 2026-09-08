@@ -15,10 +15,32 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "PTO/Transforms/InsertSync/StorageFrontierControl.h"
 #include "PTO/Transforms/InsertSync/StorageFrontierQueries.h"
+#include "PTO/Transforms/InsertSync/BufferGenerationAnalysis.h"
 #include <string>
 #include <cstdint>
 
 namespace mlir::pto {
+struct InsertSyncStorageFlow {
+    insert_sync_frontier::BufferGenerationFlow facts;
+    llvm::DenseMap<Operation*, unsigned> phases;
+    std::vector<Operation*> operations;
+    std::optional<SmallVector<Operation*>> immediatePredecessors(Operation* target) const {
+        auto t = phases.find(target);
+        if (facts.status != insert_sync_frontier::BufferGenerationFlow::Status::Complete || t == phases.end())
+            return std::nullopt;
+        const auto& previous = facts.precedingOnLane[t->second];
+        if (previous.empty() || previous.test(operations.size())) return std::nullopt;
+        SmallVector<Operation*> result;
+        for (unsigned p = 0; p < operations.size(); ++p)
+            if (previous.test(p)) result.push_back(operations[p]);
+        return result;
+    }
+    bool provesUnordered(Operation* source, Operation* target) const {
+        auto s = phases.find(source), t = phases.find(target);
+        return facts.status == insert_sync_frontier::BufferGenerationFlow::Status::Complete &&
+               s != phases.end() && t != phases.end() && !facts.orderedPhases[s->second].test(t->second);
+    }
+};
 // Snapshot users must invalidate it after any physical/synchronization/control
 // mutation. References point into the supplied function; no concrete IDs are
 // inferred from metadata. Unsupported is a query result, never admission policy.
@@ -60,6 +82,7 @@ struct StorageFrontierSnapshot {
     std::vector<insert_sync_frontier::LaneProjection> lanes;
     insert_sync_frontier::LifecycleResult lifecycle;
     insert_sync_frontier::GenerationFrontiers generations;
+    insert_sync_frontier::BufferGenerationFlow storageFlow;
     insert_sync_frontier::CompletionResult supply;
 };
 // Conservative occurrence and payload checks: this entry never assumes a
@@ -82,6 +105,15 @@ struct StorageFrontierRefinementResult {
     bool internalError = false;
     std::string reason;
 };
+// Only explicitly owned barriers are candidates. Events and payload stay fixed.
+// Reimported physical completion must establish every removed prefix/drain.
+StorageFrontierRefinementResult refineInsertSyncCompletion(
+    func::FuncOp function, const SyncIRs& syncIR, ArrayRef<Operation*> ownedBarriers,
+    insert_sync_frontier::Budget& budget);
+struct InsertSyncSlotRequirement;
+bool recheckInsertSyncGenerationRequirements(
+    func::FuncOp function, ArrayRef<std::pair<Operation*, Operation*>> requirements,
+    ArrayRef<InsertSyncSlotRequirement> slotRequirements);
 // Uses the existing translated accesses. No new admission gate or speculative
 // effect classification. Static events and physical operation order are retained.
 // The analysis is optional; unproved/budget outcomes leave the function intact.
@@ -89,6 +121,6 @@ struct StorageFrontierRefinementResult {
 // introduce mutually exclusive static first/last/zero-trip sites.
 StorageFrontierRefinementResult refineInsertSyncStorageFrontiers(
     func::FuncOp function, const SyncIRs& syncIR, ArrayRef<Operation*> candidates, bool useMmadChains = false,
-    bool placeFrontiers = false, ArrayRef<Operation*> ownedEvents = {});
+    bool placeFrontiers = false, ArrayRef<Operation*> ownedEvents = {}, bool fixedProtocols = false);
 } // namespace mlir::pto
 #endif

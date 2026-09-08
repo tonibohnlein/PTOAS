@@ -53,9 +53,21 @@ def participation(stderr):
         before = before.split("// === [PTOInsertSync Debug]", 1)[0]
         names = re.findall(r"func.func(?:\s+private)?\s+@([^\s(]+)", before)
         entries.append({"function": names[0] if names else "unknown",
+                        "lifecycle_input_marker": 'pto.insert_sync.status = "lifecycle-plus-residuals"' in before,
                         "explicit_sync_bypass": bool(re.search(
                             r"pto\.(?:set_flag|wait_flag|record_event|wait_event)\b", before))})
+    committed = set()
+    for chunk in stderr.split("// -----// IR Dump After PTOInsertSync")[1:]:
+        after = chunk.split("// -----// IR Dump Before", 1)[0]
+        for line in after.splitlines():
+            name = re.search(r"func.func\s+@([^\s(]+)", line)
+            if (name and 'pto.insert_sync.status = "lifecycle-plus-residuals"' in line
+                    and re.search(r"pto\.insert_sync\.lifecycle_channels = [1-9][0-9]*", line)):
+                committed.add(name[1])
     return {"functions": entries,
+            "lifecycle_committed": bool(entries) and all(
+                entry["function"] in committed and not entry["lifecycle_input_marker"]
+                for entry in entries),
             "analysis_executed": "[PTOInsertSync Debug] After Analysis" in stderr,
             "allocation_executed": "[PTOInsertSync Debug] After EventId Allocation" in stderr,
             "pass_invoked": bool(entries)}

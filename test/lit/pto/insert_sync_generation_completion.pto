@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --pto-insert-sync="buffer-generations=true" %s | FileCheck %s
+
+// An outstanding last store still requires return-time completion.
+// CHECK-LABEL: func.func @undrained
+// CHECK: pto.tstore
+// CHECK: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+module attributes {pto.target_arch = "a3"} {
+ func.func @undrained(%input: !pto.partition_tensor_view<16x16xf16>, %out: !pto.partition_tensor_view<16x16xf16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+ %base = arith.constant 0 : i64
+ %a = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 16x16xf16>
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+ pto.tstore ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+ return
+ }
+}
+
+// -----
+// Fixed input barriers remain owned by the user.
+// CHECK-LABEL: func.func @fixed_barrier
+// CHECK: pto.barrier <PIPE_MTE2>
+// CHECK: pto.tstore
+// CHECK: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+module attributes {pto.target_arch = "a3"} {
+ func.func @fixed_barrier(%input: !pto.partition_tensor_view<16x16xf16>, %out: !pto.partition_tensor_view<16x16xf16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+ %base = arith.constant 0 : i64
+ %a = pto.alloc_tile addr = %base : !pto.tile_buf<vec, 16x16xf16>
+ pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+ pto.barrier <PIPE_MTE2>
+ pto.tstore ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+ return
+ }
+}

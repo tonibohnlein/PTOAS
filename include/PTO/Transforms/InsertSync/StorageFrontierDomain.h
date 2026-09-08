@@ -106,6 +106,7 @@ struct RegionScope {
     enum class Kind { Sequence, Choice, Loop, Function };
     Kind kind = Kind::Sequence;
     unsigned parent = kInvalid;
+    std::vector<unsigned> members; // guarded copies; empty means original entry..exit interval
 };
 struct Program {
     unsigned lanes = 0;

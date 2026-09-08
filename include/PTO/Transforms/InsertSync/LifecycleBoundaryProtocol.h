@@ -55,7 +55,7 @@ inline LifecycleCertificate recognizeBoundaryLifecycle(
             return stop(Status::InvalidInput, "invalid lifecycle member mask");
         }
         if (
-            (touch.writes && touch.reads) || (touch.reads && touch.reads != full) ||
+            touch.updates || (touch.writes && touch.reads) || (touch.reads && touch.reads != full) ||
             (touch.writes && program.phaseLane[p] != spec.producerLane) ||
             (touch.reads && program.phaseLane[p] != spec.consumerLane)) {
             return stop(Status::Unsupported, "incomplete bundle or incompatible participant");

@@ -58,6 +58,67 @@ struct CompletionWitness {
     std::vector<unsigned> supportingSyncNodes;
     bool includesLoopInduction = false;
 };
+
+struct ExitCompletion {
+    bool proved = false;
+    unsigned node = kInvalid, phase = kInvalid;
+};
+// The queried program must exclude the tail barrier being considered. Known
+// bits start true for unissued phases and are invalidated on every reissue.
+// A completed wait on any lane can establish global retirement at return.
+inline ExitCompletion completionAtExits(const Program& p, const CompletionResult& facts)
+{
+    if (facts.status != CompletionResult::Status::Complete || !facts.eventsProved ||
+        facts.before.size() != p.nodes.size()) return {};
+    bool exit = false;
+    for (unsigned n = 0; n < p.nodes.size(); ++n) {
+        if (!facts.before[n] || p.nodes[n].kind != Node::Kind::Exit) continue;
+        exit = true;
+        Bits retired(p.phaseLane.size());
+        for (const auto& lane : facts.before[n]->known) retired.unite(lane);
+        for (unsigned phase = 0; phase < p.phaseLane.size(); ++phase)
+            if (!retired.test(phase)) return {false, n, phase};
+    }
+    return {exit, kInvalid, kInvalid};
+}
+
+// A removed barrier's full prefix must still be established before the next
+// operation that observes that lane, including a publication to another lane.
+// Acquisitions can supply that prefix; they do not themselves publish it.
+inline bool preservesBarrierCompletion(const Program& p, unsigned barrier,
+                                      const CompletionResult& facts, Budget& budget)
+{
+    if (barrier >= p.nodes.size() || facts.status != CompletionResult::Status::Complete ||
+        !facts.eventsProved || facts.before.size() != p.nodes.size()) return false;
+    unsigned lane = p.nodes[barrier].lane;
+    Bits required(p.phaseLane.size());
+    for (unsigned phase = 0; phase < p.phaseLane.size(); ++phase)
+        if (p.phaseLane[phase] == lane) required.set(phase);
+    Bits seen(p.nodes.size());
+    std::deque<unsigned> work(p.nodes[barrier].next.begin(), p.nodes[barrier].next.end());
+    while (!work.empty()) {
+        unsigned n = work.front(); work.pop_front();
+        if (seen.test(n) || !facts.before[n]) continue;
+        if (!budget.spend(1 + p.nodes[n].next.size())) return false;
+        seen.set(n);
+        const auto& node = p.nodes[n];
+        if (node.kind == Node::Kind::All || (node.kind == Node::Kind::Barrier && node.lane == lane)) continue;
+        bool observes = (node.kind == Node::Kind::Issue && node.lane == lane) ||
+                        (node.kind == Node::Kind::Signal && p.keys[node.key].source == lane);
+        if (observes) {
+            if (!facts.before[n]->known[lane].contains(required)) return false;
+            continue;
+        }
+        if (node.kind == Node::Kind::Exit) {
+            Bits retired(p.phaseLane.size());
+            for (const auto& known : facts.before[n]->known) retired.unite(known);
+            if (!retired.contains(required)) return false;
+            continue;
+        }
+        for (unsigned next : node.next) work.push_back(next);
+    }
+    return true;
+}
 inline CompletionWitness completionBefore(
     const Program& p, const CompletionResult& facts, unsigned source, unsigned node, Budget& budget)
 {
@@ -325,6 +386,71 @@ inline GenerationFrontiers generationFrontiers(const Program& p, const std::vect
         }
     }
     result.status = GenerationFrontiers::Status::Complete;
+    return result;
+}
+
+struct EventKeySharing {
+    std::vector<unsigned> representative;
+    unsigned merged = 0;
+};
+// Check token identity as well as balance: every wait must still consume a
+// publication from its original logical stream after physical key sharing.
+inline bool preservesEventOwners(const Program& original, const Program& assigned, Budget& budget)
+{
+    const unsigned keys = original.keys.size(), count = original.nodes.size();
+    using Owners = std::vector<Bits>;
+    std::vector<std::optional<Owners>> before(count);
+    before[0] = Owners(keys, Bits(keys + 1));
+    for (auto& owner : *before[0]) owner.set(keys); // empty
+    std::deque<unsigned> queue{0}; Bits queued(count); queued.set(0);
+    while (!queue.empty()) {
+        unsigned n = queue.front(); queue.pop_front(); queued.reset(n);
+        if (!budget.spend(1 + keys * (1 + assigned.nodes[n].next.size()))) return false;
+        auto outgoing = *before[n];
+        const auto& node = assigned.nodes[n];
+        if (node.kind == Node::Kind::Signal || node.kind == Node::Kind::Wait) {
+            outgoing[node.key].clear();
+            outgoing[node.key].set(node.kind == Node::Kind::Signal ? original.nodes[n].key : keys);
+        }
+        for (unsigned next : node.next) {
+            bool change = !before[next];
+            if (!before[next]) before[next] = outgoing;
+            else for (unsigned k = 0; k < keys; ++k) {
+                change |= !(*before[next])[k].contains(outgoing[k]);
+                (*before[next])[k].unite(outgoing[k]);
+            }
+            if (change && !queued.test(next)) { queue.push_back(next); queued.set(next); }
+        }
+    }
+    for (unsigned n = 0; n < count; ++n)
+        if (before[n] && assigned.nodes[n].kind == Node::Kind::Wait) {
+            Bits expected(keys + 1); expected.set(original.nodes[n].key);
+            if ((*before[n])[assigned.nodes[n].key] != expected) return false;
+        }
+    return true;
+}
+inline EventKeySharing shareEventKeys(const Program& p, const Bits& eligible, Budget& budget)
+{
+    EventKeySharing result;
+    for (unsigned k = 0; k < p.keys.size(); ++k) result.representative.push_back(k);
+    if (!valid(p) || eligible.size() != p.keys.size()) return result;
+    for (unsigned key = 0; key < p.keys.size(); ++key) {
+        if (!eligible.test(key)) continue;
+        for (unsigned other = 0; other < key; ++other) {
+            if (!eligible.test(other) || result.representative[other] != other ||
+                p.keys[key].source != p.keys[other].source || p.keys[key].target != p.keys[other].target) continue;
+            auto mapping = result.representative; mapping[key] = other;
+            auto trial = p;
+            for (auto& node : trial.nodes)
+                if (node.kind == Node::Kind::Signal || node.kind == Node::Kind::Wait) node.key = mapping[node.key];
+            auto proof = completion(trial, Bits(trial.nodes.size()), budget);
+            if (proof.status == CompletionResult::Status::Complete && proof.eventsProved &&
+                preservesEventOwners(p, trial, budget)) {
+                result.representative = std::move(mapping); ++result.merged; break;
+            }
+            if (!budget.left) return result;
+        }
+    }
     return result;
 }
 

@@ -84,6 +84,8 @@ def campaign(args):
         "mmad_chains": getattr(args, "mmad_chains", False),
         "frontier_refinement": getattr(args, "frontier_refinement", False),
         "frontier_placement": getattr(args, "frontier_placement", False),
+        "lifecycle_synthesis": getattr(args, "lifecycle_synthesis", False),
+        "buffer_generations": getattr(args, "buffer_generations", False),
         "measurement": "host scalar replay; no completion/latency simulation",
         "device_runtime": "not-run",
         "rows": {},
@@ -99,8 +101,13 @@ def campaign(args):
     prefix = [
         sys.executable,
         "-c",
-        "import sys; sys.path.insert(0, sys.argv.pop(1)); "
-        "from pathlib import Path; from ptoas import _cli; "
+        "import sys\nsys.path.insert(0, sys.argv.pop(1))\n"
+        "from pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\n"
+        "class SerialContext(ir.Context):\n"
+        "    def __init__(self, *args, **kwargs):\n"
+        "        super().__init__(*args, **kwargs)\n"
+        "        self.enable_multithreading(False)\n"
+        "ir.Context = SerialContext\n"
         "raise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))",
         str(runtime),
     ]
@@ -126,6 +133,10 @@ def campaign(args):
                         command.append("--insert-sync-frontier-refinement")
                     if getattr(args, "frontier_placement", False):
                         command.append("--insert-sync-frontier-placement")
+                    if getattr(args, "lifecycle_synthesis", False):
+                        command.append("--insert-sync-lifecycle-synthesis")
+                    if getattr(args, "buffer_generations", False):
+                        command.append("--insert-sync-buffer-generations")
                     if arm == "staged":
                         command.append("--insert-sync-defer-same-pipe")
                 if kind == "pto":
@@ -152,8 +163,8 @@ def campaign(args):
                     record["participation"] = participation(stderr)
                     active = record["participation"]
                     if code == 0 and (
-                        not active["analysis_executed"]
-                        or not active["allocation_executed"]
+                        not ((active["analysis_executed"] and active["allocation_executed"])
+                             or active["lifecycle_committed"])
                         or not active["functions"]
                         or any(f["explicit_sync_bypass"] for f in active["functions"])
                     ):
@@ -285,6 +296,8 @@ def main():
         action="store_true",
         help="Enable lifecycle-guided event placement and storage-frontier refinement",
     )
+    parser.add_argument("--lifecycle-synthesis", action="store_true", help="Enable the earlier lifecycle constructor")
+    parser.add_argument("--buffer-generations", action="store_true", help="Construct events from per-buffer generations")
     parser.add_argument("--timeout", type=int, default=120)
     args = parser.parse_args()
     return campaign(args)

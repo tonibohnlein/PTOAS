@@ -39,7 +39,7 @@ struct LifecycleCompletionProjection {
 // it is impossible for a barrier candidate to prove its own redundancy here.
 inline LifecycleCompletionProjection projectLifecycleCompletion(
     const Program& base, const std::vector<LogicalLifecycle>& channels,
-    const std::vector<ResidualCompletionHandoff>& residuals, Budget& budget)
+    const std::vector<ResidualCompletionHandoff>& residuals, Budget& budget, bool includeConcreteResiduals = false)
 {
     LifecycleCompletionProjection result;
     using Status = LifecycleCompletionProjection::Status;
@@ -51,17 +51,17 @@ inline LifecycleCompletionProjection projectLifecycleCompletion(
         return result;
     };
     if (
-        !valid(base) || channels.empty() || !base.keys.empty()) {
+        !valid(base) || channels.empty() || (!includeConcreteResiduals && !base.keys.empty())) {
         return fail(Status::InvalidInput, "expected an unsynchronized structured program and selected lifecycles");
     }
     for (const Node& node : base.nodes) {
-        if (node.kind == Node::Kind::Signal || node.kind == Node::Kind::Wait || node.kind == Node::Kind::Barrier ||
-            node.kind == Node::Kind::All) {
+        if (!includeConcreteResiduals && (node.kind == Node::Kind::Signal || node.kind == Node::Kind::Wait ||
+            node.kind == Node::Kind::Barrier || node.kind == Node::Kind::All)) {
             return fail(Status::InvalidInput, "fixed or generated synchronization is not structural input");
         }
     }
     if (
-        channels.size() > 32 || 2 * channels.size() + residuals.size() > 64) {
+        channels.size() > 32 || 2 * channels.size() + residuals.size() + base.keys.size() > 64) {
         return fail(Status::AnalysisLimit, "logical completion-key analysis limit (not hardware scarcity)");
     }
 
@@ -98,6 +98,11 @@ inline LifecycleCompletionProjection projectLifecycleCompletion(
         afterResidual[r.source].push_back(i);
     }
     result.residualKeys = residuals.size();
+    const unsigned concreteOffset = p.keys.size();
+    if (includeConcreteResiduals) {
+        p.keys.insert(p.keys.end(), base.keys.begin(), base.keys.end());
+        result.residualKeys += base.keys.size();
+    }
     for (auto& ids : beforeResidual) {
         std::stable_sort(ids.begin(), ids.end(), [&](unsigned a, unsigned b) {
             return residuals[a].waitOrder < residuals[b].waitOrder;
@@ -163,6 +168,8 @@ inline LifecycleCompletionProjection projectLifecycleCompletion(
             LifecycleRole role = !cert.nodeRoles.empty() ?
                                      cert.nodeRoles[n] :
                                      (old.kind == Node::Kind::Issue ? cert.roles[old.phase] : LifecycleRole{});
+            if (role.publishBefore) action(tail, Node::Kind::Signal, 2 * c);
+            if (role.releaseBefore) action(tail, Node::Kind::Signal, 2 * c + 1);
             if (role.bypassReady) {
                 action(tail, Node::Kind::Wait, 2 * c);
                 action(tail, Node::Kind::Signal, 2 * c + 1);
@@ -183,6 +190,8 @@ inline LifecycleCompletionProjection projectLifecycleCompletion(
             }
         }
         Node physical = old;
+        if (physical.kind == Node::Kind::Signal || physical.kind == Node::Kind::Wait)
+            physical.key += concreteOffset;
         physical.next.clear();
         unsigned id = append(std::move(physical));
         connect(tail, id);

@@ -25,6 +25,7 @@ namespace mlir::pto::insert_sync_frontier {
 struct LifecycleTouch {
     unsigned writes = 0;
     unsigned reads = 0;
+    unsigned updates = 0; // producer-side read/modify/write; also present in writes
 };
 struct LifecycleSpec {
     unsigned producerLane = 0;
@@ -40,11 +41,14 @@ struct LifecycleRole {
     // Before overwrite/exit: consume an unused Ready and return Free.
     // This is allowed only after a proved empty consumer-region invocation.
     bool bypassReady = false;
+    bool publishBefore = false;
+    bool releaseBefore = false;
     bool operator==(const LifecycleRole& other) const
     {
         return acquireFree == other.acquireFree && publishReady == other.publishReady &&
                acquireReady == other.acquireReady && publishFree == other.publishFree &&
-               bypassReady == other.bypassReady;
+               bypassReady == other.bypassReady && publishBefore == other.publishBefore &&
+               releaseBefore == other.releaseBefore;
     }
 };
 struct LifecycleCertificate {
@@ -78,7 +82,7 @@ struct LifecycleCertificate {
             return Supply::Reclamation;
         }
         if (
-            (a.writes & bit) && (b.writes & bit)) {
+            (a.writes & bit) && (b.writes & bit) && !a.updates && !b.updates) {
             return Supply::WriteOrder;
         }
         return Supply::None;
@@ -117,7 +121,7 @@ inline LifecycleCertificate recognizeLifecycle(const Program& program, const Lif
             return stop(Status::InvalidInput, "invalid member mask");
         }
         if (
-            (touch.writes && touch.reads) || (touch.reads && touch.reads != full) ||
+            touch.updates || (touch.writes && touch.reads) || (touch.reads && touch.reads != full) ||
             (touch.writes && program.phaseLane[p] != spec.producerLane) ||
             (touch.reads && program.phaseLane[p] != spec.consumerLane)) {
             return stop(Status::Unsupported, "incomplete bundle or incompatible participant");
@@ -271,6 +275,7 @@ struct LifecycleAllocation {
     std::string reason;
     unsigned failedIdentity = kInvalid;
     unsigned failedSource = kInvalid, failedTarget = kInvalid;
+    uint32_t conflictingKeyMask = 0;
 };
 using ReservedLifecycleKeys = std::map<std::pair<unsigned, unsigned>, uint32_t>;
 
@@ -309,10 +314,14 @@ inline LifecycleAllocation allocateLifecycles(
             result.failedIdentity = plan.identity;
             result.failedSource = ready ? plan.spec.consumerLane : plan.spec.producerLane;
             result.failedTarget = ready ? plan.spec.producerLane : plan.spec.consumerLane;
+            result.conflictingKeyMask = used[{result.failedSource, result.failedTarget}];
             result.ready.clear();
             result.free.clear();
             result.status = LifecycleAllocation::Status::ResourceUnresolved;
-            result.reason = "dedicated lifecycle keys do not fit; no serialization was introduced";
+            result.reason = "candidate " + std::to_string(plan.identity) + " needs a key in domain " +
+                std::to_string(result.failedSource) + "->" + std::to_string(result.failedTarget) +
+                "; occupied mask=" + std::to_string(result.conflictingKeyMask) +
+                "; dedicated assignment unresolved; no serialization was introduced";
             return result;
         }
         result.ready.push_back(*ready);
@@ -330,6 +339,7 @@ enum class LifecycleAction {
     Prime,
     AcquireFree,
     Write,
+    Update,
     PublishReady,
     AcquireReady,
     Read,
@@ -399,6 +409,10 @@ inline bool verifyReconstructedLifecycle(
                     return false;
                 }
                 written |= node.members;
+                break;
+            case LifecycleAction::Update:
+                if (stage != 2 || !node.members || (written & node.members) != node.members)
+                    return false;
                 break;
             case LifecycleAction::PublishReady:
                 if (

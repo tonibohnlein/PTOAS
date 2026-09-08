@@ -11,6 +11,7 @@
 #define PTO_TRANSFORMS_INSERTSYNC_LIFECYCLESYNTHESIS_H
 
 #include "PTO/Transforms/InsertSync/LifecycleBoundaryProtocol.h"
+#include "PTO/Transforms/InsertSync/BufferGenerationAnalysis.h"
 #include "PTO/Transforms/InsertSync/LifecycleCompletion.h"
 #include "PTO/Transforms/InsertSync/StorageFrontierAnalysis.h"
 #include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
@@ -28,6 +29,7 @@ struct InsertSyncLifecycleStructure {
     bool cube = false;
     Operation *lifetimeScope = nullptr;
     insert_sync_frontier::Program program;
+    InsertSyncStorageFlow storageFlow;
     std::vector<Operation *> anchors;
     std::vector<const CompoundInstanceElement *> phases;
     // Actual R5 guard-product bindings. No generated/input attribute is trusted
@@ -39,7 +41,8 @@ struct InsertSyncLifecycleStructure {
     std::vector<Block *> blockExits;
 };
 InsertSyncLifecycleStructure buildInsertSyncLifecycleStructure(
-    func::FuncOp function, const SyncIRs &syncIR, insert_sync_frontier::Budget &budget);
+    func::FuncOp function, const SyncIRs &syncIR, insert_sync_frontier::Budget &budget,
+    bool analyzeGenerations = false);
 
 struct LifecycleGuardTest {
     enum class Kind { First, Last, Empty, ValueEquals };
@@ -50,7 +53,7 @@ struct LifecycleGuardTest {
     unsigned variable = insert_sync_frontier::kInvalid;
 };
 struct LifecyclePlacement {
-    enum class Role { AcquireFree, PublishReady, AcquireReady, PublishFree, BypassReady };
+    enum class Role { AcquireFree, PublishReady, AcquireReady, PublishFree, BypassReady, PublishBefore, ReleaseBefore };
     Role role = Role::AcquireFree;
     Operation *anchor = nullptr;
     Block *blockEnd = nullptr;
@@ -79,6 +82,8 @@ public:
         std::string identity;
         std::vector<LifecyclePlacement> placements;
         unsigned guardedActions = 0, consumerRegions = 0;
+        bool bufferGenerations = false;
+        insert_sync_frontier::BufferGenerationAnalysis generations;
     };
     std::vector<Channel> channels;
     llvm::DenseMap<Operation *, unsigned> phaseIds;
