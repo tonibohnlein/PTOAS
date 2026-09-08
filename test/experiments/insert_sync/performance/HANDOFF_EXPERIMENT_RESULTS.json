@@ -1,0 +1,959 @@
+{
+  "pto_test_opt_sha256": "7ba0ab0ab9f16a2071699556b6ab69777623062da10283d22c8a45b38c7ef823",
+  "binary_unchanged": true,
+  "scope": "native experiment on frozen emitted plans; no device execution",
+  "rows": [
+    {
+      "fixture": "four_use",
+      "arm": "combined",
+      "source_sha256": "024eb3290504aeea2a27437dac04c23232431f97fadc39ffe8a5331a48eb8935",
+      "status": "pass",
+      "baseline_sha256": "ad1a4421e738aae4a7fb91c297e1b5a849fe5786704096e93dca65ffb387a76b",
+      "trial_sha256": "ad1a4421e738aae4a7fb91c297e1b5a849fe5786704096e93dca65ffb387a76b",
+      "changed": false,
+      "before": {
+        "sets": 24,
+        "waits": 24,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_MTE3": 2
+        }
+      },
+      "after": {
+        "sets": 24,
+        "waits": 24,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_MTE3": 2
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "four_use",
+      "arm": "manual",
+      "source_sha256": "733b3f162199f44df29ed2f6c8cf3064c7b9f3167ccbc76fa44464b6248e8e4b",
+      "status": "pass",
+      "baseline_sha256": "7e053bebbdbd343bdc5f03083cd788d2b0d1d20d1efab6866fa8582b977d0b08",
+      "trial_sha256": "7e053bebbdbd343bdc5f03083cd788d2b0d1d20d1efab6866fa8582b977d0b08",
+      "changed": false,
+      "before": {
+        "sets": 24,
+        "waits": 24,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "after": {
+        "sets": 24,
+        "waits": 24,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "four_use",
+      "arm": "staged",
+      "source_sha256": "512e0a64dd98f9f9e4b990eb9ac4a54efb9287a1b7edeb5fae4dd97f7dd95f9a",
+      "status": "pass",
+      "baseline_sha256": "5f38ee3751d4e050a66b26d722909e1bee16aa9c0624373593e3ae1a70ed3943",
+      "trial_sha256": "5f38ee3751d4e050a66b26d722909e1bee16aa9c0624373593e3ae1a70ed3943",
+      "changed": false,
+      "before": {
+        "sets": 24,
+        "waits": 24,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_MTE3": 2
+        }
+      },
+      "after": {
+        "sets": 24,
+        "waits": 24,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_MTE3": 2
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "historical_gemm",
+      "arm": "combined",
+      "source_sha256": "b87bcd72ba911ccbc44243f96c84af8134bd5e168b720e4fcca3307338c80e58",
+      "status": "pass",
+      "baseline_sha256": "22baac4f09c1ca4096e2a56f3c968548ec9a11fa25a4540d2482fefd3e255dbe",
+      "trial_sha256": "22baac4f09c1ca4096e2a56f3c968548ec9a11fa25a4540d2482fefd3e255dbe",
+      "changed": false,
+      "before": {
+        "sets": 56,
+        "waits": 56,
+        "PIPE_ALL": 0,
+        "named": {}
+      },
+      "after": {
+        "sets": 56,
+        "waits": 56,
+        "PIPE_ALL": 0,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "historical_gemm",
+      "arm": "manual",
+      "source_sha256": "2229fcf1fcb77a54042e0de859af4991eabf5cfb1bcced125e3b709926a429f9",
+      "status": "pass",
+      "baseline_sha256": "e6dd870e8ade4d71c78ab2703072bc610020bca6a059ca9986e9b77140c54d31",
+      "trial_sha256": "e6dd870e8ade4d71c78ab2703072bc610020bca6a059ca9986e9b77140c54d31",
+      "changed": false,
+      "before": {
+        "sets": 53,
+        "waits": 53,
+        "PIPE_ALL": 0,
+        "named": {}
+      },
+      "after": {
+        "sets": 53,
+        "waits": 53,
+        "PIPE_ALL": 0,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "historical_gemm",
+      "arm": "staged",
+      "source_sha256": "2b0b4db81d68bd624dd91c3dce76ccf3850c2a46d5690e68b32ee45874e74e33",
+      "status": "pass",
+      "baseline_sha256": "c83f60e408fc5306123713d8f63a8ca5845a32e8a888d0e27ce44d15dd367438",
+      "trial_sha256": "c83f60e408fc5306123713d8f63a8ca5845a32e8a888d0e27ce44d15dd367438",
+      "changed": false,
+      "before": {
+        "sets": 56,
+        "waits": 56,
+        "PIPE_ALL": 0,
+        "named": {}
+      },
+      "after": {
+        "sets": 56,
+        "waits": 56,
+        "PIPE_ALL": 0,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "one_buffer",
+      "arm": "combined",
+      "source_sha256": "797e7beb1ac4de8935dc1d07b9bb59c0d73d0ee9413d272afca4afae8f3764ac",
+      "status": "pass",
+      "baseline_sha256": "e2b66c3dd2f1300333820ed884ecc02bbe48908bbc9c67006b03e2058ec588f3",
+      "trial_sha256": "e2b66c3dd2f1300333820ed884ecc02bbe48908bbc9c67006b03e2058ec588f3",
+      "changed": false,
+      "before": {
+        "sets": 6,
+        "waits": 6,
+        "PIPE_ALL": 0,
+        "named": {}
+      },
+      "after": {
+        "sets": 6,
+        "waits": 6,
+        "PIPE_ALL": 0,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "one_buffer",
+      "arm": "manual",
+      "source_sha256": "6d354997153cab8983a486fb739fecdc4dd96dadc0700598ceb552b734c897e4",
+      "status": "pass",
+      "baseline_sha256": "d3857bf14caf745edb729896a7c7dec3c850054de275c24efc498d2a9afdc2dc",
+      "trial_sha256": "d3857bf14caf745edb729896a7c7dec3c850054de275c24efc498d2a9afdc2dc",
+      "changed": false,
+      "before": {
+        "sets": 6,
+        "waits": 6,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "after": {
+        "sets": 6,
+        "waits": 6,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "one_buffer",
+      "arm": "staged",
+      "source_sha256": "908e7a234f5d20123790719c67e4b9437cd08e204fc532cfeb38597343dffca4",
+      "status": "pass",
+      "baseline_sha256": "1929cfc5502b4f0eaf7c9e7c4c7cd403d7fbdafd3e82e0facaeab959089a0f67",
+      "trial_sha256": "1929cfc5502b4f0eaf7c9e7c4c7cd403d7fbdafd3e82e0facaeab959089a0f67",
+      "changed": false,
+      "before": {
+        "sets": 6,
+        "waits": 6,
+        "PIPE_ALL": 0,
+        "named": {}
+      },
+      "after": {
+        "sets": 6,
+        "waits": 6,
+        "PIPE_ALL": 0,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "three_buffer",
+      "arm": "combined",
+      "source_sha256": "46b90f97edbb34084207769f99fbccd8ab86b4c6b42590f531ab96994511a483",
+      "status": "pass",
+      "baseline_sha256": "81ad02700b197ff111ce73487f72dc906cccded8e7981e3af357d46e19e4c462",
+      "trial_sha256": "81ad02700b197ff111ce73487f72dc906cccded8e7981e3af357d46e19e4c462",
+      "changed": false,
+      "before": {
+        "sets": 18,
+        "waits": 18,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_MTE3": 3
+        }
+      },
+      "after": {
+        "sets": 18,
+        "waits": 18,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_MTE3": 3
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "three_buffer",
+      "arm": "manual",
+      "source_sha256": "02d877e6f1d78b2ff801a9cbd612b49758b229047812203bfe84a7d002a9f0cc",
+      "status": "pass",
+      "baseline_sha256": "6265fc2f15c2e207a4f681f69fc069f74296c448bc2a57f599ed0eebeadc65da",
+      "trial_sha256": "6265fc2f15c2e207a4f681f69fc069f74296c448bc2a57f599ed0eebeadc65da",
+      "changed": false,
+      "before": {
+        "sets": 18,
+        "waits": 18,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "after": {
+        "sets": 18,
+        "waits": 18,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "three_buffer",
+      "arm": "staged",
+      "source_sha256": "2dc38dbfccc415680f06c94d235d9feb23142ecaddea1453359cc6554ed9dd38",
+      "status": "pass",
+      "baseline_sha256": "1f67c9b86d3c592c095ad6382d5a7559f824f8be5995887ca8cfea91ff63d54f",
+      "trial_sha256": "1f67c9b86d3c592c095ad6382d5a7559f824f8be5995887ca8cfea91ff63d54f",
+      "changed": false,
+      "before": {
+        "sets": 18,
+        "waits": 18,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_MTE3": 3
+        }
+      },
+      "after": {
+        "sets": 18,
+        "waits": 18,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_MTE3": 3
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "two_buffer",
+      "arm": "combined",
+      "source_sha256": "e4d0bb56a79ec450dadb21fd113a11fd6490fc1f308fedc2c0fb785090a12b8b",
+      "status": "pass",
+      "baseline_sha256": "d3d2834efb744eefe51c95d636dd3a63a000d5b4c1f57005c14d774b9518e04b",
+      "trial_sha256": "d3d2834efb744eefe51c95d636dd3a63a000d5b4c1f57005c14d774b9518e04b",
+      "changed": false,
+      "before": {
+        "sets": 12,
+        "waits": 12,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_MTE3": 2
+        }
+      },
+      "after": {
+        "sets": 12,
+        "waits": 12,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_MTE3": 2
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "two_buffer",
+      "arm": "manual",
+      "source_sha256": "8e05c11dc44582119e0ebc7e1290e97dbd1d3d44b7475d344765b792b4724270",
+      "status": "pass",
+      "baseline_sha256": "165646f20ffa0ac4c5bb3aeaa8550825a9dfd57e9155147d113e2cec757c5cb0",
+      "trial_sha256": "165646f20ffa0ac4c5bb3aeaa8550825a9dfd57e9155147d113e2cec757c5cb0",
+      "changed": false,
+      "before": {
+        "sets": 12,
+        "waits": 12,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "after": {
+        "sets": 12,
+        "waits": 12,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "two_buffer",
+      "arm": "staged",
+      "source_sha256": "2b218fff767fa66b4be92d846ede975ac91b3ff03409ce87ae3f9dfec5aed75a",
+      "status": "pass",
+      "baseline_sha256": "43e367ae930f5e88f36323f76f2107d5c01205f408946539b71bded12ceb1dcb",
+      "trial_sha256": "43e367ae930f5e88f36323f76f2107d5c01205f408946539b71bded12ceb1dcb",
+      "changed": false,
+      "before": {
+        "sets": 12,
+        "waits": 12,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_MTE3": 2
+        }
+      },
+      "after": {
+        "sets": 12,
+        "waits": 12,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_MTE3": 2
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "conv2d_interior",
+      "arm": "combined",
+      "source_sha256": "be093bcef65effda78474cafc4e0ba4f5dce689a11bfed2881de7033982cb2aa",
+      "status": "pass",
+      "baseline_sha256": "d93836c9a313b0af9f671f92dd02d92483177529e988fa9eb3453a50e7140aa8",
+      "trial_sha256": "d93836c9a313b0af9f671f92dd02d92483177529e988fa9eb3453a50e7140aa8",
+      "changed": false,
+      "before": {
+        "sets": 0,
+        "waits": 0,
+        "PIPE_ALL": 1,
+        "named": {
+          "PIPE_M": 8
+        }
+      },
+      "after": {
+        "sets": 0,
+        "waits": 0,
+        "PIPE_ALL": 1,
+        "named": {
+          "PIPE_M": 8
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "conv2d_interior",
+      "arm": "manual",
+      "source_sha256": "d70008ce95930e9bbb50354f76ddf8db3d38d22a4d0a1b79a4e51c8e7d895ba2",
+      "status": "pass",
+      "baseline_sha256": "b5ea02e161b002c203ff08271e21c4b8e35f1fd965f27368c9cb333afc9f02da",
+      "trial_sha256": "b5ea02e161b002c203ff08271e21c4b8e35f1fd965f27368c9cb333afc9f02da",
+      "changed": false,
+      "before": {
+        "sets": 24,
+        "waits": 24,
+        "PIPE_ALL": 0,
+        "named": {}
+      },
+      "after": {
+        "sets": 24,
+        "waits": 24,
+        "PIPE_ALL": 0,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "conv2d_interior",
+      "arm": "staged",
+      "source_sha256": "be093bcef65effda78474cafc4e0ba4f5dce689a11bfed2881de7033982cb2aa",
+      "status": "pass",
+      "baseline_sha256": "d93836c9a313b0af9f671f92dd02d92483177529e988fa9eb3453a50e7140aa8",
+      "trial_sha256": "d93836c9a313b0af9f671f92dd02d92483177529e988fa9eb3453a50e7140aa8",
+      "changed": false,
+      "before": {
+        "sets": 0,
+        "waits": 0,
+        "PIPE_ALL": 1,
+        "named": {
+          "PIPE_M": 8
+        }
+      },
+      "after": {
+        "sets": 0,
+        "waits": 0,
+        "PIPE_ALL": 1,
+        "named": {
+          "PIPE_M": 8
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "flash_attention_cube",
+      "arm": "combined",
+      "source_sha256": "a1359a84d1e7edf34a5d6763babf093f9f90f6cd322e4f5dbda91f5df24380e5",
+      "status": "pass",
+      "parser_bridge": {
+        "operations": 3,
+        "sha256": "f227a2de44ca9f2260a623a3423d2324fbc62c2d93d0c84a88937cbf3dd29f1a",
+        "kind": "existing-gm-only-generic-assembly"
+      },
+      "baseline_sha256": "34a76305285ff7388afccd1aa66568330a2183ecddf57332b83a1f292afd9e6f",
+      "trial_sha256": "34a76305285ff7388afccd1aa66568330a2183ecddf57332b83a1f292afd9e6f",
+      "changed": false,
+      "before": {
+        "sets": 15,
+        "waits": 15,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "after": {
+        "sets": 15,
+        "waits": 15,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "flash_attention_cube",
+      "arm": "manual",
+      "source_sha256": "ac843bfe73226d1b6cdea94c49919f7096fb0db0b695f8480c444d1a882803b2",
+      "status": "pass",
+      "parser_bridge": {
+        "operations": 3,
+        "sha256": "2561391638915bc6093b691c6c93d2e2e1d7084c95dc13e33fdcc650d4a12cd4",
+        "kind": "existing-gm-only-generic-assembly"
+      },
+      "baseline_sha256": "e071e2cf0aaf839b8c32f850de14c730c995502dff0058b6b1adc7b0d6e5d4fd",
+      "trial_sha256": "e071e2cf0aaf839b8c32f850de14c730c995502dff0058b6b1adc7b0d6e5d4fd",
+      "changed": false,
+      "before": {
+        "sets": 18,
+        "waits": 18,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "after": {
+        "sets": 18,
+        "waits": 18,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "flash_attention_cube",
+      "arm": "staged",
+      "source_sha256": "a1359a84d1e7edf34a5d6763babf093f9f90f6cd322e4f5dbda91f5df24380e5",
+      "status": "pass",
+      "parser_bridge": {
+        "operations": 3,
+        "sha256": "f227a2de44ca9f2260a623a3423d2324fbc62c2d93d0c84a88937cbf3dd29f1a",
+        "kind": "existing-gm-only-generic-assembly"
+      },
+      "baseline_sha256": "34a76305285ff7388afccd1aa66568330a2183ecddf57332b83a1f292afd9e6f",
+      "trial_sha256": "34a76305285ff7388afccd1aa66568330a2183ecddf57332b83a1f292afd9e6f",
+      "changed": false,
+      "before": {
+        "sets": 15,
+        "waits": 15,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "after": {
+        "sets": 15,
+        "waits": 15,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "gdn_wy",
+      "arm": "combined",
+      "source_sha256": "e5fcb6b4f2d4a02e541772bb6cba490844cf6cddead1b14a9e2491d81abff6a0",
+      "status": "pass",
+      "baseline_sha256": "16ffc63ea4547af58a217a44e4d72d74815a0c31ad3ab0b5419e4afe5ebc24b6",
+      "trial_sha256": "16ffc63ea4547af58a217a44e4d72d74815a0c31ad3ab0b5419e4afe5ebc24b6",
+      "changed": false,
+      "before": {
+        "sets": 32,
+        "waits": 32,
+        "PIPE_ALL": 2,
+        "named": {
+          "PIPE_V": 13,
+          "PIPE_MTE1": 1
+        }
+      },
+      "after": {
+        "sets": 32,
+        "waits": 32,
+        "PIPE_ALL": 2,
+        "named": {
+          "PIPE_V": 13,
+          "PIPE_MTE1": 1
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer",
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "gdn_wy",
+      "arm": "manual",
+      "source_sha256": "2c6f42d28242d2cb846b0240188f4883a417377907d59bdd5a737cc2c7731ca1",
+      "status": "pass",
+      "baseline_sha256": "9de600ab171f45c17ba58fad8ddda4e194b9bc647490edd085b337a803bba773",
+      "trial_sha256": "9de600ab171f45c17ba58fad8ddda4e194b9bc647490edd085b337a803bba773",
+      "changed": false,
+      "before": {
+        "sets": 16,
+        "waits": 16,
+        "PIPE_ALL": 2,
+        "named": {
+          "PIPE_V": 6
+        }
+      },
+      "after": {
+        "sets": 16,
+        "waits": 16,
+        "PIPE_ALL": 2,
+        "named": {
+          "PIPE_V": 6
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer",
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "gdn_wy",
+      "arm": "staged",
+      "source_sha256": "7f96f4ada7a8eee7d9c13ec27be7a5fc6d499d28a4070804b4cdb0ff396ccad4",
+      "status": "pass",
+      "baseline_sha256": "ace1e674559bb1c6309959ce6af2ef61811a410edb132bd5de75ae85d287d0a2",
+      "trial_sha256": "ace1e674559bb1c6309959ce6af2ef61811a410edb132bd5de75ae85d287d0a2",
+      "changed": false,
+      "before": {
+        "sets": 32,
+        "waits": 32,
+        "PIPE_ALL": 2,
+        "named": {
+          "PIPE_V": 13,
+          "PIPE_MTE1": 1
+        }
+      },
+      "after": {
+        "sets": 32,
+        "waits": 32,
+        "PIPE_ALL": 2,
+        "named": {
+          "PIPE_V": 13,
+          "PIPE_MTE1": 1
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer",
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "kda_wy",
+      "arm": "combined",
+      "source_sha256": "d72b55a4da46838eaaba84d51873c2ae2909abba259aa8fa67944da7fe9fc0ff",
+      "status": "pass",
+      "baseline_sha256": "c42e9195f043ac8d028c7dbe729e977a88088dca60688f29b6ecb7a8fa1f056f",
+      "trial_sha256": "c42e9195f043ac8d028c7dbe729e977a88088dca60688f29b6ecb7a8fa1f056f",
+      "changed": false,
+      "before": {
+        "sets": 35,
+        "waits": 35,
+        "PIPE_ALL": 2,
+        "named": {
+          "PIPE_MTE2": 2,
+          "PIPE_V": 10,
+          "PIPE_MTE3": 1,
+          "PIPE_MTE1": 1
+        }
+      },
+      "after": {
+        "sets": 35,
+        "waits": 35,
+        "PIPE_ALL": 2,
+        "named": {
+          "PIPE_MTE2": 2,
+          "PIPE_V": 10,
+          "PIPE_MTE3": 1,
+          "PIPE_MTE1": 1
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer",
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "kda_wy",
+      "arm": "manual",
+      "source_sha256": "138d082012dce086855dc67c5f041b5b2f59f476f6b4c6230a7e3ba433830659",
+      "status": "pass",
+      "baseline_sha256": "582fb11d6146ea55d36295cc12b1bed2eebeadfa5d29852ad3366cda9927a6f5",
+      "trial_sha256": "582fb11d6146ea55d36295cc12b1bed2eebeadfa5d29852ad3366cda9927a6f5",
+      "changed": false,
+      "before": {
+        "sets": 17,
+        "waits": 17,
+        "PIPE_ALL": 2,
+        "named": {
+          "PIPE_V": 7
+        }
+      },
+      "after": {
+        "sets": 17,
+        "waits": 17,
+        "PIPE_ALL": 2,
+        "named": {
+          "PIPE_V": 7
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer",
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "kda_wy",
+      "arm": "staged",
+      "source_sha256": "d72b55a4da46838eaaba84d51873c2ae2909abba259aa8fa67944da7fe9fc0ff",
+      "status": "pass",
+      "baseline_sha256": "c42e9195f043ac8d028c7dbe729e977a88088dca60688f29b6ecb7a8fa1f056f",
+      "trial_sha256": "c42e9195f043ac8d028c7dbe729e977a88088dca60688f29b6ecb7a8fa1f056f",
+      "changed": false,
+      "before": {
+        "sets": 35,
+        "waits": 35,
+        "PIPE_ALL": 2,
+        "named": {
+          "PIPE_MTE2": 2,
+          "PIPE_V": 10,
+          "PIPE_MTE3": 1,
+          "PIPE_MTE1": 1
+        }
+      },
+      "after": {
+        "sets": 35,
+        "waits": 35,
+        "PIPE_ALL": 2,
+        "named": {
+          "PIPE_MTE2": 2,
+          "PIPE_V": 10,
+          "PIPE_MTE3": 1,
+          "PIPE_MTE1": 1
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer",
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "topk_128",
+      "arm": "combined",
+      "source_sha256": "2d56af839de0130623aed26b6dfc75c57971705b416e6ee411106f07706ce70e",
+      "status": "pass",
+      "baseline_sha256": "606ed3ce850db90a311ce765986c1b94733c3b500a10c2d64dc421f8b0af9355",
+      "trial_sha256": "606ed3ce850db90a311ce765986c1b94733c3b500a10c2d64dc421f8b0af9355",
+      "changed": false,
+      "before": {
+        "sets": 15,
+        "waits": 15,
+        "PIPE_ALL": 1,
+        "named": {
+          "PIPE_V": 14,
+          "PIPE_MTE3": 2
+        }
+      },
+      "after": {
+        "sets": 15,
+        "waits": 15,
+        "PIPE_ALL": 1,
+        "named": {
+          "PIPE_V": 14,
+          "PIPE_MTE3": 2
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "topk_128",
+      "arm": "manual",
+      "source_sha256": "89b4799bb80d1688f1f054a9d9ccc9d5e100f73ce1d215986392e755444dee53",
+      "status": "pass",
+      "baseline_sha256": "fb951137af3d833ac2479d0c51be0d6fbc656f20303ca94a8bf2cd68fc85bf39",
+      "trial_sha256": "fb951137af3d833ac2479d0c51be0d6fbc656f20303ca94a8bf2cd68fc85bf39",
+      "changed": false,
+      "before": {
+        "sets": 10,
+        "waits": 10,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_V": 22
+        }
+      },
+      "after": {
+        "sets": 10,
+        "waits": 10,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_V": 22
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "topk_128",
+      "arm": "staged",
+      "source_sha256": "2d56af839de0130623aed26b6dfc75c57971705b416e6ee411106f07706ce70e",
+      "status": "pass",
+      "baseline_sha256": "606ed3ce850db90a311ce765986c1b94733c3b500a10c2d64dc421f8b0af9355",
+      "trial_sha256": "606ed3ce850db90a311ce765986c1b94733c3b500a10c2d64dc421f8b0af9355",
+      "changed": false,
+      "before": {
+        "sets": 15,
+        "waits": 15,
+        "PIPE_ALL": 1,
+        "named": {
+          "PIPE_V": 14,
+          "PIPE_MTE3": 2
+        }
+      },
+      "after": {
+        "sets": 15,
+        "waits": 15,
+        "PIPE_ALL": 1,
+        "named": {
+          "PIPE_V": 14,
+          "PIPE_MTE3": 2
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "triangular_inverse_16",
+      "arm": "combined",
+      "source_sha256": "81e946867cbf9acf330b568faab15f8f1aac71a7c0af0dff2675f21e6e3b45f0",
+      "status": "pass",
+      "baseline_sha256": "bace49cd23d61834654e91727361b1a51ea5106dc6a5cf5e2202e0e148cf3124",
+      "trial_sha256": "bace49cd23d61834654e91727361b1a51ea5106dc6a5cf5e2202e0e148cf3124",
+      "changed": false,
+      "before": {
+        "sets": 277,
+        "waits": 277,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "after": {
+        "sets": 277,
+        "waits": 277,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "triangular_inverse_16",
+      "arm": "manual",
+      "source_sha256": "b10740887ef8e01872cc8fbf81384b39b1be0d0992f02942014b5a3fed390a35",
+      "status": "pass",
+      "baseline_sha256": "1251ed3b741667e166a66d0ec647046c8a5eb690cc1ac502931d7d0833e895f0",
+      "trial_sha256": "1251ed3b741667e166a66d0ec647046c8a5eb690cc1ac502931d7d0833e895f0",
+      "changed": false,
+      "before": {
+        "sets": 278,
+        "waits": 278,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_V": 105
+        }
+      },
+      "after": {
+        "sets": 278,
+        "waits": 278,
+        "PIPE_ALL": 0,
+        "named": {
+          "PIPE_V": 105
+        }
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    },
+    {
+      "fixture": "triangular_inverse_16",
+      "arm": "staged",
+      "source_sha256": "81e946867cbf9acf330b568faab15f8f1aac71a7c0af0dff2675f21e6e3b45f0",
+      "status": "pass",
+      "baseline_sha256": "bace49cd23d61834654e91727361b1a51ea5106dc6a5cf5e2202e0e148cf3124",
+      "trial_sha256": "bace49cd23d61834654e91727361b1a51ea5106dc6a5cf5e2202e0e148cf3124",
+      "changed": false,
+      "before": {
+        "sets": 277,
+        "waits": 277,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "after": {
+        "sets": 277,
+        "waits": 277,
+        "PIPE_ALL": 1,
+        "named": {}
+      },
+      "decisions": [
+        "InsertSync handoff experiment: 0 advanced, 0 delayed, 0 split; 0 removed cross-lane completion facts, 0 trials; unchanged: structured recurrence/choice needs occurrence-qualified demand transfer"
+      ]
+    }
+  ],
+  "base_commit": "862ab811124d2e67a7f2cde992461983163f6a7a",
+  "source_campaign": "combined-structure-flow/{controls-final,kernels-final}",
+  "positive_boundary": {
+    "changes": [
+      {
+        "target": 2,
+        "target_op": "pto.tabs",
+        "source_lane": "PIPE_MTE2",
+        "target_lane": "PIPE_V",
+        "manual_prefix": 1,
+        "automatic_prefix": 0,
+        "automatic_requires_later_prefix": false
+      }
+    ],
+    "seed": {
+      "counts": {
+        "pto.alloc_tile": 4,
+        "pto.make_tensor_view": 1,
+        "pto.partition_view": 1,
+        "pto.tload": 2,
+        "pto.set_flag": 1,
+        "pto.wait_flag": 1,
+        "pto.tabs": 2,
+        "pto.barrier": 1,
+        "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+      },
+      "payload_sha256": "cd9629a10166319e5ef7b96651b6ec4db6a07255a9e969ba683df7d4306d2e4f",
+      "action_trace_sha256": "2cf3b0108497eb2c88d46949d3f75713036081c0c5d6e11ef41bfb9bc5dbee06",
+      "scalar_steps": 21
+    },
+    "trial": {
+      "counts": {
+        "pto.alloc_tile": 4,
+        "pto.make_tensor_view": 1,
+        "pto.partition_view": 1,
+        "pto.tload": 2,
+        "pto.set_flag": 2,
+        "pto.wait_flag": 2,
+        "pto.tabs": 2,
+        "pto.barrier": 1,
+        "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+      },
+      "payload_sha256": "cd9629a10166319e5ef7b96651b6ec4db6a07255a9e969ba683df7d4306d2e4f",
+      "action_trace_sha256": "906897dd606c895d9a0322bd6716c89d827314f5d816268ee8c09d718b4265bb",
+      "scalar_steps": 23
+    }
+  }
+}

@@ -1,5 +1,11 @@
 # InsertSync performance regression fixtures
 
+The [eight Qwen A3 additions](QWEN_ADDITIONS_RESULTS.md) compare original
+InsertSync with the shared-generation revision on existing model kernels,
+including synchronization placement, specialization/fallback diagnostics and
+payload/allocation identity. Use `run_qwen_additions.py` for this population;
+[qwen-additions-manifest.json](qwen-additions-manifest.json) pins inputs and goldens.
+
 The experimental [per-buffer generation analysis](../../../../docs/designs/ptoas-insertsync-buffer-generations.md)
 is selected with `run.py --buffer-generations`. Use `--lifecycle-synthesis`
 to compare the preceding lifecycle constructor with the same frozen inputs.
@@ -253,3 +259,24 @@ python compare_boundaries.py /disk/manual/output.pto /disk/staged/output.pto \
 This compares required source-completion prefixes and payload identity, not
 latency or device correctness. Static pair counts alone do not establish lost
 overlap. The same observer rejects unknown physical lane contracts.
+
+## Forward supply / backward needs experiment
+
+The explicit native development pass `--pto-experiment-handoff-planning`
+advances, delays or splits complete one-shot handoffs using existing storage and
+completion facts. It is not enabled by production InsertSync. Its current
+linear domain declines branches, loops, repeated key occurrences and unknown
+effects; it never treats a finite replay as proof for those cases.
+
+Run it against a previously frozen campaign without regenerating seed plans:
+
+```sh
+python run_handoff_experiment.py --pto-test-opt /disk/build/tools/pto-test-opt/pto-test-opt \
+  --python-root /disk/build/python --campaign /disk/controls --campaign /disk/kernels \
+  --output /disk/new-handoff-experiment
+```
+
+The runner is serial, retains input and tool hashes, canonical seed/trial PTO,
+diagnostics, and separate mechanism inventories. See the
+[native results](HANDOFF_EXPERIMENT_RESULTS.md) and
+[annotated algorithm specification](../../../../docs/designs/ptoas-insertsync-coherent-planning.md).

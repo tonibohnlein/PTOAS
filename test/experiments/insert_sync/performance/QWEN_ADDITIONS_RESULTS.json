@@ -1,0 +1,4153 @@
+{
+  "arch": "a3",
+  "binaries_unchanged": true,
+  "device_execution": "not-run",
+  "evidence_directory": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2",
+  "failures": [],
+  "gm_contract": "distinct GM argument allocations for both arms; original legacy default",
+  "inputs": {
+    "online_softmax": {
+      "golden": "test/samples/Qwen3DecodeA3/online_softmax_golden.py",
+      "sha256": "1d67f50a2b7ae1225093444ca010ca46c9d6b726ce0f8f03c529e51889a7c534",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aiv/online_softmax.pto"
+    },
+    "q_proj": {
+      "golden": "test/samples/Qwen3DecodeA3/q_proj_golden.py",
+      "sha256": "5aa01e4f14bb7db12e44ddf67c66c4887b003d50d6cff85fee7b2d2aa1958f06",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aic/q_proj.pto"
+    },
+    "qk_matmul": {
+      "golden": "test/samples/Qwen3DecodeA3/qk_matmul_golden.py",
+      "sha256": "1f6d0e3a0f44ec4e77b4405fd5990ef3f7738b578acfae3c902545a1eed896cb",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aic/qk_matmul.pto"
+    },
+    "rmsnorm": {
+      "golden": "test/samples/Qwen3DecodeA3/rmsnorm_golden.py",
+      "sha256": "ed39cafb5f4d6ae42aaec7f9535e88011b4e52af3dfd74e40cfb4525562b1bc8",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aiv/rmsnorm.pto"
+    },
+    "rope_kv_cache": {
+      "golden": "test/samples/Qwen3DecodeA3/rope_kv_cache_golden.py",
+      "sha256": "1a650bdd8c9a49da5e78e8c83054bdc3699782872228e6fc49c38f0ff92252cf",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aiv/rope_kv_cache.pto"
+    },
+    "silu": {
+      "golden": "test/samples/Qwen3DecodeA3/silu_golden.py",
+      "sha256": "2156fd9bb8d0b85b743175f88f18c3cfe30cb0bad6b8043662ea254458578925",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aiv/silu.pto"
+    },
+    "softmax": {
+      "golden": "test/samples/Qwen3DecodeA3/softmax_golden.py",
+      "sha256": "6a31a69e1395144674533fea63a44f808aba4e25fb653467476d0ae6ee147dcc",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aiv/softmax.pto"
+    },
+    "sv_matmul": {
+      "golden": "test/samples/Qwen3DecodeA3/sv_matmul_golden.py",
+      "sha256": "cb6c20fddca2624fe2851bcb0861b7c1883a40474b1dace00c3f80864eec8bcc",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aic/sv_matmul.pto"
+    }
+  },
+  "level": "level3",
+  "manifest_sha256": "cf08e32e10493462f2af68aa1584c1f1390427c6d0c40d4b9c2a6f3707982a8e",
+  "optimizer_sha256": "7ba0ab0ab9f16a2071699556b6ab69777623062da10283d22c8a45b38c7ef823",
+  "original_source": "7e2ec3e29420e297dcf5b3c59ba4d90841464821",
+  "revised_build_note": "current worktree build; separate one-shot handoff experiment disabled",
+  "revised_head": "862ab811124d2e67a7f2cde992461983163f6a7a",
+  "revised_worktree_patch_sha256": "8ef8d908ea2cfe762a7bdc9cb5537bc853ef57a941cccbe88c24fa033ad5ff9c",
+  "rows": {
+    "online_softmax": {
+      "comparison": {
+        "abi_identical": true,
+        "allocations_identical": true,
+        "cpp_identical": false,
+        "native_diagnostic_plan_matches_cli": true,
+        "pass_entry_identical": true,
+        "payload_identical": true,
+        "placement_identical": false,
+        "same_boundary_inventory_ignoring_keys": true,
+        "same_boundary_inventory_including_keys": true,
+        "views_identical": true
+      },
+      "original": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_V": 20
+            },
+            "sets": 12,
+            "waits": 12
+          },
+          "status_attributes": [
+            {}
+          ]
+        },
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "bd298bf9440176be38348dd0475074ec747c666ecc5e82198c41c59ed29daf60"
+          },
+          "allocations": {
+            "records": 90,
+            "sha256": "48de53d0536b92c9ddabc65aa570c93418887211db13536699f4c2074b59a33c"
+          },
+          "payload": {
+            "records": 232,
+            "sha256": "3dd3271cb24b0b24b4d89fef4cdf04fbf9b9188a47fdfb83c17ac9e06665b656"
+          },
+          "placements": {
+            "records": 45,
+            "sha256": "d41d9ae62e1478c5b6ad1fdd3a2284db827ec24a8cd4dd3e48bae7acf751441b"
+          },
+          "views": {
+            "records": 18,
+            "sha256": "17ef99dd151f6233a886ea5bfc458e2a0612c9b4d67560b918faf78b21070eb6"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "online_softmax",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/online_softmax/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/online_softmax/original/output.cpp"
+            ],
+            "output_sha256": "913e150f42d255a30c60bdccda02a98b82b2c786d75fa5b950c436b3cfdbc5eb",
+            "returncode": 0,
+            "seconds": 0.45376405300339684
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/online_softmax/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/online_softmax/original/output.pto"
+            ],
+            "output_sha256": "8089f02d4a6ab85517284da2778bb39bde4a0724f0dd930c75b66f2c370e68a1",
+            "returncode": 0,
+            "seconds": 0.4532349660003092
+          }
+        },
+        "status": "pass"
+      },
+      "payload_cut_changes": {
+        "added": [],
+        "removed": []
+      },
+      "revised": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_V": 20
+            },
+            "sets": 12,
+            "waits": 12
+          },
+          "status_attributes": [
+            {
+              "pto.insert_sync.effect_coverage": "\"complete\"",
+              "pto.insert_sync.generation_barriers_removed": "0 : i64",
+              "pto.insert_sync.generation_global_witnesses": "0 : i64",
+              "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+              "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+              "pto.insert_sync.mmad_chain_targets": "0 : i64",
+              "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+              "pto.insert_sync.status": "\"analyzed\""
+            }
+          ]
+        },
+        "diagnostics": [
+          "InsertSync lifecycle synthesis: structural import: physical phase has no qualified frontier adapter; attempted=0, proposed=0, streams=0, supplied-access-pairs=0, combined-event-audit=unproved, planning-attempts=1, retries=0, consumer-regions=0, guarded-actions=0",
+          "InsertSync MMAD chains: 0 eligible targets, 0 ACC dependency groups elided; structured predecessor identities; no completion or token facts invented"
+        ],
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "bd298bf9440176be38348dd0475074ec747c666ecc5e82198c41c59ed29daf60"
+          },
+          "allocations": {
+            "records": 90,
+            "sha256": "48de53d0536b92c9ddabc65aa570c93418887211db13536699f4c2074b59a33c"
+          },
+          "payload": {
+            "records": 232,
+            "sha256": "3dd3271cb24b0b24b4d89fef4cdf04fbf9b9188a47fdfb83c17ac9e06665b656"
+          },
+          "placements": {
+            "records": 45,
+            "sha256": "4141658c1ba9907aa4c1b877eadcd425a714adcc394893733441f49352ce9f23"
+          },
+          "views": {
+            "records": 18,
+            "sha256": "17ef99dd151f6233a886ea5bfc458e2a0612c9b4d67560b918faf78b21070eb6"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "online_softmax",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/online_softmax/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/online_softmax/revised/output.cpp"
+            ],
+            "output_sha256": "0c1dd2675ee0c660e4d57a3f66d0b3fd5bb5ebb5343570495dcfcc42c6889cd7",
+            "returncode": 0,
+            "seconds": 0.45269279000058305
+          },
+          "native": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/tools/pto-test-opt/pto-test-opt",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/online_softmax/revised/before.pto",
+              "--mlir-disable-threading",
+              "--mlir-print-op-on-diagnostic=false",
+              "--pto-insert-sync=buffer-generations=true defer-same-pipe=true mmad-chains=true gm-alias=assume-disjoint-arguments effect-coverage=report",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/online_softmax/revised/native.pto"
+            ],
+            "returncode": 0,
+            "seconds": 0.14442266699916217
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/online_softmax/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/online_softmax/revised/output.pto"
+            ],
+            "output_sha256": "41bd12cadf55d73a4e7305b03c2e4bfd6a9914a8a9bee196c7a68a9b325f780d",
+            "returncode": 0,
+            "seconds": 0.428593523989548
+          }
+        },
+        "status": "pass"
+      }
+    },
+    "q_proj": {
+      "comparison": {
+        "abi_identical": true,
+        "allocations_identical": true,
+        "cpp_identical": false,
+        "native_diagnostic_plan_matches_cli": true,
+        "pass_entry_identical": true,
+        "payload_identical": true,
+        "placement_identical": false,
+        "same_boundary_inventory_ignoring_keys": false,
+        "same_boundary_inventory_including_keys": false,
+        "views_identical": true
+      },
+      "original": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_FIX>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_M": 6
+            },
+            "sets": 19,
+            "waits": 19
+          },
+          "status_attributes": [
+            {}
+          ]
+        },
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "aeb4a880a1814e374051ae52708df875b83f0edf94a9cde72b8ddaa3fe33949d"
+          },
+          "allocations": {
+            "records": 25,
+            "sha256": "ebaffe3fb20c7b0cb95398d6000d2887869ac277db8e4352ab0bc8ae7bcc612e"
+          },
+          "payload": {
+            "records": 97,
+            "sha256": "2ed6abee15b98e8fa69f9f96c3afc894217b272fe3593088d07b98aa917b4341"
+          },
+          "placements": {
+            "records": 45,
+            "sha256": "469541899a67e96513960057dc96092bd8b3df6a219b959c0821f031b6718db6"
+          },
+          "views": {
+            "records": 8,
+            "sha256": "a30b09d795c2fb56d73ec43904d5e96e06923fba7c8909a79722eceaaf74d756"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "q_proj",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/q_proj/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/q_proj/original/output.cpp"
+            ],
+            "output_sha256": "053ff0ccfa5d5523799585dc8675eb153bbed75d7e5a52d9c46820e5d51d61aa",
+            "returncode": 0,
+            "seconds": 0.5426085269864416
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/q_proj/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/q_proj/original/output.pto"
+            ],
+            "output_sha256": "d85f6fb55c615f3b3c295b9b032538bc29000e96ba01300b2f6b988aef147c64",
+            "returncode": 0,
+            "seconds": 0.5000990119879134
+          }
+        },
+        "status": "pass"
+      },
+      "payload_cut_changes": {
+        "added": [
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE2>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22
+            ],
+            "next_op": "scf.for",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22
+            ],
+            "next_op": "scf.for",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22
+            ],
+            "next_op": "scf.for",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22
+            ],
+            "next_op": "scf.for",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22
+            ],
+            "next_op": "scf.for",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22
+            ],
+            "next_op": "scf.for",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_MTE2>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              11
+            ],
+            "next_op": "pto.tload",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE2>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              11
+            ],
+            "next_op": "pto.tload",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_MTE2>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              2
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              2
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_M>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              4
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_MTE2>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              4
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              4
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              6
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE2>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              8
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_M>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              8
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              8
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE2>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              10
+            ],
+            "next_op": "pto.tmatmul",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_M>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              10
+            ],
+            "next_op": "pto.tmatmul",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              12
+            ],
+            "next_op": "pto.tmatmul.acc",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              12
+            ],
+            "next_op": "pto.tmatmul.acc",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_M>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              12
+            ],
+            "next_op": "pto.tmatmul.acc",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              13
+            ],
+            "next_op": "scf.yield",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              13
+            ],
+            "next_op": "scf.yield",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_MTE2>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              1
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              1
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_M>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              3
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_MTE2>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              3
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              3
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              5
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE2>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              7
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_M>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              7
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              7
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE2>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              9
+            ],
+            "next_op": "pto.tmatmul.acc",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_M>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              9
+            ],
+            "next_op": "pto.tmatmul.acc",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              11
+            ],
+            "next_op": "pto.tmatmul.acc",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              11
+            ],
+            "next_op": "pto.tmatmul.acc",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_M>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              11
+            ],
+            "next_op": "pto.tmatmul.acc",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              12
+            ],
+            "next_op": "scf.yield",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              1,
+              "block",
+              0,
+              12
+            ],
+            "next_op": "scf.yield",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              24
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_M>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              26
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              28
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_M>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              30
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              30
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_M>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              32
+            ],
+            "next_op": "pto.tmatmul.acc",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              34
+            ],
+            "next_op": "pto.tmatmul.acc",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              34
+            ],
+            "next_op": "pto.tmatmul.acc",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_M>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              34
+            ],
+            "next_op": "pto.tmatmul.acc",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              35
+            ],
+            "next_op": "scf.yield",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE2>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              26
+            ],
+            "next_op": "func.return",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              26
+            ],
+            "next_op": "func.return",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              26
+            ],
+            "next_op": "func.return",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              26
+            ],
+            "next_op": "func.return",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              26
+            ],
+            "next_op": "func.return",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              26
+            ],
+            "next_op": "func.return",
+            "op": "pto.wait_flag"
+          }
+        ],
+        "removed": [
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_MTE2>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22
+            ],
+            "next_op": "scf.if",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              22
+            ],
+            "next_op": "scf.if",
+            "op": "pto.wait_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE2>",
+              "src_pipe": "#pto.pipe<PIPE_MTE1>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              24
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_M>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22,
+              "region",
+              0,
+              "block",
+              0,
+              24
+            ],
+            "next_op": "pto.textract",
+            "op": "pto.set_flag"
+          }
+        ]
+      },
+      "revised": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_FIX>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_M": 6
+            },
+            "sets": 45,
+            "waits": 45
+          },
+          "status_attributes": [
+            {
+              "pto.insert_sync.buffer_generations": "unit",
+              "pto.insert_sync.effect_coverage": "\"complete\"",
+              "pto.insert_sync.generation_barriers_removed": "0 : i64",
+              "pto.insert_sync.generation_global_witnesses": "0 : i64",
+              "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+              "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+              "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+              "pto.insert_sync.lifecycle_channels": "10 : i64",
+              "pto.insert_sync.lifecycle_completion_pairs": "0 : i64",
+              "pto.insert_sync.lifecycle_completion_witnesses": "0 : i64",
+              "pto.insert_sync.lifecycle_completion_work": "36936 : i64",
+              "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+              "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+              "pto.insert_sync.lifecycle_retries": "0 : i64",
+              "pto.insert_sync.lifecycle_supplied_pairs": "156 : i64",
+              "pto.insert_sync.mmad_chain_targets": "0 : i64",
+              "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+              "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+            }
+          ]
+        },
+        "diagnostics": [
+          "InsertSync MMAD chains: 0 eligible targets, 0 ACC dependency groups elided; structured predecessor identities; no completion or token facts invented",
+          "InsertSync lifecycle synthesis: guarded lifecycle plan plus rebuilt legacy residuals; no added scarcity ordering; attempted=11, proposed=10, streams=20, supplied-access-pairs=156, combined-event-audit=proved, planning-attempts=1, retries=0, consumer-regions=0, guarded-actions=0",
+          "InsertSync lifecycle candidate: 2:[0,4096); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=12; readerless-returns=0",
+          "InsertSync lifecycle candidate: 2:[4096,69632); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=12; readerless-returns=0",
+          "InsertSync lifecycle candidate: 2:[69632,73728); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=12; readerless-returns=0",
+          "InsertSync lifecycle candidate: 2:[73728,139264); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=12; readerless-returns=0",
+          "InsertSync lifecycle candidate: 3:[0,2048); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=6; readerless-returns=0",
+          "InsertSync lifecycle candidate: 3:[2048,4096); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=6; readerless-returns=0",
+          "InsertSync lifecycle candidate: 3:[4096,6144); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=6; readerless-returns=0",
+          "InsertSync lifecycle candidate: 3:[6144,8192); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=6; readerless-returns=0",
+          "InsertSync lifecycle candidate: 4:[0,32768); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=12; readerless-returns=0",
+          "InsertSync lifecycle candidate: 4:[32768,65536); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=12; readerless-returns=0",
+          "InsertSync lifecycle candidate: 5:[0,16384); stage=attempt-1/buffer-generations; accepted=0; read can reach an uninitialized buffer generation; read-associations=23; readerless-returns=0",
+          "InsertSync lifecycle candidate: mixed-plan; stage=attempt-1/completion-supply; accepted=1; 0 same-pipe access pairs supplied; 0 residual handoffs; selected-protocol completion",
+          "InsertSync lifecycle candidate: residual-plan; stage=attempt-1/frontier-refinement; accepted=1; no redundant owned barriers proved; residual event movement requires protocol identity rebinding",
+          "InsertSync lifecycle candidate: mixed-plan; stage=attempt-1/completion-refinement; accepted=1; exit completion unproved: phase 22 at node 453",
+          "InsertSync lifecycle candidate: 2:[0,4096); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 2:[4096,69632); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 2:[69632,73728); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 2:[73728,139264); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 3:[0,2048); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 3:[2048,4096); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 3:[4096,6144); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 3:[6144,8192); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 4:[0,32768); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 4:[32768,65536); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed"
+        ],
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "aeb4a880a1814e374051ae52708df875b83f0edf94a9cde72b8ddaa3fe33949d"
+          },
+          "allocations": {
+            "records": 25,
+            "sha256": "ebaffe3fb20c7b0cb95398d6000d2887869ac277db8e4352ab0bc8ae7bcc612e"
+          },
+          "payload": {
+            "records": 97,
+            "sha256": "2ed6abee15b98e8fa69f9f96c3afc894217b272fe3593088d07b98aa917b4341"
+          },
+          "placements": {
+            "records": 97,
+            "sha256": "ab15ad771e1ad52b8dfb1c9ae2087af8b354b655d0a5946f86386993ae44c441"
+          },
+          "views": {
+            "records": 8,
+            "sha256": "a30b09d795c2fb56d73ec43904d5e96e06923fba7c8909a79722eceaaf74d756"
+          }
+        },
+        "participation": {
+          "allocation_executed": false,
+          "analysis_executed": false,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "q_proj",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": true,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/q_proj/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/q_proj/revised/output.cpp"
+            ],
+            "output_sha256": "90cec4adca6f6f0949fb00871a94acd0aae2dbfb81f2ef926af74851508c786d",
+            "returncode": 0,
+            "seconds": 0.5697441079973942
+          },
+          "native": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/tools/pto-test-opt/pto-test-opt",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/q_proj/revised/before.pto",
+              "--mlir-disable-threading",
+              "--mlir-print-op-on-diagnostic=false",
+              "--pto-insert-sync=buffer-generations=true defer-same-pipe=true mmad-chains=true gm-alias=assume-disjoint-arguments effect-coverage=report",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/q_proj/revised/native.pto"
+            ],
+            "returncode": 0,
+            "seconds": 0.1891172020114027
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/q_proj/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/q_proj/revised/output.pto"
+            ],
+            "output_sha256": "1b3ab768582756d7a5acb7f7752debf10908e623da50fe28b6a2c4c84845d481",
+            "returncode": 0,
+            "seconds": 0.5946835000067949
+          }
+        },
+        "status": "pass"
+      }
+    },
+    "qk_matmul": {
+      "comparison": {
+        "abi_identical": true,
+        "allocations_identical": true,
+        "cpp_identical": false,
+        "native_diagnostic_plan_matches_cli": true,
+        "pass_entry_identical": true,
+        "payload_identical": true,
+        "placement_identical": false,
+        "same_boundary_inventory_ignoring_keys": false,
+        "same_boundary_inventory_including_keys": false,
+        "views_identical": true
+      },
+      "original": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_FIX>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_FIX>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_M": 2
+            },
+            "sets": 21,
+            "waits": 21
+          },
+          "status_attributes": [
+            {}
+          ]
+        },
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "ab50d55e9fb33f6c42e369a00a676d86e8e7ece57485931935244591a5d6d5b9"
+          },
+          "allocations": {
+            "records": 20,
+            "sha256": "c8ab3b542f23e34b2b26212cfcb908e2dcafa4adc83b2caec67ca5e0de6d6c1d"
+          },
+          "payload": {
+            "records": 102,
+            "sha256": "b1117bcef40361a34d951d61de54dfbf62dcaef15c3092e47b4b247dd965f57e"
+          },
+          "placements": {
+            "records": 45,
+            "sha256": "4102af903f48cab62bf331a1b141a3e041f77b4967740eb43a119d510ec9816b"
+          },
+          "views": {
+            "records": 9,
+            "sha256": "1021ef4b1b8efa0e9a275885a59e88061feb94bd9becfb56e2078849920be97b"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "qk_matmul",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/qk_matmul/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/qk_matmul/original/output.cpp"
+            ],
+            "output_sha256": "f56a294af9687ffa48ba73baf2218fa1b66cf8dbb957a6e5ab73a574405a4d67",
+            "returncode": 0,
+            "seconds": 0.4459126000001561
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/qk_matmul/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/qk_matmul/original/output.pto"
+            ],
+            "output_sha256": "665f9afd1ec7b2ba8b6a3541149229f6b40f745450c73b073a928f9d954164f9",
+            "returncode": 0,
+            "seconds": 0.4299927030078834
+          }
+        },
+        "status": "pass"
+      },
+      "payload_cut_changes": {
+        "added": [
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_MTE2>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              37
+            ],
+            "next_op": "scf.for",
+            "op": "pto.set_flag"
+          }
+        ],
+        "removed": [
+          {
+            "attrs": {
+              "dst_pipe": "#pto.pipe<PIPE_MTE1>",
+              "src_pipe": "#pto.pipe<PIPE_MTE2>"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              36
+            ],
+            "next_op": "pto.tload",
+            "op": "pto.set_flag"
+          },
+          {
+            "attrs": {
+              "pipe": "#pto.pipe<PIPE_ALL>",
+              "pto.auto_sync_tail_barrier": "unit"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              38
+            ],
+            "next_op": "func.return",
+            "op": "pto.barrier"
+          }
+        ]
+      },
+      "revised": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_FIX>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_FIX>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 0,
+            "named": {
+              "PIPE_M": 2
+            },
+            "sets": 21,
+            "waits": 21
+          },
+          "status_attributes": [
+            {
+              "pto.insert_sync.buffer_generations": "unit",
+              "pto.insert_sync.effect_coverage": "\"complete\"",
+              "pto.insert_sync.generation_barriers_removed": "1 : i64",
+              "pto.insert_sync.generation_global_witnesses": "0 : i64",
+              "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+              "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+              "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+              "pto.insert_sync.lifecycle_channels": "4 : i64",
+              "pto.insert_sync.lifecycle_completion_pairs": "11 : i64",
+              "pto.insert_sync.lifecycle_completion_witnesses": "6 : i64",
+              "pto.insert_sync.lifecycle_completion_work": "12080 : i64",
+              "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+              "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+              "pto.insert_sync.lifecycle_retries": "0 : i64",
+              "pto.insert_sync.lifecycle_supplied_pairs": "144 : i64",
+              "pto.insert_sync.mmad_chain_targets": "0 : i64",
+              "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+              "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+            }
+          ]
+        },
+        "diagnostics": [
+          "InsertSync MMAD chains: 0 eligible targets, 0 ACC dependency groups elided; structured predecessor identities; no completion or token facts invented",
+          "InsertSync completion refinement: removed exit PIPE_ALL; concrete prefix proved",
+          "InsertSync lifecycle synthesis: guarded lifecycle plan plus rebuilt legacy residuals; no added scarcity ordering; attempted=6, proposed=4, streams=8, supplied-access-pairs=144, combined-event-audit=proved, planning-attempts=1, retries=0, consumer-regions=0, guarded-actions=0",
+          "InsertSync lifecycle candidate: 3:[0,2048)+4:[32768,65536); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=16; readerless-returns=0",
+          "InsertSync lifecycle candidate: 3:[2048,4096)+4:[0,32768); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=16; readerless-returns=0",
+          "InsertSync lifecycle candidate: 2:[0,4096); stage=attempt-1/buffer-generations; accepted=0; one-shot storage remains with general insertion; read-associations=8; readerless-returns=1",
+          "InsertSync lifecycle candidate: 2:[4096,8192); stage=attempt-1/buffer-generations; accepted=0; one-shot storage remains with general insertion; read-associations=8; readerless-returns=1",
+          "InsertSync lifecycle candidate: 2:[8192,73728); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=16; readerless-returns=0",
+          "InsertSync lifecycle candidate: 5:[0,16384); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=16; readerless-returns=0",
+          "InsertSync lifecycle candidate: mixed-plan; stage=attempt-1/completion-supply; accepted=1; 11 same-pipe access pairs supplied; 0 residual handoffs; selected-protocol completion",
+          "InsertSync lifecycle candidate: residual-plan; stage=attempt-1/frontier-refinement; accepted=1; no redundant owned barriers proved; residual event movement requires protocol identity rebinding",
+          "InsertSync lifecycle candidate: phase-8-to-15; stage=attempt-1/completion-recheck; accepted=1; all prior source occurrences complete at every target; emitted plan rechecked",
+          "InsertSync lifecycle candidate: phase-9-to-17; stage=attempt-1/completion-recheck; accepted=1; all prior source occurrences complete at every target; emitted plan rechecked",
+          "InsertSync lifecycle candidate: phase-16-to-7; stage=attempt-1/completion-recheck; accepted=1; all prior source occurrences complete at every target; emitted plan rechecked",
+          "InsertSync lifecycle candidate: phase-17-to-9; stage=attempt-1/completion-recheck; accepted=1; all prior source occurrences complete at every target; emitted plan rechecked",
+          "InsertSync lifecycle candidate: phase-9-to-9; stage=attempt-1/completion-recheck; accepted=1; all prior source occurrences complete at every target; emitted plan rechecked",
+          "InsertSync lifecycle candidate: phase-17-to-17; stage=attempt-1/completion-recheck; accepted=1; all prior source occurrences complete at every target; emitted plan rechecked",
+          "InsertSync lifecycle candidate: mixed-plan; stage=attempt-1/completion-refinement; accepted=1; concrete completion and event consumption checked",
+          "InsertSync lifecycle candidate: 3:[0,2048)+4:[32768,65536); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 3:[2048,4096)+4:[0,32768); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 2:[8192,73728); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 5:[0,16384); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed"
+        ],
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "ab50d55e9fb33f6c42e369a00a676d86e8e7ece57485931935244591a5d6d5b9"
+          },
+          "allocations": {
+            "records": 20,
+            "sha256": "c8ab3b542f23e34b2b26212cfcb908e2dcafa4adc83b2caec67ca5e0de6d6c1d"
+          },
+          "payload": {
+            "records": 102,
+            "sha256": "b1117bcef40361a34d951d61de54dfbf62dcaef15c3092e47b4b247dd965f57e"
+          },
+          "placements": {
+            "records": 44,
+            "sha256": "6a8cadba9ff95e2e717a92a557e8517008397c1548c7e4e5e8ae5c106a42da99"
+          },
+          "views": {
+            "records": 9,
+            "sha256": "1021ef4b1b8efa0e9a275885a59e88061feb94bd9becfb56e2078849920be97b"
+          }
+        },
+        "participation": {
+          "allocation_executed": false,
+          "analysis_executed": false,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "qk_matmul",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": true,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/qk_matmul/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/qk_matmul/revised/output.cpp"
+            ],
+            "output_sha256": "34630def490d0843189064328657292e6452d89560b90ea3f23da0f66834e742",
+            "returncode": 0,
+            "seconds": 0.45913491801184136
+          },
+          "native": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/tools/pto-test-opt/pto-test-opt",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/qk_matmul/revised/before.pto",
+              "--mlir-disable-threading",
+              "--mlir-print-op-on-diagnostic=false",
+              "--pto-insert-sync=buffer-generations=true defer-same-pipe=true mmad-chains=true gm-alias=assume-disjoint-arguments effect-coverage=report",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/qk_matmul/revised/native.pto"
+            ],
+            "returncode": 0,
+            "seconds": 0.14105676100007258
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/qk_matmul/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/qk_matmul/revised/output.pto"
+            ],
+            "output_sha256": "5760d89d4c226002c57c9d11f3a2f8a940295e1b8795cfaf6cf457e7d5027449",
+            "returncode": 0,
+            "seconds": 0.46728523199271876
+          }
+        },
+        "status": "pass"
+      }
+    },
+    "rmsnorm": {
+      "comparison": {
+        "abi_identical": true,
+        "allocations_identical": true,
+        "cpp_identical": false,
+        "native_diagnostic_plan_matches_cli": true,
+        "pass_entry_identical": true,
+        "payload_identical": true,
+        "placement_identical": false,
+        "same_boundary_inventory_ignoring_keys": true,
+        "same_boundary_inventory_including_keys": true,
+        "views_identical": true
+      },
+      "original": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>",
+              "#pto.event<EVENT_ID6>",
+              "#pto.event<EVENT_ID7>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>",
+              "#pto.event<EVENT_ID6>",
+              "#pto.event<EVENT_ID7>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_MTE3": 3,
+              "PIPE_V": 29
+            },
+            "sets": 40,
+            "waits": 40
+          },
+          "status_attributes": [
+            {}
+          ]
+        },
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "cea22fc04ff2c72759c68fc2a754e7b1181140923f22af3aa89d1a604e7e8f1c"
+          },
+          "allocations": {
+            "records": 62,
+            "sha256": "f7fe20bfd4752c47a14b5382976d06a34297c50821fc3c6bdecb2038dec1a0ca"
+          },
+          "payload": {
+            "records": 199,
+            "sha256": "7c041928cbea006561fb69f28265eabe7fe813d066b10650d8d279dd9d522188"
+          },
+          "placements": {
+            "records": 113,
+            "sha256": "9d0bc6976bfd2640ddc3920452fe5687a70591d47a0f57fa4144f1681ff3867b"
+          },
+          "views": {
+            "records": 19,
+            "sha256": "91893b9dd5faa943a090fb0531808826e8221f987a95e448c627beee9b2d6f03"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "rmsnorm",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rmsnorm/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rmsnorm/original/output.cpp"
+            ],
+            "output_sha256": "c2610b268e5f61ecd076256ee05ee277d72644d81ce11913117e0d5363ff51b0",
+            "returncode": 0,
+            "seconds": 0.4399337299983017
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rmsnorm/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rmsnorm/original/output.pto"
+            ],
+            "output_sha256": "5479c5c67697dc9233d417e82a6ac10f1a6be6452cfff9b5e6289134f175acdd",
+            "returncode": 0,
+            "seconds": 0.4693341749953106
+          }
+        },
+        "status": "pass"
+      },
+      "payload_cut_changes": {
+        "added": [],
+        "removed": []
+      },
+      "revised": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>",
+              "#pto.event<EVENT_ID6>",
+              "#pto.event<EVENT_ID7>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>",
+              "#pto.event<EVENT_ID6>",
+              "#pto.event<EVENT_ID7>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_MTE3": 3,
+              "PIPE_V": 29
+            },
+            "sets": 40,
+            "waits": 40
+          },
+          "status_attributes": [
+            {
+              "pto.insert_sync.effect_coverage": "\"complete\"",
+              "pto.insert_sync.generation_barriers_removed": "0 : i64",
+              "pto.insert_sync.generation_global_witnesses": "0 : i64",
+              "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+              "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+              "pto.insert_sync.mmad_chain_targets": "0 : i64",
+              "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+              "pto.insert_sync.status": "\"analyzed\""
+            }
+          ]
+        },
+        "diagnostics": [
+          "InsertSync lifecycle synthesis: structural import: physical phase has no qualified frontier adapter; attempted=0, proposed=0, streams=0, supplied-access-pairs=0, combined-event-audit=unproved, planning-attempts=1, retries=0, consumer-regions=0, guarded-actions=0",
+          "InsertSync MMAD chains: 0 eligible targets, 0 ACC dependency groups elided; structured predecessor identities; no completion or token facts invented"
+        ],
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "cea22fc04ff2c72759c68fc2a754e7b1181140923f22af3aa89d1a604e7e8f1c"
+          },
+          "allocations": {
+            "records": 62,
+            "sha256": "f7fe20bfd4752c47a14b5382976d06a34297c50821fc3c6bdecb2038dec1a0ca"
+          },
+          "payload": {
+            "records": 199,
+            "sha256": "7c041928cbea006561fb69f28265eabe7fe813d066b10650d8d279dd9d522188"
+          },
+          "placements": {
+            "records": 113,
+            "sha256": "a094b0cc47f4b0c6cfdf15723458d8c0a4f4dc59986477ec619249288ba12564"
+          },
+          "views": {
+            "records": 19,
+            "sha256": "91893b9dd5faa943a090fb0531808826e8221f987a95e448c627beee9b2d6f03"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "rmsnorm",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rmsnorm/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rmsnorm/revised/output.cpp"
+            ],
+            "output_sha256": "1163d8ce8ea2ef5f86bb543ac66523968e37173954aa6f970474459f814f4b9e",
+            "returncode": 0,
+            "seconds": 0.4953193580004154
+          },
+          "native": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/tools/pto-test-opt/pto-test-opt",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rmsnorm/revised/before.pto",
+              "--mlir-disable-threading",
+              "--mlir-print-op-on-diagnostic=false",
+              "--pto-insert-sync=buffer-generations=true defer-same-pipe=true mmad-chains=true gm-alias=assume-disjoint-arguments effect-coverage=report",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rmsnorm/revised/native.pto"
+            ],
+            "returncode": 0,
+            "seconds": 0.12949784999364056
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rmsnorm/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rmsnorm/revised/output.pto"
+            ],
+            "output_sha256": "6c205cc32482dbb5e1e88de583a37d84adfd4a75338ca0c5ad966db9f4ef69c3",
+            "returncode": 0,
+            "seconds": 0.4679968429991277
+          }
+        },
+        "status": "pass"
+      }
+    },
+    "rope_kv_cache": {
+      "comparison": {
+        "abi_identical": true,
+        "allocations_identical": true,
+        "cpp_identical": true,
+        "native_diagnostic_plan_matches_cli": true,
+        "pass_entry_identical": true,
+        "payload_identical": true,
+        "placement_identical": true,
+        "same_boundary_inventory_ignoring_keys": true,
+        "same_boundary_inventory_including_keys": true,
+        "views_identical": true
+      },
+      "original": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_MTE3": 2,
+              "PIPE_V": 12
+            },
+            "sets": 15,
+            "waits": 15
+          },
+          "status_attributes": [
+            {}
+          ]
+        },
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "5337353313a753d026e50ca4f01d2ec7003b4052a2737e8993ff39f3f5a82509"
+          },
+          "allocations": {
+            "records": 32,
+            "sha256": "76903e0d64b5e29e70521059c90ddecde25a0fe116acafb4a9f142fa3c867749"
+          },
+          "payload": {
+            "records": 149,
+            "sha256": "ee4ae0472786246465bb9dd878b4ee0f61eec3edca349ea75fef16a04c48ba86"
+          },
+          "placements": {
+            "records": 45,
+            "sha256": "8ee161db27c28bf696a85d6d79192daf52da377ff1601a3d3fdb7782484a1297"
+          },
+          "views": {
+            "records": 24,
+            "sha256": "326cfb0f8cd1ec3f8a4733d841ce66d75d86d5a35bc3e57324ea00e3f5ad2fbd"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "rope_kv_cache",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rope_kv_cache/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rope_kv_cache/original/output.cpp"
+            ],
+            "output_sha256": "1606221c12ce324013d616dd6985ba098a36eafba53fb4b49b3679d03dfa6e76",
+            "returncode": 0,
+            "seconds": 0.4272590320033487
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rope_kv_cache/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rope_kv_cache/original/output.pto"
+            ],
+            "output_sha256": "0fcd305c29065f2eee7ea39fddf3e833154ec39e9b1be5bf6655add0aa7c32ba",
+            "returncode": 0,
+            "seconds": 0.46926869498565793
+          }
+        },
+        "status": "pass"
+      },
+      "payload_cut_changes": {
+        "added": [],
+        "removed": []
+      },
+      "revised": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>",
+              "#pto.event<EVENT_ID4>",
+              "#pto.event<EVENT_ID5>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_MTE3": 2,
+              "PIPE_V": 12
+            },
+            "sets": 15,
+            "waits": 15
+          },
+          "status_attributes": [
+            {
+              "pto.insert_sync.effect_coverage": "\"complete\"",
+              "pto.insert_sync.generation_barriers_removed": "0 : i64",
+              "pto.insert_sync.generation_global_witnesses": "0 : i64",
+              "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+              "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+              "pto.insert_sync.mmad_chain_targets": "0 : i64",
+              "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+              "pto.insert_sync.status": "\"analyzed\""
+            }
+          ]
+        },
+        "diagnostics": [
+          "InsertSync lifecycle synthesis: structural import: physical phase has no qualified frontier adapter; attempted=0, proposed=0, streams=0, supplied-access-pairs=0, combined-event-audit=unproved, planning-attempts=1, retries=0, consumer-regions=0, guarded-actions=0",
+          "InsertSync MMAD chains: 0 eligible targets, 0 ACC dependency groups elided; structured predecessor identities; no completion or token facts invented"
+        ],
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "5337353313a753d026e50ca4f01d2ec7003b4052a2737e8993ff39f3f5a82509"
+          },
+          "allocations": {
+            "records": 32,
+            "sha256": "76903e0d64b5e29e70521059c90ddecde25a0fe116acafb4a9f142fa3c867749"
+          },
+          "payload": {
+            "records": 149,
+            "sha256": "ee4ae0472786246465bb9dd878b4ee0f61eec3edca349ea75fef16a04c48ba86"
+          },
+          "placements": {
+            "records": 45,
+            "sha256": "8ee161db27c28bf696a85d6d79192daf52da377ff1601a3d3fdb7782484a1297"
+          },
+          "views": {
+            "records": 24,
+            "sha256": "326cfb0f8cd1ec3f8a4733d841ce66d75d86d5a35bc3e57324ea00e3f5ad2fbd"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "rope_kv_cache",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rope_kv_cache/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rope_kv_cache/revised/output.cpp"
+            ],
+            "output_sha256": "1606221c12ce324013d616dd6985ba098a36eafba53fb4b49b3679d03dfa6e76",
+            "returncode": 0,
+            "seconds": 0.42832444699888583
+          },
+          "native": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/tools/pto-test-opt/pto-test-opt",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rope_kv_cache/revised/before.pto",
+              "--mlir-disable-threading",
+              "--mlir-print-op-on-diagnostic=false",
+              "--pto-insert-sync=buffer-generations=true defer-same-pipe=true mmad-chains=true gm-alias=assume-disjoint-arguments effect-coverage=report",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rope_kv_cache/revised/native.pto"
+            ],
+            "returncode": 0,
+            "seconds": 0.12224753000191413
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rope_kv_cache/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/rope_kv_cache/revised/output.pto"
+            ],
+            "output_sha256": "fc65b2eabfce5579fb93e59e82a59b3e5465f739891824975359c796d31f7117",
+            "returncode": 0,
+            "seconds": 0.43633416898956057
+          }
+        },
+        "status": "pass"
+      }
+    },
+    "silu": {
+      "comparison": {
+        "abi_identical": true,
+        "allocations_identical": true,
+        "cpp_identical": false,
+        "native_diagnostic_plan_matches_cli": true,
+        "pass_entry_identical": true,
+        "payload_identical": true,
+        "placement_identical": false,
+        "same_boundary_inventory_ignoring_keys": true,
+        "same_boundary_inventory_including_keys": true,
+        "views_identical": true
+      },
+      "original": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_V": 6
+            },
+            "sets": 3,
+            "waits": 3
+          },
+          "status_attributes": [
+            {}
+          ]
+        },
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "a7262dd5eb138e019bafff8430795a0f1c705fca7015651c7132c7722e241f19"
+          },
+          "allocations": {
+            "records": 9,
+            "sha256": "b3d3c79f77d77305608f9fc36a8a6bc4c44bf28021ebc21ee3a5c989a33a0c93"
+          },
+          "payload": {
+            "records": 48,
+            "sha256": "616a0651a174db6e7f064978cbe7c332023cb2e17bb4c3359984bccb068c22d4"
+          },
+          "placements": {
+            "records": 13,
+            "sha256": "2ae6e6d9b3c3766cb599c79cdd170bd2b1959693fa7d622226415b752ec4545e"
+          },
+          "views": {
+            "records": 6,
+            "sha256": "b9e5a748cdc521ca4c2b2ea7897df6296949be50a411b55f7eef047286eb91e8"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "silu",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/silu/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/silu/original/output.cpp"
+            ],
+            "output_sha256": "820fbb645edbc6975088b895f5dd47b7bf7bf7d0dc48b50eed342469aca141aa",
+            "returncode": 0,
+            "seconds": 0.43417670000053477
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/silu/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/silu/original/output.pto"
+            ],
+            "output_sha256": "ca65d8014ba2088004e0a897958e600bb6abf7213cc1c35a13599457001cb30a",
+            "returncode": 0,
+            "seconds": 0.4450768730021082
+          }
+        },
+        "status": "pass"
+      },
+      "payload_cut_changes": {
+        "added": [],
+        "removed": []
+      },
+      "revised": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_V": 6
+            },
+            "sets": 3,
+            "waits": 3
+          },
+          "status_attributes": [
+            {
+              "pto.insert_sync.effect_coverage": "\"complete\"",
+              "pto.insert_sync.generation_barriers_removed": "0 : i64",
+              "pto.insert_sync.generation_global_witnesses": "0 : i64",
+              "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+              "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+              "pto.insert_sync.mmad_chain_targets": "0 : i64",
+              "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+              "pto.insert_sync.status": "\"analyzed\""
+            }
+          ]
+        },
+        "diagnostics": [
+          "InsertSync lifecycle synthesis: structural import: physical phase has no qualified frontier adapter; attempted=0, proposed=0, streams=0, supplied-access-pairs=0, combined-event-audit=unproved, planning-attempts=1, retries=0, consumer-regions=0, guarded-actions=0",
+          "InsertSync MMAD chains: 0 eligible targets, 0 ACC dependency groups elided; structured predecessor identities; no completion or token facts invented"
+        ],
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "a7262dd5eb138e019bafff8430795a0f1c705fca7015651c7132c7722e241f19"
+          },
+          "allocations": {
+            "records": 9,
+            "sha256": "b3d3c79f77d77305608f9fc36a8a6bc4c44bf28021ebc21ee3a5c989a33a0c93"
+          },
+          "payload": {
+            "records": 48,
+            "sha256": "616a0651a174db6e7f064978cbe7c332023cb2e17bb4c3359984bccb068c22d4"
+          },
+          "placements": {
+            "records": 13,
+            "sha256": "5f4de0c74588915a63359d358a2c21dd614a274cc6594bc3f1cc3d486ccad6f6"
+          },
+          "views": {
+            "records": 6,
+            "sha256": "b9e5a748cdc521ca4c2b2ea7897df6296949be50a411b55f7eef047286eb91e8"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "silu",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/silu/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/silu/revised/output.cpp"
+            ],
+            "output_sha256": "6ac09e60a1e34f78e111e6e1c0911498649a198087a3bf1bdb41fe5fb3cff9f6",
+            "returncode": 0,
+            "seconds": 0.4310472409997601
+          },
+          "native": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/tools/pto-test-opt/pto-test-opt",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/silu/revised/before.pto",
+              "--mlir-disable-threading",
+              "--mlir-print-op-on-diagnostic=false",
+              "--pto-insert-sync=buffer-generations=true defer-same-pipe=true mmad-chains=true gm-alias=assume-disjoint-arguments effect-coverage=report",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/silu/revised/native.pto"
+            ],
+            "returncode": 0,
+            "seconds": 0.14723263699852396
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/silu/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/silu/revised/output.pto"
+            ],
+            "output_sha256": "88896e5ddfee70dac2b0e136ffd1c8de5aa0c1e0bd60ad094d0f8f32670d0f74",
+            "returncode": 0,
+            "seconds": 0.44793364200450014
+          }
+        },
+        "status": "pass"
+      }
+    },
+    "softmax": {
+      "comparison": {
+        "abi_identical": true,
+        "allocations_identical": true,
+        "cpp_identical": false,
+        "native_diagnostic_plan_matches_cli": true,
+        "pass_entry_identical": true,
+        "payload_identical": true,
+        "placement_identical": false,
+        "same_boundary_inventory_ignoring_keys": true,
+        "same_boundary_inventory_including_keys": true,
+        "views_identical": true
+      },
+      "original": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_V": 14
+            },
+            "sets": 15,
+            "waits": 15
+          },
+          "status_attributes": [
+            {}
+          ]
+        },
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "ecc685a715dc2a28e43ca1ace478e1f394c09a7605ba5d2be5ce9bd0b5a1f64d"
+          },
+          "allocations": {
+            "records": 22,
+            "sha256": "22fa9f44fbaf1a37135e4730a4977c41d5c902a7396709998ab0afac35f67d35"
+          },
+          "payload": {
+            "records": 121,
+            "sha256": "3a151acb0c0b02e49b92517626924540a10582cd1ecff984d22a55b946bf9c27"
+          },
+          "placements": {
+            "records": 45,
+            "sha256": "003bfb006e74ec4a7382620cb92658104b9e9f8351f174ed5d651320994416cd"
+          },
+          "views": {
+            "records": 12,
+            "sha256": "44684e9b8e137d5dd8370a9c787318f6fdbf6bcd21207dc56956b349a8b83480"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "softmax",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/softmax/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/softmax/original/output.cpp"
+            ],
+            "output_sha256": "3c81696cbfdce2157c6c918a4f3b8ea910b9bd8176e57a3497d93876c894084e",
+            "returncode": 0,
+            "seconds": 0.4459471739974106
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/softmax/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/softmax/original/output.pto"
+            ],
+            "output_sha256": "1299a3039755cf0ed9f0c202018f0ba8f034852eeadddd53956541f2f2b733f4",
+            "returncode": 0,
+            "seconds": 0.44596849200024735
+          }
+        },
+        "status": "pass"
+      },
+      "payload_cut_changes": {
+        "added": [],
+        "removed": []
+      },
+      "revised": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE3>->#pto.pipe<PIPE_V>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_V>->#pto.pipe<PIPE_MTE3>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_V": 14
+            },
+            "sets": 15,
+            "waits": 15
+          },
+          "status_attributes": [
+            {
+              "pto.insert_sync.effect_coverage": "\"complete\"",
+              "pto.insert_sync.generation_barriers_removed": "0 : i64",
+              "pto.insert_sync.generation_global_witnesses": "0 : i64",
+              "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+              "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+              "pto.insert_sync.mmad_chain_targets": "0 : i64",
+              "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+              "pto.insert_sync.status": "\"analyzed\""
+            }
+          ]
+        },
+        "diagnostics": [
+          "InsertSync lifecycle synthesis: structural import: physical phase has no qualified frontier adapter; attempted=0, proposed=0, streams=0, supplied-access-pairs=0, combined-event-audit=unproved, planning-attempts=1, retries=0, consumer-regions=0, guarded-actions=0",
+          "InsertSync MMAD chains: 0 eligible targets, 0 ACC dependency groups elided; structured predecessor identities; no completion or token facts invented"
+        ],
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "ecc685a715dc2a28e43ca1ace478e1f394c09a7605ba5d2be5ce9bd0b5a1f64d"
+          },
+          "allocations": {
+            "records": 22,
+            "sha256": "22fa9f44fbaf1a37135e4730a4977c41d5c902a7396709998ab0afac35f67d35"
+          },
+          "payload": {
+            "records": 121,
+            "sha256": "3a151acb0c0b02e49b92517626924540a10582cd1ecff984d22a55b946bf9c27"
+          },
+          "placements": {
+            "records": 45,
+            "sha256": "967fc93622fa780184b29033fee79473d728ceef4d3b96262ef13b9fc05200f3"
+          },
+          "views": {
+            "records": 12,
+            "sha256": "44684e9b8e137d5dd8370a9c787318f6fdbf6bcd21207dc56956b349a8b83480"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "softmax",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/softmax/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/softmax/revised/output.cpp"
+            ],
+            "output_sha256": "26830f04d08cdbbe1ebf7a3312a1c3462cdb8d7483f63ed1892091f94e600780",
+            "returncode": 0,
+            "seconds": 0.4325864190032007
+          },
+          "native": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/tools/pto-test-opt/pto-test-opt",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/softmax/revised/before.pto",
+              "--mlir-disable-threading",
+              "--mlir-print-op-on-diagnostic=false",
+              "--pto-insert-sync=buffer-generations=true defer-same-pipe=true mmad-chains=true gm-alias=assume-disjoint-arguments effect-coverage=report",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/softmax/revised/native.pto"
+            ],
+            "returncode": 0,
+            "seconds": 0.13180062499304768
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/softmax/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/softmax/revised/output.pto"
+            ],
+            "output_sha256": "314219658fef16276de76839cdbd9ace07c74872573e9c8342bf9edb37ae0675",
+            "returncode": 0,
+            "seconds": 0.45046929000818636
+          }
+        },
+        "status": "pass"
+      }
+    },
+    "sv_matmul": {
+      "comparison": {
+        "abi_identical": true,
+        "allocations_identical": true,
+        "cpp_identical": false,
+        "native_diagnostic_plan_matches_cli": true,
+        "pass_entry_identical": true,
+        "payload_identical": true,
+        "placement_identical": false,
+        "same_boundary_inventory_ignoring_keys": false,
+        "same_boundary_inventory_including_keys": false,
+        "views_identical": true
+      },
+      "original": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_FIX>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_FIX>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>",
+              "#pto.event<EVENT_ID2>",
+              "#pto.event<EVENT_ID3>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_M": 2
+            },
+            "sets": 25,
+            "waits": 25
+          },
+          "status_attributes": [
+            {}
+          ]
+        },
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "e9f41245a35250db2f451601f1d33e6abbee4aaea4e4d7566aa486300a62c500"
+          },
+          "allocations": {
+            "records": 18,
+            "sha256": "f9281198356d67644f9cedf3354b0cfa3259199cefbb7804ad101a4eb312096b"
+          },
+          "payload": {
+            "records": 98,
+            "sha256": "319430c9b9eff7790dfe3f756aedc286c2d5997a4f7f08461c39c042479bb1ad"
+          },
+          "placements": {
+            "records": 53,
+            "sha256": "a91a79cab156efb8bdd45b131ccce48e75a8a52cf23f2f6c2657611278e4dc19"
+          },
+          "views": {
+            "records": 9,
+            "sha256": "ca625b3897e29276b92fb6d6b0399dcd012c892c406beb2fa45144d5c946bfde"
+          }
+        },
+        "participation": {
+          "allocation_executed": true,
+          "analysis_executed": true,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "sv_matmul",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": false,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/sv_matmul/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/sv_matmul/original/output.cpp"
+            ],
+            "output_sha256": "364f89ec2082756b749ca7f5a35a9780aa80e435383c63259a8e5e7ba7e1e5b9",
+            "returncode": 0,
+            "seconds": 0.45675749400106724
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/sv_matmul/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/sv_matmul/original/output.pto"
+            ],
+            "output_sha256": "c4f29037556f6a1d4dacbb6135d502c77a2e8b237f013cbb47b2ba1c416214a8",
+            "returncode": 0,
+            "seconds": 0.43761420200462453
+          }
+        },
+        "status": "pass"
+      },
+      "payload_cut_changes": {
+        "added": [],
+        "removed": [
+          {
+            "attrs": {
+              "pipe": "#pto.pipe<PIPE_ALL>",
+              "pto.auto_sync_tail_barrier": "unit"
+            },
+            "before": [
+              "region",
+              0,
+              "block",
+              0,
+              0,
+              "region",
+              0,
+              "block",
+              0,
+              22
+            ],
+            "next_op": "func.return",
+            "op": "pto.barrier"
+          }
+        ]
+      },
+      "revised": {
+        "analysis": {
+          "event_ids_by_direction": {
+            "#pto.pipe<PIPE_FIX>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_FIX>": [
+              "#pto.event<EVENT_ID0>"
+            ],
+            "#pto.pipe<PIPE_M>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_M>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE1>->#pto.pipe<PIPE_MTE2>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ],
+            "#pto.pipe<PIPE_MTE2>->#pto.pipe<PIPE_MTE1>": [
+              "#pto.event<EVENT_ID0>",
+              "#pto.event<EVENT_ID1>"
+            ]
+          },
+          "mechanisms": {
+            "PIPE_ALL": 0,
+            "named": {
+              "PIPE_M": 2
+            },
+            "sets": 25,
+            "waits": 25
+          },
+          "status_attributes": [
+            {
+              "pto.insert_sync.buffer_generations": "unit",
+              "pto.insert_sync.effect_coverage": "\"complete\"",
+              "pto.insert_sync.generation_barriers_removed": "1 : i64",
+              "pto.insert_sync.generation_global_witnesses": "0 : i64",
+              "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+              "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+              "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+              "pto.insert_sync.lifecycle_channels": "5 : i64",
+              "pto.insert_sync.lifecycle_completion_pairs": "11 : i64",
+              "pto.insert_sync.lifecycle_completion_witnesses": "6 : i64",
+              "pto.insert_sync.lifecycle_completion_work": "15624 : i64",
+              "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+              "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+              "pto.insert_sync.lifecycle_retries": "0 : i64",
+              "pto.insert_sync.lifecycle_supplied_pairs": "173 : i64",
+              "pto.insert_sync.mmad_chain_targets": "0 : i64",
+              "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+              "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+            }
+          ]
+        },
+        "diagnostics": [
+          "InsertSync MMAD chains: 0 eligible targets, 0 ACC dependency groups elided; structured predecessor identities; no completion or token facts invented",
+          "InsertSync completion refinement: removed exit PIPE_ALL; concrete prefix proved",
+          "InsertSync lifecycle synthesis: guarded lifecycle plan plus rebuilt legacy residuals; no added scarcity ordering; attempted=5, proposed=5, streams=10, supplied-access-pairs=173, combined-event-audit=proved, planning-attempts=1, retries=0, consumer-regions=0, guarded-actions=0",
+          "InsertSync lifecycle candidate: 3:[0,4096)+4:[0,32768); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=16; readerless-returns=0",
+          "InsertSync lifecycle candidate: 3:[4096,8192)+4:[32768,65536); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=16; readerless-returns=0",
+          "InsertSync lifecycle candidate: 2:[0,8192); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=16; readerless-returns=0",
+          "InsertSync lifecycle candidate: 2:[8192,73728); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=16; readerless-returns=0",
+          "InsertSync lifecycle candidate: 5:[0,8192); stage=attempt-1/buffer-generations; accepted=1; reaching generations, final readers, and readerless returns proved; read-associations=16; readerless-returns=0",
+          "InsertSync lifecycle candidate: mixed-plan; stage=attempt-1/completion-supply; accepted=1; 11 same-pipe access pairs supplied; 0 residual handoffs; selected-protocol completion",
+          "InsertSync lifecycle candidate: residual-plan; stage=attempt-1/frontier-refinement; accepted=1; no redundant owned barriers proved; residual event movement requires protocol identity rebinding",
+          "InsertSync lifecycle candidate: phase-7-to-15; stage=attempt-1/completion-recheck; accepted=1; all prior source occurrences complete at every target; emitted plan rechecked",
+          "InsertSync lifecycle candidate: phase-8-to-17; stage=attempt-1/completion-recheck; accepted=1; all prior source occurrences complete at every target; emitted plan rechecked",
+          "InsertSync lifecycle candidate: phase-16-to-6; stage=attempt-1/completion-recheck; accepted=1; all prior source occurrences complete at every target; emitted plan rechecked",
+          "InsertSync lifecycle candidate: phase-17-to-8; stage=attempt-1/completion-recheck; accepted=1; all prior source occurrences complete at every target; emitted plan rechecked",
+          "InsertSync lifecycle candidate: phase-8-to-8; stage=attempt-1/completion-recheck; accepted=1; all prior source occurrences complete at every target; emitted plan rechecked",
+          "InsertSync lifecycle candidate: phase-17-to-17; stage=attempt-1/completion-recheck; accepted=1; all prior source occurrences complete at every target; emitted plan rechecked",
+          "InsertSync lifecycle candidate: mixed-plan; stage=attempt-1/completion-refinement; accepted=1; concrete completion and event consumption checked",
+          "InsertSync lifecycle candidate: 3:[0,4096)+4:[0,32768); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 3:[4096,8192)+4:[32768,65536); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 2:[0,8192); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 2:[8192,73728); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed",
+          "InsertSync lifecycle candidate: 5:[0,8192); stage=attempt-1/commit; accepted=1; complete emitted lifecycle and residuals committed"
+        ],
+        "identities": {
+          "abi": {
+            "records": 1,
+            "sha256": "e9f41245a35250db2f451601f1d33e6abbee4aaea4e4d7566aa486300a62c500"
+          },
+          "allocations": {
+            "records": 18,
+            "sha256": "f9281198356d67644f9cedf3354b0cfa3259199cefbb7804ad101a4eb312096b"
+          },
+          "payload": {
+            "records": 98,
+            "sha256": "319430c9b9eff7790dfe3f756aedc286c2d5997a4f7f08461c39c042479bb1ad"
+          },
+          "placements": {
+            "records": 52,
+            "sha256": "2e3ffa9ce387e1e5518eb9797e1e8a5a206105b1244f1d0eb44bd62133927493"
+          },
+          "views": {
+            "records": 9,
+            "sha256": "ca625b3897e29276b92fb6d6b0399dcd012c892c406beb2fa45144d5c946bfde"
+          }
+        },
+        "participation": {
+          "allocation_executed": false,
+          "analysis_executed": false,
+          "functions": [
+            {
+              "explicit_sync_bypass": false,
+              "function": "sv_matmul",
+              "lifecycle_input_marker": false
+            }
+          ],
+          "lifecycle_committed": true,
+          "pass_invoked": true
+        },
+        "runs": {
+          "cpp": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/sv_matmul/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/sv_matmul/revised/output.cpp"
+            ],
+            "output_sha256": "eb049f7806b43f9a8b5a2f0d6ec5ebce492eedc75716d9d102f857ada283ffa2",
+            "returncode": 0,
+            "seconds": 0.4775055750069441
+          },
+          "native": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/tools/pto-test-opt/pto-test-opt",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/sv_matmul/revised/before.pto",
+              "--mlir-disable-threading",
+              "--mlir-print-op-on-diagnostic=false",
+              "--pto-insert-sync=buffer-generations=true defer-same-pipe=true mmad-chains=true gm-alias=assume-disjoint-arguments effect-coverage=report",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/sv_matmul/revised/native.pto"
+            ],
+            "returncode": 0,
+            "seconds": 0.16416480799671263
+          },
+          "pto": {
+            "argv": [
+              "/home/toni/work/pypto3_sync_more/PTOAS-insertsync-r1/.venv/bin/python",
+              "-c",
+              "import sys\nsys.path.insert(0, sys.argv.pop(1))\nfrom pathlib import Path\nfrom ptoas import _cli\nfrom ptoas.mlir import ir\nclass SerialContext(ir.Context):\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        self.enable_multithreading(False)\nir.Context = SerialContext\nraise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))\n",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python",
+              "--pto-arch=a3",
+              "--pto-level=level3",
+              "--enable-insert-sync",
+              "--insert-sync-gm-alias=assume-disjoint-arguments",
+              "--insert-sync-effect-coverage=report",
+              "--insert-sync-defer-same-pipe",
+              "--insert-sync-mmad-chains",
+              "--insert-sync-buffer-generations",
+              "--emit-pto-ir",
+              "--pto-insert-sync-debug=1",
+              "--mlir-print-ir-before=pto-insert-sync",
+              "--mlir-print-ir-after=pto-insert-sync",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/sv_matmul/input.pto",
+              "-o",
+              "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/qwen-additions/comparison-v2/sv_matmul/revised/output.pto"
+            ],
+            "output_sha256": "3608e117015624ce70c59fb24311fec80f00cf029da07985524ece6bb3bc8bd9",
+            "returncode": 0,
+            "seconds": 0.46982625300006475
+          }
+        },
+        "status": "pass"
+      }
+    }
+  },
+  "runtime": {
+    "original": {
+      "cli_sha256": "87f4944ba496372730cba7a45c86671bc7a6cbb17e37fdb2cdb7f257e2d4d9a7",
+      "native_sha256": "0fa0a43290cb0a43f48755ded11fe9879323698b86ea8aa63cf127bb3844b7b3",
+      "python_root": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/main-runtime-python"
+    },
+    "revised": {
+      "cli_sha256": "87f4944ba496372730cba7a45c86671bc7a6cbb17e37fdb2cdb7f257e2d4d9a7",
+      "native_sha256": "bc28708f481463e0b9046a609d12525b973ffcbd6181f75a0b53bcc182664833",
+      "python_root": "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/python"
+    }
+  },
+  "validation": {
+    "compiler_emissions": 32,
+    "device_execution": "not-run",
+    "native_diagnostic_runs": 8,
+    "payload_projection_mutation_tests": 4,
+    "summed_process_seconds": 15.975965816978714
+  }
+}

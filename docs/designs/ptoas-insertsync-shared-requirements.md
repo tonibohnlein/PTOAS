@@ -107,3 +107,8 @@ the additional required completion.
 
 The [results and boundary comparison](../../test/experiments/insert_sync/performance/SHARED_REQUIREMENTS_RESULTS.md)
 record the unchanged eleven-fixture campaign and the remaining GEMM differences.
+
+The [annotated coherent-planning proposal](ptoas-insertsync-coherent-planning.md)
+adds a native experiment over emitted one-shot handoffs. Its backward needs and
+checked cut rewrites are separate from the production pipeline; they do not yet
+enable general movement of recurring protocol actions or joint allocation.

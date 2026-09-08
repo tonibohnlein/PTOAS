@@ -89,7 +89,8 @@ struct StorageFrontierSnapshot {
 // Conservative occurrence and payload checks: this entry never assumes a
 // runtime arithmetic guard that is not present in the supplied IR.
 StorageFrontierSnapshot analyzeInsertSyncStorageFrontiers(
-    func::FuncOp function, const SyncIRs& syncIR, bool useMmadChains, insert_sync_frontier::Budget& budget);
+    func::FuncOp function, const SyncIRs& syncIR, bool useMmadChains, insert_sync_frontier::Budget& budget,
+    bool allowSingleSection = false);
 
 struct StorageFrontierRefinementResult {
     unsigned removed = 0;

@@ -20,6 +20,7 @@
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
+#include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Builders.h"
@@ -1304,10 +1305,10 @@ bool mlir::pto::recheckInsertSyncGenerationRequirements(
 }
 
 StorageFrontierSnapshot mlir::pto::analyzeInsertSyncStorageFrontiers(
-    func::FuncOp function, const SyncIRs& syncIR, bool useMmadChains, Budget& budget)
+    func::FuncOp function, const SyncIRs& syncIR, bool useMmadChains, Budget& budget, bool allowSingleSection)
 {
     StorageFrontierSnapshot snapshot;
-    NativeGraph graph(function, syncIR);
+    NativeGraph graph(function, syncIR, allowSingleSection);
     if (
         graph.failure.empty()) {
         graph.partition(budget);
@@ -2256,6 +2257,298 @@ StorageFrontierRefinementResult mlir::pto::refineInsertSyncStorageFrontiers(
 }
 
 namespace {
+// Experimental planning client of the EXISTING semantic import and completion
+// domain. It owns whole one-shot handoffs only. No production option calls it.
+struct LinearHandoffPlan {
+    StorageFrontierSnapshot facts;
+    LinearHandoffNeeds needs;
+    std::vector<unsigned> phaseNodes;
+    std::vector<unsigned> positions;
+    bool proved = false;
+    std::string reason;
+};
+
+LinearHandoffPlan readLinearHandoffPlan(func::FuncOp f, bool useMmad, Budget& budget)
+{
+    LinearHandoffPlan plan;
+    bool structured = false;
+    f.walk([&](Operation* op) {
+        structured |= op != f.getOperation() && op->getNumRegions() &&
+                      !isa<SectionCubeOp, SectionVectorOp>(op);
+    });
+    if (structured) {
+        plan.reason = "structured recurrence/choice needs occurrence-qualified demand transfer";
+        return plan;
+    }
+    auto mode = resolveInsertSyncGMAlias(f, "");
+    if (failed(mode)) { plan.reason = "invalid GM contract"; return plan; }
+    MemoryDependentAnalyzer memory;
+    memory.setGMContract(f, *mode);
+    SyncIRs ir;
+    Buffer2MemInfoMap buffers;
+    PTOIRTranslator translator(ir, memory, buffers, f, SyncAnalysisMode::NORMALSYNC);
+    translator.enableGenerationFlow();
+    translator.Build();
+    plan.facts = analyzeInsertSyncStorageFrontiers(f, ir, useMmad, budget, true);
+    if (plan.facts.status != StorageFrontierSnapshot::Status::Complete) {
+        plan.reason = plan.facts.reason;
+        return plan;
+    }
+    if (!covers(plan.facts.program, plan.facts.supply, plan.facts.requirements).proved) {
+        plan.reason = plan.facts.supply.eventsProved ?
+            "seed storage requirements not proved" : "seed event recurrence not proved";
+        return plan;
+    }
+    plan.needs = backwardHandoffNeeds(plan.facts.program, plan.facts.supply, plan.facts.requirements, budget);
+    if (!plan.needs.supported) {
+        plan.reason = "requires linear control and unique publication/acquisition occurrences";
+        return plan;
+    }
+    plan.phaseNodes.resize(plan.facts.program.phaseLane.size(), kInvalid);
+    plan.positions.resize(plan.facts.program.nodes.size(), kInvalid);
+    unsigned position = 0;
+    for (unsigned n : plan.needs.order) {
+        plan.positions[n] = position++;
+        const auto& node = plan.facts.program.nodes[n];
+        if (node.kind == Node::Kind::Issue) plan.phaseNodes[node.phase] = n;
+    }
+    plan.proved = true;
+    plan.reason = "linear seed storage and event requirements proved";
+    return plan;
+}
+
+// On this admitted finite linear domain, static phases ARE distinct dynamic
+// occurrences. Comparing supply at matching payload points is exact for the
+// modeled completion order; it is not a latency or asynchronous progress model.
+bool noAdditionalBlocking(const LinearHandoffPlan& old, const LinearHandoffPlan& trial,
+                          unsigned& removed)
+{
+    const auto& a = old.facts;
+    const auto& b = trial.facts;
+    if (a.program.phaseLane != b.program.phaseLane || old.phaseNodes.size() != trial.phaseNodes.size())
+        return false;
+    for (unsigned phase = 0; phase < old.phaseNodes.size(); ++phase) {
+        unsigned x = old.phaseNodes[phase], y = trial.phaseNodes[phase];
+        if (identity(a.anchors[x]) != identity(b.anchors[y])) return false;
+        unsigned lane = a.program.phaseLane[phase];
+        const auto& before = a.supply.before[x]->known[lane];
+        const auto& after = b.supply.before[y]->known[lane];
+        if (!before.contains(after)) return false;
+        for (unsigned source = 0; source < old.phaseNodes.size(); ++source)
+            if (a.program.phaseLane[source] != lane && before.test(source) && !after.test(source)) ++removed;
+    }
+    // Preserve the seed's return-time obligations even if this function exposes
+    // incomplete completion to its caller. Do not silently weaken that contract.
+    auto retired = [](const LinearHandoffPlan& p) {
+        Bits result(p.phaseNodes.size());
+        for (unsigned n : p.needs.order)
+            if (p.facts.program.nodes[n].kind == Node::Kind::Exit)
+                for (const auto& lane : p.facts.supply.before[n]->known) result.unite(lane);
+        return result;
+    };
+    return retired(old) == retired(trial);
+}
+
+bool clearHandoffInterval(Operation* from, Operation* to)
+{
+    if (!from || !to || from->getBlock() != to->getBlock() || !from->isBeforeInBlock(to)) return false;
+    for (Operation* op = from->getNextNode(); op != to; op = op->getNextNode())
+        if (!op || localSync(op) || op->getNumRegions()) return false;
+    return true;
+}
+
+struct HandoffRewrite {
+    enum Kind { Advance, Delay, Split } kind;
+    int64_t signal, wait, producer, consumer;
+    unsigned newKey = kInvalid;
+};
+
+std::vector<HandoffRewrite> proposeHandoffRewrites(const LinearHandoffPlan& plan, unsigned signalNode)
+{
+    std::vector<HandoffRewrite> proposals;
+    const auto& p = plan.facts.program;
+    const auto& signal = p.nodes[signalNode];
+    unsigned waitNode = kInvalid;
+    for (unsigned n : plan.needs.order)
+        if (p.nodes[n].kind == Node::Kind::Wait && p.nodes[n].key == signal.key) waitNode = n;
+    if (waitNode == kInvalid) return proposals;
+    auto set = dyn_cast_or_null<SetFlagOp>(plan.facts.anchors[signalNode]);
+    auto wait = dyn_cast_or_null<WaitFlagOp>(plan.facts.anchors[waitNode]);
+    if (!set || !wait || set->getBlock() != wait->getBlock() || !set->isBeforeInBlock(wait)) return proposals;
+    auto setId = identity(set), waitId = identity(wait);
+    if (!setId || !waitId) return proposals;
+    const auto& domain = p.keys[signal.key];
+    // Preserve first-demand points; do not collapse distinct consumers to one
+    // earliest deadline and thereby reproduce the broad handoff.
+    std::map<unsigned, unsigned> deadlines; // target position -> latest source position
+    for (unsigned r = 0; r < plan.facts.requirements.size(); ++r) {
+        if (!plan.needs.served[waitNode].test(r)) continue;
+        const auto& need = plan.facts.requirements[r];
+        // A previously acquired guarantee need not delay this source-lane cut.
+        // Do not turn it into an intrinsic or whole-lane completion claim: the
+        // complete trial must still establish the original transitive need.
+        if (p.phaseLane[need.target] != domain.target) return proposals;
+        bool direct = p.phaseLane[need.source] == domain.source;
+        if (!direct && !plan.facts.supply.before[signalNode]->known[domain.source].test(need.source)) return proposals;
+        unsigned source = direct ? plan.positions[plan.phaseNodes[need.source]] : 0;
+        unsigned target = plan.positions[plan.phaseNodes[need.target]];
+        if (source >= plan.positions[signalNode] || target <= plan.positions[waitNode]) return proposals;
+        deadlines[target] = std::max(deadlines[target], source);
+    }
+    if (deadlines.empty()) return proposals; // no event deletion in this rollout
+    unsigned latestSource = 0;
+    for (auto [target, source] : deadlines) latestSource = std::max(latestSource, source);
+    auto anchorAt = [&](unsigned position) { return plan.facts.anchors[plan.needs.order[position]]; };
+    Operation* producer = anchorAt(latestSource);
+    Operation* firstConsumer = anchorAt(deadlines.begin()->first);
+    if (!producer || !firstConsumer || !identity(producer) || !identity(firstConsumer)) return proposals;
+    if (producer->getNextNode() != set && clearHandoffInterval(producer, set))
+        proposals.push_back({HandoffRewrite::Advance, *setId, *waitId, *identity(producer), -1});
+    if (wait->getNextNode() != firstConsumer && clearHandoffInterval(wait, firstConsumer))
+        proposals.push_back({HandoffRewrite::Delay, *setId, *waitId, -1, *identity(firstConsumer)});
+    if (deadlines.size() < 2) return proposals;
+    auto first = deadlines.begin();
+    unsigned prefix = first->second;
+    auto next = std::next(first);
+    while (next != deadlines.end() && next->second <= prefix) ++next;
+    if (next == deadlines.end()) return proposals; // one consumer needs the complete bundle
+    Operation* earlyProducer = anchorAt(prefix);
+    Operation* laterConsumer = anchorAt(next->first);
+    if (!earlyProducer || !laterConsumer || !identity(earlyProducer) || !identity(laterConsumer) ||
+        !clearHandoffInterval(earlyProducer, set) || !clearHandoffInterval(wait, laterConsumer)) return proposals;
+    // A fresh key is a finite realization, not unbounded logical-ID evidence.
+    // Existing keys are whole-function reservations, with no recoloring here.
+    std::set<unsigned> used;
+    for (unsigned n : plan.needs.order) {
+        if (p.nodes[n].kind != Node::Kind::Signal) continue;
+        auto op = dyn_cast_or_null<SetFlagOp>(plan.facts.anchors[n]);
+        if (op && op.getSrcPipe() == set.getSrcPipe() && op.getDstPipe() == set.getDstPipe())
+            used.insert(static_cast<unsigned>(op.getEventId().getEvent()));
+    }
+    unsigned key = 0;
+    while (key < kTotalEventIdNum && used.count(key)) ++key;
+    if (key < kTotalEventIdNum)
+        proposals.push_back({HandoffRewrite::Split, *setId, *waitId,
+                             *identity(earlyProducer), *identity(laterConsumer), key});
+    return proposals;
+}
+
+bool materializeHandoffRewrite(func::FuncOp f, const HandoffRewrite& rewrite)
+{
+    auto signal = dyn_cast_or_null<SetFlagOp>(findIdentity(f, rewrite.signal));
+    auto wait = dyn_cast_or_null<WaitFlagOp>(findIdentity(f, rewrite.wait));
+    if (!signal || !wait) return false;
+    Operation* producer = findIdentity(f, rewrite.producer);
+    Operation* consumer = findIdentity(f, rewrite.consumer);
+    if (rewrite.kind == HandoffRewrite::Advance) {
+        if (!clearHandoffInterval(producer, signal)) return false;
+        signal->moveAfter(producer);
+    } else if (rewrite.kind == HandoffRewrite::Delay) {
+        if (!clearHandoffInterval(wait, consumer)) return false;
+        wait->moveBefore(consumer);
+    } else {
+        if (!clearHandoffInterval(producer, signal) || !clearHandoffInterval(wait, consumer)) return false;
+        auto key = EventAttr::get(f.getContext(), static_cast<EVENT>(rewrite.newKey));
+        OpBuilder builder(producer);
+        builder.setInsertionPointAfter(producer);
+        builder.create<SetFlagOp>(signal.getLoc(), signal.getSrcPipe(), signal.getDstPipe(), key);
+        builder.setInsertionPoint(wait);
+        builder.create<WaitFlagOp>(wait.getLoc(), wait.getSrcPipe(), wait.getDstPipe(), key);
+        wait->moveBefore(consumer);
+    }
+    return true;
+}
+
+struct PTOExperimentHandoffPlanningPass :
+    PassWrapper<PTOExperimentHandoffPlanningPass, OperationPass<func::FuncOp>> {
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOExperimentHandoffPlanningPass)
+    StringRef getArgument() const final { return "pto-experiment-handoff-planning"; }
+    StringRef getDescription() const final { return "Experiment with backward handoff needs and forward completion"; }
+    Option<bool> useMmad{*this, "mmad-chains", llvm::cl::init(false),
+                        llvm::cl::desc("Use existing qualified MMAD ordering")};
+    PTOExperimentHandoffPlanningPass() = default;
+    PTOExperimentHandoffPlanningPass(const PTOExperimentHandoffPlanningPass& other) : PassWrapper(other) {
+        useMmad = other.useMmad;
+    }
+    void runOnOperation() override {
+        auto function = getOperation();
+        if (function.isDeclaration()) return;
+        unsigned advanced = 0, delayed = 0, split = 0, attempts = 0, removed = 0;
+        std::string reason;
+        auto report = [&]() {
+            function.emitRemark("InsertSync handoff experiment: ")
+                << advanced << " advanced, " << delayed << " delayed, " << split << " split; "
+                << removed << " removed cross-lane completion facts, " << attempts << " trials; " << reason;
+        };
+        bool collision = false;
+        function.walk([&](Operation* op) { collision |= op->hasAttr(workIdentity); });
+        if (collision) { reason = "unchanged: existing private work identities"; report(); return; }
+        Budget budget;
+        auto seed = readLinearHandoffPlan(function, useMmad, budget);
+        if (!seed.proved) { reason = "unchanged: " + seed.reason; report(); return; }
+        IRMapping mapping;
+        OwningOpRef<ModuleOp> stage(ModuleOp::create(function.getLoc()));
+        (*stage)->setAttrs(function->getParentOfType<ModuleOp>()->getAttrs());
+        auto working = cast<func::FuncOp>(function->clone(mapping));
+        stage->getBody()->push_back(working.getOperation());
+        int64_t id = 0;
+        working.walk<WalkOrder::PreOrder>([&](Operation* op) {
+            op->setAttr(workIdentity, IntegerAttr::get(IntegerType::get(function.getContext(), 64), id++));
+        });
+        const auto payload = originalTrace(working);
+        bool changed = true;
+        while (changed && attempts < 48 && budget.left) {
+            changed = false;
+            auto plan = readLinearHandoffPlan(working, useMmad, budget);
+            if (!plan.proved) { reason = "retained feasible plan: " + plan.reason; break; }
+            for (unsigned n : plan.needs.order) {
+                if (plan.facts.program.nodes[n].kind != Node::Kind::Signal) continue;
+                for (const auto& rewrite : proposeHandoffRewrites(plan, n)) {
+                    if (attempts >= 48 || !budget.left) break;
+                    ++attempts;
+                    OwningOpRef<ModuleOp> trialModule(ModuleOp::create(function.getLoc()));
+                    (*trialModule)->setAttrs((*stage)->getAttrs());
+                    auto trial = cast<func::FuncOp>(working->clone());
+                    trialModule->getBody()->push_back(trial.getOperation());
+                    if (!materializeHandoffRewrite(trial, rewrite)) continue;
+                    if (originalTrace(trial) != payload || failed(verify(trial.getOperation()))) {
+                        reason = "internal error: invalid payload-preserving rewrite";
+                        report(); signalPassFailure(); return;
+                    }
+                    auto checked = readLinearHandoffPlan(trial, useMmad, budget);
+                    unsigned improvement = 0;
+                    if (!checked.proved || !noAdditionalBlocking(plan, checked, improvement) || !improvement) continue;
+                    // Retain the ORIGINAL requirements independently of the trial's
+                    // discovery. Physical phase order/identities were checked above.
+                    if (!covers(checked.facts.program, checked.facts.supply, seed.facts.requirements).proved) continue;
+                    working.erase();
+                    trial->remove();
+                    stage->getBody()->push_back(trial.getOperation());
+                    working = trial;
+                    working.walk([&](Operation* op) {
+                        if (!op->hasAttr(workIdentity))
+                            op->setAttr(workIdentity, IntegerAttr::get(IntegerType::get(function.getContext(), 64), id++));
+                    });
+                    removed += improvement;
+                    advanced += rewrite.kind == HandoffRewrite::Advance;
+                    delayed += rewrite.kind == HandoffRewrite::Delay;
+                    split += rewrite.kind == HandoffRewrite::Split;
+                    changed = true;
+                    break;
+                }
+                if (changed || attempts >= 48 || !budget.left) break;
+            }
+        }
+        // Each accepted transaction has already been freshly imported, checked,
+        // and assigned finite noncolliding keys. Unknown trials retain that plan.
+        working.walk([&](Operation* op) { op->removeAttr(workIdentity); });
+        if (advanced || delayed || split) function.getBody().takeBody(working.getBody());
+        if (reason.empty()) reason = "checked one-shot frontiers; fixed existing keys; no scarcity serialization";
+        report();
+    }
+};
+PassRegistration<PTOExperimentHandoffPlanningPass> registerHandoffExperiment;
+
 // Test/development adapter: only explicitly marked barriers are owned. It does
 // NOT change production InsertSync's explicit-synchronization bypass behavior.
 struct PTORefineStorageFrontiersPass : PassWrapper<PTORefineStorageFrontiersPass, OperationPass<func::FuncOp>> {

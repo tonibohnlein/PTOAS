@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "input_commit": "862ab811124d2e67a7f2cde992461983163f6a7a",
+  "architecture": "a3",
+  "gm_contract": "distinct GM argument allocations for both arms; original legacy default",
+  "cases": [
+    {
+      "case_id": "rmsnorm",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aiv/rmsnorm.pto",
+      "sha256": "ed39cafb5f4d6ae42aaec7f9535e88011b4e52af3dfd74e40cfb4525562b1bc8",
+      "golden": "test/samples/Qwen3DecodeA3/rmsnorm_golden.py",
+      "golden_sha256": "1010f644a6a6b7b52ff055d558e85d5a4a0c6bc38eb3f70bad93cb9d96243ee4",
+      "level": "level3",
+      "hand_tuned": null
+    },
+    {
+      "case_id": "softmax",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aiv/softmax.pto",
+      "sha256": "6a31a69e1395144674533fea63a44f808aba4e25fb653467476d0ae6ee147dcc",
+      "golden": "test/samples/Qwen3DecodeA3/softmax_golden.py",
+      "golden_sha256": "366f455211c8abbf379aa1be3f6565dcf6231791a25b6f9004710a5176f2a37c",
+      "level": "level3",
+      "hand_tuned": null
+    },
+    {
+      "case_id": "online_softmax",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aiv/online_softmax.pto",
+      "sha256": "1d67f50a2b7ae1225093444ca010ca46c9d6b726ce0f8f03c529e51889a7c534",
+      "golden": "test/samples/Qwen3DecodeA3/online_softmax_golden.py",
+      "golden_sha256": "b55ea82fb0c32db73879c09ec114450e19277fb7e5fa33556b5855de34bf95c1",
+      "level": "level3",
+      "hand_tuned": null
+    },
+    {
+      "case_id": "silu",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aiv/silu.pto",
+      "sha256": "2156fd9bb8d0b85b743175f88f18c3cfe30cb0bad6b8043662ea254458578925",
+      "golden": "test/samples/Qwen3DecodeA3/silu_golden.py",
+      "golden_sha256": "4d908f19d6a4d3392949924b74a0d0e9063fbbee7f0b0a8318b62a0b361d59dd",
+      "level": "level3",
+      "hand_tuned": null
+    },
+    {
+      "case_id": "rope_kv_cache",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aiv/rope_kv_cache.pto",
+      "sha256": "1a650bdd8c9a49da5e78e8c83054bdc3699782872228e6fc49c38f0ff92252cf",
+      "golden": "test/samples/Qwen3DecodeA3/rope_kv_cache_golden.py",
+      "golden_sha256": "eb1eaeb33f4c9ba2549d1882996d5560d3dee6bb9f979eab61f2c74e1b71ffd3",
+      "level": "level3",
+      "hand_tuned": null
+    },
+    {
+      "case_id": "qk_matmul",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aic/qk_matmul.pto",
+      "sha256": "1f6d0e3a0f44ec4e77b4405fd5990ef3f7738b578acfae3c902545a1eed896cb",
+      "golden": "test/samples/Qwen3DecodeA3/qk_matmul_golden.py",
+      "golden_sha256": "241ec030868f8968c237d07250a59781ec708bf8318c0905351dd232f8a90abb",
+      "level": "level3",
+      "hand_tuned": null
+    },
+    {
+      "case_id": "sv_matmul",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aic/sv_matmul.pto",
+      "sha256": "cb6c20fddca2624fe2851bcb0861b7c1883a40474b1dace00c3f80864eec8bcc",
+      "golden": "test/samples/Qwen3DecodeA3/sv_matmul_golden.py",
+      "golden_sha256": "eded1708b7b73515fcfb646bba4836e6ad88ebe621856c59e7621cd27c53c558",
+      "level": "level3",
+      "hand_tuned": null
+    },
+    {
+      "case_id": "q_proj",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aic/q_proj.pto",
+      "sha256": "5aa01e4f14bb7db12e44ddf67c66c4887b003d50d6cff85fee7b2d2aa1958f06",
+      "golden": "test/samples/Qwen3DecodeA3/q_proj_golden.py",
+      "golden_sha256": "33235e42376acec2fda65a90cb376b187cf7472cfd87de4335bb871cb2765dd1",
+      "level": "level3",
+      "hand_tuned": null
+    }
+  ],
+  "support_files": [
+    {
+      "path": "test/samples/Qwen3DecodeA3/README.md",
+      "sha256": "8c7cc465aff1f66dc3b6213afc6710f9fdb4b77d8eac312795fc706fdddec0b0"
+    },
+    {
+      "path": "test/samples/Qwen3DecodeA3/qwen3_decode_golden_lib.py",
+      "sha256": "e0e8583d6c5e090c6d76822a74b426e8938cb236f90020417728cce6b6e8f8a8"
+    },
+    {
+      "path": "test/samples/validation_runtime.py",
+      "sha256": "0982a1200484efe29a55d9ee9ae7da39a850635a848326d889f5d55115323f7d"
+    },
+    {
+      "path": "test/samples/runop.sh",
+      "sha256": "9ebce2bfcbe80ef791d5694b8d44e45f672547ab8bb84c5ee01f8734701fbb2a"
+    }
+  ]
+}
