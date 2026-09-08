@@ -35,6 +35,7 @@ struct InsertSyncLifecycleStructure {
     std::shared_ptr<const LocalStorageRequirements> requirements;
     std::vector<Operation *> anchors;
     std::vector<const CompoundInstanceElement *> phases;
+    llvm::DenseMap<Operation *, SmallVector<Value>> partialDescriptorWrites;
     // Actual R5 guard-product bindings. No generated/input attribute is trusted
     // as a predicate. Entries are indexed by the same guarded Program node.
     std::vector<insert_sync_frontier::GuardEnvironment> guards;

@@ -12,6 +12,7 @@
 
 #include "PTO/Transforms/InsertSync/LifecycleProtocol.h"
 #include "PTO/Transforms/InsertSync/StorageFrontierQueries.h"
+#include <memory>
 
 namespace mlir::pto::insert_sync_frontier {
 
@@ -90,41 +91,30 @@ inline std::optional<BufferRegionTransfer> summarizeBufferRegion(
     return result;
 }
 
-// Immutable storage facts, independent of lane recipes, token closure and keys.
-// Atom::writes is a MAY effect. Only explicitly qualified definite writes kill
-// reaching content; ordering frontiers are conservative for both kinds.
-struct BufferGenerationFlow {
-    enum class Status { Complete, InvalidInput, AnalysisLimit };
-    Status status = Status::InvalidInput;
-    std::vector<BufferGenerationRead> reads;
-    std::vector<std::vector<unsigned>> firstAccess, nextAccess;
-    std::vector<Bits> finalReaders;
-    std::vector<Bits> orderedPhases;
-    std::vector<Bits> precedingOnLane; // phase-count sentinel means no earlier issue
-    GenerationFrontiers frontiers;
-    LifecycleResult ordering;
-    unsigned regionTransfersUsed = 0;
+// Control-only facts are independent of the selected slice, bundle or event
+// recipe. Cache them once per immutable graph and compare graph identities
+// exactly before reuse. No hash collision or stale native pointer can certify
+// a relationship after a control/physical mutation.
+struct BufferControlFlow {
+    unsigned lanes = 0;
+    std::vector<unsigned> phaseLane;
+    std::vector<Node> nodes;
+    std::vector<Bits> orderedPhases, precedingOnLane;
+    bool matches(const Program& p, Budget& budget) const {
+        if (lanes != p.lanes || phaseLane != p.phaseLane || nodes.size() != p.nodes.size()) return false;
+        for (unsigned n = 0; n < nodes.size(); ++n) {
+            if (!budget.spend(1 + nodes[n].next.size())) return false;
+            const auto& a = nodes[n]; const auto& b = p.nodes[n];
+            if (a.kind != b.kind || a.lane != b.lane || a.phase != b.phase || a.next != b.next) return false;
+        }
+        return true;
+    }
 };
-inline BufferGenerationFlow analyzeBufferGenerationFlow(
-    const Program& program, const std::vector<Atom>& atoms,
-    const std::vector<Bits>& definiteWrites, Budget& budget)
+inline std::shared_ptr<const BufferControlFlow> analyzeBufferControlFlow(const Program& program, Budget& budget)
 {
-    BufferGenerationFlow result;
+    if (!valid(program)) return {};
     const unsigned count = program.nodes.size(), phases = program.phaseLane.size();
-    if (!valid(program) || atoms.size() > 256 || definiteWrites.size() != atoms.size())
-        return result;
-    for (unsigned m = 0; m < atoms.size(); ++m)
-        if (atoms[m].reads.size() != phases || atoms[m].writes.size() != phases ||
-            definiteWrites[m].size() != phases || !atoms[m].writes.contains(definiteWrites[m]))
-            return result;
-    auto limit = [&]() {
-        result.status = BufferGenerationFlow::Status::AnalysisLimit;
-        return result;
-    };
-    result.ordering = lifecycles(program, atoms, budget);
-    result.frontiers = generationFrontiers(program, atoms, budget);
-    if (!result.ordering.complete || result.frontiers.status != GenerationFrontiers::Status::Complete)
-        return limit();
+    BufferControlFlow result;
     // Ordered occurrence reachability includes loop backedges and the native
     // guarded product. Absence is usable even when no closed protocol fits.
     result.orderedPhases.assign(phases, Bits(phases));
@@ -138,7 +128,7 @@ inline BufferGenerationFlow analyzeBufferGenerationFlow(
         while (!queue.empty()) {
             unsigned n = queue.front(); queue.pop_front();
             if (seen.test(n)) continue;
-            if (!budget.spend(1 + program.nodes[n].next.size())) return limit();
+            if (!budget.spend(1 + program.nodes[n].next.size())) return {};
             seen.set(n);
             if (program.nodes[n].kind == Node::Kind::Issue)
                 result.orderedPhases[source].set(program.nodes[n].phase);
@@ -154,7 +144,7 @@ inline BufferGenerationFlow analyzeBufferGenerationFlow(
         reached.set(0); queued.set(0); before[0].set(phases);
         while (!queue.empty()) {
             unsigned n = queue.front(); queue.pop_front(); queued.reset(n);
-            if (!budget.spend(1 + program.nodes[n].next.size())) return limit();
+            if (!budget.spend(1 + program.nodes[n].next.size())) return {};
             auto nextState = before[n];
             const auto& node = program.nodes[n];
             if (node.kind == Node::Kind::Issue && node.lane == lane) {
@@ -172,6 +162,54 @@ inline BufferGenerationFlow analyzeBufferGenerationFlow(
                 result.precedingOnLane[node.phase].unite(before[n]);
         }
     }
+    result.lanes = program.lanes;
+    result.phaseLane = program.phaseLane;
+    result.nodes = program.nodes;
+    return std::make_shared<const BufferControlFlow>(std::move(result));
+}
+
+// Immutable storage facts, independent of lane recipes, token closure and keys.
+// Atom::writes is a MAY effect. Only explicitly qualified definite writes kill
+// reaching content; ordering frontiers are conservative for both kinds.
+struct BufferGenerationFlow {
+    enum class Status { Complete, InvalidInput, AnalysisLimit };
+    Status status = Status::InvalidInput;
+    std::vector<BufferGenerationRead> reads;
+    std::vector<std::vector<unsigned>> firstAccess, nextAccess;
+    std::vector<Bits> finalReaders;
+    std::vector<Bits> orderedPhases;
+    std::vector<Bits> precedingOnLane; // phase-count sentinel means no earlier issue
+    GenerationFrontiers frontiers;
+    LifecycleResult ordering;
+    unsigned regionTransfersUsed = 0;
+    std::shared_ptr<const BufferControlFlow> control;
+};
+inline BufferGenerationFlow analyzeBufferGenerationFlow(
+    const Program& program, const std::vector<Atom>& atoms,
+    const std::vector<Bits>& definiteWrites, Budget& budget,
+    std::shared_ptr<const BufferControlFlow> control = {})
+{
+    BufferGenerationFlow result;
+    const unsigned count = program.nodes.size(), phases = program.phaseLane.size();
+    if (!valid(program) || atoms.size() > 256 || definiteWrites.size() != atoms.size())
+        return result;
+    for (unsigned m = 0; m < atoms.size(); ++m)
+        if (atoms[m].reads.size() != phases || atoms[m].writes.size() != phases ||
+            definiteWrites[m].size() != phases || !atoms[m].writes.contains(definiteWrites[m]))
+            return result;
+    auto limit = [&]() {
+        result.status = BufferGenerationFlow::Status::AnalysisLimit;
+        return result;
+    };
+    result.ordering = lifecycles(program, atoms, budget);
+    result.frontiers = generationFrontiers(program, atoms, budget);
+    if (!result.ordering.complete || result.frontiers.status != GenerationFrontiers::Status::Complete)
+        return limit();
+    if (!control || !control->matches(program, budget)) control = analyzeBufferControlFlow(program, budget);
+    if (!control) return limit();
+    result.control = control;
+    result.orderedPhases = control->orderedPhases;
+    result.precedingOnLane = control->precedingOnLane;
     for (unsigned m = 0; m < atoms.size(); ++m) {
         const auto& atom = atoms[m];
         std::map<unsigned, BufferRegionTransfer> summaries;
@@ -265,7 +303,8 @@ struct BufferGenerationAnalysis {
 };
 
 inline BufferGenerationAnalysis analyzeBufferGenerations(
-    const Program& program, const LifecycleSpec& spec, const Bits& boundaries, Budget& budget)
+    const Program& program, const LifecycleSpec& spec, const Bits& boundaries, Budget& budget,
+    std::shared_ptr<const BufferControlFlow> control = {})
 {
     BufferGenerationAnalysis result;
     auto& cert = result.certificate;
@@ -308,7 +347,7 @@ inline BufferGenerationAnalysis analyzeBufferGenerations(
             if ((spec.phases[p].reads | spec.phases[p].updates) & (1u << m)) atoms[m].reads.set(p);
             if (spec.phases[p].writes & (1u << m)) { atoms[m].writes.set(p); definite[m].set(p); }
         }
-    auto flow = analyzeBufferGenerationFlow(program, atoms, definite, budget);
+    auto flow = analyzeBufferGenerationFlow(program, atoms, definite, budget, std::move(control));
     if (flow.status != BufferGenerationFlow::Status::Complete)
         return fail(Status::AnalysisLimit, "generation storage-flow budget");
     result.reads = flow.reads;
@@ -320,7 +359,7 @@ inline BufferGenerationAnalysis analyzeBufferGenerations(
     Atom bundle{Bits(phases), Bits(phases)};
     for (const auto& atom : atoms) { bundle.reads.unite(atom.reads); bundle.writes.unite(atom.writes); }
     auto boundaryFlow = spec.members == 1 ? flow :
-        analyzeBufferGenerationFlow(program, {bundle}, {Bits(phases)}, budget);
+        analyzeBufferGenerationFlow(program, {bundle}, {Bits(phases)}, budget, flow.control);
     if (boundaryFlow.status != BufferGenerationFlow::Status::Complete)
         return fail(Status::AnalysisLimit, "generation bundle-flow budget");
     auto first = boundaryFlow.firstAccess[0];

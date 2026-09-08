@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+
+// RUN: %python %S/Inputs/check_descriptor_flow.py pto-test-opt %s %S/../../experiments/insert_sync/performance %t
+!V = !pto.tile_buf<vec, 16x16xf32, valid=?x?>
+!G = !pto.tensor_view<?x?xf32>
+!P = !pto.partition_tensor_view<16x16xf32>
+module attributes {pto.target_arch = "a3"} {
+  func.func @descriptor_flow(%src: !pto.ptr<f32>, %dst: !pto.ptr<f32>, %trips: index, %choose: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %size = arith.constant 16 : index
+    %partial = arith.constant 8 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 1024 : i64
+    %a = pto.alloc_tile addr = %a0 valid_row = %size valid_col = %size : !V
+    %b = pto.alloc_tile addr = %a1 valid_row = %size valid_col = %size : !V
+    %input = pto.make_tensor_view %src, shape = [%size, %size], strides = [%size, %one] : !G
+    %output = pto.make_tensor_view %dst, shape = [%size, %size], strides = [%size, %one] : !G
+    %in = pto.partition_view %input, offsets = [%z, %z], sizes = [%size, %size] : !G -> !P
+    %out = pto.partition_view %output, offsets = [%z, %z], sizes = [%size, %size] : !G -> !P
+    scf.for %i = %z to %trips step %one {
+      // DESCRIPTOR_UPDATE
+      pto.set_validshape %a, %size, %size : !V
+      pto.set_validshape %b, %size, %size : !V
+      // BEFORE_PAYLOAD
+      pto.tload ins(%in : !P) outs(%a : !V)
+      pto.tabs ins(%a : !V) outs(%b : !V)
+      pto.tstore ins(%b : !V) outs(%out : !P)
+    }
+    return
+  }
+}

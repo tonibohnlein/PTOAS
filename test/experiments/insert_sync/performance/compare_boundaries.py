@@ -79,7 +79,10 @@ class Boundaries:
     def observe(self, op, point, signature):
         lane = {"pto.tload": "PIPE_MTE2", "pto.textract": "PIPE_MTE1",
                 "pto.tmatmul": "PIPE_M", "pto.tmatmul.acc": "PIPE_M",
-                "pto.tabs": "PIPE_V", "pto.tadd": "PIPE_V"}.get(op.name)
+                "pto.tabs": "PIPE_V", "pto.tadd": "PIPE_V", "pto.tsub": "PIPE_V",
+                "pto.tmax": "PIPE_V", "pto.tmul": "PIPE_V", "pto.texp": "PIPE_V",
+                "pto.tcvt": "PIPE_V", "pto.trowexpanddiv": "PIPE_V",
+                "pto.trowexpandmul": "PIPE_V"}.get(op.name)
         if op.name == "pto.tstore":
             lane = "PIPE_FIX" if "tile_buf<acc," in str(op.operands[0].type) else "PIPE_MTE3"
         if op.name == "pto.textract" and "tile_buf<mat," not in str(op.operands[0].type):
@@ -90,6 +93,8 @@ class Boundaries:
             if ("tile_buf<mat," in str(op.operands[0].type) and
                     re.search(r"tile_buf<(?:left|right),", str(op.operands[1].type))):
                 lane = "PIPE_MTE1"
+            elif all("tile_buf<vec," in str(v.type) for v in op.operands):
+                lane = "PIPE_V"
         if op.name not in SYNC and op.name.startswith("pto.t") and lane is None:
             raise ValueError(f"no qualified physical lane in boundary observer: {op.name}")
         self.action(op.name, attrs(op), lane, signature)

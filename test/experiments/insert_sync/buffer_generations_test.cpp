@@ -280,5 +280,41 @@ int main()
     assigned = shareEventKeys(streams, shareable, sharingBudget);
     check(assigned.merged == 0, "missing causal acknowledgement prevents sharing despite balanced counts");
 
+    Program initialTokens{2, {}, {{1, 0}}, {
+        {Node::Kind::Signal, 1, kInvalid, 0, {1}},
+        {Node::Kind::Wait, 0, kInvalid, 0, {2}},
+        {Node::Kind::Signal, 1, kInvalid, 0, {3}},
+        {Node::Kind::Wait, 0, kInvalid, 0, {2, 4}}, finish()}};
+    Budget initialBudget;
+    auto firstWaits = initialEventAcquisitions(initialTokens, 0, initialBudget);
+    check(firstWaits && firstWaits->test(1) && !firstWaits->test(3),
+          "initial token ownership excludes recurring publications");
+    initialTokens.nodes[2].next = {1};
+    firstWaits = initialEventAcquisitions(initialTokens, 0, initialBudget);
+    check(firstWaits && !firstWaits->test(1),
+          "shared first/recurring static acquisition cannot be deleted");
+    initialTokens.nodes[0] = pass({1, 2});
+    check(!initialEventAcquisitions(initialTokens, 0, initialBudget),
+          "a non-publication cannot seed initial-token ownership");
+    initialTokens.nodes[0] = {Node::Kind::Signal, 1, kInvalid, 0, {1}};
+    Budget tokenBudget; tokenBudget.left = 0;
+    check(!initialEventAcquisitions(initialTokens, 0, tokenBudget), "token-origin budget returns unknown");
+
+    Budget cachedBudget, freshBudget;
+    auto cachedFlow = analyzeBufferGenerationFlow(regional, {regionAtom}, {regionAtom.writes},
+                                                   cachedBudget, directFlow.control);
+    auto freshFlow = analyzeBufferGenerationFlow(regional, {regionAtom}, {regionAtom.writes}, freshBudget);
+    check(cachedFlow.status == BufferGenerationFlow::Status::Complete &&
+          cachedFlow.control == directFlow.control && cachedBudget.left > freshBudget.left &&
+          cachedFlow.orderedPhases == freshFlow.orderedPhases &&
+          cachedFlow.precedingOnLane == freshFlow.precedingOnLane,
+          "slice projections reuse exact immutable control facts with less analysis work");
+    auto changedControl = regional; changedControl.nodes[4].next = {5};
+    auto invalidatedFlow = analyzeBufferGenerationFlow(changedControl, {regionAtom}, {regionAtom.writes},
+                                                        cachedBudget, directFlow.control);
+    check(invalidatedFlow.status == BufferGenerationFlow::Status::Complete &&
+          invalidatedFlow.control != directFlow.control && !invalidatedFlow.orderedPhases[2].test(1),
+          "changed backedge invalidates cached occurrence relationships");
+
     std::cout << checks << " buffer-generation checks passed\n";
 }

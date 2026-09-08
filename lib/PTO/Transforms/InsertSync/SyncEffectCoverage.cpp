@@ -107,6 +107,7 @@ LogicalResult helper(const Operations& operations, func::CallOp call)
 // do not erase their participation by calling the update pure.
 bool scalarDescriptorInput(Value input)
 {
+    if (!input) return false;
     SmallVector<Value> pending{input};
     llvm::DenseSet<Value> visited;
     while (!pending.empty()) {
@@ -136,6 +137,14 @@ bool scalarDescriptorInput(Value input)
     return true;
 }
 
+} // namespace
+
+bool mlir::pto::isInsertSyncScalarPrerequisite(Value value)
+{
+    return scalarDescriptorInput(value);
+}
+
+namespace {
 LogicalResult checkOperation(const Operations& operations, Operation* op)
 {
     if (auto call = dyn_cast<func::CallOp>(op)) {

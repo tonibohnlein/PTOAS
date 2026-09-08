@@ -465,6 +465,39 @@ struct EventKeySharing {
     std::vector<unsigned> representative;
     unsigned merged = 0;
 };
+// Which acquisitions consume only this initial publication? Keep the empty and
+// subsequent-publication alternatives distinct. This is a token-origin query,
+// not evidence of payload completion. A native client must group all copies of
+// an operation and recheck the complete plan after removing an initial pair.
+inline std::optional<Bits> initialEventAcquisitions(const Program& p, unsigned prime, Budget& budget)
+{
+    if (!valid(p) || prime >= p.nodes.size() || p.nodes[prime].kind != Node::Kind::Signal)
+        return std::nullopt;
+    unsigned key = p.nodes[prime].key;
+    std::vector<unsigned> before(p.nodes.size());
+    before[0] = 1; // empty=1, initial publication=2, subsequent publication=4
+    std::deque<unsigned> queue{0};
+    Bits queued(p.nodes.size()); queued.set(0);
+    while (!queue.empty()) {
+        unsigned n = queue.front(); queue.pop_front(); queued.reset(n);
+        if (!budget.spend(1 + p.nodes[n].next.size())) return std::nullopt;
+        unsigned state = before[n];
+        const auto& node = p.nodes[n];
+        if (node.key == key && node.kind == Node::Kind::Signal) state = n == prime ? 2 : 4;
+        if (node.key == key && node.kind == Node::Kind::Wait) state = 1;
+        for (unsigned next : node.next) {
+            unsigned merged = before[next] | state;
+            if (merged != before[next]) {
+                before[next] = merged;
+                if (!queued.test(next)) { queued.set(next); queue.push_back(next); }
+            }
+        }
+    }
+    Bits result(p.nodes.size());
+    for (unsigned n = 0; n < p.nodes.size(); ++n)
+        if (p.nodes[n].kind == Node::Kind::Wait && p.nodes[n].key == key && before[n] == 2) result.set(n);
+    return result;
+}
 // Check token identity as well as balance: every wait must still consume a
 // publication from its original logical stream after physical key sharing.
 inline bool preservesEventOwners(const Program& original, const Program& assigned, Budget& budget)

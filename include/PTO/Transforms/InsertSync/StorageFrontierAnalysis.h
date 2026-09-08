@@ -65,6 +65,10 @@ struct LocalStorageRequirements {
         LocalStorageSlice slice;
         bool complete = true;
         insert_sync_frontier::Bits readers, writers;
+        // Exact allocation geometry does not imply definite production of its
+        // contents. Dynamic/partial descriptor writes retain hazards but cannot
+        // seed the whole-generation constructor.
+        bool wholeProductions = true;
     };
     struct Obligation {
         unsigned source, target, sourceAccess, targetAccess, hazards;

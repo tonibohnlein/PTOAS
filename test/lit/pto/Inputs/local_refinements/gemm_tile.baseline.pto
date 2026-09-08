@@ -1,0 +1,78 @@
+module attributes {pto.target_arch = "a3"} {
+  func.func @gemm_tile(%arg0: !pto.ptr<f32, gm>, %arg1: !pto.ptr<f32, gm>, %arg2: !pto.ptr<f32, gm>, %arg3: index, %arg4: index) attributes {pto.gm_alias = "assume-disjoint-arguments", pto.insert_sync.buffer_generations, pto.insert_sync.effect_coverage = "complete", pto.insert_sync.generation_barriers_removed = 0 : i64, pto.insert_sync.generation_global_witnesses = 0 : i64, pto.insert_sync.generation_mmad_witnesses = 0 : i64, pto.insert_sync.generation_publication_edges_removed = 0 : i64, pto.insert_sync.generation_publication_work = 0 : i64, pto.insert_sync.generation_publications_advanced = 0 : i64, pto.insert_sync.generation_publications_guarded = 0 : i64, pto.insert_sync.generation_ready_sets_removed = 0 : i64, pto.insert_sync.generation_ready_streams_supplied = 0 : i64, pto.insert_sync.generation_ready_waits_removed = 0 : i64, pto.insert_sync.generation_residual_keys_shared = 0 : i64, pto.insert_sync.generation_slot_witnesses = 0 : i64, pto.insert_sync.generation_storage_barriers_guarded = 0 : i64, pto.insert_sync.generation_storage_barriers_removed = 0 : i64, pto.insert_sync.lifecycle_channels = 3 : i64, pto.insert_sync.lifecycle_completion_pairs = 5 : i64, pto.insert_sync.lifecycle_completion_witnesses = 2 : i64, pto.insert_sync.lifecycle_completion_work = 5020 : i64, pto.insert_sync.lifecycle_consumer_regions = 0 : i64, pto.insert_sync.lifecycle_guarded_actions = 0 : i64, pto.insert_sync.lifecycle_retries = 0 : i64, pto.insert_sync.lifecycle_supplied_pairs = 41 : i64, pto.insert_sync.mmad_chain_targets = 0 : i64, pto.insert_sync.mmad_dependency_groups_elided = 0 : i64, pto.insert_sync.status = "lifecycle-plus-residuals", pto.kernel_kind = #pto.kernel_kind<cube>} {
+    pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+    pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+    pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+    %c0_i64 = arith.constant 0 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %c256 = arith.constant 256 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %0 = pto.make_tensor_view %arg0, shape = [%c256, %c256], strides = [%c256, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %1 = pto.make_tensor_view %arg1, shape = [%c256, %c256], strides = [%c256, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %2 = pto.make_tensor_view %arg2, shape = [%c256, %c256], strides = [%c256, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %3 = pto.alloc_tile addr = %c0_i64 valid_row = %c64 valid_col = %c64 : !pto.tile_buf<acc, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>
+    %4 = pto.alloc_tile addr = %c0_i64 valid_row = %c64 valid_col = %c64 : !pto.tile_buf<acc, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>
+    scf.for %arg5 = %c0 to %c4 step %c1 {
+      %8 = arith.muli %arg5, %c64 : index
+      %9 = pto.alloc_tile addr = %c0_i64 valid_row = %c64 valid_col = %c64 : !pto.tile_buf<mat, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major>
+      %10 = arith.maxsi %arg3, %c0 : index
+      %11 = arith.maxsi %8, %c0 : index
+      %12 = pto.partition_view %0, offsets = [%10, %11], sizes = [%c64, %c64] : !pto.tensor_view<?x?xf32>
+      pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+      pto.tload ins(%12 : !pto.partition_tensor_view<64x64xf32>) outs(%9 : !pto.tile_buf<mat, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major>) {layout = #pto.layout<nd>}
+      pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+      %13 = pto.alloc_tile addr = %c16384_i64 valid_row = %c64 valid_col = %c64 : !pto.tile_buf<mat, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major>
+      %14 = arith.maxsi %8, %c0 : index
+      %15 = arith.maxsi %arg4, %c0 : index
+      %16 = pto.partition_view %1, offsets = [%14, %15], sizes = [%c64, %c64] : !pto.tensor_view<?x?xf32>
+      pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+      pto.tload ins(%16 : !pto.partition_tensor_view<64x64xf32>) outs(%13 : !pto.tile_buf<mat, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major>) {layout = #pto.layout<nd>}
+      pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+      %17 = arith.cmpi eq, %arg5, %c0 : index
+      scf.if %17 {
+        %18 = pto.alloc_tile addr = %c0_i64 valid_row = %c64 valid_col = %c64 : !pto.tile_buf<left, 64x64xf32, valid=?x?, slayout=row_major>
+        pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+        pto.tmov ins(%9 : !pto.tile_buf<mat, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major>) outs(%18 : !pto.tile_buf<left, 64x64xf32, valid=?x?, slayout=row_major>)
+        pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+        %19 = pto.alloc_tile addr = %c0_i64 valid_row = %c64 valid_col = %c64 : !pto.tile_buf<right, 64x64xf32, valid=?x?, slayout=col_major>
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+        pto.tmov ins(%13 : !pto.tile_buf<mat, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major>) outs(%19 : !pto.tile_buf<right, 64x64xf32, valid=?x?, slayout=col_major>)
+        pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+        pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+        %20 = pto.alloc_tile addr = %c0_i64 valid_row = %c64 valid_col = %c64 : !pto.tile_buf<acc, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>
+        pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+        pto.tmatmul ins(%18, %19 : !pto.tile_buf<left, 64x64xf32, valid=?x?, slayout=row_major>, !pto.tile_buf<right, 64x64xf32, valid=?x?, slayout=col_major>) outs(%20 : !pto.tile_buf<acc, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>)
+        pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+      } else {
+        %18 = pto.alloc_tile addr = %c0_i64 valid_row = %c64 valid_col = %c64 : !pto.tile_buf<left, 64x64xf32, valid=?x?, slayout=row_major>
+        pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+        pto.tmov ins(%9 : !pto.tile_buf<mat, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major>) outs(%18 : !pto.tile_buf<left, 64x64xf32, valid=?x?, slayout=row_major>)
+        pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+        %19 = pto.alloc_tile addr = %c0_i64 valid_row = %c64 valid_col = %c64 : !pto.tile_buf<right, 64x64xf32, valid=?x?, slayout=col_major>
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID1>]
+        pto.tmov ins(%13 : !pto.tile_buf<mat, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major>) outs(%19 : !pto.tile_buf<right, 64x64xf32, valid=?x?, slayout=col_major>)
+        pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+        pto.set_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+        pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+        pto.tmatmul.acc ins(%4, %18, %19 : !pto.tile_buf<acc, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>, !pto.tile_buf<left, 64x64xf32, valid=?x?, slayout=row_major>, !pto.tile_buf<right, 64x64xf32, valid=?x?, slayout=col_major>) outs(%4 : !pto.tile_buf<acc, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>)
+        pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+      }
+    }
+    pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+    %5 = arith.maxsi %arg3, %c0 : index
+    %6 = arith.maxsi %arg4, %c0 : index
+    %7 = pto.partition_view %2, offsets = [%5, %6], sizes = [%c64, %c64] : !pto.tensor_view<?x?xf32>
+    pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+    pto.tstore ins(%4 : !pto.tile_buf<acc, 64x64xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>) outs(%7 : !pto.partition_tensor_view<64x64xf32>) {layout = #pto.layout<nd>}
+    pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE1>, <PIPE_MTE2>, <EVENT_ID1>]
+    pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+    return
+  }
+}

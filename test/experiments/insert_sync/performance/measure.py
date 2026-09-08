@@ -185,7 +185,8 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observ
                                 "pto.tmatmul", "pto.tmatmul.acc", "pto.tsort32", "pto.tmrgsort",
                                 "pto.tgather", "pto.bitcast", "pto.taxpy", "pto.tsetval", "pto.tgetval",
                                 "pto.texpands", "pto.tcvt", "pto.tcolexpand", "pto.tmul", "pto.texp",
-                                "pto.tfillpad"} | FIXED_PROTOCOL:
+                                "pto.tfillpad", "pto.tadd", "pto.tsub", "pto.tmax",
+                                "pto.trowexpanddiv", "pto.trowexpandmul"} | FIXED_PROTOCOL:
                     raise ValueError(f"unsupported payload: {name}")
                 signature = [name, operands, properties, [str(v.type) for v in op.results]]
                 record(payload, signature)

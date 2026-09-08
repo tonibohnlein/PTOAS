@@ -1,5 +1,11 @@
 # InsertSync native revision campaign
 
+The next local descriptor, graph and command refinements are recorded in
+[LOCAL_REFINEMENTS_RESULTS.md](LOCAL_REFINEMENTS_RESULTS.md): 205 native cases,
+the 11 existing fixtures and eight Qwen additions. The report separates newly
+admitted optimizations, fewer commands, and the remaining online-softmax command
+regression and large-GEMM allocation blocker.
+
 The current shared-generation pass has also been compared with original
 InsertSync on the complete **9,754-row generated collection**. Admission,
 mechanisms, preserved payloads, concrete boundary replays and remaining blockers

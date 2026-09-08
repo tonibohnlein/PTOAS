@@ -133,7 +133,7 @@ std::optional<Channel> makeChannel(
     if (!structure.requirements) return std::nullopt;
     for (unsigned m = 0; m < slices.size(); ++m) {
         const auto* projection = structure.requirements->project(slices[m]);
-        if (!projection || !projection->complete) return std::nullopt;
+        if (!projection || !projection->complete || !projection->wholeProductions) return std::nullopt;
         for (unsigned p = 0; p < spec.phases.size(); ++p) {
             if (projection->readers.test(p)) spec.phases[p].reads |= 1u << m;
             if (projection->writers.test(p)) spec.phases[p].writes |= 1u << m;
@@ -822,11 +822,11 @@ void InsertSyncLifecyclePlan::removeSuppliedDependencies(
 }
 
 namespace {
-// Replace one COMPLETE readiness stream with already-established physical
-// completion. Reclamation remains a separate obligation and keeps its stream.
-// This is a checked alternative realization, not deletion of arbitrary actions
-// inside an opaque protocol or a claim that two streams have equal recurrence.
-void reuseReadinessSupply(func::FuncOp function, const SyncIRs& ir, InsertSyncLifecyclePlan& plan,
+// Replace complete readiness streams with already-established completion, or
+// remove an initial publication/acquisition unit with no remaining obligation.
+// Reclamation and recurring participation remain independently checked. These
+// are alternative complete realizations, not arbitrary protocol-action motion.
+void reuseLifecycleSupply(func::FuncOp function, const SyncIRs& ir, InsertSyncLifecyclePlan& plan,
                          const LifecycleAllocation& allocation, InsertSyncLifecycleResult& result)
 {
     Budget budget;
@@ -849,8 +849,11 @@ void reuseReadinessSupply(func::FuncOp function, const SyncIRs& ir, InsertSyncLi
     auto supply = snapshot.supply;
     SmallVector<Operation*> removed;
     unsigned streams = 0, sets = 0, waits = 0;
+    unsigned initialPairs = 0, initialSets = 0, initialWaits = 0;
     std::set<unsigned> suppliedLanes;
-    SmallVector<unsigned> suppliedChannels;
+    struct Unit { SmallVector<Operation*> actions; unsigned source, channel; bool initial = false; };
+    SmallVector<Unit> units;
+    SmallVector<unsigned> acceptedUnits;
     for (unsigned c = 0; c < plan.channels.size() && budget.left; ++c) {
         const auto& channel = plan.channels[c];
         const auto& spec = channel.logical.spec;
@@ -869,7 +872,41 @@ void reuseReadinessSupply(func::FuncOp function, const SyncIRs& ir, InsertSyncLi
             if (source == physicalLane(spec.producerLane, plan.cube) &&
                 target == physicalLane(spec.consumerLane, plan.cube) && id == allocation.ready[c]) actions.push_back(op);
         });
-        if (actions.empty()) continue;
+        if (!actions.empty()) units.push_back({std::move(actions), spec.producerLane, c});
+    }
+    // Only owned scope-entry priming signals are eligible. A first-use wait
+    // shared with recurring executions is deliberately left alone: deleting
+    // it would require a different guarded construction and scalar commands.
+    Block& scope = plan.lifetimeScope->getRegion(0).front();
+    for (Operation& operation : scope) {
+        if (isa<OpPipeInterface>(operation) || operation.getNumRegions()) break;
+        if (!isa<SetFlagOp>(operation) || !plan.protocolActions.contains(&operation)) continue;
+        SmallVector<unsigned> copies;
+        for (unsigned n = 0; n < snapshot.anchors.size(); ++n)
+            if (snapshot.anchors[n] == &operation) copies.push_back(n);
+        if (copies.size() != 1) continue;
+        unsigned prime = copies.front();
+        auto acquisitions = initialEventAcquisitions(snapshot.program, prime, budget);
+        if (!acquisitions) break;
+        SmallVector<Operation*> actions{&operation};
+        for (unsigned n = 0; n < snapshot.anchors.size(); ++n) {
+            Operation* wait = snapshot.anchors[n];
+            if (!acquisitions->test(n) || !wait || !plan.protocolActions.contains(wait) ||
+                llvm::is_contained(actions, wait)) continue;
+            bool uniform = true;
+            for (unsigned other = 0; other < snapshot.anchors.size(); ++other)
+                if (snapshot.anchors[other] == wait && !acquisitions->test(other)) uniform = false;
+            if (uniform) actions.push_back(wait);
+        }
+        if (actions.size() > 1)
+            units.push_back({std::move(actions), snapshot.program.keys[snapshot.program.nodes[prime].key].source,
+                             kInvalid, true});
+    }
+    for (unsigned unit = 0; unit < units.size() && budget.left; ++unit) {
+        const auto& candidate = units[unit];
+        const auto& actions = candidate.actions;
+        // A preceding accepted whole-stream deletion may already own a site.
+        if (llvm::any_of(actions, [&](Operation* op) { return llvm::is_contained(removed, op); })) continue;
         auto trial = accepted;
         for (unsigned n = 0; n < snapshot.anchors.size(); ++n)
             if (llvm::is_contained(actions, snapshot.anchors[n])) trial.nodes[n].kind = Node::Kind::Pass;
@@ -882,9 +919,9 @@ void reuseReadinessSupply(func::FuncOp function, const SyncIRs& ir, InsertSyncLi
         // generation claim; unknown correspondence refuses this replacement.
         std::vector<Requirement> needs;
         for (const auto& q : snapshot.requirements)
-            if (trial.phaseLane[q.source] == spec.producerLane) needs.push_back(q);
+            if (trial.phaseLane[q.source] == candidate.source) needs.push_back(q);
         for (const auto& q : input.obligations)
-            if (trial.phaseLane[q.source] == spec.producerLane)
+            if (trial.phaseLane[q.source] == candidate.source)
                 needs.push_back({q.source, q.target, Requirement::Kind::Conservative});
         if (!covers(trial, facts, needs).proved) continue;
         bool same = true;
@@ -896,13 +933,14 @@ void reuseReadinessSupply(func::FuncOp function, const SyncIRs& ir, InsertSyncLi
         accepted = std::move(trial);
         supply = std::move(facts);
         for (Operation* op : actions) {
-            sets += isa<SetFlagOp>(op);
-            waits += isa<WaitFlagOp>(op);
+            (candidate.initial ? initialSets : sets) += isa<SetFlagOp>(op);
+            (candidate.initial ? initialWaits : waits) += isa<WaitFlagOp>(op);
             removed.push_back(op);
         }
-        ++streams;
-        suppliedLanes.insert(spec.producerLane);
-        suppliedChannels.push_back(c);
+        if (candidate.initial) ++initialPairs;
+        else ++streams;
+        suppliedLanes.insert(candidate.source);
+        acceptedUnits.push_back(unit);
     }
     if (!removed.empty()) {
         // Detach transactionally, then translate actual emitted effects and
@@ -958,21 +996,27 @@ void reuseReadinessSupply(func::FuncOp function, const SyncIRs& ir, InsertSyncLi
         if (!proved) {
             for (const auto& item : llvm::reverse(detached))
                 item.second->getBlock()->getOperations().insert(Block::iterator(item.second), item.first);
-            streams = sets = waits = 0;
+            streams = sets = waits = initialPairs = initialSets = initialWaits = 0;
             result.diagnostics.push_back({"mixed-plan", "shared-readiness",
                 "actual emitted reconstruction unproved; complete original streams retained", false});
         } else {
             for (Operation* op : removed) { plan.protocolActions.erase(op); op->destroy(); }
-            for (unsigned c : suppliedChannels)
-                result.diagnostics.push_back({plan.channels[c].identity, "shared-readiness",
-                    "complete readiness supplied by remaining handoffs; fresh effects, guarded payload prefixes, "
-                    "source-lane requirements, exit completion and actual event participation rechecked", true});
+            for (unsigned unit : acceptedUnits) {
+                const auto& candidate = units[unit];
+                result.diagnostics.push_back({candidate.initial ? "scope-entry" : plan.channels[candidate.channel].identity,
+                    candidate.initial ? "initial-pair" : "shared-readiness",
+                    "remaining plan preserves fresh source-lane requirements, guarded payload prefixes, "
+                    "exit completion and actual event participation; no new guard or moved endpoint", true});
+            }
         }
     }
     auto i64 = IntegerType::get(function.getContext(), 64);
     function->setAttr("pto.insert_sync.generation_ready_streams_supplied", IntegerAttr::get(i64, streams));
     function->setAttr("pto.insert_sync.generation_ready_sets_removed", IntegerAttr::get(i64, sets));
     function->setAttr("pto.insert_sync.generation_ready_waits_removed", IntegerAttr::get(i64, waits));
+    function->setAttr("pto.insert_sync.generation_initial_pairs_removed", IntegerAttr::get(i64, initialPairs));
+    function->setAttr("pto.insert_sync.generation_initial_sets_removed", IntegerAttr::get(i64, initialSets));
+    function->setAttr("pto.insert_sync.generation_initial_waits_removed", IntegerAttr::get(i64, initialWaits));
 }
 
 // Recolor residual keys using the COMPLETE logical plan before reserving
@@ -1526,7 +1570,7 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
         cloned->setAttr("pto.insert_sync.generation_publication_edges_removed", IntegerAttr::get(i64, placement.occurrenceProofs));
         cloned->setAttr("pto.insert_sync.generation_publication_work", IntegerAttr::get(i64, placement.work));
         result.diagnostics.push_back({"mixed-plan", "shared-publication", placement.reason, true});
-        reuseReadinessSupply(cloned, checkedIR, plan, allocation, result);
+        reuseLifecycleSupply(cloned, checkedIR, plan, allocation, result);
         if (!preserved(cloned, original) || failed(verify(cloned))) {
             result.status = InsertSyncLifecycleResult::Status::InternalError;
             result.reason = "publication refinement changed original payload or produced invalid IR";

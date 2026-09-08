@@ -217,7 +217,7 @@ bool mlir::pto::qualifyInsertSyncLifecycleBoundaries(
         for (unsigned n = 0; n < size; ++n)
             if (s.blockExits[n] || s.program.nodes[n].kind == Node::Kind::Exit)
                 boundaries.set(n);
-        channel.generations = analyzeBufferGenerations(s.program, spec, boundaries, budget);
+        channel.generations = analyzeBufferGenerations(s.program, spec, boundaries, budget, s.storageFlow.facts.control);
         cert = channel.generations.certificate;
     } else {
         cert = recognizeBoundaryLifecycle(s.program, spec, facts, budget);

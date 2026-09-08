@@ -299,14 +299,17 @@ struct IterationClass {
     bool first = false, last = false;
 };
 template <class Tails, class Gate, class Body, class Merge, class Backedge>
-Tails structuredLoopTransfer(Tails incoming, Gate gate, Body body, Merge merge, Backedge backedge)
+Tails structuredLoopTransfer(Tails incoming, Gate gate, Body body, Merge merge, Backedge backedge,
+                             bool mayHaveMiddle = true)
 {
     Tails empty = gate(incoming, 0);
     Tails one = body(gate(incoming, 1), IterationClass{true, true});
     Tails first = body(gate(incoming, 2), IterationClass{true, false});
     Tails hub = merge(first);
-    Tails middle = body(hub, IterationClass{false, false});
-    backedge(middle, hub);
+    if (mayHaveMiddle) {
+        Tails middle = body(hub, IterationClass{false, false});
+        backedge(middle, hub);
+    }
     Tails last = body(hub, IterationClass{false, true});
     empty.insert(empty.end(), one.begin(), one.end());
     empty.insert(empty.end(), last.begin(), last.end());

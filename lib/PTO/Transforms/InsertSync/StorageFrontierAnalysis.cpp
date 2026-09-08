@@ -19,6 +19,7 @@
 #include "PTO/Transforms/InsertSync/SyncGMAlias.h"
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
+#include "PTO/Transforms/InsertSync/SyncEffectCoverage.h"
 #include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
 #include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -85,6 +86,11 @@ std::optional<unsigned> laneFor(PIPE pipe, bool cube)
 // without sending flag-resource effects through the payload-only coverage gate.
 bool mappedPayloadEffects(Operation* op, const CompoundInstanceElement* compound)
 {
+    // Some op interfaces omit by-value scalar operands from memory effects.
+    // Their prerequisites still have to be synchronous scalar computations.
+    for (Value value : op->getOperands())
+        if (isa<IntegerType, IndexType, FloatType>(value.getType()) &&
+            !isInsertSyncScalarPrerequisite(value)) return false;
     auto interface = dyn_cast<MemoryEffectOpInterface>(op);
     if (
         !interface) {
@@ -169,6 +175,78 @@ public:
             result[id].tripShapeOf = loop;
         }
         return result;
+    }
+
+    // Scalar descriptors are mutable control state, not payload production or
+    // lane completion. Interpret their assignments on the SAME guarded graph.
+    // The meet retains a full extent only when every reaching descriptor
+    // version has it. Allocation reexecution resets the descriptor, branches
+    // intersect, and backedges converge; an empty path preserves its incoming
+    // state. Unknown/partial valid extents never become whole-slot definitions.
+    bool descriptorWrites(llvm::DenseMap<Operation*, SmallVector<Value>>& partial, Budget& budget)
+    {
+        auto full = [&](Value handle, Value rows, Value cols) {
+            auto type = cast<TileBufType>(handle.getType());
+            auto r = constant(rows), c = constant(cols);
+            return type.getShape().size() == 2 && r && c && *r == type.getShape()[0] &&
+                   *c == type.getShape()[1] && *r > 0 && *c > 0;
+        };
+        llvm::DenseMap<Value, unsigned> handles;
+        for (const auto& phase : phases)
+            for (const auto& access : phase.accesses)
+                if (auto type = dyn_cast<TileBufType>(access.legacy->baseBuffer.getType());
+                    type && type.hasDynamicValid()) {
+                    Value handle = access.legacy->baseBuffer;
+                    if (llvm::any_of(handle.getUsers(), [](Operation* op) { return isa<SetValidShapeOp>(op); })) {
+                        handles.try_emplace(handle, handles.size());
+                    } else if (access.write) {
+                        auto alloc = handle.getDefiningOp<AllocTileOp>();
+                        if (!alloc || !full(handle, alloc.getValidRow(), alloc.getValidCol()))
+                            partial[phase.legacy->elementOp].push_back(handle);
+                    }
+                }
+        if (handles.empty()) return true;
+        if (handles.size() > 256) return false;
+        const unsigned count = program.nodes.size();
+        std::vector<std::optional<Bits>> before(count);
+        before[0] = Bits(handles.size());
+        std::deque<unsigned> pending{0};
+        Bits queued(count); queued.set(0);
+        while (!pending.empty()) {
+            unsigned n = pending.front(); pending.pop_front(); queued.reset(n);
+            if (!budget.spend(1 + handles.size() + program.nodes[n].next.size())) return false;
+            Bits state = *before[n];
+            Value handle, rows, cols;
+            if (auto alloc = dyn_cast_or_null<AllocTileOp>(anchors[n])) {
+                handle = alloc.getResult(); rows = alloc.getValidRow(); cols = alloc.getValidCol();
+            } else if (auto update = dyn_cast_or_null<SetValidShapeOp>(anchors[n])) {
+                handle = update.getSource(); rows = update.getValidRow(); cols = update.getValidCol();
+            }
+            if (auto it = handles.find(handle); handle && it != handles.end()) {
+                if (full(handle, rows, cols)) state.set(it->second);
+                else state.reset(it->second);
+            }
+            for (unsigned next : program.nodes[n].next) {
+                Bits merged = state;
+                if (before[next]) merged.intersect(*before[next]);
+                if (!before[next] || merged != *before[next]) {
+                    before[next] = std::move(merged);
+                    if (!queued.test(next)) { queued.set(next); pending.push_back(next); }
+                }
+            }
+        }
+        for (unsigned n = 0; n < count; ++n) {
+            const auto& node = program.nodes[n];
+            if (node.kind != Node::Kind::Issue || !before[n]) continue;
+            for (const auto& access : phases[node.phase].accesses) {
+                auto it = handles.find(access.legacy->baseBuffer);
+                if (access.write && it != handles.end() && !before[n]->test(it->second)) {
+                    auto& values = partial[anchors[n]];
+                    if (!llvm::is_contained(values, it->first)) values.push_back(it->first);
+                }
+            }
+        }
+        return true;
     }
 
     bool partition(Budget& budget)
@@ -717,6 +795,13 @@ private:
     }
     Tails constrained(Tails tails, GuardFact fact)
     {
+        // Reject impossible finite-domain alternatives before importing their
+        // bodies. In particular a constant-trip loop must not spend the node
+        // budget on its impossible empty/one-trip copies.
+        const auto& domain = control.variables[fact.expression].finiteValues;
+        if (tails.empty() || (!domain.empty() && !llvm::any_of(domain, [&](int64_t value) {
+                return (value == fact.value) == fact.equal;
+            }))) return {};
         Tails from = tails;
         Tails head = add(std::move(tails), {}, nullptr);
         if (
@@ -795,17 +880,27 @@ private:
     Tails classifiedLoop(scf::ForOp loop, Tails tails, unsigned depth)
     {
         unsigned shape = loopShapes.lookup(loop.getOperation());
+        auto lo = constant(loop.getLowerBound()), hi = constant(loop.getUpperBound()),
+             step = constant(loop.getStep());
+        // Keep the recurrence for arbitrary trip counts. Exactly two trips
+        // have first+last and no middle occurrence; constructing its backedge
+        // would introduce impossible executions and duplicate nested bodies.
+        bool middle = !(lo && hi && step && *step > 0 &&
+                        __int128(*hi) - *lo > *step && __int128(*hi) - *lo <= 2 * __int128(*step));
         auto result = structuredLoopTransfer(
             std::move(tails),
             [&](Tails entry, unsigned which) {
                 return constrained(std::move(entry), {shape, kInvalid, int64_t(which), true});
             },
             [&](Tails entry, IterationClass which) {
+                if (entry.empty()) return Tails{};
                 iterationClass[loop.getOperation()] = {which.first, which.last};
                 return region(
                     loop.getRegion(), refresh(std::move(entry), loop.getOperation(), which.first ? 1 : 2), depth + 1);
             },
-            [&](Tails entry) { return add(std::move(entry), {}, loop.getOperation()); },
+            [&](Tails entry) {
+                return entry.empty() ? Tails{} : add(std::move(entry), {}, loop.getOperation());
+            },
             [&](const Tails& ends, const Tails& header) {
                 if (
                     !failure.empty() || header.empty()) {
@@ -815,7 +910,7 @@ private:
                     unsigned end : ends) {
                     program.nodes[end].next.push_back(header.front());
                 }
-            });
+            }, middle);
         iterationClass.erase(loop.getOperation());
         if (
             collectLifecycleMetadata && !result.empty()) {
@@ -905,7 +1000,7 @@ private:
     Tails region(Region& r, Tails tails, unsigned depth)
     {
         if (
-            !failure.empty()) {
+            !failure.empty() || tails.empty()) {
             return {};
         }
         if (
@@ -1013,6 +1108,37 @@ private:
                 failure = "unmodeled physical region or macro; no partial optimization";
                 return {};
             }
+            if (auto alloc = dyn_cast<AllocTileOp>(op)) {
+                if (cast<TileBufType>(alloc.getResult().getType()).hasDynamicValid()) {
+                    if (!isInsertSyncScalarPrerequisite(alloc.getValidRow()) ||
+                        !isInsertSyncScalarPrerequisite(alloc.getValidCol())) {
+                        failure = "unqualified descriptor allocation prerequisite";
+                        return {};
+                    }
+                    if (llvm::any_of(alloc.getResult().getUsers(), [](Operation* user) {
+                            return isa<SetValidShapeOp>(user);
+                        })) tails = add(std::move(tails), {}, &op);
+                }
+                continue;
+            }
+            if (auto update = dyn_cast<SetValidShapeOp>(op)) {
+                if (!update.getSource().getDefiningOp<AllocTileOp>() ||
+                    !isInsertSyncScalarPrerequisite(update.getValidRow()) ||
+                    !isInsertSyncScalarPrerequisite(update.getValidCol())) {
+                    failure = "unqualified descriptor handle or scalar prerequisite";
+                    return {};
+                }
+                tails = add(std::move(tails), {}, &op);
+                continue;
+            }
+            if (auto read = dyn_cast<GetValidShapeOp>(op)) {
+                if (!read.getSource().getDefiningOp<AllocTileOp>()) {
+                    failure = "unqualified descriptor read handle";
+                    return {};
+                }
+                tails = add(std::move(tails), {}, &op);
+                continue;
+            }
             auto flag = [&](PIPE sp, PIPE tp, unsigned id, Node::Kind kind) {
                 auto source = laneFor(sp, cube), target = laneFor(tp, cube);
                 if (
@@ -1065,10 +1191,18 @@ private:
                 auto physical = dyn_cast<OpPipeInterface>(op)) {
                 auto lane = laneFor(physical.getPipe(), cube);
                 auto found = compounds.find(&op);
+                // Single physical phases. The V arithmetic/conversion/
+                // reduction family uses its existing target-specific effects,
+                // including read/write scratch operands. MAT padding and
+                // helper/hidden-resource phases still require separate models.
+                bool qualified = isa<TLoadOp, TStoreOp, TAbsOp, TAddOp, TExtractOp, TMovOp,
+                    TMatmulOp, TMatmulAccOp, TSort32Op, TMrgSortOp, TGatherOp,
+                    TAddSOp, TMulSOp, TMulOp, TSubOp, TExpOp, TExpandsOp, TCvtOp, TRowSumOp,
+                    TSqrtOp, TRecipOp, TNegOp, TMaxOp, TRowMaxOp, TRowExpandDivOp,
+                    TRowExpandMulOp, TRowExpandSubOp, TColExpandMulOp>(op) ||
+                    (isa<TFillPadOp>(op) && physical.getPipe() == PIPE::PIPE_V);
                 if (
-                    !lane || found == compounds.end() || getSyncMacroModel(&op) ||
-                    !isa<TLoadOp, TStoreOp, TAbsOp, TAddOp, TExtractOp, TMovOp, TMatmulOp, TMatmulAccOp,
-                         TSort32Op, TMrgSortOp, TGatherOp>(op)) {
+                    !lane || found == compounds.end() || getSyncMacroModel(&op) || !qualified) {
                     failure = "physical phase has no qualified frontier adapter";
                     return {};
                 }
@@ -1223,6 +1357,9 @@ static std::shared_ptr<const LocalStorageRequirements> discoverLocalRequirements
             if (!exact || !(*exact == slice.slice)) { slice.complete = false; continue; }
             if (a.read) slice.readers.set(a.phase);
             if (a.write) slice.writers.set(a.phase);
+            auto partial = structure.partialDescriptorWrites.find(facts->phases[a.phase]);
+            if (a.write && partial != structure.partialDescriptorWrites.end() &&
+                llvm::is_contained(partial->second, a.memory.baseBuffer)) slice.wholeProductions = false;
         }
     }
     for (unsigned i = 0; i < facts->accesses.size(); ++i) {
@@ -1496,6 +1633,11 @@ InsertSyncLifecycleStructure mlir::pto::buildInsertSyncLifecycleStructure(
     // Export existing physical/control facts before synchronization selection.
     // An unsynchronized input is not required to have completion supply. Selected
     // slot protocols establish it; ordinary insertion handles every residual.
+    if (!graph.descriptorWrites(result.partialDescriptorWrites, budget)) {
+        result.status = StorageFrontierSnapshot::Status::AnalysisLimit;
+        result.reason = "descriptor transfer budget";
+        return result;
+    }
     for (
         const auto& phase : graph.phases) {
         result.phases.push_back(phase.legacy);

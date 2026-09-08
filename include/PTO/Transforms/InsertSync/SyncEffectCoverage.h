@@ -12,6 +12,9 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
 namespace mlir::pto {
+// Scalar SSA prerequisites, excluding asynchronous scalar production. Shared
+// by effect coverage and the structural descriptor/physical-phase adapter.
+bool isInsertSyncScalarPrerequisite(Value value);
 // Verify translator completeness, not scheduling correctness. A missing
 // summary or discarded memory operand is an explicit unsupported diagnostic.
 LogicalResult checkInsertSyncEffectCoverage(func::FuncOp function, const SyncIRs& syncIR);
