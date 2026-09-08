@@ -145,6 +145,12 @@ private:
                   CompoundInstanceElement *frontCompound,
                   SyncRecordList &syncRecordList,
                   const std::optional<unsigned> &forEndIndex);
+
+  // True means the exact local family was resolved completely: remaining pairs
+  // need direct repair. False retains the conservative legacy decision path.
+  bool ResolveLocalRequirements(CompoundInstanceElement *source, CompoundInstanceElement *target,
+                                SyncRecordList &records, const std::optional<unsigned> &forEndIndex,
+                                DepBaseMemInfoPairVec &pairs);
  
   /// 判断两个节点是否存在 RAW/WAR/WAW 依赖
   bool IsMemInfoHasDependency(CompoundInstanceElement *nowCompound,

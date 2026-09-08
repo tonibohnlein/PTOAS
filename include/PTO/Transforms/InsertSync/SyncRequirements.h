@@ -16,8 +16,10 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
+#include <memory>
 
 namespace mlir::pto {
+struct LocalStorageRequirements;
 // Requirements retain payload/SSA identities across construction, placement and
 // allocation. The justification is deliberately typed: access disjointness,
 // intrinsic ordering, member ownership and full completion are different facts.
@@ -36,6 +38,9 @@ class SyncRequirements {
     SmallVector<SyncRequirement> entries;
     llvm::DenseMap<Operation*, SmallVector<unsigned, 2>> actions;
 public:
+    // Immutable input requirements. Unlike entries (resolution witnesses), this
+    // survives alreadySync, failed recipe selection, and changes of event IDs.
+    std::shared_ptr<const LocalStorageRequirements> local;
     void retain(SyncRequirement requirement) {
         bool phaseWide = requirement.kind == SyncRequirement::Kind::FullCompletion ||
                          requirement.kind == SyncRequirement::Kind::MmadOrder;

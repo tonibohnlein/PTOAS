@@ -112,3 +112,23 @@ The [annotated coherent-planning proposal](ptoas-insertsync-coherent-planning.md
 adds a native experiment over emitted one-shot handoffs. Its backward needs and
 checked cut rewrites are separate from the production pipeline; they do not yet
 enable general movement of recurring protocol actions or joint allocation.
+
+## Immutable exact-local requirements
+
+`LocalStorageRequirements` now snapshots physical accesses before plan selection,
+including guarded occurrence identities and the shared generation-flow facts.
+Exact slice projections qualify all overlapping readers and writers together;
+unknown, partial or unrepresented accesses retain conservative legacy repair.
+
+Ordinary repair resolves these retained obligations through
+`ResolveLocalRequirements()`. Already-established completion, selected lifecycle
+supply and qualified intrinsic ordering describe implementations of an
+obligation, rather than erasing its input-side meaning. Admitted groups bypass
+the superseded legacy decision sequence. Lifecycle construction consumes the
+same slice projections instead of rescanning each candidate's effects.
+
+The migrated relation means all feasible ordered occurrences, with their original
+guarded program and enclosing invocation retained. It does not guess an iteration
+distance or claim universal exact generation correspondence. Dynamic slots and
+GM accesses retain their established occurrence queries. This migration is
+separate from publication movement and command-sharing behavior.

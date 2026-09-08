@@ -1131,6 +1131,123 @@ private:
 
 } // namespace
 
+std::optional<LocalStorageSlice> LocalStorageRequirements::exact(const BaseMemInfo* m)
+{
+    if (!m || m->scope == AddressSpace::GM || m->aliasesUnknownRange || !m->hasKnownPhysicalAddresses ||
+        m->baseAddresses.size() != 1 || !m->allocateSize ||
+        m->baseAddresses[0] > std::numeric_limits<uint64_t>::max() - m->allocateSize) return std::nullopt;
+    return LocalStorageSlice{m->scope, m->baseAddresses[0], m->allocateSize};
+}
+
+const LocalStorageRequirements::Projection* LocalStorageRequirements::project(const LocalStorageSlice& slice) const
+{
+    auto it = llvm::find_if(slices, [&](const auto& p) { return p.slice == slice; });
+    return it == slices.end() ? nullptr : &*it;
+}
+
+bool LocalStorageRequirements::mayOverlap(const BaseMemInfo* m, const LocalStorageSlice& slice)
+{
+    if (!m || m->scope != slice.space) return false;
+    if (m->aliasesUnknownRange || !m->hasKnownPhysicalAddresses || m->baseAddresses.empty() || !m->allocateSize)
+        return true;
+    return llvm::any_of(m->baseAddresses, [&](uint64_t address) {
+        return !disjointBytes(address, m->allocateSize, slice.begin, slice.bytes);
+    });
+}
+
+std::optional<unsigned> LocalStorageRequirements::required(
+    Operation* source, const BaseMemInfo* a, Operation* target, const BaseMemInfo* b) const
+{
+    auto s = phaseIds.find(source), t = phaseIds.find(target);
+    auto x = exact(a), y = exact(b);
+    if (!complete || !x || !y || s == phaseIds.end() || t == phaseIds.end()) return std::nullopt;
+    auto represented = [&](unsigned phase, const BaseMemInfo* memory, const LocalStorageSlice& slice) {
+        return llvm::any_of(accesses, [&](const auto& access) {
+            auto region = exact(&access.memory);
+            return access.phase == phase && access.memory.baseBuffer == memory->baseBuffer && region && *region == slice;
+        });
+    };
+    if (!represented(s->second, a, *x) || !represented(t->second, b, *y)) return std::nullopt;
+    if (occurrences[s->second].empty() || occurrences[t->second].empty()) return 0;
+    auto px = project(*x), py = project(*y);
+    if (!px || !py || !px->complete || !py->complete) return std::nullopt;
+    if (x->space != y->space || disjointBytes(x->begin, x->bytes, y->begin, y->bytes)) return 0;
+    if (flow.status == BufferGenerationFlow::Status::Complete && !flow.orderedPhases[s->second].test(t->second))
+        return 0;
+    unsigned hazards = 0;
+    for (const auto& q : obligations)
+        if (q.source == s->second && q.target == t->second &&
+            accesses[q.sourceAccess].memory.baseBuffer == a->baseBuffer &&
+            accesses[q.targetAccess].memory.baseBuffer == b->baseBuffer) hazards |= q.hazards;
+    return hazards;
+}
+
+// Discovery runs before plan selection and retains both reader and readerless
+// paths. Projection rejects *any* partial/unknown participant in the same slice;
+// absence from this optional model never exempts legacy repair.
+static std::shared_ptr<const LocalStorageRequirements> discoverLocalRequirements(
+    const InsertSyncLifecycleStructure& structure, Budget& budget)
+{
+    auto facts = std::make_shared<LocalStorageRequirements>();
+    facts->control = structure.program;
+    facts->flow = structure.storageFlow.facts;
+    facts->occurrences.resize(structure.phases.size());
+    for (unsigned n = 0; n < structure.program.nodes.size(); ++n) {
+        const auto& node = structure.program.nodes[n];
+        if (node.kind == Node::Kind::Issue) facts->occurrences[node.phase].push_back(n);
+    }
+    for (unsigned p = 0; p < structure.phases.size(); ++p) {
+        auto phase = structure.phases[p];
+        facts->phases.push_back(phase->elementOp);
+        facts->phaseIds[phase->elementOp] = p;
+        auto add = [&](const BaseMemInfo* m, bool write) {
+            if (!m || m->scope == AddressSpace::GM) return;
+            auto it = llvm::find_if(facts->accesses, [&](const auto& a) { return a.phase == p && a.memory == *m; });
+            if (it == facts->accesses.end()) facts->accesses.push_back({p, *m, !write, write});
+            else { it->read |= !write; it->write |= write; }
+            if (auto slice = LocalStorageRequirements::exact(m))
+                if (!facts->project(*slice)) facts->slices.push_back(
+                    {*slice, true, Bits(structure.phases.size()), Bits(structure.phases.size())});
+        };
+        for (auto m : phase->useVec) add(m, false);
+        for (auto m : phase->defVec) add(m, true);
+    }
+    for (auto& slice : facts->slices) {
+        for (const auto& a : facts->accesses) {
+            if (!budget.spend()) return {};
+            const auto* m = &a.memory;
+            if (m->scope != slice.slice.space) continue;
+            if (!LocalStorageRequirements::mayOverlap(m, slice.slice)) continue;
+            auto exact = LocalStorageRequirements::exact(m);
+            if (!exact || !(*exact == slice.slice)) { slice.complete = false; continue; }
+            if (a.read) slice.readers.set(a.phase);
+            if (a.write) slice.writers.set(a.phase);
+        }
+    }
+    for (unsigned i = 0; i < facts->accesses.size(); ++i) {
+        const auto& a = facts->accesses[i];
+        auto x = LocalStorageRequirements::exact(&a.memory);
+        if (!x || !facts->project(*x)->complete) continue;
+        for (unsigned j = 0; j < facts->accesses.size(); ++j) {
+            if (!budget.spend()) return {};
+            const auto& b = facts->accesses[j];
+            auto y = LocalStorageRequirements::exact(&b.memory);
+            if (!y || !(*x == *y)) continue;
+            if (facts->flow.status == BufferGenerationFlow::Status::Complete &&
+                !facts->flow.orderedPhases[a.phase].test(b.phase)) continue;
+            unsigned hazards = (a.write && b.read ? LocalStorageRequirements::RAW : LocalStorageRequirements::None) |
+                               (a.read && b.write ? LocalStorageRequirements::WAR : LocalStorageRequirements::None) |
+                               (a.write && b.write ? LocalStorageRequirements::WAW : LocalStorageRequirements::None) |
+                               (a.read && b.read && x->space == AddressSpace::ACC &&
+                                structure.program.phaseLane[a.phase] != structure.program.phaseLane[b.phase] ?
+                                    LocalStorageRequirements::AccReadOrder : LocalStorageRequirements::None);
+            if (hazards) facts->obligations.push_back({a.phase, b.phase, i, j, hazards});
+        }
+    }
+    facts->complete = true;
+    return facts;
+}
+
 StorageFrontierRefinementResult mlir::pto::refineInsertSyncCompletion(
     func::FuncOp function, const SyncIRs& syncIR, ArrayRef<Operation*> ownedBarriers, Budget& budget)
 {
@@ -1230,6 +1347,7 @@ InsertSyncLifecycleStructure mlir::pto::buildInsertSyncLifecycleStructure(
     }
     result.program = std::move(graph.program);
     result.anchors = std::move(graph.anchors);
+    result.requirements = discoverLocalRequirements(result, budget);
     result.status = StorageFrontierSnapshot::Status::Complete;
     result.reason = "R5 physical phases and guarded occurrences, before completion selection";
     return result;

@@ -42,6 +42,52 @@ struct InsertSyncStorageFlow {
                s != phases.end() && t != phases.end() && !facts.orderedPhases[s->second].test(t->second);
     }
 };
+struct LocalStorageSlice {
+    AddressSpace space = AddressSpace::Zero;
+    uint64_t begin = 0, bytes = 0;
+    bool operator==(const LocalStorageSlice& b) const {
+        return space == b.space && begin == b.begin && bytes == b.bytes;
+    }
+};
+
+// One input-side account of the migrated exact local-storage family. Nodes refer
+// to the immutable guarded Program, including enclosing invocations/backedges;
+// a phase pair is an ALL-ordered-occurrences obligation, never a guessed i+1.
+// Unknown/partial footprints stay in the existing conservative repair path.
+struct LocalStorageRequirements {
+    enum Hazard : unsigned { None = 0, RAW = 1, WAR = 2, WAW = 4, AccReadOrder = 8 };
+    struct Access {
+        unsigned phase;
+        BaseMemInfo memory; // snapshot; mutable legacy records cannot redefine a requirement
+        bool read, write;
+    };
+    struct Projection {
+        LocalStorageSlice slice;
+        bool complete = true;
+        insert_sync_frontier::Bits readers, writers;
+    };
+    struct Obligation {
+        unsigned source, target, sourceAccess, targetAccess, hazards;
+    };
+    std::vector<Operation*> phases;
+    llvm::DenseMap<Operation*, unsigned> phaseIds;
+    std::vector<Access> accesses;
+    std::vector<Projection> slices;
+    std::vector<Obligation> obligations;
+    // Original guarded node identities and incoming-generation relationships.
+    // They are deliberately independent of any selected protocol certificate.
+    std::vector<std::vector<unsigned>> occurrences;
+    insert_sync_frontier::Program control;
+    insert_sync_frontier::BufferGenerationFlow flow;
+    bool complete = false;
+
+    static std::optional<LocalStorageSlice> exact(const BaseMemInfo* memory);
+    static bool mayOverlap(const BaseMemInfo* memory, const LocalStorageSlice& slice);
+    const Projection* project(const LocalStorageSlice& slice) const;
+    // nullopt means not migrated. Zero means a proved absent requirement.
+    std::optional<unsigned> required(Operation* source, const BaseMemInfo* sourceAccess,
+                                    Operation* target, const BaseMemInfo* targetAccess) const;
+};
 // Snapshot users must invalidate it after any physical/synchronization/control
 // mutation. References point into the supplied function; no concrete IDs are
 // inferred from metadata. Unsupported is a query result, never admission policy.

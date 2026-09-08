@@ -32,6 +32,7 @@ struct InsertSyncLifecycleStructure {
     Operation *lifetimeScope = nullptr;
     insert_sync_frontier::Program program;
     InsertSyncStorageFlow storageFlow;
+    std::shared_ptr<const LocalStorageRequirements> requirements;
     std::vector<Operation *> anchors;
     std::vector<const CompoundInstanceElement *> phases;
     // Actual R5 guard-product bindings. No generated/input attribute is trusted
@@ -71,13 +72,7 @@ struct LifecycleDiagnostic {
 };
 class InsertSyncLifecyclePlan {
 public:
-    struct Slice {
-        AddressSpace space = AddressSpace::Zero;
-        uint64_t begin = 0, bytes = 0;
-        bool operator==(const Slice &other) const {
-            return space == other.space && begin == other.begin && bytes == other.bytes;
-        }
-    };
+    using Slice = LocalStorageSlice;
     struct Channel {
         insert_sync_frontier::LogicalLifecycle logical;
         SmallVector<Slice, 2> members;

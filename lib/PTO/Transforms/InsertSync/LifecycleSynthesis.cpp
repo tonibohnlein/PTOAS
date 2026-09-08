@@ -43,33 +43,7 @@ using Channel = InsertSyncLifecyclePlan::Channel;
 
 std::optional<Slice> exactSlice(const BaseMemInfo* info)
 {
-    if (
-        !info || info->scope == AddressSpace::GM || info->aliasesUnknownRange || !info->hasKnownPhysicalAddresses ||
-        info->baseAddresses.size() != 1 || !info->allocateSize ||
-        info->baseAddresses[0] > std::numeric_limits<uint64_t>::max() - info->allocateSize) {
-        return std::nullopt;
-    }
-    return Slice{info->scope, info->baseAddresses[0], info->allocateSize};
-}
-
-bool mayOverlap(const BaseMemInfo* info, const Slice& slice)
-{
-    if (
-        !info || info->scope != slice.space) {
-        return false;
-    }
-    if (
-        info->aliasesUnknownRange || !info->hasKnownPhysicalAddresses || info->baseAddresses.empty() ||
-        !info->allocateSize) {
-        return true;
-    }
-    for (uint64_t address : info->baseAddresses) {
-        if (
-            !disjointBytes(address, info->allocateSize, slice.begin, slice.bytes)) {
-            return true;
-        }
-    }
-    return false;
+    return LocalStorageRequirements::exact(info);
 }
 
 std::optional<unsigned> localLane(PIPE pipe, bool cube)
@@ -156,22 +130,17 @@ std::optional<Channel> makeChannel(
     auto& spec = channel.logical.spec;
     spec.members = slices.size();
     spec.phases.resize(structure.phases.size());
+    if (!structure.requirements) return std::nullopt;
+    for (unsigned m = 0; m < slices.size(); ++m) {
+        const auto* projection = structure.requirements->project(slices[m]);
+        if (!projection || !projection->complete) return std::nullopt;
+        for (unsigned p = 0; p < spec.phases.size(); ++p) {
+            if (projection->readers.test(p)) spec.phases[p].reads |= 1u << m;
+            if (projection->writers.test(p)) spec.phases[p].writes |= 1u << m;
+        }
+    }
     std::optional<unsigned> producer, consumer;
     for (unsigned p = 0; p < structure.phases.size(); ++p) {
-        const auto* phase = structure.phases[p];
-        auto add = [&](const BaseMemInfo* info, bool write) {
-            for (unsigned m = 0; m < slices.size(); ++m) {
-                if (!mayOverlap(info, slices[m])) continue;
-                auto exact = exactSlice(info);
-                if (!exact || !(*exact == slices[m])) return false;
-                (write ? spec.phases[p].writes : spec.phases[p].reads) |= 1u << m;
-            }
-            return true;
-        };
-        for (const auto* read : phase->useVec)
-            if (!add(read, false)) return std::nullopt;
-        for (const auto* write : phase->defVec)
-            if (!add(write, true)) return std::nullopt;
         if (spec.phases[p].writes) {
             unsigned lane = structure.program.phaseLane[p];
             if (producer && *producer != lane) return std::nullopt;
@@ -207,6 +176,7 @@ InsertSyncLifecyclePlan discover(
     InsertSyncLifecyclePlan plan;
     plan.cube = structure.cube;
     plan.lifetimeScope = structure.lifetimeScope;
+    plan.requirements.local = structure.requirements;
     std::vector<Slice> slices;
     for (unsigned p = 0; p < structure.phases.size(); ++p) {
         const auto* phase = structure.phases[p];
@@ -608,7 +578,7 @@ bool reconstruct(
                 auto recover = [&](const BaseMemInfo* access, bool write) {
                     for (unsigned member = 0; member < channel.members.size(); ++member) {
                         if (
-                            !mayOverlap(access, channel.members[member])) {
+                            !LocalStorageRequirements::mayOverlap(access, channel.members[member])) {
                             continue;
                         }
                         auto slice = exactSlice(access);
@@ -806,6 +776,11 @@ void InsertSyncLifecyclePlan::removeSuppliedDependencies(
         std::remove_if(
             pairs.begin(), pairs.end(),
             [&](const auto& pair) {
+                if (requirements.local) {
+                    auto required = requirements.local->required(source->elementOp, pair.second,
+                                                                  target->elementOp, pair.first);
+                    if (required && !*required) return true;
+                }
                 auto a = exactSlice(pair.first), b = exactSlice(pair.second);
                 if (a && b && *a == *b) {
                     for (const auto& channel : channels) {

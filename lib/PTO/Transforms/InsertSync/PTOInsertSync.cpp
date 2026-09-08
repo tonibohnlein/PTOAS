@@ -328,8 +328,10 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     if (bufferGenerations) {
         insert_sync_frontier::Budget budget;
         generationStructure = buildInsertSyncLifecycleStructure(func, syncIR, budget, true);
-        if (generationStructure->status == StorageFrontierSnapshot::Status::Complete)
+        if (generationStructure->status == StorageFrontierSnapshot::Status::Complete) {
             analyzer.setStorageFlow(&generationStructure->storageFlow);
+            analyzer.getRequirements().local = generationStructure->requirements;
+        }
     }
     analyzer.Run(/*insertBarAllAtLast=*/true,
                  /*deferSamePipeRepair=*/deferSamePipe,

@@ -528,11 +528,55 @@ static bool isForwardDepDroppableBySlotAffine(const BaseMemInfo *a,
          SlotRelation::kDisjoint;
 }
 
+bool InsertSyncAnalysis::ResolveLocalRequirements(
+    CompoundInstanceElement* source, CompoundInstanceElement* target, SyncRecordList& records,
+    const std::optional<unsigned>& forEndIndex, DepBaseMemInfoPairVec& pairs)
+{
+  if (!requirements_->local) return false;
+  SmallVector<unsigned> needs;
+  for (const auto& pair : pairs) {
+    auto requirement = requirements_->local->required(source->elementOp, pair.second,
+                                                       target->elementOp, pair.first);
+    // Partial/unknown members or mixed local/GM groups retain legacy handling.
+    // An absent record never says that these accesses cannot conflict.
+    if (!requirement) return false;
+    needs.push_back(*requirement);
+  }
+  unsigned i = 0;
+  llvm::erase_if(pairs, [&](const auto&) { return !needs[i++]; });
+  if (pairs.empty()) return true;
+  if (isAlreadySync(target, source, records, 0)) { pairs.clear(); return true; }
+
+  // These are implementations of the retained obligations, not changes to the
+  // input requirement set. The selected construction uses this same local
+  // projection and queries its certified generation relationships below.
+  if (lifecycleSupply_) lifecycleSupply_->removeSuppliedDependencies(source, target, pairs);
+  if (pairs.empty()) return true;
+  if (mmadChains_ && storageFlow_) {
+    auto previous = storageFlow_->immediatePredecessors(target->elementOp);
+    if (previous && mmadChains_->dischargesWithPredecessors(source, target, pairs, *previous)) {
+      requirements_->retain({SyncRequirement::Kind::MmadOrder, source->elementOp, target->elementOp});
+      ++intrinsicMmadGroups_;
+      pairs.clear();
+      return true;
+    }
+  }
+  if (mmadChains_ && mmadChains_->discharges(source, target, pairs)) {
+    ++intrinsicMmadGroups_;
+    pairs.clear();
+    return true;
+  }
+  if (CanPrunePipeVBarrier(target, source, pairs, forEndIndex)) pairs.clear();
+  // Every admitted access names exactly one physical slot. The multibuffer
+  // per-slot traversal and affine queries stay in the non-migrated path.
+  return true;
+}
+
 void InsertSyncAnalysis::MemAnalyze(
     CompoundInstanceElement *nowCompound, CompoundInstanceElement *frontCompound,
     SyncRecordList &syncRecordList,
     const std::optional<unsigned> &forEndIndex) {
-  if (isAlreadySync(nowCompound, frontCompound, syncRecordList, 0)) {
+  if (!requirements_->local && isAlreadySync(nowCompound, frontCompound, syncRecordList, 0)) {
     return;
   }
 
@@ -540,6 +584,23 @@ void InsertSyncAnalysis::MemAnalyze(
   if (!IsMemInfoHasDependency(nowCompound, frontCompound, depVec)) {
     return;
   }
+
+  auto repair = [&]() {
+    if (depVec.empty()) return;
+    if (storageFlow_) {
+      for (const auto& pair : depVec)
+        requirements_->retain({SyncRequirement::Kind::DirectRepair, frontCompound->elementOp,
+                               nowCompound->elementOp, pair.second->baseBuffer, pair.first->baseBuffer,
+                               forEndIndex.has_value(), ~0u, syncIndex_});
+    }
+    InsertSyncOperation(nowCompound, frontCompound, depVec, forEndIndex);
+    UpdateSyncRecordInfo(frontCompound, syncRecordList);
+  };
+  if (ResolveLocalRequirements(frontCompound, nowCompound, syncRecordList, forEndIndex, depVec)) {
+    repair();
+    return; // The fragmented legacy decisions do not also own this family.
+  }
+  if (isAlreadySync(nowCompound, frontCompound, syncRecordList, 0)) return;
 
   // Required execution order is independent of protocol acceptance. The native
   // guarded graph includes loop backedges; only an impossible ordered pair can
@@ -637,14 +698,7 @@ void InsertSyncAnalysis::MemAnalyze(
     }
   }
 
-  if (storageFlow_) {
-    for (const auto& pair : depVec)
-      requirements_->retain({SyncRequirement::Kind::DirectRepair, frontCompound->elementOp,
-                             nowCompound->elementOp, pair.second->baseBuffer, pair.first->baseBuffer,
-                             forEndIndex.has_value(), ~0u, syncIndex_});
-  }
-  InsertSyncOperation(nowCompound, frontCompound, depVec, forEndIndex);
-  UpdateSyncRecordInfo(frontCompound, syncRecordList);
+  repair();
 }
 
 bool InsertSyncAnalysis::IsMemInfoHasDependency(
