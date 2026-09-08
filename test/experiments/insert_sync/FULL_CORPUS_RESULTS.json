@@ -1,0 +1,1446 @@
+{
+  "accounting_tests": 31,
+  "all_compile_failures_precede_insert_sync": true,
+  "arms": [
+    {
+      "arch": "a3",
+      "arm": "main",
+      "audit_mode": null,
+      "buffer_generations": false,
+      "cli_sha256": "87f4944ba496372730cba7a45c86671bc7a6cbb17e37fdb2cdb7f257e2d4d9a7",
+      "device_execution": "not-run",
+      "effect_coverage": null,
+      "execution_mode": "isolated-fork-with-preloaded-runtime",
+      "gm_alias": null,
+      "manifest_sha256": "8d7fa280b832f49723e68d970a35994cedca5322f7bbc29281ef8c909245b44a",
+      "mmad_chains": false,
+      "native_sha256": "0fa0a43290cb0a43f48755ded11fe9879323698b86ea8aa63cf127bb3844b7b3",
+      "native_unchanged": true,
+      "population": "full-generated-static-9754",
+      "semantic_verification": "not-run"
+    },
+    {
+      "arch": "a3",
+      "arm": "staged",
+      "audit_mode": null,
+      "buffer_generations": true,
+      "cli_sha256": "87f4944ba496372730cba7a45c86671bc7a6cbb17e37fdb2cdb7f257e2d4d9a7",
+      "device_execution": "not-run",
+      "effect_coverage": "report",
+      "execution_mode": "isolated-fork-with-preloaded-runtime",
+      "gm_alias": "assume-disjoint-arguments",
+      "manifest_sha256": "8d7fa280b832f49723e68d970a35994cedca5322f7bbc29281ef8c909245b44a",
+      "mmad_chains": true,
+      "native_sha256": "556d43a49f6be9224e24b25f28b9f02bdcac63be60220b07ddedd54f1008c655",
+      "native_unchanged": true,
+      "population": "full-generated-static-9754",
+      "semantic_verification": "not-run"
+    }
+  ],
+  "boundaries": {
+    "gemm_tile": {
+      "arguments": [
+        0,
+        1048576,
+        2097152,
+        0,
+        0
+      ],
+      "case_id": "843b72f276ffb59a5b0b_000",
+      "current": {
+        "action_trace_sha256": "5042027fdf32b5bc6a26d6ddbd403a63877eaab6951a0f1de74f1213a5c28221",
+        "counts": {
+          "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1,
+          "pto.alloc_tile": 19,
+          "pto.barrier": 1,
+          "pto.make_tensor_view": 3,
+          "pto.partition_view": 9,
+          "pto.set_flag": 28,
+          "pto.tload": 8,
+          "pto.tmatmul": 1,
+          "pto.tmatmul.acc": 3,
+          "pto.tmov": 8,
+          "pto.tstore": 1,
+          "pto.wait_flag": 28
+        },
+        "payload_sha256": "70202741b6454b6b07358fe5279fee355db9257d73345f0ada8d2baec6c60f78",
+        "scalar_counts": {
+          "arith.cmpi": 4,
+          "arith.constant": 7,
+          "arith.maxsi": 18,
+          "arith.muli": 4,
+          "scf.for": 1,
+          "scf.if": 4,
+          "scf.yield": 8
+        },
+        "scalar_steps": 156
+      },
+      "earlier": 7,
+      "example_differences": [
+        {
+          "automatic_prefix": 0,
+          "automatic_requires_later_prefix": false,
+          "manual_prefix": 1,
+          "source_lane": "PIPE_MTE2",
+          "target": 2,
+          "target_lane": "PIPE_MTE1",
+          "target_op": "pto.tmov"
+        },
+        {
+          "automatic_prefix": 2,
+          "automatic_requires_later_prefix": false,
+          "manual_prefix": 3,
+          "source_lane": "PIPE_MTE1",
+          "target": 5,
+          "target_lane": "PIPE_MTE2",
+          "target_op": "pto.tload"
+        },
+        {
+          "automatic_prefix": 5,
+          "automatic_requires_later_prefix": false,
+          "manual_prefix": 6,
+          "source_lane": "PIPE_MTE2",
+          "target": 7,
+          "target_lane": "PIPE_MTE1",
+          "target_op": "pto.tmov"
+        },
+        {
+          "automatic_prefix": 7,
+          "automatic_requires_later_prefix": false,
+          "manual_prefix": 8,
+          "source_lane": "PIPE_MTE1",
+          "target": 10,
+          "target_lane": "PIPE_MTE2",
+          "target_op": "pto.tload"
+        },
+        {
+          "automatic_prefix": 10,
+          "automatic_requires_later_prefix": false,
+          "manual_prefix": 11,
+          "source_lane": "PIPE_MTE2",
+          "target": 12,
+          "target_lane": "PIPE_MTE1",
+          "target_op": "pto.tmov"
+        }
+      ],
+      "later": 0,
+      "original": {
+        "action_trace_sha256": "ba2984ceaaf28de4a262bc82ad20d84c73eacff17f74495d492a59171f84683f",
+        "counts": {
+          "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1,
+          "pto.alloc_tile": 19,
+          "pto.barrier": 1,
+          "pto.make_tensor_view": 3,
+          "pto.partition_view": 9,
+          "pto.set_flag": 19,
+          "pto.tload": 8,
+          "pto.tmatmul": 1,
+          "pto.tmatmul.acc": 3,
+          "pto.tmov": 8,
+          "pto.tstore": 1,
+          "pto.wait_flag": 19
+        },
+        "payload_sha256": "70202741b6454b6b07358fe5279fee355db9257d73345f0ada8d2baec6c60f78",
+        "scalar_counts": {
+          "arith.cmpi": 4,
+          "arith.constant": 7,
+          "arith.maxsi": 18,
+          "arith.muli": 4,
+          "scf.for": 1,
+          "scf.if": 4,
+          "scf.yield": 8
+        },
+        "scalar_steps": 138
+      },
+      "physical_operations": 21
+    },
+    "proj": {
+      "arguments": [
+        0,
+        67108864,
+        134217728,
+        0
+      ],
+      "case_id": "50483153f03e07623a74_000",
+      "current": {
+        "action_trace_sha256": "910eb806e37a4a1c72cbdc33b8e72c13f360a9a7591f96676e356dc8745a18d3",
+        "counts": {
+          "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1,
+          "barrier:#pto.pipe<PIPE_M>:loop": 127,
+          "pto.alloc_tile": 387,
+          "pto.barrier": 128,
+          "pto.make_tensor_view": 3,
+          "pto.partition_view": 129,
+          "pto.set_flag": 517,
+          "pto.textract": 256,
+          "pto.tload": 128,
+          "pto.tmatmul": 1,
+          "pto.tmatmul.acc": 127,
+          "pto.tstore": 1,
+          "pto.wait_flag": 517
+        },
+        "payload_sha256": "de64b28673e5eb08abe1875a873dc70d1970359e6635ce45f1c684c737934698",
+        "scalar_counts": {
+          "arith.cmpi": 64,
+          "arith.constant": 11,
+          "arith.maxsi": 193,
+          "arith.muli": 64,
+          "scf.for": 1,
+          "scf.if": 64,
+          "scf.yield": 128
+        },
+        "scalar_steps": 2720
+      },
+      "earlier": 253,
+      "example_differences": [
+        {
+          "automatic_prefix": 0,
+          "automatic_requires_later_prefix": false,
+          "manual_prefix": 1,
+          "source_lane": "PIPE_MTE2",
+          "target": 2,
+          "target_lane": "PIPE_MTE1",
+          "target_op": "pto.textract"
+        },
+        {
+          "automatic_prefix": 4,
+          "automatic_requires_later_prefix": false,
+          "manual_prefix": 5,
+          "source_lane": "PIPE_MTE1",
+          "target": 8,
+          "target_lane": "PIPE_MTE2",
+          "target_op": "pto.tload"
+        },
+        {
+          "automatic_prefix": 6,
+          "automatic_requires_later_prefix": false,
+          "manual_prefix": 7,
+          "source_lane": "PIPE_M",
+          "target": 10,
+          "target_lane": "PIPE_MTE1",
+          "target_op": "pto.textract"
+        },
+        {
+          "automatic_prefix": 8,
+          "automatic_requires_later_prefix": false,
+          "manual_prefix": 9,
+          "source_lane": "PIPE_MTE2",
+          "target": 10,
+          "target_lane": "PIPE_MTE1",
+          "target_op": "pto.textract"
+        },
+        {
+          "automatic_prefix": 6,
+          "automatic_requires_later_prefix": false,
+          "manual_prefix": 7,
+          "source_lane": "PIPE_M",
+          "target": 11,
+          "target_lane": "PIPE_MTE1",
+          "target_op": "pto.textract"
+        }
+      ],
+      "later": 0,
+      "original": {
+        "action_trace_sha256": "5a70d3eade5e3a3159ea8d0136be0a568f45b07bc7835a2fa33daffaccc996d6",
+        "counts": {
+          "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1,
+          "barrier:#pto.pipe<PIPE_M>:loop": 128,
+          "pto.alloc_tile": 387,
+          "pto.barrier": 129,
+          "pto.make_tensor_view": 3,
+          "pto.partition_view": 129,
+          "pto.set_flag": 323,
+          "pto.textract": 256,
+          "pto.tload": 128,
+          "pto.tmatmul": 1,
+          "pto.tmatmul.acc": 127,
+          "pto.tstore": 1,
+          "pto.wait_flag": 323
+        },
+        "payload_sha256": "de64b28673e5eb08abe1875a873dc70d1970359e6635ce45f1c684c737934698",
+        "scalar_counts": {
+          "arith.cmpi": 64,
+          "arith.constant": 11,
+          "arith.maxsi": 193,
+          "arith.muli": 64,
+          "scf.for": 1,
+          "scf.if": 64,
+          "scf.yield": 128
+        },
+        "scalar_steps": 2333
+      },
+      "physical_operations": 513
+    }
+  },
+  "compile_failure_causes": {
+    "'pto.tci' op requires explicit tmp when PlanMemory is skipped": 752,
+    "'pto.tcvt' op requires explicit tmp for non-saturating narrowing tcvt when PlanMemory is skipped": 715,
+    "'pto.tsel' op expects A2/A3 tsel tmp element type to be 4 bytes wide": 104
+  },
+  "counters": {
+    "pto.insert_sync.generation_barriers_removed:functions": 544,
+    "pto.insert_sync.generation_barriers_removed:sum": 544,
+    "pto.insert_sync.generation_publication_work:functions": 6,
+    "pto.insert_sync.generation_publication_work:sum": 1166744,
+    "pto.insert_sync.generation_ready_sets_removed:functions": 166,
+    "pto.insert_sync.generation_ready_sets_removed:sum": 923,
+    "pto.insert_sync.generation_ready_streams_supplied:functions": 166,
+    "pto.insert_sync.generation_ready_streams_supplied:sum": 550,
+    "pto.insert_sync.generation_ready_waits_removed:functions": 166,
+    "pto.insert_sync.generation_ready_waits_removed:sum": 923,
+    "pto.insert_sync.generation_residual_keys_shared:functions": 147,
+    "pto.insert_sync.generation_residual_keys_shared:sum": 538,
+    "pto.insert_sync.generation_storage_barriers_removed:functions": 117,
+    "pto.insert_sync.generation_storage_barriers_removed:sum": 154,
+    "pto.insert_sync.lifecycle_channels:functions": 747,
+    "pto.insert_sync.lifecycle_channels:sum": 4955,
+    "pto.insert_sync.lifecycle_completion_pairs:functions": 669,
+    "pto.insert_sync.lifecycle_completion_pairs:sum": 10666,
+    "pto.insert_sync.lifecycle_completion_witnesses:functions": 669,
+    "pto.insert_sync.lifecycle_completion_witnesses:sum": 2848,
+    "pto.insert_sync.lifecycle_completion_work:functions": 747,
+    "pto.insert_sync.lifecycle_completion_work:sum": 51860749,
+    "pto.insert_sync.lifecycle_consumer_regions:functions": 233,
+    "pto.insert_sync.lifecycle_consumer_regions:sum": 1331,
+    "pto.insert_sync.lifecycle_guarded_actions:functions": 270,
+    "pto.insert_sync.lifecycle_guarded_actions:sum": 2937,
+    "pto.insert_sync.lifecycle_retries:functions": 4,
+    "pto.insert_sync.lifecycle_retries:sum": 8,
+    "pto.insert_sync.lifecycle_supplied_pairs:functions": 747,
+    "pto.insert_sync.lifecycle_supplied_pairs:sum": 120751
+  },
+  "device_execution": "not-run",
+  "diagnostic_sample": {
+    "all_205_native_mechanisms_match_cli": true,
+    "compilable": 208,
+    "fallback_reasons": {
+      "concrete event reconstruction: structured node budget": 32,
+      "guarded lifecycle plan plus rebuilt legacy residuals; no added scarcity ordering": 23,
+      "structural import: physical phase has no qualified frontier adapter": 33,
+      "structural import: structured node budget": 4,
+      "structural import: unmodeled non-payload effect; original translation retained": 59,
+      "unchanged: effect coverage gap; ordinary report-mode translation retained": 25,
+      "unchanged: fixed input synchronization or helper/macro contract outside this constructor": 15,
+      "unchanged: lifecycle recognition budget": 7,
+      "unchanged: no complete exact-slot lifecycle": 7
+    },
+    "native_replayed": 205,
+    "payload_identical_after_sync_only_constant_projection": 208,
+    "population": 213,
+    "unavailable_multiple_functions": 3
+  },
+  "generation_off_controls": {
+    "50483153f03e07623a74_000": {
+      "command": [
+        "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/tools/pto-test-opt/pto-test-opt",
+        "../insertsync-builds/campaign/shared-corpus-3400426f3/analysis-213/50483153f03e07623a74_000/before.pto",
+        "--mlir-disable-threading",
+        "--mlir-print-op-on-diagnostic=false",
+        "--pto-insert-sync=buffer-generations=false defer-same-pipe=true mmad-chains=true gm-alias=assume-disjoint-arguments effect-coverage=report",
+        "-o",
+        "../insertsync-builds/campaign/shared-corpus-3400426f3/generation-off-controls/50483153f03e07623a74_000.pto"
+      ],
+      "mechanisms": {
+        "PIPE_ALL": 1,
+        "named": {
+          "PIPE_M": 4,
+          "PIPE_MTE2": 1
+        },
+        "sets": 10,
+        "waits": 10
+      },
+      "returncode": 0,
+      "seconds": 0.11863104600342922
+    },
+    "53e5d41c753156890923_000": {
+      "command": [
+        "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/tools/pto-test-opt/pto-test-opt",
+        "../insertsync-builds/campaign/shared-corpus-3400426f3/analysis-213/53e5d41c753156890923_000/before.pto",
+        "--mlir-disable-threading",
+        "--mlir-print-op-on-diagnostic=false",
+        "--pto-insert-sync=buffer-generations=false defer-same-pipe=true mmad-chains=true gm-alias=assume-disjoint-arguments effect-coverage=report",
+        "-o",
+        "../insertsync-builds/campaign/shared-corpus-3400426f3/generation-off-controls/53e5d41c753156890923_000.pto"
+      ],
+      "mechanisms": {
+        "PIPE_ALL": 1,
+        "named": {
+          "PIPE_FIX": 1,
+          "PIPE_M": 17,
+          "PIPE_MTE1": 2,
+          "PIPE_MTE2": 4
+        },
+        "sets": 94,
+        "waits": 94
+      },
+      "returncode": 0,
+      "seconds": 0.12901747100113425
+    },
+    "843b72f276ffb59a5b0b_000": {
+      "command": [
+        "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/tools/pto-test-opt/pto-test-opt",
+        "../insertsync-builds/campaign/shared-corpus-3400426f3/analysis-213/843b72f276ffb59a5b0b_000/before.pto",
+        "--mlir-disable-threading",
+        "--mlir-print-op-on-diagnostic=false",
+        "--pto-insert-sync=buffer-generations=false defer-same-pipe=true mmad-chains=true gm-alias=assume-disjoint-arguments effect-coverage=report",
+        "-o",
+        "../insertsync-builds/campaign/shared-corpus-3400426f3/generation-off-controls/843b72f276ffb59a5b0b_000.pto"
+      ],
+      "mechanisms": {
+        "PIPE_ALL": 1,
+        "named": {
+          "PIPE_MTE2": 1
+        },
+        "sets": 8,
+        "waits": 8
+      },
+      "returncode": 0,
+      "seconds": 0.13287724100518972
+    },
+    "c3a529c3d50959475d02_000": {
+      "command": [
+        "/home/toni/work/pypto3_sync_more/insertsync-builds/PTOAS-insertsync-r1/tools/pto-test-opt/pto-test-opt",
+        "../insertsync-builds/campaign/shared-corpus-3400426f3/analysis-213/c3a529c3d50959475d02_000/before.pto",
+        "--mlir-disable-threading",
+        "--mlir-print-op-on-diagnostic=false",
+        "--pto-insert-sync=buffer-generations=false defer-same-pipe=true mmad-chains=true gm-alias=assume-disjoint-arguments effect-coverage=report",
+        "-o",
+        "../insertsync-builds/campaign/shared-corpus-3400426f3/generation-off-controls/c3a529c3d50959475d02_000.pto"
+      ],
+      "mechanisms": {
+        "PIPE_ALL": 1,
+        "named": {
+          "PIPE_FIX": 1,
+          "PIPE_M": 8,
+          "PIPE_MTE1": 2,
+          "PIPE_MTE2": 1
+        },
+        "sets": 30,
+        "waits": 30
+      },
+      "returncode": 0,
+      "seconds": 0.12531166400003713
+    }
+  },
+  "inventory_sha256": "bd6ed65154d17e8f3bd84af451f1e341c4c431b4b08f210dbf3783563d30a84b",
+  "manifest_sha256": "8d7fa280b832f49723e68d970a35994cedca5322f7bbc29281ef8c909245b44a",
+  "named_barrier_changes": {
+    "PIPE_FIX_fewer": 102,
+    "PIPE_FIX_same": 814,
+    "PIPE_MTE1_fewer": 241,
+    "PIPE_MTE1_same": 685,
+    "PIPE_MTE2_fewer": 314,
+    "PIPE_MTE2_more": 1639,
+    "PIPE_MTE2_same": 34,
+    "PIPE_MTE3_fewer": 90,
+    "PIPE_MTE3_same": 1532,
+    "PIPE_M_fewer": 295,
+    "PIPE_M_same": 1573,
+    "PIPE_V_fewer": 114,
+    "PIPE_V_more": 10,
+    "PIPE_V_same": 3184
+  },
+  "parent_seeds": 213,
+  "projection_failures": [],
+  "raw_artifacts": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/shared-corpus-3400426f3",
+  "raw_results_sha256": "a94e8a6ac8e6cdeb721315d263e4268cdb3b3d9f3a2ed521ce1e3c9dfd213925",
+  "raw_table_sha256": "05c5cb2837f60e2a258f183276327b4df778a4a36242043702d1df653a447462",
+  "representatives": {
+    "50483153f03e07623a74_000": {
+      "bytes": "16604",
+      "case_id": "50483153f03e07623a74_000",
+      "current": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "25e7ffa768d939ab0b3d97cfa66613fac7df76cdd46b2d1986668b6a0060b90a",
+          "allocations": "bc03520210a6f7f9c0494529cdeadf19c6d21e5fd7a1b255809772a0c8d92179",
+          "payload": "280dfba084e48d533b7417d36b1933dec4abf3888234d57a558df156eb7c1486",
+          "placements": "4ab39dc670946c552dc341495466e5b37ce81a446841b637cc796ad869315fd0",
+          "views": "c85fe2332b9b545bfd93fff9dabf5f5928b73f289124c747fc3afa3d543eb5ab"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {
+            "PIPE_M": 3
+          },
+          "sets": 19,
+          "waits": 19
+        },
+        "process_seconds": 0.06345792999491096,
+        "pto_status": "pass",
+        "status_attributes": [
+          {
+            "pto.insert_sync.buffer_generations": "unit",
+            "pto.insert_sync.effect_coverage": "\"complete\"",
+            "pto.insert_sync.generation_barriers_removed": "0 : i64",
+            "pto.insert_sync.generation_global_witnesses": "0 : i64",
+            "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+            "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+            "pto.insert_sync.generation_publication_work": "0 : i64",
+            "pto.insert_sync.generation_publications_advanced": "0 : i64",
+            "pto.insert_sync.generation_publications_guarded": "0 : i64",
+            "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+            "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+            "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+            "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+            "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+            "pto.insert_sync.lifecycle_channels": "4 : i64",
+            "pto.insert_sync.lifecycle_completion_pairs": "0 : i64",
+            "pto.insert_sync.lifecycle_completion_witnesses": "0 : i64",
+            "pto.insert_sync.lifecycle_completion_work": "7560 : i64",
+            "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+            "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+            "pto.insert_sync.lifecycle_retries": "0 : i64",
+            "pto.insert_sync.lifecycle_supplied_pairs": "70 : i64",
+            "pto.insert_sync.mmad_chain_targets": "0 : i64",
+            "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+            "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+          }
+        ],
+        "sync_control": {}
+      },
+      "entry": "qkv_proj",
+      "entry_source": "examples/advanced/multi_proj.py",
+      "equal": {
+        "abi": true,
+        "allocations": true,
+        "payload": true,
+        "placements": false,
+        "views": true
+      },
+      "family": "pypto-lib",
+      "generated_path": "outputs/50483153f03e07623a74/kernels/aic/proj.pto",
+      "level": "level3",
+      "original": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "25e7ffa768d939ab0b3d97cfa66613fac7df76cdd46b2d1986668b6a0060b90a",
+          "allocations": "bc03520210a6f7f9c0494529cdeadf19c6d21e5fd7a1b255809772a0c8d92179",
+          "payload": "280dfba084e48d533b7417d36b1933dec4abf3888234d57a558df156eb7c1486",
+          "placements": "b76c513a469f08fb0bd43cca2ba01d96581f4ea2a56f39d9a8c747822c47855f",
+          "views": "c85fe2332b9b545bfd93fff9dabf5f5928b73f289124c747fc3afa3d543eb5ab"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {
+            "PIPE_M": 4
+          },
+          "sets": 10,
+          "waits": 10
+        },
+        "process_seconds": 0.045459877015673555,
+        "pto_status": "pass",
+        "status_attributes": [
+          {}
+        ],
+        "sync_control": {}
+      },
+      "parent_seed": "50483153f03e07623a74",
+      "sha256": "faa2e8f445083d50b0de09703f3f7edf35a484557259c4b68e443ec400dea57c",
+      "source": "inputs/50483153f03e07623a74_000.pto"
+    },
+    "53e5d41c753156890923_000": {
+      "bytes": "80272",
+      "case_id": "53e5d41c753156890923_000",
+      "current": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "a8a45ac684b41488f1cb63339c6320e13fd19d8fc1e51625379b8af6a07dc69e",
+          "allocations": "beb5920b7e546285d2028ec4ee82fc7c8b20417556e28f2b2c36e4ced1953ab0",
+          "payload": "d1faa7fb5a1dfbc233022afd211fa316af6e5c8fe84f9bedfb5be2bf864e50d9",
+          "placements": "d6635ef7478e575fe9ba5c95b6f8bcd14136d9b8231b4dfd7dca2ce9e4ed3812",
+          "views": "21e976784ed7b6ac01566e9f95332982acd87eea84d3543c81a6d86708d7e4bd"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {
+            "PIPE_FIX": 1,
+            "PIPE_M": 17,
+            "PIPE_MTE1": 2,
+            "PIPE_MTE2": 4
+          },
+          "sets": 94,
+          "waits": 94
+        },
+        "process_seconds": 0.13630582300538663,
+        "pto_status": "pass",
+        "status_attributes": [
+          {
+            "pto.insert_sync.effect_coverage": "\"complete\"",
+            "pto.insert_sync.generation_barriers_removed": "0 : i64",
+            "pto.insert_sync.generation_global_witnesses": "0 : i64",
+            "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+            "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+            "pto.insert_sync.generation_publication_work": "0 : i64",
+            "pto.insert_sync.generation_publications_advanced": "0 : i64",
+            "pto.insert_sync.generation_publications_guarded": "0 : i64",
+            "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+            "pto.insert_sync.mmad_chain_targets": "0 : i64",
+            "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+            "pto.insert_sync.status": "\"analyzed\""
+          }
+        ],
+        "sync_control": {}
+      },
+      "entry": "l2_distributed_markov_sample",
+      "entry_source": "models/deepseek_v4_flash_dspark/dspark_markov.py",
+      "equal": {
+        "abi": true,
+        "allocations": true,
+        "payload": true,
+        "placements": false,
+        "views": true
+      },
+      "family": "pypto-lib",
+      "generated_path": "outputs/53e5d41c753156890923/kernels/aic/lm_head_matmul.pto",
+      "level": "level3",
+      "original": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "a8a45ac684b41488f1cb63339c6320e13fd19d8fc1e51625379b8af6a07dc69e",
+          "allocations": "beb5920b7e546285d2028ec4ee82fc7c8b20417556e28f2b2c36e4ced1953ab0",
+          "payload": "d1faa7fb5a1dfbc233022afd211fa316af6e5c8fe84f9bedfb5be2bf864e50d9",
+          "placements": "bd43f7cd71e5269e7558ea45af24b4724a96625d49fc140f7c2b9b03ec609fbd",
+          "views": "21e976784ed7b6ac01566e9f95332982acd87eea84d3543c81a6d86708d7e4bd"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {
+            "PIPE_FIX": 1,
+            "PIPE_M": 17,
+            "PIPE_MTE1": 2
+          },
+          "sets": 94,
+          "waits": 94
+        },
+        "process_seconds": 0.07387145700340625,
+        "pto_status": "pass",
+        "status_attributes": [
+          {}
+        ],
+        "sync_control": {}
+      },
+      "parent_seed": "53e5d41c753156890923",
+      "sha256": "526907caf73bbdd9531c111b00c5b75d3b3f1cc7ca6b7ccfdd42eb196bd10d18",
+      "source": "inputs/53e5d41c753156890923_000.pto"
+    },
+    "5939284c4f38f28205a7_000": {
+      "bytes": "38912",
+      "case_id": "5939284c4f38f28205a7_000",
+      "current": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "2de3c9db09606aa26c6274812765ef600f24616492e4778cd8e11bae4499a828",
+          "allocations": "2daa42ee9f6716116fdfbb265678fdfa474db5c9016ac49cf1681e49895cb469",
+          "payload": "b87e0e5d868131e0c92fa3d2b4acef54a30577571e9175a40e0e29adaa3aa41c",
+          "placements": "a775b76c8458dccf09677dde235b8e796906ccf689a8240914e35266608e9b4d",
+          "views": "d4302b1bfe2eeac422062c52fb99718ec263f76228de404a103467871d16d0d1"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {
+            "PIPE_M": 7
+          },
+          "sets": 51,
+          "waits": 51
+        },
+        "process_seconds": 0.2570948639913695,
+        "pto_status": "pass",
+        "status_attributes": [
+          {
+            "pto.insert_sync.buffer_generations": "unit",
+            "pto.insert_sync.effect_coverage": "\"complete\"",
+            "pto.insert_sync.generation_barriers_removed": "0 : i64",
+            "pto.insert_sync.generation_global_witnesses": "0 : i64",
+            "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+            "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+            "pto.insert_sync.generation_publication_work": "0 : i64",
+            "pto.insert_sync.generation_publications_advanced": "0 : i64",
+            "pto.insert_sync.generation_publications_guarded": "0 : i64",
+            "pto.insert_sync.generation_ready_sets_removed": "8 : i64",
+            "pto.insert_sync.generation_ready_streams_supplied": "4 : i64",
+            "pto.insert_sync.generation_ready_waits_removed": "8 : i64",
+            "pto.insert_sync.generation_residual_keys_shared": "3 : i64",
+            "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+            "pto.insert_sync.lifecycle_channels": "9 : i64",
+            "pto.insert_sync.lifecycle_completion_pairs": "3 : i64",
+            "pto.insert_sync.lifecycle_completion_witnesses": "1 : i64",
+            "pto.insert_sync.lifecycle_completion_work": "33680 : i64",
+            "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+            "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+            "pto.insert_sync.lifecycle_retries": "0 : i64",
+            "pto.insert_sync.lifecycle_supplied_pairs": "126 : i64",
+            "pto.insert_sync.mmad_chain_targets": "0 : i64",
+            "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+            "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+          }
+        ],
+        "sync_control": {}
+      },
+      "entry": "markov_sample",
+      "entry_source": "models/deepseek_v4_flash_dspark/dspark_markov.py",
+      "equal": {
+        "abi": true,
+        "allocations": true,
+        "payload": true,
+        "placements": false,
+        "views": true
+      },
+      "family": "pypto-lib",
+      "generated_path": "outputs/5939284c4f38f28205a7/kernels/aic/dspark_base_logits.pto",
+      "level": "level3",
+      "original": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "2de3c9db09606aa26c6274812765ef600f24616492e4778cd8e11bae4499a828",
+          "allocations": "2daa42ee9f6716116fdfbb265678fdfa474db5c9016ac49cf1681e49895cb469",
+          "payload": "b87e0e5d868131e0c92fa3d2b4acef54a30577571e9175a40e0e29adaa3aa41c",
+          "placements": "6b4d9ac980bb74ae48d2c0a997696ff79cd90e6bdb6f03309228769a053f02a8",
+          "views": "d4302b1bfe2eeac422062c52fb99718ec263f76228de404a103467871d16d0d1"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {
+            "PIPE_M": 7
+          },
+          "sets": 35,
+          "waits": 35
+        },
+        "process_seconds": 0.05453207100799773,
+        "pto_status": "pass",
+        "status_attributes": [
+          {}
+        ],
+        "sync_control": {}
+      },
+      "parent_seed": "5939284c4f38f28205a7",
+      "sha256": "aff8bb8cdb454e6824c382d7beb521509d4d292f1cd633d7e2ae645c53e2f9ed",
+      "source": "inputs/5939284c4f38f28205a7_000.pto"
+    },
+    "843b72f276ffb59a5b0b_000": {
+      "bytes": "11353",
+      "case_id": "843b72f276ffb59a5b0b_000",
+      "current": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "a3f5fb1a05dd9811af84346573fcece16fcd17b7ee47f317c8c11a436370d0ab",
+          "allocations": "9bb12928daf9fb5485aac5e1a1c6d30605f4eac19ba2e74a29e9b2835980a9cf",
+          "payload": "347d570eeb112542cb11a5991ff53b246f8c570e43d2868ad1045e351617783d",
+          "placements": "de31bfad3ab73ee3264522d695e78b35bc8f67caadb38db5cf569ad8ff61a34e",
+          "views": "1c05b05d86fe352f0cf2ba756aa8003894ebc5c2206e7d5efc0d8a4dd16e0922"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {},
+          "sets": 14,
+          "waits": 14
+        },
+        "process_seconds": 0.04298786500294227,
+        "pto_status": "pass",
+        "status_attributes": [
+          {
+            "pto.insert_sync.buffer_generations": "unit",
+            "pto.insert_sync.effect_coverage": "\"complete\"",
+            "pto.insert_sync.generation_barriers_removed": "0 : i64",
+            "pto.insert_sync.generation_global_witnesses": "0 : i64",
+            "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+            "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+            "pto.insert_sync.generation_publication_work": "0 : i64",
+            "pto.insert_sync.generation_publications_advanced": "0 : i64",
+            "pto.insert_sync.generation_publications_guarded": "0 : i64",
+            "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+            "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+            "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+            "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+            "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+            "pto.insert_sync.lifecycle_channels": "3 : i64",
+            "pto.insert_sync.lifecycle_completion_pairs": "5 : i64",
+            "pto.insert_sync.lifecycle_completion_witnesses": "2 : i64",
+            "pto.insert_sync.lifecycle_completion_work": "5020 : i64",
+            "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+            "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+            "pto.insert_sync.lifecycle_retries": "0 : i64",
+            "pto.insert_sync.lifecycle_supplied_pairs": "41 : i64",
+            "pto.insert_sync.mmad_chain_targets": "0 : i64",
+            "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+            "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+          }
+        ],
+        "sync_control": {}
+      },
+      "entry": "gemm",
+      "entry_source": "examples/intermediate/gemm.py",
+      "equal": {
+        "abi": true,
+        "allocations": true,
+        "payload": true,
+        "placements": false,
+        "views": true
+      },
+      "family": "pypto-lib",
+      "generated_path": "outputs/843b72f276ffb59a5b0b/kernels/aic/gemm_tile.pto",
+      "level": "level3",
+      "original": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "a3f5fb1a05dd9811af84346573fcece16fcd17b7ee47f317c8c11a436370d0ab",
+          "allocations": "9bb12928daf9fb5485aac5e1a1c6d30605f4eac19ba2e74a29e9b2835980a9cf",
+          "payload": "347d570eeb112542cb11a5991ff53b246f8c570e43d2868ad1045e351617783d",
+          "placements": "e46d5eea5c78fa2947826ba77befa2b02ef496a4fddb0c03d8dc91a67898ae82",
+          "views": "1c05b05d86fe352f0cf2ba756aa8003894ebc5c2206e7d5efc0d8a4dd16e0922"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {},
+          "sets": 8,
+          "waits": 8
+        },
+        "process_seconds": 0.03698013900429942,
+        "pto_status": "pass",
+        "status_attributes": [
+          {}
+        ],
+        "sync_control": {}
+      },
+      "parent_seed": "843b72f276ffb59a5b0b",
+      "sha256": "5e8a843372b4a2d499708b14407a2d82ee13e3fa04ea9559e66a6c44aa8b4845",
+      "source": "inputs/843b72f276ffb59a5b0b_000.pto"
+    },
+    "9157b88f9e9bfc6706a0_062": {
+      "bytes": "152772",
+      "case_id": "9157b88f9e9bfc6706a0_062",
+      "current": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "2f4de15221b1279497dda5796fd6e15ebab9c83d645f1751af4ec45207b1d725",
+          "allocations": "8cde8b8648356c6679642c363502518f5647e18c5b304d3e3d098f80fb11e9b4",
+          "payload": "137d9fecd6cd6706e20ae8c03166ac3b10e3997f8ace41f2bf31121b43f743a1",
+          "placements": "4242f6fe74239fcf486683fef9247bdcf810d1d7c7c51e0c1139a2f78392c5c8",
+          "views": "6e3654dfecfa27195a313351ffe6c359dcced6488184022abf64a3ef64ca3d56"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 2,
+          "named": {
+            "PIPE_FIX": 4,
+            "PIPE_M": 16,
+            "PIPE_MTE1": 4,
+            "PIPE_MTE2": 15,
+            "PIPE_MTE3": 2,
+            "PIPE_V": 16
+          },
+          "sets": 67,
+          "waits": 67
+        },
+        "process_seconds": 0.15647015599824954,
+        "pto_status": "pass",
+        "status_attributes": [
+          {
+            "pto.insert_sync.effect_coverage": "\"gap-legacy-retained\"",
+            "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+            "pto.insert_sync.mmad_chain_targets": "0 : i64",
+            "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+            "pto.insert_sync.status": "\"analyzed\""
+          },
+          {
+            "pto.insert_sync.effect_coverage": "\"gap-legacy-retained\"",
+            "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+            "pto.insert_sync.mmad_chain_targets": "0 : i64",
+            "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+            "pto.insert_sync.status": "\"analyzed\""
+          }
+        ],
+        "sync_control": {}
+      },
+      "entry": "decode_csa_test",
+      "entry_source": "models/deepseek_v4_flash_dspark/decode_csa.py",
+      "equal": {
+        "abi": true,
+        "allocations": true,
+        "payload": true,
+        "placements": false,
+        "views": true
+      },
+      "family": "pypto-lib",
+      "generated_path": "outputs/9157b88f9e9bfc6706a0/kernels/qk_pv.pto",
+      "level": "level3",
+      "original": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "2f4de15221b1279497dda5796fd6e15ebab9c83d645f1751af4ec45207b1d725",
+          "allocations": "8cde8b8648356c6679642c363502518f5647e18c5b304d3e3d098f80fb11e9b4",
+          "payload": "137d9fecd6cd6706e20ae8c03166ac3b10e3997f8ace41f2bf31121b43f743a1",
+          "placements": "c019393bb115b340794745c6fce04d2dd80cfd583f0a559d49740521031dc304",
+          "views": "6e3654dfecfa27195a313351ffe6c359dcced6488184022abf64a3ef64ca3d56"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 2,
+          "named": {
+            "PIPE_FIX": 4,
+            "PIPE_M": 16,
+            "PIPE_MTE1": 4,
+            "PIPE_MTE2": 1,
+            "PIPE_MTE3": 2,
+            "PIPE_V": 18
+          },
+          "sets": 71,
+          "waits": 71
+        },
+        "process_seconds": 0.13570723199518397,
+        "pto_status": "pass",
+        "status_attributes": [
+          {},
+          {}
+        ],
+        "sync_control": {}
+      },
+      "parent_seed": "9157b88f9e9bfc6706a0",
+      "sha256": "17cd6092b00dede122ed4f1ddd1685232e18ad3a5fc70fa3c8f22b76f723d20a",
+      "source": "inputs/9157b88f9e9bfc6706a0_062.pto"
+    },
+    "a61baf44c0880ad5ad74_001": {
+      "bytes": "27240",
+      "case_id": "a61baf44c0880ad5ad74_001",
+      "current": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "00998ea5872a8183f43a6c2d73724ac0dd45332dd8e981466c1bc644bc5c0d34",
+          "allocations": "2b4d6b13ab49d10af2749f8e8f22b530c52a0ed654fee23f1323ed9bbb3ab5d2",
+          "payload": "2d100ab49cd9ef1563d97b9207391f877b634e5b63f4c686a0610447b5205084",
+          "placements": "7b41bb6ad0384d25737e4d6e5bc9d4b6707cf3e100ad7563580d640da9cd7d17",
+          "views": "d7b18612fd0fbc6b0a958b36aecc0743cd2232243eee4017bb1f3e90fdfcf6e5"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 0,
+          "named": {},
+          "sets": 32,
+          "waits": 32
+        },
+        "process_seconds": 0.09088245400926098,
+        "pto_status": "pass",
+        "status_attributes": [
+          {
+            "pto.insert_sync.buffer_generations": "unit",
+            "pto.insert_sync.effect_coverage": "\"complete\"",
+            "pto.insert_sync.generation_barriers_removed": "1 : i64",
+            "pto.insert_sync.generation_global_witnesses": "0 : i64",
+            "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+            "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+            "pto.insert_sync.generation_publication_work": "0 : i64",
+            "pto.insert_sync.generation_publications_advanced": "0 : i64",
+            "pto.insert_sync.generation_publications_guarded": "0 : i64",
+            "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+            "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+            "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+            "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+            "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+            "pto.insert_sync.lifecycle_channels": "4 : i64",
+            "pto.insert_sync.lifecycle_completion_pairs": "47 : i64",
+            "pto.insert_sync.lifecycle_completion_witnesses": "14 : i64",
+            "pto.insert_sync.lifecycle_completion_work": "12784 : i64",
+            "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+            "pto.insert_sync.lifecycle_guarded_actions": "2 : i64",
+            "pto.insert_sync.lifecycle_retries": "0 : i64",
+            "pto.insert_sync.lifecycle_supplied_pairs": "392 : i64",
+            "pto.insert_sync.mmad_chain_targets": "0 : i64",
+            "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+            "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+          }
+        ],
+        "sync_control": {
+          "arith.cmpi": 2,
+          "arith.subi": 2,
+          "scf.if": 2
+        }
+      },
+      "entry": "prefill_hidden_a8w8",
+      "entry_source": "models/qwen3_14b/prefill_fwd_a8w8.py",
+      "equal": {
+        "abi": true,
+        "allocations": true,
+        "payload": true,
+        "placements": false,
+        "views": true
+      },
+      "family": "pypto-lib",
+      "generated_path": "outputs/a61baf44c0880ad5ad74/kernels/aic/kv_proj_matmul.pto",
+      "level": "level3",
+      "original": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "00998ea5872a8183f43a6c2d73724ac0dd45332dd8e981466c1bc644bc5c0d34",
+          "allocations": "2b4d6b13ab49d10af2749f8e8f22b530c52a0ed654fee23f1323ed9bbb3ab5d2",
+          "payload": "2d100ab49cd9ef1563d97b9207391f877b634e5b63f4c686a0610447b5205084",
+          "placements": "feb2af2fbc5dd1a067f48c5df336522852ec7af32611d962e0879a3191d216b7",
+          "views": "d7b18612fd0fbc6b0a958b36aecc0743cd2232243eee4017bb1f3e90fdfcf6e5"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {},
+          "sets": 39,
+          "waits": 39
+        },
+        "process_seconds": 0.05961282599309925,
+        "pto_status": "pass",
+        "status_attributes": [
+          {}
+        ],
+        "sync_control": {}
+      },
+      "parent_seed": "a61baf44c0880ad5ad74",
+      "sha256": "af3baa3205aa1601ffa3b0c3d73229596289515843716b1d6b67f17bf72cebfd",
+      "source": "inputs/a61baf44c0880ad5ad74_001.pto"
+    },
+    "a61baf44c0880ad5ad74_082": {
+      "bytes": "14220",
+      "case_id": "a61baf44c0880ad5ad74_082",
+      "current": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "77d249d65050be4f08d183dceb6deeda41f1846510a56fcf0689aa8a0c1448b6",
+          "allocations": "a8846a030f674cf80340e78bdb71c40acd0b561de75e38f557086dd5f7071913",
+          "payload": "09891adba7b625162980ce2a4f6b94457af2b1c032100f2bc7cf7e51bc0ce227",
+          "placements": "1cb0bf46b35b273b7f9d2d5bc4d6ddf1ab7444051f60c49a0f3ada379526a2c3",
+          "views": "abc27fa86ca3affed61318ad3304bf7ad85c18a64a96608b45ee8b7655e24d9c"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 0,
+          "named": {},
+          "sets": 18,
+          "waits": 18
+        },
+        "process_seconds": 0.09094012799323536,
+        "pto_status": "pass",
+        "status_attributes": [
+          {
+            "pto.insert_sync.buffer_generations": "unit",
+            "pto.insert_sync.effect_coverage": "\"complete\"",
+            "pto.insert_sync.generation_barriers_removed": "1 : i64",
+            "pto.insert_sync.generation_global_witnesses": "0 : i64",
+            "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+            "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+            "pto.insert_sync.generation_publication_work": "0 : i64",
+            "pto.insert_sync.generation_publications_advanced": "0 : i64",
+            "pto.insert_sync.generation_publications_guarded": "0 : i64",
+            "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+            "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+            "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+            "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+            "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+            "pto.insert_sync.lifecycle_channels": "4 : i64",
+            "pto.insert_sync.lifecycle_completion_pairs": "13 : i64",
+            "pto.insert_sync.lifecycle_completion_witnesses": "4 : i64",
+            "pto.insert_sync.lifecycle_completion_work": "8480 : i64",
+            "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+            "pto.insert_sync.lifecycle_guarded_actions": "1 : i64",
+            "pto.insert_sync.lifecycle_retries": "0 : i64",
+            "pto.insert_sync.lifecycle_supplied_pairs": "103 : i64",
+            "pto.insert_sync.mmad_chain_targets": "0 : i64",
+            "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+            "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+          }
+        ],
+        "sync_control": {
+          "arith.cmpi": 1,
+          "arith.subi": 1,
+          "scf.if": 1
+        }
+      },
+      "entry": "prefill_hidden_a8w8",
+      "entry_source": "models/qwen3_14b/prefill_fwd_a8w8.py",
+      "equal": {
+        "abi": true,
+        "allocations": true,
+        "payload": true,
+        "placements": false,
+        "views": true
+      },
+      "family": "pypto-lib",
+      "generated_path": "outputs/a61baf44c0880ad5ad74/kernels/aic/q_proj_matmul.pto",
+      "level": "level3",
+      "original": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "77d249d65050be4f08d183dceb6deeda41f1846510a56fcf0689aa8a0c1448b6",
+          "allocations": "a8846a030f674cf80340e78bdb71c40acd0b561de75e38f557086dd5f7071913",
+          "payload": "09891adba7b625162980ce2a4f6b94457af2b1c032100f2bc7cf7e51bc0ce227",
+          "placements": "18a934c6fbc18aee04c75eea05373fc35062f0f0246c448a3a59822f15cf6e79",
+          "views": "abc27fa86ca3affed61318ad3304bf7ad85c18a64a96608b45ee8b7655e24d9c"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {},
+          "sets": 21,
+          "waits": 21
+        },
+        "process_seconds": 0.04772335400048178,
+        "pto_status": "pass",
+        "status_attributes": [
+          {}
+        ],
+        "sync_control": {}
+      },
+      "parent_seed": "a61baf44c0880ad5ad74",
+      "sha256": "9faa3f61e4c5c6146184576b099c1d53a623583465f988c2363e4c55bfd3f92c",
+      "source": "inputs/a61baf44c0880ad5ad74_082.pto"
+    },
+    "c3a529c3d50959475d02_000": {
+      "bytes": "34802",
+      "case_id": "c3a529c3d50959475d02_000",
+      "current": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "b1fa5ff1f64dbcbb7e0ff9bc3e2a708a4fd748e68b70a623c844cb325ab98611",
+          "allocations": "6a36378154a77999e4e0d2443fa9830c25cf86cf8906a6bace24166638b5e801",
+          "payload": "6c49035fe3cd0bcbd349214e46f61b717d716ef01000bba9a4bf87e1f68144cb",
+          "placements": "b86b3b1dfcf71ce2e14e1166993896bfd7e4731e8a2788f172201c237d8fa148",
+          "views": "5ea25089676063e6212865d59c34540932d23e5530b1de934335aeb515a9016a"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {
+            "PIPE_FIX": 1,
+            "PIPE_M": 8,
+            "PIPE_MTE1": 2,
+            "PIPE_MTE2": 1
+          },
+          "sets": 30,
+          "waits": 30
+        },
+        "process_seconds": 0.30816041001526173,
+        "pto_status": "pass",
+        "status_attributes": [
+          {
+            "pto.insert_sync.effect_coverage": "\"complete\"",
+            "pto.insert_sync.generation_barriers_removed": "0 : i64",
+            "pto.insert_sync.generation_global_witnesses": "0 : i64",
+            "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+            "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+            "pto.insert_sync.generation_publication_work": "0 : i64",
+            "pto.insert_sync.generation_publications_advanced": "0 : i64",
+            "pto.insert_sync.generation_publications_guarded": "0 : i64",
+            "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+            "pto.insert_sync.mmad_chain_targets": "0 : i64",
+            "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+            "pto.insert_sync.status": "\"analyzed\""
+          }
+        ],
+        "sync_control": {}
+      },
+      "entry": "l3_decode_layer_csa",
+      "entry_source": "models/deepseek_v4_flash_dspark/decode_layer.py",
+      "equal": {
+        "abi": true,
+        "allocations": true,
+        "payload": true,
+        "placements": false,
+        "views": true
+      },
+      "family": "pypto-lib",
+      "generated_path": "outputs/c3a529c3d50959475d02/next_levels/decode_layer_csa_test/kernels/aic/exp_gate_mm.pto",
+      "level": "level3",
+      "original": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "b1fa5ff1f64dbcbb7e0ff9bc3e2a708a4fd748e68b70a623c844cb325ab98611",
+          "allocations": "6a36378154a77999e4e0d2443fa9830c25cf86cf8906a6bace24166638b5e801",
+          "payload": "6c49035fe3cd0bcbd349214e46f61b717d716ef01000bba9a4bf87e1f68144cb",
+          "placements": "d5893974d7ee788a70480c817ce33511e60afeec826c07fee70d0d508968a7d6",
+          "views": "5ea25089676063e6212865d59c34540932d23e5530b1de934335aeb515a9016a"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {
+            "PIPE_FIX": 1,
+            "PIPE_M": 8,
+            "PIPE_MTE1": 2
+          },
+          "sets": 30,
+          "waits": 30
+        },
+        "process_seconds": 0.06676799000706524,
+        "pto_status": "pass",
+        "status_attributes": [
+          {}
+        ],
+        "sync_control": {}
+      },
+      "parent_seed": "c3a529c3d50959475d02",
+      "sha256": "7f23202cacf61a6fd0720a25242a45addb386d6025178cfb9a9168a1c6ed0e03",
+      "source": "inputs/c3a529c3d50959475d02_000.pto"
+    },
+    "e8fe078ed52ee0696efa_007": {
+      "bytes": "25461",
+      "case_id": "e8fe078ed52ee0696efa_007",
+      "current": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "993b965b42b03631a53f463ac47802e38c751077272aa9d1e72b6685765ec3fa",
+          "allocations": "57c58af8ec22cb6ff0f4eb08c32a6b47a24bc937d6661b787b175dc1223f7f12",
+          "payload": "3a6b9ee4d50bee1902eccc5fb06b3385cd1cabefa7b475e2174a947af72f8f69",
+          "placements": "949fcede6c3e3fc86fccd6f2aa27d64f1b8b43b4b0a498b7bb89980d72eee57f",
+          "views": "e9f483264c9b6de73394120ee14550c3539b4df14558e12bdbbae6918d46a5a8"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 0,
+          "named": {},
+          "sets": 31,
+          "waits": 31
+        },
+        "process_seconds": 0.1455072919925442,
+        "pto_status": "pass",
+        "status_attributes": [
+          {
+            "pto.insert_sync.buffer_generations": "unit",
+            "pto.insert_sync.effect_coverage": "\"complete\"",
+            "pto.insert_sync.generation_barriers_removed": "1 : i64",
+            "pto.insert_sync.generation_global_witnesses": "0 : i64",
+            "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+            "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+            "pto.insert_sync.generation_publication_work": "0 : i64",
+            "pto.insert_sync.generation_publications_advanced": "0 : i64",
+            "pto.insert_sync.generation_publications_guarded": "0 : i64",
+            "pto.insert_sync.generation_ready_sets_removed": "3 : i64",
+            "pto.insert_sync.generation_ready_streams_supplied": "2 : i64",
+            "pto.insert_sync.generation_ready_waits_removed": "3 : i64",
+            "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+            "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+            "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+            "pto.insert_sync.lifecycle_channels": "8 : i64",
+            "pto.insert_sync.lifecycle_completion_pairs": "46 : i64",
+            "pto.insert_sync.lifecycle_completion_witnesses": "9 : i64",
+            "pto.insert_sync.lifecycle_completion_work": "43892 : i64",
+            "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+            "pto.insert_sync.lifecycle_guarded_actions": "1 : i64",
+            "pto.insert_sync.lifecycle_retries": "0 : i64",
+            "pto.insert_sync.lifecycle_supplied_pairs": "241 : i64",
+            "pto.insert_sync.mmad_chain_targets": "0 : i64",
+            "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+            "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+          }
+        ],
+        "sync_control": {
+          "arith.cmpi": 1,
+          "arith.subi": 1,
+          "scf.if": 1
+        }
+      },
+      "entry": "decode_csa_tp1_test",
+      "entry_source": "models/deepseek_v4_flash_dspark/decode_csa.py",
+      "equal": {
+        "abi": true,
+        "allocations": true,
+        "payload": true,
+        "placements": false,
+        "views": true
+      },
+      "family": "pypto-lib",
+      "generated_path": "outputs/e8fe078ed52ee0696efa/kernels/aic/proj_b_mm.pto",
+      "level": "level3",
+      "original": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "993b965b42b03631a53f463ac47802e38c751077272aa9d1e72b6685765ec3fa",
+          "allocations": "57c58af8ec22cb6ff0f4eb08c32a6b47a24bc937d6661b787b175dc1223f7f12",
+          "payload": "3a6b9ee4d50bee1902eccc5fb06b3385cd1cabefa7b475e2174a947af72f8f69",
+          "placements": "ed4e3cfaa55383e3d5dc7563b31451fbacc872ed211f7b2046aa9d3556da4d94",
+          "views": "e9f483264c9b6de73394120ee14550c3539b4df14558e12bdbbae6918d46a5a8"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 1,
+          "named": {
+            "PIPE_FIX": 1
+          },
+          "sets": 21,
+          "waits": 21
+        },
+        "process_seconds": 0.047250079005607404,
+        "pto_status": "pass",
+        "status_attributes": [
+          {}
+        ],
+        "sync_control": {}
+      },
+      "parent_seed": "e8fe078ed52ee0696efa",
+      "sha256": "f08cc07d04bd80d23ff0a67877ed23b0be7bca3c8291dcd6e9d08cc43096e9a4",
+      "source": "inputs/e8fe078ed52ee0696efa_007.pto"
+    },
+    "ef61476d00115c75cd58_364": {
+      "bytes": "93488",
+      "case_id": "ef61476d00115c75cd58_364",
+      "current": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "66402b4f09ded023229091ea6c6dea4157613aa7f125588c3831bbca0c939db7",
+          "allocations": "2cdb39ddc8a695b06a602e26f2aeec51ccab9d420d3a6b6e034c4c5abccb21b4",
+          "payload": "140257bb31626b61eb6e462ec4f5053ecfa775cdcae5cf5ff9e4698215486f00",
+          "placements": "02bcf9488d1ac74dad64d9bf6a7e0624e495d6e12dc5d51c0ce8b33828c88dc8",
+          "views": "9a07264745a4da755a9707ae2a73a63e631089ce1673c12f3f73bedb5f4a6782"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 2,
+          "named": {
+            "PIPE_FIX": 3,
+            "PIPE_M": 16,
+            "PIPE_MTE1": 4,
+            "PIPE_MTE2": 4,
+            "PIPE_MTE3": 1,
+            "PIPE_V": 16
+          },
+          "sets": 49,
+          "waits": 49
+        },
+        "process_seconds": 0.11725846699846443,
+        "pto_status": "pass",
+        "status_attributes": [
+          {
+            "pto.insert_sync.effect_coverage": "\"gap-legacy-retained\"",
+            "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+            "pto.insert_sync.mmad_chain_targets": "0 : i64",
+            "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+            "pto.insert_sync.status": "\"analyzed\""
+          },
+          {
+            "pto.insert_sync.effect_coverage": "\"gap-legacy-retained\"",
+            "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+            "pto.insert_sync.mmad_chain_targets": "0 : i64",
+            "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+            "pto.insert_sync.status": "\"analyzed\""
+          }
+        ],
+        "sync_control": {}
+      },
+      "entry": "l2_decode_fwd",
+      "entry_source": "models/deepseek_v4_flash_mtp/decode_fwd.py",
+      "equal": {
+        "abi": true,
+        "allocations": true,
+        "payload": true,
+        "placements": false,
+        "views": true
+      },
+      "family": "pypto-lib",
+      "generated_path": "outputs/ef61476d00115c75cd58/kernels/qk_pv_2.pto",
+      "level": "level3",
+      "original": {
+        "compiled": true,
+        "cpp_status": "pass",
+        "hashes": {
+          "abi": "66402b4f09ded023229091ea6c6dea4157613aa7f125588c3831bbca0c939db7",
+          "allocations": "2cdb39ddc8a695b06a602e26f2aeec51ccab9d420d3a6b6e034c4c5abccb21b4",
+          "payload": "140257bb31626b61eb6e462ec4f5053ecfa775cdcae5cf5ff9e4698215486f00",
+          "placements": "2a979d4d0d0112c673850b9fc9daa6e3f875613ee84e5dc8060b99c0fd8eff8c",
+          "views": "9a07264745a4da755a9707ae2a73a63e631089ce1673c12f3f73bedb5f4a6782"
+        },
+        "mechanisms": {
+          "PIPE_ALL": 2,
+          "named": {
+            "PIPE_FIX": 3,
+            "PIPE_M": 16,
+            "PIPE_MTE1": 4,
+            "PIPE_MTE3": 1,
+            "PIPE_V": 14
+          },
+          "sets": 55,
+          "waits": 55
+        },
+        "process_seconds": 0.10749147001479287,
+        "pto_status": "pass",
+        "status_attributes": [
+          {},
+          {}
+        ],
+        "sync_control": {}
+      },
+      "parent_seed": "ef61476d00115c75cd58",
+      "sha256": "89db148c4a38019dbdcafa7de4b32e25ebfab4443d239429ebffb432f758c7b9",
+      "source": "inputs/ef61476d00115c75cd58_364.pto"
+    }
+  },
+  "row_count": 9754,
+  "row_counts": {
+    "effect_gap_report_mode": 1671,
+    "readiness_sharing": 166,
+    "selected_lifecycles": 747
+  },
+  "runner_parity": {
+    "all_successful_pto_cpp_byte_identical": true,
+    "arms": [
+      "original",
+      "current"
+    ],
+    "emission_status_parity": true,
+    "rows_per_arm": 213
+  },
+  "runner_sha256": {
+    "compare_native.py": "b0f2eeb8eac204e7eb7e9254053cc117c28ace7bfc396dbb4c5080ce28101fc1",
+    "performance/compare_boundaries.py": "2ff2e932fdeec5430fff693e5bf3db97e64192ee3aa8fe721805e4c306b8c407",
+    "performance/run_qwen_additions.py": "cc31d29326b5b88f2cd473ba9a03ddc8536974d6c659cb6d17cf80152564def3",
+    "summarize_corpus.py": "06946c1963c922eed14ee3bcd474e9886e3bd76d4379d7ca1565df82420e4567"
+  },
+  "source_commit": "3400426f393aac606c134663d5517218fe9a3dc6",
+  "status_counts": {
+    "absent": 218,
+    "analyzed": 7852,
+    "lifecycle-plus-residuals": 747
+  },
+  "table_serialization": "Checked-in CSV uses LF line endings; all parsed fields equal the raw campaign CSV.",
+  "table_sha256": "15b7155ddf861556bdf8ddc7bd90bbc1b10f85fc317f406ccf5258769008e7b0",
+  "totals": {
+    "PIPE_ALL_fewer": 544,
+    "PIPE_ALL_same": 7639,
+    "abi_identical": 8183,
+    "allocations_identical": 8183,
+    "current_compiled": 8183,
+    "current_cpp_passed": 8183,
+    "current_pto_passed": 8183,
+    "original_compiled": 8183,
+    "original_cpp_passed": 8183,
+    "original_pto_passed": 8183,
+    "paired_verified": 8183,
+    "payload_identical": 8183,
+    "placements_identical": 4202,
+    "same_inventory": 5430,
+    "sets_fewer": 246,
+    "sets_more": 754,
+    "sets_same": 7183,
+    "views_identical": 8183,
+    "waits_fewer": 246,
+    "waits_more": 754,
+    "waits_same": 7183
+  },
+  "unique_inputs": 9563
+}

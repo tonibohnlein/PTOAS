@@ -84,6 +84,12 @@ class Boundaries:
             lane = "PIPE_FIX" if "tile_buf<acc," in str(op.operands[0].type) else "PIPE_MTE3"
         if op.name == "pto.textract" and "tile_buf<mat," not in str(op.operands[0].type):
             raise ValueError("boundary observer only qualifies MAT operand extraction")
+        if op.name == "pto.tmov":
+            # Qualified by TMovOp::getPipe: MAT -> LEFT/RIGHT uses MTE1.
+            # Other TMOV directions have different physical completion domains.
+            if ("tile_buf<mat," in str(op.operands[0].type) and
+                    re.search(r"tile_buf<(?:left|right),", str(op.operands[1].type))):
+                lane = "PIPE_MTE1"
         if op.name not in SYNC and op.name.startswith("pto.t") and lane is None:
             raise ValueError(f"no qualified physical lane in boundary observer: {op.name}")
         self.action(op.name, attrs(op), lane, signature)

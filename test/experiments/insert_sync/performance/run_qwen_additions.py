@@ -88,7 +88,7 @@ are recorded separately. Payload control, constants, views and effects remain.
             yield from walk(child)
 
     excluded = {op for op in walk(module.operation) if op.name == "scf.if" and only_sync(op)}
-    control_arithmetic = {"arith.cmpi", "arith.subi", "arith.addi", "arith.andi", "arith.ori", "arith.xori"}
+    control_arithmetic = {"arith.constant", "arith.cmpi", "arith.subi", "arith.addi", "arith.andi", "arith.ori", "arith.xori"}
     while True:
         found = {op for op in walk(module.operation) if op not in excluded and op.name in control_arithmetic
                  and op.results and any(value.uses for value in op.results)

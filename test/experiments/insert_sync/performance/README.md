@@ -1,5 +1,12 @@
 # InsertSync performance regression fixtures
 
+The [verified 862ab8111 device results](GENERATIONS_862_DEVICE_RESULTS.md)
+show the 56-pair GEMM matching hand-tuned performance within the measured
+precision. They also record the GDN placement regression, corrected Conv2D
+failure classification and timer qualifications. The
+[current device task](../../../../DEVICE_TASK_INSERTSYNC_SHARED_3400426F3_WALLTIME.md)
+targets QK/Q projection, GEMM, GDN and Conv2D with exact published source pins.
+
 The [eight Qwen A3 additions](QWEN_ADDITIONS_RESULTS.md) compare original
 InsertSync with the shared-generation revision on existing model kernels,
 including synchronization placement, specialization/fallback diagnostics and

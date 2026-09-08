@@ -80,6 +80,23 @@ class QwenEvidenceTests(unittest.TestCase):
                                  "    scf.if %ready {\n" + payload + "\n    }")
         self.assertNotEqual(self.projection(SOURCE)["payload"], self.projection(guarded)["payload"])
 
+    def test_sync_only_constant_is_recorded_without_hiding_payload_constants(self):
+        control = """    %one = arith.constant 1 : i64
+    %ready = arith.cmpi ne, %zero, %one : i64
+    scf.if %ready {
+      pto.barrier <PIPE_V>
+    }
+"""
+        changed = SOURCE.replace("    return", control + "    return")
+        original, guarded = self.projection(SOURCE), self.projection(changed)
+        self.assertEqual(original["payload"], guarded["payload"])
+        self.assertEqual(guarded["sync_control"], {"arith.constant": 1, "arith.cmpi": 1, "scf.if": 1})
+        self.assertNotEqual(guarded["placements"], self.projection(changed.replace("constant 1 :", "constant 2 :"))["placements"])
+        shared = changed.replace("    %one = arith.constant 1 : i64\n", "")
+        shared = shared.replace("    %zero =", "    %one = arith.constant 32 : i64\n    %zero =")
+        shared = shared.replace("addr = %address", "addr = %one")
+        self.assertNotEqual(original["allocations"], self.projection(shared)["allocations"])
+
     def test_diagnostic_text_is_not_pass_entry_ir(self):
         function = "func.func @sample() {\n  return\n}"
         log = ("// -----// IR Dump Before PTOInsertSync (pto-insert-sync) //----- //\n" +

@@ -19,6 +19,10 @@ import csv
 import difflib
 import hashlib
 import json
+import os
+import signal
+import sys
+import traceback
 from pathlib import Path
 import re
 import subprocess
@@ -41,6 +45,57 @@ def run(command, timeout):
         stdout = error.stdout or b""
         stderr = error.stderr or b""
         return None, stdout.decode(errors="replace"), stderr.decode(errors="replace"), time.monotonic() - start
+
+
+def warm_runtime(runtime):
+    """Preload one serial native runtime before forking isolated invocations."""
+    sys.path.insert(0, str(runtime))
+    from ptoas import _cli
+    from ptoas.mlir import ir
+    class SerialContext(ir.Context):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.enable_multithreading(False)
+    ir.Context = SerialContext
+    _cli._load_native_module()
+    # Forking a process with active native threads is not this execution mode.
+    if len(list(Path("/proc/self/task").iterdir())) != 1:
+        raise RuntimeError("warm-process mode requires a single-threaded parent")
+    return _cli
+
+
+def run_warm(cli, arguments, timeout, directory, kind):
+    """Avoid repeated imports; every compiler call still gets a fresh process.
+
+    Native option state, crashes and timeouts cannot contaminate the next call.
+    The parent performs no compilation while its sole child is running.
+    """
+    stdout_path, stderr_path = directory / f"{kind}.stdout", directory / f"{kind}.stderr"
+    start = time.monotonic()
+    sys.stdout.flush(); sys.stderr.flush()
+    pid = os.fork()
+    if pid == 0:
+        with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
+            os.dup2(stdout.fileno(), 1); os.dup2(stderr.fileno(), 2)
+            try:
+                code = cli.launch(arguments, wrapper=Path(cli.__file__))
+            except BaseException:
+                traceback.print_exc()
+                code = 1
+            sys.stdout.flush(); sys.stderr.flush()
+            os._exit(int(code))
+    status = None
+    while time.monotonic() - start < timeout:
+        finished, raw = os.waitpid(pid, os.WNOHANG)
+        if finished:
+            status = os.waitstatus_to_exitcode(raw)
+            break
+        time.sleep(0.01)
+    else:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+    return (status, stdout_path.read_text(errors="replace") if stdout_path.exists() else "",
+            stderr_path.read_text(errors="replace") if stderr_path.exists() else "", time.monotonic() - start)
 
 
 def participation(stderr):
@@ -93,6 +148,8 @@ def read_rows(manifest, root):
 
 def compile_arm(args):
     """Compile PTO and C++ independently and retain every row, including failures."""
+    if args.warm_process and Path(sys.executable).resolve() != args.python.resolve():
+        raise ValueError("warm-process mode must run with the interpreter specified by --python")
     root = args.input_root.resolve()
     rows = read_rows(args.manifest, root)
     runtime = args.python_root.resolve() if args.python_root else args.build.resolve() / "python"
@@ -100,13 +157,20 @@ def compile_arm(args):
     entry = runtime / "ptoas/_cli.py"
     command_prefix = [str(args.python.resolve()), "-c",
                       "import sys; sys.path.insert(0, sys.argv.pop(1)); "
-                      "from pathlib import Path; from ptoas import _cli; "
+                      "from pathlib import Path; from ptoas import _cli; from ptoas.mlir import ir; "
+                      "exec('class SerialContext(ir.Context):\\n "
+                      "def __init__(self, *a, **kw):\\n  super().__init__(*a, **kw); self.enable_multithreading(False)'); "
+                      "ir.Context = SerialContext; "
                       "raise SystemExit(_cli.launch(sys.argv[1:], wrapper=Path(_cli.__file__)))", str(runtime)]
+    cli = warm_runtime(runtime) if args.warm_process else None
     args.output.mkdir(parents=True, exist_ok=False)
     report = {"population": args.population, "manifest_sha256": digest(args.manifest),
               "native_sha256": digest(native), "cli_sha256": digest(entry),
               "arm": args.arm, "arch": args.arch, "rows": [],
               "gm_alias": args.gm_alias, "audit_mode": args.audit,
+              "buffer_generations": args.buffer_generations, "mmad_chains": args.mmad_chains,
+              "effect_coverage": args.effect_coverage,
+              "execution_mode": "isolated-fork-with-preloaded-runtime" if cli else "fresh-process",
               "semantic_verification": "not-run", "device_execution": "not-run"}
     for row in rows:
         directory = args.output / row["case_id"]
@@ -120,6 +184,12 @@ def compile_arm(args):
                 command.append("--insert-sync-defer-same-pipe")
             if args.gm_alias:
                 command.append(f"--insert-sync-gm-alias={args.gm_alias}")
+            if args.buffer_generations:
+                command.append("--insert-sync-buffer-generations")
+            if args.mmad_chains:
+                command.append("--insert-sync-mmad-chains")
+            if args.effect_coverage:
+                command.append(f"--insert-sync-effect-coverage={args.effect_coverage}")
             if args.audit and kind == "pto":
                 command.append(f"--insert-sync-audit={args.audit}")
             if kind == "pto":
@@ -127,13 +197,16 @@ def compile_arm(args):
                                 "--mlir-print-ir-before=pto-insert-sync",
                                 "--mlir-print-ir-after=pto-insert-sync"])
             command.extend([str(root / row["source"]), "-o", str(output)])
-            code, stdout, stderr, elapsed = run(command, args.timeout)
+            code, stdout, stderr, elapsed = (run_warm(cli, command[len(command_prefix):], args.timeout, directory, kind)
+                                            if cli else run(command, args.timeout))
             (directory / f"{kind}.stdout").write_text(stdout)
             (directory / f"{kind}.stderr").write_text(stderr)
             result = {"command": command, "returncode": code, "seconds": elapsed,
                       "status": "pass" if code == 0 and output.is_file() else "failure"}
             if kind == "pto":
                 result.update(participation(stderr))
+                result["planning_diagnostics"] = [line for line in stderr.splitlines()
+                    if "remark: InsertSync" in line or "error:" in line]
                 result["audit_diagnostics"] = [
                     line for line in stderr.splitlines()
                     if "remark: InsertSync audit:" in line
@@ -144,7 +217,8 @@ def compile_arm(args):
                     )
             record["runs"][kind] = result
         report["rows"].append(record)
-        (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
+        if len(report["rows"]) % 25 == 0:
+            (args.output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
         print(f"{len(report['rows'])}/{len(rows)} {row['case_id']} "
               f"pto={record['runs']['pto']['status']} cpp={record['runs']['cpp']['status']}", flush=True)
     report["native_unchanged"] = digest(native) == report["native_sha256"]
@@ -189,6 +263,11 @@ def main():
     parser.add_argument("--population")
     parser.add_argument("--arm", choices=("main", "combined", "staged"))
     parser.add_argument("--arch", choices=("a2", "a3"), default="a3")
+    parser.add_argument("--warm-process", action="store_true",
+                        help="Preload the runtime and fork each isolated invocation (Linux, one worker)")
+    parser.add_argument("--buffer-generations", action="store_true")
+    parser.add_argument("--mmad-chains", action="store_true")
+    parser.add_argument("--effect-coverage", choices=("report", "strict"))
     parser.add_argument("--gm-alias", choices=("may-alias", "assume-disjoint-arguments"))
     parser.add_argument("--audit", choices=("report", "strict"))
     parser.add_argument("--timeout", type=int, default=120)

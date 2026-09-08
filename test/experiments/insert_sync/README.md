@@ -1,5 +1,12 @@
 # InsertSync native revision campaign
 
+The current shared-generation pass has also been compared with original
+InsertSync on the complete **9,754-row generated collection**. Admission,
+mechanisms, preserved payloads, concrete boundary replays and remaining blockers
+are recorded in [FULL_CORPUS_RESULTS.md](FULL_CORPUS_RESULTS.md), with a complete
+[per-row CSV](FULL_CORPUS_RESULTS.csv). This is a local compiler experiment;
+device correctness and wall time remain separate.
+
 The follow-up v2 application, native integration fixes, and current results are
 recorded in [FOLLOWUP_V2_VALIDATION.md](FOLLOWUP_V2_VALIDATION.md): 147/147
 related fixtures pass in both traversal modes, corpus admission returns to
