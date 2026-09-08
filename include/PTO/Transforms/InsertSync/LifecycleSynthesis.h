@@ -10,15 +10,17 @@
 #ifndef PTO_TRANSFORMS_INSERTSYNC_LIFECYCLESYNTHESIS_H
 #define PTO_TRANSFORMS_INSERTSYNC_LIFECYCLESYNTHESIS_H
 
-#include "PTO/Transforms/InsertSync/LifecycleProtocol.h"
+#include "PTO/Transforms/InsertSync/LifecycleBoundaryProtocol.h"
 #include "PTO/Transforms/InsertSync/StorageFrontierAnalysis.h"
 #include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
 #include "llvm/ADT/DenseMap.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 namespace mlir::pto {
-// Read-only structural import using R5's NativeGraph/guard/residue logic, without
-// demanding that an as-yet UNSYNCHRONIZED function already has completion supply.
-// No new IR attributes, dialect operations, or caller promises are needed.
+struct LifecycleIterationClass {
+    Operation *loop = nullptr;
+    bool first = false, last = false;
+};
 struct InsertSyncLifecycleStructure {
     StorageFrontierSnapshot::Status status = StorageFrontierSnapshot::Status::Unsupported;
     std::string reason;
@@ -27,10 +29,40 @@ struct InsertSyncLifecycleStructure {
     insert_sync_frontier::Program program;
     std::vector<Operation *> anchors;
     std::vector<const CompoundInstanceElement *> phases;
+    // Actual R5 guard-product bindings. No generated/input attribute is trusted
+    // as a predicate. Entries are indexed by the same guarded Program node.
+    std::vector<insert_sync_frontier::GuardEnvironment> guards;
+    std::vector<StorageFrontierGuardRecord> guardDomains;
+    std::vector<std::vector<LifecycleIterationClass>> iterations;
+    std::vector<Operation *> loopExits;
+    std::vector<Block *> blockExits;
 };
 InsertSyncLifecycleStructure buildInsertSyncLifecycleStructure(
     func::FuncOp function, const SyncIRs &syncIR, insert_sync_frontier::Budget &budget);
 
+struct LifecycleGuardTest {
+    enum class Kind { First, Last, Empty, ValueEquals };
+    Kind kind = Kind::Empty;
+    Operation *loop = nullptr;
+    Value expression;
+    int64_t value = 0;
+    unsigned variable = insert_sync_frontier::kInvalid;
+};
+struct LifecyclePlacement {
+    enum class Role { AcquireFree, PublishReady, AcquireReady, PublishFree, BypassReady };
+    Role role = Role::AcquireFree;
+    Operation *anchor = nullptr;
+    Block *blockEnd = nullptr;
+    bool after = false;
+    std::vector<LifecycleGuardTest> tests;
+    insert_sync_frontier::GuardedRole guard;
+};
+struct LifecycleDiagnostic {
+    std::string identity;
+    std::string stage;
+    std::string reason;
+    bool accepted = false;
+};
 class InsertSyncLifecyclePlan {
 public:
     struct Slice {
@@ -43,6 +75,9 @@ public:
     struct Channel {
         insert_sync_frontier::LogicalLifecycle logical;
         SmallVector<Slice, 2> members;
+        std::string identity;
+        std::vector<LifecyclePlacement> placements;
+        unsigned guardedActions = 0, consumerRegions = 0;
     };
     std::vector<Channel> channels;
     llvm::DenseMap<Operation *, unsigned> phaseIds;
@@ -50,26 +85,28 @@ public:
     bool cube = false;
     Operation *lifetimeScope = nullptr;
     mutable uint64_t suppliedPairs = 0;
-
-    // Used BEFORE legacy insertion. Removes only exact covered access pairs,
-    // never marks a whole pipe complete or hides mixed residual dependencies.
     void removeSuppliedDependencies(CompoundInstanceElement *source,
                                    CompoundInstanceElement *target,
                                    DepBaseMemInfoPairVec &pairs) const;
 };
+
+std::optional<bool> classifyInsertSyncLifecycleContinuation(
+    Value condition, scf::ForOp loop, bool first, bool last);
+
+bool qualifyInsertSyncLifecycleBoundaries(
+    const InsertSyncLifecycleStructure &structure, InsertSyncLifecyclePlan::Channel &channel,
+    func::FuncOp function, insert_sync_frontier::Budget &budget, std::string &reason);
 
 struct InsertSyncLifecycleResult {
     enum class Status { Applied, Unchanged, InputError, InternalError };
     Status status = Status::Unchanged;
     std::string reason;
     unsigned attempted = 0, selected = 0, logicalStreams = 0;
+    unsigned planningAttempts = 0, retries = 0, guardedActions = 0, consumerRegions = 0;
     uint64_t suppliedPairs = 0;
     bool combinedEventAuditProved = false;
+    std::vector<LifecycleDiagnostic> diagnostics;
 };
-// Integrated optional construction path. It clones the original, derives
-// lifecycles before insertion, lets the EXISTING analyzer repair residuals,
-// allocates disjoint concrete keys, emits both plans and verifies the protocol
-// delta. Unsupported/capacity outcomes return the original for ordinary insertion.
 InsertSyncLifecycleResult tryInsertSyncLifecycleSynthesis(
     func::FuncOp function, const InsertSyncOptions &options);
 } // namespace mlir::pto

@@ -37,10 +37,14 @@ struct LifecycleRole {
     bool publishReady = false;
     bool acquireReady = false;
     bool publishFree = false;
+    // Before overwrite/exit: consume an unused Ready and return Free.
+    // This is allowed only after a proved empty consumer-region invocation.
+    bool bypassReady = false;
     bool operator==(const LifecycleRole& other) const
     {
         return acquireFree == other.acquireFree && publishReady == other.publishReady &&
-               acquireReady == other.acquireReady && publishFree == other.publishFree;
+               acquireReady == other.acquireReady && publishFree == other.publishFree &&
+               bypassReady == other.bypassReady;
     }
 };
 struct LifecycleCertificate {
@@ -48,6 +52,10 @@ struct LifecycleCertificate {
     Status status = Status::Unsupported;
     std::string reason;
     std::vector<LifecycleRole> roles;
+    // R7 keeps roles per guarded graph occurrence. Static roles are populated
+    // only where uniform; the native adapter must synthesize checked guards.
+    std::vector<LifecycleRole> nodeRoles;
+    std::vector<bool> uniformRoles;
     bool mayReuse = false; // A second production can follow a completed episode.
     // Only a complete certificate can answer a dependency query. This is a
     // storage/occurrence relationship, NEVER a whole-pipe completion fact.
@@ -261,6 +269,8 @@ struct LifecycleAllocation {
     Status status = Status::InvalidInput;
     std::vector<unsigned> ready, free;
     std::string reason;
+    unsigned failedIdentity = kInvalid;
+    unsigned failedSource = kInvalid, failedTarget = kInvalid;
 };
 using ReservedLifecycleKeys = std::map<std::pair<unsigned, unsigned>, uint32_t>;
 
@@ -293,9 +303,12 @@ inline LifecycleAllocation allocateLifecycles(
             return std::nullopt;
         };
         auto ready = choose(plan.spec.producerLane, plan.spec.consumerLane);
-        auto free = choose(plan.spec.consumerLane, plan.spec.producerLane);
+        auto free = ready ? choose(plan.spec.consumerLane, plan.spec.producerLane) : std::nullopt;
         if (
             !ready || !free) {
+            result.failedIdentity = plan.identity;
+            result.failedSource = ready ? plan.spec.consumerLane : plan.spec.producerLane;
+            result.failedTarget = ready ? plan.spec.producerLane : plan.spec.consumerLane;
             result.ready.clear();
             result.free.clear();
             result.status = LifecycleAllocation::Status::ResourceUnresolved;
@@ -312,7 +325,19 @@ inline LifecycleAllocation allocateLifecycles(
 
 // Independent protocol-reconstruction alphabet. Native code reconstructs these
 // actions from the emitted concrete keys, not from candidate coverage bits.
-enum class LifecycleAction { None, Prime, AcquireFree, Write, PublishReady, AcquireReady, Read, PublishFree, Drain };
+enum class LifecycleAction {
+    None,
+    Prime,
+    AcquireFree,
+    Write,
+    PublishReady,
+    AcquireReady,
+    Read,
+    PublishFree,
+    Drain,
+    FreeSignal,
+    FreeWait
+};
 struct ReconstructedLifecycleNode {
     LifecycleAction action = LifecycleAction::None;
     unsigned members = 0;
@@ -364,9 +389,13 @@ inline bool verifyReconstructedLifecycle(
                 stage = 2;
                 written = 0;
                 break;
-            case LifecycleAction::Write:
-                if (
-                    stage != 2 || !node.members || (node.members & ~full) || (written & node.members)) {
+        case LifecycleAction::Write:
+            if (
+                stage == 6) {
+                stage = 2;
+            }
+            if (
+                stage != 2 || !node.members || (node.members & ~full) || (written & node.members)) {
                     return false;
                 }
                 written |= node.members;
@@ -399,16 +428,34 @@ inline bool verifyReconstructedLifecycle(
                 stage = 1;
                 written = 0;
                 break;
-            case LifecycleAction::Drain:
-                if (
-                    stage != 1) {
-                    return false;
-                }
-                stage = 5;
-                break;
+        case LifecycleAction::Drain:
+            if (
+                stage != 1) {
+                return false;
+            }
+            stage = 5;
+            break;
+        case LifecycleAction::FreeSignal:
+            // Reconstruct from the reverse key and actual protocol state, not
+            // the planner's prime/release tags or a lexical-region heuristic.
+            if (
+                stage != 0 && stage != 4) {
+                return false;
+            }
+            stage = 1;
+            written = 0;
+            break;
+        case LifecycleAction::FreeWait:
+            if (
+                stage != 1) {
+                return false;
+            }
+            stage = 6;
+            written = 0;
+            break;
         }
         if (
-            node.next.empty() && stage != 5) {
+            node.next.empty() && stage != 5 && !(stage == 6 && written == 0)) {
             return false;
         }
         for (unsigned next : node.next) {

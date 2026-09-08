@@ -138,6 +138,11 @@ public:
     std::vector<unsigned> rawOrigins;
     std::vector<RequirementWitness> requirementWitnesses;
     std::vector<GuardEnvironment> guardEnvironments;
+    // R7 metadata is collected only for the pre-insertion lifecycle client.
+    bool collectLifecycleMetadata = false;
+    std::vector<std::vector<LifecycleIterationClass>> rawIterationClasses;
+    std::vector<Operation*> rawLoopExits;
+    std::vector<Block*> rawBlockExits;
 
     std::vector<StorageFrontierGuardRecord> describeGuardDomains() const
     {
@@ -213,7 +218,8 @@ public:
         return true;
     }
 
-    NativeGraph(func::FuncOp f, const SyncIRs& syncIR, bool allowSingleSection = false) : function(f)
+    NativeGraph(func::FuncOp f, const SyncIRs& syncIR, bool allowSingleSection = false)
+        : collectLifecycleMetadata(allowSingleSection), function(f)
     {
         auto module = f->getParentOfType<ModuleOp>();
         auto arch = module ? module->getAttrOfType<StringAttr>("pto.target_arch") : StringAttr();
@@ -566,7 +572,9 @@ private:
             !value || !matchPattern(value, m_Constant(&attr)) || !attr.getValue().isSignedIntN(64)) {
             return std::nullopt;
         }
-        return attr.getValue().getSExtValue();
+        // i1 true sign-extends to -1, but finite predicate domains use 0/1.
+        // Retain exact ordinary integer values; normalize only booleans.
+        return canonicalGuardConstant(attr.getValue().getSExtValue(), attr.getValue().getBitWidth());
     }
     // These are exact scalar identities. Tags on generated guards are diagnostic
     // only and are never accepted in place of inspecting the actual expression.
@@ -584,6 +592,13 @@ private:
         for (
             const auto& [operation, stage] : iterationClass) {
             auto loop = cast<scf::ForOp>(operation);
+            if (
+                collectLifecycleMetadata) {
+                if (
+                    auto known = classifyInsertSyncLifecycleContinuation(value, loop, stage.first, stage.second)) {
+                    return known;
+                }
+            }
             bool forward = cmp.getLhs() == loop.getInductionVar() && cmp.getRhs() == loop.getLowerBound();
             bool reverse = cmp.getRhs() == loop.getInductionVar() && cmp.getLhs() == loop.getLowerBound();
             if (
@@ -711,6 +726,52 @@ private:
         }
         return head;
     }
+    // R7 guards are actual scalar expressions, not trusted tags. Expand boolean
+    // conjunction/disjunction into existing path constraints so reconstruction
+    // does not treat a generated (first && path) predicate as a fresh coin flip.
+    Tails constrainedLifecycleCondition(Tails tails, Value value, bool truth, unsigned depth = 0)
+    {
+        if (
+            depth > 16) {
+            failure = "lifecycle boolean predicate budget";
+            return {};
+        }
+        if (
+            auto known = classifiedCondition(value)) {
+            return *known == truth ? tails : Tails{};
+        }
+        Value lhs, rhs;
+        bool conjunction = false;
+        if (
+            auto op = value.getDefiningOp<arith::AndIOp>()) {
+            if (
+                value.getType().isInteger(1)) {
+                lhs = op.getLhs();
+                rhs = op.getRhs();
+                conjunction = true;
+            }
+        } else if (auto op = value.getDefiningOp<arith::OrIOp>()) {
+            if (
+                value.getType().isInteger(1)) {
+                lhs = op.getLhs();
+                rhs = op.getRhs();
+            }
+        }
+        if (
+            !lhs) {
+            return constrained(std::move(tails), condition(value, truth));
+        }
+        if (
+            truth == conjunction) {
+            return constrainedLifecycleCondition(
+                constrainedLifecycleCondition(std::move(tails), lhs, truth, depth + 1), rhs, truth, depth + 1);
+        }
+        auto shortCircuit = constrainedLifecycleCondition(tails, lhs, truth, depth + 1);
+        auto evaluateRight = constrainedLifecycleCondition(
+            constrainedLifecycleCondition(std::move(tails), lhs, !truth, depth + 1), rhs, truth, depth + 1);
+        shortCircuit.insert(shortCircuit.end(), evaluateRight.begin(), evaluateRight.end());
+        return shortCircuit;
+    }
     Tails refresh(Tails tails, Operation* loop, unsigned kind = 0)
     {
         Tails head = add(std::move(tails), {}, nullptr);
@@ -753,6 +814,10 @@ private:
                 }
             });
         iterationClass.erase(loop.getOperation());
+        if (
+            collectLifecycleMetadata && !result.empty()) {
+            rawLoopExits[result.front()] = loop.getOperation();
+        }
         return result;
     }
 
@@ -783,6 +848,15 @@ private:
         unsigned id = program.nodes.size();
         program.nodes.push_back(std::move(node));
         anchors.push_back(anchor);
+        if (
+            collectLifecycleMetadata) {
+            rawIterationClasses.emplace_back();
+            for (const auto& item : iterationClass) {
+                rawIterationClasses.back().push_back({item.first, item.second.first, item.second.second});
+            }
+            rawLoopExits.push_back(nullptr);
+            rawBlockExits.push_back(nullptr);
+        }
         for (
             unsigned p : previous) {
             program.nodes[p].next.push_back(id);
@@ -883,8 +957,12 @@ private:
                         tails = region(choice.getElseRegion(), std::move(tails), depth + 1);
                     }
                 } else {
-                    Tails a = constrained(tails, condition(choice.getCondition(), true));
-                    Tails b = constrained(tails, condition(choice.getCondition(), false));
+                    Tails a = collectLifecycleMetadata ?
+                                  constrainedLifecycleCondition(tails, choice.getCondition(), true) :
+                                  constrained(tails, condition(choice.getCondition(), true));
+                    Tails b = collectLifecycleMetadata ?
+                                  constrainedLifecycleCondition(tails, choice.getCondition(), false) :
+                                  constrained(tails, condition(choice.getCondition(), false));
                     a = region(choice.getThenRegion(), std::move(a), depth + 1);
                     if (
                         !choice.getElseRegion().empty()) {
@@ -1040,6 +1118,10 @@ private:
             return {};
         }
         program.regions[regionId].exit = tails.front();
+        if (
+            collectLifecycleMetadata) {
+            rawBlockExits[tails.front()] = &r.front();
+        }
         return tails;
     }
 };
@@ -1074,6 +1156,13 @@ InsertSyncLifecycleStructure mlir::pto::buildInsertSyncLifecycleStructure(
     }
     result.cube = graph.cube;
     result.lifetimeScope = graph.singlePhysicalSection ? graph.singlePhysicalSection : function.getOperation();
+    result.guardDomains = graph.describeGuardDomains();
+    result.guards = graph.guardEnvironments;
+    for (unsigned original : graph.rawOrigins) {
+        result.iterations.push_back(graph.rawIterationClasses[original]);
+        result.loopExits.push_back(graph.rawLoopExits[original]);
+        result.blockExits.push_back(graph.rawBlockExits[original]);
+    }
     result.program = std::move(graph.program);
     result.anchors = std::move(graph.anchors);
     result.status = StorageFrontierSnapshot::Status::Complete;

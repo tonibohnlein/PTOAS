@@ -20,6 +20,7 @@
 #include "PTO/Transforms/InsertSync/SyncGMAlias.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
@@ -131,10 +132,25 @@ bool supportedDirection(unsigned producer, unsigned consumer)
     return (producer == 0 && consumer == 1) || (producer == 1 && consumer == 2);
 }
 
+std::string channelIdentity(ArrayRef<Slice> slices)
+{
+    std::string result;
+    for (const auto& slice : slices) {
+        if (
+            !result.empty()) {
+            result += "+";
+        }
+        result += std::to_string(static_cast<unsigned>(slice.space)) + ":[" + std::to_string(slice.begin) + "," +
+                  std::to_string(slice.begin + slice.bytes) + ")";
+    }
+    return result;
+}
+
 std::optional<Channel> makeChannel(const InsertSyncLifecycleStructure& structure, ArrayRef<Slice> slices)
 {
     Channel channel;
     channel.members.append(slices.begin(), slices.end());
+    channel.identity = channelIdentity(slices);
     auto& spec = channel.logical.spec;
     spec.members = slices.size();
     spec.phases.resize(structure.phases.size());
@@ -188,7 +204,8 @@ std::optional<Channel> makeChannel(const InsertSyncLifecycleStructure& structure
 }
 
 InsertSyncLifecyclePlan discover(
-    const InsertSyncLifecycleStructure& structure, Budget& budget, unsigned& attempted, bool& invalid)
+    const InsertSyncLifecycleStructure& structure, Budget& budget, unsigned& attempted, bool& invalid,
+    func::FuncOp function, const std::set<std::string>& excluded, std::vector<LifecycleDiagnostic>& diagnostics)
 {
     InsertSyncLifecyclePlan plan;
     plan.cube = structure.cube;
@@ -216,21 +233,34 @@ InsertSyncLifecyclePlan discover(
     });
     if (
         slices.size() > 32) {
+        diagnostics.push_back({"function", "candidate-limit", "more than 32 exact physical slices", false});
         return plan;
     }
     std::vector<std::optional<Channel>> singles;
     for (const auto& slice : slices) {
-        singles.push_back(makeChannel(structure, ArrayRef<Slice>(&slice, 1)));
+        auto single = makeChannel(structure, ArrayRef<Slice>(&slice, 1));
+        if (
+            !single) {
+            diagnostics.push_back(
+                {channelIdentity(ArrayRef<Slice>(&slice, 1)), "physical-recovery",
+                 "partial/unknown overlap, incomplete participant set, or unsupported pipe direction", false});
+        }
+        singles.push_back(std::move(single));
     }
     std::vector<bool> selected(slices.size(), false);
     auto qualify = [&](Channel& channel) {
+        if (
+            excluded.count(channel.identity)) {
+            diagnostics.push_back(
+                {channel.identity, "retry-exclusion", "candidate omitted; its dependencies are restored", false});
+            return false;
+        }
         ++attempted;
-        channel.logical.certificate = recognizeLifecycle(structure.program, channel.logical.spec, budget);
+        std::string reason;
+        bool accepted = qualifyInsertSyncLifecycleBoundaries(structure, channel, function, budget, reason);
         invalid |= channel.logical.certificate.status == LifecycleCertificate::Status::InvalidInput;
-        // Do not add a primed round trip to a statically non-reused one-shot
-        // buffer. General insertion already handles its availability.
-        return channel.logical.certificate.status == LifecycleCertificate::Status::Complete &&
-               channel.logical.certificate.mayReuse;
+        diagnostics.push_back({channel.identity, "recognition-and-guards", reason, accepted});
+        return accepted;
     };
     // LEFT/RIGHT are bundled only when every consumer reads both members. A
     // consumer of just one side vetoes bundling; grouping never postpones an
@@ -332,6 +362,59 @@ bool preserved(func::FuncOp function, const std::vector<OriginalOperation>& orig
     return true;
 }
 
+Value materializeGuard(OpBuilder& builder, Location loc, const LifecyclePlacement& placement)
+{
+    Value disjunction;
+    for (const auto& term : placement.guard.alternatives) {
+        if (
+            term.empty()) {
+            return {}; // unconditional true
+        }
+        Value conjunction;
+        for (const auto& literal : term) {
+            const auto& test = placement.tests[literal.test];
+            Value predicate;
+            if (
+                test.kind == LifecycleGuardTest::Kind::ValueEquals) {
+                Value constant;
+                if (
+                    test.expression.getType().isIndex()) {
+                    constant = builder.create<arith::ConstantIndexOp>(loc, test.value);
+                } else {
+                    constant = builder.create<arith::ConstantOp>(
+                        loc, test.expression.getType(), builder.getIntegerAttr(test.expression.getType(), test.value));
+                }
+                predicate = builder.create<arith::CmpIOp>(
+                    loc, literal.truth ? arith::CmpIPredicate::eq : arith::CmpIPredicate::ne, test.expression,
+                    constant);
+            } else {
+                auto loop = cast<scf::ForOp>(test.loop);
+                if (
+                    test.kind == LifecycleGuardTest::Kind::First) {
+                    predicate = builder.create<arith::CmpIOp>(
+                        loc, literal.truth ? arith::CmpIPredicate::eq : arith::CmpIPredicate::ne,
+                        loop.getInductionVar(), loop.getLowerBound());
+                } else if (test.kind == LifecycleGuardTest::Kind::Last) {
+                    Value remaining =
+                        builder.create<arith::SubIOp>(loc, loop.getUpperBound(), loop.getInductionVar());
+                    predicate = builder.create<arith::CmpIOp>(
+                        loc, literal.truth ? arith::CmpIPredicate::sle : arith::CmpIPredicate::sgt, remaining,
+                        loop.getStep());
+                } else {
+                    predicate = builder.create<arith::CmpIOp>(
+                        loc, literal.truth ? arith::CmpIPredicate::sge : arith::CmpIPredicate::slt,
+                        loop.getLowerBound(), loop.getUpperBound());
+                }
+            }
+            conjunction = conjunction ? builder.create<arith::AndIOp>(loc, conjunction, predicate).getResult() :
+                                        predicate;
+        }
+        disjunction =
+            disjunction ? builder.create<arith::OrIOp>(loc, disjunction, conjunction).getResult() : conjunction;
+    }
+    return disjunction;
+}
+
 void materialize(func::FuncOp function, const InsertSyncLifecyclePlan& plan, const LifecycleAllocation& allocation)
 {
     auto make = [&](OpBuilder& builder, bool set, unsigned source, unsigned target, unsigned id, Location loc) {
@@ -345,41 +428,9 @@ void materialize(func::FuncOp function, const InsertSyncLifecyclePlan& plan, con
             builder.create<WaitFlagOp>(loc, src, dst, event);
         }
     };
-    OpBuilder entry(function.getContext());
     Block& scope = plan.lifetimeScope->getRegion(0).front();
-    entry.setInsertionPointToStart(&scope);
-    for (unsigned c = 0; c < plan.channels.size(); ++c) {
-        const auto& spec = plan.channels[c].logical.spec;
-        make(entry, true, spec.consumerLane, spec.producerLane, allocation.free[c], function.getLoc());
-    }
-    for (unsigned p = 0; p < plan.phases.size(); ++p) {
-        Operation* op = plan.phases[p];
-        OpBuilder before(op), after(function.getContext());
-        after.setInsertionPointAfter(op);
-        for (unsigned c = 0; c < plan.channels.size(); ++c) {
-            const auto& logical = plan.channels[c].logical;
-            const auto& role = logical.certificate.roles[p];
-            unsigned producer = logical.spec.producerLane, consumer = logical.spec.consumerLane;
-            if (
-                role.acquireFree) {
-                make(before, false, consumer, producer, allocation.free[c], op->getLoc());
-            }
-            if (
-                role.acquireReady) {
-                make(before, false, producer, consumer, allocation.ready[c], op->getLoc());
-            }
-            if (
-                role.publishReady) {
-                make(after, true, producer, consumer, allocation.ready[c], op->getLoc());
-            }
-            if (
-                role.publishFree) {
-                make(after, true, consumer, producer, allocation.free[c], op->getLoc());
-            }
-        }
-    }
-    // Drain only at the real function lifetime exit, after original suffix work.
-    // Preserve the existing automatic ALL as the final synchronization boundary.
+    // Save the real tail BEFORE adding guarded cleanup. A new scf.if must not
+    // stop a backwards scan and move cleanup behind the original terminal ALL.
     Operation* drainPoint = nullptr;
     for (Operation& operation : llvm::reverse(scope)) {
         if (
@@ -398,6 +449,96 @@ void materialize(func::FuncOp function, const InsertSyncLifecyclePlan& plan, con
             break;
         }
     }
+    OpBuilder entry(function.getContext());
+    entry.setInsertionPointToStart(&scope);
+    for (unsigned c = 0; c < plan.channels.size(); ++c) {
+        const auto& spec = plan.channels[c].logical.spec;
+        make(entry, true, spec.consumerLane, spec.producerLane, allocation.free[c], function.getLoc());
+    }
+    auto emit = [&](OpBuilder& builder, unsigned c, const LifecyclePlacement& place) {
+        if (
+            place.guard.alternatives.empty()) {
+            return;
+        }
+        Location loc = place.anchor ? place.anchor->getLoc() : function.getLoc();
+        OpBuilder::InsertionGuard restore(builder);
+        Value condition = materializeGuard(builder, loc, place);
+        if (
+            condition) {
+            auto branch = builder.create<scf::IfOp>(loc, condition, false);
+            builder.setInsertionPoint(branch.thenBlock()->getTerminator());
+        }
+        const auto& spec = plan.channels[c].logical.spec;
+        unsigned producer = spec.producerLane, consumer = spec.consumerLane;
+        switch (place.role) {
+            case LifecyclePlacement::Role::BypassReady:
+                make(builder, false, producer, consumer, allocation.ready[c], loc);
+                make(builder, true, consumer, producer, allocation.free[c], loc);
+                break;
+            case LifecyclePlacement::Role::AcquireFree:
+                make(builder, false, consumer, producer, allocation.free[c], loc);
+                break;
+            case LifecyclePlacement::Role::AcquireReady:
+                make(builder, false, producer, consumer, allocation.ready[c], loc);
+                break;
+            case LifecyclePlacement::Role::PublishReady:
+                make(builder, true, producer, consumer, allocation.ready[c], loc);
+                break;
+            case LifecyclePlacement::Role::PublishFree:
+                make(builder, true, consumer, producer, allocation.free[c], loc);
+                break;
+        }
+    };
+    // Establish a deterministic original-operation traversal BEFORE adding new
+    // branches. Bypasses precede acquisition at the same overwrite point.
+    SmallVector<Operation*> originalOps;
+    SmallVector<Block*> originalBlocks;
+    function.getBody().walk([&](Operation* op) { originalOps.push_back(op); });
+    originalBlocks.push_back(&function.getBody().front());
+    for (Operation* op : originalOps) {
+        for (Region& region : op->getRegions()) {
+            for (Block& block : region) {
+                originalBlocks.push_back(&block);
+            }
+        }
+    }
+    for (Operation* op : originalOps) {
+        OpBuilder before(op), after(function.getContext());
+        after.setInsertionPointAfter(op);
+        if (
+            op->hasTrait<OpTrait::IsTerminator>() && op->getBlock() == &scope && drainPoint) {
+            before.setInsertionPoint(drainPoint);
+        }
+        for (unsigned c = 0; c < plan.channels.size(); ++c) {
+            for (const auto& place : plan.channels[c].placements) {
+                if (
+                    place.anchor == op) {
+                    emit(place.after ? after : before, c, place);
+                }
+            }
+        }
+    }
+    for (Block* block : originalBlocks) {
+        OpBuilder atEnd(function.getContext());
+        if (
+            block == &scope && drainPoint) {
+            atEnd.setInsertionPoint(drainPoint);
+        } else if (!block->empty() && block->back().hasTrait<OpTrait::IsTerminator>()) {
+            atEnd.setInsertionPoint(&block->back());
+        } else {
+            atEnd.setInsertionPointToEnd(block);
+        }
+        for (unsigned c = 0; c < plan.channels.size(); ++c) {
+            for (const auto& place : plan.channels[c].placements) {
+                if (
+                    place.blockEnd == block) {
+                    emit(atEnd, c, place);
+                }
+            }
+        }
+    }
+    // Readerless returns at physical-scope exit must precede this final Free
+    // consumption. Keep any original terminal ALL as the final boundary.
     OpBuilder exit(function.getContext());
     if (
         drainPoint) {
@@ -502,34 +643,10 @@ bool reconstruct(
                     nodes[n].action =
                         node.kind == Node::Kind::Signal ? LifecycleAction::PublishReady : LifecycleAction::AcquireReady;
                 } else if (*s == spec.consumerLane && *t == spec.producerLane && id == allocation.free[c]) {
-                    // Prime/drain are recognized by their placement, not a tag.
-                    bool atFunction = anchor->getBlock() == &plan.lifetimeScope->getRegion(0).front();
-                    bool beforePhysical = atFunction;
-                    if (
-                        atFunction) {
-                        for (Operation* prev = anchor->getPrevNode(); prev; prev = prev->getPrevNode()) {
-                            if (
-                                isa<OpPipeInterface>(prev) || prev->getNumRegions()) {
-                                beforePhysical = false;
-                            }
-                        }
-                    }
-                    bool afterPhysical = atFunction;
-                    if (
-                        atFunction) {
-                        for (Operation* next = anchor->getNextNode(); next; next = next->getNextNode()) {
-                            if (
-                                isa<OpPipeInterface>(next) || next->getNumRegions()) {
-                                afterPhysical = false;
-                            }
-                        }
-                    }
-                    if (
-                        node.kind == Node::Kind::Signal) {
-                        nodes[n].action = beforePhysical ? LifecycleAction::Prime : LifecycleAction::PublishFree;
-                    } else {
-                        nodes[n].action = afterPhysical ? LifecycleAction::Drain : LifecycleAction::AcquireFree;
-                    }
+                    // Recover prime/release and acquire/drain by the actual
+                    // per-key state machine, not by tags or "no later region".
+                    nodes[n].action =
+                        node.kind == Node::Kind::Signal ? LifecycleAction::FreeSignal : LifecycleAction::FreeWait;
                 }
             }
         }
@@ -583,8 +700,13 @@ void InsertSyncLifecyclePlan::removeSuppliedDependencies(
         pairs.end());
 }
 
-InsertSyncLifecycleResult mlir::pto::tryInsertSyncLifecycleSynthesis(
-    func::FuncOp function, const InsertSyncOptions& options)
+namespace {
+struct RetryRequest {
+    std::string identity;
+};
+InsertSyncLifecycleResult attemptLifecycleSynthesis(
+    func::FuncOp function, const InsertSyncOptions& options, const std::set<std::string>& excluded,
+    RetryRequest& retryRequest)
 {
     InsertSyncLifecycleResult result;
     auto parent = function->getParentOfType<ModuleOp>();
@@ -650,7 +772,8 @@ InsertSyncLifecycleResult mlir::pto::tryInsertSyncLifecycleSynthesis(
         return result;
     }
     bool invalidLifecycle = false;
-    auto plan = discover(structure, budget, result.attempted, invalidLifecycle);
+    auto plan = discover(
+        structure, budget, result.attempted, invalidLifecycle, cloned, excluded, result.diagnostics);
     if (
         invalidLifecycle) {
         result.status = InsertSyncLifecycleResult::Status::InternalError;
@@ -669,6 +792,42 @@ InsertSyncLifecycleResult mlir::pto::tryInsertSyncLifecycleSynthesis(
     }
     result.selected = plan.channels.size();
     result.logicalStreams = 2 * result.selected;
+    for (const auto& channel : plan.channels) {
+        result.guardedActions += channel.guardedActions;
+        result.consumerRegions += channel.consumerRegions;
+    }
+    auto retry = [&](const std::string& stage, const std::string& reason, unsigned source = kInvalid,
+                     unsigned target = kInvalid, unsigned failedIdentity = kInvalid) {
+        result.reason = reason;
+        if (failedIdentity != kInvalid) {
+            auto failed = std::find_if(plan.channels.begin(), plan.channels.end(), [&](const auto& channel) {
+                return channel.logical.identity == failedIdentity;
+            });
+            if (
+                failed == plan.channels.end()) {
+                result.status = InsertSyncLifecycleResult::Status::InternalError;
+                result.reason = "resource assignment reported an unknown lifecycle candidate";
+                return;
+            }
+            retryRequest.identity = failed->identity;
+            result.diagnostics.push_back({retryRequest.identity, stage, reason, false});
+            return;
+        }
+        std::vector<LogicalLifecycle> selected;
+        for (const auto& channel : plan.channels) {
+            selected.push_back(channel.logical);
+        }
+        auto identity = chooseLifecycleRetry(selected, source, target);
+        if (
+            !identity && source != kInvalid) {
+            identity = chooseLifecycleRetry(selected);
+        }
+        if (
+            identity) {
+            retryRequest.identity = plan.channels[*identity].identity;
+            result.diagnostics.push_back({retryRequest.identity, stage, reason, false});
+        }
+    };
 
     // The shared logical plan exists BEFORE dependency insertion. Legacy
     // traversal retains and repairs every dependency not explicitly supplied.
@@ -698,7 +857,7 @@ InsertSyncLifecycleResult mlir::pto::tryInsertSyncLifecycleSynthesis(
                 sync->isBarrierType()) {
                 if (
                     sync->GetActualSrcPipe() == PipelineType::PIPE_ALL && !sync->IsAutoSyncTailBarrier()) {
-                    result.reason = "unchanged: residual allocation required serialization";
+                    retry("residual-allocation", "residual allocation required serialization");
                     return result;
                 }
                 continue;
@@ -711,13 +870,14 @@ InsertSyncLifecycleResult mlir::pto::tryInsertSyncLifecycleSynthesis(
             auto target = localLane(static_cast<PIPE>(sync->GetActualDstPipe()), plan.cube);
             if (
                 !source || !target || sync->eventIds.empty()) {
-                result.reason = "unchanged: residual event realization unresolved";
+                retry("residual-allocation", "residual event realization unresolved");
                 return result;
             }
             for (int id : sync->eventIds) {
                 if (
                     id < 0 || id >= 8) {
-                    result.reason = "unchanged: residual key out of range";
+                    result.status = InsertSyncLifecycleResult::Status::InternalError;
+                    result.reason = "residual key out of range";
                     return result;
                 }
                 occupied[{*source, *target}] |= 1u << id;
@@ -730,8 +890,16 @@ InsertSyncLifecycleResult mlir::pto::tryInsertSyncLifecycleSynthesis(
     }
     auto allocation = allocateLifecycles(logical, occupied);
     if (
+        allocation.status == LifecycleAllocation::Status::InvalidInput) {
+        result.status = InsertSyncLifecycleResult::Status::InternalError;
+        result.reason = "invalid logical channel allocation input";
+        return result;
+    }
+    if (
         allocation.status != LifecycleAllocation::Status::Complete) {
-        result.reason = "unchanged: " + allocation.reason;
+        retry(
+            "resource-assignment", allocation.reason, allocation.failedSource,
+            allocation.failedTarget, allocation.failedIdentity);
         return result;
     }
     SyncCodegen codegen(ir, cloned, SyncAnalysisMode::NORMALSYNC);
@@ -749,7 +917,7 @@ InsertSyncLifecycleResult mlir::pto::tryInsertSyncLifecycleSynthesis(
     });
     if (
         bodyAll || allCount > 1) {
-        result.reason = "unchanged: residual output contains a broad body cut";
+        retry("residual-emission", "residual output contains a broad body cut");
         return result;
     }
     materialize(cloned, plan, allocation);
@@ -849,14 +1017,80 @@ InsertSyncLifecycleResult mlir::pto::tryInsertSyncLifecycleSynthesis(
     result.combinedEventAuditProved = whole.status == CompletionResult::Status::Complete && whole.eventsProved;
     if (
         !result.combinedEventAuditProved) {
-        result.reason =
-            "unchanged: combined residual event transfer unproved at node " + std::to_string(whole.unprovedEventNode);
+        if (
+            whole.status == CompletionResult::Status::LimitExceeded) {
+            result.reason = "combined event analysis budget exhausted; not event scarcity";
+            return result;
+        }
+        unsigned source = kInvalid, target = kInvalid;
+        if (
+            whole.unprovedEventNode < concrete.program.nodes.size()) {
+            unsigned key = concrete.program.nodes[whole.unprovedEventNode].key;
+            if (
+                key < concrete.program.keys.size()) {
+                source = concrete.program.keys[key].source;
+                target = concrete.program.keys[key].target;
+            }
+        }
+        retry(
+            "combined-event-proof",
+            "combined residual event transfer unproved at node " + std::to_string(whole.unprovedEventNode), source,
+            target);
         return result;
     }
     result.suppliedPairs = plan.suppliedPairs;
+    for (const auto& channel : plan.channels) {
+        result.diagnostics.push_back(
+            {channel.identity, "commit", "complete emitted lifecycle and residuals committed", true});
+    }
     function.getBody().takeBody(cloned.getBody());
     function->setAttrs(cloned->getAttrs());
     result.status = InsertSyncLifecycleResult::Status::Applied;
-    result.reason = "pre-insertion exact-slot lifecycle plan plus legacy residuals; no added scarcity ordering";
+    result.reason = "guarded lifecycle plan plus rebuilt legacy residuals; no added scarcity ordering";
+    return result;
+}
+
+} // namespace
+
+InsertSyncLifecycleResult mlir::pto::tryInsertSyncLifecycleSynthesis(
+    func::FuncOp function, const InsertSyncOptions& options)
+{
+    constexpr unsigned maximumAttempts = 8;
+    std::set<std::string> excluded;
+    std::vector<LifecycleDiagnostic> diagnostics;
+    unsigned candidatesAttempted = 0;
+    InsertSyncLifecycleResult result;
+    for (unsigned attempt = 0; attempt < maximumAttempts; ++attempt) {
+        RetryRequest retry;
+        // Each attempt clones function afresh. No omitted dependency, event ID,
+        // or mutable SyncIR from the failed attempt can leak into this one.
+        result = attemptLifecycleSynthesis(function, options, excluded, retry);
+        candidatesAttempted += result.attempted;
+        for (auto diagnostic : result.diagnostics) {
+            diagnostic.stage = "attempt-" + std::to_string(attempt + 1) + "/" + diagnostic.stage;
+            diagnostics.push_back(std::move(diagnostic));
+        }
+        result.planningAttempts = attempt + 1;
+        result.retries = attempt;
+        result.attempted = candidatesAttempted;
+        result.diagnostics = diagnostics;
+        if (
+            result.status != InsertSyncLifecycleResult::Status::Applied) {
+            // These counters describe committed changes, never rolled-back trials.
+            result.selected = result.logicalStreams = result.guardedActions = result.consumerRegions = 0;
+            result.suppliedPairs = 0;
+        }
+        if (
+            result.status != InsertSyncLifecycleResult::Status::Unchanged || retry.identity.empty()) {
+            return result;
+        }
+        if (
+            !excluded.insert(retry.identity).second) {
+            result.status = InsertSyncLifecycleResult::Status::InternalError;
+            result.reason = "retry did not remove a distinct optional candidate";
+            return result;
+        }
+    }
+    result.reason = "bounded optional-candidate retry exhausted; original input retained (not a scarcity proof)";
     return result;
 }

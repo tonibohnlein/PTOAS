@@ -251,7 +251,14 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
             << result.reason << "; attempted=" << result.attempted
             << ", proposed=" << result.selected << ", streams=" << result.logicalStreams
             << ", supplied-access-pairs=" << result.suppliedPairs
-            << ", combined-event-audit=" << (result.combinedEventAuditProved ? "proved" : "unproved");
+            << ", combined-event-audit=" << (result.combinedEventAuditProved ? "proved" : "unproved")
+            << ", planning-attempts=" << result.planningAttempts << ", retries=" << result.retries
+            << ", consumer-regions=" << result.consumerRegions << ", guarded-actions=" << result.guardedActions;
+        for (const auto& diagnostic : result.diagnostics) {
+            func.emitRemark("InsertSync lifecycle candidate: ")
+                << diagnostic.identity << "; stage=" << diagnostic.stage
+                << "; accepted=" << diagnostic.accepted << "; " << diagnostic.reason;
+        }
         if (result.status == InsertSyncLifecycleResult::Status::InternalError ||
             result.status == InsertSyncLifecycleResult::Status::InputError) {
             func.emitError(result.reason);
@@ -263,6 +270,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
             // Counts are output diagnostics, never input semantic promises.
             auto type = IntegerType::get(&getContext(), 64);
             func->setAttr("pto.insert_sync.lifecycle_channels", IntegerAttr::get(type, result.selected));
+            func->setAttr("pto.insert_sync.lifecycle_retries", IntegerAttr::get(type, result.retries));
+            func->setAttr("pto.insert_sync.lifecycle_consumer_regions", IntegerAttr::get(type, result.consumerRegions));
+            func->setAttr("pto.insert_sync.lifecycle_guarded_actions", IntegerAttr::get(type, result.guardedActions));
             func->setAttr("pto.insert_sync.lifecycle_supplied_pairs", IntegerAttr::get(type, result.suppliedPairs));
             auditOutput(func);
             return;

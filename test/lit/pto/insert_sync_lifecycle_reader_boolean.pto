@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+// Native test definition; not executed in the producing environment.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --insert-sync-lifecycle-synthesis --emit-pto-ir %s -o %t.on.pto
+// RUN: FileCheck %s --check-prefix=ON < %t.on.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --insert-sync-lifecycle-synthesis --insert-sync-defer-same-pipe %s -o %t.cpp
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --emit-pto-ir %s -o %t.off.pto
+// RUN: FileCheck %s --check-prefix=OFF < %t.off.pto
+// OFF-NOT: lifecycle-plus-residuals
+// ON-LABEL: func.func @boolean_guarded_panel
+// ON-SAME: lifecycle-plus-residuals
+// ON: pto.section.cube
+// ON: scf.for
+// ON: pto.tload
+// ON: scf.for
+// ON: arith.cmpi eq
+// ON: scf.if
+// ON: pto.wait_flag
+// ON: pto.textract
+// ON: arith.subi
+// ON: arith.cmpi sle
+// ON: scf.if
+// ON: pto.set_flag
+// ON: pto.tmatmul
+// ON: arith.cmpi sge
+// ON: scf.if
+// ON: pto.wait_flag
+// ON: pto.set_flag
+!MA = !pto.tile_buf<loc=mat, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!MB = !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!A = !pto.tile_buf<loc=left, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+!B = !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!C = !pto.tile_buf<loc=acc, dtype=f32, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!G = !pto.tensor_view<?x?xf16>
+!PA = !pto.partition_tensor_view<128x64xf16>
+!PB = !pto.partition_tensor_view<64x256xf16>
+module attributes {pto.target_arch = "a3"} {
+  func.func @boolean_guarded_panel(%ga: !pto.ptr<f16>, %gb: !pto.ptr<f16>, %outer: index, %inner: index, %enabled: i1) {
+    pto.section.cube {
+      %z = arith.constant 0 : index
+      %one = arith.constant 1 : index
+      %m = arith.constant 128 : index
+      %k = arith.constant 64 : index
+      %n = arith.constant 256 : index
+      %a0 = arith.constant 0 : i64
+      %aB = arith.constant 131072 : i64
+      %av = pto.make_tensor_view %ga, shape = [%m, %k], strides = [%k, %one] : !G
+      %bv = pto.make_tensor_view %gb, shape = [%k, %n], strides = [%one, %k] {layout = #pto.layout<dn>} : !G
+      %ap = pto.partition_view %av, offsets = [%z, %z], sizes = [%m, %k] : !G -> !PA
+      %bp = pto.partition_view %bv, offsets = [%z, %z], sizes = [%k, %n] : !G -> !PB
+      %ma = pto.alloc_tile addr = %a0 : !MA
+      %mb = pto.alloc_tile addr = %aB : !MB
+      %a = pto.alloc_tile addr = %a0 : !A
+      %b = pto.alloc_tile addr = %a0 : !B
+      %c = pto.alloc_tile addr = %a0 : !C
+      %true = arith.constant true
+      %go = arith.cmpi eq, %enabled, %true : i1
+      scf.if %go {
+      scf.for %p = %z to %outer step %one {
+        pto.tload ins(%ap : !PA) outs(%ma : !MA)
+        pto.tload ins(%bp : !PB) outs(%mb : !MB)
+        scf.for %j = %z to %inner step %one {
+          pto.textract ins(%ma, %z, %z : !MA, index, index) outs(%a : !A)
+          pto.textract ins(%mb, %z, %z : !MB, index, index) outs(%b : !B)
+          pto.tmatmul ins(%a, %b : !A, !B) outs(%c : !C)
+        }
+      }
+      }
+    }
+    return
+  }
+}
