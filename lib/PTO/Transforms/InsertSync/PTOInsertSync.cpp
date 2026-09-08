@@ -420,6 +420,13 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         auto cleanup = refineInsertSyncCompletion(func, syncIR, candidates, budget);
         func->setAttr("pto.insert_sync.generation_barriers_removed",
                       IntegerAttr::get(IntegerType::get(&getContext(), 64), cleanup.removed));
+        insert_sync_frontier::Budget placementBudget;
+        auto placement = refineInsertSyncPublications(func, syncIR, analyzer.getRequirements(), placementBudget);
+        auto i64 = IntegerType::get(&getContext(), 64);
+        func->setAttr("pto.insert_sync.generation_publications_advanced", IntegerAttr::get(i64, placement.signalsAdvanced));
+        func->setAttr("pto.insert_sync.generation_publications_guarded", IntegerAttr::get(i64, placement.guarded));
+        func->setAttr("pto.insert_sync.generation_publication_edges_removed", IntegerAttr::get(i64, placement.occurrenceProofs));
+        func->setAttr("pto.insert_sync.generation_publication_work", IntegerAttr::get(i64, placement.work));
     }
     if (pruneCompletedBarriers && *coverage) {
         // Optional refinement never becomes an admission gate. It does not
@@ -431,7 +438,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
             << result.removed << " barriers removed; " << result.reason;
     }
     if (
-        (frontierRefinement || frontierPlacement) && *coverage) {
+        (frontierRefinement || frontierPlacement) && *coverage && !bufferGenerations) {
         SmallVector<Operation *> candidates;
         func.walk([&](BarrierOp barrier) {
             if (

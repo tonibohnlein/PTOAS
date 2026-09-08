@@ -822,6 +822,159 @@ void InsertSyncLifecyclePlan::removeSuppliedDependencies(
 }
 
 namespace {
+// Replace one COMPLETE readiness stream with already-established physical
+// completion. Reclamation remains a separate obligation and keeps its stream.
+// This is a checked alternative realization, not deletion of arbitrary actions
+// inside an opaque protocol or a claim that two streams have equal recurrence.
+void reuseReadinessSupply(func::FuncOp function, const SyncIRs& ir, InsertSyncLifecyclePlan& plan,
+                         const LifecycleAllocation& allocation, InsertSyncLifecycleResult& result)
+{
+    Budget budget;
+    auto snapshot = analyzeInsertSyncStorageFrontiers(function, ir, false, budget, true);
+    if (snapshot.status != StorageFrontierSnapshot::Status::Complete ||
+        !completionAtExits(snapshot.program, snapshot.supply).proved || !plan.requirements.local) return;
+    const auto& input = *plan.requirements.local;
+    auto identitiesMatch = [&](const StorageFrontierSnapshot& view) {
+        if (view.program.phaseLane.size() != input.phases.size() ||
+            view.anchors.size() != view.program.nodes.size()) return false;
+        for (unsigned n = 0; n < view.program.nodes.size(); ++n) {
+            const auto& node = view.program.nodes[n];
+            if (node.kind == Node::Kind::Issue &&
+                (node.phase >= input.phases.size() || view.anchors[n] != input.phases[node.phase])) return false;
+        }
+        return true;
+    };
+    if (!identitiesMatch(snapshot)) return;
+    auto accepted = snapshot.program;
+    auto supply = snapshot.supply;
+    SmallVector<Operation*> removed;
+    unsigned streams = 0, sets = 0, waits = 0;
+    std::set<unsigned> suppliedLanes;
+    SmallVector<unsigned> suppliedChannels;
+    for (unsigned c = 0; c < plan.channels.size() && budget.left; ++c) {
+        const auto& channel = plan.channels[c];
+        const auto& spec = channel.logical.spec;
+        SmallVector<Operation*> actions;
+        function.walk([&](Operation* op) {
+            if (!plan.protocolActions.contains(op)) return;
+            PIPE source, target;
+            unsigned id;
+            if (auto set = dyn_cast<SetFlagOp>(op)) {
+                source = set.getSrcPipe().getPipe(); target = set.getDstPipe().getPipe();
+                id = unsigned(set.getEventId().getEvent());
+            } else if (auto wait = dyn_cast<WaitFlagOp>(op)) {
+                source = wait.getSrcPipe().getPipe(); target = wait.getDstPipe().getPipe();
+                id = unsigned(wait.getEventId().getEvent());
+            } else return;
+            if (source == physicalLane(spec.producerLane, plan.cube) &&
+                target == physicalLane(spec.consumerLane, plan.cube) && id == allocation.ready[c]) actions.push_back(op);
+        });
+        if (actions.empty()) continue;
+        auto trial = accepted;
+        for (unsigned n = 0; n < snapshot.anchors.size(); ++n)
+            if (llvm::is_contained(actions, snapshot.anchors[n])) trial.nodes[n].kind = Node::Kind::Pass;
+        auto facts = completion(trial, Bits(trial.nodes.size()), budget);
+        if (!completionAtExits(trial, facts).proved) continue;
+        // Source-prefix publication can serve more than its motivating member.
+        // Recheck EVERY memory obligation sourced on this physical lane, from
+        // shared input requirements AND independent emitted effect extraction.
+        // Full phase completion is deliberately stronger than a recipe's own
+        // generation claim; unknown correspondence refuses this replacement.
+        std::vector<Requirement> needs;
+        for (const auto& q : snapshot.requirements)
+            if (trial.phaseLane[q.source] == spec.producerLane) needs.push_back(q);
+        for (const auto& q : input.obligations)
+            if (trial.phaseLane[q.source] == spec.producerLane)
+                needs.push_back({q.source, q.target, Requirement::Kind::Conservative});
+        if (!covers(trial, facts, needs).proved) continue;
+        bool same = true;
+        for (unsigned n = 0; n < trial.nodes.size() && same; ++n) {
+            if (trial.nodes[n].kind != Node::Kind::Issue || !supply.before[n]) continue;
+            same = facts.before[n] && supply.before[n]->known == facts.before[n]->known;
+        }
+        if (!same) continue;
+        accepted = std::move(trial);
+        supply = std::move(facts);
+        for (Operation* op : actions) {
+            sets += isa<SetFlagOp>(op);
+            waits += isa<WaitFlagOp>(op);
+            removed.push_back(op);
+        }
+        ++streams;
+        suppliedLanes.insert(spec.producerLane);
+        suppliedChannels.push_back(c);
+    }
+    if (!removed.empty()) {
+        // Detach transactionally, then translate actual emitted effects and
+        // reconstruct its keys/guards independently of the trial graph.
+        SmallVector<std::pair<Operation*, Operation*>> detached;
+        for (Operation* op : removed) {
+            detached.push_back({op, op->getNextNode()});
+            op->remove();
+        }
+        MemoryDependentAnalyzer memory;
+        auto mode = function->getAttrOfType<StringAttr>("pto.gm_alias");
+        memory.setGMContract(function, mode && mode.getValue() == "assume-disjoint-arguments" ?
+            InsertSyncGMAliasMode::DisjointArguments : InsertSyncGMAliasMode::MayAlias);
+        SyncIRs rebuilt;
+        Buffer2MemInfoMap buffers;
+        PTOIRTranslator translator(rebuilt, memory, buffers, function, SyncAnalysisMode::NORMALSYNC);
+        translator.enableGenerationFlow();
+        translator.Build();
+        auto concrete = analyzeInsertSyncStorageFrontiers(function, rebuilt, false, budget, true);
+        bool proved = concrete.status == StorageFrontierSnapshot::Status::Complete && identitiesMatch(concrete) &&
+                      completionAtExits(concrete.program, concrete.supply).proved;
+        std::vector<Requirement> needs;
+        if (proved) {
+            for (const auto& q : concrete.requirements)
+                if (suppliedLanes.count(concrete.program.phaseLane[q.source])) needs.push_back(q);
+            for (const auto& q : input.obligations)
+                if (suppliedLanes.count(concrete.program.phaseLane[q.source]))
+                    needs.push_back({q.source, q.target, Requirement::Kind::Conservative});
+            proved = covers(concrete.program, concrete.supply, needs).proved;
+        }
+        // Deleting event nodes must preserve the supported guarded payload
+        // occurrences, and every completion prefix at each such occurrence.
+        SmallVector<unsigned> oldIssues, newIssues;
+        for (unsigned n = 0; n < snapshot.program.nodes.size(); ++n)
+            if (snapshot.program.nodes[n].kind == Node::Kind::Issue) oldIssues.push_back(n);
+        for (unsigned n = 0; n < concrete.program.nodes.size(); ++n)
+            if (concrete.program.nodes[n].kind == Node::Kind::Issue) newIssues.push_back(n);
+        proved &= oldIssues.size() == newIssues.size() && snapshot.guardDomains.size() == concrete.guardDomains.size();
+        for (unsigned g = 0; proved && g < snapshot.guardDomains.size(); ++g) {
+            const auto& a = snapshot.guardDomains[g]; const auto& b = concrete.guardDomains[g];
+            proved = a.expression == b.expression && a.invocationScope == b.invocationScope &&
+                     a.tripShapeOf == b.tripShapeOf && a.possibleValues == b.possibleValues;
+        }
+        for (unsigned i = 0; proved && i < oldIssues.size(); ++i) {
+            unsigned a = oldIssues[i], b = newIssues[i];
+            const auto& oldFact = snapshot.supply.before[a];
+            const auto& newFact = concrete.supply.before[b];
+            proved = snapshot.anchors[a] == concrete.anchors[b] &&
+                     !(snapshot.guards[a] < concrete.guards[b]) && !(concrete.guards[b] < snapshot.guards[a]) &&
+                     bool(oldFact) == bool(newFact) && (!oldFact || oldFact->known == newFact->known);
+        }
+        proved &= succeeded(verify(function));
+        if (!proved) {
+            for (const auto& item : llvm::reverse(detached))
+                item.second->getBlock()->getOperations().insert(Block::iterator(item.second), item.first);
+            streams = sets = waits = 0;
+            result.diagnostics.push_back({"mixed-plan", "shared-readiness",
+                "actual emitted reconstruction unproved; complete original streams retained", false});
+        } else {
+            for (Operation* op : removed) { plan.protocolActions.erase(op); op->destroy(); }
+            for (unsigned c : suppliedChannels)
+                result.diagnostics.push_back({plan.channels[c].identity, "shared-readiness",
+                    "complete readiness supplied by remaining handoffs; fresh effects, guarded payload prefixes, "
+                    "source-lane requirements, exit completion and actual event participation rechecked", true});
+        }
+    }
+    auto i64 = IntegerType::get(function.getContext(), 64);
+    function->setAttr("pto.insert_sync.generation_ready_streams_supplied", IntegerAttr::get(i64, streams));
+    function->setAttr("pto.insert_sync.generation_ready_sets_removed", IntegerAttr::get(i64, sets));
+    function->setAttr("pto.insert_sync.generation_ready_waits_removed", IntegerAttr::get(i64, waits));
+}
+
 // Recolor residual keys using the COMPLETE logical plan before reserving
 // dedicated lifecycle keys. Sharing never changes an endpoint or adds a wait.
 unsigned compactResidualAllocation(func::FuncOp function, SyncOperations& syncs,
@@ -1364,6 +1517,19 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
         if (failed(verify(cloned))) {
             result.status = InsertSyncLifecycleResult::Status::InternalError;
             result.reason = "completion refinement produced invalid MLIR";
+            return result;
+        }
+        Budget placementBudget;
+        auto placement = refineInsertSyncPublications(cloned, checkedIR, plan.requirements, placementBudget);
+        cloned->setAttr("pto.insert_sync.generation_publications_advanced", IntegerAttr::get(i64, placement.signalsAdvanced));
+        cloned->setAttr("pto.insert_sync.generation_publications_guarded", IntegerAttr::get(i64, placement.guarded));
+        cloned->setAttr("pto.insert_sync.generation_publication_edges_removed", IntegerAttr::get(i64, placement.occurrenceProofs));
+        cloned->setAttr("pto.insert_sync.generation_publication_work", IntegerAttr::get(i64, placement.work));
+        result.diagnostics.push_back({"mixed-plan", "shared-publication", placement.reason, true});
+        reuseReadinessSupply(cloned, checkedIR, plan, allocation, result);
+        if (!preserved(cloned, original) || failed(verify(cloned))) {
+            result.status = InsertSyncLifecycleResult::Status::InternalError;
+            result.reason = "publication refinement changed original payload or produced invalid IR";
             return result;
         }
     }

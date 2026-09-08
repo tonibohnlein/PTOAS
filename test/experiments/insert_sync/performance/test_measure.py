@@ -291,7 +291,7 @@ class AccountingTests(unittest.TestCase):
         )
 
     def test_unknown_scalar_rejected(self):
-        source = generate(1)[0].replace("arith.remui", "arith.maxsi")
+        source = generate(1)[0].replace("arith.remui", "arith.shli")
         with self.assertRaisesRegex(ValueError, "unsupported operation"):
             self.evaluate(source, 1)
 

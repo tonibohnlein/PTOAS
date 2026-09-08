@@ -24,6 +24,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/Matchers.h"
@@ -1296,6 +1297,180 @@ StorageFrontierRefinementResult mlir::pto::refineInsertSyncCompletion(
     result.removed = removed.size();
     result.work = start - budget.left;
     if (result.reason.empty()) result.reason = "concrete completion and event consumption checked";
+    return result;
+}
+
+StorageFrontierRefinementResult mlir::pto::refineInsertSyncPublications(
+    func::FuncOp function, const SyncIRs& syncIR, SyncRequirements& requirements, Budget& budget)
+{
+    StorageFrontierRefinementResult result;
+    if (!requirements.local || !requirements.local->complete) {
+        result.reason = "exact local requirements unavailable; existing plan retained";
+        return result;
+    }
+    const auto& input = *requirements.local;
+    NativeGraph base(function, syncIR, true);
+    if (base.failure.empty()) base.partition(budget);
+    if (!base.failure.empty()) { result.reason = base.failure; return result; }
+    auto supply = completion(base.program, Bits(base.program.nodes.size()), budget);
+    if (!completionAtExits(base.program, supply).proved) {
+        result.reason = "publication rewrite cannot establish the existing exit contract";
+        return result;
+    }
+    // Payload identity is unchanged by this rewrite. Guarded occurrences are
+    // reconstructed for each trial; neither their indices nor their knowledge
+    // bits are copied across the newly introduced conditional publication.
+    auto samePhases = [&](const NativeGraph& graph) {
+        if (graph.phases.size() != input.phases.size()) return false;
+        for (unsigned p = 0; p < input.phases.size(); ++p)
+            if (graph.phases[p].legacy->elementOp != input.phases[p]) return false;
+        return true;
+    };
+    if (!samePhases(base)) { result.reason = "payload phase identity changed"; return result; }
+    std::vector<Bits> intrinsic;
+    // This independent re-extraction also retains GM/resource-facing conflicts
+    // outside the migrated family. A local slice alone cannot isolate a lane.
+    auto independent = base.allPairs(false, intrinsic, budget, false);
+    if (!base.failure.empty()) { result.reason = base.failure; return result; }
+    SmallVector<SetFlagOp> signals;
+    function.walk([&](SetFlagOp set) { if (requirements.owns(set)) signals.push_back(set); });
+    DominanceInfo dominance(function);
+    const uint64_t start = budget.left;
+    for (SetFlagOp set : signals) {
+        if (!budget.left || result.placementAttempts >= 32) break;
+        if (set->getNumOperands()) continue; // dynamic event selection is not this lowering
+        auto lane = laneFor(set.getSrcPipe().getPipe(), base.cube);
+        auto targetLane = laneFor(set.getDstPipe().getPipe(), base.cube);
+        if (!lane || !targetLane) continue;
+        SmallVector<Operation*> anchors;
+        // Complete stream participation stays in place. Advancing through a
+        // wait, another publication, or control region would require a distinct
+        // transformation, so none is crossed here.
+        for (Operation* op = set->getPrevNode(); op; op = op->getPrevNode()) {
+            if (op->getNumRegions() || isa<SetFlagOp, WaitFlagOp, BarrierOp, RecordEventOp, WaitEventOp>(op)) break;
+            auto p = input.phaseIds.find(op);
+            if (p == input.phaseIds.end()) continue;
+            if (base.program.phaseLane[p->second] != *lane) break;
+            bool producer = llvm::any_of(input.obligations, [&](const auto& q) {
+                return q.source == p->second && (q.hazards & LocalStorageRequirements::RAW) &&
+                       base.program.phaseLane[q.target] == *targetLane;
+            });
+            if (producer) anchors.push_back(op);
+            if (anchors.size() == 8) break;
+        }
+        // The nearest producer does not improve its own prefix. Try successively
+        // earlier requirement boundaries; keep only a concretely useful result.
+        for (Operation* anchor : anchors) {
+            Bits crossed(input.phases.size());
+            for (Operation* op = anchor->getNextNode(); op != set; op = op->getNextNode()) {
+                auto p = input.phaseIds.find(op);
+                if (p != input.phaseIds.end()) crossed.set(p->second);
+            }
+            if (crossed.empty()) continue;
+            std::vector<Requirement> needs;
+            for (const auto& q : input.obligations)
+                if (crossed.test(q.source)) needs.push_back({q.source, q.target, Requirement::Kind::Conservative});
+            for (const auto& q : independent) if (crossed.test(q.source)) needs.push_back(q);
+            // No target rule is upgraded to full completion here. All affected
+            // source effects, even on skipped-reader paths, retain their needs.
+            SmallVector<scf::ForOp> loops;
+            loops.push_back({}); // first try without scalar-control overhead
+            for (const auto& q : input.obligations) {
+                if (!crossed.test(q.source)) continue;
+                Operation* target = input.phases[q.target];
+                for (auto loop = target->getParentOfType<scf::ForOp>(); loop;
+                     loop = loop->getParentOfType<scf::ForOp>()) {
+                    IntegerAttr step;
+                    if (loop->getBlock() != set->getBlock() || !set->isBeforeInBlock(loop) ||
+                        loop->hasAttr("unsignedCmp") || !matchPattern(loop.getStep(), m_Constant(&step)) ||
+                        !step.getValue().isStrictlyPositive() ||
+                        !dominance.dominates(loop.getLowerBound(), anchor) ||
+                        !dominance.dominates(loop.getUpperBound(), anchor)) continue;
+                    if (!llvm::is_contained(loops, loop)) loops.push_back(loop);
+                    if (loops.size() == 5) break;
+                }
+                if (loops.size() == 5) break;
+            }
+            bool accepted = false;
+            for (scf::ForOp loop : loops) {
+                if (!budget.left || result.placementAttempts++ >= 32) break;
+                Operation* restoreBefore = set->getNextNode();
+                SmallVector<Operation*> added;
+                Operation* late = nullptr;
+                if (loop) {
+                    OpBuilder builder(anchor);
+                    builder.setInsertionPointAfter(anchor);
+                    auto nonempty = builder.create<arith::CmpIOp>(set.getLoc(), arith::CmpIPredicate::slt,
+                                                                  loop.getLowerBound(), loop.getUpperBound());
+                    added.push_back(nonempty);
+                    auto early = builder.create<scf::IfOp>(set.getLoc(), nonempty, false);
+                    added.push_back(early);
+                    builder.setInsertionPoint(set);
+                    auto empty = builder.create<arith::CmpIOp>(set.getLoc(), arith::CmpIPredicate::sge,
+                                                               loop.getLowerBound(), loop.getUpperBound());
+                    added.push_back(empty);
+                    auto fallback = builder.create<scf::IfOp>(set.getLoc(), empty, false);
+                    added.push_back(fallback);
+                    late = set->clone();
+                    fallback.thenBlock()->getOperations().insert(fallback.thenBlock()->getTerminator()->getIterator(), late);
+                    set->moveBefore(early.thenBlock()->getTerminator());
+                } else {
+                    set->moveAfter(anchor);
+                }
+                NativeGraph trial(function, syncIR, true);
+                if (trial.failure.empty()) trial.partition(budget);
+                auto facts = trial.failure.empty() && samePhases(trial) ?
+                    completion(trial.program, Bits(trial.program.nodes.size()), budget) : CompletionResult{};
+                bool proved = trial.failure.empty() && samePhases(trial) &&
+                              covers(trial.program, facts, needs).proved &&
+                              completionAtExits(trial.program, facts).proved;
+                unsigned lessBlocking = 0;
+                if (proved) {
+                    // Require a real removed completion edge at a payload use,
+                    // not merely an earlier textual signal or smaller inventory.
+                    for (unsigned s = 0; s < input.phases.size(); ++s) {
+                        if (!crossed.test(s)) continue;
+                        for (unsigned t = 0; t < input.phases.size(); ++t) {
+                            if (base.program.phaseLane[t] == *lane) continue;
+                            std::vector<Requirement> edge{{s, t, Requirement::Kind::Conservative}};
+                            if (covers(base.program, supply, edge).proved && !covers(trial.program, facts, edge).proved)
+                                ++lessBlocking;
+                        }
+                    }
+                }
+                if (proved && lessBlocking && succeeded(verify(function))) {
+                    // Same key, same acquisition, and exactly one mutually
+                    // exclusive publication at an earlier or identical source
+                    // cut. No new payload blocking or scarcity ordering can be
+                    // introduced by this construction. Concrete event proof
+                    // above checks recurrence/consumption in the entire plan.
+                    if (late) {
+                        SmallVector<unsigned> groups(requirements.groups(set));
+                        for (unsigned group : groups) requirements.bind(group, late);
+                    }
+                    result.signalsAdvanced++;
+                    result.guarded += bool(loop);
+                    result.requirements += needs.size();
+                    result.occurrenceProofs += lessBlocking;
+                    function.emitRemark("InsertSync shared publication: ")
+                        << "advanced after phase " << input.phaseIds.lookup(anchor)
+                        << "; affected requirements=" << needs.size() << "; removed completion edges=" << lessBlocking
+                        << "; empty-path publication=" << (loop ? "original cut" : "not needed");
+                    // Subsequent rewrites are checked against this accepted
+                    // concrete plan, not the original singleton supply.
+                    base = std::move(trial);
+                    supply = std::move(facts);
+                    accepted = true;
+                    break;
+                }
+                set->moveBefore(restoreBefore);
+                for (Operation* op : llvm::reverse(added)) op->erase();
+            }
+            if (accepted) break;
+        }
+    }
+    result.work = start - budget.left;
+    result.reason = "residual cuts resolved against shared requirements; whole-plan events and exit rechecked";
     return result;
 }
 

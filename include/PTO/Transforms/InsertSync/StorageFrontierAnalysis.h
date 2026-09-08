@@ -158,6 +158,11 @@ struct StorageFrontierRefinementResult {
 StorageFrontierRefinementResult refineInsertSyncCompletion(
     func::FuncOp function, const SyncIRs& syncIR, ArrayRef<Operation*> ownedBarriers,
     insert_sync_frontier::Budget& budget);
+// Resolve residual publication cuts against immutable local requirements and
+// the complete emitted event plan. Selected recurring actions remain atomic.
+StorageFrontierRefinementResult refineInsertSyncPublications(
+    func::FuncOp function, const SyncIRs& syncIR, SyncRequirements& requirements,
+    insert_sync_frontier::Budget& budget);
 bool disjointInsertSyncGlobalOccurrences(const BaseMemInfo* sourceAccess, Operation* source,
                                          const BaseMemInfo* targetAccess, Operation* target,
                                          func::FuncOp function);

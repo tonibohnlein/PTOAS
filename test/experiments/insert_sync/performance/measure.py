@@ -80,6 +80,7 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observ
     """Evaluate a concrete launch instance with bounded positive-step scf loops."""
     env = {}
     counts = Counter()
+    scalar_counts = Counter()
     payload = hashlib.sha256()
     actions = hashlib.sha256()
     remaining = budget
@@ -99,6 +100,8 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observ
                 raise ValueError("scalar replay budget exceeded")
             op = view.operation
             name = op.name
+            if name.startswith("arith.") or name.startswith("scf."):
+                scalar_counts[name] += 1
             properties = attrs(op)
             operands = [env[v] for v in op.operands]
             result = None
@@ -159,6 +162,10 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observ
                 if not isinstance(operands[0], (int, bool)):
                     raise ValueError("unknown select condition")
                 result = operands[1] if operands[0] else operands[2]
+            elif name in ("arith.maxsi", "arith.minsi"):
+                if not all(isinstance(v, int) for v in operands):
+                    raise ValueError("unknown signed min/max operands")
+                result = (max if name == "arith.maxsi" else min)(operands)
             elif name == "pto.get_block_idx":
                 result = block_idx
             elif name == "pto.get_block_num":
@@ -201,7 +208,7 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observ
         return []
 
     block(function.regions[0].blocks[0], arguments)
-    return {"counts": dict(counts), "payload_sha256": payload.hexdigest(),
+    return {"counts": dict(counts), "scalar_counts": dict(scalar_counts), "payload_sha256": payload.hexdigest(),
             "action_trace_sha256": actions.hexdigest(), "scalar_steps": budget - remaining}
 
 

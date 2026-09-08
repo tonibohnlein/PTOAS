@@ -5,6 +5,16 @@ against `862ab811124d2e67a7f2cde992461983163f6a7a` and the native experiment in
 this change. The supplied document reviewed `16d727c74`; its original proposal
 is preserved below. The local Downloads copy is unchanged.
 
+## Subsequent integrated milestone
+
+The linear-only experiment below is retained as historical design evidence.
+The later [shared requirements and publication implementation](ptoas-insertsync-shared-publications.md)
+runs inside InsertSync on real loops. It demonstrates an earlier QK readiness
+cut with correct empty-path retirement and a Q-projection readiness-stream
+replacement. Its [results](../../test/experiments/insert_sync/performance/SHARED_PUBLICATIONS_RESULTS.md)
+separate those gains from scalar overhead and remaining production-pass gaps.
+It does not claim to implement every part of the general algorithm below.
+
 ## What the actual examples change about the proposal
 
 The organizing idea is useful: retain storage requirements, propagate actual

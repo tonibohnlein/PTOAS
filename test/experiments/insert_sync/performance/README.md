@@ -280,3 +280,12 @@ The runner is serial, retains input and tool hashes, canonical seed/trial PTO,
 diagnostics, and separate mechanism inventories. See the
 [native results](HANDOFF_EXPERIMENT_RESULTS.md) and
 [annotated algorithm specification](../../../../docs/designs/ptoas-insertsync-coherent-planning.md).
+
+### Integrated requirement and handoff changes
+
+[SHARED_PUBLICATIONS_RESULTS.md](SHARED_PUBLICATIONS_RESULTS.md) records the
+shared-requirement migration and two changes on unchanged Qwen inputs: QK's
+first-panel consumer no longer acquires the independent second preload, and
+Q projection replaces four redundant readiness streams while preserving their
+separate releases. The report includes all 19 fixtures, executed flags, scalar
+control and native proof limits. Device timing of this output remains pending.
