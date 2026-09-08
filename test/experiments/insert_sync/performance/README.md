@@ -236,3 +236,20 @@ remain historical, not updated expected outputs for this repaired population.
 
 The follow-up instructions are in
 [DEVICE_TASK_INSERTSYNC_MMAD_R3_WALLTIME.md](../../../../DEVICE_TASK_INSERTSYNC_MMAD_R3_WALLTIME.md).
+
+## Shared requirement and boundary comparison
+
+[Shared requirements results](SHARED_REQUIREMENTS_RESULTS.md) distinguish static
+sites from guarded barriers actually executed by each scenario. The existing
+`--buffer-generations` runner exercises the change on unchanged fixture bytes.
+
+Compare the emitted GEMM handoffs using the matching build's Python package:
+
+```sh
+python compare_boundaries.py /disk/manual/output.pto /disk/staged/output.pto \
+  --scenario outer_reuse --output /disk/gemm-boundaries.json
+```
+
+This compares required source-completion prefixes and payload identity, not
+latency or device correctness. Static pair counts alone do not establish lost
+overlap. The same observer rejects unknown physical lane contracts.

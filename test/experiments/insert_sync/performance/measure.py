@@ -76,7 +76,7 @@ def static_metrics(op):
     return result
 
 
-def replay(function, arguments, block_idx=0, block_num=1, budget=2000000):
+def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observer=None):
     """Evaluate a concrete launch instance with bounded positive-step scf loops."""
     env = {}
     counts = Counter()
@@ -168,6 +168,8 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000):
                 if name == "pto.barrier":
                     counts[f"barrier:{properties['pipe']}:{'loop' if depth else 'outside-loop'}"] += 1
                 record(actions, [executed, name, properties])
+                if observer:
+                    observer(op, executed, None)
             elif name.startswith("pto.") and not op.regions:
                 # Explicit allowlist prevents unknown sync/helper operations being
                 # misreported as ordinary payload with a successful metric verdict.
@@ -180,6 +182,8 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000):
                     raise ValueError(f"unsupported payload: {name}")
                 signature = [name, operands, properties, [str(v.type) for v in op.results]]
                 record(payload, signature)
+                if observer:
+                    observer(op, executed, signature)
                 executed += 1
                 counts[name] += 1
                 if name in {"pto.sync.set", "pto.sync.wait"}:
@@ -224,6 +228,7 @@ def measure(path, scenarios, mode="replay", normalize_gm_pipes=False):
     from ptoas.mlir import ir
     from ptoas.mlir.dialects import pto
     with ir.Context() as context:
+        context.enable_multithreading(False)
         pto.register_dialect(context, load=True)
         original = path.read_text()
         normalization = None

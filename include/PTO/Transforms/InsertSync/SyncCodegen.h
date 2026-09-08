@@ -15,6 +15,7 @@
 #define MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_SYNCCODEGEN_H
  
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncRequirements.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -31,8 +32,8 @@ struct SyncPipeBuild {
 class SyncCodegen {
 public:
   SyncCodegen(SyncIRs &syncIR, func::FuncOp func,
-              SyncAnalysisMode syncAnalysisMode)
-      : syncIR_(syncIR), func_(func), syncAnalysisMode_(syncAnalysisMode) {};
+              SyncAnalysisMode syncAnalysisMode, SyncRequirements* requirements = nullptr)
+      : syncIR_(syncIR), func_(func), syncAnalysisMode_(syncAnalysisMode), requirements_(requirements) {};
  
   ~SyncCodegen() = default;
  
@@ -92,6 +93,10 @@ private:
 
   // Deferred tail-clean barrier requested by sync analysis.
   bool pendingAutoSyncTailBarrier_ = false;
+  SyncRequirements* requirements_ = nullptr;
+  void bind(SyncOperation* sync, Operation* action) {
+    if (requirements_) requirements_->bind(sync->GetSyncIndex(), action);
+  }
 };
  
 } // namespace pto

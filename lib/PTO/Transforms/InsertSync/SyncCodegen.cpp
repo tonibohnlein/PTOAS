@@ -135,32 +135,24 @@ static void setSyncInsertionPoint(IRRewriter &rewriter, Operation *op,
   rewriter.setInsertionPointAfter(op);
 }
 
-static bool hasNeighborBarrier(Block *block, Block::iterator ip,
-                               pto::PipeAttr pipeAttr, bool insertBefore) {
+static Operation* neighborBarrier(Block *block, Block::iterator ip,
+                                  pto::PipeAttr pipeAttr, bool insertBefore) {
   if (insertBefore) {
-    if (ip == block->begin()) {
-      return false;
-    }
-    auto prevBarrier = dyn_cast<pto::BarrierOp>(&*std::prev(ip));
-    return prevBarrier && prevBarrier.getPipe() == pipeAttr;
+    if (ip == block->begin()) return nullptr;
+    auto barrier = dyn_cast<pto::BarrierOp>(&*std::prev(ip));
+    return barrier && barrier.getPipe() == pipeAttr ? barrier.getOperation() : nullptr;
   }
-
-  if (ip == block->end()) {
-    return false;
-  }
-  auto nextBarrier = dyn_cast<pto::BarrierOp>(&*ip);
-  return nextBarrier && nextBarrier.getPipe() == pipeAttr;
+  if (ip == block->end()) return nullptr;
+  auto barrier = dyn_cast<pto::BarrierOp>(&*ip);
+  return barrier && barrier.getPipe() == pipeAttr ? barrier.getOperation() : nullptr;
 }
 
-static void createSetOrWaitFlagOp(IRRewriter &rewriter, Operation *op,
-                                  SyncOperation *sync, pto::PipeAttr srcPipe,
-                                  pto::PipeAttr dstPipe,
-                                  pto::EventAttr eventId) {
-  if (sync->isSyncWaitType()) {
-    rewriter.create<pto::WaitFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
-    return;
-  }
-  rewriter.create<pto::SetFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
+static Operation* createSetOrWaitFlagOp(IRRewriter &rewriter, Operation *op,
+                                       SyncOperation *sync, pto::PipeAttr srcPipe,
+                                       pto::PipeAttr dstPipe, pto::EventAttr eventId) {
+  if (sync->isSyncWaitType())
+    return rewriter.create<pto::WaitFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
+  return rewriter.create<pto::SetFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
 }
 
 // ==============================================================================
@@ -323,13 +315,14 @@ void SyncCodegen::CreateBarrierOp(IRRewriter &rewriter, Operation *op,
   Block *block = rewriter.getInsertionBlock();
   Block::iterator ip = rewriter.getInsertionPoint();
   auto currentPipeAttr = getPipeAttr(rewriter, sync->GetActualSrcPipe());
-  if (hasNeighborBarrier(block, ip, currentPipeAttr, insertAtPos)) {
+  if (auto existing = neighborBarrier(block, ip, currentPipeAttr, insertAtPos)) {
+    bind(sync, existing);
     return;
   }
 
   auto barrier = rewriter.create<pto::BarrierOp>(op->getLoc(), currentPipeAttr);
 
-  (void)barrier;
+  bind(sync, barrier);
 }
 
 void SyncCodegen::AppendAutoSyncTailBarrierIfNeeded(IRRewriter &rewriter) {
@@ -366,7 +359,7 @@ void SyncCodegen::CreateSetWaitOpForSingleBuffer(IRRewriter &rewriter,
   auto srcPipe = getPipeAttr(rewriter, sync->GetActualSrcPipe());
   auto dstPipe = getPipeAttr(rewriter, sync->GetActualDstPipe());
   auto eventId = getEventAttr(rewriter, sync->eventIds[0]);
-  createSetOrWaitFlagOp(rewriter, op, sync, srcPipe, dstPipe, eventId);
+  bind(sync, createSetOrWaitFlagOp(rewriter, op, sync, srcPipe, dstPipe, eventId));
 }
 
 void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
@@ -385,7 +378,7 @@ void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
   // correctness at the cost of forgoing per-slot pipelining.
   if (!sync->slotSSAExpr || sync->eventIds.empty()) {
     auto eventId = getEventAttr(rewriter, sync->eventIds[0]);
-    createSetOrWaitFlagOp(rewriter, op, sync, srcPipe, dstPipe, eventId);
+    bind(sync, createSetOrWaitFlagOp(rewriter, op, sync, srcPipe, dstPipe, eventId));
     return;
   }
 
@@ -422,9 +415,9 @@ void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
   }
 
   if (sync->isSyncWaitType()) {
-    rewriter.create<pto::WaitFlagDynOp>(loc, srcPipe, dstPipe, selected);
+    bind(sync, rewriter.create<pto::WaitFlagDynOp>(loc, srcPipe, dstPipe, selected));
   } else {
-    rewriter.create<pto::SetFlagDynOp>(loc, srcPipe, dstPipe, selected);
+    bind(sync, rewriter.create<pto::SetFlagDynOp>(loc, srcPipe, dstPipe, selected));
   }
 }
 

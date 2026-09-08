@@ -19,10 +19,66 @@ from generate_controls import generate
 from generate_kernel_pairs import conv2d, flash_cube, strip_local_sync, topk
 from generate_recurrence_pairs import GENERATORS, triangular_inverse, wy
 from measure import children, normalize_gm_pipe_assembly, replay, static_metrics
+from compare_boundaries import Boundaries, compare as compare_boundaries
 from run import compare
 from compare_native import participation
 from ptoas.mlir import ir
 from ptoas.mlir.dialects import pto
+
+
+class BoundaryTests(unittest.TestCase):
+    @staticmethod
+    def flag(source, target, key="0"):
+        return {"src_pipe": source, "dst_pipe": target, "event_id": key}
+
+    def test_delayed_publication_blocks_independent_work(self):
+        schedules = []
+        for late in (False, True):
+            b = Boundaries()
+            b.action("load", {}, "PIPE_MTE2", ["load A"])
+            if not late:
+                b.action("pto.set_flag", self.flag("PIPE_MTE2", "PIPE_V"))
+            b.action("load", {}, "PIPE_MTE2", ["load B"])
+            if late:
+                b.action("pto.set_flag", self.flag("PIPE_MTE2", "PIPE_V", "7"))
+            b.action("pto.wait_flag", self.flag("PIPE_MTE2", "PIPE_V", "7" if late else "0"))
+            b.action("compute", {}, "PIPE_V", ["consume A"])
+            schedules.append(b)
+        difference = compare_boundaries(*schedules)
+        self.assertEqual(len(difference), 1)
+        self.assertEqual((difference[0]["target"], difference[0]["manual_prefix"],
+                          difference[0]["automatic_prefix"]), (2, 0, 1))
+
+    def test_prefixes_follow_transitive_handoffs_and_token_consumption(self):
+        b = Boundaries()
+        b.action("load", {}, "PIPE_MTE2", ["load"])
+        b.action("pto.set_flag", self.flag("PIPE_MTE2", "PIPE_V"))
+        b.action("pto.wait_flag", self.flag("PIPE_MTE2", "PIPE_V"))
+        b.action("compute", {}, "PIPE_V", ["compute"])
+        b.action("pto.set_flag", self.flag("PIPE_V", "PIPE_MTE3"))
+        b.action("pto.wait_flag", self.flag("PIPE_V", "PIPE_MTE3"))
+        b.action("store", {}, "PIPE_MTE3", ["store"])
+        self.assertEqual(b.before[-1]["completed"], {"PIPE_MTE2": 0, "PIPE_V": 1})
+        with self.assertRaisesRegex(ValueError, "without publication"):
+            b.action("pto.wait_flag", self.flag("PIPE_V", "PIPE_MTE3"))
+
+    def test_rearmed_key_captures_the_new_generation(self):
+        b = Boundaries()
+        key = self.flag("PIPE_MTE2", "PIPE_V")
+        for generation in range(2):
+            b.action("load", {}, "PIPE_MTE2", ["load", generation])
+            b.action("pto.set_flag", key)
+            with self.assertRaisesRegex(ValueError, "overwritten"):
+                b.action("pto.set_flag", key)
+            b.action("pto.wait_flag", key)
+        self.assertEqual(b.completed["PIPE_V"]["PIPE_MTE2"], 1)
+
+    def test_all_drain_reaches_a_lane_that_has_not_issued_yet(self):
+        b = Boundaries()
+        b.action("load", {}, "PIPE_MTE2", ["load"])
+        b.action("pto.barrier", {"pipe": "PIPE_ALL"})
+        b.action("compute", {}, "PIPE_V", ["compute"])
+        self.assertEqual(b.before[-1]["completed"], {"PIPE_MTE2": 0})
 
 
 class AccountingTests(unittest.TestCase):

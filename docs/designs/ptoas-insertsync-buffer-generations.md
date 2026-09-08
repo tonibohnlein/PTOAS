@@ -1,5 +1,8 @@
 # InsertSync per-buffer generation analysis
 
+The [shared-requirements follow-up](ptoas-insertsync-shared-requirements.md) records
+new integration of direct repairs, protocol ownership and guarded GM refinement.
+
 The experimental `--insert-sync-buffer-generations` option constructs local
 ready/release protocols from physical buffer generations before ordinary
 InsertSync repairs the remaining dependencies. It defaults to off and implies
@@ -132,10 +135,11 @@ Successful generation synthesis now runs completion cleanup and can invoke R4/R5
 residual barrier refinement. Selected protocols and original operation identities
 remain fixed. R5's general event-placement implementation commits a cloned body;
 that would invalidate retained protocol witnesses. Therefore selected-protocol
-composition currently permits proved residual barrier deletion only, without
-new overflow guards. Residual event movement requires explicit identity rebinding
-before it can compose. Ordinary insertion without selected protocols retains
-its existing R4/R5 placement behavior.
+composition permits proved residual barrier deletion and invariant overflow guards
+around residual barriers, preserving payload and protocol operation identities.
+Residual event movement still requires explicit identity rebinding before it can
+compose. Ordinary insertion without selected protocols retains its existing R4/R5
+placement behavior and receives the shared GM refinement when generations are enabled.
 
 Key compaction uses concrete logical lifetimes and checks token ownership as well
 as event causality. It currently shares residual keys; selected lifecycle keys

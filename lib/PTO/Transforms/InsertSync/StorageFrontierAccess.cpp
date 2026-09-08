@@ -192,8 +192,12 @@ GlobalSlice mlir::pto::insert_sync_frontier::recoverFrontierGlobalSlice(
     // store to a contiguous row-major view. A view descriptor alone is not an
     // instruction footprint (padding/conversion/FIX modes remain conservative).
     if (
-        !isa<TStoreOp>(access) || access->getNumOperands() != 2 || view->getAttr("layout")) {
+        !isa<TStoreOp>(access) || access->getNumOperands() != 2 ||
+        (view.getLayoutAttr() && view.getLayoutAttr().getLayout() != Layout::ND)) {
         return result;
+    }
+    if (auto layout = access->getAttrOfType<LayoutAttr>("layout")) {
+        if (layout.getLayout() != Layout::ND) return result;
     }
     Value payload = access->getOperand(0);
     auto payloadType = dyn_cast<TileBufType>(payload.getType());
@@ -214,7 +218,8 @@ GlobalSlice mlir::pto::insert_sync_frontier::recoverFrontierGlobalSlice(
         return result;
     }
     if (
-        !payloadType.getElementType().isF16() && !payloadType.getElementType().isF32()) {
+        !payloadType.getElementType().isF16() && !payloadType.getElementType().isF32() &&
+        !payloadType.getElementType().isInteger(32)) {
         return result;
     }
     const uint64_t elementBytes = getPTOStorageElemByteSize(type.getElementType());

@@ -16,13 +16,6 @@
 #include "mlir/IR/Matchers.h"
 
 namespace mlir::pto {
-struct InsertSyncSlotRequirement {
-    Operation* source;
-    Operation* target;
-    Value sourceBuffer;
-    Value targetBuffer;
-    bool carried;
-};
 // An unequal selector proves non-overlap only if every unequal-index pair is
 // physically disjoint. Equal capacity or equal root names alone are insufficient.
 // This same certificate is required when selectors index recurring event keys.

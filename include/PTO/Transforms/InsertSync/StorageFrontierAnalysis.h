@@ -16,6 +16,7 @@
 #include "PTO/Transforms/InsertSync/StorageFrontierControl.h"
 #include "PTO/Transforms/InsertSync/StorageFrontierQueries.h"
 #include "PTO/Transforms/InsertSync/BufferGenerationAnalysis.h"
+#include "PTO/Transforms/InsertSync/SyncRequirements.h"
 #include <string>
 #include <cstdint>
 
@@ -110,10 +111,10 @@ struct StorageFrontierRefinementResult {
 StorageFrontierRefinementResult refineInsertSyncCompletion(
     func::FuncOp function, const SyncIRs& syncIR, ArrayRef<Operation*> ownedBarriers,
     insert_sync_frontier::Budget& budget);
-struct InsertSyncSlotRequirement;
-bool recheckInsertSyncGenerationRequirements(
-    func::FuncOp function, ArrayRef<std::pair<Operation*, Operation*>> requirements,
-    ArrayRef<InsertSyncSlotRequirement> slotRequirements);
+bool disjointInsertSyncGlobalOccurrences(const BaseMemInfo* sourceAccess, Operation* source,
+                                         const BaseMemInfo* targetAccess, Operation* target,
+                                         func::FuncOp function);
+bool recheckInsertSyncGenerationRequirements(func::FuncOp function, const SyncRequirements& requirements);
 // Uses the existing translated accesses. No new admission gate or speculative
 // effect classification. Static events and physical operation order are retained.
 // The analysis is optional; unproved/budget outcomes leave the function intact.
@@ -121,6 +122,7 @@ bool recheckInsertSyncGenerationRequirements(
 // introduce mutually exclusive static first/last/zero-trip sites.
 StorageFrontierRefinementResult refineInsertSyncStorageFrontiers(
     func::FuncOp function, const SyncIRs& syncIR, ArrayRef<Operation*> candidates, bool useMmadChains = false,
-    bool placeFrontiers = false, ArrayRef<Operation*> ownedEvents = {}, bool fixedProtocols = false);
+    bool placeFrontiers = false, ArrayRef<Operation*> ownedEvents = {}, bool fixedProtocols = false,
+    const SyncRequirements* requirements = nullptr);
 } // namespace mlir::pto
 #endif

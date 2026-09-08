@@ -563,12 +563,23 @@ void InsertSyncAnalysis::MemAnalyze(
       insert_sync_frontier::Budget budget;
       depVec.erase(std::remove_if(depVec.begin(), depVec.end(), [&](const auto& pair) {
         if (!disjointInsertSyncSlotOccurrences(pair.second, pair.first, loop, distance != 0, budget)) return false;
-        slotRequirements_.push_back({frontCompound->elementOp, nowCompound->elementOp,
-                                     pair.second->baseBuffer, pair.first->baseBuffer, distance != 0});
+        requirements_->retain({SyncRequirement::Kind::SlotDisjoint, frontCompound->elementOp, nowCompound->elementOp,
+                                pair.second->baseBuffer, pair.first->baseBuffer, distance != 0});
         return true;
       }), depVec.end());
       if (depVec.empty()) return;
     }
+  }
+
+  if (storageFlow_) {
+    depVec.erase(std::remove_if(depVec.begin(), depVec.end(), [&](const auto& pair) {
+      if (!disjointInsertSyncGlobalOccurrences(pair.second, frontCompound->elementOp,
+                                               pair.first, nowCompound->elementOp, func_)) return false;
+      requirements_->retain({SyncRequirement::Kind::GlobalDisjoint, frontCompound->elementOp,
+                            nowCompound->elementOp, pair.second->baseBuffer, pair.first->baseBuffer});
+      return true;
+    }), depVec.end());
+    if (depVec.empty()) return;
   }
 
   if (lifecycleSupply_) {
@@ -583,8 +594,7 @@ void InsertSyncAnalysis::MemAnalyze(
   if (mmadChains_ && storageFlow_) {
     auto predecessors = storageFlow_->immediatePredecessors(nowCompound->elementOp);
     if (predecessors && mmadChains_->dischargesWithPredecessors(frontCompound, nowCompound, depVec, *predecessors)) {
-      auto witness = std::make_pair(frontCompound->elementOp, nowCompound->elementOp);
-      if (!llvm::is_contained(generationMmadRequirements_, witness)) generationMmadRequirements_.push_back(witness);
+      requirements_->retain({SyncRequirement::Kind::MmadOrder, frontCompound->elementOp, nowCompound->elementOp});
       ++intrinsicMmadGroups_;
       return;
     }
@@ -627,6 +637,12 @@ void InsertSyncAnalysis::MemAnalyze(
     }
   }
 
+  if (storageFlow_) {
+    for (const auto& pair : depVec)
+      requirements_->retain({SyncRequirement::Kind::DirectRepair, frontCompound->elementOp,
+                             nowCompound->elementOp, pair.second->baseBuffer, pair.first->baseBuffer,
+                             forEndIndex.has_value(), ~0u, syncIndex_});
+  }
   InsertSyncOperation(nowCompound, frontCompound, depVec, forEndIndex);
   UpdateSyncRecordInfo(frontCompound, syncRecordList);
 }

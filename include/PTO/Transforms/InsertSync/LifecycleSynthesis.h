@@ -16,6 +16,8 @@
 #include "PTO/Transforms/InsertSync/StorageFrontierAnalysis.h"
 #include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "PTO/Transforms/InsertSync/SyncRequirements.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 namespace mlir::pto {
@@ -94,13 +96,11 @@ public:
     // A read-only selected-plan projection, initialized before residual insertion.
     // It contains no candidate barriers and no concrete hardware event IDs.
     insert_sync_frontier::Program completionStructure;
-    struct CompletionRequirement {
-        Operation *source = nullptr, *target = nullptr;
-        Value sourceAccess, targetAccess;
-    };
     mutable insert_sync_frontier::LifecycleCompletionSupply completionSupply;
-    mutable std::vector<CompletionRequirement> completionRequirements;
-    mutable std::set<std::pair<unsigned, unsigned>> completionRequirementKeys;
+    mutable SyncRequirements requirements;
+    // Explicit action ownership survives event recoloring. Protocol events are
+    // indivisible; only residual barriers may be refined in place.
+    llvm::SmallPtrSet<Operation*, 32> protocolActions;
     mutable uint64_t completionSuppliedPairs = 0, completionWork = 0;
     mutable unsigned importedResidualHandoffs = 0;
     mutable bool completionInternalError = false;

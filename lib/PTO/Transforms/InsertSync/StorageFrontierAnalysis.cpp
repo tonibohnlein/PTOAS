@@ -1064,8 +1064,9 @@ private:
                 auto lane = laneFor(physical.getPipe(), cube);
                 auto found = compounds.find(&op);
                 if (
-                    !lane || found == compounds.end() ||
-                    !isa<TLoadOp, TStoreOp, TAbsOp, TAddOp, TExtractOp, TMovOp, TMatmulOp, TMatmulAccOp>(op)) {
+                    !lane || found == compounds.end() || getSyncMacroModel(&op) ||
+                    !isa<TLoadOp, TStoreOp, TAbsOp, TAddOp, TExtractOp, TMovOp, TMatmulOp, TMatmulAccOp,
+                         TSort32Op, TMrgSortOp, TGatherOp>(op)) {
                     failure = "physical phase has no qualified frontier adapter";
                     return {};
                 }
@@ -1233,11 +1234,26 @@ InsertSyncLifecycleStructure mlir::pto::buildInsertSyncLifecycleStructure(
     return result;
 }
 
-bool mlir::pto::recheckInsertSyncGenerationRequirements(
-    func::FuncOp function, ArrayRef<std::pair<Operation*, Operation*>> requirements,
-    ArrayRef<InsertSyncSlotRequirement> slotRequirements)
+bool mlir::pto::disjointInsertSyncGlobalOccurrences(
+    const BaseMemInfo* sourceAccess, Operation* source, const BaseMemInfo* targetAccess,
+    Operation* target, func::FuncOp function)
 {
-    if (requirements.empty() && slotRequirements.empty()) return true;
+    if (!sourceAccess || !targetAccess || !source || !target ||
+        sourceAccess->scope != AddressSpace::GM || targetAccess->scope != AddressSpace::GM) return false;
+    auto a = recoverFrontierGlobalSlice(sourceAccess->baseBuffer, source, function);
+    auto b = recoverFrontierGlobalSlice(targetAccess->baseBuffer, target, function);
+    auto proof = compareFrontierOccurrences(a, source, b, target);
+    // Early repair cannot speculate on an arithmetic precondition. Guarded
+    // proofs belong to the residual placement stage, which emits the fallback.
+    return proof.disjoint && proof.guards.empty();
+}
+
+bool mlir::pto::recheckInsertSyncGenerationRequirements(
+    func::FuncOp function, const SyncRequirements& requirements)
+{
+    using Kind = SyncRequirement::Kind;
+    if (!requirements.count(Kind::MmadOrder) && !requirements.count(Kind::SlotDisjoint) &&
+        !requirements.count(Kind::GlobalDisjoint)) return true;
     SyncIRs ir;
     Buffer2MemInfoMap buffers;
     MemoryDependentAnalyzer memory;
@@ -1246,7 +1262,7 @@ bool mlir::pto::recheckInsertSyncGenerationRequirements(
     translator.Build();
     Budget budget;
     InsertSyncLifecycleStructure structure;
-    if (!requirements.empty()) {
+    if (requirements.count(Kind::MmadOrder)) {
         structure = buildInsertSyncLifecycleStructure(function, ir, budget, true);
         if (structure.status != StorageFrontierSnapshot::Status::Complete) return false;
     }
@@ -1254,30 +1270,33 @@ bool mlir::pto::recheckInsertSyncGenerationRequirements(
     llvm::DenseMap<Operation*, const CompoundInstanceElement*> phases;
     for (const auto& element : ir)
         if (const auto* phase = dyn_cast<CompoundInstanceElement>(element.get())) phases[phase->elementOp] = phase;
-    for (auto [source, target] : requirements) {
-        auto from = phases.lookup(source), to = phases.lookup(target);
+    for (const auto& witness : requirements.all()) {
+        if (witness.kind == Kind::FullCompletion || witness.kind == Kind::Lifecycle ||
+            witness.kind == Kind::DirectRepair) continue;
+        auto from = phases.lookup(witness.source), to = phases.lookup(witness.target);
         if (!from || !to) return false;
         DepBaseMemInfoPairVec dependencies;
         memory.DepBetween(to->useVec, from->defVec, dependencies);
         memory.DepBetween(to->defVec, from->defVec, dependencies);
         memory.DepBetween(to->defVec, from->useVec, dependencies);
-        auto previous = structure.storageFlow.immediatePredecessors(target);
-        if (!previous || !matrix.dischargesWithPredecessors(from, to, dependencies, *previous)) return false;
-    }
-    for (const auto& witness : slotRequirements) {
-        auto from = phases.lookup(witness.source), to = phases.lookup(witness.target);
-        auto loop = witness.target->getParentOfType<scf::ForOp>();
-        if (!from || !to || !loop || witness.source->getParentOfType<scf::ForOp>() != loop) return false;
-        DepBaseMemInfoPairVec dependencies;
-        memory.DepBetween(to->useVec, from->defVec, dependencies);
-        memory.DepBetween(to->defVec, from->defVec, dependencies);
-        memory.DepBetween(to->defVec, from->useVec, dependencies);
+        if (witness.kind == Kind::MmadOrder) {
+            auto previous = structure.storageFlow.immediatePredecessors(witness.target);
+            if (!previous || !matrix.dischargesWithPredecessors(from, to, dependencies, *previous)) return false;
+            continue;
+        }
         bool recovered = false;
         for (const auto& pair : dependencies) {
-            if (pair.second->baseBuffer != witness.sourceBuffer || pair.first->baseBuffer != witness.targetBuffer)
+            if (pair.second->baseBuffer != witness.sourceAccess || pair.first->baseBuffer != witness.targetAccess)
                 continue;
             recovered = true;
-            if (!disjointInsertSyncSlotOccurrences(pair.second, pair.first, loop, witness.carried, budget)) return false;
+            if (witness.kind == Kind::GlobalDisjoint) {
+                if (!disjointInsertSyncGlobalOccurrences(pair.second, witness.source, pair.first,
+                                                          witness.target, function)) return false;
+            } else {
+                auto loop = witness.target->getParentOfType<scf::ForOp>();
+                if (!loop || witness.source->getParentOfType<scf::ForOp>() != loop ||
+                    !disjointInsertSyncSlotOccurrences(pair.second, pair.first, loop, witness.carried, budget)) return false;
+            }
         }
         if (!recovered) return false;
     }
@@ -1512,16 +1531,33 @@ static StorageFrontierRefinementResult refineStorageBarriers(
     }
 
     if (preserveIdentities) {
-        // Lifecycle reconstruction retains original operation and SSA identities.
-        // Do not replace their body or introduce new protocol participation.
-        if (!graph.guards.empty()) {
-            result.reason = "unchanged: residual proof requires overflow guards; lifecycle identities fixed";
-            return result;
+        // A fixed protocol owns its event participation, not unrelated residual
+        // barriers. Wrap only those barriers in a common invariant fallback;
+        // keep every payload and event Operation*/SSA identity intact.
+        OpBuilder builder(function.getContext());
+        builder.setInsertionPointToStart(&function.getBody().front());
+        Value slow;
+        for (const auto& guard : graph.guards) {
+            auto limit = builder.create<arith::ConstantIndexOp>(function.getLoc(), guard.limit);
+            Value exceeds = builder.create<arith::CmpIOp>(function.getLoc(), arith::CmpIPredicate::sgt,
+                                                          guard.upper, limit);
+            slow = slow ? builder.create<arith::OrIOp>(function.getLoc(), slow, exceeds).getResult() : exceeds;
         }
-        for (Operation* candidate : candidates)
-            if (omittedOperations.contains(candidate)) candidate->erase();
-        result.removed = total;
-        result.reason = "proved residual barriers deleted; lifecycle endpoints and payload identities fixed";
+        for (Operation* candidate : candidates) {
+            if (!omittedOperations.contains(candidate)) continue;
+            if (!slow) {
+                candidate->erase();
+                ++result.removed;
+            } else {
+                builder.setInsertionPoint(candidate);
+                auto branch = builder.create<scf::IfOp>(candidate->getLoc(), slow, false);
+                branch->setAttr("pto.insert_sync.frontier_overflow_guard", builder.getUnitAttr());
+                candidate->moveBefore(branch.thenBlock()->getTerminator());
+                ++result.guarded;
+            }
+        }
+        result.reason = "residual storage requirements proved; protocol/payload identities retained";
+        if (slow) result.reason += "; original barriers retained on invariant overflow-risk path";
         return result;
     }
 
@@ -2006,8 +2042,29 @@ std::vector<Motion> proposeMotions(func::FuncOp f, int64_t eventId, const Checke
 
 StorageFrontierRefinementResult mlir::pto::refineInsertSyncStorageFrontiers(
     func::FuncOp function, const SyncIRs& syncIR, ArrayRef<Operation*> candidates, bool useMmadChains,
-    bool placeFrontiers, ArrayRef<Operation*> ownedEvents, bool fixedProtocols)
+    bool placeFrontiers, ArrayRef<Operation*> ownedEvents, bool fixedProtocols,
+    const SyncRequirements* requirements)
 {
+    if (requirements) {
+        for (auto candidate : candidates) {
+            if (!requirements->owns(candidate)) {
+                StorageFrontierRefinementResult invalid;
+                invalid.internalError = true;
+                invalid.reason = "residual candidate has no codegen ownership binding";
+                return invalid;
+            }
+            if (!isInsertSyncDebugEnabled(InsertSyncDebugLevel::Phase)) continue;
+            for (const auto& requirement : requirements->all()) {
+                if (requirement.kind != SyncRequirement::Kind::DirectRepair ||
+                    !llvm::is_contained(requirements->groups(candidate), requirement.repairGroup)) continue;
+                llvm::errs() << "[InsertSync retained repair] group=" << requirement.repairGroup
+                             << " carried=" << requirement.carried << "\n  source: " << *requirement.source
+                             << "\n  source access: " << requirement.sourceAccess
+                             << "\n  target: " << *requirement.target
+                             << "\n  target access: " << requirement.targetAccess << "\n";
+            }
+        }
+    }
     if (fixedProtocols) {
         auto result = refineStorageBarriers(function, syncIR, candidates, useMmadChains, true);
         result.reason += "; residual event movement requires protocol identity rebinding";

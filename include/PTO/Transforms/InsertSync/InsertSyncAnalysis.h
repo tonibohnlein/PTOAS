@@ -19,6 +19,7 @@
 #include "PTO/Transforms/InsertSync/SyncPlanningPrimitives.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
+#include "PTO/Transforms/InsertSync/SyncRequirements.h"
 #include <array>
 
 namespace mlir::pto { class MmadChainAnalysis; class InsertSyncLifecyclePlan; struct InsertSyncStorageFlow; }
@@ -61,8 +62,8 @@ public:
     lifecycleSupply_ = plan;
   }
   void setStorageFlow(const InsertSyncStorageFlow *flow) { storageFlow_ = flow; }
-  ArrayRef<std::pair<Operation*, Operation*>> getGenerationMmadRequirements() const { return generationMmadRequirements_; }
-  ArrayRef<InsertSyncSlotRequirement> getSlotRequirements() const { return slotRequirements_; }
+  void setRequirements(SyncRequirements *requirements) { requirements_ = requirements; }
+  SyncRequirements& getRequirements() { return *requirements_; }
  
   /// 入口函数：执行分析并注入同步
   /// insertBarAllAtLast: 是否在最后插入一个全局 Barrier (通常需要)
@@ -86,8 +87,8 @@ private:
   const MmadChainAnalysis *mmadChains_{nullptr};
   const InsertSyncLifecyclePlan *lifecycleSupply_{nullptr};
   const InsertSyncStorageFlow *storageFlow_{nullptr};
-  SmallVector<std::pair<Operation*, Operation*>> generationMmadRequirements_;
-  SmallVector<InsertSyncSlotRequirement> slotRequirements_;
+  SyncRequirements localRequirements_;
+  SyncRequirements *requirements_ = &localRequirements_;
   unsigned intrinsicMmadGroups_{0};
  
 private:

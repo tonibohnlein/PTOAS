@@ -378,19 +378,38 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         (frontierRefinement || frontierPlacement || bufferGenerations) && *coverage) {
         func.walk([&](BarrierOp barrier) { fixedInputBarriers.insert(barrier.getOperation()); });
     }
-    SyncCodegen codegen(syncIR, func, SyncAnalysisMode::NORMALSYNC);
+    SyncCodegen codegen(syncIR, func, SyncAnalysisMode::NORMALSYNC, bufferGenerations ? &analyzer.getRequirements() : nullptr);
     codegen.Run();
-    if (!recheckInsertSyncGenerationRequirements(func, analyzer.getGenerationMmadRequirements(), analyzer.getSlotRequirements())) {
+    if (!recheckInsertSyncGenerationRequirements(func, analyzer.getRequirements())) {
         func.emitError("emitted generation-qualified requirements could not be reconstructed");
         signalPassFailure();
         return;
     }
     if (bufferGenerations)
         func->setAttr("pto.insert_sync.generation_mmad_witnesses",
-                      IntegerAttr::get(IntegerType::get(&getContext(), 64), analyzer.getGenerationMmadRequirements().size()));
+                      IntegerAttr::get(IntegerType::get(&getContext(), 64), analyzer.getRequirements().count(SyncRequirement::Kind::MmadOrder)));
     if (bufferGenerations && *coverage) {
+        SmallVector<Operation*> residualBarriers;
+        func.walk([&](BarrierOp barrier) {
+            if (analyzer.getRequirements().owns(barrier.getOperation()) && barrier.getPipe().getPipe() != PIPE::PIPE_ALL)
+                residualBarriers.push_back(barrier.getOperation());
+        });
+        auto refinement = refineInsertSyncStorageFrontiers(func, syncIR, residualBarriers,
+                                                           mmadChains, false, {}, true, &analyzer.getRequirements());
+        func->setAttr("pto.insert_sync.generation_storage_barriers_removed",
+                      IntegerAttr::get(IntegerType::get(&getContext(), 64), refinement.removed));
+        func->setAttr("pto.insert_sync.generation_storage_barriers_guarded",
+                      IntegerAttr::get(IntegerType::get(&getContext(), 64), refinement.guarded));
+        func->setAttr("pto.insert_sync.generation_global_witnesses",
+                      IntegerAttr::get(IntegerType::get(&getContext(), 64),
+                                       analyzer.getRequirements().count(SyncRequirement::Kind::GlobalDisjoint)));
+        if (refinement.internalError) {
+            func.emitError("invalid residual storage refinement: ") << refinement.reason;
+            signalPassFailure();
+            return;
+        }
         func->setAttr("pto.insert_sync.generation_slot_witnesses",
-                      IntegerAttr::get(IntegerType::get(&getContext(), 64), analyzer.getSlotRequirements().size()));
+                      IntegerAttr::get(IntegerType::get(&getContext(), 64), analyzer.getRequirements().count(SyncRequirement::Kind::SlotDisjoint)));
         SmallVector<Operation*> candidates;
         func.walk([&](BarrierOp barrier) {
             if (!fixedInputBarriers.contains(barrier.getOperation())) candidates.push_back(barrier.getOperation());

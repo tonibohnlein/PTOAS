@@ -816,6 +816,9 @@ void InsertSyncLifecyclePlan::removeSuppliedDependencies(
                             auto supply =
                                 channel.logical.certificate.supplies(channel.logical.spec, s->second, t->second, m);
                             if (supply != LifecycleCertificate::Supply::None) {
+                                requirements.retain({SyncRequirement::Kind::Lifecycle, source->elementOp,
+                                                     target->elementOp, pair.second->baseBuffer, pair.first->baseBuffer,
+                                                     false, unsigned(&channel - channels.data())});
                                 ++suppliedPairs;
                                 return true;
                             }
@@ -833,14 +836,9 @@ void InsertSyncLifecyclePlan::removeSuppliedDependencies(
                     ++completionSuppliedPairs;
                     // DepBetween records (target access, source access). Retain original
                     // identities for checking the ACTUAL emitted plan after allocation.
-                    CompletionRequirement requirement{
-                        source->elementOp, target->elementOp, pair.second->baseBuffer, pair.first->baseBuffer};
-                    // One full-completion witness covers every payload access of this
-                    // phase pair. Retain one representative access without quadratic
-                    // repeated scans through the growing witness vector.
-                    if (completionRequirementKeys.emplace(s->second, t->second).second) {
-                        completionRequirements.push_back(requirement);
-                    }
+                    requirements.retain({SyncRequirement::Kind::FullCompletion,
+                                         source->elementOp, target->elementOp,
+                                         pair.second->baseBuffer, pair.first->baseBuffer});
                     return true;
                 }
                 return false;
@@ -1064,6 +1062,7 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
     // traversal retains and repairs every dependency not explicitly supplied.
     InsertSyncAnalysis analysis(ir, memory, syncs, cloned, SyncAnalysisMode::NORMALSYNC);
     analysis.setLifecycleSupply(&plan);
+    analysis.setRequirements(&plan.requirements);
     if (options.bufferGenerations) analysis.setStorageFlow(&structure.storageFlow);
     analysis.Run(true, options.deferSamePipe, options.mmadChains);
     if (plan.completionInternalError) {
@@ -1085,7 +1084,7 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
 
     bool residualEmitted = false;
     if (options.bufferGenerations) {
-        SyncCodegen codegen(ir, cloned, SyncAnalysisMode::NORMALSYNC);
+        SyncCodegen codegen(ir, cloned, SyncAnalysisMode::NORMALSYNC, &plan.requirements);
         codegen.Run(); residualEmitted = true;
         unsigned shared = compactResidualAllocation(cloned, syncs, plan);
         cloned->setAttr("pto.insert_sync.generation_residual_keys_shared",
@@ -1154,7 +1153,7 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
         return result;
     }
     if (!residualEmitted) {
-        SyncCodegen codegen(ir, cloned, SyncAnalysisMode::NORMALSYNC);
+        SyncCodegen codegen(ir, cloned, SyncAnalysisMode::NORMALSYNC, &plan.requirements);
         codegen.Run();
     }
     unsigned allCount = 0;
@@ -1173,18 +1172,23 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
         retry("residual-emission", "residual output contains a broad body cut");
         return result;
     }
-    SmallVector<Operation*> residualEvents;
-    if (options.frontierPlacement)
-        cloned.walk([&](Operation* op) { if (isa<SetFlagOp, WaitFlagOp>(op)) residualEvents.push_back(op); });
     materialize(cloned, plan, allocation);
-    if (options.frontierRefinement || options.frontierPlacement) {
+    cloned.walk([&](Operation* op) {
+        if (isa<SetFlagOp, WaitFlagOp>(op) && !plan.requirements.owns(op)) plan.protocolActions.insert(op);
+    });
+    if (options.frontierRefinement || options.frontierPlacement || options.bufferGenerations) {
         SmallVector<Operation*> residualBarriers;
         cloned.walk([&](BarrierOp barrier) {
-            if (barrier.getPipe().getPipe() != PIPE::PIPE_ALL) residualBarriers.push_back(barrier.getOperation());
+            if (plan.requirements.owns(barrier.getOperation()) && barrier.getPipe().getPipe() != PIPE::PIPE_ALL)
+                residualBarriers.push_back(barrier.getOperation());
         });
         auto refinement = refineInsertSyncStorageFrontiers(
-            cloned, ir, residualBarriers, options.mmadChains, options.frontierPlacement, residualEvents, true);
+            cloned, ir, residualBarriers, options.mmadChains, options.frontierPlacement, {}, true, &plan.requirements);
         result.diagnostics.push_back({"residual-plan", "frontier-refinement", refinement.reason, !refinement.internalError});
+        cloned->setAttr("pto.insert_sync.generation_storage_barriers_removed",
+                       IntegerAttr::get(IntegerType::get(cloned.getContext(), 64), refinement.removed));
+        cloned->setAttr("pto.insert_sync.generation_storage_barriers_guarded",
+                       IntegerAttr::get(IntegerType::get(cloned.getContext(), 64), refinement.guarded));
         if (refinement.internalError) {
             result.status = InsertSyncLifecycleResult::Status::InternalError;
             result.reason = "invalid residual frontier refinement";
@@ -1226,31 +1230,7 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
             continue;
         }
         Operation* op = concrete.anchors[n];
-        PIPE source, target;
-        unsigned id;
-        if (
-            auto set = dyn_cast_or_null<SetFlagOp>(op)) {
-            source = set.getSrcPipe().getPipe();
-            target = set.getDstPipe().getPipe();
-            id = static_cast<unsigned>(set.getEventId().getEvent());
-        } else if (auto wait = dyn_cast_or_null<WaitFlagOp>(op)) {
-            source = wait.getSrcPipe().getPipe();
-            target = wait.getDstPipe().getPipe();
-            id = static_cast<unsigned>(wait.getEventId().getEvent());
-        } else {
-            result.status = InsertSyncLifecycleResult::Status::InternalError;
-            result.reason = "concrete event anchor missing";
-            return result;
-        }
-        auto from = localLane(source, plan.cube), to = localLane(target, plan.cube);
-        bool owned = false;
-        for (unsigned c = 0; from && to && c < plan.channels.size(); ++c) {
-            const auto& spec = plan.channels[c].logical.spec;
-            owned |= (*from == spec.producerLane && *to == spec.consumerLane && id == allocation.ready[c]) ||
-                     (*from == spec.consumerLane && *to == spec.producerLane && id == allocation.free[c]);
-        }
-        if (
-            !owned) {
+        if (!plan.protocolActions.contains(op)) {
             node.kind = Node::Kind::Pass;
             node.phase = node.key = kInvalid;
         }
@@ -1316,8 +1296,35 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
     for (unsigned p = 0; p < concrete.phases.size(); ++p) {
         concretePhaseIds[concrete.phases[p]->elementOp] = p;
     }
+    // Every exact-member omission uses the same payload/SSA identities as direct
+    // repairs. Recovered channel actions were independently reconstructed above;
+    // now verify that the retained access still names that channel's member.
+    for (const auto& witness : plan.requirements.all()) {
+        if (witness.kind != SyncRequirement::Kind::Lifecycle) continue;
+        if (witness.channel >= plan.channels.size() || !concretePhaseIds.count(witness.source) ||
+            !concretePhaseIds.count(witness.target)) {
+            result.status = InsertSyncLifecycleResult::Status::InternalError;
+            result.reason = "lost lifecycle requirement ownership";
+            return result;
+        }
+        const auto& channel = plan.channels[witness.channel];
+        auto memberAt = [&](Operation* operation, Value access) -> std::optional<Slice> {
+            auto phase = concrete.phases[concretePhaseIds.lookup(operation)];
+            for (auto info : phase->useVec) if (info->baseBuffer == access) return exactSlice(info);
+            for (auto info : phase->defVec) if (info->baseBuffer == access) return exactSlice(info);
+            return std::nullopt;
+        };
+        auto source = memberAt(witness.source, witness.sourceAccess);
+        auto target = memberAt(witness.target, witness.targetAccess);
+        if (!source || !target || !(*source == *target) || !llvm::is_contained(channel.members, *source)) {
+            result.status = InsertSyncLifecycleResult::Status::InternalError;
+            result.reason = "changed physical member in lifecycle requirement";
+            return result;
+        }
+    }
     std::vector<Requirement> retainedCompletionRequirements;
-    for (const auto& witness : plan.completionRequirements) {
+    for (const auto& witness : plan.requirements.all()) {
+        if (witness.kind != SyncRequirement::Kind::FullCompletion) continue;
         auto source = concretePhaseIds.find(witness.source), target = concretePhaseIds.find(witness.target);
         if (
             source == concretePhaseIds.end() || target == concretePhaseIds.end()) {
@@ -1341,15 +1348,16 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
     auto i64 = IntegerType::get(cloned.getContext(), 64);
     cloned->setAttr("pto.insert_sync.lifecycle_completion_pairs", IntegerAttr::get(i64, plan.completionSuppliedPairs));
     cloned->setAttr(
-        "pto.insert_sync.lifecycle_completion_witnesses", IntegerAttr::get(i64, plan.completionRequirements.size()));
+        "pto.insert_sync.lifecycle_completion_witnesses", IntegerAttr::get(i64, plan.requirements.count(SyncRequirement::Kind::FullCompletion)));
     cloned->setAttr("pto.insert_sync.lifecycle_completion_work", IntegerAttr::get(i64, plan.completionWork));
     unsigned diagnosticWitnesses = 0;
-    for (const auto& witness : plan.completionRequirements) {
+    for (const auto& witness : plan.requirements.all()) {
+        if (witness.kind != SyncRequirement::Kind::FullCompletion) continue;
         if (diagnosticWitnesses++ == 64) {
             result.diagnostics.push_back(
                 {"mixed-plan", "completion-recheck",
                  "individual witness diagnostics capped at 64; all " +
-                     std::to_string(plan.completionRequirements.size()) + " requirements rechecked",
+                     std::to_string(plan.requirements.count(SyncRequirement::Kind::FullCompletion)) + " requirements rechecked",
                  true});
             break;
         }
@@ -1359,15 +1367,17 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
              "completion-recheck", "all prior source occurrences complete at every target; emitted plan rechecked",
              true});
     }
-    if (!recheckInsertSyncGenerationRequirements(cloned, analysis.getGenerationMmadRequirements(), analysis.getSlotRequirements())) {
+    if (!recheckInsertSyncGenerationRequirements(cloned, plan.requirements)) {
         result.status = InsertSyncLifecycleResult::Status::InternalError;
         result.reason = "emitted generation-qualified requirements could not be reconstructed";
         return result;
     }
     cloned->setAttr("pto.insert_sync.generation_mmad_witnesses",
-                   IntegerAttr::get(i64, analysis.getGenerationMmadRequirements().size()));
+                   IntegerAttr::get(i64, plan.requirements.count(SyncRequirement::Kind::MmadOrder)));
+    cloned->setAttr("pto.insert_sync.generation_global_witnesses",
+                   IntegerAttr::get(i64, plan.requirements.count(SyncRequirement::Kind::GlobalDisjoint)));
     cloned->setAttr("pto.insert_sync.generation_slot_witnesses",
-                   IntegerAttr::get(i64, analysis.getSlotRequirements().size()));
+                   IntegerAttr::get(i64, plan.requirements.count(SyncRequirement::Kind::SlotDisjoint)));
     result.suppliedPairs = plan.suppliedPairs;
     if (options.bufferGenerations) {
         SmallVector<Operation*> candidates;
