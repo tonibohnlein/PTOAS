@@ -11,6 +11,7 @@
 #define PTO_TRANSFORMS_INSERTSYNC_LIFECYCLESYNTHESIS_H
 
 #include "PTO/Transforms/InsertSync/LifecycleBoundaryProtocol.h"
+#include "PTO/Transforms/InsertSync/LifecycleCompletion.h"
 #include "PTO/Transforms/InsertSync/StorageFrontierAnalysis.h"
 #include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
 #include "llvm/ADT/DenseMap.h"
@@ -85,6 +86,24 @@ public:
     bool cube = false;
     Operation *lifetimeScope = nullptr;
     mutable uint64_t suppliedPairs = 0;
+    // A read-only selected-plan projection, initialized before residual insertion.
+    // It contains no candidate barriers and no concrete hardware event IDs.
+    insert_sync_frontier::Program completionStructure;
+    struct CompletionRequirement {
+        Operation *source = nullptr, *target = nullptr;
+        Value sourceAccess, targetAccess;
+    };
+    mutable insert_sync_frontier::LifecycleCompletionSupply completionSupply;
+    mutable std::vector<CompletionRequirement> completionRequirements;
+    mutable std::set<std::pair<unsigned, unsigned>> completionRequirementKeys;
+    mutable uint64_t completionSuppliedPairs = 0, completionWork = 0;
+    mutable unsigned importedResidualHandoffs = 0;
+    mutable bool completionInternalError = false;
+    mutable std::string completionReason;
+    // Called at the start of each repair stage, before new same-pipe repairs.
+    // The staged walk can include supported cross-pipe residual handoffs from
+    // its first walk; the combined walk still sees the complete protocol supply.
+    void refreshCompletionSupply(const SyncIRs& ir, const SyncOperations& syncs) const;
     void removeSuppliedDependencies(CompoundInstanceElement *source,
                                    CompoundInstanceElement *target,
                                    DepBaseMemInfoPairVec &pairs) const;

@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+//
+// Exercise the ORIGINAL frozen one-buffer input, not a rewritten payload.
+// This file's RUN commands are supplied native acceptance tests; NOT_RUN in
+// the patch-producing environment. Do not weaken these checks into fallbacks.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --insert-sync-lifecycle-synthesis --emit-pto-ir %S/../../experiments/insert_sync/performance/inputs/one_buffer.auto.pto -o %t.combined.pto
+// RUN: FileCheck %s --check-prefix=ONE --implicit-check-not='pto.barrier <PIPE_MTE3>' < %t.combined.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --insert-sync-lifecycle-synthesis --insert-sync-defer-same-pipe --emit-pto-ir %S/../../experiments/insert_sync/performance/inputs/one_buffer.auto.pto -o %t.staged.pto
+// RUN: FileCheck %s --check-prefix=ONE --implicit-check-not='pto.barrier <PIPE_MTE3>' < %t.staged.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --insert-sync-lifecycle-synthesis --insert-sync-defer-same-pipe %S/../../experiments/insert_sync/performance/inputs/one_buffer.auto.pto -o %t.cpp
+// ONE-LABEL: func.func @pipeline
+// ONE-SAME: pto.insert_sync.lifecycle_completion_pairs = {{[1-9][0-9]*}}
+// ONE-SAME: lifecycle-plus-residuals
+// ONE: pto.tload
+// ONE: pto.tabs
+// ONE: pto.tstore
+// ONE: pto.barrier <PIPE_ALL>

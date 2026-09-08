@@ -659,11 +659,106 @@ bool reconstruct(
 }
 } // namespace
 
+// The mixed view interprets actual logical endpoints, not the singleton member
+// certificates. Protocol publications include preceding effects on their source
+// lane, including GM effects of a TSTORE whose selected member is a local read.
+void InsertSyncLifecyclePlan::refreshCompletionSupply(const SyncIRs& ir, const SyncOperations& syncs) const
+{
+    completionSupply = LifecycleCompletionSupply{};
+    importedResidualHandoffs = 0;
+    if (completionStructure.nodes.empty()) {
+        completionReason = "no read-only lifecycle completion structure";
+        return;
+    }
+    std::vector<LogicalLifecycle> logical;
+    for (const auto& channel : channels) {
+        logical.push_back(channel.logical);
+    }
+    Budget budget;
+    const uint64_t startingWork = budget.left;
+    auto selected = analyzeLifecycleCompletion(completionStructure, logical, {}, budget);
+    completionWork += startingWork - budget.left;
+    if (selected.status == LifecycleCompletionSupply::Status::InvalidInput) {
+        completionInternalError = true;
+        completionReason = selected.reason;
+        return;
+    }
+    if (selected.status != LifecycleCompletionSupply::Status::Complete) {
+        completionReason = "protocol-prefix query unavailable: " + selected.reason;
+        return; // Existing exact-member certificates still remain available.
+    }
+    completionSupply = std::move(selected);
+    completionReason = "selected-protocol completion";
+
+    std::vector<ResidualCompletionHandoff> direct;
+    for (const auto& group : syncs) {
+        if (
+            group.size() != 2) {
+            continue;
+        }
+        const auto *set = group[0].get(), *wait = group[1].get();
+        if (!set || !wait || set->uselessSync || wait->uselessSync ||
+            set->GetType() != SyncOperation::TYPE::SET_EVENT || wait->GetType() != SyncOperation::TYPE::WAIT_EVENT ||
+            set->GetSyncIndex() != wait->GetSyncIndex() || set->GetForEndIndex() || wait->GetForEndIndex() ||
+            set->isCompensation || wait->isCompensation || set->eventIdNum != 1 || wait->eventIdNum != 1 ||
+            set->slotSSAExpr || wait->slotSSAExpr || set->GetSyncIRIndex() >= ir.size() ||
+            wait->GetSyncIRIndex() >= ir.size()) {
+            continue;
+        }
+        auto* from = dyn_cast<CompoundInstanceElement>(ir[set->GetSyncIRIndex()].get());
+        auto* to = dyn_cast<CompoundInstanceElement>(ir[wait->GetSyncIRIndex()].get());
+        if (!from || !to || !from->elementOp || !to->elementOp || from->elementOp == to->elementOp ||
+            from->elementOp->getBlock() != to->elementOp->getBlock() ||
+            !from->elementOp->isBeforeInBlock(to->elementOp)) {
+            continue;
+        }
+        auto source = phaseIds.find(from->elementOp), target = phaseIds.find(to->elementOp);
+        if (
+            source == phaseIds.end() || target == phaseIds.end() || set->GetActualSrcPipe() != from->kPipeValue ||
+            set->GetActualDstPipe() != to->kPipeValue || wait->GetActualSrcPipe() != from->kPipeValue ||
+            wait->GetActualDstPipe() != to->kPipeValue || from->kPipeValue == to->kPipeValue) {
+            continue;
+        }
+        auto setAt = std::find(from->pipeAfter.begin(), from->pipeAfter.end(), set);
+        auto waitAt = std::find(to->pipeBefore.begin(), to->pipeBefore.end(), wait);
+        if (
+            setAt == from->pipeAfter.end() || waitAt == to->pipeBefore.end() ||
+            std::count(from->pipeAfter.begin(), from->pipeAfter.end(), set) != 1 ||
+            std::count(to->pipeBefore.begin(), to->pipeBefore.end(), wait) != 1) {
+            continue;
+        }
+        direct.push_back(
+            {source->second, target->second, static_cast<unsigned>(std::distance(from->pipeAfter.begin(), setAt)),
+             static_cast<unsigned>(std::distance(to->pipeBefore.begin(), waitAt))});
+    }
+    if (direct.empty()) {
+        return;
+    }
+    Budget jointBudget;
+    const uint64_t jointStart = jointBudget.left;
+    auto mixed = analyzeLifecycleCompletion(completionStructure, logical, direct, jointBudget);
+    completionWork += jointStart - jointBudget.left;
+    if (mixed.status == LifecycleCompletionSupply::Status::InvalidInput) {
+        completionInternalError = true;
+        completionReason = mixed.reason;
+        return;
+    }
+    if (mixed.status == LifecycleCompletionSupply::Status::Complete) {
+        completionSupply = std::move(mixed);
+        importedResidualHandoffs = direct.size();
+        completionReason = "selected protocols plus qualified same-block residual handoffs";
+    } else {
+        // A repeated direct stream may need an acknowledgement outside this
+        // deliberately restricted import. Do not use an unproved token world.
+        // Retain the separately proved selected-protocol view instead.
+        completionReason = "selected-protocol completion; residual overlay unproved: " + mixed.reason;
+    }
+}
+
 void InsertSyncLifecyclePlan::removeSuppliedDependencies(
     CompoundInstanceElement* source, CompoundInstanceElement* target, DepBaseMemInfoPairVec& pairs) const
 {
-    if (
-        !source || !target) {
+    if (!source || !target) {
         return;
     }
     auto s = phaseIds.find(source->elementOp), t = phaseIds.find(target->elementOp);
@@ -676,24 +771,41 @@ void InsertSyncLifecyclePlan::removeSuppliedDependencies(
             pairs.begin(), pairs.end(),
             [&](const auto& pair) {
                 auto a = exactSlice(pair.first), b = exactSlice(pair.second);
-                if (
-                    !a || !b || !(*a == *b)) {
-                    return false;
-                }
-                for (const auto& channel : channels) {
-                    for (unsigned m = 0; m < channel.members.size(); ++m) {
-                        if (
-                            !(channel.members[m] == *a)) {
-                            continue;
-                        }
-                        auto supply =
-                            channel.logical.certificate.supplies(channel.logical.spec, s->second, t->second, m);
-                        if (
-                            supply != LifecycleCertificate::Supply::None) {
-                            ++suppliedPairs;
-                            return true;
+                if (a && b && *a == *b) {
+                    for (const auto& channel : channels) {
+                        for (unsigned m = 0; m < channel.members.size(); ++m) {
+                            if (!(channel.members[m] == *a)) {
+                                continue;
+                            }
+                            auto supply =
+                                channel.logical.certificate.supplies(channel.logical.spec, s->second, t->second, m);
+                            if (supply != LifecycleCertificate::Supply::None) {
+                                ++suppliedPairs;
+                                return true;
+                            }
                         }
                     }
+                }
+                // A physical completion certificate is stronger than exact member
+                // ownership. For example, Store(g)->Free->Compute(g+1)->Ready->Store(g+1)
+                // also orders the store's GM WAW, although the channel owns only its UB
+                // input. Restrict the new use to same-pipe memory repair: completion
+                // never becomes a new cross-pipe GM visibility or ACC exception.
+                if (pair.first && pair.second && source->kPipeValue == target->kPipeValue &&
+                    completionSupply.proves(s->second, t->second)) {
+                    ++suppliedPairs;
+                    ++completionSuppliedPairs;
+                    // DepBetween records (target access, source access). Retain original
+                    // identities for checking the ACTUAL emitted plan after allocation.
+                    CompletionRequirement requirement{
+                        source->elementOp, target->elementOp, pair.second->baseBuffer, pair.first->baseBuffer};
+                    // One full-completion witness covers every payload access of this
+                    // phase pair. Retain one representative access without quadratic
+                    // repeated scans through the growing witness vector.
+                    if (completionRequirementKeys.emplace(s->second, t->second).second) {
+                        completionRequirements.push_back(requirement);
+                    }
+                    return true;
                 }
                 return false;
             }),
@@ -829,11 +941,25 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
         }
     };
 
+    // The logical completion view is refreshed by each ordinary repair stage.
+    // It is based on immutable physical/control facts, not the barriers that
+    // stage is about to create. Candidate retry builds this again from scratch.
+    plan.completionStructure = structure.program;
     // The shared logical plan exists BEFORE dependency insertion. Legacy
     // traversal retains and repairs every dependency not explicitly supplied.
     InsertSyncAnalysis analysis(ir, memory, syncs, cloned, SyncAnalysisMode::NORMALSYNC);
     analysis.setLifecycleSupply(&plan);
     analysis.Run(true, options.deferSamePipe, options.mmadChains);
+    if (plan.completionInternalError) {
+        result.status = InsertSyncLifecycleResult::Status::InternalError;
+        result.reason = "invalid mixed logical completion view: " + plan.completionReason;
+        return result;
+    }
+    result.diagnostics.push_back(
+        {"mixed-plan", "completion-supply",
+         std::to_string(plan.completionSuppliedPairs) + " same-pipe access pairs supplied; " +
+             std::to_string(plan.importedResidualHandoffs) + " residual handoffs; " + plan.completionReason,
+         true});
     MoveSyncState move(ir, syncs);
     move.Run();
     RemoveRedundantSync redundant(ir, syncs, SyncAnalysisMode::NORMALSYNC);
@@ -1037,6 +1163,56 @@ InsertSyncLifecycleResult attemptLifecycleSynthesis(
             "combined residual event transfer unproved at node " + std::to_string(whole.unprovedEventNode), source,
             target);
         return result;
+    }
+    // Revalidate EVERY new full-completion exemption against actual emitted
+    // actions after legacy motion, cleanup and allocation. The proof cannot
+    // silently rely on a direct handoff later removed/widened by those stages.
+    llvm::DenseMap<Operation*, unsigned> concretePhaseIds;
+    for (unsigned p = 0; p < concrete.phases.size(); ++p) {
+        concretePhaseIds[concrete.phases[p]->elementOp] = p;
+    }
+    std::vector<Requirement> retainedCompletionRequirements;
+    for (const auto& witness : plan.completionRequirements) {
+        auto source = concretePhaseIds.find(witness.source), target = concretePhaseIds.find(witness.target);
+        if (
+            source == concretePhaseIds.end() || target == concretePhaseIds.end()) {
+            result.status = InsertSyncLifecycleResult::Status::InternalError;
+            result.reason = "lost original phase in mixed-completion witness reconstruction";
+            return result;
+        }
+        retainedCompletionRequirements.push_back({source->second, target->second, Requirement::Kind::Conservative});
+    }
+    auto supplied = covers(concrete.program, whole, retainedCompletionRequirements);
+    if (!supplied.proved) {
+        // Legacy motion/cleanup/allocation is not part of this proof. A failure
+        // of the conservative final query is an unproved optional realization,
+        // not a demonstrated device race. Never commit it: R7 retries from the
+        // original input and restores every omitted residual dependency.
+        retry(
+            "completion-realization", "emitted plan does not establish the required full-completion witness: phase " +
+                                          std::to_string(supplied.source) + " -> " + std::to_string(supplied.target));
+        return result;
+    }
+    auto i64 = IntegerType::get(cloned.getContext(), 64);
+    cloned->setAttr("pto.insert_sync.lifecycle_completion_pairs", IntegerAttr::get(i64, plan.completionSuppliedPairs));
+    cloned->setAttr(
+        "pto.insert_sync.lifecycle_completion_witnesses", IntegerAttr::get(i64, plan.completionRequirements.size()));
+    cloned->setAttr("pto.insert_sync.lifecycle_completion_work", IntegerAttr::get(i64, plan.completionWork));
+    unsigned diagnosticWitnesses = 0;
+    for (const auto& witness : plan.completionRequirements) {
+        if (diagnosticWitnesses++ == 64) {
+            result.diagnostics.push_back(
+                {"mixed-plan", "completion-recheck",
+                 "individual witness diagnostics capped at 64; all " +
+                     std::to_string(plan.completionRequirements.size()) + " requirements rechecked",
+                 true});
+            break;
+        }
+        result.diagnostics.push_back(
+            {"phase-" + std::to_string(plan.phaseIds.lookup(witness.source)) + "-to-" +
+                 std::to_string(plan.phaseIds.lookup(witness.target)),
+             "completion-recheck", "all prior source occurrences complete at every target; emitted plan rechecked",
+             true});
     }
     result.suppliedPairs = plan.suppliedPairs;
     for (const auto& channel : plan.channels) {

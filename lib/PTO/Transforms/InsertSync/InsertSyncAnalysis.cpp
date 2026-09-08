@@ -240,6 +240,12 @@ void InsertSyncAnalysis::Run(bool insertBarAllAtLast,
   // Keep IDs, inserted actions and stable SyncIR indices across both walks.
   insert_sync_detail::forEachRepairStage(staged, [&](auto stage) {
     repairStage_ = stage;
+    // Selected lifecycle actions stay out of the legacy mutable lists, but
+    // their completion must be visible before constructing residual barriers.
+    // On the staged second walk, include qualified first-walk direct handoffs.
+    if (lifecycleSupply_) {
+        lifecycleSupply_->refreshCompletionSupply(syncIR_, syncOperations_);
+    }
     for (auto &nowElement : syncIR_) {
       if (auto *nowCompound =
               dyn_cast<CompoundInstanceElement>(nowElement.get())) {
