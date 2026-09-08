@@ -25,6 +25,7 @@
 #include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
 #include "PTO/Transforms/InsertSync/PruneCompletedBarriers.h"
 #include "PTO/Transforms/InsertSync/StorageFrontierAnalysis.h"
+#include "PTO/Transforms/InsertSync/LifecycleSynthesis.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h" // [FIX] 确保 FuncOp 定义可见
@@ -125,6 +126,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         mmadChains = options.mmadChains;
         frontierRefinement = options.frontierRefinement;
         frontierPlacement = options.frontierPlacement;
+        lifecycleSynthesis = options.lifecycleSynthesis;
     }
     PTOInsertSyncPass(const PTOInsertSyncPass& other) : PTOInsertSyncBase(other)
     {
@@ -136,6 +138,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         mmadChains = other.mmadChains;
         frontierRefinement = other.frontierRefinement;
         frontierPlacement = other.frontierPlacement;
+        lifecycleSynthesis = other.lifecycleSynthesis;
     }
 
     Option<bool> deferSamePipe{
@@ -160,6 +163,10 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     Option<bool> frontierPlacement{
         *this, "frontier-placement", llvm::cl::init(false),
         llvm::cl::desc("Place generated handoffs at proved storage frontiers; includes refinement; experimental")};
+
+    Option<bool> lifecycleSynthesis{
+        *this, "lifecycle-synthesis", llvm::cl::init(false),
+        llvm::cl::desc("Construct exact-slot lifecycle protocols before residual insertion; experimental")};
 
     void auditOutput(func::FuncOp function)
     {
@@ -232,6 +239,36 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         func->setAttr("pto.insert_sync.status", StringAttr::get(&getContext(), "explicit-sync-bypass"));
         auditOutput(func);
         return;
+    }
+
+    if (lifecycleSynthesis) {
+        InsertSyncOptions lifecycleOptions;
+        lifecycleOptions.deferSamePipe = deferSamePipe;
+        lifecycleOptions.mmadChains = mmadChains;
+        lifecycleOptions.effectCoverage = effectCoverage;
+        auto result = tryInsertSyncLifecycleSynthesis(func, lifecycleOptions);
+        func.emitRemark("InsertSync lifecycle synthesis: ")
+            << result.reason << "; attempted=" << result.attempted
+            << ", proposed=" << result.selected << ", streams=" << result.logicalStreams
+            << ", supplied-access-pairs=" << result.suppliedPairs
+            << ", combined-event-audit=" << (result.combinedEventAuditProved ? "proved" : "unproved");
+        if (result.status == InsertSyncLifecycleResult::Status::InternalError ||
+            result.status == InsertSyncLifecycleResult::Status::InputError) {
+            func.emitError(result.reason);
+            signalPassFailure();
+            return;
+        }
+        if (result.status == InsertSyncLifecycleResult::Status::Applied) {
+            func->setAttr("pto.insert_sync.status", StringAttr::get(&getContext(), "lifecycle-plus-residuals"));
+            // Counts are output diagnostics, never input semantic promises.
+            auto type = IntegerType::get(&getContext(), 64);
+            func->setAttr("pto.insert_sync.lifecycle_channels", IntegerAttr::get(type, result.selected));
+            func->setAttr("pto.insert_sync.lifecycle_supplied_pairs", IntegerAttr::get(type, result.suppliedPairs));
+            auditOutput(func);
+            return;
+        }
+        // Optional construction failed before mutating func. Run the existing
+        // path, including its configured R4/R5 refinement and scarcity policy.
     }
 
     // 0. 数据结构准备

@@ -239,6 +239,10 @@ llvm::cl::opt<bool> insertSyncMmadChains(
 llvm::cl::opt<bool> insertSyncFrontierRefinement(
     "insert-sync-frontier-refinement", llvm::cl::desc("Refine generated named barriers using storage/lane frontiers"),
     llvm::cl::init(false));
+llvm::cl::opt<bool> insertSyncLifecycleSynthesis(
+    "insert-sync-lifecycle-synthesis",
+    llvm::cl::desc("Construct exact-slot lifecycle protocols before residual insertion (experimental)"),
+    llvm::cl::init(false));
 llvm::cl::opt<bool> insertSyncFrontierPlacement(
     "insert-sync-frontier-placement",
     llvm::cl::desc("Place generated handoffs at proved storage frontiers (experimental)"),

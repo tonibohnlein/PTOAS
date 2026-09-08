@@ -9,6 +9,7 @@
 // for the full text of the License.
 
 #include "PTO/Transforms/InsertSync/StorageFrontierAnalysis.h"
+#include "PTO/Transforms/InsertSync/LifecycleSynthesis.h"
 #include "StorageFrontierAccess.h"
 #include "PTO/Transforms/InsertSync/StorageFrontierControl.h"
 #include "PTO/Transforms/InsertSync/StorageFrontierQueries.h"
@@ -131,6 +132,7 @@ public:
     unsigned occurrenceProofs = 0;
     bool cube = false;
     bool internalError = false;
+    Operation* singlePhysicalSection = nullptr;
     GuardControl control;
     std::vector<std::vector<unsigned>> rawCopies;
     std::vector<unsigned> rawOrigins;
@@ -211,18 +213,62 @@ public:
         return true;
     }
 
-    NativeGraph(func::FuncOp f, const SyncIRs& syncIR) : function(f)
+    NativeGraph(func::FuncOp f, const SyncIRs& syncIR, bool allowSingleSection = false) : function(f)
     {
         auto module = f->getParentOfType<ModuleOp>();
         auto arch = module ? module->getAttrOfType<StringAttr>("pto.target_arch") : StringAttr();
         auto core = f->getAttrOfType<FunctionKernelKindAttr>("pto.kernel_kind");
+        bool explicitCore = core && (core.getKernelKind() == FunctionKernelKind::Cube ||
+                                     core.getKernelKind() == FunctionKernelKind::Vector);
+        cube = explicitCore && core.getKernelKind() == FunctionKernelKind::Cube;
+        bool invalidSection = false;
         if (
-            !arch || (arch.getValue() != "a2" && arch.getValue() != "a3") || !core ||
-            (core.getKernelKind() != FunctionKernelKind::Cube && core.getKernelKind() != FunctionKernelKind::Vector)) {
-            failure = "requires one explicit A2/A3 physical Cube or vector context";
+            allowSingleSection) {
+            f.walk([&](Operation* op) {
+                if (
+                    !isa<SectionCubeOp, SectionVectorOp>(op)) {
+                    return;
+                }
+                if (
+                    singlePhysicalSection || op->getParentOp() != f.getOperation()) {
+                    invalidSection = true;
+                    return;
+                }
+                singlePhysicalSection = op;
+                bool sectionCube = isa<SectionCubeOp>(op);
+                invalidSection |= explicitCore && cube != sectionCube;
+                cube = sectionCube;
+            });
+            if (
+                singlePhysicalSection) {
+                f.walk([&](Operation* op) {
+                    if (
+                        op == f.getOperation() || op == singlePhysicalSection ||
+                        singlePhysicalSection->isAncestor(op)) {
+                        return;
+                    }
+                    // Keep the existing function-exit ALL, but no other physical
+                    // commands may silently migrate outside the selected core.
+                    auto barrier = dyn_cast<BarrierOp>(op);
+                    if (
+                        barrier && barrier.getPipe().getPipe() == PIPE::PIPE_ALL) {
+                        return;
+                    }
+                    if (
+                        isa<OpPipeInterface, SetFlagOp, WaitFlagOp, BarrierOp>(op)) {
+                        invalidSection = true;
+                    }
+                });
+            }
+        }
+        if (
+            !arch || (arch.getValue() != "a2" && arch.getValue() != "a3") ||
+            (!explicitCore && !singlePhysicalSection) || invalidSection) {
+            failure = allowSingleSection ?
+                          "requires one qualified A2/A3 context from existing function or single section" :
+                          "requires one explicit A2/A3 physical Cube or vector context";
             return;
         }
-        cube = core.getKernelKind() == FunctionKernelKind::Cube;
         program.lanes = cube ? 4 : 3;
         for (
             const auto& e : syncIR) {
@@ -875,6 +921,13 @@ private:
                 continue;
             }
             if (
+                &op == singlePhysicalSection) {
+                // Physical sections are existing execution-context structure,
+                // not a new effect or a new annotation required from the caller.
+                tails = region(op.getRegion(0), std::move(tails), depth + 1);
+                continue;
+            }
+            if (
                 op.getNumRegions() || getSyncMacroModel(&op)) {
                 failure = "unmodeled physical region or macro; no partial optimization";
                 return {};
@@ -992,6 +1045,41 @@ private:
 };
 
 } // namespace
+
+InsertSyncLifecycleStructure mlir::pto::buildInsertSyncLifecycleStructure(
+    func::FuncOp function, const SyncIRs& syncIR, Budget& budget)
+{
+    InsertSyncLifecycleStructure result;
+    NativeGraph graph(function, syncIR, /*allowSingleSection=*/true);
+    if (
+        graph.failure.empty()) {
+        graph.partition(budget);
+    }
+    if (
+        !graph.failure.empty()) {
+        result.reason = graph.failure;
+        result.status = graph.internalError ?
+                            StorageFrontierSnapshot::Status::InternalError :
+                            (!budget.left || graph.failure.find("budget") != std::string::npos ?
+                                    StorageFrontierSnapshot::Status::AnalysisLimit :
+                                    StorageFrontierSnapshot::Status::Unsupported);
+        return result;
+    }
+    // Export existing physical/control facts before synchronization selection.
+    // An unsynchronized input is not required to have completion supply. Selected
+    // slot protocols establish it; ordinary insertion handles every residual.
+    for (
+        const auto& phase : graph.phases) {
+        result.phases.push_back(phase.legacy);
+    }
+    result.cube = graph.cube;
+    result.lifetimeScope = graph.singlePhysicalSection ? graph.singlePhysicalSection : function.getOperation();
+    result.program = std::move(graph.program);
+    result.anchors = std::move(graph.anchors);
+    result.status = StorageFrontierSnapshot::Status::Complete;
+    result.reason = "R5 physical phases and guarded occurrences, before completion selection";
+    return result;
+}
 
 StorageFrontierSnapshot mlir::pto::analyzeInsertSyncStorageFrontiers(
     func::FuncOp function, const SyncIRs& syncIR, bool useMmadChains, Budget& budget)

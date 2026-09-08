@@ -21,6 +21,7 @@
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
+#include "PTO/Transforms/InsertSync/LifecycleSynthesis.h"
 #include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
 #include "PTO/Transforms/InsertSync/MmadChainAnalysis.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
@@ -532,6 +533,15 @@ void InsertSyncAnalysis::MemAnalyze(
   DepBaseMemInfoPairVec depVec;
   if (!IsMemInfoHasDependency(nowCompound, frontCompound, depVec)) {
     return;
+  }
+
+  if (lifecycleSupply_) {
+    lifecycleSupply_->removeSuppliedDependencies(frontCompound, nowCompound, depVec);
+    if (depVec.empty()) {
+      // The full lifecycle supplies these exact storage relationships. Do not
+      // mark alreadySync: unrelated accesses still require ordinary repair.
+      return;
+    }
   }
 
   // Same-iter (forward) deps: drop pairs that the affine analysis proves

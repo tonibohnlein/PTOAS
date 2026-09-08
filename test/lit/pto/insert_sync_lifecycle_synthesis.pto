@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// Native lifecycle-synthesis regression exercised by repository lit.
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --insert-sync-lifecycle-synthesis --emit-pto-ir %s -o %t.on.pto
+// RUN: FileCheck %s --check-prefix=ON < %t.on.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --emit-pto-ir %s -o %t.off.pto
+// RUN: FileCheck %s --check-prefix=OFF < %t.off.pto
+// RUN: ptoas --pto-arch=a2 --pto-level=level3 --enable-insert-sync --insert-sync-gm-alias=assume-disjoint-arguments --insert-sync-lifecycle-synthesis --insert-sync-defer-same-pipe %s -o %t.cpp
+// OFF-NOT: lifecycle-plus-residuals
+// ON-LABEL: func.func @two_slots
+// ON-SAME: lifecycle_channels = 4
+// ON-SAME: lifecycle-plus-residuals
+// ON: pto.set_flag
+// ON: scf.for
+// ON: pto.wait_flag
+// ON: pto.tload
+// ON: pto.set_flag
+// ON: pto.wait_flag
+// ON: pto.tabs
+// ON: pto.set_flag
+// ON: pto.tstore
+// ON: pto.barrier <PIPE_ALL>
+!V = !pto.tile_buf<vec, 16x16xf16>
+!G = !pto.tensor_view<?x?xf16>
+!P = !pto.partition_tensor_view<16x16xf16>
+module attributes {pto.target_arch = "a3"} {
+  func.func @two_slots(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>, %trips: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %s = arith.constant 16 : index
+    %depth = arith.constant 2 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 512 : i64
+    %b0 = arith.constant 1024 : i64
+    %b1 = arith.constant 1536 : i64
+    %in0 = pto.alloc_tile addr = %a0 : !V
+    %in1 = pto.alloc_tile addr = %a1 : !V
+    %out0 = pto.alloc_tile addr = %b0 : !V
+    %out1 = pto.alloc_tile addr = %b1 : !V
+    %rows = arith.muli %trips, %s : index
+    %input = pto.make_tensor_view %src, shape = [%rows, %s], strides = [%s, %one] : !G
+    %output = pto.make_tensor_view %dst, shape = [%rows, %s], strides = [%s, %one] : !G
+    scf.for %i = %z to %trips step %one {
+      %row = arith.muli %i, %s : index
+      %p = pto.partition_view %input, offsets = [%row, %z], sizes = [%s, %s] : !G -> !P
+      %q = pto.partition_view %output, offsets = [%row, %z], sizes = [%s, %s] : !G -> !P
+      %slot = arith.remui %i, %depth : index
+      %first = arith.cmpi eq, %slot, %z : index
+      scf.if %first {
+        pto.tload ins(%p : !P) outs(%in0 : !V)
+        pto.tabs ins(%in0 : !V) outs(%out0 : !V)
+        pto.tstore ins(%out0 : !V) outs(%q : !P)
+      } else {
+        pto.tload ins(%p : !P) outs(%in1 : !V)
+        pto.tabs ins(%in1 : !V) outs(%out1 : !V)
+        pto.tstore ins(%out1 : !V) outs(%q : !P)
+      }
+    }
+    return
+  }
+}

@@ -20,7 +20,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include <array>
 
-namespace mlir::pto { class MmadChainAnalysis; }
+namespace mlir::pto { class MmadChainAnalysis; class InsertSyncLifecyclePlan; }
  
 namespace mlir {
 namespace pto {
@@ -53,6 +53,12 @@ public:
         syncAnalysisMode_(syncAnalysisMode) {}
  
   ~InsertSyncAnalysis() = default;
+
+  // Exact storage-specific supply from a selected complete protocol. This does
+  // not alter the traversal or promote a local guarantee to a whole-pipe fact.
+  void setLifecycleSupply(const InsertSyncLifecyclePlan *plan) {
+    lifecycleSupply_ = plan;
+  }
  
   /// 入口函数：执行分析并注入同步
   /// insertBarAllAtLast: 是否在最后插入一个全局 Barrier (通常需要)
@@ -74,6 +80,7 @@ private:
   // 全局同步索引计数
   unsigned syncIndex_{0};
   const MmadChainAnalysis *mmadChains_{nullptr};
+  const InsertSyncLifecyclePlan *lifecycleSupply_{nullptr};
   unsigned intrinsicMmadGroups_{0};
  
 private:
