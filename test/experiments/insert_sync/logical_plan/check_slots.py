@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -81,7 +82,7 @@ class OriginalAccesses:
         self.iteration = -1
 
     def bases(self, role):
-        return self.maps[role] if role in self.maps else [4096 + 512 * int(role[3:])]
+        return self.maps[role] if role in self.maps else [self.options.get("output_base", 4096) + 512 * int(role[3:])]
 
     def exact(self, aid):
         role = self.roles[aid]
@@ -329,8 +330,10 @@ def main():
     parser.add_argument("--inputs", type=Path, default=HERE / "inputs/slots")
     parser.add_argument("--case", action="append", help="Restrict probing to named cases; default all twelve")
     parser.add_argument("--baseline-json", type=Path, help="Frozen Step3 rotating_d2 retirement output; no extra compiler invocation")
+    parser.add_argument("--reference-discovery", type=Path, help="Frozen general-slot discovery sidecars for exact requirement parity")
     parser.add_argument("--mutations", action="store_true")
     parser.add_argument("--focused", action="store_true", help="Small strict binding seeds and fast conservative negatives")
+    parser.add_argument("--compact-scaling", action="store_true", help="Fixed four-phase kernels with 2/3/4/8/16 physical slots")
     parser.add_argument("--stop-file", type=Path, help="Finish the current case, then pause before another native invocation")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
@@ -360,6 +363,22 @@ def main():
         for spec in specs:
             spec["required_application"] = True
         args.mutations = True
+    if args.compact_scaling:
+        assert not args.focused
+        specs = []
+        template = (args.inputs / "slot_guard_binding.pto").read_text()
+        for count in (2, 3, 4, 8, 16):
+            source = template.replace("arith.constant 2 : index", f"arith.constant {count} : index")
+            source = source.replace("count=2>", f"count={count}>")
+            source = source.replace("array<i64: 0, 512>", "array<i64: " + ", ".join(str(512 * i) for i in range(count)) + ">")
+            source = source.replace("4096 : i64", "16384 : i64").replace("4608 : i64", "16896 : i64")
+            path = args.output / f"compact_depth_{count}.pto"
+            path.write_text(source)
+            specs.append({"name": path.stem, "file": str(path.resolve()),
+                          "sha256": hashlib.sha256(source.encode()).hexdigest(),
+                          "options": {"fixed_trip_count": 4, "count": count, "output_base": 16384},
+                          "required_application": True, "mandatory": True,
+                          "replay_bounds": [0], "boolean_values": []})
     if args.case:
         assert set(args.case) <= {s["name"] for s in specs}
         specs = [s for s in specs if s["name"] in args.case]
@@ -394,9 +413,30 @@ def main():
         path = args.inputs / spec["file"]
         source = path.read_text()
         assert hashlib.sha256(source.encode()).hexdigest() == spec["sha256"], spec["name"]
-        code, data = invoke(path, "retirement", spec["name"])
+        code, data = invoke(path, "retirement", spec["name"], trace=True)
         row.update({"strict_status": data["status"], "reason": data["reason"], "work": data["work"],
                     "applied": data["applied"]})
+        if args.reference_discovery:
+            reference_path = args.reference_discovery / (spec["name"] + ".discovery.json")
+            reference = json.loads(reference_path.read_text())
+            reference_summary = json.loads((args.reference_discovery / "summary.json").read_text())
+            recorded = next(item for item in reference_summary["cases"] if item["case"] == spec["name"])
+            assert recorded["source_sha256"] == spec["sha256"], "reference uses another original program"
+            assert data.get("export_complete") and reference["export_complete"], "requirement parity needs complete discovery"
+            assert data["accesses"] == reference["accesses"] and data["phases"] == reference["phases"]
+            assert data["points"] == reference["points"], "reference occurrence coordinates/domains differ"
+            def requirement_maps(snapshot):
+                maps = {}
+                for item in snapshot["requirements"]:
+                    key = tuple(item[k] for k in ("kind", "property", "source", "target", "source_access", "target_access"))
+                    relation = isl.map(isl_text(item["occurrences"]))
+                    maps[key] = (maps[key] | relation) if key in maps else relation
+                return maps
+            before, after = requirement_maps(reference), requirement_maps(data)
+            assert before.keys() == after.keys(), (spec["name"], "requirement identities changed")
+            for key in before:
+                assert before[key].equal(after[key]), (spec["name"], "requirement relation changed", key)
+            row["exact_requirement_parity"] = {"relations": len(before), "reference_sha256": hashlib.sha256(reference_path.read_bytes()).hexdigest()}
         if code == "timeout":
             row["validation_status"] = "not-established"
             row["effectiveness"] = "not established; timed-out process supplies no proof or rollback evidence"
@@ -417,6 +457,31 @@ def main():
             print(spec["name"], "strict unavailable:", data["reason"], flush=True)
             return
         assert code == 0 and data["status"] == "applied" and data["invoked"] and data["export_complete"], data
+        trace = (args.output / (spec["name"] + ".stderr")).read_text()
+        counters = re.findall(r"logical slot_queries range_builds (\d+) equality_builds (\d+) domain_builds (\d+) geometry_builds (\d+)", trace)
+        assert len(counters) == 1, (spec["name"], "missing or duplicate production slot-query counters")
+        row["slot_queries"] = dict(zip(("range_builds", "equality_builds", "domain_builds", "geometry_builds"), map(int, counters[0])))
+        components = re.findall(r"logical slot_components nodes (\d+) edges (\d+) find_steps (\d+) joins (\d+) compact_members (\d+)", trace)
+        assert len(components) == 1, "missing native representation-component counters"
+        row["slot_components"] = dict(zip(("nodes", "edges", "find_steps", "joins", "compact_members"), map(int, components[0])))
+        assert row["slot_components"]["joins"] < row["slot_components"]["nodes"], row["slot_components"]
+        assert row["slot_queries"]["geometry_builds"] <= row["slot_components"]["joins"], row["slot_queries"]
+        options = spec["options"]
+        if not (options.get("mapping") or options.get("unknown") or options.get("out_of_range")):
+            # All dynamic local accesses use the identical qualified table.
+            # This includes fresh emitted reconstruction, not just discovery.
+            assert row["slot_queries"]["domain_builds"] == 0, (spec["name"], row["slot_queries"])
+            assert row["slot_queries"]["equality_builds"] > 0, (spec["name"], row["slot_queries"])
+        if options.get("partial_overlap"):
+            assert row["slot_queries"]["domain_builds"] > 0, "different physical maps must retain general overlap"
+            assert row["slot_queries"]["equality_builds"] == 0, "heterogeneous component mixed relation representations"
+        if args.compact_scaling:
+            # Fixed four selector-bearing phases: cached range proofs in the
+            # constructor and independent reconstruction; at most all 4x4
+            # ordered equalities. Neither count grows with physical slot count.
+            assert row["slot_queries"]["range_builds"] <= 8, row["slot_queries"]
+            assert row["slot_queries"]["equality_builds"] <= 16, row["slot_queries"]
+            assert row["slot_queries"]["geometry_builds"] <= 3, row["slot_queries"]
         sidecar = json.loads((args.output / (spec["name"] + ".discovery.json")).read_text())
         assert data["discovery_written"] and sidecar["discovery_only"] and sidecar["export_complete"]
         for field in ("accesses", "phases", "requirements", "points", "orders"):
@@ -434,7 +499,7 @@ def main():
             assert row["observations"]["broadened_first_readers"] == 0
             row["removed_payload_prefix_requirements"] = compare_prefixes(row["baseline"], row["observations"])
         mutations = {"rotating_d2": ("erase-wait", "swap-loads", "swap-wait-keys"),
-                     "slot_guard_binding": ("slot-guard-selector-binding", "slot-guard-unbound-parameter"),
+                     "slot_guard_binding": ("slot-guard-selector-binding", "slot-guard-unbound-parameter", "slot-selector-common-permutation"),
                      "slot_guard_known_parameter": ("slot-guard-known-parameter",)}
         if spec["name"] in mutations and args.mutations:
             row["mutations"] = []
@@ -446,6 +511,11 @@ def main():
                     assert rejected["counts_preserved"] and rejected["original_scalar_uses_preserved"], rejected
                     assert "original payload" not in rejected["reason"], rejected
                     assert rejected["original_parameter_count"] == int(bool(spec["options"].get("known_parameter")))
+                if mutation == "slot-selector-common-permutation":
+                    assert rejected["selector_permutation_count"] == 2, rejected
+                    assert rejected["counts_preserved"] and rejected["physical_slot_tables_preserved"], rejected
+                    assert rejected["original_payload_uses_preserved"], rejected
+                    assert "original payload" in rejected["reason"], rejected
                 row["mutations"].append({"mutation": mutation, "reason": rejected["reason"]})
         row["validation_status"] = "passed"
         row["accepted"] = True

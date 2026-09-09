@@ -14,6 +14,7 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto::logical_sync;
@@ -31,7 +32,7 @@ int main(int argc,char** argv) {
     Array functions;
     for (auto f:module->getOps<func::FuncOp>()) {
         if (f.isDeclaration()) continue;
-        SmallVector<Operation*> phases, scalarQueries;
+        SmallVector<Operation*> phases, scalarQueries, equalityQueries;
         SmallVector<Value> requestedScalars;
         f.walk([&](Operation* op) {
             if (op->getName().getStringRef()=="test.phase" ||
@@ -40,11 +41,32 @@ int main(int argc,char** argv) {
                 scalarQueries.push_back(op);
                 requestedScalars.push_back(op->getOperand(0));
             }
+            if (op->getName().getStringRef()=="test.equal_scalars" && op->getNumOperands()==2) {
+                equalityQueries.push_back(op);
+                requestedScalars.append(op->getOperands().begin(),op->getOperands().end());
+            }
         });
         if (f->hasAttr("test.reverse_phases")) std::reverse(phases.begin(),phases.end());
         auto facts=SyncOccurrences::build(f,phases,requestedScalars);
         Object result{{"function",f.getSymName()},{"complete",facts.complete},{"reason",facts.reason}};
         if (facts.complete) {
+            if (auto depth=f->getAttrOfType<IntegerAttr>("test.equality_dag_depth")) {
+                // Isolated representation-cost challenge, not scalar-import
+                // coverage. On this checked singleton domain i=0, each floor
+                // diamond still denotes the actual SSA value zero exactly.
+                if (depth.getInt()<0 || depth.getInt()>40 || facts.loops.size()!=1 || requestedScalars.empty()) return 2;
+                auto lo=dyn_cast<AffineConstantExpr>(facts.loopDomains[0].lower);
+                auto hi=dyn_cast<AffineConstantExpr>(facts.loopDomains[0].upper);
+                if (!lo || !hi || lo.getValue()!=0 || hi.getValue()!=1 || facts.loopDomains[0].step!=1) return 2;
+                Value iv=facts.loops[0].getInductionVar();
+                for (Value value:requestedScalars) if (value!=iv) return 2;
+                AffineExpr expr=getAffineDimExpr(0,&context);
+                const bool chain=f->hasAttr("test.equality_chain");
+                for (int64_t i=0;i<depth.getInt();++i)
+                    expr=chain ? (expr+1).floorDiv(2) : expr.floorDiv(2)+expr.floorDiv(3);
+                facts.scalarExpressions[iv]=expr;
+                result["synthetic_equality_dag_depth"]=depth.getInt();
+            }
             Array parameters, points, orders;
             for (Value value:facts.parameters) {
                 Object binding;
@@ -88,6 +110,55 @@ int main(int argc,char** argv) {
                 scalars.push_back(std::move(scalar));
             }
             result["scalars"]=std::move(scalars);
+            Array equalities;
+            for (Operation* query:equalityQueries) {
+                auto source=query->getAttrOfType<IntegerAttr>("source");
+                auto target=query->getAttrOfType<IntegerAttr>("target");
+                auto allowance=query->getAttrOfType<IntegerAttr>("budget");
+                if (!source || !target || source.getInt()<0 || target.getInt()<0 ||
+                    uint64_t(source.getInt())>std::numeric_limits<unsigned>::max() ||
+                    uint64_t(target.getInt())>std::numeric_limits<unsigned>::max() ||
+                    (allowance && allowance.getInt()<0)) return 2;
+                RelationQueries queries(allowance ? uint64_t(allowance.getInt()) : 1000000);
+                auto relation=facts.equalScalars(query->getOperand(0),unsigned(source.getInt()),
+                                                query->getOperand(1),unsigned(target.getInt()),queries);
+                const char* status=relation.status==QueryStatus::Proved ? "proved" :
+                    relation.status==QueryStatus::NotEstablished ? "not-established" :
+                    relation.status==QueryStatus::Unsupported ? "unsupported" : "budget-exhausted";
+                Object equality{{"source",source.getInt()},{"target",target.getInt()},
+                                {"status",status},{"reason",relation.reason},{"work",int64_t(queries.work())}};
+                if (relation) equality["relation"]=testing::encode(*relation.relation);
+                if (uint64_t(source.getInt())<facts.points.size() && uint64_t(target.getInt())<facts.points.size()) {
+                    auto original=facts.ordered(unsigned(source.getInt()),unsigned(target.getInt()));
+                    if (!original) return 3;
+                    auto fromLower=query->getAttrOfType<IntegerAttr>("source_lower");
+                    auto toUpper=query->getAttrOfType<IntegerAttr>("target_upper");
+                    auto parameterEquals=query->getAttrOfType<IntegerAttr>("parameter_equals");
+                    if ((fromLower || toUpper) && facts.dimensions()<2) return 2;
+                    if (parameterEquals && facts.parameters.empty()) return 2;
+                    auto restricted=Relation::getEmpty(original.relation->getSpace());
+                    for (auto piece:original.relation->getAllDisjuncts()) {
+                        if (fromLower) piece.addBound(presburger::BoundType::LB,1,fromLower.getInt());
+                        if (toUpper) piece.addBound(presburger::BoundType::UB,facts.dimensions()+1,toUpper.getInt());
+                        if (parameterEquals) piece.addBound(presburger::BoundType::EQ,2*facts.dimensions(),parameterEquals.getInt());
+                        restricted.unionInPlace(piece);
+                    }
+                    if (query->hasAttr("empty_filter")) restricted=Relation::getEmpty(restricted.getSpace());
+                    if (query->hasAttr("wrong_filter_space")) restricted=facts.domain(unsigned(source.getInt()));
+                    RelationQueries filterQueries(allowance ? uint64_t(allowance.getInt()) : 1000000);
+                    auto filtered=facts.filterEqualScalars(restricted,query->getOperand(0),unsigned(source.getInt()),
+                                                          query->getOperand(1),unsigned(target.getInt()),filterQueries);
+                    equality["original_occurrences"]=testing::encode(restricted);
+                    equality["filter_status"]=filtered.status==QueryStatus::Proved ? "proved" :
+                        filtered.status==QueryStatus::NotEstablished ? "not-established" :
+                        filtered.status==QueryStatus::Unsupported ? "unsupported" : "budget-exhausted";
+                    equality["filter_reason"]=filtered.reason;
+                    equality["filter_work"]=int64_t(filterQueries.work());
+                    if (filtered) equality["filtered_relation"]=testing::encode(*filtered.relation);
+                }
+                equalities.push_back(std::move(equality));
+            }
+            result["equalities"]=std::move(equalities);
         }
         functions.push_back(std::move(result));
     }

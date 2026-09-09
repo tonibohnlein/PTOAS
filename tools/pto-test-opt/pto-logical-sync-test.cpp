@@ -16,6 +16,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/JSON.h"
@@ -192,10 +193,14 @@ int main(int argc, char** argv)
     bool invoked = false, changed = false, exportComplete = true, countsPreserved = true;
     bool originalUsesPreserved = true, discoveryWritten = false, discoveryFailed = false;
     bool boundaryConditionsInvoked = false, boundaryConditionsPassed = false;
+    bool physicalSlotTablesPreserved = true, originalPayloadUsesPreserved = true;
+    unsigned selectorPermutationCount = 0;
+    const bool selectorPermutation = mutation == "slot-selector-common-permutation";
     const bool slotMutation = mutation == "slot-guard-selector-binding" ||
                               mutation == "slot-guard-known-parameter" ||
                               mutation == "slot-guard-unbound-parameter";
     llvm::DenseMap<Operation*, SmallVector<Value>> originalOperands;
+    SmallVector<Operation*> originalPayload;
     SmallVector<Value> originalParameters;
     llvm::json::Array requirements, points, orders, accesses, physicalPhases;
     uint64_t budget = kDefaultLogicalSyncWorkBudget;
@@ -228,7 +233,49 @@ int main(int argc, char** argv)
                 return std::make_tuple(sets, waits, barriers);
             };
             auto beforeCounts = counts(candidate);
-            if (slotMutation) {
+            if (selectorPermutation) {
+                // Apply the same bijection to BOTH original D2 selectors.
+                // Pairwise equality is invariant under s -> 1-s, although each
+                // selector now denotes the other physical slot. The original
+                // descriptor operand contract must reject this before the
+                // later fresh selector-value check; never bypass that check
+                // merely to claim coverage of a later rejection stage.
+                SmallVector<MultiTileGetOp> selections;
+                SmallVector<std::pair<Operation*, DictionaryAttr>> tables;
+                bool qualified = true;
+                candidate.walk([&](AllocMultiTileOp alloc) {
+                    tables.push_back({alloc, alloc->getAttrDictionary()});
+                });
+                candidate.walk([&](MultiTileGetOp get) {
+                    if (!originalOperands.contains(get)) return;
+                    auto rem = get.getSlot().getDefiningOp<arith::RemUIOp>();
+                    APInt divisor;
+                    if (get.getSource().getType().getCount() != 2 || !rem ||
+                        !originalOperands.contains(rem) ||
+                        !matchPattern(rem.getRhs(), m_ConstantInt(&divisor)) || divisor != 2) {
+                        qualified = false;
+                        return;
+                    }
+                    selections.push_back(get);
+                });
+                if (qualified && selections.size() == 2) {
+                    for (auto get : selections) {
+                        OpBuilder builder(get);
+                        auto one = builder.create<arith::ConstantOp>(get.getLoc(),
+                            builder.getIntegerAttr(get.getSlot().getType(), 1));
+                        auto permuted = builder.create<arith::SubIOp>(get.getLoc(), one, get.getSlot());
+                        get.getSlotMutable().assign(permuted);
+                        ++selectorPermutationCount;
+                    }
+                    changed = true;
+                }
+                for (const auto &[op, attrs] : tables)
+                    physicalSlotTablesPreserved &= op->getAttrDictionary() == attrs;
+                for (Operation* op : originalPayload)
+                    originalPayloadUsesPreserved &= llvm::equal(op->getOperands(), originalOperands.at(op));
+                for (const auto &[op, operands] : originalOperands)
+                    originalUsesPreserved &= llvm::equal(op->getOperands(), operands);
+            } else if (slotMutation) {
                 DominanceInfo dominance(candidate);
                 candidate.walk([&](arith::CmpIOp compare) {
                     if (changed || originalOperands.contains(compare)) return;
@@ -448,11 +495,13 @@ int main(int argc, char** argv)
                 boundaryConditionsInvoked = true;
                 boundaryConditionsPassed = testing::checkBoundaryConditions(facts, kDefaultLogicalSyncWorkBudget);
             }
-            if (slotMutation && !phases.empty()) {
+            if ((slotMutation || selectorPermutation) && !phases.empty()) {
                 auto candidate = phases.front()->elementOp->getParentOfType<func::FuncOp>();
                 candidate.walk([&](Operation *op) {
                     originalOperands.try_emplace(op, op->getOperands().begin(), op->getOperands().end());
                 });
+                for (const auto* phase : phases)
+                    originalPayload.push_back(phase->elementOp);
                 originalParameters.assign(facts.parameters.begin(), facts.parameters.end());
             }
             if (mutation != "facts" && mutation != "retirement" && discoveryPath.empty())
@@ -551,6 +600,9 @@ int main(int argc, char** argv)
                             {"applied", applied},
                             {"counts_preserved", countsPreserved},
                             {"original_scalar_uses_preserved", originalUsesPreserved},
+                            {"selector_permutation_count", selectorPermutationCount},
+                            {"physical_slot_tables_preserved", physicalSlotTablesPreserved},
+                            {"original_payload_uses_preserved", originalPayloadUsesPreserved},
                             {"original_parameter_count", originalParameters.size()},
                             {"discovery_written", discoveryWritten},
                             {"boundary_conditions_invoked", boundaryConditionsInvoked},
@@ -573,6 +625,10 @@ int main(int argc, char** argv)
         return invoked && applied && exportComplete ? 0 : 1;
     if (!(invoked && changed && !applied && preserved))
         return 1;
+    if (selectorPermutation)
+        return selectorPermutationCount == 2 && countsPreserved && physicalSlotTablesPreserved &&
+                       originalPayloadUsesPreserved && !originalUsesPreserved &&
+                       StringRef(result.reason).contains("original payload") ? 0 : 1;
     if (slotMutation)
         return countsPreserved && originalUsesPreserved && !StringRef(result.reason).contains("original payload") ? 0 : 1;
     if (mutation == "swap-loads" || mutation == "change-rounding" || mutation == "add-allocation")

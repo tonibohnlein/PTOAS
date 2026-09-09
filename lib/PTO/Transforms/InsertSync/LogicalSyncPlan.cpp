@@ -20,6 +20,7 @@
 #include "mlir/IR/IntegerSet.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include <map>
 #include <set>
 #include <cstdlib>
@@ -198,8 +199,14 @@ class Constructor {
     std::map<const BaseMemInfo*, std::optional<SyncPhysicalSlotMapping>> slotMappings;
     SmallVector<Value> slotSelectors;
     using SelectorPoint = std::pair<Value, std::pair<unsigned, unsigned>>;
+    llvm::DenseMap<SelectorPoint, bool> selectorRanges;
     llvm::DenseMap<SelectorPoint, std::optional<std::vector<Relation>>> selectorDomains;
     std::map<std::pair<unsigned, const BaseMemInfo*>, std::vector<Relation>> usedSlotDomains;
+    llvm::SmallPtrSet<const BaseMemInfo*, 16> compactSlotMemories;
+    llvm::DenseMap<std::pair<SelectorPoint, SelectorPoint>, std::optional<Relation>> compactSlotRelations;
+    std::set<std::pair<unsigned, const BaseMemInfo*>> usedCompactSlots;
+    uint64_t slotRangeBuilds = 0, slotEqualityBuilds = 0, slotDomainsBuilt = 0, slotGeometryBuilds = 0;
+    uint64_t slotComponentNodes = 0, slotComponentEdges = 0, slotComponentFinds = 0, slotComponentJoins = 0;
     std::optional<CompletionQueries> completionOrder;
     ConstructionResult result;
     RetirementSink retirement;
@@ -393,6 +400,7 @@ class Constructor {
         if (queries.profilingEnabled())
             llvm::errs() << "logical discovery intervals " << candidates.intervalVisits
                 << " candidate_visits " << candidates.candidateVisits << " pairs " << candidates.pairs.size() << "\n";
+        if (!chooseSlotRepresentations(accesses, candidates.pairs)) return false;
         for (const auto& [x, y] : candidates.pairs) {
             const auto& a = accesses[x]; const auto& b = accesses[y];
             auto kind = [](bool sourceWrite, bool targetWrite) {
@@ -425,28 +433,44 @@ class Constructor {
             observeRequirements(facts, phases, requirements);
         return true;
     }
-    // Return one domain per physical slot after proving that the selector is
-    // always in range at THIS access occurrence. multi_tile_get uses slot zero
-    // on out-of-range dynamic indices; ordinary modular equality is therefore
-    // unavailable unless this complete-domain qualification succeeds.
-    std::optional<std::vector<Relation>> buildSlotDomains(
+    // Range proof is separate from enumerating slot domains. An exact compact
+    // equality must not pay for N residue domains just to qualify its inputs.
+    // multi_tile_get uses slot zero on an out-of-range dynamic index, so this
+    // proof covers the entire access domain, not only the conflict subset.
+    bool proveSlotRange(
         const SyncOccurrences& occurrences, unsigned point, const SyncPhysicalSlotMapping& mapping)
     {
-        if (!mapping.selector) return std::vector<Relation>{occurrences.domain(point)};
+        ++slotRangeBuilds;
         auto range = occurrences.scalarDomain(mapping.selector, point, 0, mapping.bases.size() - 1, queries);
         if (!range) {
             if (range.status == QueryStatus::BudgetExhausted)
                 fail(ConstructionResult::AnalysisLimit, "slot selector domain budget");
-            return {};
+            return false;
         }
         auto coverage = queries.contains(*range.relation, occurrences.domain(point));
         if (coverage != QueryStatus::Proved) {
             if (coverage == QueryStatus::BudgetExhausted)
                 fail(ConstructionResult::AnalysisLimit, "slot selector range budget");
-            return {};
+            return false;
         }
+        return true;
+    }
+    bool slotInRange(unsigned point, const SyncPhysicalSlotMapping& mapping)
+    {
+        if (!queries.spend(1)) return fail(ConstructionResult::AnalysisLimit, "slot range lookup budget");
+        SelectorPoint key{mapping.selector, {point, unsigned(mapping.bases.size())}};
+        if (auto found = selectorRanges.find(key); found != selectorRanges.end()) return found->second;
+        bool proved = proveSlotRange(facts, point, mapping);
+        if (result.status != ConstructionResult::AnalysisLimit) selectorRanges.try_emplace(key, proved);
+        return proved;
+    }
+    // Caller has a complete-domain range receipt for this selector/point/count.
+    std::optional<std::vector<Relation>> enumerateSlotDomains(
+        const SyncOccurrences& occurrences, unsigned point, const SyncPhysicalSlotMapping& mapping)
+    {
         std::vector<Relation> domains;
         for (unsigned slot = 0; slot < mapping.bases.size(); ++slot) {
+            ++slotDomainsBuilt;
             auto domain = occurrences.scalarDomain(mapping.selector, point, slot, slot, queries);
             if (!domain) {
                 if (domain.status == QueryStatus::BudgetExhausted)
@@ -469,17 +493,126 @@ class Constructor {
             // qualification is depth-specific; do not reuse the wrong count.
             auto [found, inserted] = selectorDomains.try_emplace(
                 SelectorPoint{mapping->selector, {point, unsigned(mapping->bases.size())}}, std::nullopt);
-            if (inserted) found->second = buildSlotDomains(facts, point, *mapping);
+            if (inserted && slotInRange(point, *mapping))
+                found->second = enumerateSlotDomains(facts, point, *mapping);
             domains = found->second;
         } else domains = std::vector<Relation>{facts.domain(point)};
         if (!domains) return nullptr;
         return &usedSlotDomains.emplace(key, std::move(*domains)).first->second;
+    }
+    bool sameSlotGeometry(const BaseMemInfo* a, const BaseMemInfo* b)
+    {
+        ++slotGeometryBuilds;
+        const auto& ma = *slotMappings.at(a); const auto& mb = *slotMappings.at(b);
+        bool same = ma.scope == mb.scope && ma.bytes == mb.bytes && ma.bases.size() == mb.bases.size();
+        if (same) {
+            if (!queries.spend(ma.bases.size()))
+                return fail(ConstructionResult::AnalysisLimit, "slot table comparison budget");
+            same = ma.bases == mb.bases;
+        }
+        // Both selector mappings were independently qualified, including
+        // disjoint intervals within each ORIGINAL ordered table. A permutation
+        // or partial overlap cannot use ordinal equality and stays general.
+        return same;
+    }
+    bool chooseSlotRepresentations(ArrayRef<SyncPhysicalAccess> accesses,
+                                    ArrayRef<std::pair<unsigned, unsigned>> candidates)
+    {
+        if (slotSelectors.empty()) return true;
+        // Reuse the existing conservative overlap graph, not another all-pairs
+        // mapping scan. Freeze representation BEFORE forming any requirement:
+        // mixing equality and enumerated forms in one overlapping component
+        // can make exact downstream difference substantially more expensive.
+        if (!queries.spend(uint64_t(accesses.size()) * 4))
+            return fail(ConstructionResult::AnalysisLimit, "slot component setup budget");
+        struct Node { unsigned parent, rank; const BaseMemInfo* memory; bool homogeneous; };
+        std::vector<Node> nodes;
+        SmallVector<unsigned> accessNodes;
+        llvm::DenseMap<const BaseMemInfo*, unsigned> ids;
+        for (const auto& access : accesses) {
+            auto [it, inserted] = ids.try_emplace(access.memory, nodes.size());
+            if (inserted) nodes.push_back({it->second, 0, access.memory, bool(slotMappings.at(access.memory))});
+            accessNodes.push_back(it->second);
+        }
+        slotComponentNodes = nodes.size();
+        auto find = [&](unsigned id) -> std::optional<unsigned> {
+            for (;;) {
+                if (!queries.spend(1)) { fail(ConstructionResult::AnalysisLimit, "slot component find budget"); return {}; }
+                ++slotComponentFinds;
+                if (nodes[id].parent == id) return id;
+                nodes[id].parent = nodes[nodes[id].parent].parent;
+                id = nodes[id].parent;
+            }
+        };
+        for (auto [x, y] : candidates) {
+            if (!queries.spend(1)) return fail(ConstructionResult::AnalysisLimit, "slot component edge budget");
+            ++slotComponentEdges;
+            auto a = find(accessNodes[x]), b = find(accessNodes[y]);
+            if (!a || !b) return false;
+            if (*a == *b) continue;
+            bool homogeneous = nodes[*a].homogeneous && nodes[*b].homogeneous &&
+                               sameSlotGeometry(nodes[*a].memory, nodes[*b].memory);
+            if (result.status == ConstructionResult::AnalysisLimit) return false;
+            if (nodes[*a].rank < nodes[*b].rank) std::swap(a, b);
+            nodes[*b].parent = *a;
+            nodes[*a].rank += nodes[*a].rank == nodes[*b].rank;
+            nodes[*a].homogeneous = homogeneous;
+            ++slotComponentJoins;
+        }
+        for (unsigned id = 0; id < nodes.size(); ++id) {
+            auto root = find(id);
+            if (!root) return false;
+            if (nodes[*root].homogeneous) compactSlotMemories.insert(nodes[id].memory);
+            const auto& mapping = slotMappings.at(nodes[id].memory);
+            if (std::getenv("PTOAS_LOGICAL_TRACE") && mapping && mapping->selector)
+                llvm::errs() << "logical slot_component_member index " << id << " scope " << unsigned(mapping->scope)
+                             << " base " << mapping->bases.front() << " slots " << mapping->bases.size()
+                             << " compact " << nodes[*root].homogeneous << "\n";
+        }
+        // A heterogeneous/unknown component retains the SAME precise general
+        // slot calculation. Representation selection never removes a conflict.
+        return true;
     }
     std::optional<Relation> slotConflicts(unsigned p, unsigned q, const BaseMemInfo* a,
                                           const BaseMemInfo* b, const Relation& original)
     {
         const auto& ma = slotMappings.at(a); const auto& mb = slotMappings.at(b);
         if (!ma || !mb || (!ma->selector && !mb->selector)) return original;
+        // Discovery only calls this for an edge of the frozen candidate graph.
+        // Thus eligible endpoints belong to one qualified homogeneous component.
+        bool sameGeometry = ma->selector && mb->selector && compactSlotMemories.contains(a) && compactSlotMemories.contains(b);
+        if (sameGeometry) {
+            bool leftRange = slotInRange(p, *ma);
+            if (result.status == ConstructionResult::AnalysisLimit) return {};
+            bool rightRange = slotInRange(q, *mb);
+            if (result.status == ConstructionResult::AnalysisLimit) return {};
+            if (!leftRange || !rightRange) return original;
+            // The only caller (discovery) supplies FULL immutable NativeOrder
+            // p->q here, never a previously filtered relation. The cache key
+            // relies on that invariant: it cannot identify arbitrary subsets.
+            // This order's ambient-domain qualification
+            // is the filter API's precondition; do not multiply those domains
+            // into the equality again. Cache across RAW/WAR/WAW consumers.
+            if (!queries.spend(1)) {
+                fail(ConstructionResult::AnalysisLimit, "slot equality lookup budget"); return {};
+            }
+            auto key = std::make_pair(SelectorPoint{ma->selector, {p, unsigned(ma->bases.size())}},
+                                      SelectorPoint{mb->selector, {q, unsigned(mb->bases.size())}});
+            auto found = compactSlotRelations.find(key);
+            if (found == compactSlotRelations.end()) {
+                ++slotEqualityBuilds;
+                auto equal = facts.filterEqualScalars(original, ma->selector, p, mb->selector, q, queries);
+                if (equal.status == QueryStatus::BudgetExhausted) {
+                    fail(ConstructionResult::AnalysisLimit, "slot equality filter budget"); return {};
+                }
+                found = compactSlotRelations.try_emplace(key, equal ? std::move(equal.relation) : std::nullopt).first;
+            }
+            if (found->second) {
+                usedCompactSlots.insert({p, a});
+                usedCompactSlots.insert({q, b});
+                return *found->second;
+            }
+        }
         const auto* left = slots(p, a); const auto* right = slots(q, b);
         if (result.status == ConstructionResult::AnalysisLimit) return {};
         if (!left || !right) return original;
@@ -826,6 +959,14 @@ public:
         } else
             result.reason = stage.str() + ": " + result.reason;
         result.work = queries.work();
+        if (std::getenv("PTOAS_LOGICAL_TRACE"))
+            llvm::errs() << "logical slot_queries range_builds " << slotRangeBuilds
+                         << " equality_builds " << slotEqualityBuilds << " domain_builds " << slotDomainsBuilt
+                         << " geometry_builds " << slotGeometryBuilds << "\n";
+        if (std::getenv("PTOAS_LOGICAL_TRACE"))
+            llvm::errs() << "logical slot_components nodes " << slotComponentNodes << " edges " << slotComponentEdges
+                         << " find_steps " << slotComponentFinds << " joins " << slotComponentJoins
+                         << " compact_members " << compactSlotMemories.size() << "\n";
         if (queries.profilingEnabled()) {
             auto report = [](StringRef name, const RelationQueries::PrimitiveStats& stats) {
                 llvm::errs() << "logical primitive " << name << " calls " << stats.calls
@@ -1946,8 +2087,10 @@ bool Constructor::reconstruct()
     // from freshly translated effects and actual emitted control. Equal event
     // counts or a selected protocol's certificate cannot justify slot omission.
     std::map<const BaseMemInfo*, SyncPhysicalSlotMapping> actualMappings;
-    llvm::DenseSet<SelectorPoint> checkedSelectors;
-    for (const auto& [key, domains] : usedSlotDomains) {
+    llvm::DenseSet<SelectorPoint> checkedSelectors, checkedCompactSelectors, checkedRanges;
+    auto usedSlots = usedCompactSlots;
+    for (const auto& [key, domains] : usedSlotDomains) usedSlots.insert(key);
+    for (const auto& key : usedSlots) {
         auto [point, oldMemory] = key;
         auto oldMapping = slotMappings.find(oldMemory);
         auto rebuilt = rebuiltAccesses.find(oldMemory);
@@ -1964,6 +2107,33 @@ bool Constructor::reconstruct()
                 return fail(ConstructionResult::Unproved, "emitted physical slot mapping changed");
             mapping = actualMappings.emplace(oldMemory, std::move(*fresh)).first;
         }
+        if (original.selector) {
+            SelectorPoint selector{original.selector, {point, unsigned(original.bases.size())}};
+            if (!checkedRanges.contains(selector)) {
+                if (!proveSlotRange(actual, point, mapping->second)) {
+                    if (result.status == ConstructionResult::AnalysisLimit) return false;
+                    return fail(ConstructionResult::Unproved, "emitted selector range unavailable");
+                }
+                checkedRanges.insert(selector);
+            }
+            if (usedCompactSlots.count(key) && !checkedCompactSelectors.contains(selector)) {
+                if (!queries.spend(1)) return fail(ConstructionResult::AnalysisLimit, "emitted scalar identity budget");
+                auto before = facts.scalarExpressions.find(original.selector);
+                auto after = actual.scalarExpressions.find(original.selector);
+                // Point domains and the original SSA/loop/parameter bindings
+                // were independently checked above. Under those bindings,
+                // identical normalized expressions preserve EACH selector's
+                // value graph. Merely preserving pairwise selector equality
+                // could miss simultaneous permutations of both selectors.
+                if (before == facts.scalarExpressions.end() || after == actual.scalarExpressions.end() ||
+                    before->second != after->second)
+                    return fail(ConstructionResult::Unproved, "emitted selector value changed");
+                checkedCompactSelectors.insert(selector);
+            }
+        }
+        auto oldDomains = usedSlotDomains.find(key);
+        if (oldDomains == usedSlotDomains.end()) continue;
+        const auto& domains = oldDomains->second;
         std::vector<Relation> freshDomains;
         if (original.selector) {
             SelectorPoint selector{original.selector, {point, unsigned(original.bases.size())}};
@@ -1971,7 +2141,7 @@ bool Constructor::reconstruct()
             // above. The exact scalar equivalence is shared only WITHIN this
             // fresh reconstruction, independent of any planner receipt.
             if (checkedSelectors.contains(selector)) continue;
-            auto fresh = buildSlotDomains(actual, point, mapping->second);
+            auto fresh = enumerateSlotDomains(actual, point, mapping->second);
             if (!fresh) {
                 if (result.status == ConstructionResult::AnalysisLimit) return false;
                 return fail(ConstructionResult::Unproved, "emitted selector domain unavailable");

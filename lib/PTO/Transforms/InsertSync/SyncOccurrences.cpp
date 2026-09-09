@@ -77,6 +77,56 @@ std::optional<IntegerRelation> flatten(ArrayRef<Constraint> constraints, unsigne
         if (equalities[i]) flat.addEquality(rows[i]); else flat.addInequality(rows[i]);
     return IntegerRelation(flat);
 }
+// Equality queries may receive two expressions sharing a DAG. Preserve the
+// importer's coefficient/depth limits without revisiting every unfolded path.
+// This cache belongs to ONE query and one MLIR context, never a global process.
+class EqualityCoefficients {
+public:
+    struct Receipt { __int128 mass; unsigned height; uint64_t expandedNodes; };
+private:
+    RelationQueries& queries;
+    llvm::DenseMap<AffineExpr, Receipt> memo;
+    QueryStatus outcome = QueryStatus::Proved;
+    static uint64_t addSaturated(uint64_t a, uint64_t b) {
+        return a > std::numeric_limits<uint64_t>::max() - b ? std::numeric_limits<uint64_t>::max() : a + b;
+    }
+public:
+    explicit EqualityCoefficients(RelationQueries& q) : queries(q) {}
+    QueryStatus status() const { return outcome; }
+    std::optional<Receipt> analyze(AffineExpr expr, unsigned depth = 0) {
+        // Charge every actual call, including an edge into an already visited
+        // node, before recursion or a cache lookup can perform additional work.
+        if (!queries.spend(1)) { outcome = QueryStatus::BudgetExhausted; return {}; }
+        if (depth >= 64) { outcome = QueryStatus::Unsupported; return {}; }
+        if (auto found = memo.find(expr); found != memo.end()) {
+            if (depth + found->second.height > 64) { outcome = QueryStatus::Unsupported; return {}; }
+            return found->second;
+        }
+        Receipt result{1, 1, 1};
+        if (auto c = dyn_cast<AffineConstantExpr>(expr)) {
+            result.mass = c.getValue() < 0 ? -__int128(c.getValue()) : __int128(c.getValue());
+        } else if (auto binary = dyn_cast<AffineBinaryOpExpr>(expr)) {
+            auto a = analyze(binary.getLHS(), depth + 1);
+            if (!a) return {};
+            auto b = analyze(binary.getRHS(), depth + 1);
+            if (!b) return {};
+            result.height = 1 + std::max(a->height, b->height);
+            result.expandedNodes = addSaturated(1, addSaturated(a->expandedNodes, b->expandedNodes));
+            if (a->mass > coefficientLimit || b->mass > coefficientLimit) result.mass = coefficientLimit + 1;
+            else switch (expr.getKind()) {
+            case AffineExprKind::Add: result.mass = a->mass + b->mass; break;
+            case AffineExprKind::Mul: result.mass = a->mass * b->mass; break;
+            case AffineExprKind::Mod:
+            case AffineExprKind::FloorDiv:
+            case AffineExprKind::CeilDiv: result.mass = a->mass + 2 * b->mass + 1; break;
+            default: result.mass = coefficientLimit + 1; break;
+            }
+        }
+        result.mass = std::min(result.mass, coefficientLimit + 1);
+        memo.try_emplace(expr, result);
+        return result;
+    }
+};
 class Importer {
     func::FuncOp function;
     MLIRContext* context;
@@ -528,6 +578,127 @@ RelationResult SyncOccurrences::scalarDomain(Value value, unsigned point, int64_
     if (!queries.spend(cells))
         return {QueryStatus::BudgetExhausted, {}, "scalar domain intersection budget"};
     return queries.normalize(ambient.intersect(Relation(flat)));
+}
+
+RelationResult SyncOccurrences::scalarEqualityConstraint(Value sourceValue, unsigned sourcePoint,
+                                                        Value targetValue, unsigned targetPoint,
+                                                        RelationQueries& queries) const {
+    if (!complete)
+        return {limitExceeded ? QueryStatus::BudgetExhausted : QueryStatus::Unsupported, {},
+                "scalar equality requires complete occurrence import"};
+    if (sourcePoint >= points.size() || targetPoint >= points.size() ||
+        !points[sourcePoint].operation || !points[targetPoint].operation)
+        return {QueryStatus::Unsupported, {}, "scalar equality requires valid occurrence points"};
+    auto source = scalarExpressions.find(sourceValue), target = scalarExpressions.find(targetValue);
+    if (source == scalarExpressions.end() || target == scalarExpressions.end())
+        return {QueryStatus::Unsupported, {}, "scalar equality normalization unavailable"};
+    DominanceInfo dominance;
+    if (!dominance.dominates(sourceValue, points[sourcePoint].operation) ||
+        !dominance.dominates(targetValue, points[targetPoint].operation))
+        return {QueryStatus::Unsupported, {}, "scalar equality operand does not dominate its occurrence"};
+    const unsigned n = dimensions(), symbols = parameters.size();
+    if (!queries.spend(2 * n + symbols + 1))
+        return {QueryStatus::BudgetExhausted, {}, "scalar equality setup budget"};
+    // Check before forming the difference: mathematical range qualification of
+    // the original SSA values does not bound AffineExpr's int64 coefficients.
+    EqualityCoefficients coefficients(queries);
+    auto sourceSize = coefficients.analyze(source->second);
+    if (!sourceSize)
+        return {coefficients.status(), {}, "scalar equality coefficient traversal unavailable"};
+    auto targetSize = coefficients.analyze(target->second);
+    if (!targetSize)
+        return {coefficients.status(), {}, "scalar equality coefficient traversal unavailable"};
+    if (sourceSize->mass > coefficientLimit || targetSize->mass > coefficientLimit ||
+        sourceSize->mass + targetSize->mass > coefficientLimit)
+        return {QueryStatus::Unsupported, {}, "scalar equality coefficient bound unavailable"};
+    // Dimension replacement and MLIR flattening may unfold a shared expression.
+    // Charge their conservative tree-visit bound before entering those APIs;
+    // a small DAG cannot conceal exponential work after our memoized walk.
+    for (unsigned pass = 0; pass < 2; ++pass)
+        for (uint64_t amount : {sourceSize->expandedNodes, targetSize->expandedNodes})
+            if (!queries.spend(amount))
+                return {QueryStatus::BudgetExhausted, {}, "scalar equality affine traversal budget"};
+    auto* context = points[sourcePoint].operation->getContext();
+    SmallVector<AffineExpr> sourceDims, targetDims, syms;
+    for (unsigned d = 0; d < loops.size(); ++d) {
+        sourceDims.push_back(getAffineDimExpr(1 + d, context));
+        targetDims.push_back(getAffineDimExpr(n + 1 + d, context));
+    }
+    for (unsigned s = 0; s < symbols; ++s) syms.push_back(getAffineSymbolExpr(s, context));
+    auto a = source->second.replaceDimsAndSymbols(sourceDims, syms);
+    auto b = target->second.replaceDimsAndSymbols(targetDims, syms);
+    // Flatten one equality in the full source/range space. Total floor/modulo
+    // witness definitions remain attached; there is no integer projection or
+    // complement, and no identification of the two loop-coordinate tuples.
+    auto flat = flatten({Constraint{a - b, true}}, 2 * n, symbols, context);
+    if (!flat)
+        return {QueryStatus::Unsupported, {}, "scalar equality flattening unavailable"};
+    flat->setSpace(PresburgerSpace::getRelationSpace(n, n, symbols, flat->getNumLocalVars()));
+    if (!queries.spend(uint64_t(flat->getNumCols()) * (flat->getNumConstraints() + 1)))
+        return {QueryStatus::BudgetExhausted, {}, "scalar equality constraint budget"};
+    return {QueryStatus::Proved, Relation(*flat), {}};
+}
+
+RelationResult SyncOccurrences::equalScalars(Value sourceValue, unsigned sourcePoint,
+                                            Value targetValue, unsigned targetPoint,
+                                            RelationQueries& queries) const {
+    auto equality = scalarEqualityConstraint(sourceValue, sourcePoint, targetValue, targetPoint, queries);
+    if (!equality) return equality;
+    const unsigned n = dimensions(), symbols = parameters.size();
+    const auto& flat = equality.relation->getAllDisjuncts().front();
+    // Charge the potentially multiplicative ambient-domain product BEFORE
+    // constructing it. Overflow is exhaustion, never a small wrapped charge.
+    uint64_t rows = flat.getNumConstraints() + 3, locals = flat.getNumLocalVars();
+    for (unsigned point : {sourcePoint, targetPoint}) {
+        unsigned maxRows = 0, maxLocals = 0;
+        for (const auto& piece : points[point].domain.getAllDisjuncts()) {
+            if (!queries.spend(1))
+                return {QueryStatus::BudgetExhausted, {}, "scalar equality domain indexing budget"};
+            maxRows = std::max(maxRows, piece.getNumConstraints());
+            maxLocals = std::max(maxLocals, piece.getNumLocalVars());
+        }
+        rows += maxRows;
+        locals += maxLocals;
+    }
+    uint64_t cells = rows;
+    for (uint64_t factor : {uint64_t(2 * n + symbols + 1) + locals,
+                            uint64_t(points[sourcePoint].domain.getNumDisjuncts()) + 1,
+                            uint64_t(points[targetPoint].domain.getNumDisjuncts()) + 1}) {
+        if (factor && cells > std::numeric_limits<uint64_t>::max() / factor)
+            return {QueryStatus::BudgetExhausted, {}, "scalar equality domain product overflow"};
+        cells *= factor;
+    }
+    if (!queries.spend(cells))
+        return {QueryStatus::BudgetExhausted, {}, "scalar equality intersection budget"};
+    auto left = domain(sourcePoint);
+    left.inverse();
+    left.insertVarInPlace(VarKind::Range, 0, n);
+    auto right = domain(targetPoint);
+    right.insertVarInPlace(VarKind::Domain, 0, n);
+    return queries.normalize(left.intersect(right).intersect(*equality.relation));
+}
+
+RelationResult SyncOccurrences::filterEqualScalars(const Relation& originalOccurrences,
+                                                  Value sourceValue, unsigned sourcePoint,
+                                                  Value targetValue, unsigned targetPoint,
+                                                  RelationQueries& queries) const {
+    auto equality = scalarEqualityConstraint(sourceValue, sourcePoint, targetValue, targetPoint, queries);
+    if (!equality) return equality;
+    if (!originalOccurrences.getSpace().isCompatible(equality.relation->getSpace()))
+        return {QueryStatus::Unsupported, {}, "scalar equality filter occurrence space differs"};
+    const auto& atom = equality.relation->getAllDisjuncts().front();
+    // The caller retains the original qualified point domains. This operation
+    // only adds a necessary-and-sufficient equality atom with its floor locals;
+    // it does not reconstruct, relax, or reinterpret the caller's conditions.
+    for (const auto& piece : originalOccurrences.getAllDisjuncts()) {
+        uint64_t rows = uint64_t(piece.getNumConstraints()) + atom.getNumConstraints() + 1;
+        uint64_t cols = uint64_t(piece.getNumCols()) + atom.getNumLocalVars();
+        if (cols && rows > std::numeric_limits<uint64_t>::max() / cols)
+            return {QueryStatus::BudgetExhausted, {}, "scalar equality filter product overflow"};
+        if (!queries.spend(rows * cols))
+            return {QueryStatus::BudgetExhausted, {}, "scalar equality filter intersection budget"};
+    }
+    return queries.normalize(originalOccurrences.intersect(*equality.relation));
 }
 
 RelationResult SyncOccurrences::ordered(unsigned source,unsigned target,bool inclusive) const {
