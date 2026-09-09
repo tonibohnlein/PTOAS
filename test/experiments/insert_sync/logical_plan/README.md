@@ -1,8 +1,12 @@
 # Native logical-constructor acceptance
 
-Guard generalization is currently paused as **WIP**; the complete gate is not
-green. See [GUARD_WIP.md](GUARD_WIP.md) for passed checks, the three-buffer timeout
-and outstanding validation. M1/M2 extraction remains the accepted checkpoint.
+The authored-event and retirement/endpoint checkpoints are accepted; see
+[RETIREMENT_ENDPOINT_RESULTS.md](RETIREMENT_ENDPOINT_RESULTS.md). Computation
+and reconstruction improvements are documented in
+[SCALABILITY_RESULTS.md](SCALABILITY_RESULTS.md). Two-/three-buffer strict
+acceptance and occurrence-dependent slot refinement remain the next gate.
+[GUARD_WIP.md](GUARD_WIP.md) preserves the earlier guard checkpoint and its
+limitations; it is not a report for the current source.
 
 Milestone one includes direct construction from unsynchronized PTO, exact
 query parity, shared native requirement export, and fresh emitted reconstruction.
@@ -90,7 +94,8 @@ Containment first tries bounded sufficient rational implication, including only
 canonical total floor definitions for qualified witnesses. Tightened residue
 membership remains an obligation. Bounded integer samples may refute containment
 but never prove it. All other cases retain the existing exact integer difference.
-The 75 native/reference query tests challenge those directions independently.
+The 161 native/reference query tests challenge those directions independently,
+including sparse endpoint indexing, common-row subtraction, and cache invalidation.
 `PTOAS_LOGICAL_TRACE=1` records slow primitive queries and guard preparation in
 addition to the existing stage work counts; it does not change planning.
 
@@ -146,6 +151,9 @@ It covers native/reference relation parity, occurrence and arithmetic import,
 known-local requirements, physical admission, observer challenges, one-buffer
 and skipped/empty native construction, emitted corruption/rollback, budget
 fallback and dynamic-only authored synchronization in all three planner modes.
+The gate also requires the independent physical-candidate oracle, native fanout
+scaling checks, and actual endpoint/barrier mutation tests. These tests protect
+qualified fast paths as well as their conservative fallbacks.
 Fresh run directories and commands/timings are retained under the build tree's
 `test-results/oahs/`. Production compilation has no Python/libisl dependency.
 

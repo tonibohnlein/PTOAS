@@ -95,15 +95,80 @@ int main(int argc, char** argv)
             if (mutation == "none" || mutation == "retirement")
                 return;
             auto counts = [](func::FuncOp f) {
-                unsigned sets = 0, waits = 0;
+                unsigned sets = 0, waits = 0, barriers = 0;
                 f.walk([&](Operation* op) {
                     sets += isa<SetFlagOp>(op);
                     waits += isa<WaitFlagOp>(op);
+                    barriers += isa<BarrierOp>(op);
                 });
-                return std::make_pair(sets, waits);
+                return std::make_tuple(sets, waits, barriers);
             };
             auto beforeCounts = counts(candidate);
-            if (mutation == "erase-retirement" || mutation == "wrong-retirement-pipe" ||
+            if (mutation == "publication-before-source" || mutation == "acquisition-after-consumer" ||
+                mutation == "publication-after-independent-load" || mutation == "unrepresented-event-lane") {
+                SetFlagOp publication;
+                WaitFlagOp acquisition;
+                candidate.walk([&](SetFlagOp set) {
+                    if (!publication && set.getSrcPipe().getPipe() == PIPE::PIPE_MTE2 &&
+                        set.getDstPipe().getPipe() == PIPE::PIPE_V) publication = set;
+                });
+                if (publication)
+                    candidate.walk([&](WaitFlagOp wait) {
+                        if (!acquisition && wait.getSrcPipe() == publication.getSrcPipe() &&
+                            wait.getDstPipe() == publication.getDstPipe() &&
+                            wait.getEventId() == publication.getEventId()) acquisition = wait;
+                    });
+                if (publication && mutation == "publication-before-source") {
+                    for (Operation* op = publication->getPrevNode(); op; op = op->getPrevNode()) {
+                        if (op->getNumRegions()) break;
+                        if (isa<TLoadOp>(op)) {
+                            publication->moveBefore(op);
+                            changed = true;
+                            break;
+                        }
+                    }
+                } else if (publication && mutation == "publication-after-independent-load") {
+                    for (Operation* op = publication->getNextNode(); op; op = op->getNextNode()) {
+                        if (op->getNumRegions()) break;
+                        if (isa<TLoadOp>(op)) {
+                            publication->moveAfter(op);
+                            changed = true;
+                            break;
+                        }
+                    }
+                } else if (acquisition && mutation == "acquisition-after-consumer") {
+                    for (Operation* op = acquisition->getNextNode(); op; op = op->getNextNode()) {
+                        if (op->getNumRegions()) break;
+                        if (isa<TAbsOp>(op)) {
+                            acquisition->moveAfter(op);
+                            changed = true;
+                            break;
+                        }
+                    }
+                } else if (publication && acquisition && mutation == "unrepresented-event-lane") {
+                    // Change both endpoints, keeping the token balanced while
+                    // introducing a lane absent from these vector fixtures.
+                    publication.setDstPipeAttr(PipeAttr::get(&context, PIPE::PIPE_MTE1));
+                    acquisition.setDstPipeAttr(PipeAttr::get(&context, PIPE::PIPE_MTE1));
+                    changed = true;
+                }
+            } else if (mutation == "barrier-after-consumer" || mutation == "unrepresented-barrier-lane") {
+                BarrierOp selected;
+                candidate.walk([&](BarrierOp barrier) {
+                    if (!selected && barrier.getPipe().getPipe() != PIPE::PIPE_ALL) selected = barrier;
+                });
+                if (selected && mutation == "unrepresented-barrier-lane") {
+                    selected.setPipeAttr(PipeAttr::get(&context, PIPE::PIPE_MTE1));
+                    changed = true;
+                } else if (selected) {
+                    for (Operation* op = selected->getNextNode(); op; op = op->getNextNode()) {
+                        if (op->getNumRegions()) break;
+                        if (isa<TAbsOp>(op)) {
+                            selected->moveAfter(op); changed = true; break;
+                        }
+                    }
+                }
+            } else if (mutation == "erase-retirement" || mutation == "wrong-retirement-pipe" ||
                 mutation == "early-retirement" || mutation == "hint-retirement" ||
                 mutation == "unconsumed-before-retirement") {
                 auto terminal = dyn_cast_or_null<BarrierOp>(candidate.getBody().front().getTerminator()->getPrevNode());
@@ -322,6 +387,13 @@ int main(int argc, char** argv)
         return 1;
     if (mutation == "swap-loads" || mutation == "change-rounding" || mutation == "add-allocation")
         return StringRef(result.reason).contains("original payload") ? 0 : 1;
+    if (mutation == "publication-before-source" || mutation == "acquisition-after-consumer" ||
+        mutation == "publication-after-independent-load")
+        return countsPreserved && StringRef(result.reason).contains("handoff boundary") ? 0 : 1;
+    if (mutation == "unrepresented-event-lane")
+        return countsPreserved && StringRef(result.reason).contains("event domain") ? 0 : 1;
+    if (mutation == "barrier-after-consumer" || mutation == "unrepresented-barrier-lane")
+        return countsPreserved && StringRef(result.reason).contains("barrier") ? 0 : 1;
     if (mutation == "swap-wait-keys")
         return countsPreserved ? 0 : 1;
     if (mutation == "change-residue" || mutation == "unguard-remainder" || mutation == "change-slot-distance")

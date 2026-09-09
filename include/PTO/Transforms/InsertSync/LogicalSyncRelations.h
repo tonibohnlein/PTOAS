@@ -11,10 +11,12 @@
 
 #include "mlir/Analysis/Presburger/PresburgerRelation.h"
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace mlir::pto::logical_sync {
 using Relation = presburger::PresburgerRelation;
@@ -32,14 +34,72 @@ struct RelationResult {
 // rational shadows, or the pinned union PWMA lexopt implementation here.
 // Work accounting bounds query requests/term growth, not time inside MLIR.
 class RelationQueries {
+public:
+    // Own the RHS so cached coordinate witnesses can never outlive or silently
+    // refer to a different relation. The index is built only after the ordinary
+    // composition charge succeeds. CompletionQueries invalidates it whenever a
+    // committed monotone addition changes its primitive relation.
+    class CompositionRHS {
+        friend class RelationQueries;
+        friend class CompletionQueries;
+        Relation relation;
+        struct Index {
+            using Constants = std::vector<std::optional<llvm::DynamicAPInt>>;
+            std::vector<Constants> joined;
+            std::map<llvm::DynamicAPInt, std::vector<unsigned>> fixed;
+            std::vector<unsigned> wildcard, all;
+            uint64_t chargeCost = 0;
+        };
+        std::optional<Index> index;
+    public:
+        explicit CompositionRHS(Relation value) : relation(std::move(value)) {}
+        const Relation& value() const { return relation; }
+    };
+    // Opt-in diagnostics, enabled by PTOAS_LOGICAL_TRACE when this instance is
+    // created. Times include nested queries and all result statuses; they must
+    // not be summed as exclusive pipeline time. maxInputPieces is the largest
+    // total number of input disjuncts in one call, across all of its operands.
+    struct PrimitiveStats {
+        uint64_t calls = 0, wallNanoseconds = 0, maxInputPieces = 0;
+    };
+    struct Profile {
+        PrimitiveStats normalize, compose, subtract, contains, restrictEndpoints;
+    };
+
+private:
+    friend class CompletionQueries;
     uint64_t remaining, used = 0;
-    bool charge(const Relation& relation);
+    uint64_t endpointComparisons = 0;
+    uint64_t compositionIndexBuilds = 0, compositionIndexPieces = 0;
+    uint64_t endpointProjections = 0, endpointProjectionPieces = 0;
+    uint64_t differenceCommonRows = 0;
+    uint64_t relationEndpointIndexPieces = 0, relationEndpointBucketLookups = 0;
+    uint64_t differenceEndpointComparisons = 0, containmentEndpointComparisons = 0;
+    bool profiling;
+    Profile queryProfile;
+    bool charge(const Relation& relation, uint64_t* chargedCost = nullptr);
+    RelationResult composeImpl(const Relation& first, const Relation& second,
+                               std::optional<CompositionRHS::Index>& index);
     RelationResult restrictCandidateOrder(const Relation& order, const Relation& candidates, bool sources);
 
 public:
-    explicit RelationQueries(uint64_t budget = 8000000) : remaining(budget) {}
+    explicit RelationQueries(uint64_t budget = 8000000);
     uint64_t work() const { return used; }
     uint64_t remainingWork() const { return remaining; }
+    uint64_t endpointComparisonCount() const { return endpointComparisons; }
+    uint64_t compositionIndexBuildCount() const { return compositionIndexBuilds; }
+    uint64_t compositionIndexPieceCount() const { return compositionIndexPieces; }
+    // Completion-owned primitive/reached/additional endpoint caches only;
+    // arbitrary import and per-demand projections are outside these counters.
+    uint64_t endpointProjectionCount() const { return endpointProjections; }
+    uint64_t endpointProjectionPieceCount() const { return endpointProjectionPieces; }
+    uint64_t differenceCommonRowCount() const { return differenceCommonRows; }
+    uint64_t relationEndpointIndexPieceCount() const { return relationEndpointIndexPieces; }
+    uint64_t relationEndpointBucketLookupCount() const { return relationEndpointBucketLookups; }
+    uint64_t differenceEndpointComparisonCount() const { return differenceEndpointComparisons; }
+    uint64_t containmentEndpointComparisonCount() const { return containmentEndpointComparisons; }
+    bool profilingEnabled() const { return profiling; }
+    const Profile& profile() const { return queryProfile; }
     bool spend(uint64_t amount)
     {
         if (amount > remaining) {
@@ -52,6 +112,7 @@ public:
         return true;
     }
     RelationResult compose(const Relation& first, const Relation& second);
+    RelationResult compose(const Relation& first, CompositionRHS& second);
     RelationResult normalize(const Relation& relation);
     // Prune only endpoint coordinates proved incompatible with the candidate
     // sets. The result may retain extra edges; it never removes a matching one.
@@ -79,28 +140,55 @@ public:
 // continue composition. Replacing a plan requires a new instance.
 class CompletionQueries {
     Relation known;
-    std::optional<Relation> issueOrder;
-    std::optional<Relation> globalIssueOrder;
-    Relation primitive;
+    std::shared_ptr<const Relation> issueOrder;
+    std::shared_ptr<const Relation> globalIssueOrder;
+    RelationQueries::CompositionRHS primitive;
+    std::optional<presburger::PresburgerSet> primitiveSources, primitiveTargets;
     Relation expanded;
     bool fixed = false;
     struct SourceState {
         Relation reached, pending;
         bool saturated = false;
+        std::optional<presburger::PresburgerSet> reachedTargets;
     };
     // A key restricts only the first source coordinate. All other coordinates,
     // guards and parameters remain in the actual issue-order relation. This
     // partition is algebraic; coordinate zero need not be a native phase ID.
     std::map<std::optional<llvm::DynamicAPInt>, SourceState> sources;
-    std::optional<Relation> transitions;
+    std::optional<RelationQueries::CompositionRHS> transitions;
     using Coordinate = std::optional<llvm::DynamicAPInt>;
-    using OrderBlocks = std::map<std::pair<Coordinate, Coordinate>, Relation>;
+    using OrderKey = std::pair<Coordinate, Coordinate>;
+    struct OrderBlocks {
+        std::map<OrderKey, Relation> values;
+        std::map<Coordinate, std::vector<OrderKey>> bySource, byTarget;
+    };
     std::shared_ptr<std::optional<OrderBlocks>> indexedIssues = std::make_shared<std::optional<OrderBlocks>>();
     std::shared_ptr<std::optional<OrderBlocks>> indexedGlobal = std::make_shared<std::optional<OrderBlocks>>();
     RelationResult selectOrder(
         bool global, const presburger::PresburgerSet& source, const presburger::PresburgerSet& target,
         RelationQueries& queries);
     QueryStatus proveSparse(const Relation& requirement, RelationQueries& queries, unsigned rounds);
+    const presburger::PresburgerSet& primitiveEndpoints(bool sources, RelationQueries& queries);
+
+public:
+    // An owning callback for ONE immutable occurrence universe. A successful
+    // answer contains only actual inclusive issue-order edges and includes
+    // EVERY such edge whose endpoints lie in the candidate sets. It may keep
+    // extra actual edges, like the explicit relation selector. Preserve all
+    // guards, parameters and invocation coordinates; global order is used only
+    // by rejection screens and must never supply completion on its own.
+    // The provider owns (or shares ownership of) every captured program fact,
+    // charges its work through queries, and reports incomplete queries explicitly.
+    using OrderSelection = std::function<RelationResult(
+        bool global, const presburger::PresburgerSet& sources,
+        const presburger::PresburgerSet& targets, RelationQueries& queries)>;
+
+private:
+    std::shared_ptr<const OrderSelection> orderSelection;
+    bool hasGlobalSelection = false;
+    uint64_t indexedLookups = 0;
+    bool sparse() const { return bool(issueOrder) || bool(orderSelection); }
+    bool hasGlobalOrder() const { return bool(globalIssueOrder) || hasGlobalSelection; }
 
 public:
     explicit CompletionQueries(Relation primitiveSupply)
@@ -110,14 +198,20 @@ public:
     // order only extends/joins those handoffs; it is never completion by itself.
     CompletionQueries(Relation handoffs, Relation orderedIssues, std::optional<Relation> globalOrder = {})
         : known(std::move(handoffs)),
-          issueOrder(std::move(orderedIssues)),
-          globalIssueOrder(std::move(globalOrder)),
+          issueOrder(std::make_shared<const Relation>(std::move(orderedIssues))),
+          globalIssueOrder(globalOrder ? std::make_shared<const Relation>(std::move(*globalOrder)) : nullptr),
           primitive(known),
           expanded(Relation::getEmpty(known.getSpace()))
     {}
+    CompletionQueries(Relation handoffs, OrderSelection select, bool globalOrderAvailable = false)
+        : known(std::move(handoffs)), primitive(known),
+          expanded(Relation::getEmpty(known.getSpace())),
+          orderSelection(std::make_shared<const OrderSelection>(std::move(select))),
+          hasGlobalSelection(globalOrderAvailable)
+    {}
     QueryStatus prove(const Relation& requirement, RelationQueries& queries, unsigned rounds = 8);
     // New plan, identical immutable issue-order universe. Reuse only the order
-    // index; all completion, pending-path and saturation state starts fresh.
+    // storage/index/provider; completion, pending paths and saturation reset.
     CompletionQueries withHandoffs(Relation handoffs) const
     {
         CompletionQueries next(std::move(handoffs));
@@ -125,7 +219,9 @@ public:
         next.globalIssueOrder = globalIssueOrder;
         next.indexedIssues = indexedIssues;
         next.indexedGlobal = indexedGlobal;
-        if (issueOrder)
+        next.orderSelection = orderSelection;
+        next.hasGlobalSelection = hasGlobalSelection;
+        if (sparse())
             next.expanded = Relation::getEmpty(next.known.getSpace());
         return next;
     }
@@ -135,8 +231,11 @@ public:
     QueryStatus addHandoffs(const Relation& additional, RelationQueries& queries);
     // Compact mode exposes proved completion in the most recent query scope.
     // Absence remains unproved; it is not evidence of required synchronization.
-    const Relation& supply() const { return issueOrder ? expanded : known; }
+    const Relation& supply() const { return sparse() ? expanded : known; }
     bool fixedPoint() const { return fixed; }
+    // Individual source/target block probes, excluding group lookups and
+    // algebra/solver work. Narrow queries must not scan the entire index.
+    uint64_t orderIndexLookups() const { return indexedLookups; }
 };
 } // namespace mlir::pto::logical_sync
 #endif

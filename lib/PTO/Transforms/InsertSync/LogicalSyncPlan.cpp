@@ -23,6 +23,7 @@
 #include <set>
 #include <cstdlib>
 #include <limits>
+#include <chrono>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -49,6 +50,111 @@ struct RetirementSink {
     // from the physical lane vector and ordinary handoff completion relation.
     unsigned point = 0;
 };
+// One immutable occurrence universe, shared by all plan versions. Only the
+// exact phase-pair cache is mutable; it contains issue order, never completion.
+// Fixed phase coordinates index requests. Unknown coordinates retain the whole
+// relevant universe, rather than becoming a false empty answer.
+struct NativeOrder {
+    SyncOccurrences facts;
+    std::vector<Lane> lanes;
+    std::map<Lane, SmallVector<unsigned>> byLane;
+    std::map<Lane, PresburgerSet> domains;
+    std::map<unsigned, unsigned> clearPredecessor;
+    std::map<std::tuple<unsigned, unsigned, bool>, Relation> cache;
+    uint64_t requests = 0, built = 0, selections = 0;
+    Relation empty() const {
+        return Relation::getEmpty(PresburgerSpace::getRelationSpace(
+            facts.dimensions(), facts.dimensions(), facts.parameters.size()));
+    }
+    RelationResult get(unsigned p, unsigned q, bool inclusive, RelationQueries& queries) {
+        ++requests;
+        if (!queries.spend(1))
+            return {QueryStatus::BudgetExhausted, {}, "native order lookup budget"};
+        auto key = std::make_tuple(p, q, inclusive);
+        if (auto found = cache.find(key); found != cache.end())
+            return {QueryStatus::Proved, found->second, {}};
+        ++built;
+        auto value = facts.ordered(p, q, inclusive);
+        if (value) value = queries.normalize(*value.relation);
+        if (value) cache.emplace(key, *value.relation);
+        return value;
+    }
+    std::optional<std::set<unsigned>> phaseIds(const PresburgerSet& domain, RelationQueries& queries) const {
+        std::set<unsigned> ids;
+        for (const auto& piece : domain.getAllDisjuncts()) {
+            if (!queries.spend(uint64_t(piece.getNumEqualities() + 1) * piece.getNumCols())) return {};
+            std::optional<llvm::DynamicAPInt> fixed;
+            for (unsigned r = 0; r < piece.getNumEqualities(); ++r) {
+                auto row = piece.getEquality(r);
+                if (row[0] != 1 && row[0] != -1) continue;
+                bool isolated = true;
+                for (unsigned c = 1; c < piece.getNumVars(); ++c)
+                    if (row[c] != 0) { isolated = false; break; }
+                if (isolated) { fixed = row[0] == 1 ? -row.back() : row.back(); break; }
+            }
+            if (!fixed) {
+                for (unsigned p = 0; p < lanes.size(); ++p) ids.insert(p);
+                return ids;
+            }
+            if (*fixed >= 0 && *fixed < int64_t(lanes.size())) ids.insert(unsigned(int64_t(*fixed)));
+        }
+        return ids;
+    }
+    RelationResult select(const PresburgerSet& sources, const PresburgerSet& targets,
+                          bool sameLane, bool inclusive, RelationQueries& queries) {
+        ++selections;
+        auto from = phaseIds(sources, queries), to = phaseIds(targets, queries);
+        if (!from || !to) return {QueryStatus::BudgetExhausted, {}, "native order endpoint budget"};
+        auto result = empty();
+        std::map<Lane, SmallVector<unsigned>> destinations;
+        if (sameLane)
+            for (unsigned q : *to) destinations[lanes[q]].push_back(q);
+        auto append = [&](unsigned p, unsigned q) {
+            auto edge = get(p, q, inclusive, queries);
+            if (!edge) return edge;
+            result.unionInPlace(*edge.relation);
+            return RelationResult{QueryStatus::Proved, {}, {}};
+        };
+        for (unsigned p : *from) {
+            if (sameLane) {
+                auto found = destinations.find(lanes[p]);
+                if (found == destinations.end()) continue;
+                for (unsigned q : found->second) {
+                    auto status = append(p, q);
+                    if (status.status != QueryStatus::Proved) return status;
+                }
+            } else for (unsigned q : *to) {
+                auto status = append(p, q);
+                if (status.status != QueryStatus::Proved) return status;
+            }
+        }
+        // Prune fixed invocation coordinates before returning to composition.
+        // This is a conservative filter, not projection or completion supply.
+        return queries.restrictEndpoints(result, sources, targets);
+    }
+};
+// Timings are diagnostic only. Preserve independent final reconstruction;
+// expose its cost separately from proposals and optional simplification.
+class StageProfile {
+    RelationQueries& queries;
+    const bool enabled;
+    const char* label;
+    uint64_t work;
+    std::chrono::steady_clock::time_point started;
+public:
+    StageProfile(RelationQueries& q, const char* label) : queries(q), enabled(q.profilingEnabled()),
+        label(label), work(q.work()) { if (enabled) started = std::chrono::steady_clock::now(); }
+    void next(const char* name) {
+        if (enabled) {
+            auto now = std::chrono::steady_clock::now();
+            llvm::errs() << "logical substage " << label << " work " << queries.work() - work
+                         << " seconds " << std::chrono::duration<double>(now - started).count() << "\n";
+            started = now; work = queries.work();
+        }
+        label = name;
+    }
+    ~StageProfile() { next("finished"); }
+};
 class Constructor {
     func::FuncOp function;
     SyncPayloadSnapshot payload;
@@ -59,16 +165,15 @@ class Constructor {
     Buffer2MemInfoMap buffers;
     MemoryDependentAnalyzer memory;
     RelationQueries queries;
-    SyncOccurrences facts;
+    std::shared_ptr<NativeOrder> orders = std::make_shared<NativeOrder>();
+    SyncOccurrences& facts = orders->facts;
     std::vector<const CompoundInstanceElement*> phases;
-    std::vector<Lane> lanes;
+    std::vector<Lane>& lanes = orders->lanes;
     std::vector<Requirement> requirements;
     std::vector<Stream> streams;
     std::vector<Barrier> barriers;
-    std::map<std::tuple<unsigned, unsigned, bool>, Relation> orderCache;
-    std::map<std::pair<Lane, bool>, Relation> laneCache;
-    std::optional<Relation> globalCache;
-    std::optional<Relation> issueCache;
+    std::vector<Relation> targetRequirements;
+    std::map<std::pair<unsigned, unsigned>, Relation> pairRequirements;
     std::optional<CompletionQueries> completionOrder;
     ConstructionResult result;
     RetirementSink retirement;
@@ -120,35 +225,11 @@ class Constructor {
     }
     std::optional<Relation> compose(const Relation& a, const Relation& b) { return take(queries.compose(a, b)); }
     std::optional<Relation> order(unsigned p, unsigned q, bool inclusive = false)
-    {
-        auto key = std::make_tuple(p, q, inclusive);
-        if (auto found = orderCache.find(key); found != orderCache.end())
-            return found->second;
-        auto value = take(facts.ordered(p, q, inclusive));
-        if (value)
-            value = take(queries.normalize(*value));
-        if (value)
-            orderCache.emplace(key, *value);
-        return value;
-    }
-    std::optional<Relation> laneOrder(Lane pipe, bool inclusive)
-    {
-        auto key = std::make_pair(pipe, inclusive);
-        if (auto found = laneCache.find(key); found != laneCache.end())
-            return found->second;
-        auto value = empty();
-        for (unsigned p = 0; p < lanes.size(); ++p)
-            if (lanes[p] == pipe)
-                for (unsigned q = 0; q < lanes.size(); ++q)
-                    if (lanes[q] == pipe) {
-                        auto edge = order(p, q, inclusive);
-                        if (!edge)
-                            return {};
-                        value.unionInPlace(*edge);
-                    }
-        laneCache.emplace(key, value);
-        return value;
-    }
+    { return take(orders->get(p, q, inclusive, queries)); }
+    std::optional<Relation> selectedOrder(const PresburgerSet& sources, const PresburgerSet& targets,
+                                         bool inclusive = false)
+    { return take(orders->select(sources, targets, true, inclusive, queries)); }
+    const PresburgerSet& laneDomain(Lane pipe) const { return orders->domains.at(pipe); }
     Relation identity() const
     {
         auto value = empty();
@@ -156,43 +237,15 @@ class Constructor {
             value.unionInPlace(facts.identity(p));
         return value;
     }
-    std::optional<Relation> issueOrder()
-    {
-        if (issueCache)
-            return issueCache;
-        auto value = empty();
-        std::set<Lane> pipes(lanes.begin(), lanes.end());
-        for (auto pipe : pipes) {
-            auto lane = laneOrder(pipe, true);
-            if (!lane)
-                return {};
-            value.unionInPlace(*lane);
-        }
-        issueCache = value;
-        return value;
-    }
-    std::optional<Relation> globalOrder()
-    {
-        if (globalCache)
-            return globalCache;
-        auto value = empty();
-        for (unsigned p = 0; p < lanes.size(); ++p)
-            for (unsigned q = 0; q < lanes.size(); ++q) {
-                auto edge = order(p, q, true);
-                if (!edge)
-                    return {};
-                value.unionInPlace(*edge);
-            }
-        globalCache = value;
-        return value;
-    }
     std::optional<CompletionQueries> completion(Relation handoffs)
     {
         if (!completionOrder) {
-            auto issue = issueOrder(), global = globalOrder();
-            if (!issue || !global)
-                return {};
-            completionOrder.emplace(empty(), *issue, *global);
+            auto owner = orders;
+            completionOrder.emplace(empty(),
+                [owner](bool global, const PresburgerSet& source, const PresburgerSet& target,
+                        RelationQueries& queries) {
+                    return owner->select(source, target, !global, true, queries);
+                }, true);
         }
         return completionOrder->withHandoffs(std::move(handoffs));
     }
@@ -239,6 +292,28 @@ class Constructor {
             return fail(
                 facts.limitExceeded ? ConstructionResult::AnalysisLimit : ConstructionResult::Unsupported,
                 facts.reason);
+        for (unsigned p = 0; p < lanes.size(); ++p) {
+            orders->byLane[lanes[p]].push_back(p);
+            auto [it, inserted] = orders->domains.try_emplace(lanes[p],
+                PresburgerSet::getEmpty(facts.domain(p).getRangeSet().getSpace()));
+            it->second.unionInPlace(facts.domain(p).getRangeSet());
+        }
+        // Original clear-interval neighbours are immutable input facts. Reuse
+        // them for proposals and independently compare them with emitted cuts.
+        std::set<Block*> originalBlocks;
+        for (const auto& point : facts.points) originalBlocks.insert(point.operation->getBlock());
+        for (Block* block : originalBlocks) {
+            std::map<Lane, unsigned> previous;
+            for (auto& op : *block) {
+                if (op.getNumRegions()) { previous.clear(); continue; }
+                auto found = facts.ids.find(&op);
+                if (found == facts.ids.end() || found->second >= lanes.size()) continue;
+                unsigned p = found->second;
+                if (auto last = previous.find(lanes[p]); last != previous.end())
+                    orders->clearPredecessor.emplace(p, last->second);
+                previous[lanes[p]] = p;
+            }
+        }
         auto add = [&](unsigned p, unsigned q, const BaseMemInfo* a, const BaseMemInfo* b,
                        Requirement::Kind kind) -> bool {
             if (a && b && !logicalSyncMayAlias(a, b, function, gm))
@@ -252,32 +327,47 @@ class Constructor {
                 requirements.push_back({kind, p, q, a, b, std::move(*relation)});
             return true;
         };
-        for (unsigned p = 0; p < phases.size(); ++p)
-            for (unsigned q = 0; q < phases.size(); ++q) {
-                auto* a = phases[p];
-                auto* b = phases[q];
-                for (auto* x : a->defVec)
-                    for (auto* y : b->useVec)
-                        if (!add(p, q, x, y, Requirement::RAW))
-                            return false;
-                for (auto* x : a->useVec)
-                    for (auto* y : b->defVec)
-                        if (!add(p, q, x, y, Requirement::WAR))
-                            return false;
-                for (auto* x : a->defVec)
-                    for (auto* y : b->defVec)
-                        if (!add(p, q, x, y, Requirement::WAW))
-                            return false;
-                if (lanes[p] != lanes[q])
-                    for (auto* x : a->useVec)
-                        for (auto* y : b->useVec)
-                            if (x->scope == AddressSpace::ACC && y->scope == AddressSpace::ACC &&
-                                !add(p, q, x, y, Requirement::AccResource))
-                                return false;
-            }
+        // Index qualified physical overlap once; retain the original alias
+        // contract and occurrence query for every conservative candidate.
+        std::vector<SyncPhysicalAccess> accesses;
+        for (unsigned p = 0; p < phases.size(); ++p) {
+            for (const auto* mem : phases[p]->defVec) accesses.push_back({p, mem, true, lanes[p]});
+            for (const auto* mem : phases[p]->useVec) accesses.push_back({p, mem, false, lanes[p]});
+        }
+        auto candidates = enumerateSyncAccessCandidates(accesses, [&](uint64_t work) { return queries.spend(work); });
+        if (candidates.status != SyncAccessCandidates::Status::Complete)
+            return fail(candidates.status == SyncAccessCandidates::Status::AnalysisLimit ?
+                ConstructionResult::AnalysisLimit : ConstructionResult::InternalError, "storage candidate enumeration");
+        if (queries.profilingEnabled())
+            llvm::errs() << "logical discovery intervals " << candidates.intervalVisits
+                << " candidate_visits " << candidates.candidateVisits << " pairs " << candidates.pairs.size() << "\n";
+        for (const auto& [x, y] : candidates.pairs) {
+            const auto& a = accesses[x]; const auto& b = accesses[y];
+            auto kind = [](bool sourceWrite, bool targetWrite) {
+                return sourceWrite ? (targetWrite ? Requirement::WAW : Requirement::RAW) :
+                                     (targetWrite ? Requirement::WAR : Requirement::AccResource);
+            };
+            if (!queries.spend(1)) return fail(ConstructionResult::AnalysisLimit, "storage candidates budget");
+            if (!add(a.phase, b.phase, a.memory, b.memory, kind(a.write, b.write))) return false;
+            if (x != y && !add(b.phase, a.phase, b.memory, a.memory, kind(b.write, a.write))) return false;
+        }
         for (unsigned p = 0; p < phases.size(); ++p)
             if (!add(p, retirement.point, nullptr, nullptr, Requirement::Retirement))
                 return false;
+        // Keep every typed obligation immutable. Index their union once for
+        // planning/proof clients; never drop a distinct occurrence relation
+        // merely because its static source/target pair has already appeared.
+        for (const auto& r : requirements) if (r.kind != Requirement::Retirement) {
+            auto [it, inserted] = pairRequirements.try_emplace({r.source, r.target}, empty());
+            it->second.unionInPlace(r.occurrences);
+        }
+        targetRequirements.assign(lanes.size(), empty());
+        for (auto& [pair, relation] : pairRequirements) {
+            auto normalized = take(queries.normalize(relation));
+            if (!normalized) return false;
+            relation = std::move(*normalized);
+            targetRequirements[pair.second].unionInPlace(relation);
+        }
         result.requirements = requirements.size();
         if (observeRequirements)
             observeRequirements(facts, phases, requirements);
@@ -297,26 +387,64 @@ class Constructor {
         auto status = queries.contains(diagonal, *consumers.relation);
         return status == QueryStatus::Proved ? queries.contains(diagonal, *producers.relation) : status;
     }
+    // Exact common case of the same prefix-staircase rule: all payload
+    // occurrences execute once in the original function block. Scanning its
+    // demands needs no Cartesian target-order relation. Guarded, recurring or
+    // access-qualified alternatives remain with the general exact query path.
+    std::optional<bool> constructLinearHandoffs() {
+        auto* block = &function.getBody().front();
+        if (!facts.loops.empty() || llvm::any_of(phases, [&](const auto* p) {
+                return p->elementOp->getBlock() != block; })) return {};
+        std::map<unsigned, unsigned> rank;
+        unsigned next = 0;
+        for (auto& op : *block) {
+            auto found = facts.ids.find(&op);
+            if (found != facts.ids.end()) rank.emplace(found->second, next++);
+        }
+        // Check the precise domain, not merely a convenient static phase ID.
+        for (const auto& [pair, relation] : pairRequirements) {
+            auto full = order(pair.first, pair.second);
+            if (!full) return false;
+            auto covered = queries.contains(relation, *full);
+            if (queryFailed(covered, "linear handoff domain qualification")) return false;
+            if (covered != QueryStatus::Proved) return {};
+        }
+        std::map<Domain, std::map<unsigned, std::pair<unsigned, unsigned>>> deadlines;
+        for (const auto& [pair, relation] : pairRequirements) {
+            auto [source, target] = pair;
+            if (lanes[source] == lanes[target]) continue;
+            auto& demands = deadlines[{lanes[source], lanes[target]}];
+            auto [it, inserted] = demands.try_emplace(rank.at(target), source, target);
+            if (!inserted && rank.at(source) > rank.at(it->second.first)) it->second.first = source;
+        }
+        for (const auto& [pipes, demands] : deadlines) {
+            std::optional<unsigned> acquired;
+            for (const auto& [position, demand] : demands) {
+                auto [source, target] = demand;
+                if (acquired && rank.at(source) <= *acquired) continue;
+                auto matching = order(source, target);
+                if (!matching) return false;
+                streams.push_back({pipes, std::move(*matching), source, -1});
+                acquired = rank.at(source);
+            }
+        }
+        return true;
+    }
     bool constructHandoffs()
     {
+        if (auto linear = constructLinearHandoffs()) return *linear;
         std::map<Domain, Relation> missing;
-        std::set<std::pair<unsigned, unsigned>> seen;
-        for (const auto& r : requirements)
-            if (r.kind != Requirement::Retirement && lanes[r.source] != lanes[r.target]) {
-                // Multiple immutable access obligations can name the same phase
-                // occurrence relation; construction needs that relation only once.
-                if (!seen.emplace(r.source, r.target).second)
-                    continue;
-                auto key = Domain{lanes[r.source], lanes[r.target]};
+        for (const auto& [pair, relation] : pairRequirements)
+            if (lanes[pair.first] != lanes[pair.second]) {
+                auto key = Domain{lanes[pair.first], lanes[pair.second]};
                 auto [it, inserted] = missing.try_emplace(key, empty());
-                (void)inserted;
-                it->second.unionInPlace(r.occurrences);
+                it->second.unionInPlace(relation);
             }
         for (const auto& [pipes, needed] : missing) {
-            auto before = laneOrder(pipes.first, false), through = laneOrder(pipes.first, true);
-            auto destinations = laneOrder(pipes.second, false);
-            if (!before || !through || !destinations)
-                return false;
+            auto sources = needed.getDomainSet(), targets = needed.getRangeSet();
+            auto before = selectedOrder(sources, sources), through = selectedOrder(sources, sources, true);
+            auto destinations = selectedOrder(targets, targets);
+            if (!before || !through || !destinations) return false;
             auto latest = take(queries.latestSources(needed, *before));
             if (!latest)
                 return false;
@@ -357,16 +485,10 @@ class Constructor {
                 // In a clear original block interval, the previous lane operation
                 // is the exact predecessor in this invocation. Reuse the imported
                 // IV identities rather than rediscovering it through every pair.
-                auto* anchor = facts.points[barrier.point].operation;
-                for (auto* op = anchor->getPrevNode(); op; op = op->getPrevNode()) {
-                    if (op->getNumRegions())
-                        break;
-                    auto found = facts.ids.find(op);
-                    if (found == facts.ids.end() || lanes[found->second] != barrier.pipe)
-                        continue;
-                    auto edge = order(found->second, barrier.point);
-                    if (!edge)
-                        return {};
+                if (auto previous = orders->clearPredecessor.find(barrier.point);
+                    previous != orders->clearPredecessor.end()) {
+                    auto edge = order(previous->second, barrier.point);
+                    if (!edge) return {};
                     IntegerRelation invocation(empty().getSpace());
                     for (unsigned iv = 1; iv < facts.dimensions(); ++iv) {
                         SmallVector<int64_t> row(invocation.getNumCols());
@@ -376,17 +498,12 @@ class Constructor {
                     }
                     barrier.logical =
                         take(queries.normalize(edge->intersect(Relation(invocation)).intersectRange(barrier.domain)));
-                    if (!barrier.logical)
-                        return {};
-                    break;
+                    if (!barrier.logical) return {};
                 }
                 if (barrier.logical) {
                     supply.unionInPlace(*barrier.logical);
                     continue;
                 }
-                auto before = laneOrder(barrier.pipe, false);
-                if (!before)
-                    return {};
                 auto candidates = empty();
                 for (unsigned source = 0; source < lanes.size(); ++source)
                     if (lanes[source] == barrier.pipe) {
@@ -398,6 +515,8 @@ class Constructor {
                 auto cut = take(queries.normalize(candidates.intersectRange(barrier.domain)));
                 if (!cut)
                     return {};
+                auto before = selectedOrder(cut->getDomainSet(), cut->getDomainSet());
+                if (!before) return {};
                 auto edge = take(queries.latestSources(*cut, *before));
                 if (!edge)
                     return {};
@@ -406,15 +525,7 @@ class Constructor {
             }
         return supply;
     }
-    Relation requirementsAt(unsigned point) const
-    {
-        auto value = empty();
-        std::set<unsigned> seen;
-        for (const auto& r : requirements)
-            if (r.kind != Requirement::Retirement && r.target == point && seen.insert(r.source).second)
-                value.unionInPlace(r.occurrences);
-        return value;
-    }
+    const Relation& requirementsAt(unsigned point) const { return targetRequirements[point]; }
     QueryStatus proveRequirements(CompletionQueries& completed)
     {
         for (unsigned p = 0; p < lanes.size(); ++p) {
@@ -453,7 +564,7 @@ class Constructor {
                 return false;
             // Cross-lane construction must already supply its own guarantees.
             for (const auto& r : requirements)
-                if (r.target == p && lanes[r.source] != lanes[p])
+                if (r.kind != Requirement::Retirement && r.target == p && lanes[r.source] != lanes[p])
                     if (!expect(
                             queries.contains(completed->supply(), r.occurrences),
                             "cross-lane occurrence requirement remains unordered"))
@@ -466,7 +577,7 @@ class Constructor {
             if (queryFailed(covers, "barrier execution domain query"))
                 return false;
             barriers.push_back({p, lanes[p], covers == QueryStatus::Proved ? ambient : PresburgerSet(*domain), {}});
-            auto laneBefore = laneOrder(lanes[p], false);
+            auto laneBefore = selectedOrder(missing->getDomainSet(), barriers.back().domain);
             if (!laneBefore)
                 return false;
             auto barrierSupply = take(queries.normalize(laneBefore->intersectRange(barriers.back().domain)));
@@ -523,11 +634,11 @@ class Constructor {
     bool reconstruct();
     QueryStatus reuseSafe(const Relation& matching, Lane pipe, CompletionQueries& completed)
     {
-        auto before = laneOrder(pipe, false);
+        auto domain = matching.getDomainSet();
+        auto before = selectedOrder(domain, domain);
         if (!before)
             return result.status == ConstructionResult::AnalysisLimit ? QueryStatus::BudgetExhausted :
                                                                         QueryStatus::Unsupported;
-        auto domain = matching.getDomainSet();
         auto following = before->intersectDomain(domain).intersectRange(domain);
         auto next = queries.firstTargets(following, *before);
         if (!next)
@@ -552,10 +663,13 @@ public:
         auto run = [&](StringRef name, auto method) {
             stage = name;
             auto start = queries.work();
+            auto time = std::chrono::steady_clock::now();
             bool ok = (this->*method)();
             if (std::getenv("PTOAS_LOGICAL_TRACE"))
                 llvm::errs() << "logical stage " << name << " work " << queries.work() - start << " complete " << ok
-                             << "\n";
+                             << " seconds " << std::chrono::duration<double>(std::chrono::steady_clock::now() - time).count()
+                             << " order_requests " << orders->requests << " order_built " << orders->built
+                             << " endpoint_comparisons " << queries.endpointComparisonCount() << "\n";
             if (!ok)
                 result.reason += " (stage work " + std::to_string(queries.work() - start) + ")";
             return ok;
@@ -569,6 +683,21 @@ public:
         } else
             result.reason = stage.str() + ": " + result.reason;
         result.work = queries.work();
+        if (queries.profilingEnabled()) {
+            auto report = [](StringRef name, const RelationQueries::PrimitiveStats& stats) {
+                llvm::errs() << "logical primitive " << name << " calls " << stats.calls
+                    << " nanoseconds " << stats.wallNanoseconds << " max_input_pieces " << stats.maxInputPieces << "\n";
+            };
+            const auto& profile = queries.profile();
+            report("normalize", profile.normalize); report("compose", profile.compose);
+            report("subtract", profile.subtract); report("contains", profile.contains);
+            report("restrictEndpoints", profile.restrictEndpoints);
+            llvm::errs() << "logical cache composition_builds " << queries.compositionIndexBuildCount()
+                << " composition_pieces " << queries.compositionIndexPieceCount()
+                << " endpoint_projections " << queries.endpointProjectionCount()
+                << " endpoint_pieces " << queries.endpointProjectionPieceCount() << "\n";
+            llvm::errs() << "logical difference common_rows " << queries.differenceCommonRowCount() << "\n";
+        }
         return result;
     }
 };
@@ -1140,6 +1269,7 @@ public:
 
 bool Constructor::realize()
 {
+    StageProfile profile(queries, "guard_preparation");
     BoundaryLowering lowering(facts, queries);
     std::vector<Endpoint> endpoints;
     std::vector<Guard> barrierGuards;
@@ -1191,14 +1321,12 @@ bool Constructor::realize()
     auto supply = primitive();
     if (!supply)
         return false;
-    auto issued = issueOrder();
-    if (!issued)
-        return false;
     // Preparing legal endpoint guards changes no selected logical action. Reuse
     // the established requirement receipt; actual emitted IR is still freshly
     // reconstructed and proved below, including its keys and token ownership.
     if (receiptVersion != planVersion || provedTargets.size() != lanes.size())
         return fail(ConstructionResult::InternalError, "logical requirement receipt is incomplete or stale");
+    profile.next("allocation");
     // A single assignment interface sees every selected stream. Sharing is
     // permitted only with occurrence-specific consumption-before-rearm proof;
     // assignment does not alter publication or acquisition boundaries.
@@ -1235,6 +1363,7 @@ bool Constructor::realize()
                 ConstructionResult::AllocationFailure,
                 "no proved assignment within the event domain; boundaries retained");
     }
+    profile.next("endpoint_normalization");
     // Only adjacent identical commands at the exact same insertion boundary
     // may coalesce. Concrete-key sharing alone does not identify a token: the
     // occurrence domains must be disjoint, preserving one action per execution.
@@ -1313,6 +1442,7 @@ bool Constructor::realize()
     }
     if (!queries.spend(normalization.work()))
         return fail(ConstructionResult::AnalysisLimit, "endpoint normalization accounting");
+    profile.next("emission");
     auto at = [&](unsigned p, bool after, const Guard& guard, auto action) {
         auto* anchor = facts.points[p].operation;
         OpBuilder builder(anchor);
@@ -1380,11 +1510,13 @@ bool Constructor::realize()
         emissionMutation(function);
     if (failed(verify(function)))
         return fail(ConstructionResult::InternalError, "malformed logical emission");
+    profile.next("reconstruction");
     return reconstruct();
 }
 
 bool Constructor::reconstruct()
 {
+    StageProfile profile(queries, "reconstruct_effects");
     if (!payload.preserved(function, [](Operation* op) {
             // The constructor owns only events, barriers and their scalar
             // guards. Extra allocations/views/resources are payload changes,
@@ -1463,6 +1595,7 @@ bool Constructor::reconstruct()
             points.push_back(op);
         }
     });
+    profile.next("reconstruct_occurrences");
     auto actual = SyncOccurrences::build(function, points);
     if (!queries.spend(actual.work))
         return fail(ConstructionResult::AnalysisLimit, "emitted occurrence import work budget");
@@ -1510,10 +1643,60 @@ bool Constructor::reconstruct()
                     queries.contains(*retired, r.occurrences), "reconstructed retirement misses payload occurrences"))
                 return false;
         }
+    // Index clear block intervals once in each direction. An original payload
+    // on the same lane in this invocation is the exact adjacent cut; nested
+    // control invalidates the shortcut and uses full occurrence queries below.
+    std::map<std::pair<Operation*, Lane>, unsigned> previousPayload, nextPayload;
+    std::set<Block*> blocks;
+    for (const auto& point : actual.points) blocks.insert(point.operation->getBlock());
+    for (Block* block : blocks) {
+        std::map<Lane, unsigned> last;
+        auto visit = [&](Operation& op, auto& index) {
+            if (op.getNumRegions()) { last.clear(); return; }
+            auto found = facts.ids.find(&op);
+            if (found != facts.ids.end() && found->second < lanes.size())
+                last[lanes[found->second]] = found->second;
+            else if (isa<SetFlagOp, WaitFlagOp, BarrierOp>(&op))
+                for (auto [lane, point] : last) index.emplace(std::make_pair(&op, lane), point);
+        };
+        for (auto& op : *block) visit(op, previousPayload);
+        last.clear();
+        for (auto& op : llvm::reverse(*block)) visit(op, nextPayload);
+    }
+    auto sameInvocation = [&](Relation relation) -> std::optional<Relation> {
+        IntegerRelation equal(relation.getSpace());
+        for (unsigned iv = 1; iv < facts.dimensions(); ++iv) {
+            SmallVector<int64_t> row(equal.getNumCols());
+            row[iv] = 1; row[facts.dimensions() + iv] = -1;
+            equal.addEquality(row);
+        }
+        return take(queries.normalize(relation.intersect(Relation(equal))));
+    };
+    auto adjacentCut = [&](ArrayRef<unsigned> eventPoints, Lane lane, bool source) -> std::optional<Relation> {
+        auto result = empty();
+        const auto& index = source ? previousPayload : nextPayload;
+        // Check all endpoints before issuing queries. A missing neighbour is
+        // an unsupported shortcut, never an empty source prefix or target cut.
+        for (unsigned event : eventPoints)
+            if (!index.count({actual.points[event].operation, lane})) return {};
+        for (unsigned event : eventPoints) {
+            unsigned payload = index.at({actual.points[event].operation, lane});
+            auto edge = source ? before(payload, event) : before(event, payload);
+            if (!edge) return {};
+            auto same = sameInvocation(std::move(*edge));
+            if (!same) return {};
+            result.unionInPlace(*same);
+        }
+        return result;
+    };
+    profile.next("reconstruct_events");
     std::vector<std::pair<Key, Relation>> actualMatching;
     for (const auto& [key, events] : groups) {
         auto [sourceLane, targetLane, keyNumber] = key;
-        if (keyNumber >= 8 || sourceLane == targetLane)
+        if (events.acquisitions.empty()) return fail(ConstructionResult::Unproved, "emitted publication lacks acquisition");
+        if (events.publications.empty()) return fail(ConstructionResult::Unproved, "emitted acquisition lacks publication");
+        if (keyNumber >= 8 || sourceLane == targetLane || !orders->byLane.count(sourceLane) ||
+            !orders->byLane.count(targetLane))
             return fail(ConstructionResult::InternalError, "invalid emitted event domain");
         auto preceding = empty(), pubOrder = empty();
         auto pubDomain = PresburgerSet::getEmpty(actual.domain(0).getRangeSet().getSpace());
@@ -1553,35 +1736,35 @@ bool Constructor::reconstruct()
             !expect(queries.contains(matched->getDomainSet(), pubDomain), "emitted publication lacks acquisition") ||
             !expect(queries.contains(matched->getRangeSet(), waitDomain), "emitted acquisition lacks publication"))
             return false;
-        auto prefix = empty(), suffix = empty();
-        for (unsigned p = 0; p < lanes.size(); ++p) {
-            if (lanes[p] == sourceLane)
+        auto lastSource = adjacentCut(events.publications, sourceLane, true);
+        auto firstTarget = adjacentCut(events.acquisitions, targetLane, false);
+        if (!lastSource) {
+            auto prefix = empty();
+            for (unsigned p : orders->byLane.at(sourceLane))
                 for (unsigned publication : events.publications) {
                     auto edge = before(p, publication);
-                    if (!edge)
-                        return false;
+                    if (!edge) return false;
                     prefix.unionInPlace(*edge);
                 }
-            if (lanes[p] == targetLane)
+            auto sourceBefore = selectedOrder(prefix.getDomainSet(), prefix.getDomainSet());
+            if (!sourceBefore) return false;
+            lastSource = take(queries.latestSources(prefix, *sourceBefore));
+        }
+        if (!firstTarget) {
+            auto suffix = empty();
+            for (unsigned p : orders->byLane.at(targetLane))
                 for (unsigned acquisition : events.acquisitions) {
                     auto edge = before(acquisition, p);
-                    if (!edge)
-                        return false;
+                    if (!edge) return false;
                     suffix.unionInPlace(*edge);
                 }
+            auto targetBefore = selectedOrder(suffix.getRangeSet(), suffix.getRangeSet());
+            if (!targetBefore) return false;
+            firstTarget = take(queries.firstTargets(suffix, *targetBefore));
         }
-        // Recover the actual captured source prefix and blocked destination cut.
-        // Equality here checks that realization did not recapture independent
-        // work or move a wait before an earlier destination operation.
-        auto sourceBefore = laneOrder(sourceLane, false), targetBefore = laneOrder(targetLane, false);
-        if (!sourceBefore || !targetBefore)
-            return false;
-        auto lastSource = take(queries.latestSources(prefix, *sourceBefore));
-        if (!lastSource)
-            return false;
-        auto firstTarget = take(queries.firstTargets(suffix, *targetBefore));
-        if (!firstTarget)
-            return false;
+        if (!lastSource || !firstTarget) return false;
+        // Compare freshly recovered cuts with the selected boundaries below.
+        // Same-block adjacency does not trust stream identities or certificates.
         auto a = compose(*lastSource, *matched);
         if (!a)
             return false;
@@ -1598,35 +1781,76 @@ bool Constructor::reconstruct()
         supply.unionInPlace(*logical);
         actualMatching.push_back({key, std::move(*logical)});
     }
+    profile.next("reconstruct_barriers");
     if (actualBarriers.size() != barriers.size())
         return fail(ConstructionResult::InternalError, "emission changed selected barrier inventory");
     std::set<unsigned> checkedBarriers;
+    std::map<unsigned, SmallVector<unsigned>> selectedBarriers;
+    for (unsigned i = 0; i < barriers.size(); ++i) selectedBarriers[barriers[i].point].push_back(i);
     for (auto [barrier, pipe] : actualBarriers) {
+        if (!orders->byLane.count(pipe)) return fail(ConstructionResult::Unproved, "unrepresented emitted barrier lane");
+        // A complete clear interval permits a compact independent challenge.
+        // Recover the emitted cut, then derive the original cut from physical
+        // input neighbours and the retained domain. Never trust barrier.logical.
+        auto emittedPrevious = previousPayload.find({actual.points[barrier].operation, pipe});
+        auto emittedNext = nextPayload.find({actual.points[barrier].operation, pipe});
+        if (emittedPrevious != previousPayload.end() && emittedNext != nextPayload.end()) {
+            auto originalPrevious = orders->clearPredecessor.find(emittedNext->second);
+            auto candidates = selectedBarriers.find(emittedNext->second);
+            if (originalPrevious != orders->clearPredecessor.end() && candidates != selectedBarriers.end()) {
+                SmallVector<unsigned> singleton{barrier};
+                auto last = adjacentCut(singleton, pipe, true), first = adjacentCut(singleton, pipe, false);
+                if (!last || !first) return false;
+                auto cut = compose(*last, *first);
+                auto original = order(originalPrevious->second, emittedNext->second);
+                if (!cut || !original) return false;
+                original = sameInvocation(std::move(*original));
+                if (!original) return false;
+                bool matched = false;
+                for (unsigned i : candidates->second) {
+                    if (checkedBarriers.count(i) || barriers[i].pipe != pipe) continue;
+                    auto intended = original->intersectRange(barriers[i].domain);
+                    auto same = queries.contains(intended, *cut);
+                    if (same == QueryStatus::Proved) same = queries.contains(*cut, intended);
+                    if (queryFailed(same, "reconstructed adjacent barrier cut query")) return false;
+                    if (same != QueryStatus::Proved) continue;
+                    checkedBarriers.insert(i); matched = true; break;
+                }
+                if (!matched) return fail(ConstructionResult::Unproved, "realization changed adjacent barrier cut");
+                supply.unionInPlace(*cut);
+                continue;
+            }
+        }
         auto prefix = empty(), suffix = empty();
-        for (unsigned p = 0; p < lanes.size(); ++p)
-            if (lanes[p] == pipe) {
+        for (unsigned p : orders->byLane.at(pipe)) {
                 auto a = before(p, barrier), b = before(barrier, p);
                 if (!a || !b)
                     return false;
                 prefix.unionInPlace(*a);
                 suffix.unionInPlace(*b);
             }
-        auto beforeLane = laneOrder(pipe, false);
-        if (!beforeLane)
-            return false;
-        auto last = take(queries.latestSources(prefix, *beforeLane));
+        auto sourceOrder = selectedOrder(prefix.getDomainSet(), prefix.getDomainSet());
+        auto targetOrder = selectedOrder(suffix.getRangeSet(), suffix.getRangeSet());
+        if (!sourceOrder || !targetOrder) return false;
+        auto last = take(queries.latestSources(prefix, *sourceOrder));
         if (!last)
             return false;
-        auto first = take(queries.firstTargets(suffix, *beforeLane));
+        auto first = take(queries.firstTargets(suffix, *targetOrder));
         if (!first)
             return false;
         auto actualPrefix = compose(prefix, *first);
         if (!actualPrefix)
             return false;
         bool matchedBarrier = false;
-        for (unsigned i = 0; i < barriers.size(); ++i) {
-            if (checkedBarriers.count(i) || barriers[i].pipe != pipe)
-                continue;
+        auto candidatePoints = orders->phaseIds(first->getRangeSet(), queries);
+        if (!candidatePoints) return fail(ConstructionResult::AnalysisLimit, "barrier candidate index budget");
+        SmallVector<unsigned> candidates;
+        for (unsigned point : *candidatePoints) {
+            auto found = selectedBarriers.find(point);
+            if (found != selectedBarriers.end()) candidates.append(found->second);
+        }
+        for (unsigned i : candidates) {
+            if (checkedBarriers.count(i) || barriers[i].pipe != pipe) continue;
             auto domain = queries.contains(first->getRangeSet(), barriers[i].domain);
             if (queryFailed(domain, "reconstructed barrier domain query"))
                 return false;
@@ -1637,6 +1861,8 @@ bool Constructor::reconstruct()
                 return false;
             if (exact != QueryStatus::Proved)
                 continue;
+            auto beforeLane = selectedOrder(laneDomain(pipe), barriers[i].domain);
+            if (!beforeLane) return false;
             auto intendedPrefix = beforeLane->intersectRange(barriers[i].domain);
             if (!expect(
                     queries.contains(intendedPrefix, *actualPrefix), "realization broadened selected barrier cut") ||
@@ -1653,6 +1879,7 @@ bool Constructor::reconstruct()
             return false;
         supply.unionInPlace(*cut);
     }
+    profile.next("reconstruct_completion_reuse");
     auto completed = completion(supply);
     if (!completed)
         return false;

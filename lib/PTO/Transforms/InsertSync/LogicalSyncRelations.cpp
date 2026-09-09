@@ -10,6 +10,7 @@
 #include "PTO/Transforms/InsertSync/LogicalSyncRelations.h"
 #include "mlir/Analysis/Presburger/Utils.h"
 #include "mlir/Analysis/Presburger/Simplex.h"
+#include <algorithm>
 #include <map>
 #include <set>
 #include <cstdlib>
@@ -21,13 +22,25 @@ namespace {
 // checked-work count cannot be mistaken for a wall-clock bound.
 struct QueryTimer {
     const char* name;
-    unsigned left, right;
-    bool enabled = std::getenv("PTOAS_LOGICAL_TRACE") != nullptr;
-    std::chrono::steady_clock::time_point start = enabled ? std::chrono::steady_clock::now() :
-                                                          std::chrono::steady_clock::time_point{};
+    RelationQueries::PrimitiveStats* stats;
+    uint64_t left, right, other;
+    std::chrono::steady_clock::time_point start;
+    QueryTimer(const char* name, RelationQueries::PrimitiveStats* stats,
+               uint64_t left, uint64_t right = 0, uint64_t other = 0)
+        : name(name), stats(stats), left(left), right(right), other(other)
+    {
+        if (!stats) return;
+        ++stats->calls;
+        stats->maxInputPieces = std::max(stats->maxInputPieces, left + right + other);
+        start = std::chrono::steady_clock::now();
+    }
+    QueryTimer(const QueryTimer&) = delete;
+    QueryTimer& operator=(const QueryTimer&) = delete;
     ~QueryTimer() {
-        if (!enabled) return;
-        double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        if (!stats) return;
+        auto elapsed = std::chrono::steady_clock::now() - start;
+        stats->wallNanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
+        double seconds = std::chrono::duration<double>(elapsed).count();
         if (seconds >= 0.25)
             llvm::errs() << "logical query " << name << " pieces " << left << "/" << right
                          << " seconds " << seconds << "\n";
@@ -54,6 +67,18 @@ struct CompactPiece : mlir::presburger::IntegerRelation {
         simplify();
     }
 };
+size_t pieceFingerprint(const mlir::presburger::IntegerRelation& piece)
+{
+    auto hash = llvm::hash_combine(
+        piece.getNumEqualities(), piece.getNumInequalities(), piece.getNumVars());
+    for (unsigned i = 0; i < piece.getNumEqualities(); ++i)
+        hash = llvm::hash_combine(
+            hash, llvm::hash_combine_range(piece.getEquality(i).begin(), piece.getEquality(i).end()));
+    for (unsigned i = 0; i < piece.getNumInequalities(); ++i)
+        hash = llvm::hash_combine(
+            hash, llvm::hash_combine_range(piece.getInequality(i).begin(), piece.getInequality(i).end()));
+    return size_t(hash);
+}
 using Constants = std::vector<std::optional<llvm::DynamicAPInt>>;
 Constants fixedCoordinates(const mlir::presburger::IntegerRelation& piece, unsigned offset, unsigned count)
 {
@@ -82,9 +107,69 @@ bool incompatible(const Constants& a, const Constants& b)
             return true;
     return false;
 }
+// A cheap necessary endpoint filter, not an alias or completion proof. Bucket
+// by the first source/range coordinates where fixed, retaining wildcard pieces
+// and every remaining coordinate check. Return original disjunct order so
+// callers' bounded implication attempts retain their existing priority.
+struct EndpointCandidates {
+    using Coordinate = std::optional<llvm::DynamicAPInt>;
+    using Key = std::pair<Coordinate, Coordinate>;
+    unsigned domain, range;
+    std::vector<Constants> coordinates;
+    std::map<Key, std::vector<unsigned>> both;
+    std::map<Coordinate, std::vector<unsigned>> sources, targets;
+    std::vector<unsigned> all;
+    explicit EndpointCandidates(const Relation& relation)
+        : domain(relation.getNumDomainVars()), range(relation.getNumRangeVars())
+    {
+        for (const auto& piece : relation.getAllDisjuncts()) {
+            coordinates.push_back(fixedCoordinates(piece, 0, domain + range));
+            unsigned ordinal = coordinates.size() - 1;
+            auto [source, target] = key(coordinates.back());
+            both[{source, target}].push_back(ordinal);
+            sources[source].push_back(ordinal);
+            targets[target].push_back(ordinal);
+            all.push_back(ordinal);
+        }
+    }
+    Key key(const Constants& values) const {
+        return {domain ? values[0] : Coordinate{}, range ? values[domain] : Coordinate{}};
+    }
+    std::optional<std::vector<unsigned>> select(
+        const Constants& values, RelationQueries& queries, uint64_t& lookups) const
+    {
+        auto [source, target] = key(values);
+        std::vector<unsigned> result;
+        auto append = [&](const auto& index, const auto& key) {
+            if (!queries.spend(1)) return false;
+            ++lookups;
+            if (auto found = index.find(key); found != index.end())
+                result.insert(result.end(), found->second.begin(), found->second.end());
+            return true;
+        };
+        if (source && target) {
+            if (!append(both, Key{source, target}) || !append(both, Key{source, {}}) ||
+                !append(both, Key{{}, target}) || !append(both, Key{{}, {}})) return {};
+        } else if (source) {
+            if (!append(sources, source) || !append(sources, Coordinate{})) return {};
+        } else if (target) {
+            if (!append(targets, target) || !append(targets, Coordinate{})) return {};
+        } else {
+            if (!queries.spend(1)) return {};
+            ++lookups;
+            return all;
+        }
+        llvm::sort(result);
+        return result;
+    }
+};
 }
 
-bool RelationQueries::charge(const Relation& relation) {
+RelationQueries::RelationQueries(uint64_t budget)
+    : remaining(budget), profiling(std::getenv("PTOAS_LOGICAL_TRACE") != nullptr)
+{}
+
+bool RelationQueries::charge(const Relation& relation, uint64_t* chargedCost) {
     uint64_t cost = 1;
     for (const auto& piece : relation.getAllDisjuncts()) {
         uint64_t rows = uint64_t(piece.getNumEqualities()) + piece.getNumInequalities() + 1;
@@ -95,36 +180,54 @@ bool RelationQueries::charge(const Relation& relation) {
         cost += rows * cols;
     }
     if (cost > remaining) { used += remaining; remaining = 0; return false; }
-    remaining -= cost; used += cost; return true;
+    remaining -= cost; used += cost;
+    if (chargedCost) *chargedCost = cost;
+    return true;
 }
 
 RelationResult RelationQueries::normalize(const Relation& relation)
 {
+    QueryTimer timer{"normalize", profiling ? &queryProfile.normalize : nullptr, relation.getNumDisjuncts()};
     if (!charge(relation))
         return failure(QueryStatus::BudgetExhausted, "normalization budget");
     auto result = Relation::getEmpty(relation.getSpace());
+    std::map<size_t, std::vector<unsigned>> fingerprints;
     for (const auto& input : relation.getAllDisjuncts()) {
         CompactPiece piece(input);
         piece.compact();
         if (piece.isEmpty())
             continue;
         bool duplicate = false;
-        for (const auto& old : result.getAllDisjuncts()) {
+        auto& bucket = fingerprints[pieceFingerprint(piece)];
+        for (unsigned index : bucket) {
             if (!spend(1))
                 return failure(QueryStatus::BudgetExhausted, "normalization deduplication budget");
-            if (piece.isObviouslyEqual(old)) {
+            if (piece.isObviouslyEqual(result.getAllDisjuncts()[index])) {
                 duplicate = true;
                 break;
             }
         }
-        if (!duplicate)
+        if (!duplicate) {
+            bucket.push_back(result.getNumDisjuncts());
             result.unionInPlace(Relation(piece));
+        }
     }
     return {QueryStatus::Proved, std::move(result), {}};
 }
 
 RelationResult RelationQueries::compose(const Relation& first, const Relation& second) {
-    QueryTimer timer{"compose", first.getNumDisjuncts(), second.getNumDisjuncts()};
+    std::optional<CompositionRHS::Index> index;
+    return composeImpl(first, second, index);
+}
+
+RelationResult RelationQueries::compose(const Relation& first, CompositionRHS& second) {
+    return composeImpl(first, second.relation, second.index);
+}
+
+RelationResult RelationQueries::composeImpl(
+    const Relation& first, const Relation& second, std::optional<CompositionRHS::Index>& index) {
+    QueryTimer timer{"compose", profiling ? &queryProfile.compose : nullptr,
+                     first.getNumDisjuncts(), second.getNumDisjuncts()};
     if (!first.getSpace().getRangeSpace().isCompatible(second.getSpace().getDomainSpace()))
         return failure(QueryStatus::Unsupported, "incompatible composition spaces");
     if (!first.getNumDisjuncts() || !second.getNumDisjuncts()) {
@@ -135,19 +238,29 @@ RelationResult RelationQueries::compose(const Relation& first, const Relation& s
             return failure(QueryStatus::BudgetExhausted, "empty composition budget");
         return {QueryStatus::Proved, std::move(empty), {}};
     }
-    if (!charge(first) || !charge(second)) return failure(QueryStatus::BudgetExhausted, "composition budget");
-    std::vector<Constants> joined;
-    std::map<llvm::DynamicAPInt, std::vector<unsigned>> indexed;
-    std::vector<unsigned> wildcard, all;
-    for (const auto& piece : second.getAllDisjuncts()) {
-        joined.push_back(fixedCoordinates(piece, 0, piece.getNumDomainVars()));
-        unsigned index = joined.size() - 1;
-        all.push_back(index);
-        if (!joined.back().empty() && joined.back().front())
-            indexed[*joined.back().front()].push_back(index);
-        else
-            wildcard.push_back(index);
+    uint64_t rhsCharge = 0;
+    if (!charge(first) || (index ? !spend(index->chargeCost) : !charge(second, &rhsCharge)))
+        return failure(QueryStatus::BudgetExhausted, "composition budget");
+    if (!index) {
+        CompositionRHS::Index built;
+        built.chargeCost = rhsCharge;
+        ++compositionIndexBuilds;
+        for (const auto& piece : second.getAllDisjuncts()) {
+            ++compositionIndexPieces;
+            built.joined.push_back(fixedCoordinates(piece, 0, piece.getNumDomainVars()));
+            unsigned ordinal = built.joined.size() - 1;
+            built.all.push_back(ordinal);
+            if (!built.joined.back().empty() && built.joined.back().front())
+                built.fixed[*built.joined.back().front()].push_back(ordinal);
+            else
+                built.wildcard.push_back(ordinal);
+        }
+        index = std::move(built);
     }
+    const auto& joined = index->joined;
+    const auto& indexed = index->fixed;
+    const auto& wildcard = index->wildcard;
+    const auto& all = index->all;
     auto result = Relation::getEmpty(
         mlir::presburger::PresburgerSpace::getRelationSpace(
             first.getSpace().getNumDomainVars(), second.getSpace().getNumRangeVars(),
@@ -178,18 +291,8 @@ RelationResult RelationQueries::compose(const Relation& first, const Relation& s
             piece.compact();
             if (piece.isEmpty())
                 continue;
-            auto fingerprint =
-                llvm::hash_combine(piece.getNumEqualities(), piece.getNumInequalities(), piece.getNumVars());
-            for (unsigned row = 0; row < piece.getNumEqualities(); ++row)
-                fingerprint = llvm::hash_combine(
-                    fingerprint,
-                    llvm::hash_combine_range(piece.getEquality(row).begin(), piece.getEquality(row).end()));
-            for (unsigned row = 0; row < piece.getNumInequalities(); ++row)
-                fingerprint = llvm::hash_combine(
-                    fingerprint,
-                    llvm::hash_combine_range(piece.getInequality(row).begin(), piece.getInequality(row).end()));
             bool duplicate = false;
-            auto& bucket = fingerprints[size_t(fingerprint)];
+            auto& bucket = fingerprints[pieceFingerprint(piece)];
             for (unsigned index : bucket) {
                 if (!remaining)
                     return failure(QueryStatus::BudgetExhausted, "composition deduplication budget");
@@ -237,7 +340,8 @@ RelationResult RelationQueries::compose(const Relation& first, const Relation& s
 }
 
 RelationResult RelationQueries::subtract(const Relation& from, const Relation& remove) {
-    QueryTimer timer{"subtract", from.getNumDisjuncts(), remove.getNumDisjuncts()};
+    QueryTimer timer{"subtract", profiling ? &queryProfile.subtract : nullptr,
+                     from.getNumDisjuncts(), remove.getNumDisjuncts()};
     if (!sameSpace(from, remove)) return failure(QueryStatus::Unsupported, "incompatible difference spaces");
     if (!from.getNumDisjuncts()) {
         if (!charge(from))
@@ -248,19 +352,22 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
     // Distribute difference over the left union, ignoring only right pieces
     // proved disjoint by fixed endpoint coordinates. Qualify each distinct
     // right subset once; unrelated phase pairs need no integer elimination.
-    std::vector<Constants> endpoints;
     unsigned dimensions = from.getNumDomainVars() + from.getNumRangeVars();
-    for (const auto& piece : remove.getAllDisjuncts())
-        endpoints.push_back(fixedCoordinates(piece, 0, dimensions));
+    EndpointCandidates endpoints(remove);
+    relationEndpointIndexPieces += remove.getNumDisjuncts();
     std::map<std::vector<unsigned>, Relation> qualifiedSubsets;
     auto result = Relation::getEmpty(from.getSpace());
     for (const auto& piece : from.getAllDisjuncts()) {
         auto coordinates = fixedCoordinates(piece, 0, dimensions);
+        auto possible = endpoints.select(coordinates, *this, relationEndpointBucketLookups);
+        if (!possible)
+            return failure(QueryStatus::BudgetExhausted, "difference endpoint lookup budget");
         std::vector<unsigned> selected;
-        for (unsigned i = 0; i < endpoints.size(); ++i) {
+        for (unsigned i : *possible) {
             if (!spend(1))
                 return failure(QueryStatus::BudgetExhausted, "difference endpoint budget");
-            if (!incompatible(coordinates, endpoints[i]))
+            ++differenceEndpointComparisons;
+            if (!incompatible(coordinates, endpoints.coordinates[i]))
                 selected.push_back(i);
         }
         if (selected.empty()) {
@@ -340,15 +447,70 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
                 auto copyRow = [](llvm::ArrayRef<llvm::DynamicAPInt> row) {
                     return llvm::SmallVector<llvm::DynamicAPInt>(row);
                 };
+                // After local witnesses are aligned, a literal prefix row is
+                // already true throughout that prefix. Do not partition its
+                // impossible complement. Equalities may differ only by sign;
+                // inequalities must match exactly. Hashes select candidates,
+                // while exact coefficient equality establishes membership.
+                struct KnownRows {
+                    using Row = llvm::SmallVector<llvm::DynamicAPInt>;
+                    bool equality;
+                    std::map<size_t, std::vector<Row>> buckets;
+                    std::optional<bool> insert(llvm::ArrayRef<llvm::DynamicAPInt> input,
+                                               RelationQueries& queries) {
+                        if (!queries.spend(uint64_t(input.size()) + 1)) return {};
+                        Row row(input);
+                        if (equality)
+                            for (const auto& coefficient : row) {
+                                if (coefficient == 0) continue;
+                                if (coefficient < 0)
+                                    for (auto& entry : row) entry = -entry;
+                                break;
+                            }
+                        auto& bucket = buckets[size_t(llvm::hash_combine_range(row.begin(), row.end()))];
+                        for (const auto& existing : bucket) {
+                            if (!queries.spend(uint64_t(row.size()) + 1)) return {};
+                            if (existing == row) return false;
+                        }
+                        bucket.push_back(std::move(row));
+                        return true;
+                    }
+                };
+                KnownRows knownEqualities{true, {}}, knownInequalities{false, {}};
+                for (unsigned i = 0; i < prefix.getNumEqualities(); ++i)
+                    if (!knownEqualities.insert(prefix.getEquality(i), *this).has_value())
+                        return failure(QueryStatus::BudgetExhausted, "difference common-row index budget");
+                for (unsigned i = 0; i < prefix.getNumInequalities(); ++i)
+                    if (!knownInequalities.insert(prefix.getInequality(i), *this).has_value())
+                        return failure(QueryStatus::BudgetExhausted, "difference common-row index budget");
+                std::vector<KnownRows::Row> equalities, rows;
+                for (unsigned i = 0; i < rhs.getNumEqualities(); ++i) {
+                    auto inserted = knownEqualities.insert(rhs.getEquality(i), *this);
+                    if (!inserted)
+                        return failure(QueryStatus::BudgetExhausted, "difference common equality budget");
+                    if (*inserted) equalities.push_back(copyRow(rhs.getEquality(i)));
+                    else ++differenceCommonRows;
+                }
+                for (unsigned i = 0; i < originalInequalities; ++i) {
+                    auto inserted = knownInequalities.insert(rhs.getInequality(i), *this);
+                    if (!inserted)
+                        return failure(QueryStatus::BudgetExhausted, "difference common inequality budget");
+                    if (*inserted) rows.push_back(copyRow(rhs.getInequality(i)));
+                    else ++differenceCommonRows;
+                }
+                // Every RHS membership condition is already present. The
+                // canonical division extension is total, so this whole left
+                // piece lies in the RHS without an emptiness/partition query.
+                if (equalities.empty() && rows.empty()) continue;
                 // Remove only constraints proved redundant in the full
                 // intersection, one at a time. Construct a fresh simplex for
                 // each implication query; never relax/restore a constraint row
                 // with detectRedundant(), the pinned assertion's source.
                 auto intersection = prefix;
-                for (unsigned i = 0; i < rhs.getNumEqualities(); ++i)
-                    intersection.addEquality(copyRow(rhs.getEquality(i)));
-                for (unsigned i = 0; i < originalInequalities; ++i)
-                    intersection.addInequality(copyRow(rhs.getInequality(i)));
+                for (const auto& row : equalities)
+                    intersection.addEquality(row);
+                for (const auto& row : rows)
+                    intersection.addInequality(row);
                 if (!charge(Relation(intersection)))
                     return failure(QueryStatus::BudgetExhausted, "difference intersection budget");
                 if (intersection.isIntegerEmpty()) {
@@ -358,8 +520,7 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
                 // Keep equality structure in the retained prefix. Replacing
                 // e=0 with two inequalities loses unit-local elimination and
                 // fixed occurrence coordinates in subsequent compositions.
-                for (unsigned i = 0; i < rhs.getNumEqualities(); ++i) {
-                    auto equality = copyRow(rhs.getEquality(i));
+                for (const auto& equality : equalities) {
                     for (bool negative : {false, true}) {
                         if (!charge(Relation(prefix)))
                             return failure(QueryStatus::BudgetExhausted, "difference equality budget");
@@ -376,12 +537,9 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
                     }
                     prefix.addEquality(equality);
                 }
-                std::vector<llvm::SmallVector<llvm::DynamicAPInt>> rows;
                 intersection = prefix;
-                for (unsigned i = 0; i < originalInequalities; ++i) {
-                    rows.push_back(copyRow(rhs.getInequality(i)));
-                    intersection.addInequality(rows.back());
-                }
+                for (const auto& row : rows)
+                    intersection.addInequality(row);
                 std::vector<bool> keep(rows.size(), true);
                 unsigned base = prefix.getNumInequalities();
                 for (unsigned i = rows.size(); i > 0; --i) {
@@ -427,7 +585,8 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
 }
 
 QueryStatus RelationQueries::contains(const Relation& supply, const Relation& requirement) {
-    QueryTimer timer{"contains", supply.getNumDisjuncts(), requirement.getNumDisjuncts()};
+    QueryTimer timer{"contains", profiling ? &queryProfile.contains : nullptr,
+                     supply.getNumDisjuncts(), requirement.getNumDisjuncts()};
     if (!sameSpace(supply, requirement)) return QueryStatus::Unsupported;
     if (!charge(supply) || !charge(requirement)) return QueryStatus::BudgetExhausted;
     // A sufficient piecewise implication avoids manufacturing an exact set
@@ -437,16 +596,22 @@ QueryStatus RelationQueries::contains(const Relation& supply, const Relation& re
     // never with RHS membership restrictions. Unqualified supply locals remain
     // unconstrained, giving a stronger sufficient test. Failure of this rational
     // test supplies no negative answer.
+    if (!requirement.getNumDisjuncts()) return QueryStatus::Proved;
+    EndpointCandidates endpoints(supply);
+    relationEndpointIndexPieces += supply.getNumDisjuncts();
     bool covered = true;
     unsigned testsLeft = 512;
     for (const auto& needed : requirement.getAllDisjuncts()) {
         bool found = false;
         unsigned candidatesLeft = 8;
         auto coordinates = fixedCoordinates(needed, 0, needed.getNumDomainVars() + needed.getNumRangeVars());
-        for (const auto& available : supply.getAllDisjuncts()) {
+        auto possible = endpoints.select(coordinates, *this, relationEndpointBucketLookups);
+        if (!possible) return QueryStatus::BudgetExhausted;
+        for (unsigned ordinal : *possible) {
+            const auto& available = supply.getAllDisjuncts()[ordinal];
             if (!spend(1)) return QueryStatus::BudgetExhausted;
-            if (incompatible(coordinates, fixedCoordinates(
-                    available, 0, available.getNumDomainVars() + available.getNumRangeVars()))) continue;
+            ++containmentEndpointComparisons;
+            if (incompatible(coordinates, endpoints.coordinates[ordinal])) continue;
             if (needed.isObviouslyEqual(available)) { found = true; break; }
             if (!candidatesLeft || !testsLeft) break;
             --candidatesLeft;
@@ -468,11 +633,15 @@ QueryStatus RelationQueries::contains(const Relation& supply, const Relation& re
             unsigned rows = membershipRows + 2 * rhs.getNumEqualities();
             if (lhs.getNumCols() > 64 || lhs.getNumConstraints() > 128 || rows > testsLeft) continue;
             bool implied = true, exhausted = false;
+            // Each objective query rolls back its temporary row in the pinned
+            // Simplex implementation. Reuse the unchanged antecedent tableau;
+            // never add a tested RHS membership constraint to that antecedent.
+            std::optional<mlir::presburger::Simplex> simplex;
             auto proves = [&](llvm::SmallVector<llvm::DynamicAPInt> row) {
                 --testsLeft;
                 if (!charge(Relation(lhs))) { exhausted = true; return false; }
-                mlir::presburger::Simplex simplex(lhs);
-                return simplex.isEmpty() || simplex.isRedundantInequality(row);
+                if (!simplex) simplex.emplace(lhs);
+                return simplex->isEmpty() || simplex->isRedundantInequality(row);
             };
             for (unsigned i = 0; implied && i < rhs.getNumEqualities(); ++i) {
                 llvm::SmallVector<llvm::DynamicAPInt> row(rhs.getEquality(i));
@@ -564,6 +733,8 @@ RelationResult RelationQueries::restrictEndpoints(
     const Relation& order, const mlir::presburger::PresburgerSet& sources,
     const mlir::presburger::PresburgerSet& targets)
 {
+    QueryTimer timer{"restrictEndpoints", profiling ? &queryProfile.restrictEndpoints : nullptr,
+                     order.getNumDisjuncts(), sources.getNumDisjuncts(), targets.getNumDisjuncts()};
     if (order.getNumDomainVars() != sources.getNumRangeVars() || order.getNumRangeVars() != targets.getNumRangeVars())
         return failure(QueryStatus::Unsupported, "candidate endpoint space mismatch");
     if (!sources.getNumDisjuncts() || !targets.getNumDisjuncts()) {
@@ -574,43 +745,61 @@ RelationResult RelationQueries::restrictEndpoints(
     }
     if (!charge(order) || !charge(sources) || !charge(targets))
         return failure(QueryStatus::BudgetExhausted, "candidate endpoint budget");
-    auto constants = [](const Relation& set) {
-        std::vector<Constants> result;
-        for (const auto& piece : set.getAllDisjuncts())
-            result.push_back(fixedCoordinates(piece, 0, piece.getNumRangeVars()));
-        return result;
+    struct EndpointIndex {
+        std::vector<Constants> values;
+        std::map<llvm::DynamicAPInt, std::vector<unsigned>> fixed;
+        std::vector<unsigned> wildcard;
+        explicit EndpointIndex(const Relation& set) {
+            for (const auto& piece : set.getAllDisjuncts()) {
+                values.push_back(fixedCoordinates(piece, 0, piece.getNumRangeVars()));
+                unsigned index = values.size() - 1;
+                if (!values.back().empty() && values.back().front())
+                    fixed[*values.back().front()].push_back(index);
+                else wildcard.push_back(index);
+            }
+        }
     };
-    auto sourceConstants = constants(sources), targetConstants = constants(targets);
+    EndpointIndex sourceIndex(sources), targetIndex(targets);
     auto result = Relation::getEmpty(order.getSpace());
+    auto possible = [&](const Constants& endpoint, const EndpointIndex& index) -> std::optional<bool> {
+        auto matches = [&](unsigned candidate) -> std::optional<bool> {
+            if (!spend(1)) return {};
+            ++endpointComparisons;
+            return !incompatible(endpoint, index.values[candidate]);
+        };
+        if (endpoint.empty() || !endpoint.front()) {
+            // An unknown first coordinate can match every fixed bucket. Keep
+            // the remaining-coordinate checks; no equality is inferred here.
+            for (unsigned i = 0; i < index.values.size(); ++i) {
+                auto answer = matches(i);
+                if (!answer || *answer) return answer;
+            }
+        } else {
+            if (auto found = index.fixed.find(*endpoint.front()); found != index.fixed.end())
+                for (unsigned i : found->second) {
+                    auto answer = matches(i);
+                    if (!answer || *answer) return answer;
+                }
+            for (unsigned i : index.wildcard) {
+                auto answer = matches(i);
+                if (!answer || *answer) return answer;
+            }
+        }
+        return false;
+    };
     for (const auto& piece : order.getAllDisjuncts()) {
-        auto left = fixedCoordinates(piece, 0, piece.getNumDomainVars());
-        auto right = fixedCoordinates(piece, piece.getNumDomainVars(), piece.getNumRangeVars());
-        bool possibleLeft = false, possibleRight = false;
-        for (const auto& endpoint : sourceConstants) {
-            if (!remaining)
-                return failure(QueryStatus::BudgetExhausted, "candidate endpoint enumeration budget");
-            --remaining;
-            ++used;
-            if (!incompatible(left, endpoint)) {
-                possibleLeft = true;
-                break;
-            }
-        }
-        if (!possibleLeft)
-            continue;
-        for (const auto& endpoint : targetConstants) {
-            if (!remaining)
-                return failure(QueryStatus::BudgetExhausted, "candidate endpoint enumeration budget");
-            --remaining;
-            ++used;
-            if (!incompatible(right, endpoint)) {
-                possibleRight = true;
-                break;
-            }
-        }
-        if (possibleRight)
-            result.unionInPlace(Relation(piece));
+        if (!spend(1))
+            return failure(QueryStatus::BudgetExhausted, "candidate endpoint lookup budget");
+        auto left = possible(fixedCoordinates(piece, 0, piece.getNumDomainVars()), sourceIndex);
+        if (!left)
+            return failure(QueryStatus::BudgetExhausted, "candidate endpoint enumeration budget");
+        if (!*left) continue;
+        auto right = possible(fixedCoordinates(piece, piece.getNumDomainVars(), piece.getNumRangeVars()), targetIndex);
+        if (!right)
+            return failure(QueryStatus::BudgetExhausted, "candidate endpoint enumeration budget");
+        if (*right) result.unionInPlace(Relation(piece));
     }
+
     return {QueryStatus::Proved, std::move(result), {}};
 }
 
@@ -618,6 +807,24 @@ RelationResult CompletionQueries::selectOrder(
     bool global, const mlir::presburger::PresburgerSet& source, const mlir::presburger::PresburgerSet& target,
     RelationQueries& queries)
 {
+    const Relation& base = primitive.value();
+    if (!source.getSpace().isCompatible(base.getSpace().getDomainSpace()) ||
+        !target.getSpace().isCompatible(base.getSpace().getRangeSpace()) ||
+        (global && !hasGlobalOrder()))
+        return failure(QueryStatus::Unsupported, "issue-order selection space or provider mismatch");
+    if (!queries.spend(uint64_t(source.getNumDisjuncts()) + target.getNumDisjuncts() + 1))
+        return failure(QueryStatus::BudgetExhausted, "issue-order selection budget");
+    if (!source.getNumDisjuncts() || !target.getNumDisjuncts())
+        return {QueryStatus::Proved, Relation::getEmpty(base.getSpace()), {}};
+    if (orderSelection) {
+        if (!*orderSelection)
+            return failure(QueryStatus::Unsupported, "missing issue-order selection callback");
+        auto value = (*orderSelection)(global, source, target, queries);
+        if (value.status == QueryStatus::Proved &&
+            (!value.relation || !sameSpace(*value.relation, base)))
+            return failure(QueryStatus::Unsupported, "incompatible issue-order selection result");
+        return value;
+    }
     auto& index = *(global ? indexedGlobal : indexedIssues);
     const auto& original = global ? *globalIssueOrder : *issueOrder;
     if (!index) {
@@ -626,11 +833,16 @@ RelationResult CompletionQueries::selectOrder(
             return value;
         OrderBlocks blocks;
         for (const auto& piece : value.relation->getAllDisjuncts()) {
+            if (!queries.spend(1))
+                return failure(QueryStatus::BudgetExhausted, "issue-order index construction budget");
             auto a = fixedCoordinates(piece, 0, piece.getNumDomainVars());
             auto b = fixedCoordinates(piece, piece.getNumDomainVars(), piece.getNumRangeVars());
             auto key = std::make_pair(a.empty() ? std::nullopt : a.front(), b.empty() ? std::nullopt : b.front());
-            auto [it, inserted] = blocks.try_emplace(key, Relation::getEmpty(original.getSpace()));
-            (void)inserted;
+            auto [it, inserted] = blocks.values.try_emplace(key, Relation::getEmpty(original.getSpace()));
+            if (inserted) {
+                blocks.bySource[key.first].push_back(key);
+                blocks.byTarget[key.second].push_back(key);
+            }
             it->second.unionInPlace(Relation(piece));
         }
         index = std::move(blocks);
@@ -644,33 +856,90 @@ RelationResult CompletionQueries::selectOrder(
         return result;
     };
     auto from = coordinates(source), to = coordinates(target);
-    auto possible = [](Coordinate key, const auto& selected) {
-        return !selected.empty() && (!key || selected.count(std::nullopt) || selected.count(key));
-    };
+    const bool anySource = from.count(std::nullopt), anyTarget = to.count(std::nullopt);
     auto selected = Relation::getEmpty(original.getSpace());
-    for (const auto& [key, block] : *index) {
-        if (!queries.spend(1))
-            return failure(QueryStatus::BudgetExhausted, "indexed issue order budget");
-        if (possible(key.first, from) && possible(key.second, to))
-            selected.unionInPlace(block);
+    auto append = [&](const OrderKey& key) {
+        ++indexedLookups;
+        if (!queries.spend(1)) return false;
+        if (auto found = index->values.find(key); found != index->values.end())
+            selected.unionInPlace(found->second);
+        return true;
+    };
+    // Unknown coordinates in the ORDER are always possible. Unknown query
+    // coordinates select every corresponding group, not just a null-key block.
+    from.insert(std::nullopt);
+    to.insert(std::nullopt);
+    if (!anySource && !anyTarget) {
+        for (const auto& a : from) {
+            if (!queries.spend(1))
+                return failure(QueryStatus::BudgetExhausted, "indexed issue source lookup budget");
+            auto group = index->bySource.find(a);
+            if (group == index->bySource.end()) continue;
+            // A broad finite candidate set can still touch a sparse order.
+            // Visit the smaller actual row rather than its empty Cartesian
+            // product, while narrow targets use direct block lookups.
+            if (group->second.size() < to.size()) {
+                for (const auto& key : group->second) {
+                    if (!queries.spend(1))
+                        return failure(QueryStatus::BudgetExhausted, "indexed issue target filter budget");
+                    if (to.count(key.second) && !append(key))
+                        return failure(QueryStatus::BudgetExhausted, "indexed issue order budget");
+                }
+            } else {
+                for (const auto& b : to)
+                    if (!append({a, b}))
+                        return failure(QueryStatus::BudgetExhausted, "indexed issue order budget");
+            }
+        }
+    } else if (anySource && !anyTarget) {
+        for (const auto& b : to) {
+            if (!queries.spend(1))
+                return failure(QueryStatus::BudgetExhausted, "indexed issue target lookup budget");
+            if (auto found = index->byTarget.find(b); found != index->byTarget.end())
+                for (const auto& key : found->second)
+                    if (!append(key))
+                        return failure(QueryStatus::BudgetExhausted, "indexed issue order budget");
+        }
+    } else if (!anySource && anyTarget) {
+        for (const auto& a : from) {
+            if (!queries.spend(1))
+                return failure(QueryStatus::BudgetExhausted, "indexed issue source lookup budget");
+            if (auto found = index->bySource.find(a); found != index->bySource.end())
+                for (const auto& key : found->second)
+                    if (!append(key))
+                        return failure(QueryStatus::BudgetExhausted, "indexed issue order budget");
+        }
+    } else {
+        for (const auto& [key, block] : index->values) {
+            (void)block;
+            if (!append(key))
+                return failure(QueryStatus::BudgetExhausted, "indexed issue order budget");
+        }
     }
     return queries.restrictEndpoints(selected, source, target);
 }
 
 QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQueries& queries)
 {
-    if (!issueOrder || !sameSpace(primitive, additional))
+    if (!sparse() || !sameSpace(primitive.value(), additional))
         return QueryStatus::Unsupported;
     auto updated = sources;
+    RelationQueries::CompositionRHS incoming(additional);
+    std::optional<mlir::presburger::PresburgerSet> incomingSources;
     for (auto& [scope, state] : updated) {
-        mlir::presburger::IntegerRelation filter(issueOrder->getSpace().getDomainSpace());
+        mlir::presburger::IntegerRelation filter(primitive.value().getSpace().getDomainSpace());
         if (scope)
             filter.addBound(mlir::presburger::BoundType::EQ, 0, *scope);
+        if (!incomingSources) {
+            incomingSources = additional.getDomainSet();
+            ++queries.endpointProjections;
+            queries.endpointProjectionPieces += additional.getNumDisjuncts();
+        }
         auto before =
-            selectOrder(false, mlir::presburger::PresburgerSet(Relation(filter)), additional.getDomainSet(), queries);
+            selectOrder(false, mlir::presburger::PresburgerSet(Relation(filter)), *incomingSources, queries);
         if (!before)
             return before.status;
-        auto initial = queries.compose(*before.relation, additional);
+        auto initial = queries.compose(*before.relation, incoming);
         if (!initial)
             return initial.status;
         state.reached.unionInPlace(*initial.relation);
@@ -678,18 +947,34 @@ QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQ
         if (!normalized)
             return normalized.status;
         state.reached = *normalized.relation;
+        state.reachedTargets.reset();
         // Old paths can now enter a newly added handoff. Reprocessing them is
         // necessary even when no new direct path starts in this source scope.
         state.pending = state.reached;
         state.saturated = false;
     }
-    primitive.unionInPlace(additional);
-    known = primitive;
+    primitive.relation.unionInPlace(additional);
+    primitive.index.reset();
+    primitiveSources.reset();
+    primitiveTargets.reset();
+    known = primitive.value();
     sources = std::move(updated);
     transitions.reset();
-    expanded = Relation::getEmpty(primitive.getSpace());
+    expanded = Relation::getEmpty(primitive.value().getSpace());
     fixed = false;
     return QueryStatus::Proved;
+}
+
+const mlir::presburger::PresburgerSet& CompletionQueries::primitiveEndpoints(
+    bool sources, RelationQueries& queries)
+{
+    auto& cached = sources ? primitiveSources : primitiveTargets;
+    if (!cached) {
+        cached = sources ? primitive.value().getDomainSet() : primitive.value().getRangeSet();
+        ++queries.endpointProjections;
+        queries.endpointProjectionPieces += primitive.value().getNumDisjuncts();
+    }
+    return *cached;
 }
 
 QueryStatus CompletionQueries::proveSparse(const Relation& requirement, RelationQueries& queries, unsigned rounds)
@@ -711,11 +996,11 @@ QueryStatus CompletionQueries::proveSparse(const Relation& requirement, Relation
             // Cache the FULL issue-order source scope, not just this demand's
             // possibly narrower guard/invocation domain. O itself retains all
             // qualified execution conditions; this filter never invents edges.
-            mlir::presburger::IntegerRelation filter(issueOrder->getSpace().getDomainSpace());
+            mlir::presburger::IntegerRelation filter(primitive.value().getSpace().getDomainSpace());
             if (scope)
                 filter.addBound(mlir::presburger::BoundType::EQ, 0, *scope);
             auto before = selectOrder(
-                false, mlir::presburger::PresburgerSet(Relation(filter)), primitive.getDomainSet(), queries);
+                false, mlir::presburger::PresburgerSet(Relation(filter)), primitiveEndpoints(true, queries), queries);
             if (!before)
                 return before.status;
             auto initial = queries.compose(*before.relation, primitive);
@@ -724,9 +1009,18 @@ QueryStatus CompletionQueries::proveSparse(const Relation& requirement, Relation
             found = sources.emplace(scope, SourceState{*initial.relation, *initial.relation, false}).first;
         }
         auto& state = found->second;
+        // These sets describe this exact demand, whereas the cached source
+        // reachability above retains the complete qualified occurrence scope.
+        const auto requiredSources = required.getDomainSet();
+        const auto requiredTargets = required.getRangeSet();
         Relation available = Relation::getEmpty(requirement.getSpace());
         auto coverage = [&]() -> QueryStatus {
-            auto after = selectOrder(false, state.reached.getRangeSet(), required.getRangeSet(), queries);
+            if (!state.reachedTargets) {
+                state.reachedTargets = state.reached.getRangeSet();
+                ++queries.endpointProjections;
+                queries.endpointProjectionPieces += state.reached.getNumDisjuncts();
+            }
+            auto after = selectOrder(false, *state.reachedTargets, requiredTargets, queries);
             if (!after)
                 return after.status;
             auto value = queries.compose(state.reached, *after.relation);
@@ -736,12 +1030,12 @@ QueryStatus CompletionQueries::proveSparse(const Relation& requirement, Relation
             return queries.contains(available, required);
         };
         auto covered = coverage();
-        if (covered == QueryStatus::NotEstablished && !state.saturated && globalIssueOrder) {
+        if (covered == QueryStatus::NotEstablished && !state.saturated && hasGlobalOrder()) {
             // Rejection-only upper bounds: every completion path must enter
             // and leave through a real handoff. Global issue order is never
             // inserted into reached completion or used to claim saturation.
-            auto before = selectOrder(true, required.getDomainSet(), primitive.getDomainSet(), queries);
-            auto after = selectOrder(false, primitive.getRangeSet(), required.getRangeSet(), queries);
+            auto before = selectOrder(true, requiredSources, primitiveEndpoints(true, queries), queries);
+            auto after = selectOrder(false, primitiveEndpoints(false, queries), requiredTargets, queries);
             if (!before || !after)
                 return !before ? before.status : after.status;
             auto prefix = queries.compose(*before.relation, primitive);
@@ -752,8 +1046,8 @@ QueryStatus CompletionQueries::proveSparse(const Relation& requirement, Relation
                 return possible.status;
             auto necessary = queries.contains(*possible.relation, required);
             if (necessary == QueryStatus::Proved) {
-                auto firstBefore = selectOrder(false, required.getDomainSet(), primitive.getDomainSet(), queries);
-                auto firstAfter = selectOrder(true, primitive.getRangeSet(), required.getRangeSet(), queries);
+                auto firstBefore = selectOrder(false, requiredSources, primitiveEndpoints(true, queries), queries);
+                auto firstAfter = selectOrder(true, primitiveEndpoints(false, queries), requiredTargets, queries);
                 if (!firstBefore || !firstAfter)
                     return !firstBefore ? firstBefore.status : firstAfter.status;
                 auto first = queries.compose(*firstBefore.relation, primitive);
@@ -778,13 +1072,13 @@ QueryStatus CompletionQueries::proveSparse(const Relation& requirement, Relation
         unsigned steps = (1u << std::min(rounds, 8u)) - 1;
         for (unsigned step = 0; covered == QueryStatus::NotEstablished && !state.saturated && step < steps; ++step) {
             if (!transitions) {
-                auto between = selectOrder(false, primitive.getRangeSet(), primitive.getDomainSet(), queries);
+                auto between = selectOrder(false, primitiveEndpoints(false, queries), primitiveEndpoints(true, queries), queries);
                 if (!between)
                     return between.status;
                 auto value = queries.compose(*between.relation, primitive);
                 if (!value)
                     return value.status;
-                transitions = std::move(*value.relation);
+                transitions.emplace(std::move(*value.relation));
             }
             auto next = queries.compose(state.pending, *transitions);
             if (!next)
@@ -798,6 +1092,7 @@ QueryStatus CompletionQueries::proveSparse(const Relation& requirement, Relation
                 break;
             }
             state.reached.unionInPlace(state.pending);
+            state.reachedTargets.reset();
             covered = coverage();
         }
         if (covered == QueryStatus::Unsupported || covered == QueryStatus::BudgetExhausted)
@@ -812,7 +1107,7 @@ QueryStatus CompletionQueries::proveSparse(const Relation& requirement, Relation
 }
 
 QueryStatus CompletionQueries::prove(const Relation& requirement, RelationQueries& queries, unsigned rounds) {
-    if (issueOrder)
+    if (sparse())
         return proveSparse(requirement, queries, rounds);
     auto covered = queries.contains(known, requirement);
     if (covered != QueryStatus::NotEstablished || fixed)

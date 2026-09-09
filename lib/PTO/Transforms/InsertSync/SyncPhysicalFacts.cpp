@@ -11,8 +11,12 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include <limits>
 #include <optional>
+#include <map>
+#include <set>
+#include <tuple>
 using namespace mlir;
 using namespace mlir::pto;
 namespace {
@@ -251,4 +255,92 @@ bool mlir::pto::logicalSyncMayAlias(const BaseMemInfo *a, const BaseMemInfo *b,
     if (x < y + b->allocateSize && y < x + a->allocateSize) return true;
   }
   return false;
+}
+
+SyncAccessCandidates mlir::pto::enumerateSyncAccessCandidates(
+    ArrayRef<SyncPhysicalAccess> accesses, llvm::function_ref<bool(uint64_t)> spend) {
+  SyncAccessCandidates result;
+  auto charge = [&](uint64_t amount) {
+    if (!spend(amount)) {
+      result.status = SyncAccessCandidates::Status::AnalysisLimit;
+      return false;
+    }
+    result.work += amount;
+    return true;
+  };
+  struct Interval { uint64_t begin, end; unsigned access; };
+  std::map<AddressSpace, SmallVector<unsigned>> reads, writes, unknown;
+  std::map<std::pair<AddressSpace, PipelineType>, SmallVector<unsigned>> readersByLane;
+  std::map<AddressSpace, std::vector<Interval>> intervals;
+  for (unsigned id = 0; id < accesses.size(); ++id) {
+    const auto &access = accesses[id];
+    const auto *mem = access.memory;
+    if (!mem) return result;
+    if (!charge(mem->baseAddresses.size() + 1)) return result;
+    (access.write ? writes : reads)[mem->scope].push_back(id);
+    if (!access.write) readersByLane[{mem->scope, access.lane}].push_back(id);
+    bool known = mem->scope != AddressSpace::GM && mem->hasKnownPhysicalAddresses &&
+        !mem->aliasesUnknownRange && mem->allocateSize && !mem->baseAddresses.empty();
+    for (uint64_t base : mem->baseAddresses)
+      known &= base <= std::numeric_limits<uint64_t>::max() - mem->allocateSize;
+    if (!known) { unknown[mem->scope].push_back(id); continue; }
+    for (uint64_t base : mem->baseAddresses)
+      intervals[mem->scope].push_back({base, base + mem->allocateSize, id});
+  }
+  std::set<std::pair<unsigned, unsigned>> candidates;
+  auto candidate = [&](unsigned x, unsigned y) {
+    if (!charge(1)) return false;
+    ++result.candidateVisits;
+    const auto &a = accesses[x]; const auto &b = accesses[y];
+    if (!a.write && !b.write &&
+        (a.memory->scope != AddressSpace::ACC || a.lane == b.lane)) return true;
+    candidates.emplace(std::min(x, y), std::max(x, y));
+    return true;
+  };
+  for (auto &[scope, spans] : intervals) {
+    llvm::sort(spans, [](const Interval &a, const Interval &b) {
+      return std::tie(a.begin, a.end, a.access) < std::tie(b.begin, b.end, b.access);
+    });
+    std::map<PipelineType, std::set<unsigned>> activeReads;
+    std::set<unsigned> activeWrites;
+    std::multimap<uint64_t, unsigned> expiration;
+    for (unsigned i = 0; i < spans.size(); ++i) {
+      ++result.intervalVisits;
+      const auto &current = spans[i];
+      while (!expiration.empty() && expiration.begin()->first <= current.begin) {
+        unsigned old = expiration.begin()->second;
+        const auto &access = accesses[spans[old].access];
+        if (access.write) activeWrites.erase(old);
+        else activeReads[access.lane].erase(old);
+        expiration.erase(expiration.begin());
+      }
+      if (!candidate(current.access, current.access)) return result;
+      for (unsigned previous : activeWrites)
+        if (!candidate(current.access, spans[previous].access)) return result;
+      const auto &access = accesses[current.access];
+      if (access.write || scope == AddressSpace::ACC)
+        for (const auto &[lane, readers] : activeReads) {
+          if (!access.write && lane == access.lane) continue;
+          for (unsigned previous : readers)
+            if (!candidate(current.access, spans[previous].access)) return result;
+        }
+      if (access.write) activeWrites.insert(i);
+      else activeReads[access.lane].insert(i);
+      expiration.emplace(current.end, i);
+    }
+  }
+  for (const auto &[scope, uncertain] : unknown)
+    for (unsigned x : uncertain) {
+      for (unsigned y : writes[scope]) if (!candidate(x, y)) return result;
+      if (accesses[x].write) {
+        for (unsigned y : reads[scope]) if (!candidate(x, y)) return result;
+      } else if (scope == AddressSpace::ACC) {
+        for (const auto &[key, readers] : readersByLane)
+          if (key.first == scope && key.second != accesses[x].lane)
+            for (unsigned y : readers) if (!candidate(x, y)) return result;
+      }
+    }
+  result.pairs.assign(candidates.begin(), candidates.end());
+  result.status = SyncAccessCandidates::Status::Complete;
+  return result;
 }

@@ -25,7 +25,7 @@ def main():
     if not __debug__:
         raise RuntimeError("OAHS acceptance requires assertions")
     parser = argparse.ArgumentParser()
-    for name in ("relation-driver", "occurrence-driver", "native-driver", "opt",
+    for name in ("relation-driver", "occurrence-driver", "native-driver", "candidates-driver", "opt",
                  "python-root", "output-root"):
         parser.add_argument("--" + name, required=True, type=Path)
     args = parser.parse_args()
@@ -74,6 +74,11 @@ def main():
                            ("check_qualification", args.native_driver)):
         run(script, [sys.executable, HERE / (script + ".py"), "--driver", driver,
                      "--output", output / script])
+    run("candidates", [args.candidates_driver])
+    run("scalability", [sys.executable, HERE / "check_scalability.py", "--opt", args.opt,
+                        "--python-root", args.python_root, "--output", output / "scalability", "--repetitions", "1"])
+    run("reconstruction-cuts", [sys.executable, HERE / "check_reconstruction_cuts.py", "--driver", args.native_driver,
+                                 "--python-root", args.python_root, "--output", output / "reconstruction-cuts"])
     run("observers", [sys.executable, HERE / "test_observations.py"])
     run("constructor", [sys.executable, HERE / "check_constructor.py", "--focused",
                          "--python-root", args.python_root, "--native-driver", args.native_driver,
