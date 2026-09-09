@@ -1,0 +1,55 @@
+module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a3"} {
+  func.func @pipeline(%arg0: !pto.ptr<f16, gm>, %arg1: !pto.ptr<f16, gm>, %arg2: index) attributes {pto.gm_alias = "assume-disjoint-arguments", pto.insert_sync.logical_reason = "constructed and reconstructed occurrence handoffs", pto.insert_sync.logical_requirements = 10 : i64, pto.insert_sync.logical_status = "applied", pto.insert_sync.logical_streams = 4 : i64, pto.insert_sync.logical_work = 1901094 : i64, pto.insert_sync.producer = "logical", pto.insert_sync.requested_planner = "logical", pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %true = arith.constant true
+    %c512_i64 = arith.constant 512 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %0 = arith.muli %arg2, %c16 : index
+    %1 = pto.make_tensor_view %arg0, shape = [%0, %c16], strides = [%c16, %c1] {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<?x?xf16>
+    %2 = pto.make_tensor_view %arg1, shape = [%0, %c16], strides = [%c16, %c1] {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<?x?xf16>
+    %3 = pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 16x16xf16>
+    %4 = pto.alloc_tile addr = %c512_i64 : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %arg3 = %c0 to %arg2 step %c1 {
+      %6 = arith.muli %arg3, %c16 : index
+      %7 = pto.partition_view %1, offsets = [%6, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16>
+      scf.if %true {
+        %8 = arith.cmpi eq, %arg3, %c0 : index
+        %true_0 = arith.constant true
+        %9 = arith.xori %8, %true_0 : i1
+        scf.if %9 {
+          pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+        }
+        pto.tload ins(%7 : !pto.partition_tensor_view<16x16xf16>) outs(%3 : !pto.tile_buf<vec, 16x16xf16>) {layout = #pto.layout<nd>, pto.inferred_layout = true}
+        pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+        %10 = arith.muli %arg3, %c16 : index
+        %11 = pto.partition_view %2, offsets = [%10, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16>
+        pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+        %12 = arith.cmpi eq, %arg3, %c0 : index
+        %true_1 = arith.constant true
+        %13 = arith.xori %12, %true_1 : i1
+        scf.if %13 {
+          pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+        }
+        pto.tabs ins(%3 : !pto.tile_buf<vec, 16x16xf16>) outs(%4 : !pto.tile_buf<vec, 16x16xf16>)
+        pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+        %14 = arith.addi %arg3, %c1 : index
+        %15 = arith.cmpi sge, %14, %arg2 : index
+        %true_2 = arith.constant true
+        %16 = arith.xori %15, %true_2 : i1
+        scf.if %16 {
+          pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+        }
+        pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+        pto.tstore ins(%4 : !pto.tile_buf<vec, 16x16xf16>) outs(%11 : !pto.partition_tensor_view<16x16xf16>) {layout = #pto.layout<nd>, pto.inferred_layout = true}
+        pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+      }
+    }
+    %5 = arith.cmpi slt, %c0, %arg2 : index
+    scf.if %5 {
+      pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+    }
+    return
+  }
+}

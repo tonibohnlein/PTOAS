@@ -1,0 +1,736 @@
+{
+  "milestone": 1,
+  "status": "accepted-locally",
+  "source_base": "96b5c282836bc06575f88cb79a0bd46d130bbf6d",
+  "llvm_revision": "fa2fd1f75d742fec91ecf40d98c9c7961647ec42",
+  "experimental_work_budget": 128000000,
+  "artifact_directory": "/home/toni/work/pypto3_sync_more/insertsync-builds/campaign/logical-plan/m1-native/final",
+  "device_qualified": false,
+  "rows": [
+    {
+      "case": "one_buffer",
+      "input_sha256": "600c7fa8959c5cfb97660a9a54fb585905434bc332e73ed709274f4dd7700011",
+      "boundaries": [
+        {
+          "scenario": "trips_0",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "trips_1",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "trips_2",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "trips_3",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "trips_16",
+          "status": "checked",
+          "weaker_prefixes": []
+        }
+      ],
+      "arms": {
+        "revised": {
+          "seconds": 0.42114394798409194,
+          "static": {
+            "sets": 6,
+            "waits": 6,
+            "PIPE_ALL": 0,
+            "named": {}
+          },
+          "status": [
+            {
+              "pto.insert_sync.buffer_generations": "unit",
+              "pto.insert_sync.effect_coverage": "\"complete\"",
+              "pto.insert_sync.generation_barriers_removed": "1 : i64",
+              "pto.insert_sync.generation_global_witnesses": "0 : i64",
+              "pto.insert_sync.generation_initial_pairs_removed": "0 : i64",
+              "pto.insert_sync.generation_initial_sets_removed": "0 : i64",
+              "pto.insert_sync.generation_initial_waits_removed": "0 : i64",
+              "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+              "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+              "pto.insert_sync.generation_publication_work": "0 : i64",
+              "pto.insert_sync.generation_publications_advanced": "0 : i64",
+              "pto.insert_sync.generation_publications_guarded": "0 : i64",
+              "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+              "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+              "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+              "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+              "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+              "pto.insert_sync.lifecycle_channels": "2 : i64",
+              "pto.insert_sync.lifecycle_completion_pairs": "1 : i64",
+              "pto.insert_sync.lifecycle_completion_witnesses": "1 : i64",
+              "pto.insert_sync.lifecycle_completion_work": "3346 : i64",
+              "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+              "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+              "pto.insert_sync.lifecycle_retries": "0 : i64",
+              "pto.insert_sync.lifecycle_supplied_pairs": "11 : i64",
+              "pto.insert_sync.mmad_chain_targets": "0 : i64",
+              "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+              "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+            }
+          ],
+          "scenarios": {
+            "trips_0": {
+              "sets": 2,
+              "waits": 2,
+              "barriers": {},
+              "scalar_operations": 8,
+              "replay_steps": 17,
+              "payload_sha256": "67b2435f53e584fae446b8fb5b09e9f049c6867e59169e4816da1c9c7886dd78"
+            },
+            "trips_1": {
+              "sets": 6,
+              "waits": 6,
+              "barriers": {},
+              "scalar_operations": 13,
+              "replay_steps": 35,
+              "payload_sha256": "94eecea40b00cc3f80fccd0de7118b23cdbbd5c61385cd62577f1bf394dbae69"
+            },
+            "trips_2": {
+              "sets": 10,
+              "waits": 10,
+              "barriers": {},
+              "scalar_operations": 18,
+              "replay_steps": 53,
+              "payload_sha256": "52df812e0e019d2e23517e8d27c0477c71fd5b288e47b44e4123a9705b5fa8a5"
+            },
+            "trips_3": {
+              "sets": 14,
+              "waits": 14,
+              "barriers": {},
+              "scalar_operations": 23,
+              "replay_steps": 71,
+              "payload_sha256": "84cc43e83984e74739c41e9d8d88e57ecd1e6968e2ee57926793d3c162fc90c8"
+            },
+            "trips_16": {
+              "sets": 66,
+              "waits": 66,
+              "barriers": {},
+              "scalar_operations": 88,
+              "replay_steps": 305,
+              "payload_sha256": "56420698011087c49ecee4b7e7531298d1b39dc63bf9e3779c49d1200009ac27"
+            }
+          }
+        },
+        "refiner": {
+          "seconds": 0.41282879901700653,
+          "static": {
+            "sets": 6,
+            "waits": 6,
+            "PIPE_ALL": 0,
+            "named": {}
+          },
+          "status": [
+            {
+              "pto.insert_sync.buffer_generations": "unit",
+              "pto.insert_sync.effect_coverage": "\"complete\"",
+              "pto.insert_sync.generation_barriers_removed": "1 : i64",
+              "pto.insert_sync.generation_global_witnesses": "0 : i64",
+              "pto.insert_sync.generation_initial_pairs_removed": "0 : i64",
+              "pto.insert_sync.generation_initial_sets_removed": "0 : i64",
+              "pto.insert_sync.generation_initial_waits_removed": "0 : i64",
+              "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+              "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+              "pto.insert_sync.generation_publication_work": "0 : i64",
+              "pto.insert_sync.generation_publications_advanced": "0 : i64",
+              "pto.insert_sync.generation_publications_guarded": "0 : i64",
+              "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+              "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+              "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+              "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+              "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+              "pto.insert_sync.handoff_advanced": "0 : i64",
+              "pto.insert_sync.handoff_delayed": "0 : i64",
+              "pto.insert_sync.handoff_reason": "\"retained unproved candidate: unproved requirement 4294967295 -> 4294967295; event node 70\"",
+              "pto.insert_sync.handoff_sets_removed": "0 : i64",
+              "pto.insert_sync.handoff_split": "0 : i64",
+              "pto.insert_sync.handoff_waits_removed": "0 : i64",
+              "pto.insert_sync.handoff_work": "10116 : i64",
+              "pto.insert_sync.lifecycle_channels": "2 : i64",
+              "pto.insert_sync.lifecycle_completion_pairs": "1 : i64",
+              "pto.insert_sync.lifecycle_completion_witnesses": "1 : i64",
+              "pto.insert_sync.lifecycle_completion_work": "3346 : i64",
+              "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+              "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+              "pto.insert_sync.lifecycle_retries": "0 : i64",
+              "pto.insert_sync.lifecycle_supplied_pairs": "11 : i64",
+              "pto.insert_sync.mmad_chain_targets": "0 : i64",
+              "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+              "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+            }
+          ],
+          "scenarios": {
+            "trips_0": {
+              "sets": 2,
+              "waits": 2,
+              "barriers": {},
+              "scalar_operations": 8,
+              "replay_steps": 17,
+              "payload_sha256": "67b2435f53e584fae446b8fb5b09e9f049c6867e59169e4816da1c9c7886dd78"
+            },
+            "trips_1": {
+              "sets": 6,
+              "waits": 6,
+              "barriers": {},
+              "scalar_operations": 13,
+              "replay_steps": 35,
+              "payload_sha256": "94eecea40b00cc3f80fccd0de7118b23cdbbd5c61385cd62577f1bf394dbae69"
+            },
+            "trips_2": {
+              "sets": 10,
+              "waits": 10,
+              "barriers": {},
+              "scalar_operations": 18,
+              "replay_steps": 53,
+              "payload_sha256": "52df812e0e019d2e23517e8d27c0477c71fd5b288e47b44e4123a9705b5fa8a5"
+            },
+            "trips_3": {
+              "sets": 14,
+              "waits": 14,
+              "barriers": {},
+              "scalar_operations": 23,
+              "replay_steps": 71,
+              "payload_sha256": "84cc43e83984e74739c41e9d8d88e57ecd1e6968e2ee57926793d3c162fc90c8"
+            },
+            "trips_16": {
+              "sets": 66,
+              "waits": 66,
+              "barriers": {},
+              "scalar_operations": 88,
+              "replay_steps": 305,
+              "payload_sha256": "56420698011087c49ecee4b7e7531298d1b39dc63bf9e3779c49d1200009ac27"
+            }
+          }
+        },
+        "logical": {
+          "seconds": 0.5121382460056338,
+          "static": {
+            "sets": 4,
+            "waits": 5,
+            "PIPE_ALL": 0,
+            "named": {}
+          },
+          "status": [
+            {
+              "pto.insert_sync.logical_reason": "\"constructed and reconstructed occurrence handoffs\"",
+              "pto.insert_sync.logical_requirements": "10 : i64",
+              "pto.insert_sync.logical_status": "\"applied\"",
+              "pto.insert_sync.logical_streams": "4 : i64",
+              "pto.insert_sync.logical_work": "699966 : i64",
+              "pto.insert_sync.producer": "\"logical\"",
+              "pto.insert_sync.requested_planner": "\"logical\""
+            }
+          ],
+          "scenarios": {
+            "trips_0": {
+              "sets": 0,
+              "waits": 0,
+              "barriers": {},
+              "scalar_operations": 10,
+              "replay_steps": 15,
+              "payload_sha256": "67b2435f53e584fae446b8fb5b09e9f049c6867e59169e4816da1c9c7886dd78"
+            },
+            "trips_1": {
+              "sets": 3,
+              "waits": 3,
+              "barriers": {},
+              "scalar_operations": 29,
+              "replay_steps": 45,
+              "payload_sha256": "94eecea40b00cc3f80fccd0de7118b23cdbbd5c61385cd62577f1bf394dbae69"
+            },
+            "trips_2": {
+              "sets": 7,
+              "waits": 7,
+              "barriers": {},
+              "scalar_operations": 50,
+              "replay_steps": 79,
+              "payload_sha256": "52df812e0e019d2e23517e8d27c0477c71fd5b288e47b44e4123a9705b5fa8a5"
+            },
+            "trips_3": {
+              "sets": 11,
+              "waits": 11,
+              "barriers": {},
+              "scalar_operations": 71,
+              "replay_steps": 113,
+              "payload_sha256": "84cc43e83984e74739c41e9d8d88e57ecd1e6968e2ee57926793d3c162fc90c8"
+            },
+            "trips_16": {
+              "sets": 63,
+              "waits": 63,
+              "barriers": {},
+              "scalar_operations": 344,
+              "replay_steps": 555,
+              "payload_sha256": "56420698011087c49ecee4b7e7531298d1b39dc63bf9e3779c49d1200009ac27"
+            }
+          }
+        }
+      }
+    },
+    {
+      "case": "online_softmax",
+      "input_sha256": "1d67f50a2b7ae1225093444ca010ca46c9d6b726ce0f8f03c529e51889a7c534",
+      "boundaries": [
+        {
+          "scenario": "0",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "1",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "2",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "16",
+          "status": "checked",
+          "weaker_prefixes": []
+        }
+      ],
+      "arms": {
+        "revised": {
+          "seconds": 0.4928718809969723,
+          "static": {
+            "sets": 20,
+            "waits": 20,
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_V": 20
+            }
+          },
+          "status": [
+            {
+              "pto.insert_sync.buffer_generations": "unit",
+              "pto.insert_sync.effect_coverage": "\"complete\"",
+              "pto.insert_sync.generation_barriers_removed": "0 : i64",
+              "pto.insert_sync.generation_global_witnesses": "0 : i64",
+              "pto.insert_sync.generation_initial_pairs_removed": "0 : i64",
+              "pto.insert_sync.generation_initial_sets_removed": "0 : i64",
+              "pto.insert_sync.generation_initial_waits_removed": "0 : i64",
+              "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+              "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+              "pto.insert_sync.generation_publication_work": "62861 : i64",
+              "pto.insert_sync.generation_publications_advanced": "0 : i64",
+              "pto.insert_sync.generation_publications_guarded": "0 : i64",
+              "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+              "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+              "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+              "pto.insert_sync.generation_residual_keys_shared": "3 : i64",
+              "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+              "pto.insert_sync.lifecycle_channels": "2 : i64",
+              "pto.insert_sync.lifecycle_completion_pairs": "0 : i64",
+              "pto.insert_sync.lifecycle_completion_witnesses": "0 : i64",
+              "pto.insert_sync.lifecycle_completion_work": "20216 : i64",
+              "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+              "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+              "pto.insert_sync.lifecycle_retries": "0 : i64",
+              "pto.insert_sync.lifecycle_supplied_pairs": "27 : i64",
+              "pto.insert_sync.mmad_chain_targets": "0 : i64",
+              "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+              "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+            }
+          ],
+          "scenarios": {
+            "0": {
+              "sets": 8,
+              "waits": 8,
+              "barriers": {
+                "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+              },
+              "scalar_operations": 49,
+              "replay_steps": 106,
+              "payload_sha256": "97d37bda021bb8fae0a5f77283feed36f37d52e2a15db37346062ef3f088ddae"
+            },
+            "1": {
+              "sets": 8,
+              "waits": 8,
+              "barriers": {
+                "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+              },
+              "scalar_operations": 49,
+              "replay_steps": 106,
+              "payload_sha256": "97d37bda021bb8fae0a5f77283feed36f37d52e2a15db37346062ef3f088ddae"
+            },
+            "2": {
+              "sets": 20,
+              "waits": 20,
+              "barriers": {
+                "barrier:#pto.pipe<PIPE_V>:loop": 17,
+                "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+              },
+              "scalar_operations": 74,
+              "replay_steps": 288,
+              "payload_sha256": "a4b7cb2fb6e4d3f48e5bbb30c2dd7413845955012818ffa8603ab66cde687f0d"
+            },
+            "16": {
+              "sets": 188,
+              "waits": 188,
+              "barriers": {
+                "barrier:#pto.pipe<PIPE_V>:loop": 255,
+                "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+              },
+              "scalar_operations": 424,
+              "replay_steps": 2836,
+              "payload_sha256": "9c0c5b3318f91ceb17e9b32ff8df88b1ace83f19bdb0a5544c1bf8ff355ec083"
+            }
+          }
+        },
+        "refiner": {
+          "seconds": 0.561506272002589,
+          "static": {
+            "sets": 12,
+            "waits": 12,
+            "PIPE_ALL": 1,
+            "named": {
+              "PIPE_V": 20
+            }
+          },
+          "status": [
+            {
+              "pto.insert_sync.buffer_generations": "unit",
+              "pto.insert_sync.effect_coverage": "\"complete\"",
+              "pto.insert_sync.generation_barriers_removed": "0 : i64",
+              "pto.insert_sync.generation_global_witnesses": "0 : i64",
+              "pto.insert_sync.generation_initial_pairs_removed": "0 : i64",
+              "pto.insert_sync.generation_initial_sets_removed": "0 : i64",
+              "pto.insert_sync.generation_initial_waits_removed": "0 : i64",
+              "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+              "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+              "pto.insert_sync.generation_publication_work": "62861 : i64",
+              "pto.insert_sync.generation_publications_advanced": "0 : i64",
+              "pto.insert_sync.generation_publications_guarded": "0 : i64",
+              "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+              "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+              "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+              "pto.insert_sync.generation_residual_keys_shared": "3 : i64",
+              "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+              "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+              "pto.insert_sync.handoff_advanced": "0 : i64",
+              "pto.insert_sync.handoff_delayed": "0 : i64",
+              "pto.insert_sync.handoff_reason": "\"retained unproved candidate: unproved requirement 22 -> 8; event node 4294967295\"",
+              "pto.insert_sync.handoff_sets_removed": "8 : i64",
+              "pto.insert_sync.handoff_split": "0 : i64",
+              "pto.insert_sync.handoff_waits_removed": "8 : i64",
+              "pto.insert_sync.handoff_work": "1480185 : i64",
+              "pto.insert_sync.lifecycle_channels": "2 : i64",
+              "pto.insert_sync.lifecycle_completion_pairs": "0 : i64",
+              "pto.insert_sync.lifecycle_completion_witnesses": "0 : i64",
+              "pto.insert_sync.lifecycle_completion_work": "20216 : i64",
+              "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+              "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+              "pto.insert_sync.lifecycle_retries": "0 : i64",
+              "pto.insert_sync.lifecycle_supplied_pairs": "27 : i64",
+              "pto.insert_sync.mmad_chain_targets": "0 : i64",
+              "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+              "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+            }
+          ],
+          "scenarios": {
+            "0": {
+              "sets": 6,
+              "waits": 6,
+              "barriers": {
+                "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+              },
+              "scalar_operations": 49,
+              "replay_steps": 102,
+              "payload_sha256": "97d37bda021bb8fae0a5f77283feed36f37d52e2a15db37346062ef3f088ddae"
+            },
+            "1": {
+              "sets": 6,
+              "waits": 6,
+              "barriers": {
+                "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+              },
+              "scalar_operations": 49,
+              "replay_steps": 102,
+              "payload_sha256": "97d37bda021bb8fae0a5f77283feed36f37d52e2a15db37346062ef3f088ddae"
+            },
+            "2": {
+              "sets": 12,
+              "waits": 12,
+              "barriers": {
+                "barrier:#pto.pipe<PIPE_V>:loop": 17,
+                "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+              },
+              "scalar_operations": 74,
+              "replay_steps": 272,
+              "payload_sha256": "a4b7cb2fb6e4d3f48e5bbb30c2dd7413845955012818ffa8603ab66cde687f0d"
+            },
+            "16": {
+              "sets": 96,
+              "waits": 96,
+              "barriers": {
+                "barrier:#pto.pipe<PIPE_V>:loop": 255,
+                "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+              },
+              "scalar_operations": 424,
+              "replay_steps": 2652,
+              "payload_sha256": "9c0c5b3318f91ceb17e9b32ff8df88b1ace83f19bdb0a5544c1bf8ff355ec083"
+            }
+          }
+        },
+        "logical": {
+          "seconds": 7.693019147001905,
+          "static": {
+            "sets": 13,
+            "waits": 13,
+            "PIPE_ALL": 0,
+            "named": {
+              "PIPE_V": 20
+            }
+          },
+          "status": [
+            {
+              "pto.insert_sync.logical_reason": "\"constructed and reconstructed occurrence handoffs\"",
+              "pto.insert_sync.logical_requirements": "484 : i64",
+              "pto.insert_sync.logical_status": "\"applied\"",
+              "pto.insert_sync.logical_streams": "13 : i64",
+              "pto.insert_sync.logical_work": "97108064 : i64",
+              "pto.insert_sync.producer": "\"logical\"",
+              "pto.insert_sync.requested_planner": "\"logical\""
+            }
+          ],
+          "scenarios": {
+            "0": {
+              "sets": 7,
+              "waits": 7,
+              "barriers": {
+                "barrier:#pto.pipe<PIPE_V>:outside-loop": 2
+              },
+              "scalar_operations": 71,
+              "replay_steps": 124,
+              "payload_sha256": "97d37bda021bb8fae0a5f77283feed36f37d52e2a15db37346062ef3f088ddae"
+            },
+            "1": {
+              "sets": 7,
+              "waits": 7,
+              "barriers": {
+                "barrier:#pto.pipe<PIPE_V>:outside-loop": 2
+              },
+              "scalar_operations": 71,
+              "replay_steps": 124,
+              "payload_sha256": "97d37bda021bb8fae0a5f77283feed36f37d52e2a15db37346062ef3f088ddae"
+            },
+            "2": {
+              "sets": 10,
+              "waits": 10,
+              "barriers": {
+                "barrier:#pto.pipe<PIPE_V>:loop": 16,
+                "barrier:#pto.pipe<PIPE_V>:outside-loop": 3
+              },
+              "scalar_operations": 106,
+              "replay_steps": 298,
+              "payload_sha256": "a4b7cb2fb6e4d3f48e5bbb30c2dd7413845955012818ffa8603ab66cde687f0d"
+            },
+            "16": {
+              "sets": 94,
+              "waits": 94,
+              "barriers": {
+                "barrier:#pto.pipe<PIPE_V>:loop": 254,
+                "barrier:#pto.pipe<PIPE_V>:outside-loop": 3
+              },
+              "scalar_operations": 680,
+              "replay_steps": 2902,
+              "payload_sha256": "9c0c5b3318f91ceb17e9b32ff8df88b1ace83f19bdb0a5544c1bf8ff355ec083"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "reconstruction": {
+    "reconstruction.add-allocation.stdout": {
+      "accesses": [],
+      "applied": false,
+      "changed": true,
+      "counts_preserved": true,
+      "export_complete": true,
+      "invoked": true,
+      "mutation": "add-allocation",
+      "orders": [],
+      "original_preserved": true,
+      "phases": [],
+      "points": [],
+      "reason": "realization: emission changed original payload, control or allocation contract (stage work 300109)",
+      "requirements": [],
+      "work": 874622
+    },
+    "reconstruction.change-rounding.stdout": {
+      "accesses": [],
+      "applied": false,
+      "changed": true,
+      "counts_preserved": true,
+      "export_complete": true,
+      "invoked": true,
+      "mutation": "change-rounding",
+      "orders": [],
+      "original_preserved": true,
+      "phases": [],
+      "points": [],
+      "reason": "realization: emission changed original payload, control or allocation contract (stage work 300109)",
+      "requirements": [],
+      "work": 874622
+    },
+    "reconstruction.erase-wait.stdout": {
+      "accesses": [],
+      "applied": false,
+      "changed": true,
+      "counts_preserved": false,
+      "export_complete": true,
+      "invoked": true,
+      "mutation": "erase-wait",
+      "orders": [],
+      "original_preserved": true,
+      "phases": [],
+      "points": [],
+      "reason": "realization: emitted publication lacks acquisition (stage work 302047)",
+      "requirements": [],
+      "work": 876560
+    },
+    "reconstruction.none.stdout": {
+      "accesses": [],
+      "applied": true,
+      "changed": false,
+      "counts_preserved": true,
+      "export_complete": true,
+      "invoked": true,
+      "mutation": "none",
+      "orders": [],
+      "original_preserved": false,
+      "phases": [],
+      "points": [],
+      "reason": "constructed and reconstructed occurrence handoffs",
+      "requirements": [],
+      "work": 1650073
+    },
+    "reconstruction.swap-loads.stdout": {
+      "accesses": [],
+      "applied": false,
+      "changed": true,
+      "counts_preserved": true,
+      "export_complete": true,
+      "invoked": true,
+      "mutation": "swap-loads",
+      "orders": [],
+      "original_preserved": true,
+      "phases": [],
+      "points": [],
+      "reason": "realization: emission changed original payload, control or allocation contract (stage work 300109)",
+      "requirements": [],
+      "work": 874622
+    },
+    "reconstruction.swap-wait-keys.stdout": {
+      "accesses": [],
+      "applied": false,
+      "changed": true,
+      "counts_preserved": true,
+      "export_complete": true,
+      "invoked": true,
+      "mutation": "swap-wait-keys",
+      "orders": [],
+      "original_preserved": true,
+      "phases": [],
+      "points": [],
+      "reason": "realization: realization broadened selected handoff boundary (stage work 5691666)",
+      "requirements": [],
+      "work": 50361079
+    },
+    "reconstruction.widen-barrier.stdout": {
+      "accesses": [],
+      "applied": false,
+      "changed": true,
+      "counts_preserved": true,
+      "export_complete": true,
+      "invoked": true,
+      "mutation": "widen-barrier",
+      "orders": [],
+      "original_preserved": true,
+      "phases": [],
+      "points": [],
+      "reason": "realization: realization changed selected barrier domain (stage work 468026)",
+      "requirements": [],
+      "work": 1042539
+    }
+  },
+  "structured_scenarios": 16,
+  "requirement_comparison": {
+    "status": "passed",
+    "cases": [
+      {
+        "case": "skipped_reader",
+        "local_requirements_checked": 7,
+        "order_relations_checked": 25,
+        "excluded_nonlocal_or_unknown_access_pairs": 27,
+        "work": 1650073,
+        "source_sha256": "f4a85a60e5cdcacd2e5347ce658cf780b9f37814177920ae7cca7a8edb6d623d"
+      },
+      {
+        "case": "overlapping_roots",
+        "local_requirements_checked": 11,
+        "order_relations_checked": 25,
+        "excluded_nonlocal_or_unknown_access_pairs": 27,
+        "work": 2021323,
+        "source_sha256": "48d0781586993c3db21cdc87bb550cb63cf6968ce4cdb8414c5427733b3b258f"
+      },
+      {
+        "case": "additional_reader",
+        "local_requirements_checked": 14,
+        "order_relations_checked": 36,
+        "excluded_nonlocal_or_unknown_access_pairs": 35,
+        "work": 2770557,
+        "source_sha256": "7427bddd073f93dfd6bde7da58853d573adcbe3ba929f92ef72a405bc9633818"
+      },
+      {
+        "case": "equivalent_predicate",
+        "local_requirements_checked": 7,
+        "order_relations_checked": 25,
+        "excluded_nonlocal_or_unknown_access_pairs": 27,
+        "work": 1644797,
+        "source_sha256": "a24e6588cebb8bbd598ea88d8beebdf377954a829351fbaf32edf112d158bcb6"
+      },
+      {
+        "case": "online_softmax",
+        "local_requirements_checked": 439,
+        "order_relations_checked": 2025,
+        "excluded_nonlocal_or_unknown_access_pairs": 1436,
+        "work": 97108072,
+        "source_sha256": "1d67f50a2b7ae1225093444ca010ca46c9d6b726ce0f8f03c529e51889a7c534"
+      }
+    ],
+    "isl": "isl-0.24-GMP",
+    "driver_sha256": "d896694cc19bd2b861281cb89470954647d22a974f234d92f1146b0abff2aa8e"
+  },
+  "hashes": {
+    "python/ptoas/mlir/_mlir_libs/libPTOASCompiler.so": "885178791a31e2d39c6a448bc40751fb4443638c67a68c65e643b96eb1a1b2c2",
+    "tools/pto-test-opt/pto-logical-sync-test": "4f9027c21f7632059ffa0d7c5c85dca3451dde389572b7d1334036043f635792"
+  }
+}

@@ -1,0 +1,316 @@
+module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a3"} {
+  func.func @online_softmax(%arg0: !pto.ptr<f32, gm>, %arg1: !pto.ptr<f32, gm>, %arg2: !pto.ptr<f32, gm>, %arg3: !pto.ptr<bf16, gm>, %arg4: index, %arg5: i32, %arg6: i32) attributes {pto.gm_alias = "assume-disjoint-arguments", pto.insert_sync.logical_reason = "constructed and reconstructed occurrence handoffs", pto.insert_sync.logical_requirements = 484 : i64, pto.insert_sync.logical_status = "applied", pto.insert_sync.logical_streams = 13 : i64, pto.insert_sync.logical_work = 133409415 : i64, pto.insert_sync.producer = "logical", pto.insert_sync.requested_planner = "logical", pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c8448_i64 = arith.constant 8448 : i64
+    %c12544_i64 = arith.constant 12544 : i64
+    %c12576_i64 = arith.constant 12576 : i64
+    %c12608_i64 = arith.constant 12608 : i64
+    %c16704_i64 = arith.constant 16704 : i64
+    %c16736_i64 = arith.constant 16736 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %c4128_i64 = arith.constant 4128 : i64
+    %c4160_i64 = arith.constant 4160 : i64
+    %c4288_i64 = arith.constant 4288 : i64
+    %c4192_i64 = arith.constant 4192 : i64
+    %c4224_i64 = arith.constant 4224 : i64
+    %c4256_i64 = arith.constant 4256 : i64
+    %c8384_i64 = arith.constant 8384 : i64
+    %c8416_i64 = arith.constant 8416 : i64
+    %c2048 = arith.constant 2048 : index
+    %c128 = arith.constant 128 : index
+    %c1 = arith.constant 1 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c256 = arith.constant 256 : index
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %0 = pto.make_tensor_view %arg0, shape = [%c2048, %c128], strides = [%c128, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %1 = pto.make_tensor_view %arg1, shape = [%c1024, %c1], strides = [%c1, %c1024] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf32>
+    %2 = pto.make_tensor_view %arg2, shape = [%c1024, %c1], strides = [%c1, %c1024] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xf32>
+    %3 = pto.make_tensor_view %arg3, shape = [%c1, %c8192], strides = [%c8192, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %4 = arith.index_cast %arg5 : i32 to index
+    %5 = arith.muli %4, %c2 : index
+    %6 = arith.muli %4, %c2 : index
+    %7 = arith.addi %6, %c1 : index
+    %8 = arith.muli %5, %c8 : index
+    %9 = arith.muli %7, %c8 : index
+    %10 = pto.alloc_tile addr = %c8448_i64 valid_row = %c8 valid_col = %c128 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+    %11 = arith.muli %5, %c256 : index
+    %12 = arith.maxsi %11, %c0 : index
+    %13 = pto.partition_view %0, offsets = [%12, %c0], sizes = [%c8, %c128] : !pto.tensor_view<?x?xf32>
+    pto.tload ins(%13 : !pto.partition_tensor_view<8x128xf32>) outs(%10 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>) {layout = #pto.layout<nd>}
+    pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    %14 = pto.alloc_tile addr = %c12544_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+    %15 = arith.muli %5, %c128 : index
+    %16 = arith.maxsi %15, %c0 : index
+    %17 = pto.partition_view %1, offsets = [%16, %c0], sizes = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    pto.tload ins(%17 : !pto.partition_tensor_view<8x1xf32>) outs(%14 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) {layout = #pto.layout<dn>}
+    %18 = pto.alloc_tile addr = %c12576_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+    %19 = arith.muli %5, %c128 : index
+    %20 = arith.maxsi %19, %c0 : index
+    %21 = pto.partition_view %2, offsets = [%20, %c0], sizes = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    pto.tload ins(%21 : !pto.partition_tensor_view<8x1xf32>) outs(%18 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) {layout = #pto.layout<dn>}
+    %22 = arith.cmpi slt, %c1, %arg4 : index
+    %true = arith.constant true
+    %23 = arith.xori %22, %true : i1
+    scf.if %23 {
+      pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    }
+    %24 = pto.alloc_tile addr = %c12608_i64 valid_row = %c8 valid_col = %c128 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+    %25 = arith.muli %7, %c256 : index
+    %26 = arith.maxsi %25, %c0 : index
+    %27 = pto.partition_view %0, offsets = [%26, %c0], sizes = [%c8, %c128] : !pto.tensor_view<?x?xf32>
+    pto.tload ins(%27 : !pto.partition_tensor_view<8x128xf32>) outs(%24 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>) {layout = #pto.layout<nd>}
+    %28 = pto.alloc_tile addr = %c16704_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+    %29 = arith.muli %7, %c128 : index
+    %30 = arith.maxsi %29, %c0 : index
+    %31 = pto.partition_view %1, offsets = [%30, %c0], sizes = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    pto.tload ins(%31 : !pto.partition_tensor_view<8x1xf32>) outs(%28 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) {layout = #pto.layout<dn>}
+    %32 = pto.alloc_tile addr = %c16736_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+    %33 = arith.muli %7, %c128 : index
+    %34 = arith.maxsi %33, %c0 : index
+    %35 = pto.partition_view %2, offsets = [%34, %c0], sizes = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    pto.tload ins(%35 : !pto.partition_tensor_view<8x1xf32>) outs(%32 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) {layout = #pto.layout<dn>}
+    %36 = arith.cmpi slt, %c1, %arg4 : index
+    %true_0 = arith.constant true
+    %37 = arith.xori %36, %true_0 : i1
+    scf.if %37 {
+      pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+    }
+    scf.for %arg7 = %c1 to %arg4 step %c1 {
+      %55 = pto.alloc_tile addr = %c0_i64 valid_row = %c8 valid_col = %c128 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+      %56 = arith.muli %5, %c256 : index
+      %57 = arith.muli %arg7, %c16 : index
+      %58 = arith.addi %56, %57 : index
+      %59 = arith.maxsi %58, %c0 : index
+      %60 = pto.partition_view %0, offsets = [%59, %c0], sizes = [%c8, %c128] : !pto.tensor_view<?x?xf32>
+      %61 = arith.cmpi eq, %arg7, %c1 : index
+      %true_3 = arith.constant true
+      %62 = arith.xori %61, %true_3 : i1
+      scf.if %62 {
+        pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+      }
+      pto.tload ins(%60 : !pto.partition_tensor_view<8x128xf32>) outs(%55 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>) {layout = #pto.layout<nd>}
+      %63 = pto.alloc_tile addr = %c4096_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %64 = arith.muli %5, %c128 : index
+      %65 = arith.muli %arg7, %c8 : index
+      %66 = arith.addi %64, %65 : index
+      %67 = arith.maxsi %66, %c0 : index
+      %68 = pto.partition_view %1, offsets = [%67, %c0], sizes = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+      pto.tload ins(%68 : !pto.partition_tensor_view<8x1xf32>) outs(%63 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) {layout = #pto.layout<dn>}
+      pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+      %69 = pto.alloc_tile addr = %c4128_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %70 = arith.muli %5, %c128 : index
+      %71 = arith.muli %arg7, %c8 : index
+      %72 = arith.addi %70, %71 : index
+      %73 = arith.maxsi %72, %c0 : index
+      %74 = pto.partition_view %2, offsets = [%73, %c0], sizes = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+      pto.tload ins(%74 : !pto.partition_tensor_view<8x1xf32>) outs(%69 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) {layout = #pto.layout<dn>}
+      pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+      %75 = pto.alloc_tile addr = %c12544_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %76 = pto.alloc_tile addr = %c4096_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %77 = pto.alloc_tile addr = %c4160_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+      %78 = arith.cmpi eq, %arg7, %c1 : index
+      %true_4 = arith.constant true
+      %79 = arith.xori %78, %true_4 : i1
+      scf.if %79 {
+        pto.barrier <PIPE_V>
+      }
+      pto.tmax ins(%75, %76 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%77 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %80 = pto.alloc_tile addr = %c4160_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %81 = pto.alloc_tile addr = %c12544_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %82 = pto.alloc_tile addr = %c4160_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %83 = pto.alloc_tile addr = %c4288_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.tsub ins(%81, %82 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%83 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %84 = pto.alloc_tile addr = %c4288_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %85 = pto.alloc_tile addr = %c4288_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %86 = pto.alloc_tile addr = %c4192_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.texp ins(%85 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%86 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %87 = pto.alloc_tile addr = %c4192_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %88 = pto.alloc_tile addr = %c4096_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %89 = pto.alloc_tile addr = %c4160_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %90 = pto.alloc_tile addr = %c4288_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.tsub ins(%88, %89 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%90 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %91 = pto.alloc_tile addr = %c4288_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %92 = pto.alloc_tile addr = %c4288_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %93 = pto.alloc_tile addr = %c4224_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.texp ins(%92 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%93 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %94 = pto.alloc_tile addr = %c4224_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %95 = pto.alloc_tile addr = %c4192_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %96 = pto.alloc_tile addr = %c12576_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %97 = pto.alloc_tile addr = %c4288_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.tmul ins(%95, %96 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%97 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %98 = pto.alloc_tile addr = %c4288_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %99 = pto.alloc_tile addr = %c4224_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %100 = pto.alloc_tile addr = %c4128_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %101 = pto.alloc_tile addr = %c4256_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+      pto.tmul ins(%99, %100 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%101 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %102 = pto.alloc_tile addr = %c4256_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %103 = pto.alloc_tile addr = %c4288_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %104 = pto.alloc_tile addr = %c4256_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %105 = pto.alloc_tile addr = %c4256_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.tadd ins(%103, %104 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%105 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %106 = pto.alloc_tile addr = %c4256_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %107 = pto.alloc_tile addr = %c4288_i64 valid_row = %c8 valid_col = %c128 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.trowexpandmul ins(%10, %87 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>, !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) outs(%107 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>)
+      %108 = pto.alloc_tile addr = %c0_i64 valid_row = %c8 valid_col = %c128 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+      pto.trowexpandmul ins(%55, %94 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>, !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) outs(%108 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>)
+      %109 = pto.alloc_tile addr = %c8448_i64 valid_row = %c8 valid_col = %c128 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.tadd ins(%107, %108 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>, !pto.tile_buf<vec, 8x128xf32, valid=?x?>) outs(%109 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>)
+      pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+      %110 = pto.alloc_tile addr = %c4160_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %111 = pto.alloc_tile addr = %c0_i64 valid_row = %c8 valid_col = %c128 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+      %112 = arith.muli %7, %c256 : index
+      %113 = arith.muli %arg7, %c16 : index
+      %114 = arith.addi %112, %113 : index
+      %115 = arith.maxsi %114, %c0 : index
+      %116 = pto.partition_view %0, offsets = [%115, %c0], sizes = [%c8, %c128] : !pto.tensor_view<?x?xf32>
+      pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+      pto.tload ins(%116 : !pto.partition_tensor_view<8x128xf32>) outs(%111 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>) {layout = #pto.layout<nd>}
+      %117 = pto.alloc_tile addr = %c4096_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %118 = arith.muli %7, %c128 : index
+      %119 = arith.muli %arg7, %c8 : index
+      %120 = arith.addi %118, %119 : index
+      %121 = arith.maxsi %120, %c0 : index
+      %122 = pto.partition_view %1, offsets = [%121, %c0], sizes = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+      pto.tload ins(%122 : !pto.partition_tensor_view<8x1xf32>) outs(%117 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) {layout = #pto.layout<dn>}
+      pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+      %123 = pto.alloc_tile addr = %c4128_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %124 = arith.muli %7, %c128 : index
+      %125 = arith.muli %arg7, %c8 : index
+      %126 = arith.addi %124, %125 : index
+      %127 = arith.maxsi %126, %c0 : index
+      %128 = pto.partition_view %2, offsets = [%127, %c0], sizes = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+      pto.tload ins(%128 : !pto.partition_tensor_view<8x1xf32>) outs(%123 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) {layout = #pto.layout<dn>}
+      pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+      %129 = pto.alloc_tile addr = %c16704_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %130 = pto.alloc_tile addr = %c4096_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %131 = pto.alloc_tile addr = %c4192_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+      pto.tmax ins(%129, %130 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%131 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %132 = pto.alloc_tile addr = %c4192_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %133 = pto.alloc_tile addr = %c16704_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %134 = pto.alloc_tile addr = %c4192_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %135 = pto.alloc_tile addr = %c4288_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.tsub ins(%133, %134 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%135 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %136 = pto.alloc_tile addr = %c4288_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %137 = pto.alloc_tile addr = %c4288_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %138 = pto.alloc_tile addr = %c4224_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.texp ins(%137 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%138 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %139 = pto.alloc_tile addr = %c4224_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %140 = pto.alloc_tile addr = %c4096_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %141 = pto.alloc_tile addr = %c4192_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %142 = pto.alloc_tile addr = %c4288_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.tsub ins(%140, %141 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%142 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %143 = pto.alloc_tile addr = %c4288_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %144 = pto.alloc_tile addr = %c4288_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %145 = pto.alloc_tile addr = %c8384_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.texp ins(%144 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%145 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %146 = pto.alloc_tile addr = %c8384_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %147 = pto.alloc_tile addr = %c4224_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %148 = pto.alloc_tile addr = %c16736_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %149 = pto.alloc_tile addr = %c4288_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.tmul ins(%147, %148 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%149 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %150 = pto.alloc_tile addr = %c4288_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %151 = pto.alloc_tile addr = %c8384_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %152 = pto.alloc_tile addr = %c4128_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %153 = pto.alloc_tile addr = %c8416_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+      pto.tmul ins(%151, %152 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%153 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %154 = pto.alloc_tile addr = %c8416_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %155 = pto.alloc_tile addr = %c4288_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %156 = pto.alloc_tile addr = %c8416_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      %157 = pto.alloc_tile addr = %c8416_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.tadd ins(%155, %156 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%157 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+      %158 = pto.alloc_tile addr = %c8416_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %159 = pto.alloc_tile addr = %c4288_i64 valid_row = %c8 valid_col = %c128 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.trowexpandmul ins(%24, %139 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>, !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) outs(%159 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>)
+      %160 = pto.alloc_tile addr = %c0_i64 valid_row = %c8 valid_col = %c128 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+      pto.trowexpandmul ins(%111, %146 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>, !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) outs(%160 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>)
+      %161 = pto.alloc_tile addr = %c12608_i64 valid_row = %c8 valid_col = %c128 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+      pto.barrier <PIPE_V>
+      pto.tadd ins(%159, %160 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>, !pto.tile_buf<vec, 8x128xf32, valid=?x?>) outs(%161 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>)
+      %162 = arith.addi %arg7, %c1 : index
+      %163 = arith.cmpi sge, %162, %arg4 : index
+      %true_5 = arith.constant true
+      %164 = arith.xori %163, %true_5 : i1
+      scf.if %164 {
+        pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+      }
+      %165 = pto.alloc_tile addr = %c4192_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      %166 = pto.alloc_tile addr = %c12576_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      pto.tmov ins(%106 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) outs(%166 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>)
+      %167 = pto.alloc_tile addr = %c16736_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      pto.tmov ins(%158 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) outs(%167 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>)
+      %168 = pto.alloc_tile addr = %c12544_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      pto.tmov ins(%110 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) outs(%168 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>)
+      %169 = pto.alloc_tile addr = %c16704_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+      pto.tmov ins(%165 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) outs(%169 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>)
+    }
+    %38 = pto.alloc_tile addr = %c8448_i64 valid_row = %c8 valid_col = %c128 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+    %39 = arith.cmpi slt, %c1, %arg4 : index
+    %true_1 = arith.constant true
+    %40 = arith.xori %39, %true_1 : i1
+    scf.if %40 {
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    }
+    %41 = arith.cmpi slt, %c1, %arg4 : index
+    scf.if %41 {
+      pto.barrier <PIPE_V>
+    }
+    pto.trowexpanddiv ins(%10, %18 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>, !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) outs(%38 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>) {precisionType = #pto<div_precision default>}
+    %42 = pto.alloc_tile addr = %c8448_i64 valid_row = %c1 valid_col = %c1024 : !pto.tile_buf<vec, 1x1024xf32, valid=?x?>
+    %43 = pto.alloc_tile addr = %c8448_i64 valid_row = %c1 valid_col = %c1024 : !pto.tile_buf<vec, 1x1024xbf16, valid=?x?>
+    pto.barrier <PIPE_V>
+    pto.tcvt ins(%42 {rmode = #pto<round_mode ROUND>, satmode = #pto<saturation_mode OFF>} : !pto.tile_buf<vec, 1x1024xf32, valid=?x?>) outs(%43 : !pto.tile_buf<vec, 1x1024xbf16, valid=?x?>)
+    pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+    %44 = arith.muli %8, %c128 : index
+    %45 = arith.maxsi %44, %c0 : index
+    %46 = pto.partition_view %3, offsets = [%c0, %45], sizes = [%c1, %c1024] : !pto.tensor_view<?x?xbf16>
+    pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+    pto.tstore ins(%43 : !pto.tile_buf<vec, 1x1024xbf16, valid=?x?>) outs(%46 : !pto.partition_tensor_view<1x1024xbf16>) {layout = #pto.layout<nd>}
+    pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+    %47 = pto.alloc_tile addr = %c8448_i64 valid_row = %c8 valid_col = %c128 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>
+    %48 = arith.cmpi slt, %c1, %arg4 : index
+    %true_2 = arith.constant true
+    %49 = arith.xori %48, %true_2 : i1
+    scf.if %49 {
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+    }
+    pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+    pto.trowexpanddiv ins(%24, %32 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>, !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) outs(%47 : !pto.tile_buf<vec, 8x128xf32, valid=?x?>) {precisionType = #pto<div_precision default>}
+    %50 = pto.alloc_tile addr = %c8448_i64 valid_row = %c1 valid_col = %c1024 : !pto.tile_buf<vec, 1x1024xf32, valid=?x?>
+    %51 = pto.alloc_tile addr = %c8448_i64 valid_row = %c1 valid_col = %c1024 : !pto.tile_buf<vec, 1x1024xbf16, valid=?x?>
+    pto.barrier <PIPE_V>
+    pto.tcvt ins(%50 {rmode = #pto<round_mode ROUND>, satmode = #pto<saturation_mode OFF>} : !pto.tile_buf<vec, 1x1024xf32, valid=?x?>) outs(%51 : !pto.tile_buf<vec, 1x1024xbf16, valid=?x?>)
+    pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+    %52 = arith.muli %9, %c128 : index
+    %53 = arith.maxsi %52, %c0 : index
+    %54 = pto.partition_view %3, offsets = [%c0, %53], sizes = [%c1, %c1024] : !pto.tensor_view<?x?xbf16>
+    pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+    pto.tstore ins(%51 : !pto.tile_buf<vec, 1x1024xbf16, valid=?x?>) outs(%54 : !pto.partition_tensor_view<1x1024xbf16>) {layout = #pto.layout<nd>}
+    pto.set_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE3>, <PIPE_V>, <EVENT_ID0>]
+    return
+  }
+}
