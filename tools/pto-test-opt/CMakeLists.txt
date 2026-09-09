@@ -20,7 +20,7 @@ add_dependencies(pto-sync-occurrences-test PTOOpsIncGen PTOPassesIncGen)
 
 add_llvm_executable(pto-logical-sync-test pto-logical-sync-test.cpp PARTIAL_SOURCES_INTENDED)
 target_link_libraries(pto-logical-sync-test PRIVATE
-  PTOIR PTOTransforms MLIRIR MLIRParser MLIRFuncDialect MLIRSCFDialect MLIRArithDialect)
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRFuncDialect MLIRSCFDialect MLIRArithDialect MLIRDLTIDialect)
 add_dependencies(pto-logical-sync-test PTOOpsIncGen PTOPassesIncGen)
 
 add_llvm_executable(pto-sync-candidates-test pto-sync-candidates-test.cpp PARTIAL_SOURCES_INTENDED)
@@ -29,7 +29,7 @@ add_dependencies(pto-sync-candidates-test PTOOpsIncGen PTOPassesIncGen)
 
 add_llvm_executable(pto-sync-slots-test pto-sync-slots-test.cpp PARTIAL_SOURCES_INTENDED)
 target_link_libraries(pto-sync-slots-test PRIVATE
-  PTOIR PTOTransforms MLIRIR MLIRParser MLIRFuncDialect MLIRSCFDialect MLIRArithDialect)
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRPass MLIRFuncDialect MLIRSCFDialect MLIRArithDialect)
 add_dependencies(pto-sync-slots-test PTOOpsIncGen PTOPassesIncGen)
 
 add_llvm_executable(pto-test-opt

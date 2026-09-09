@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --mlir-disable-threading --pto-remove-identity-tmov %s | FileCheck %s
+
+module {
+  // An unresolved base uses conservative placeholder ranges during translation.
+  // Equal placeholders must not turn a copy between different slots into an
+  // identity. The later read uses a separately addressed alias of slot one.
+  func.func @runtime_base_slots(%base: i64) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %stride = arith.constant 64 : i64
+    %out_address = arith.constant 512 : i64
+    %multi = pto.alloc_multi_tile addr = %base : !pto.multi_tile_buf<vec, 1x16xf32, count=2>
+    %src = pto.multi_tile_get %multi[%zero] : !pto.multi_tile_buf<vec, 1x16xf32, count=2> -> !pto.tile_buf<vec, 1x16xf32>
+    %dst = pto.multi_tile_get %multi[%one] : !pto.multi_tile_buf<vec, 1x16xf32, count=2> -> !pto.tile_buf<vec, 1x16xf32>
+    %alias_address = arith.addi %base, %stride : i64
+    %alias = pto.alloc_tile addr = %alias_address : !pto.tile_buf<vec, 1x16xf32>
+    %out = pto.alloc_tile addr = %out_address : !pto.tile_buf<vec, 1x16xf32>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 1x16xf32>) outs(%dst : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tabs ins(%alias : !pto.tile_buf<vec, 1x16xf32>) outs(%out : !pto.tile_buf<vec, 1x16xf32>)
+    return
+  }
+
+  // Both dynamic gets have the same conservative union {slot0, slot1}, but
+  // opposite parity selectors. The current pass has no selector-identity
+  // proof; equality of their may-access unions must not remove the copy.
+  func.func @distinct_dynamic_slots(%iteration: index) {
+    %base = arith.constant 0 : i64
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %stride = arith.constant 64 : i64
+    %out_address = arith.constant 512 : i64
+    %current = arith.remui %iteration, %two : index
+    %increment = arith.addi %current, %one : index
+    %next = arith.remui %increment, %two : index
+    %multi = pto.alloc_multi_tile addr = %base : !pto.multi_tile_buf<vec, 1x16xf32, count=2>
+    %src = pto.multi_tile_get %multi[%current] : !pto.multi_tile_buf<vec, 1x16xf32, count=2> -> !pto.tile_buf<vec, 1x16xf32>
+    %dst = pto.multi_tile_get %multi[%next] : !pto.multi_tile_buf<vec, 1x16xf32, count=2> -> !pto.tile_buf<vec, 1x16xf32>
+    %slot = arith.index_cast %next : index to i64
+    %alias_address = arith.muli %slot, %stride : i64
+    %alias = pto.alloc_tile addr = %alias_address : !pto.tile_buf<vec, 1x16xf32>
+    %out = pto.alloc_tile addr = %out_address : !pto.tile_buf<vec, 1x16xf32>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 1x16xf32>) outs(%dst : !pto.tile_buf<vec, 1x16xf32>)
+    pto.tabs ins(%alias : !pto.tile_buf<vec, 1x16xf32>) outs(%out : !pto.tile_buf<vec, 1x16xf32>)
+    return
+  }
+
+  func.func @known_same_slot_identity() {
+    %address = arith.constant 0 : i64
+    %src = pto.alloc_tile addr = %address : !pto.tile_buf<vec, 1x16xf32>
+    %dst = pto.alloc_tile addr = %address : !pto.tile_buf<vec, 1x16xf32>
+    pto.tmov ins(%src : !pto.tile_buf<vec, 1x16xf32>) outs(%dst : !pto.tile_buf<vec, 1x16xf32>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @runtime_base_slots
+// CHECK: pto.tmov
+// CHECK: pto.tabs
+// CHECK-LABEL: func.func @distinct_dynamic_slots
+// CHECK: pto.tmov
+// CHECK: pto.tabs
+// CHECK-LABEL: func.func @known_same_slot_identity
+// CHECK-NOT: pto.tmov
+// CHECK: return

@@ -25,6 +25,7 @@
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/InsertSync/SyncAddressAnalysis.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -306,13 +307,25 @@ static LogicalResult resolveTileNativeSubviews(ModuleOp module,
 
 static LogicalResult getMultiTileAddresses(pto::AllocMultiTileOp alloc,
                                            IRRewriter &rewriter,
+                                           pto::SyncAddressEvaluator &evaluator,
                                            SmallVectorImpl<Value> &addrs) {
   uint32_t count = alloc.getResult().getType().getCount();
+  auto layout = pto::getPTOStaticMultiTileSlotLayout(alloc.getResult().getType().getSlotType());
+  if (failed(layout)) {
+    return alloc.emitError(
+        "requires a checked static dense slot layout and known element byte size");
+  }
   if (auto planned = alloc->getAttrOfType<DenseI64ArrayAttr>(
           pto::kPtoMultiBufferAddrsAttrName)) {
     if (planned.size() != count) {
       return alloc.emitError("planned address count does not match slot count");
     }
+    for (int64_t address : planned.asArrayRef())
+      if (address < 0 || failed(pto::getPTOStaticMultiTileSlotAddress(*layout, uint64_t(address), 0)))
+        return alloc.emitError("planned slot address or footprint end overflows nonnegative i64");
+    for (int64_t address : planned.asArrayRef())
+      if (uint64_t(address) % layout->alignmentBytes)
+        return alloc.emitError("planned slot address is not aligned to its physical memory space");
     for (int64_t address : planned.asArrayRef()) {
       addrs.push_back(rewriter.create<arith::ConstantIntOp>(
           alloc.getLoc(), address, kI64BitWidth));
@@ -325,18 +338,27 @@ static LogicalResult getMultiTileAddresses(pto::AllocMultiTileOp alloc,
     return alloc.emitError(
         "has neither a level3 base address nor planner-assigned slot addresses");
   }
-  auto layout = pto::getPTOStaticMultiTileSlotLayout(alloc.getResult().getType().getSlotType());
-  if (failed(layout)) {
-    return alloc.emitError(
-        "requires a static slot shape and known element byte size");
+  SmallVector<uint64_t> offsets;
+  auto knownBase = evaluator.evaluate(base);
+  if (knownBase && (knownBase->isNegative() || !knownBase->isSignedIntN(64)))
+    return alloc.emitError("slot base is outside nonnegative i64 range");
+  if (knownBase && knownBase->getZExtValue() % layout->alignmentBytes)
+    return alloc.emitError("slot base is not aligned to its physical memory space");
+  for (uint32_t slot = 0; slot < count; ++slot) {
+    auto offset = pto::getPTOStaticMultiTileSlotOffset(*layout, slot);
+    if (failed(offset)) return alloc.emitError("slot offset overflows nonnegative i64");
+    if (knownBase && failed(pto::getPTOStaticMultiTileSlotAddress(*layout, knownBase->getZExtValue(), slot)))
+      return alloc.emitError("slot address or footprint end overflows nonnegative i64");
+    offsets.push_back(*offset);
   }
 
-  uint64_t slotStride = layout->strideBytes;
-
+  // Keep the existing runtime-base expression and selector semantics. Only
+  // constant addresses can be proved in range here; dynamic addresses retain
+  // their original input contract, with every emitted offset checked above.
   addrs.push_back(base);
   for (uint32_t slot = 1; slot < count; ++slot) {
     Value offset = rewriter.create<arith::ConstantIntOp>(
-        alloc.getLoc(), static_cast<int64_t>(slot * slotStride), 64);
+        alloc.getLoc(), static_cast<int64_t>(offsets[slot]), 64);
     addrs.push_back(
         rewriter.create<arith::AddIOp>(alloc.getLoc(), base, offset));
   }
@@ -347,6 +369,7 @@ static LogicalResult resolveTileNativeMultiGets(ModuleOp module,
                                                 MLIRContext *ctx) {
   SmallVector<pto::MultiTileGetOp, mlir::pto::kValue8> getOps;
   module.walk([&](pto::MultiTileGetOp op) { getOps.push_back(op); });
+  llvm::DenseMap<Operation *, std::unique_ptr<pto::SyncAddressEvaluator>> evaluators;
 
   for (pto::MultiTileGetOp op : getOps) {
     auto alloc = op.getSource().getDefiningOp<pto::AllocMultiTileOp>();
@@ -358,7 +381,11 @@ static LogicalResult resolveTileNativeMultiGets(ModuleOp module,
     IRRewriter rewriter(ctx);
     rewriter.setInsertionPoint(op);
     SmallVector<Value, mlir::pto::kValue8> addrs;
-    if (failed(getMultiTileAddresses(alloc, rewriter, addrs))) {
+    auto function = op->getParentOfType<func::FuncOp>();
+    if (!function) return op.emitError("requires an enclosing function for address semantics");
+    auto &evaluator = evaluators[function.getOperation()];
+    if (!evaluator) evaluator = std::make_unique<pto::SyncAddressEvaluator>(function);
+    if (failed(getMultiTileAddresses(alloc, rewriter, *evaluator, addrs))) {
       return failure();
     }
 

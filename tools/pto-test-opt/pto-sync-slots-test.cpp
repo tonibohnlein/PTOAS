@@ -7,9 +7,13 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "PTO/Transforms/InsertSync/SyncAddressAnalysis.h"
 #include "PTO/Transforms/InsertSync/SyncPhysicalFacts.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/AsmParser/AsmParser.h"
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
@@ -21,16 +25,49 @@ using namespace mlir::pto;
 using llvm::json::Array;
 using llvm::json::Object;
 int main(int argc, char **argv) {
-  if (argc != 2) return 2;
+  bool lower = argc == 3 && StringRef(argv[1]) == "--lower";
+  if (argc != 2 && !lower) return 2;
   DialectRegistry registry;
   registry.insert<PTODialect, func::FuncDialect, scf::SCFDialect, arith::ArithDialect>();
   MLIRContext context(registry, MLIRContext::Threading::DISABLED);
-  auto module = parseSourceFile<ModuleOp>(argv[1], &context);
+  auto module = parseSourceFile<ModuleOp>(argv[lower ? 2 : 1], &context);
   if (!module) return 2;
+  if (lower) {
+    PassManager manager(&context);
+    manager.addPass(createPTOResolveBufferSelectPass());
+    if (failed(manager.run(*module))) return 1;
+    module->print(llvm::outs());
+    llvm::outs() << "\n";
+    return 0;
+  }
   Array functions;
   unsigned checks = 0;
   bool passed = true;
   auto check = [&](bool value) { ++checks; passed &= value; };
+  const uint64_t addressLimit = std::numeric_limits<int64_t>::max();
+  const StaticMultiTileSlotLayout padded{32, 512, 512};
+  auto offset = getPTOStaticMultiTileSlotOffset(padded, 15);
+  check(succeeded(offset) && *offset == 15 * 512);
+  auto address = getPTOStaticMultiTileSlotAddress(padded, 512, 15);
+  check(succeeded(address) && *address == 16 * 512);
+  check(failed(getPTOStaticMultiTileSlotOffset(padded, addressLimit / 512 + 1)));
+  check(failed(getPTOStaticMultiTileSlotOffset(padded, std::numeric_limits<uint64_t>::max())));
+  address = getPTOStaticMultiTileSlotAddress(padded, addressLimit - 32, 0);
+  check(succeeded(address) && *address == addressLimit - 32);
+  check(failed(getPTOStaticMultiTileSlotAddress(padded, addressLimit - 31, 0)));
+  check(failed(getPTOStaticMultiTileSlotAddress(padded, addressLimit - 511, 1)));
+  check(failed(getPTOStaticMultiTileSlotAddress(padded, std::numeric_limits<uint64_t>::max(), 0)));
+  check(failed(getPTOStaticMultiTileSlotOffset({0, 32, 32}, 0)));
+  check(failed(getPTOStaticMultiTileSlotOffset({32, 0, 32}, 0)));
+  check(failed(getPTOStaticMultiTileSlotOffset({32, 32, 16}, 0)));
+  check(failed(getPTOStaticMultiTileSlotOffset({32, 32, 33}, 0)));
+  // The tile type itself is legal; multi-tile allocations explicitly reject
+  // this compaction because product(shape) is not its physical footprint.
+  auto rowPlusOne = dyn_cast_or_null<TileBufType>(parseType(
+      "!pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, "
+      "blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=2>", &context));
+  check(bool(rowPlusOne));
+  if (rowPlusOne) check(failed(getPTOStaticMultiTileSlotLayout(rowPlusOne)));
   // Large disjoint/touching populations must not pay for a Cartesian product.
   // These synthetic maps satisfy the same nonoverlapping, aligned interval
   // contract as qualified native maps, without needing thousands of IR ops.
@@ -66,11 +103,18 @@ int main(int argc, char **argv) {
   }
   for (auto function : module->getOps<func::FuncOp>()) {
     if (function.isDeclaration()) continue;
+    auto admission = qualifySyncPhysicalAddresses(function);
+    if (admission.status == SyncAddressAdmission::Rejected) {
+      functions.push_back(Object{{"function",function.getSymName()},
+        {"physical_complete",false}, {"address_rejected",true}, {"reason",admission.reason},
+        {"records",Array{}}, {"layouts",Array{}}, {"overlaps",Array{}}});
+      continue;
+    }
     SyncIRs ir;
     Buffer2MemInfoMap buffers;
     MemoryDependentAnalyzer memory;
     PTOIRTranslator translator(ir, memory, buffers, function, SyncAnalysisMode::NORMALSYNC);
-    translator.Build();
+    if (failed(translator.Build())) return 1;
     auto physical = importSyncPhysicalFacts(function, ir, 1000000);
     Array records, layouts, overlaps;
     SmallVector<SyncPhysicalSlotMapping> mappings;

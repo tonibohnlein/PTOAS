@@ -15,6 +15,7 @@
 #define MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_PTOIRTRANSLATOR_H
  
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/InsertSync/SyncAddressAnalysis.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -34,7 +35,7 @@ public:
                   Buffer2MemInfoMap &buffer2MemInfoMap,
                   func::FuncOp func,
                   SyncAnalysisMode syncAnalysisMode)
-    : func_(func), 
+    : func_(func), addressEvaluator_(func),
       index(0),
       syncIR_(syncIR), 
       buffer2MemInfoMap_(buffer2MemInfoMap),
@@ -45,7 +46,7 @@ public:
   };
  
   // 核心入口：执行 IR 分析和转换
-  void Build();
+  LogicalResult Build();
  
   // 获取生成的 SyncIR (指令序列)
   SyncIRs &getSyncIR() { return syncIR_; }
@@ -58,6 +59,8 @@ public:
  
 private:
   func::FuncOp func_;
+  SyncAddressEvaluator addressEvaluator_;
+  bool translationFailed_ = false;
   unsigned index; // 当前 SyncIR 节点的索引计数器
   
   // 核心数据结构 (定义在 SyncCommon.h 中)

@@ -10,10 +10,13 @@
 #include "PTO/Transforms/InsertSync/LogicalSyncPlan.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "PTO/Transforms/InsertSync/SyncAddressAnalysis.h"
 #include "PTO/Transforms/InsertSync/SyncPhysicalFacts.h"
 #include "PTO/Transforms/InsertSync/SyncGlobalOccurrences.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/Parser/Parser.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -32,7 +35,7 @@ int main(int argc, char** argv)
     if (argc != 3 && argc != 4)
         return 2;
     DialectRegistry registry;
-    registry.insert<PTODialect, func::FuncDialect, scf::SCFDialect, arith::ArithDialect>();
+    registry.insert<PTODialect, func::FuncDialect, scf::SCFDialect, arith::ArithDialect, DLTIDialect>();
     MLIRContext context(registry, MLIRContext::Threading::DISABLED);
     auto module = parseSourceFile<ModuleOp>(argv[1], &context);
     if (!module || !llvm::hasSingleElement(module->getOps<func::FuncOp>()))
@@ -44,6 +47,107 @@ int main(int argc, char** argv)
         module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, "a3"));
     auto function = *module->getOps<func::FuncOp>().begin();
     StringRef mutation(argv[2]);
+    if (mutation == "address-values") {
+        SyncAddressEvaluator evaluator(function);
+        llvm::json::Array values;
+        function.walk([&](Operation *op) {
+            if (op->getDialect() != context.getLoadedDialect<arith::ArithDialect>()) return;
+            for (Value value : op->getResults()) {
+                auto evaluated = evaluator.evaluate(value);
+                llvm::json::Object row{{"operation", op->getName().getStringRef()}, {"known", bool(evaluated)}};
+                if (evaluated) {
+                    llvm::SmallString<64> signedText, unsignedText;
+                    evaluated->toString(signedText, 10, true);
+                    evaluated->toString(unsignedText, 10, false);
+                    row["bits"] = evaluated->getBitWidth();
+                    row["signed"] = signedText.str().str();
+                    row["unsigned"] = unsignedText.str().str();
+                }
+                values.push_back(std::move(row));
+            }
+        });
+        auto visits = evaluator.visits();
+        function.walk([&](Operation *op) {
+            if (op->getDialect() == context.getLoadedDialect<arith::ArithDialect>())
+                for (Value value : op->getResults()) (void)evaluator.evaluate(value);
+        });
+        llvm::outs() << llvm::json::Value(llvm::json::Object{
+            {"mode", "address-values"}, {"values", std::move(values)},
+            {"visits", visits}, {"repeated_visits", evaluator.visits()}}) << "\n";
+        return 0;
+    }
+    if (mutation == "physical-addresses") {
+        auto admission = qualifySyncPhysicalAddresses(function);
+        const char *status = admission.status == SyncAddressAdmission::Rejected ? "reject" :
+                             admission.status == SyncAddressAdmission::Conservative ? "conservative" : "safe";
+        llvm::json::Object output{{"mode", "physical-addresses"}, {"admission", status},
+                                  {"reason", admission.reason}, {"translated", false}};
+        // Refused geometry must never reach the translator's internal
+        // invariants, including in this read-only test entry point.
+        if (admission.status == SyncAddressAdmission::Rejected) {
+            llvm::outs() << llvm::json::Value(std::move(output)) << "\n";
+            return 0;
+        }
+        SyncAddressEvaluator evaluator(function);
+        SmallVector<Value> addresses;
+        function.walk([&](Operation *op) {
+            if (auto allocation = dyn_cast<AllocTileOp>(op)) {
+                if (auto address = allocation.getAddr()) addresses.push_back(address);
+            } else if (auto allocation = dyn_cast<AllocMultiTileOp>(op)) {
+                if (auto address = allocation.getAddr()) addresses.push_back(address);
+            }
+        });
+        for (Value address : addresses) (void)evaluator.evaluate(address);
+        auto visits = evaluator.visits();
+        for (Value address : addresses) (void)evaluator.evaluate(address);
+        output["address_evaluation_requests"] = addresses.size();
+        output["address_evaluation_visits"] = visits;
+        output["address_evaluation_repeated_visits"] = evaluator.visits();
+        SyncIRs ir;
+        Buffer2MemInfoMap buffers;
+        MemoryDependentAnalyzer memory;
+        PTOIRTranslator translator(ir, memory, buffers, function, SyncAnalysisMode::NORMALSYNC);
+        if (failed(translator.Build())) {
+            output["reason"] = "physical translation failed";
+            llvm::outs() << llvm::json::Value(std::move(output)) << "\n";
+            return 1;
+        }
+        struct Access { const BaseMemInfo *info; unsigned phase; bool write; };
+        SmallVector<Access> accesses;
+        unsigned phaseId = 0;
+        for (const auto &element : ir)
+            if (auto *phase = dyn_cast<CompoundInstanceElement>(element.get())) {
+                for (auto *info : phase->useVec) accesses.push_back({info, phaseId, false});
+                for (auto *info : phase->defVec) accesses.push_back({info, phaseId, true});
+                ++phaseId;
+            }
+        llvm::DenseMap<Value, unsigned> roots;
+        llvm::json::Array facts, aliases;
+        for (unsigned id = 0; id < accesses.size(); ++id) {
+            auto access = accesses[id];
+            auto *info = access.info;
+            auto root = roots.try_emplace(info->rootBuffer, roots.size()).first->second;
+            llvm::json::Array bases;
+            for (auto address : info->baseAddresses) bases.push_back(std::to_string(address));
+            facts.push_back(llvm::json::Object{
+                {"id", id}, {"phase", access.phase}, {"write", access.write}, {"root", root},
+                {"scope", static_cast<unsigned>(info->scope)}, {"base_addresses", std::move(bases)},
+                {"allocation_bytes", std::to_string(info->allocateSize)},
+                {"physical", info->hasKnownPhysicalAddresses}, {"unknown_range", info->aliasesUnknownRange}});
+        }
+        for (unsigned i = 0; i < accesses.size(); ++i)
+            for (unsigned j = 0; j < accesses.size(); ++j)
+                aliases.push_back(llvm::json::Object{
+                    {"source", i}, {"target", j},
+                    {"legacy", memory.MemAlias(accesses[i].info, accesses[j].info)},
+                    {"logical", logicalSyncMayAlias(accesses[i].info, accesses[j].info, function,
+                                                    InsertSyncGMAliasMode::MayAlias)}});
+        output["translated"] = true;
+        output["accesses"] = std::move(facts);
+        output["aliases"] = std::move(aliases);
+        llvm::outs() << llvm::json::Value(std::move(output)) << "\n";
+        return 0;
+    }
     if (mutation == "guard-growth") {
         SmallVector<unsigned> exponential(32, 2), linear(64, 1);
         bool passed = testing::guardEmissionFits({2}, true, 4096) &&
@@ -60,7 +164,8 @@ int main(int argc, char** argv)
         Buffer2MemInfoMap buffers;
         MemoryDependentAnalyzer memory;
         PTOIRTranslator translator(ir, memory, buffers, function, SyncAnalysisMode::NORMALSYNC);
-        translator.Build();
+        if (failed(translator.Build()))
+            return 1;
         struct Access { const BaseMemInfo *info; Operation *op; bool write; };
         SmallVector<Access> accesses;
         for (const auto &element : ir)
