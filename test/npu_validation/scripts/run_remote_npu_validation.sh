@@ -669,7 +669,11 @@ while IFS= read -r -d '' cpp; do
   testcase="${testcase%-pto}"
   testcase="${testcase%_pto}"
   case_dir="$(cd "$(dirname "${cpp}")" && pwd)"
-  sample_name="$(basename "${case_dir}")"
+  # Share layout resolution with generation: split kernels/aic|aiv inputs
+  # still belong to the model sample, including its buffer/scalar contracts.
+  sample_root="$(python3 "${ROOT_DIR}/test/npu_validation/scripts/generate_testcase.py" \
+    --input "${cpp}" --print-sample-root)"
+  sample_name="$(basename "${sample_root}")"
   sample_name_lc="$(printf '%s' "${sample_name}" | tr '[:upper:]' '[:lower:]')"
   case_id="${sample_name}/${testcase}"
 
