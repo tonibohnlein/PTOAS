@@ -31,8 +31,12 @@ def main():
     parser.add_argument("--native-driver", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--case", action="append", dest="cases")
-    parser.add_argument("--focused", action="store_true",
-                        help="Small automatic gate; excludes milestone buffering and four-kernel coverage")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--focused", action="store_true",
+                      help="Small automatic gate; excludes milestone buffering and four-kernel coverage")
+    mode.add_argument("--buffers-only", action="store_true",
+                      help="Strict two/three-buffer scenarios, boundaries, C++ and guard mutations")
+    parser.add_argument("--buffer-case", action="append", choices=("two_buffer", "three_buffer"))
     args = parser.parse_args()
     sys.path.insert(0, str(args.python_root.resolve()))
     args.output.mkdir(parents=True, exist_ok=False)
@@ -60,8 +64,8 @@ def main():
 
     prefix = [sys.executable, "-c", SERIAL_DRIVER, str(args.python_root.resolve()),
               "--pto-arch=a3", "--pto-level=level3", "--enable-insert-sync"]
-    selected = args.cases or (["one_buffer"] if args.focused else
-                              ["one_buffer", "online_softmax", "q_proj", "qk_matmul"])
+    selected = [] if args.buffers_only else (args.cases or (["one_buffer"] if args.focused else
+                              ["one_buffer", "online_softmax", "q_proj", "qk_matmul"]))
     cases = {case["case_id"]: case for case in population()}
     result, _ = run("guard-growth", [str(args.native_driver.resolve()),
         str(HERE / "inputs/emission_contract.pto"), "guard-growth"])
@@ -170,7 +174,7 @@ def main():
         print(case_id, {arm: value["projection"]["mechanisms"] for arm, value in row["arms"].items()}, flush=True)
 
     structured = []
-    for fixture in ("skipped_reader", "emission_contract", "first_else_reader"):
+    for fixture in (() if args.buffers_only else ("skipped_reader", "emission_contract", "first_else_reader")):
         source = HERE / "inputs" / (fixture + ".pto")
         outputs = {}
         for arm, flags in (("existing", []), ("logical", ["--insert-sync-planner=logical"])):
@@ -196,7 +200,7 @@ def main():
     # counts. Negative/empty bounds execute no payload or remainder; every
     # residue class, partial fill and subsequent reuse receives matched events.
     buffer_rows = []
-    for case_id in (() if args.focused else ("two_buffer", "three_buffer")):
+    for case_id in (() if args.focused else (args.buffer_case or ("two_buffer", "three_buffer"))):
         source = cases[case_id]["source"].resolve()
         common = [*prefix, "--insert-sync-gm-alias=assume-disjoint-arguments", "--emit-pto-ir", str(source)]
         outputs = {}
@@ -242,6 +246,10 @@ def main():
             assert answer["applied"], answer
         else:
             assert answer["changed"] and answer["counts_preserved"] and not answer["applied"] and answer["original_preserved"], answer
+
+    if args.buffers_only:
+        print("Strict buffering acceptance passed; device validation remains separate")
+        return
 
     # Positive construction is required before each native mutation challenge.
     fixture = HERE / "inputs/emission_contract.pto"

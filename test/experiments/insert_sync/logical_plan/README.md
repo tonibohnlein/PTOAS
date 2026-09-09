@@ -5,6 +5,8 @@ The authored-event and retirement/endpoint checkpoints are accepted; see
 and reconstruction improvements are documented in
 [SCALABILITY_RESULTS.md](SCALABILITY_RESULTS.md). Two-/three-buffer strict
 acceptance and occurrence-dependent slot refinement remain the next gate.
+[SLOT_WIP.md](SLOT_WIP.md) records the paused slot-refinement work, its first
+native precision result and the outstanding performance/coverage gates.
 [GUARD_WIP.md](GUARD_WIP.md) preserves the earlier guard checkpoint and its
 limitations; it is not a report for the current source.
 
@@ -94,7 +96,7 @@ Containment first tries bounded sufficient rational implication, including only
 canonical total floor definitions for qualified witnesses. Tightened residue
 membership remains an obligation. Bounded integer samples may refute containment
 but never prove it. All other cases retain the existing exact integer difference.
-The 161 native/reference query tests challenge those directions independently,
+The 183 native/reference query tests challenge those directions independently,
 including sparse endpoint indexing, common-row subtraction, and cache invalidation.
 `PTOAS_LOGICAL_TRACE=1` records slow primitive queries and guard preparation in
 addition to the existing stage work counts; it does not change planning.

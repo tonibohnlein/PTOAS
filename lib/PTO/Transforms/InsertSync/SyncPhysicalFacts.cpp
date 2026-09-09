@@ -8,10 +8,15 @@
 #include "PTO/Transforms/InsertSync/SyncPhysicalFacts.h"
 #include "PTO/Transforms/InsertSync/SyncEffectCoverage.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
+#include "PTO/Transforms/SlotAffineAnalysis.h"
+#include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/IR/PTOMultiBuffer.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include <algorithm>
 #include <limits>
 #include <optional>
 #include <map>
@@ -19,6 +24,155 @@
 #include <tuple>
 using namespace mlir;
 using namespace mlir::pto;
+
+uint64_t mlir::pto::estimateSyncPhysicalSlotQualificationWork(
+    const BaseMemInfo *memory, const Buffer2MemInfoMap &buffers) {
+  constexpr uint64_t fragmentLimit = 2048;
+  uint64_t accessSlots = memory ? std::min<uint64_t>(memory->baseAddresses.size(), fragmentLimit) : 0;
+  uint64_t rootSlots = 0;
+  if (memory && memory->rootBuffer && memory->rootBuffer.getDefiningOp<AllocMultiTileOp>()) {
+    auto found = buffers.find(memory->rootBuffer);
+    if (found != buffers.end() && found->second.size() == 1 && found->second.front())
+      rootSlots = std::min<uint64_t>(found->second.front()->baseAddresses.size(), fragmentLimit);
+  }
+  uint64_t levels = 1;
+  for (uint64_t remaining = rootSlots; remaining > 1; remaining = (remaining + 1) / 2) ++levels;
+  // Fixed provenance/view work, original-access validation, root validation,
+  // copy/sort/nonoverlap checks, and returned original-order mapping storage.
+  return 160 + 2 * accessSlots + rootSlots * (8 + 3 * levels);
+}
+
+std::optional<SyncPhysicalSlotMapping> mlir::pto::qualifySyncPhysicalSlots(
+    const BaseMemInfo *memory, const Buffer2MemInfoMap &buffers) {
+  auto physical = [](const BaseMemInfo *info) {
+    if (!info || !info->hasKnownPhysicalAddresses || info->aliasesUnknownRange ||
+        info->scope == AddressSpace::GM || info->scope == AddressSpace::Zero ||
+        !info->allocateSize || info->baseAddresses.empty() || info->baseAddresses.size() > 2048)
+      return false;
+    return llvm::all_of(info->baseAddresses, [&](uint64_t base) {
+      return base <= std::numeric_limits<uint64_t>::max() - info->allocateSize;
+    });
+  };
+  if (!physical(memory)) return {};
+  auto root = memory->rootBuffer ? memory->rootBuffer.getDefiningOp<AllocMultiTileOp>() : AllocMultiTileOp();
+  if (!root) {
+    // Ordinary translated ranges are conservative effect footprints. No
+    // dynamic slot interpretation is added to them.
+    return SyncPhysicalSlotMapping{{}, memory->baseAddresses, memory->allocateSize, memory->scope};
+  }
+  Value selected = memory->baseBuffer;
+  SmallVector<TileBufType> views;
+  MultiTileGetOp get;
+  for (unsigned hop = 0; selected && hop < 32; ++hop) {
+    Operation *op = selected.getDefiningOp();
+    if (!op) return {};
+    if ((get = dyn_cast<MultiTileGetOp>(op))) break;
+    auto viewType = dyn_cast<TileBufType>(selected.getType());
+    if (!viewType) return {};
+    views.push_back(viewType);
+    if (auto reshape = dyn_cast<TReshapeOp>(op)) selected = reshape.getSrc();
+    else if (auto bitcast = dyn_cast<BitcastOp>(op)) selected = bitcast.getSrc();
+    else return {}; // In particular, no dynamic subview offset is guessed.
+  }
+  if (!get || get.getSource() != root.getResult() ||
+      findMultiTileSlotExpr(memory->baseBuffer) != get.getSlot()) return {};
+  auto rootEntries = buffers.find(root.getResult());
+  if (rootEntries == buffers.end() || rootEntries->second.size() != 1) return {};
+  const BaseMemInfo *rootMemory = rootEntries->second.front().get();
+  auto type = root.getResult().getType();
+  auto slot = type.getSlotType();
+  auto layout = getPTOStaticMultiTileSlotLayout(slot);
+  if (failed(layout) || layout->footprintBytes > uint64_t(INT64_MAX) ||
+      slot.getCompactModeI32() == int32_t(CompactMode::RowPlusOne) ||
+      !physical(rootMemory) || rootMemory->rootBuffer != root.getResult() ||
+      rootMemory->scope != memory->scope || rootMemory->baseAddresses.size() != type.getCount() ||
+      rootMemory->allocateSize != layout->footprintBytes || memory->allocateSize != layout->footprintBytes)
+    return {};
+  auto scope = dyn_cast_or_null<AddressSpaceAttr>(slot.getMemorySpace());
+  if (!scope || scope.getAddressSpace() != memory->scope) return {};
+  for (TileBufType view : views) {
+    auto shape = getPTOStaticMultiTileSlotLayout(view);
+    if (failed(shape) || shape->footprintBytes > layout->footprintBytes ||
+        view.getMemorySpace() != slot.getMemorySpace() ||
+        view.getCompactModeI32() == int32_t(CompactMode::RowPlusOne)) return {};
+  }
+  const auto &bases = rootMemory->baseAddresses;
+  if (auto planned = root->getAttrOfType<DenseI64ArrayAttr>(kPtoMultiBufferAddrsAttrName)) {
+    if (root.getAddr() || uint64_t(planned.size()) != bases.size()) return {};
+    for (unsigned i = 0; i < bases.size(); ++i)
+      if (planned[i] < 0 || uint64_t(planned[i]) != bases[i]) return {};
+  } else {
+    // The unchanged translator currently spaces explicit bases by raw bytes;
+    // lowering rounds up to address alignment. Decline a mismatch rather than
+    // silently claiming the translated union denotes the lowered addresses.
+    if (!root.getAddr() || layout->strideBytes != layout->footprintBytes) return {};
+    for (unsigned i = 0; i < bases.size(); ++i) {
+      if (uint64_t(i) > (std::numeric_limits<uint64_t>::max() - bases.front()) / layout->strideBytes ||
+          bases[i] != bases.front() + uint64_t(i) * layout->strideBytes) return {};
+    }
+  }
+  SmallVector<uint64_t> sorted(bases);
+  llvm::sort(sorted);
+  for (unsigned i = 0; i < sorted.size(); ++i) {
+    if (sorted[i] % layout->alignmentBytes || sorted[i] > uint64_t(INT64_MAX) - layout->footprintBytes ||
+        sorted[i] > std::numeric_limits<uint64_t>::max() - layout->footprintBytes ||
+        (i && sorted[i - 1] + layout->footprintBytes > sorted[i])) return {};
+  }
+  IntegerAttr literal;
+  if (matchPattern(get.getSlot(), m_Constant(&literal))) {
+    if (!literal.getValue().isSignedIntN(64)) return {};
+    int64_t index = literal.getValue().getSExtValue();
+    if (index < 0 || uint64_t(index) >= bases.size() || memory->baseAddresses.size() != 1 ||
+        memory->baseAddresses.front() != bases[index]) return {};
+  } else if (ArrayRef<uint64_t>(memory->baseAddresses) != ArrayRef<uint64_t>(bases)) return {};
+  return SyncPhysicalSlotMapping{get.getSlot(), bases, layout->footprintBytes, memory->scope};
+}
+
+std::optional<std::vector<std::pair<unsigned, unsigned>>> mlir::pto::overlappingSyncPhysicalSlots(
+    const SyncPhysicalSlotMapping &a, const SyncPhysicalSlotMapping &b,
+    llvm::function_ref<bool(uint64_t)> spend) {
+  std::vector<std::pair<unsigned, unsigned>> result;
+  if (!spend(1)) return {};
+  if (a.scope != b.scope) return result;
+  const uint64_t n = a.bases.size() + b.bases.size();
+  uint64_t levels = 1;
+  for (uint64_t remaining = n; remaining > 1; remaining = (remaining + 1) / 2) ++levels;
+  // Collect/sort and balanced active/expiration indexes. No Cartesian charge
+  // is paid for disjoint intervals; actual output is billed separately below.
+  if (!spend(n * (4 + 3 * levels))) return {};
+  struct Span { uint64_t begin, end; unsigned index; bool right; };
+  SmallVector<Span> spans;
+  for (unsigned i = 0; i < a.bases.size(); ++i) spans.push_back({a.bases[i], a.bases[i] + a.bytes, i, false});
+  for (unsigned i = 0; i < b.bases.size(); ++i) spans.push_back({b.bases[i], b.bases[i] + b.bytes, i, true});
+  llvm::sort(spans, [](const Span &x, const Span &y) {
+    return std::tie(x.begin, x.end, x.right, x.index) < std::tie(y.begin, y.end, y.right, y.index);
+  });
+  std::set<unsigned> activeLeft, activeRight;
+  std::multimap<uint64_t, std::pair<bool, unsigned>> expiration;
+  for (const auto &span : spans) {
+    while (!expiration.empty() && expiration.begin()->first <= span.begin) {
+      auto [right, index] = expiration.begin()->second;
+      (right ? activeRight : activeLeft).erase(index);
+      expiration.erase(expiration.begin());
+    }
+    if (span.right) {
+      for (unsigned left : activeLeft) {
+        if (!spend(1)) return {};
+        result.emplace_back(left, span.index);
+      }
+      activeRight.insert(span.index);
+    } else {
+      for (unsigned right : activeRight) {
+        if (!spend(1)) return {};
+        result.emplace_back(span.index, right);
+      }
+      activeLeft.insert(span.index);
+    }
+    expiration.emplace(span.end, std::make_pair(span.right, span.index));
+  }
+  return result;
+}
+
 namespace {
 std::optional<unsigned> laneFor(PIPE pipe, bool cube)
 {
@@ -120,6 +274,11 @@ class Importer {
     if (info->scope == AddressSpace::GM) return true;
     if (!info->hasKnownPhysicalAddresses || !info->allocateSize ||
         info->baseAddresses.empty() || info->baseAddresses.size() > 64) return false;
+    if (info->rootBuffer && info->rootBuffer.getDefiningOp<AllocMultiTileOp>() &&
+        (info->allocateSize > uint64_t(INT64_MAX) ||
+         llvm::any_of(info->baseAddresses, [&](uint64_t base) {
+           return base > uint64_t(INT64_MAX) - info->allocateSize;
+         }))) return false;
     return llvm::all_of(info->baseAddresses, [&](uint64_t address) {
       return address <= std::numeric_limits<uint64_t>::max() - info->allocateSize;
     });
@@ -142,6 +301,25 @@ class Importer {
             (!isInsertSyncScalarPrerequisite(alloc.getValidRow()) ||
              !isInsertSyncScalarPrerequisite(alloc.getValidCol())))
           return fail("unqualified descriptor allocation prerequisite");
+        continue;
+      }
+      if (auto alloc = dyn_cast<AllocMultiTileOp>(op)) {
+        auto type = alloc.getResult().getType().getSlotType();
+        auto layout = getPTOStaticMultiTileSlotLayout(type);
+        if (failed(layout) || layout->footprintBytes > uint64_t(INT64_MAX) ||
+            type.getCompactModeI32() == int32_t(CompactMode::RowPlusOne))
+          return fail("unqualified multi-tile physical layout");
+        if (!alloc->hasAttr(kPtoMultiBufferAddrsAttrName) &&
+            layout->strideBytes != layout->footprintBytes)
+          return fail("multi-tile translator spacing differs from lowered aligned stride");
+        // This admission precedes all interval/alias candidate pruning. Merely
+        // declining optional selector refinement would be too late if the
+        // original translated range had already missed a real lowered overlap.
+        if (auto planned = alloc->getAttrOfType<DenseI64ArrayAttr>(kPtoMultiBufferAddrsAttrName))
+          for (int64_t base : planned.asArrayRef())
+            if (base < 0 || uint64_t(base) % layout->alignmentBytes ||
+                uint64_t(base) > uint64_t(INT64_MAX) - layout->footprintBytes)
+              return fail("unqualified planned multi-tile physical interval");
         continue;
       }
       if (auto update = dyn_cast<SetValidShapeOp>(op)) {

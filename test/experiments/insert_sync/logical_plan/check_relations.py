@@ -523,6 +523,28 @@ def main():
     run("indexed_endpoint_unknown_candidate", {
         "op":"restrict_endpoints", "a":two_coordinates, "sources":unknown_phase, "targets":target_point},
         str(isl.map(isl_text(two_coordinates))))
+    # Dense +/-1 terms after a long zero prefix do not define fixed
+    # coordinates. The row scan must also retain a genuinely isolated late
+    # coordinate, including its negative coefficient and range offset.
+    def wide_row(width, terms, constant=0):
+        row = [0] * (width + 1)
+        for column, coefficient in terms.items():
+            row[column] = coefficient
+        row[-1] = constant
+        return row
+    wide = relation(d=32,r=32,eq=[
+        wide_row(64,{0:1},-3), wide_row(64,{32:1},-7),
+        wide_row(64,{column:(1 if column % 2 == 0 else -1) for column in range(48,64)})])
+    wide_source = relation(d=0,r=32,eq=[wide_row(32,{0:1},-3)])
+    wide_target = relation(d=0,r=32,eq=[wide_row(32,{0:1},-7),wide_row(32,{16:1},-2)])
+    run("indexed_endpoint_dense_late_coefficients_remain_unknown", {
+        "op":"restrict_endpoints", "a":wide,"sources":wide_source,"targets":wide_target},
+        str(isl.map(isl_text(wide))))
+    late_fixed = relation(d=32,r=32,eq=wide["pieces"][0]["eq"]+[wide_row(64,{63:-1},3)])
+    late_mismatch = relation(d=0,r=32,eq=[wide_row(32,{0:1},-7),wide_row(32,{31:1},-4)])
+    run("indexed_endpoint_late_isolated_coordinate_still_filters", {
+        "op":"restrict_endpoints", "a":late_fixed,"sources":wide_source,"targets":late_mismatch},
+        str(isl.map(isl_text(relation(d=32,r=32,pieces=[])))))
     (args.output / "endpoint_scaling.json").write_text(json.dumps(endpoint_scaling, indent=2) + "\n")
 
     answer = run("continued_completion_query", {"op":"completion", "a":primitive, "needs":[
@@ -691,6 +713,35 @@ def main():
             "contains_index_input_pieces":covered["relation_endpoint_index_pieces"],
             "bucket_lookups":covered["relation_endpoint_bucket_lookups"]})
     (args.output / "endpoint_population_scaling.json").write_text(json.dumps(endpoint_population_scaling,indent=2)+"\n")
+
+    # Emptiness-only unit substitution must not change the returned relation's
+    # source/range/symbol coordinates or erase nonunit divisibility. All these
+    # differences include correlated occurrence coordinates and symbolic bounds.
+    for modulus in (2,3,4):
+        for shift in (-1,0,1):
+            for residue in (0,1):
+                eqs = [[1,0,0,0,0,0,0,-7], [0,0,-1,0,0,0,0,11],
+                       [0,1,0,-1,0,0,0,shift],
+                       [0,1,0,0,0,-modulus,0,-residue],
+                       [0,0,0,0,1,0,-2,-1]]
+                bounds = [[0,1,0,0,0,0,0,2], [0,-1,0,0,1,0,0,-1],
+                          [0,0,0,0,1,0,0,-1], [0,0,0,0,-1,0,0,7]]
+                source = relation(d=2,r=2,s=1,locals=2,eq=eqs,ge=bounds)
+                kept = relation(d=2,r=2,s=1,locals=2,eq=eqs,
+                    ge=bounds+[[0,1,0,0,0,0,0,-1]])
+                run(f"unit_emptiness_keeps_occurrence_scope_{modulus}_{shift}_{residue}",
+                    {"op":"subtract","a":source,"b":kept},
+                    str(isl.map(isl_text(source))-isl.map(isl_text(kept))))
+    # No unit coefficient in 2*x=1: the integer-empty equality cannot be
+    # rationally substituted away. A fixed parameter is still part of output.
+    nonunit_impossible = relation(d=2,r=1,s=1,
+        eq=[[1,0,0,0,-4],[0,2,0,0,-1],[0,0,-1,0,8],[0,0,0,1,-3]])
+    nonunit_possible = relation(d=2,r=1,s=1,
+        eq=[[1,0,0,0,-4],[0,2,0,0,-2],[0,0,-1,0,8],[0,0,0,1,-3]])
+    for name,left,right in (("nonunit_empty",nonunit_impossible,nonunit_possible),
+                            ("nonunit_nonempty",nonunit_possible,nonunit_impossible)):
+        run("unit_emptiness_"+name,{"op":"subtract","a":left,"b":right},
+            str(isl.map(isl_text(left))-isl.map(isl_text(right))))
 
     summary = {"status":"passed", "checks":results, "isl_version":isl.version,
                "driver_sha256":hashlib.sha256(args.driver.read_bytes()).hexdigest()}

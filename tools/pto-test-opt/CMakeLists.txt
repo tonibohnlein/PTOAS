@@ -27,6 +27,11 @@ add_llvm_executable(pto-sync-candidates-test pto-sync-candidates-test.cpp PARTIA
 target_link_libraries(pto-sync-candidates-test PRIVATE PTOIR PTOTransforms MLIRIR MLIRFuncDialect)
 add_dependencies(pto-sync-candidates-test PTOOpsIncGen PTOPassesIncGen)
 
+add_llvm_executable(pto-sync-slots-test pto-sync-slots-test.cpp PARTIAL_SOURCES_INTENDED)
+target_link_libraries(pto-sync-slots-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRFuncDialect MLIRSCFDialect MLIRArithDialect)
+add_dependencies(pto-sync-slots-test PTOOpsIncGen PTOPassesIncGen)
+
 add_llvm_executable(pto-test-opt
   pto-test-opt.cpp
   PARTIAL_SOURCES_INTENDED

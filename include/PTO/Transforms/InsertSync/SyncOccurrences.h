@@ -32,6 +32,10 @@ struct SyncOccurrences {
     SmallVector<LoopDomain> loopDomains;
     SmallVector<Value> parameters;
     SmallVector<PredicateDomain, 0> predicates;
+    // Optional scalar projections use the same original loop and parameter
+    // bindings as control import. Absence means unavailable precision, not an
+    // impossible value or an empty domain. No integer wrapping is inferred.
+    llvm::DenseMap<Value, AffineExpr> scalarExpressions;
     SmallVector<OccurrencePoint, 0> points;
     llvm::DenseMap<Operation*, unsigned> ids;
     unsigned scheduleDimensions = 0;
@@ -39,7 +43,8 @@ struct SyncOccurrences {
     bool complete = false;
     bool limitExceeded = false;
     uint64_t work = 0;
-    static SyncOccurrences build(func::FuncOp function, ArrayRef<Operation*> physicalPoints);
+    static SyncOccurrences build(func::FuncOp function, ArrayRef<Operation*> physicalPoints,
+                                 ArrayRef<Value> optionalScalarValues = {});
     // Uniform occurrence tuple: phase ID followed by one IV per original loop.
     unsigned dimensions() const { return 1 + loops.size(); }
     // Queries require complete and valid point IDs. Parameter Values are
@@ -49,6 +54,14 @@ struct SyncOccurrences {
     RelationResult ordered(unsigned source, unsigned target, bool inclusive = false) const;
     Relation identity(unsigned point) const;
     Relation predicateDomain(unsigned predicate, unsigned point) const;
+    // Exact subset where inclusiveLower <= value <= inclusiveUpper. Requires
+    // a normalized requested value that dominates the actual queried point.
+    // In particular, a loop-local value is not interpreted at an outer point
+    // using its zero-filled IV coordinate. i1 uses the existing 0/1 convention.
+    // A client must prove full access-domain coverage by [0, count-1] before
+    // using ordinary slot-index equality; multi_tile_get does not imply mod N.
+    RelationResult scalarDomain(Value value, unsigned point, int64_t inclusiveLower,
+                                int64_t inclusiveUpper, RelationQueries& queries) const;
 };
 } // namespace mlir::pto::logical_sync
 #endif

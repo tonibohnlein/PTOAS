@@ -60,16 +60,7 @@ constexpr int32_t kSlayoutColMajor = 2;
 // Tile shape / valid-shape dimension indices: dim0 = row, dim1 = col.
 constexpr unsigned kDim0 = 0;
 constexpr unsigned kDim1 = 1;
-constexpr uint64_t kCubeTileAddressAlignmentBytes = 512;
-constexpr uint64_t kVectorTileAddressAlignmentBytes = 32;
 constexpr unsigned kI64BitWidth = 64;
-
-static uint64_t alignUp(uint64_t value, uint64_t align) {
-  if (align == 0) {
-    return value;
-  }
-  return ((value + align - 1) / align) * align;
-}
 
 static Value ensureI64(Value value, IRRewriter &rewriter, Location loc) {
   if (!value) {
@@ -186,30 +177,6 @@ static bool getTilePointerStrides(pto::TileBufType type, int64_t &rowStride,
     return getNoneBoxPointerStrides(type, shape, bl, rowStride, colStride);
   }
   return getBoxedPointerStrides(type, shape, bl, sl, rowStride, colStride);
-}
-
-static uint64_t getTileAddressAlignmentBytes(pto::TileBufType type) {
-  auto addrSpace =
-      dyn_cast_or_null<pto::AddressSpaceAttr>(type.getMemorySpace());
-  if (!addrSpace) {
-    return 1;
-  }
-
-  switch (addrSpace.getAddressSpace()) {
-  case pto::AddressSpace::LEFT:
-  case pto::AddressSpace::RIGHT:
-  case pto::AddressSpace::ACC:
-    return kCubeTileAddressAlignmentBytes;
-  case pto::AddressSpace::VEC:
-  case pto::AddressSpace::MAT:
-  case pto::AddressSpace::BIAS:
-  case pto::AddressSpace::SCALING:
-    return kVectorTileAddressAlignmentBytes;
-  case pto::AddressSpace::GM:
-  case pto::AddressSpace::Zero:
-    return 1;
-  }
-  return 1;
 }
 
 static Value computeTileAddress(Value value, IRRewriter &rewriter,
@@ -337,21 +304,6 @@ static LogicalResult resolveTileNativeSubviews(ModuleOp module,
   return success();
 }
 
-static FailureOr<uint64_t> getStaticSlotBytes(pto::TileBufType slotType) {
-  uint64_t elemBytes = pto::getPTOStorageElemByteSize(slotType.getElementType());
-  if (elemBytes == 0) {
-    return failure();
-  }
-  uint64_t bytes = elemBytes;
-  for (int64_t dim : slotType.getShape()) {
-    if (dim == ShapedType::kDynamic) {
-      return failure();
-    }
-    bytes *= static_cast<uint64_t>(dim);
-  }
-  return bytes;
-}
-
 static LogicalResult getMultiTileAddresses(pto::AllocMultiTileOp alloc,
                                            IRRewriter &rewriter,
                                            SmallVectorImpl<Value> &addrs) {
@@ -373,16 +325,13 @@ static LogicalResult getMultiTileAddresses(pto::AllocMultiTileOp alloc,
     return alloc.emitError(
         "has neither a level3 base address nor planner-assigned slot addresses");
   }
-  auto slotBytes = getStaticSlotBytes(alloc.getResult().getType().getSlotType());
-  if (failed(slotBytes)) {
+  auto layout = pto::getPTOStaticMultiTileSlotLayout(alloc.getResult().getType().getSlotType());
+  if (failed(layout)) {
     return alloc.emitError(
         "requires a static slot shape and known element byte size");
   }
 
-  uint64_t slotStride =
-      alignUp(*slotBytes,
-              getTileAddressAlignmentBytes(
-                  alloc.getResult().getType().getSlotType()));
+  uint64_t slotStride = layout->strideBytes;
 
   addrs.push_back(base);
   for (uint32_t slot = 1; slot < count; ++slot) {

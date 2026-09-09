@@ -66,6 +66,18 @@ struct CompactPiece : mlir::presburger::IntegerRelation {
         removeTrivialRedundancy();
         simplify();
     }
+    // Only this Boolean feasibility query may forget endpoint/symbol identities.
+    // Every coordinate is existential here. Unit equality substitution on a
+    // disposable copy is integer-exact; nonunit divisibility remains intact.
+    // Never return the reduced copy as an occurrence/completion relation.
+    static bool emptyAfterUnitSubstitution(const IntegerRelation& piece)
+    {
+        CompactPiece reduced(piece);
+        reduced.setSpace(mlir::presburger::PresburgerSpace::getRelationSpace(
+            0, 0, 0, reduced.getNumVars()));
+        reduced.removeRedundantLocalVars();
+        return reduced.isIntegerEmpty();
+    }
 };
 size_t pieceFingerprint(const mlir::presburger::IntegerRelation& piece)
 {
@@ -85,18 +97,20 @@ Constants fixedCoordinates(const mlir::presburger::IntegerRelation& piece, unsig
     Constants result(count);
     for (unsigned i = 0; i < piece.getNumEqualities(); ++i) {
         auto row = piece.getEquality(i);
-        for (unsigned j = 0; j < count; ++j) {
-            if (row[offset + j] != 1 && row[offset + j] != -1)
-                continue;
-            bool isolated = true;
-            for (unsigned k = 0; k < piece.getNumVars(); ++k)
-                if (k != offset + j && row[k] != 0) {
-                    isolated = false;
-                    break;
-                }
-            if (isolated)
-                result[j] = row[offset + j] == 1 ? -row.back() : row.back();
+        // A fixed coordinate requires exactly one nonzero variable term in
+        // the WHOLE row, including symbols and local witnesses. Find it once;
+        // testing isolation separately for every +/-1 term rescans long zero
+        // prefixes quadratically on dense, late-coordinate equalities.
+        unsigned nonzero = piece.getNumVars();
+        bool isolated = true;
+        for (unsigned k = 0; k < piece.getNumVars(); ++k) {
+            if (row[k] == 0) continue;
+            if (nonzero != piece.getNumVars()) { isolated = false; break; }
+            nonzero = k;
         }
+        if (isolated && nonzero >= offset && nonzero - offset < count &&
+            (row[nonzero] == 1 || row[nonzero] == -1))
+            result[nonzero - offset] = row[nonzero] == 1 ? -row.back() : row.back();
     }
     return result;
 }
@@ -376,6 +390,8 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
         }
         auto found = qualifiedSubsets.find(selected);
         if (found == qualifiedSubsets.end()) {
+            QueryTimer qualificationTimer{"subtract_qualification",
+                profiling ? &queryProfile.subtractQualification : nullptr, selected.size()};
             auto subset = Relation::getEmpty(remove.getSpace());
             for (unsigned i : selected)
                 subset.unionInPlace(Relation(remove.getAllDisjuncts()[i]));
@@ -414,6 +430,9 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
         if (!pending.relation)
             return pending;
         for (const auto& right : found->second.getAllDisjuncts()) {
+            QueryTimer partitionTimer{"subtract_partition",
+                profiling ? &queryProfile.subtractPartition : nullptr,
+                pending.relation->getNumDisjuncts(), 1};
             auto divisions = right.getLocalReprs();
             if (!divisions.hasAllReprs()) {
                 if (std::getenv("PTOAS_LOGICAL_TRACE")) {
@@ -513,7 +532,7 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
                     intersection.addInequality(row);
                 if (!charge(Relation(intersection)))
                     return failure(QueryStatus::BudgetExhausted, "difference intersection budget");
-                if (intersection.isIntegerEmpty()) {
+                if (CompactPiece::emptyAfterUnitSubstitution(intersection)) {
                     next.unionInPlace(Relation(left));
                     continue;
                 }
@@ -532,7 +551,7 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
                         CompactPiece excluded(prefix);
                         excluded.addInequality(row);
                         excluded.compact();
-                        if (!excluded.isIntegerEmpty())
+                        if (!CompactPiece::emptyAfterUnitSubstitution(excluded))
                             next.unionInPlace(Relation(excluded));
                     }
                     prefix.addEquality(equality);
@@ -542,15 +561,19 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
                     intersection.addInequality(row);
                 std::vector<bool> keep(rows.size(), true);
                 unsigned base = prefix.getNumInequalities();
-                for (unsigned i = rows.size(); i > 0; --i) {
-                    intersection.removeInequality(base + i - 1);
-                    if (!charge(Relation(intersection)))
-                        return failure(QueryStatus::BudgetExhausted, "difference implication budget");
-                    mlir::presburger::Simplex simplex(intersection);
-                    if (simplex.isRedundantInequality(rows[i - 1]))
-                        keep[i - 1] = false;
-                    else
-                        intersection.addInequality(rows[i - 1]);
+                {
+                    QueryTimer implicationTimer{"subtract_implication",
+                        profiling ? &queryProfile.subtractImplication : nullptr, 1};
+                    for (unsigned i = rows.size(); i > 0; --i) {
+                        intersection.removeInequality(base + i - 1);
+                        if (!charge(Relation(intersection)))
+                            return failure(QueryStatus::BudgetExhausted, "difference implication budget");
+                        mlir::presburger::Simplex simplex(intersection);
+                        if (simplex.isRedundantInequality(rows[i - 1]))
+                            keep[i - 1] = false;
+                        else
+                            intersection.addInequality(rows[i - 1]);
+                    }
                 }
                 // Complement every remaining membership constraint, including
                 // tightened bounds used to infer a division. Only canonical
@@ -568,7 +591,7 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
                     --negated.back(); // Integer negation of e >= 0.
                     excluded.addInequality(negated);
                     excluded.compact();
-                    if (!excluded.isIntegerEmpty())
+                    if (!CompactPiece::emptyAfterUnitSubstitution(excluded))
                         next.unionInPlace(Relation(excluded));
                     prefix.addInequality(rows[i]);
                 }

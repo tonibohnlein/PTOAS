@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <optional>
 namespace mlir::pto {
 struct SyncPhysicalFacts {
   enum class Status { Complete, Unsupported, AnalysisLimit, InternalError };
@@ -31,6 +32,37 @@ bool supportsLogicalSyncTranslation(func::FuncOp function);
 // Conservative physical overlap with a separately qualified caller contract.
 bool logicalSyncMayAlias(const BaseMemInfo *a, const BaseMemInfo *b,
                          func::FuncOp function, InsertSyncGMAliasMode gm);
+
+struct SyncPhysicalSlotMapping {
+  // Absent for fixed conservative physical intervals. Otherwise bases retains
+  // the allocation's ORIGINAL slot order, even for a literal selector.
+  Value selector;
+  SmallVector<uint64_t> bases;
+  uint64_t bytes = 0;
+  AddressSpace scope = AddressSpace::Zero;
+};
+// Qualify existing translated geometry against actual multi_tile_get lowering.
+// Does not interpret the selector or assume modulo/count bounds. Nullopt keeps
+// the original may-conflict relation. Transparent reshape/bitcast paths retain
+// a conservative whole-slot footprint; other forwarding is unavailable.
+// Bounded by the import's 2048 physical fragments and 32 forwarding hops. No
+// solver is invoked; callers charge the estimate below before qualification.
+std::optional<SyncPhysicalSlotMapping> qualifySyncPhysicalSlots(
+    const BaseMemInfo *memory, const Buffer2MemInfoMap &buffers);
+// Allocation-free bounded preflight accounting, including the root slot table
+// sorted by qualification even when a literal get has only one access range.
+// Counts beyond qualification's hard limit need no larger allocation/sort:
+// qualification declines them before walking those ranges. No buffers mutate.
+uint64_t estimateSyncPhysicalSlotQualificationWork(
+    const BaseMemInfo *memory, const Buffer2MemInfoMap &buffers);
+// Exact geometric overlap for two QUALIFIED mappings, in original slot/index
+// coordinates in deterministic sweep order. Sweep work is
+// O((N+M) log(N+M)+K), where K is returned overlap. Charges setup before
+// allocation and each overlap before appending it. Nullopt means the caller's
+// budget refused; no partial pairs escape. This does not interpret selectors.
+std::optional<std::vector<std::pair<unsigned, unsigned>>> overlappingSyncPhysicalSlots(
+    const SyncPhysicalSlotMapping &a, const SyncPhysicalSlotMapping &b,
+    llvm::function_ref<bool(uint64_t)> spend);
 
 struct SyncPhysicalAccess {
   unsigned phase;

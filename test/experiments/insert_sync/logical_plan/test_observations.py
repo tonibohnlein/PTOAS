@@ -174,5 +174,54 @@ class BooleanReplayTests(unittest.TestCase):
                 self.assertEqual(len(pipes), 1)
                 self.assertIn("PIPE_V" if argument else "PIPE_MTE2", pipes[0])
 
+
+class MultiTileReplayTests(unittest.TestCase):
+    @staticmethod
+    def source(allocation, shape="16x16xf16", selection="%slot"):
+        multi = f"!pto.multi_tile_buf<vec, {shape}, count=2>"
+        tile = f"!pto.tile_buf<vec, {shape}>"
+        return f'''module {{ func.func @f(%slot: index) {{
+          %base = arith.constant 1024 : i64
+          %bad = arith.constant 3 : index
+          %out_addr = arith.constant 4096 : i64
+          %out = pto.alloc_tile addr = %out_addr : {tile}
+          %slots = pto.alloc_multi_tile {allocation} : {multi}
+          %selected = pto.multi_tile_get %slots[{selection}] : {multi} -> {tile}
+          pto.tabs ins(%selected : {tile}) outs(%out : {tile})
+          return
+        }} }}'''
+
+    def selected(self, source, slot):
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            module = ir.Module.parse(source)
+            observer = Boundaries()
+            result = replay(next(children(module.operation)), [slot], observer=observer.observe)
+            # Allocation and selection are descriptors, not asynchronous phases.
+            self.assertEqual(len(observer.before), 1)
+            self.assertEqual(observer.before[0]["lane"], "PIPE_V")
+            self.assertEqual(result["counts"]["pto.multi_tile_get"], 1)
+            return observer.payload[0][1][0]["local_tile"]
+
+    def test_planned_order_and_dynamic_default_slot(self):
+        source = self.source("{pto.multi_buffer_addrs = array<i64: 1024, 0>}")
+        for slot, base in ((0, 1024), (1, 0), (2, 1024), (-1, 1024), (3, 1024)):
+            self.assertEqual(self.selected(source, slot), {"scope": "vec", "begin": base, "bytes": 512})
+
+    def test_explicit_aligned_stride(self):
+        source = self.source("addr = %base")
+        self.assertEqual(self.selected(source, 0)["begin"], 1024)
+        self.assertEqual(self.selected(source, 1)["begin"], 1536)
+
+    def test_unknown_geometry_is_not_replayed(self):
+        with self.assertRaisesRegex(ValueError, "geometry"):
+            self.selected(self.source("addr = %base", shape="8x16xf16"), 0)
+
+    def test_constant_out_of_range_is_not_dynamic_fallback(self):
+        # Native verification rejects this before replay can select a fallback.
+        with self.assertRaisesRegex(ir.MLIRError, "constant slot 3 is out of range"):
+            self.selected(self.source("addr = %base", selection="%bad"), 0)
+
 if __name__ == "__main__":
     unittest.main()

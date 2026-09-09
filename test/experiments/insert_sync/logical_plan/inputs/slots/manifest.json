@@ -1,0 +1,228 @@
+[
+  {
+    "name": "rotating_d2",
+    "file": "rotating_d2.pto",
+    "sha256": "bfb5fecaed45da1d935cfd6b944a9dfebc0c48042abd518a6aaee9ffb7432d3d",
+    "options": {},
+    "status": "PREPARED_NOT_RUN",
+    "replay_bounds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7
+    ],
+    "boolean_values": []
+  },
+  {
+    "name": "rotating_d3",
+    "file": "rotating_d3.pto",
+    "sha256": "8ea8450bb919851504b81ee75f28062293d32370eb89fd953cffd1906f9b7a5b",
+    "options": {
+      "count": 3
+    },
+    "status": "PREPARED_NOT_RUN",
+    "replay_bounds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7
+    ],
+    "boolean_values": []
+  },
+  {
+    "name": "rotating_mask_d2",
+    "file": "rotating_mask_d2.pto",
+    "sha256": "8676e48229210c95a959e232dbc5808c9f94dad5cd54ca71bd5ae986d6798b37",
+    "options": {
+      "mask": true
+    },
+    "status": "PREPARED_NOT_RUN",
+    "replay_bounds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7
+    ],
+    "boolean_values": []
+  },
+  {
+    "name": "rotating_explicit_base_d2",
+    "file": "rotating_explicit_base_d2.pto",
+    "sha256": "abebddf120b7a71e51dbe703af61f65d7995d53f93c6fc866698bb46c6ee04ca",
+    "options": {
+      "explicit_base": true
+    },
+    "status": "PREPARED_NOT_RUN",
+    "replay_bounds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7
+    ],
+    "boolean_values": []
+  },
+  {
+    "name": "rotating_shifted_overlap",
+    "file": "rotating_shifted_overlap.pto",
+    "sha256": "93c4dba3b48b334882f8279a162d6ad7f08d2736d7ae8308097311d6c77b1fd1",
+    "options": {
+      "mapping": [
+        512,
+        1024
+      ]
+    },
+    "status": "PREPARED_NOT_RUN",
+    "replay_bounds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7
+    ],
+    "boolean_values": []
+  },
+  {
+    "name": "rotating_reversed_overlap",
+    "file": "rotating_reversed_overlap.pto",
+    "sha256": "1daaf36adbdb6af44b4b335372b61bccd815294700ac878a2c4595f24d999ea7",
+    "options": {
+      "mapping": [
+        512,
+        0
+      ]
+    },
+    "status": "PREPARED_NOT_RUN",
+    "replay_bounds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7
+    ],
+    "boolean_values": []
+  },
+  {
+    "name": "rotating_additional_reader",
+    "file": "rotating_additional_reader.pto",
+    "sha256": "d58d3b8025905ce17e16c8cc4e314059c9946636f91098f91f9882f9ac9b4151",
+    "options": {
+      "extra_reader": true
+    },
+    "status": "PREPARED_NOT_RUN",
+    "replay_bounds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7
+    ],
+    "boolean_values": []
+  },
+  {
+    "name": "rotating_common_consumer",
+    "file": "rotating_common_consumer.pto",
+    "sha256": "f4261b8d56ff6d09971127469530df4301c36beb5f382a96b8f7cf0e21e8d416",
+    "options": {
+      "common_consumer": true
+    },
+    "status": "PREPARED_NOT_RUN",
+    "replay_bounds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7
+    ],
+    "boolean_values": []
+  },
+  {
+    "name": "rotating_skipped_first_reader",
+    "file": "rotating_skipped_first_reader.pto",
+    "sha256": "1b1007ef97036127d4f523413763233338dcbfb7be942006a7ab5058dbd1c5af",
+    "options": {
+      "skipped_reader": true
+    },
+    "status": "PREPARED_NOT_RUN",
+    "replay_bounds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7
+    ],
+    "boolean_values": [
+      0,
+      1
+    ]
+  },
+  {
+    "name": "rotating_unknown_selector",
+    "file": "rotating_unknown_selector.pto",
+    "sha256": "1001d4a808257c014607033473a0586ac0466ae31b142fcde1308e633425c3b6",
+    "options": {
+      "unknown": true
+    },
+    "status": "PREPARED_NOT_RUN",
+    "replay_bounds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7
+    ],
+    "boolean_values": [
+      0,
+      1
+    ]
+  },
+  {
+    "name": "rotating_out_of_range",
+    "file": "rotating_out_of_range.pto",
+    "sha256": "af2ea5f70ef342a156a68520399336762f354ed68b005902e81e78bdd456b5aa",
+    "options": {
+      "out_of_range": 1
+    },
+    "status": "PREPARED_NOT_RUN",
+    "replay_bounds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7
+    ],
+    "boolean_values": []
+  },
+  {
+    "name": "rotating_negative_selector",
+    "file": "rotating_negative_selector.pto",
+    "sha256": "5e811d30aaf4495e6392f4ad1d0a3df590889afe55c73514f175b9ccc6b43cb0",
+    "options": {
+      "out_of_range": -1
+    },
+    "status": "PREPARED_NOT_RUN",
+    "replay_bounds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7
+    ],
+    "boolean_values": []
+  }
+]

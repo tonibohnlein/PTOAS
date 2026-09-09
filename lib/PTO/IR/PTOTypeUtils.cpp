@@ -10,6 +10,7 @@
 #include "PTO/IR/PTOTypeUtils.h"
 
 #include "PTO/IR/PTO.h"
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -20,6 +21,34 @@ constexpr unsigned kPackedLdgStgBitWidth16 = 16;
 constexpr unsigned kPackedLdgStgBitWidth32 = 32;
 constexpr unsigned kPackedLdgStgBitWidth64 = 64;
 } // namespace
+
+FailureOr<StaticMultiTileSlotLayout>
+mlir::pto::getPTOStaticMultiTileSlotLayout(TileBufType type) {
+  if (!type) return failure();
+  uint64_t bytes = getPTOStorageElemByteSize(type.getElementType());
+  if (!bytes) return failure();
+  for (int64_t dim : type.getShape()) {
+    if (dim <= 0 || bytes > std::numeric_limits<uint64_t>::max() / uint64_t(dim))
+      return failure();
+    bytes *= uint64_t(dim);
+  }
+  uint64_t alignment = 1;
+  if (auto space = dyn_cast_or_null<AddressSpaceAttr>(type.getMemorySpace())) {
+    switch (space.getAddressSpace()) {
+    case AddressSpace::LEFT:
+    case AddressSpace::RIGHT:
+    case AddressSpace::ACC: alignment = 512; break;
+    case AddressSpace::VEC:
+    case AddressSpace::MAT:
+    case AddressSpace::BIAS:
+    case AddressSpace::SCALING: alignment = 32; break;
+    case AddressSpace::GM:
+    case AddressSpace::Zero: break;
+    }
+  }
+  if (bytes > std::numeric_limits<uint64_t>::max() - (alignment - 1)) return failure();
+  return StaticMultiTileSlotLayout{bytes, alignment, ((bytes + alignment - 1) / alignment) * alignment};
+}
 
 bool mlir::pto::isPTOFloat8Type(Type t) {
   return isPTOFloat8E4M3LikeType(t) || isPTOFloat8E5M2LikeType(t);

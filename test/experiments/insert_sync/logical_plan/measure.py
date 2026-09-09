@@ -39,6 +39,51 @@ def children(op):
                 yield child.operation
 
 
+def multi_tile_descriptor(op, operands, properties):
+    """Concrete descriptor selection only; no asynchronous issue or byte access.
+
+    This bounded observer qualifies plain VEC 16x16 f16 slots. Their 512-byte
+    extent is also their 32-byte-aligned explicit-base stride. Other layouts
+    remain unsupported instead of guessing the compiler's physical geometry.
+    """
+    if op.name == "pto.alloc_multi_tile":
+        ty = str(op.results[0].type)
+        match = re.fullmatch(r"!pto\.multi_tile_buf<(?:!pto\.tile_buf<vec,\s*16x16xf16>|vec,\s*16x16xf16),\s*count\s*=\s*(\d+)>", ty)
+        if not match or not 1 <= int(match[1]) <= 64:
+            raise ValueError("unsupported multi-tile replay geometry")
+        count = int(match[1])
+        if "pto.multi_buffer_addrs" in properties:
+            addresses = re.fullmatch(r"array<i64:\s*([\d,\s-]+)>", properties["pto.multi_buffer_addrs"])
+            if not addresses:
+                raise ValueError("unsupported planned multi-tile addresses")
+            bases = [int(value.strip()) for value in addresses[1].split(",")]
+            if len(bases) != count:
+                raise ValueError("multi-tile planned address count mismatch")
+        else:
+            if not operands or not isinstance(operands[0], int) or operands[0] % 32:
+                raise ValueError("unsupported multi-tile explicit base")
+            bases = [operands[0] + 512 * slot for slot in range(count)]
+        if any(base < 0 or base > 2**63 - 1 - 512 for base in bases):
+            raise ValueError("unsupported multi-tile address range")
+        return {"multi_tile": {"scope": "vec", "bases": bases, "bytes": 512}}
+    if op.name == "pto.multi_tile_get":
+        if (len(operands) != 2 or not isinstance(operands[0], dict)
+                or "multi_tile" not in operands[0] or not isinstance(operands[1], int)
+                or not re.fullmatch(r"!pto\.tile_buf<vec,\s*16x16xf16>", str(op.results[0].type))):
+            raise ValueError("unsupported multi-tile selection")
+        mapping, slot = operands[0]["multi_tile"], operands[1]
+        if not 0 <= slot < len(mapping["bases"]):
+            # Constant out-of-range operands are rejected by native lowering.
+            # Dynamic lowering selects slot 0 unless an exact slot 1..N-1 matches.
+            definition = getattr(op.operands[1].owner, "operation", None)
+            if definition is not None and definition.name == "arith.constant":
+                raise ValueError("constant multi-tile slot outside range")
+            slot = 0
+        return {"local_tile": {"scope": mapping["scope"], "begin": mapping["bases"][slot],
+                               "bytes": mapping["bytes"]}}
+    raise ValueError("not a multi-tile descriptor operation")
+
+
 def static_metrics(op):
     """Record placements relative to payload/control, and directed event footprint."""
     counts = Counter()
@@ -192,7 +237,8 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observ
             elif name.startswith("pto.") and not op.regions:
                 # Explicit allowlist prevents unknown sync/helper operations being
                 # misreported as ordinary payload with a successful metric verdict.
-                if name not in {"pto.alloc_tile", "pto.make_tensor_view", "pto.partition_view",
+                if name not in {"pto.alloc_tile", "pto.alloc_multi_tile", "pto.multi_tile_get",
+                                "pto.make_tensor_view", "pto.partition_view",
                                 "pto.tload", "pto.tstore", "pto.textract", "pto.tmov", "pto.tabs",
                                 "pto.tmatmul", "pto.tmatmul.acc", "pto.tsort32", "pto.tmrgsort",
                                 "pto.tgather", "pto.bitcast", "pto.taxpy", "pto.tsetval", "pto.tgetval",
@@ -209,7 +255,8 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observ
                 if name in {"pto.sync.set", "pto.sync.wait"}:
                     counts[f"{name}:{properties['event_id']}"] += 1
                 # Fixed-length symbolic descriptors keep nested expressions bounded.
-                result = fingerprint(signature)
+                result = (multi_tile_descriptor(op, operands, properties)
+                          if name in {"pto.alloc_multi_tile", "pto.multi_tile_get"} else fingerprint(signature))
             else:
                 raise ValueError(f"unsupported operation: {name}")
             if len(op.results) == 1:

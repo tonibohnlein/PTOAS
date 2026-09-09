@@ -31,13 +31,18 @@ int main(int argc,char** argv) {
     Array functions;
     for (auto f:module->getOps<func::FuncOp>()) {
         if (f.isDeclaration()) continue;
-        SmallVector<Operation*> phases;
+        SmallVector<Operation*> phases, scalarQueries;
+        SmallVector<Value> requestedScalars;
         f.walk([&](Operation* op) {
             if (op->getName().getStringRef()=="test.phase" ||
                 op->getName().getStringRef().starts_with("pto.t")) phases.push_back(op);
+            if (op->getName().getStringRef()=="test.scalar" && op->getNumOperands()==1) {
+                scalarQueries.push_back(op);
+                requestedScalars.push_back(op->getOperand(0));
+            }
         });
         if (f->hasAttr("test.reverse_phases")) std::reverse(phases.begin(),phases.end());
-        auto facts=SyncOccurrences::build(f,phases);
+        auto facts=SyncOccurrences::build(f,phases,requestedScalars);
         Object result{{"function",f.getSymName()},{"complete",facts.complete},{"reason",facts.reason}};
         if (facts.complete) {
             Array parameters, points, orders;
@@ -62,6 +67,27 @@ int main(int argc,char** argv) {
             result["parameters"]=std::move(parameters);
             result["points"]=std::move(points);
             result["orders"]=std::move(orders);
+            Array scalars;
+            for (Operation* query:scalarQueries) {
+                auto point=query->getAttrOfType<IntegerAttr>("point");
+                auto lower=query->getAttrOfType<IntegerAttr>("lower");
+                auto upper=query->getAttrOfType<IntegerAttr>("upper");
+                auto allowance=query->getAttrOfType<IntegerAttr>("budget");
+                if (!point || !lower || !upper || point.getInt()<0 ||
+                    uint64_t(point.getInt())>=facts.points.size() ||
+                    (allowance && allowance.getInt()<0)) return 2;
+                RelationQueries queries(allowance ? uint64_t(allowance.getInt()) : 1000000);
+                auto domain=facts.scalarDomain(query->getOperand(0),unsigned(point.getInt()),
+                                               lower.getInt(),upper.getInt(),queries);
+                const char* status=domain.status==QueryStatus::Proved ? "proved" :
+                    domain.status==QueryStatus::NotEstablished ? "not-established" :
+                    domain.status==QueryStatus::Unsupported ? "unsupported" : "budget-exhausted";
+                Object scalar{{"point",point.getInt()},{"lower",lower.getInt()},{"upper",upper.getInt()},
+                              {"status",status},{"reason",domain.reason},{"work",int64_t(queries.work())}};
+                if (domain) scalar["relation"]=testing::encode(*domain.relation);
+                scalars.push_back(std::move(scalar));
+            }
+            result["scalars"]=std::move(scalars);
         }
         functions.push_back(std::move(result));
     }

@@ -1,0 +1,29 @@
+// Prepared input; strict construction and device execution have not yet been tested.
+module attributes {pto.target_arch = "a3"} {
+  func.func @rotating_d3(%src: !pto.ptr<f16>, %n: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %depth = arith.constant 3 : index
+    %c16 = arith.constant 16 : index
+    %base = arith.constant 0 : i64
+    %out0_addr = arith.constant 4096 : i64
+    %out1_addr = arith.constant 4608 : i64
+    %out0 = pto.alloc_tile addr = %out0_addr : !pto.tile_buf<vec, 16x16xf16>
+    %out1 = pto.alloc_tile addr = %out1_addr : !pto.tile_buf<vec, 16x16xf16>
+    %view = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %slots = pto.alloc_multi_tile {pto.multi_buffer_addrs = array<i64: 0, 512, 1024>} : !pto.multi_tile_buf<vec, 16x16xf16, count=3>
+    scf.for %i = %c0 to %n step %c1 {
+      %next = arith.addi %i, %c1 : index
+      %cur_mod = arith.remui %i, %depth : index
+      %next_mod = arith.remui %next, %depth : index
+      %a = pto.multi_tile_get %slots[%cur_mod] : !pto.multi_tile_buf<vec, 16x16xf16, count=3> -> !pto.tile_buf<vec, 16x16xf16>
+      %b = pto.multi_tile_get %slots[%next_mod] : !pto.multi_tile_buf<vec, 16x16xf16, count=3> -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%out0 : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%out1 : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    return
+  }
+}
