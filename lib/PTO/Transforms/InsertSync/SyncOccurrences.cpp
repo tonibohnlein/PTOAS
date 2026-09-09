@@ -8,6 +8,7 @@
 #include "PTO/Transforms/InsertSync/SyncOccurrences.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Analysis/FlatLinearValueConstraints.h"
+#include "mlir/Analysis/Presburger/Simplex.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/IntegerSet.h"
 #include "mlir/IR/Matchers.h"
@@ -80,6 +81,7 @@ class Importer {
     SyncOccurrences result;
     llvm::DenseMap<Value,AffineExpr> expressions;
     llvm::DenseMap<Value,Range> ranges;
+    llvm::DenseMap<Operation*, Alternatives> definitionDomains;
     struct Pending { Operation* op; Alternatives domain; SmallVector<AffineExpr> time; SmallVector<unsigned> enclosing; };
     SmallVector<Pending, 0> pending;
     SmallVector<std::pair<Value, Alternatives>, 0> predicates;
@@ -104,6 +106,46 @@ class Importer {
         auto range=typeRange(value.getType());
         auto expr=getAffineSymbolExpr(result.parameters.size(),context);
         result.parameters.push_back(value); expressions[value]=expr; ranges[value]=range; return expr;
+    }
+    // Interval arithmetic forgets correlations such as lower <= iv < upper.
+    // Recover a sufficient rational enclosure on the scalar's ORIGINAL
+    // definition domain, never its later use domain or the predicate it defines.
+    // A successful enclosure qualifies only this value; operand ranges remain
+    // unchanged. Fresh emitted import repeats this same query.
+    std::optional<Range> definitionRange(Operation* op, AffineExpr expr) {
+        auto found = definitionDomains.find(op);
+        if (found == definitionDomains.end() || coefficientMass(expr) > coefficientLimit)
+            return {};
+        const unsigned n = result.loops.size(), symbols = result.parameters.size();
+        std::optional<Range> total;
+        for (auto constraints : found->second) {
+            constraints.push_back({expr - getAffineDimExpr(n, context), true});
+            auto flat = flatten(constraints, n + 1, symbols, context);
+            if (!flat) return {};
+            for (unsigned s = 0; s < symbols; ++s) {
+                auto r = ranges[result.parameters[s]];
+                SmallVector<llvm::DynamicAPInt> row(flat->getNumCols());
+                row[n + 1 + s] = 1; row.back() = -llvm::DynamicAPInt(int64_t(r.first));
+                flat->addInequality(row);
+                row[n + 1 + s] = -1; row.back() = llvm::DynamicAPInt(int64_t(r.second));
+                flat->addInequality(row);
+            }
+            uint64_t cost = uint64_t(flat->getNumConstraints() + 1) * flat->getNumCols() * 2;
+            if (cost > workLeft) { limit("definition range query budget"); return {}; }
+            workLeft -= cost;
+            Simplex simplex(*flat);
+            if (simplex.isEmpty()) continue;
+            SmallVector<llvm::DynamicAPInt> objective(flat->getNumCols());
+            objective[n] = 1;
+            auto lo = simplex.computeOptimum(Simplex::Direction::Down, objective);
+            auto hi = simplex.computeOptimum(Simplex::Direction::Up, objective);
+            if (!lo.isBounded() || !hi.isBounded()) return {};
+            auto lower = presburger::ceil(*lo), upper = presburger::floor(*hi);
+            if (lower < INT64_MIN || upper > INT64_MAX || lower > upper) return {};
+            Range r{int64_t(lower), int64_t(upper)};
+            total = total ? Range{std::min(total->first, r.first), std::max(total->second, r.second)} : r;
+        }
+        return total;
     }
     std::optional<AffineExpr> expression(Value value) {
         if (!supportedInteger(value.getType())) return {};
@@ -157,11 +199,9 @@ class Importer {
         auto bound=typeRange(value.getType());
         if (isa<arith::AddIOp>(op)) {
             r={x.first+y.first,x.second+y.second};
-            if (r.first<bound.first || r.second>bound.second) return {};
             expr=*a+*b;
         } else if (isa<arith::SubIOp>(op)) {
             r={x.first-y.second,x.second-y.first};
-            if (r.first<bound.first || r.second>bound.second) return {};
             expr=*a-*b;
         }
         else if (isa<arith::MulIOp>(op)) {
@@ -172,7 +212,12 @@ class Importer {
             expr=*a * *k; r={std::min(x.first* *k,x.second* *k),std::max(x.first* *k,x.second* *k)};
         } else if (isa<arith::RemUIOp,arith::RemSIOp,arith::DivUIOp,arith::DivSIOp>(op)) {
             auto k=literal(op->getOperand(1));
-            if (!k || *k<=0 || x.first<0 || massA + 2*__int128(*k) + 1 > coefficientLimit) return {};
+            if (!k || *k<=0 || massA + 2*__int128(*k) + 1 > coefficientLimit) return {};
+            if (x.first < 0) {
+                auto qualified = definitionRange(op, *a);
+                if (!qualified || qualified->first < 0) return {};
+                x = *qualified;
+            }
             bool rem=isa<arith::RemUIOp,arith::RemSIOp>(op);
             expr=rem ? *a % *k : a->floorDiv(*k);
             r=rem ? Range{0,*k-1} : Range{x.first/ *k,x.second/ *k};
@@ -182,7 +227,11 @@ class Importer {
             if (massA + 2*(__int128(*k)+1) + 1 > coefficientLimit) return {};
             expr=*a % (*k+1); r={0,*k};
         } else return {};
-        if (r.first<bound.first || r.second>bound.second) return {};
+        if (r.first<bound.first || r.second>bound.second) {
+            auto qualified = definitionRange(op, expr);
+            if (!qualified || qualified->first<bound.first || qualified->second>bound.second) return {};
+            r = *qualified;
+        }
         expressions[value]=expr; ranges[value]=r; return expr;
     }
     Alternatives product(const Alternatives& a,const Alternatives& b) {
@@ -252,6 +301,9 @@ class Importer {
             if (workLeft == 0)
                 return limit("occurrence import work limit");
             --workLeft;
+            if (isa<arith::AddIOp, arith::SubIOp, arith::RemUIOp, arith::RemSIOp,
+                    arith::DivUIOp, arith::DivSIOp>(op))
+                definitionDomains.try_emplace(&op, domain);
             auto here=time; here.push_back(constant(rank++));
             if (auto loop=dyn_cast<scf::ForOp>(op)) {
                 if (!supportedInteger(loop.getInductionVar().getType()) ||

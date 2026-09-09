@@ -9,6 +9,7 @@
 import unittest
 from measure import children, replay
 from compare_boundaries import Boundaries, compare as compare_boundaries
+from observations import project
 from ptoas.mlir import ir
 from ptoas.mlir.dialects import pto
 
@@ -67,6 +68,41 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(b.before[-1]["completed"], {"PIPE_MTE2": 0})
 
 class BooleanReplayTests(unittest.TestCase):
+    def test_nested_sync_arithmetic_is_private(self):
+        source = '''module { func.func @f(%n: index) {
+          %z = arith.constant 0 : index
+          %two = arith.constant 2 : index
+          %ok = arith.cmpi sge, %n, %z : index
+          scf.if %ok {
+            %r = arith.remsi %n, %two : index
+            %even = arith.cmpi eq, %r, %z : index
+            scf.if %even { pto.barrier <PIPE_V> }
+          }
+          return
+        } }'''
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            module = ir.Module.parse(source)
+            bare = ir.Module.parse('module { func.func @f(%n: index) { return } }')
+            actual = project(module)
+            self.assertEqual(actual["payload"], project(bare)["payload"])
+            self.assertEqual(actual["sync_control"]["arith.remsi"], 1)
+            # A result escaping the region is payload even when the region
+            # also contains synchronization and otherwise pure arithmetic.
+            escapes = ir.Module.parse('''module { func.func @f(%n: index, %ok: i1) -> index {
+              %v = scf.if %ok -> (index) {
+                %two = arith.constant 2 : index
+                %r = arith.remsi %n, %two : index
+                pto.barrier <PIPE_V>
+                scf.yield %r : index
+              } else { scf.yield %n : index }
+              return %v : index
+            } }''')
+            payload = [row.get("op") for row in project(escapes)["payload"]]
+            self.assertIn("arith.remsi", payload)
+            self.assertIn("scf.if", payload)
+
     def test_signed_boolean_minmax(self):
         source = '''module { func.func @f(%p: i1) {
           %true = arith.constant true
