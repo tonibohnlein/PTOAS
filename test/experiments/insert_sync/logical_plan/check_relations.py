@@ -147,6 +147,31 @@ def main():
         run(name, {"op": "contains", "a": supply, "b": requirement}, status=status)
 
     odd = relation(eq=[[1,-1,0,0], [1,0,-2,-1]], locals=1)
+    # A single candidate antecedent serves several optimum queries. These
+    # exercise both signs of equalities, late failures and a fresh candidate
+    # after failure, so reusing its tableau cannot retain a tested RHS row.
+    multi_needed = relation(d=2, r=2, s=1,
+        eq=[[1,0,-1,0,0,0], [0,1,0,-1,0,0], [1,0,0,0,-1,0], [0,1,0,0,1,0]],
+        ge=[[0,0,0,0,1,0], [0,0,0,0,-1,7]])
+    multi_supply = relation(d=2, r=2, s=1,
+        eq=[[1,1,0,0,0,0], [0,0,1,1,0,0], [2,0,-2,0,0,0], [0,-3,0,3,0,0],
+            [1,0,0,0,-1,0]],
+        ge=[[1,0,0,0,0,0], [0,-1,0,0,0,0], [0,0,-1,0,0,7], [0,0,0,1,0,7]])
+    contains_case("reused_simplex_multiple_equalities", multi_supply, multi_needed)
+    late_equality = relation(d=2, r=2, s=1,
+        eq=multi_supply["pieces"][0]["eq"] + [[0,0,0,0,1,-3]],
+        ge=multi_supply["pieces"][0]["ge"])
+    contains_case("reused_simplex_late_equality_failure", late_equality, multi_needed)
+    late_inequality = relation(d=2, r=2, s=1,
+        eq=multi_supply["pieces"][0]["eq"],
+        ge=multi_supply["pieces"][0]["ge"] + [[0,0,0,0,-1,3]])
+    contains_case("reused_simplex_late_inequality_failure", late_inequality, multi_needed)
+    contains_case("reused_simplex_candidate_reset", relation(d=2, r=2, s=1,
+        pieces=late_equality["pieces"] + multi_supply["pieces"]), multi_needed)
+    contains_case("reused_simplex_unbounded_directions", relation(d=2, r=2,
+        eq=[[1,1,-1,-1,0], [2,0,-2,0,0], [0,-3,0,3,0]]),
+        relation(d=2, r=2, eq=[[1,0,-1,0,0], [0,1,0,-1,0]]))
+
     contains_case("different_parity_witnesses", even, odd)
     contains_case("same_parity_redundant_constraints", even,
                   relation(eq=[[1,-1,0,0], [1,0,-2,0]], ge=[[1,0,0,0]], locals=1))
@@ -333,6 +358,173 @@ def main():
                   {"relation": edges([(1, 5)]), "add_handoffs": edges([(1, 3)])}]})
     assert [a["status"] for a in screened_addition["answers"]] == ["not-established", "proved"], screened_addition
 
+    # The explicit relation constructor remains an oracle for an owning lazy
+    # provider. Compare each retained supply, not only the eventual statuses.
+    def provider_parity(name, request, expected):
+        eager = run(name + "_eager", {**request, "record_steps": True})
+        lazy = run(name + "_lazy", {**request, "record_steps": True, "lazy": True})
+        assert eager["answers"] == lazy["answers"], (name, eager, lazy)
+        assert [x["status"] for x in eager["answers"]] == expected, (name, eager)
+        assert len(eager["steps"]) == len(lazy["steps"]) == len(expected)
+        for left, right in zip(eager["steps"], lazy["steps"]):
+            assert isl.map(isl_text(left["supply"])).equal(isl.map(isl_text(right["supply"]))), name
+        return eager, lazy
+
+    provider_parity("provider_empty_and_issue_only", {
+        "op": "completion", "a": edges([]), "issue_order": edges([(0,0),(0,1),(1,1)]),
+        "needs": [{"relation": edges([])}, {"relation": edges([(0,1)])}]},
+        ["proved", "not-established"])
+    provider_parity("provider_addition_to_cached_empty_scope", {
+        "op": "completion", "a": edges([]), "issue_order": edges([(i,i) for i in range(3)]),
+        "needs": [{"relation": edges([(0,2)])},
+                  {"relation": edges([(0,2)]), "add_handoffs": edges([(0,2)])},
+                  {"relation": edges([(0,2)]), "replace_handoffs": edges([])}]},
+        ["not-established", "proved", "not-established"])
+    provider_parity("provider_resumed_and_reset", {
+        "op": "completion", "a": chain, "issue_order": edges([(i,i) for i in range(5)]),
+        "needs": [{"relation": edges([(0,1)]), "rounds": 0},
+                  {"relation": edges([(0,4)]), "rounds": 2},
+                  {"relation": edges([(4,0)])},
+                  {"relation": edges([(0,4)]), "replace_handoffs": edges([(1,2),(2,3),(3,4)])},
+                  {"relation": edges([(0,4)]), "add_handoffs": edges([(0,1)])}]},
+        ["proved", "proved", "not-established", "not-established", "proved"])
+    provider_parity("provider_guarded_addition", {
+        "op": "completion", "a": guarded_edges([(0,1,0),(0,1,1)]),
+        "issue_order": guarded_edges([(i,i,g) for i in range(3) for g in (0,1)]),
+        "needs": [{"relation": guarded_edges([(0,2,0),(0,2,1)])},
+                  {"relation": guarded_edges([(0,2,1)]), "add_handoffs": guarded_edges([(1,2,1)])},
+                  {"relation": guarded_edges([(0,2,0)])}]},
+        ["not-established", "proved", "not-established"])
+    provider_parity("provider_unknown_scope_narrow_then_broad", {
+        "op": "completion", "a": positive_shift, "issue_order": diagonal, "global_order": through,
+        "needs": [{"relation": relation(eq=[[1,-1,1]], ge=[[1,0,0],[0,-1,4]])},
+                  {"relation": positive_shift},
+                  {"relation": relation(eq=[[1,-1,1]], ge=[[1,0,2]])}]},
+        ["proved", "proved", "not-established"])
+    provider_parity("provider_screen_is_not_completion", {
+        "op": "completion", "a": edges([(3,5)]),
+        "issue_order": edges([(i,i) for i in (1,3,5)]), "global_order": through,
+        "needs": [{"relation": edges([(1,5)])},
+                  {"relation": edges([(1,5)]), "add_handoffs": edges([(1,3)])}]},
+        ["not-established", "proved"])
+    provider_parity("provider_ids_are_not_schedule_order", {
+        "op": "completion", "a": edges([(9,3),(3,1)]), "issue_order": edges([(i,i) for i in (9,3,1)]),
+        "global_order": edges([(9,9),(9,3),(9,1),(3,3),(3,1),(1,1)]),
+        "needs": [{"relation": edges([(9,1)])}, {"relation": edges([(1,9)])}]},
+        ["proved", "not-established"])
+    # Unknown ORDER coordinates must remain candidates for a fixed query, and
+    # unknown query coordinates must select all applicable fixed-order blocks.
+    wildcard_order = relation(pieces=diagonal["pieces"] + edges([(0,2)])["pieces"])
+    provider_parity("provider_wildcard_order", {
+        "op": "completion", "a": edges([(2,3)]), "issue_order": wildcard_order,
+        "needs": [{"relation": edges([(0,3)])}, {"relation": edges([(2,3)])}]},
+        ["proved", "proved"])
+    provider_parity("provider_wildcard_query", {
+        "op": "completion", "a": edges([(0,1),(2,3)]),
+        "issue_order": edges([(i,i) for i in range(4)]),
+        "needs": [{"relation": relation(eq=[[1,-1,1]], ge=[[1,0,0],[-1,0,2]])}]},
+        ["not-established"])
+
+    # A finite independent occurrence model with phase, outer invocation, inner
+    # iteration, a trip parameter and a skipped-reader parameter. Returning to
+    # the same phase in another invocation must not reuse the first query's
+    # narrower guard/domain. Compute expected supply by ordinary tuple closure.
+    def occurrence_edges(values):
+        pieces = []
+        for source, target, trips, take in values:
+            equalities = []
+            for column, value in enumerate((*source, *target, trips, take)):
+                row = [0] * 9
+                row[column], row[-1] = 1, -value
+                equalities.append(row)
+            pieces.append({"locals": 0, "eq": equalities, "ge": []})
+        return relation(d=3, r=3, s=2, pieces=pieces)
+
+    occurrence_order, occurrence_global, occurrence_handoffs, expected_supply = [], [], [], set()
+    for trips in (0,1,2):
+        for take in (0,1):
+            points = [(phase, outer, inner) for outer in range(2) for phase in range(3)
+                      for inner in (range(trips) if phase == 1 and take else (() if phase == 1 else (0,)))]
+            schedule = lambda point: (point[1], point[0], point[2])
+            order = {(a,b) for a in points for b in points if a[0] == b[0] and schedule(a) <= schedule(b)}
+            all_order = {(a,b) for a in points for b in points if schedule(a) <= schedule(b)}
+            handoffs = ({((0,o,0),(1,o,0)) for o in range(2)} |
+                        {((1,o,trips-1),(2,o,0)) for o in range(2)}) if trips and take else set()
+            compose = lambda a,b: {(x,z) for x,y in a for v,z in b if y == v}
+            supplied = compose(compose(order, handoffs), order)
+            while True:
+                next_supply = supplied | compose(supplied, supplied)
+                if next_supply == supplied: break
+                supplied = next_supply
+            occurrence_order.extend((a,b,trips,take) for a,b in sorted(order))
+            occurrence_global.extend((a,b,trips,take) for a,b in sorted(all_order))
+            occurrence_handoffs.extend((a,b,trips,take) for a,b in sorted(handoffs))
+            expected_supply.update((a,b,trips,take) for a,b in supplied)
+    requested_occurrences = [((0,0,0),(2,0,0),1,1), ((0,1,0),(2,1,0),2,1),
+                             ((0,0,0),(2,0,0),0,1), ((0,0,0),(2,0,0),2,0),
+                             ((0,1,0),(2,0,0),2,1), ((0,0,0),(2,1,0),2,1)]
+    provider_parity("provider_nested_skipped_and_zero", {
+        "op": "completion", "a": occurrence_edges(occurrence_handoffs),
+        "issue_order": occurrence_edges(occurrence_order), "global_order": occurrence_edges(occurrence_global),
+        "needs": [{"relation": occurrence_edges([item])} for item in requested_occurrences]},
+        ["proved" if item in expected_supply else "not-established" for item in requested_occurrences])
+
+    # Warm both caches, then challenge one narrow query in an order universe
+    # with 1,024 independent phase blocks. The per-query metadata probes must
+    # depend on requested endpoint buckets, not scan the universe again.
+    eager, lazy = provider_parity("provider_sparse_lookup_work", {
+        "op": "completion", "a": edges([(0,1)]),
+        "issue_order": edges([(i,i) for i in range(1024)]),
+        "needs": [{"relation": edges([(0,1)])}, {"relation": edges([(0,1)])}]},
+        ["proved", "proved"])
+    assert eager["steps"][1]["index_lookups"] - eager["steps"][0]["index_lookups"] <= 4, eager["steps"]
+    assert lazy["steps"][1]["provider_block_lookups"] - lazy["steps"][0]["provider_block_lookups"] <= 2, lazy["steps"]
+    assert lazy["steps"][1]["provider_returned_pieces"] - lazy["steps"][0]["provider_returned_pieces"] == 1
+    independent = edges([(2*i,2*i+1) for i in range(16)])
+    eager, lazy = provider_parity("provider_sparse_rows_many_endpoints", {
+        "op": "completion", "a": independent,
+        "issue_order": edges([(i,i) for i in range(1024)]),
+        "needs": [{"relation": independent}]}, ["proved"])
+    assert eager["steps"][0]["index_lookups"] <= 64, eager["steps"]
+    assert lazy["steps"][0]["provider_block_lookups"] <= 64, lazy["steps"]
+    for fault in ("unsupported", "budget-exhausted"):
+        answer = run("provider_reports_" + fault, {
+            "op": "completion", "a": edges([(0,1)]), "issue_order": diagonal, "lazy": True,
+            "provider_fault": fault, "needs": [{"relation": edges([(0,1)])}]})
+        assert answer["answers"][0]["status"] == fault, answer
+
+    # Structural deduplication must retain distinct pieces and confirm equality
+    # inside fingerprint buckets. Repeated pieces provide actual duplicate
+    # candidates; the independent isl union checks semantic preservation.
+    duplicates = edges([(i,i) for i in range(256)] * 3)
+    dedup = run("normalize_fingerprinted_pieces", {"op": "normalize", "a": duplicates},
+                str(isl.map(isl_text(duplicates))))
+    assert len(dedup["relation"]["pieces"]) == 256, dedup
+    assert dedup["work"] <= 32 * len(duplicates["pieces"]), dedup["work"]
+    endpoint_scaling = []
+    for size in (32,128,512):
+        selected = relation(d=0, pieces=[{"locals":0,"eq":[[1,-i]],"ge":[]} for i in range(size)])
+        ordered = edges([(i,i) for i in range(size)])
+        answer = run(f"indexed_endpoint_scaling_{size}", {
+            "op": "restrict_endpoints", "a": ordered, "sources": selected, "targets": selected},
+            str(isl.map(isl_text(ordered))))
+        assert answer["endpoint_comparisons"] == 2 * size, answer
+        assert answer["work"] <= 25 * size + 10, answer
+        endpoint_scaling.append({"pieces": size, "comparisons": answer["endpoint_comparisons"], "work": answer["work"]})
+    # The fast first-coordinate lookup must retain tests of OTHER coordinates;
+    # a wildcard in either order or candidate set must remain conservative.
+    two_coordinates = relation(d=2,r=2, eq=[[1,0,0,0,0],[0,1,0,0,0],[0,0,1,0,-1],[0,0,0,1,0]])
+    wrong_inner = relation(d=0,r=2, eq=[[1,0,0],[0,1,-1]])
+    target_point = relation(d=0,r=2, eq=[[1,0,-1],[0,1,0]])
+    run("indexed_endpoint_checks_full_coordinates", {
+        "op":"restrict_endpoints", "a":two_coordinates, "sources":wrong_inner, "targets":target_point},
+        "{[d0,d1] -> [r0,r1]: false}")
+    unknown_phase = relation(d=0,r=2, eq=[[0,1,0]])
+    run("indexed_endpoint_unknown_candidate", {
+        "op":"restrict_endpoints", "a":two_coordinates, "sources":unknown_phase, "targets":target_point},
+        str(isl.map(isl_text(two_coordinates))))
+    (args.output / "endpoint_scaling.json").write_text(json.dumps(endpoint_scaling, indent=2) + "\n")
+
     answer = run("continued_completion_query", {"op":"completion", "a":primitive, "needs":[
         {"relation":edges([(0,1)]), "rounds":0},
         {"relation":edges([(0,3)]), "rounds":2},
@@ -354,6 +546,152 @@ def main():
                          ge=[[1,0,0,0,0],[0,-1,1,0,-1],[-1,1,0,0,-1]])
         run(f"slot_count_{slots}", {"op":"latest","a":value,"b":before_param},
             f"[p0] -> {{[d0] -> [r0]: 0<=d0 and d0=r0-{slots} and r0<p0}}")
+    # The prepared RHS is an owning, immutable operand. Compare every result
+    # and exact budget charge with the uncached implementation, including
+    # wildcard coordinates, shifted division witnesses and RHS replacement.
+    def cached_composition(name, rhs, inputs):
+        request = {"op": "compose_sequence", "a": inputs[0]["left"], "b": rhs, "inputs": inputs}
+        ordinary = run(name + "_ordinary", request)
+        cached = run(name + "_prepared", dict(request, prepared=True))
+        current = rhs
+        assert len(ordinary["compose_steps"]) == len(inputs) == len(cached["compose_steps"])
+        for item, plain, fast in zip(inputs, ordinary["compose_steps"], cached["compose_steps"]):
+            current = item.get("rhs", current)
+            assert (plain["status"], plain["reason"], plain["work"]) == (fast["status"], fast["reason"], fast["work"])
+            assert plain["status"] == "proved", (name, plain, fast)
+            wanted = isl.map(isl_text(item["left"])).then(isl.map(isl_text(current)))
+            assert isl.map(isl_text(plain["relation"])).equal(wanted), (name, plain)
+            assert isl.map(isl_text(fast["relation"])).equal(wanted), (name, fast)
+        return ordinary, cached
+
+    plain, cached = cached_composition("prepared_wildcard_and_rhs_reset", diagonal, [
+        {"left": edges([(0,0)])}, {"left": even}, {"left": diagonal},
+        {"left": diagonal, "rhs": shift}, {"left": shift},
+        {"left": diagonal, "rhs": even}, {"left": shift}])
+    assert plain["composition_index_builds"] == 7, plain
+    assert cached["composition_index_builds"] == 3, cached
+    cached_composition("prepared_guarded_invocations", guarded_edges([(0,1,0),(0,1,1)]), [
+        {"left": guarded_edges([(0,0,0)])},
+        {"left": guarded_edges([(0,0,1)])},
+        {"left": guarded_edges([(0,0,0),(0,0,1)])}])
+    for name, left, right, budget, outcome in (
+        ("empty", edges([]), diagonal, 8000000, "proved"),
+        ("exhausted", even, diagonal, 0, "budget-exhausted"),
+        ("incompatible", diagonal, target_before, 8000000, "unsupported")):
+        ordinary = run("prepared_" + name + "_ordinary", {"op":"compose", "a":left, "b":right,
+            "budget":budget}, status=outcome)
+        cached = run("prepared_" + name + "_cached", {"op":"compose", "a":left, "b":right,
+            "budget":budget, "prepared":True}, status=outcome)
+        assert ordinary == cached, (name, ordinary, cached)
+
+    preprocessing = []
+    for size in (8,32,128):
+        handoffs = edges([(2*i,2*i+1) for i in range(size)])
+        answer = run(f"source_scope_preprocessing_{size}", {
+            "op":"completion", "a":handoffs, "issue_order":edges([(i,i) for i in range(2*size)]),
+            "lazy":True, "record_steps":True,
+            "needs":[{"relation":edges([(2*i,2*i+1)])} for i in range(size)]})
+        assert all(x["status"] == "proved" for x in answer["answers"]), answer
+        # One full primitive index plus one one-piece target order per query;
+        # one primitive endpoint set plus one reached endpoint per source scope.
+        assert answer["composition_index_builds"] == size + 1, answer
+        assert answer["composition_index_pieces"] == 2 * size, answer
+        assert answer["endpoint_projections"] == size + 1, answer
+        assert answer["endpoint_projection_pieces"] == 2 * size, answer
+        for i, step in enumerate(answer["steps"]):
+            assert isl.map(isl_text(step["supply"])).equal(isl.map(isl_text(edges([(2*i,2*i+1)])))), step
+        preprocessing.append({"independent_sources":size, "index_builds":answer["composition_index_builds"],
+            "index_piece_visits":answer["composition_index_pieces"],
+            "endpoint_projections":answer["endpoint_projections"],
+            "projection_input_pieces":answer["endpoint_projection_pieces"], "work":answer["work"]})
+    (args.output / "preprocessing_scaling.json").write_text(json.dumps(preprocessing, indent=2) + "\n")
+
+    # Common rows are tested only after local witnesses have been aligned.
+    # Check exact integer difference independently, including the sign change
+    # allowed for equalities and the sign change forbidden for inequalities.
+    def common_difference(name, left, right, minimum_skipped=0):
+        expected = isl.map(isl_text(left)) - isl.map(isl_text(right))
+        answer = run(name, {"op":"subtract", "a":left, "b":right}, str(expected))
+        assert answer["difference_common_rows"] >= minimum_skipped, answer
+        return answer
+    common_left = relation(d=2,r=2,s=1,
+        eq=[[1,0,0,0,0,-7],[0,0,1,0,0,-11],[0,1,0,-1,0,0]],
+        ge=[[0,1,0,0,0,0],[0,-1,0,0,1,-1]])
+    common_right = relation(d=2,r=2,s=1,
+        eq=[[-x for x in row] for row in common_left["pieces"][0]["eq"]],
+        ge=common_left["pieces"][0]["ge"]+[[0,1,0,0,0,-4]])
+    common_difference("difference_common_guarded_invocation_rows", common_left, common_right, 3)
+    common_difference("difference_all_rows_already_hold", common_left, common_left, 3)
+    common_difference("difference_opposite_inequality_is_not_common",
+        relation(eq=[[1,-1,0]],ge=[[1,0,0]]),
+        relation(eq=[[-1,1,0]],ge=[[-1,0,0]]), 1)
+    common_difference("difference_total_floor_not_tightened_membership", quotient_eq, tightened)
+    common_difference("difference_shifted_floor_keeps_original_witness", even, odd)
+    common_difference("difference_union_updates_prefix_rows", common_left, relation(d=2,r=2,s=1,
+        pieces=common_right["pieces"]+[{
+            "locals":0, "eq":common_left["pieces"][0]["eq"],
+            "ge":common_left["pieces"][0]["ge"]+[[0,-1,0,0,0,1]]}]), 3)
+
+    # Endpoint indexing is only a necessary fixed-coordinate filter. Unknown
+    # source/target coordinates retain wildcard buckets, invocation coordinates
+    # still participate in the final comparison, and source/sink dimensions are
+    # never conflated for Presburger sets.
+    indexed_cases = [
+        ("supply_unknown_source", edges([(2,5)]), relation(eq=[[0,1,-5]])),
+        ("supply_unknown_target", edges([(2,5)]), relation(eq=[[1,0,-2]])),
+        ("supply_unknown_both", edges([(2,5)]), diagonal),
+        ("requirement_unknown_source", relation(eq=[[0,1,-5]]), edges([(2,5),(3,5)])),
+        ("requirement_unknown_target", relation(eq=[[1,0,-2]]), edges([(2,5),(2,6)])),
+        ("requirement_unknown_both", diagonal, edges([(2,2),(3,3)])),
+        ("guard_symbols_remain_exact", guarded_edges([(2,5,0)]), guarded_edges([(2,5,1)])),
+        ("other_invocation_coordinate", relation(d=2,r=2,
+            eq=[[1,0,0,0,-2],[0,1,0,0,-1],[0,0,1,0,-5],[0,0,0,1,-1]]),
+            relation(d=2,r=2, eq=[[1,0,0,0,-2],[0,1,0,0,0],[0,0,1,0,-5],[0,0,0,1,0]])),
+        ("set_has_no_source_coordinate", relation(d=0,eq=[[1,-2]]), relation(d=0,eq=[[1,-3]])),
+        ("domain_has_no_target_coordinate", relation(r=0,eq=[[1,-2]]), relation(r=0,eq=[[1,-3]])),
+    ]
+    for name, requirement, supply in indexed_cases:
+        run("indexed_difference_" + name, {"op":"subtract", "a":requirement, "b":supply},
+            str(isl.map(isl_text(requirement)) - isl.map(isl_text(supply))))
+        contains_case("indexed_contains_" + name, supply, requirement)
+    # A wildcard family preceding a fixed-key family must retain that priority.
+    # The eighth compatible failed query still exhausts the same cheap attempt
+    # population, then the complete exact subtraction proves the union.
+    priorities = relation(pieces=[relation(eq=[[1,-1,j]])["pieces"][0] for j in range(1,10)] +
+                         edges([(7,7)])["pieces"])
+    priority = run("indexed_contains_preserves_candidate_budget_order", {
+        "op":"contains", "a":priorities, "b":edges([(7,7)])})
+    assert priority["containment_endpoint_comparisons"] == 9, priority
+    assert priority["difference_endpoint_comparisons"] == 10, priority
+
+    endpoint_population_scaling = []
+    for size in (32,128,512):
+        left = edges([(i,0) for i in range(size)])
+        unrelated = edges([(i+size,0) for i in range(size)])
+        disjoint = run(f"indexed_difference_disjoint_population_{size}",
+            {"op":"subtract", "a":left, "b":unrelated}, str(isl.map(isl_text(left))))
+        matched = run(f"indexed_difference_matched_population_{size}",
+            {"op":"subtract", "a":left, "b":left}, "{[d0] -> [r0]: false}")
+        supplied = relation(pieces=unrelated["pieces"]+list(reversed(left["pieces"])))
+        covered = run(f"indexed_contains_matched_population_{size}",
+            {"op":"contains", "a":supplied, "b":left})
+        assert disjoint["difference_endpoint_comparisons"] == 0, disjoint
+        assert disjoint["relation_endpoint_index_pieces"] == size, disjoint
+        assert matched["difference_endpoint_comparisons"] == size, matched
+        assert matched["relation_endpoint_index_pieces"] == size, matched
+        assert covered["containment_endpoint_comparisons"] == size, covered
+        assert covered["relation_endpoint_index_pieces"] == 2*size, covered
+        assert covered["difference_endpoint_comparisons"] == 0, covered
+        for answer in (disjoint,matched,covered):
+            assert answer["relation_endpoint_bucket_lookups"] == 4*size, answer
+        endpoint_population_scaling.append({"required_pieces":size,
+            "difference_disjoint_comparisons":disjoint["difference_endpoint_comparisons"],
+            "difference_matched_comparisons":matched["difference_endpoint_comparisons"],
+            "contains_matched_comparisons":covered["containment_endpoint_comparisons"],
+            "contains_index_input_pieces":covered["relation_endpoint_index_pieces"],
+            "bucket_lookups":covered["relation_endpoint_bucket_lookups"]})
+    (args.output / "endpoint_population_scaling.json").write_text(json.dumps(endpoint_population_scaling,indent=2)+"\n")
+
     summary = {"status":"passed", "checks":results, "isl_version":isl.version,
                "driver_sha256":hashlib.sha256(args.driver.read_bytes()).hexdigest()}
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")

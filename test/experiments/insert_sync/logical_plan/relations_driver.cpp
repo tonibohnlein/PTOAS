@@ -11,6 +11,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
+#include <set>
 
 using namespace mlir::pto::logical_sync;
 using namespace mlir::presburger;
@@ -64,6 +65,100 @@ static const char* status(QueryStatus value) {
     }
     std::abort();
 }
+namespace {
+using Coordinate = std::optional<llvm::DynamicAPInt>;
+struct ProviderCounts {
+    uint64_t calls = 0, globalCalls = 0, blockLookups = 0, returnedPieces = 0;
+};
+// Independent test provider: retain an immutable dictionary of supplied order
+// pieces and materialize only candidate source/target buckets. The native
+// consumer can generate those buckets directly from its occurrence facts.
+struct TestOrderProvider {
+    using Targets = std::map<Coordinate, Relation>;
+    using Blocks = std::map<Coordinate, Targets>;
+    PresburgerSpace space;
+    Blocks lane, global;
+    bool hasGlobal = false;
+    static Coordinate coordinate(const IntegerRelation& piece, unsigned column, unsigned count) {
+        if (!count) return {};
+        for (unsigned i = 0; i < piece.getNumEqualities(); ++i) {
+            auto row = piece.getEquality(i);
+            if (row[column] != 1 && row[column] != -1) continue;
+            bool isolated = true;
+            for (unsigned j = 0; j < piece.getNumVars(); ++j)
+                if (j != column && row[j] != 0) isolated = false;
+            if (isolated) return row[column] == 1 ? -row.back() : row.back();
+        }
+        return {};
+    }
+    static Blocks index(const Relation& order) {
+        Blocks result;
+        for (const auto& piece : order.getAllDisjuncts()) {
+            auto source = coordinate(piece, 0, piece.getNumDomainVars());
+            auto target = coordinate(piece, piece.getNumDomainVars(), piece.getNumRangeVars());
+            auto [it, inserted] = result[source].try_emplace(target, Relation::getEmpty(order.getSpace()));
+            (void)inserted;
+            it->second.unionInPlace(Relation(piece));
+        }
+        return result;
+    }
+    TestOrderProvider(const Relation& order, const std::optional<Relation>& all)
+        : space(order.getSpace()), lane(index(order)), hasGlobal(bool(all)) {
+        if (all) global = index(*all);
+    }
+    RelationResult select(bool all, const PresburgerSet& source, const PresburgerSet& target,
+                          RelationQueries& queries, ProviderCounts& counts) const {
+        ++counts.calls;
+        counts.globalCalls += all;
+        if (all && !hasGlobal) return {QueryStatus::Unsupported, {}, "test provider has no global order"};
+        auto keys = [](const PresburgerSet& set) {
+            std::set<Coordinate> result;
+            for (const auto& piece : set.getAllDisjuncts())
+                result.insert(coordinate(piece, 0, piece.getNumRangeVars()));
+            return result;
+        };
+        auto from = keys(source), to = keys(target);
+        bool anySource = from.count(std::nullopt), anyTarget = to.count(std::nullopt);
+        from.insert(std::nullopt);
+        to.insert(std::nullopt);
+        auto result = Relation::getEmpty(space);
+        auto takeGroup = [&](const Targets& group) {
+            auto take = [&](const Relation& block) {
+                result.unionInPlace(block);
+                counts.returnedPieces += block.getNumDisjuncts();
+            };
+            if (anyTarget || group.size() < to.size()) {
+                for (const auto& [key, block] : group) {
+                    ++counts.blockLookups;
+                    if (!queries.spend(1)) return false;
+                    if (anyTarget || to.count(key)) take(block);
+                }
+            } else {
+                for (const auto& key : to) {
+                    ++counts.blockLookups;
+                    if (!queries.spend(1)) return false;
+                    if (auto found = group.find(key); found != group.end()) take(found->second);
+                }
+            }
+            return true;
+        };
+        const auto& blocks = all ? global : lane;
+        if (anySource) {
+            for (const auto& [key, group] : blocks) {
+                (void)key;
+                if (!takeGroup(group)) return {QueryStatus::BudgetExhausted, {}, "test provider budget"};
+            }
+        } else {
+            for (const auto& key : from) {
+                if (!queries.spend(1)) return {QueryStatus::BudgetExhausted, {}, "test provider budget"};
+                if (auto found = blocks.find(key); found != blocks.end())
+                    if (!takeGroup(found->second)) return {QueryStatus::BudgetExhausted, {}, "test provider budget"};
+            }
+        }
+        return queries.restrictEndpoints(result, source, target);
+    }
+};
+} // namespace
 int main() {
     auto input = llvm::MemoryBuffer::getSTDIN();
     if (!input) return 2;
@@ -77,13 +172,26 @@ int main() {
     Object output;
     if (op == "completion") {
         CompletionQueries completion(a);
+        auto counts = std::make_shared<ProviderCounts>();
         if (auto* order = root->getObject("issue_order")) {
             std::optional<Relation> global;
             if (auto* value = root->getObject("global_order"))
                 global = read(*value);
-            completion = CompletionQueries(a, read(*order), std::move(global));
+            if (root->getBoolean("lazy").value_or(false)) {
+                auto provider = std::make_shared<const TestOrderProvider>(read(*order), global);
+                std::optional<QueryStatus> fault;
+                if (auto requested = root->getString("provider_fault"))
+                    fault = *requested == "budget-exhausted" ? QueryStatus::BudgetExhausted : QueryStatus::Unsupported;
+                completion = CompletionQueries(a,
+                    [provider, counts, fault](bool all, const PresburgerSet& source,
+                                              const PresburgerSet& target, RelationQueries& queries) {
+                        if (fault) return RelationResult{*fault, {}, "injected test provider failure"};
+                        return provider->select(all, source, target, queries, *counts);
+                    }, bool(global));
+            } else completion = CompletionQueries(a, read(*order), std::move(global));
         }
         Array answers;
+        Array steps;
         for (const auto& value : *root->getArray("needs")) {
             const auto& need = *value.getAsObject();
             if (auto* handoffs = need.getObject("replace_handoffs"))
@@ -98,13 +206,52 @@ int main() {
             auto answer = completion.prove(read(*need.getObject("relation")), queries,
                                           need.getInteger("rounds").value_or(8));
             answers.push_back(Object{{"status", status(answer)}, {"fixed", completion.fixedPoint()}});
+            if (root->getBoolean("record_steps").value_or(false))
+                steps.push_back(Object{{"supply", write(completion.supply())}, {"work", int64_t(queries.work())},
+                    {"index_lookups", int64_t(completion.orderIndexLookups())},
+                    {"endpoint_comparisons", int64_t(queries.endpointComparisonCount())},
+                    {"composition_index_builds", int64_t(queries.compositionIndexBuildCount())},
+                    {"composition_index_pieces", int64_t(queries.compositionIndexPieceCount())},
+                    {"endpoint_projections", int64_t(queries.endpointProjectionCount())},
+                    {"endpoint_projection_pieces", int64_t(queries.endpointProjectionPieceCount())},
+                    {"provider_calls", int64_t(counts->calls)}, {"provider_global_calls", int64_t(counts->globalCalls)},
+                    {"provider_block_lookups", int64_t(counts->blockLookups)},
+                    {"provider_returned_pieces", int64_t(counts->returnedPieces)}});
         }
         output["answers"] = std::move(answers);
+        if (root->getBoolean("record_steps").value_or(false)) output["steps"] = std::move(steps);
         output["relation"] = write(completion.supply());
     } else {
-        auto b = read(*root->getObject("b"));
+        auto b = root->getObject("b") ? read(*root->getObject("b")) : a;
         RelationResult result;
-        if (op == "compose") result = queries.compose(a, b);
+        if (op == "normalize") result = queries.normalize(a);
+        else if (op == "restrict_endpoints")
+            result = queries.restrictEndpoints(a, PresburgerSet(read(*root->getObject("sources"))),
+                                               PresburgerSet(read(*root->getObject("targets"))));
+        else if (op == "compose" || op == "compose_sequence") {
+            RelationQueries::CompositionRHS rhs(b);
+            bool prepared = root->getBoolean("prepared").value_or(false);
+            if (op == "compose") result = prepared ? queries.compose(a, rhs) : queries.compose(a, b);
+            else {
+                Array steps;
+                for (const auto& value : *root->getArray("inputs")) {
+                    const auto& input = *value.getAsObject();
+                    if (auto* replacement = input.getObject("rhs")) {
+                        b = read(*replacement);
+                        rhs = RelationQueries::CompositionRHS(b);
+                    }
+                    auto left = read(*input.getObject("left"));
+                    result = prepared ? queries.compose(left, rhs) : queries.compose(left, b);
+                    Object step{{"status", status(result.status)}, {"reason", result.reason},
+                        {"work", int64_t(queries.work())},
+                        {"composition_index_builds", int64_t(queries.compositionIndexBuildCount())},
+                        {"composition_index_pieces", int64_t(queries.compositionIndexPieceCount())}};
+                    if (result.relation) step["relation"] = write(*result.relation);
+                    steps.push_back(std::move(step));
+                }
+                output["compose_steps"] = std::move(steps);
+            }
+        }
         else if (op == "subtract") result = queries.subtract(a, b);
         else if (op == "latest") result = queries.latestSources(a, b);
         else if (op == "first") result = queries.firstTargets(a, b);
@@ -116,5 +263,15 @@ int main() {
         if (result.relation) output["relation"] = write(*result.relation);
     }
     output["work"] = int64_t(queries.work());
+    output["endpoint_comparisons"] = int64_t(queries.endpointComparisonCount());
+    output["composition_index_builds"] = int64_t(queries.compositionIndexBuildCount());
+    output["composition_index_pieces"] = int64_t(queries.compositionIndexPieceCount());
+    output["endpoint_projections"] = int64_t(queries.endpointProjectionCount());
+    output["endpoint_projection_pieces"] = int64_t(queries.endpointProjectionPieceCount());
+    output["difference_common_rows"] = int64_t(queries.differenceCommonRowCount());
+    output["relation_endpoint_index_pieces"] = int64_t(queries.relationEndpointIndexPieceCount());
+    output["relation_endpoint_bucket_lookups"] = int64_t(queries.relationEndpointBucketLookupCount());
+    output["difference_endpoint_comparisons"] = int64_t(queries.differenceEndpointComparisonCount());
+    output["containment_endpoint_comparisons"] = int64_t(queries.containmentEndpointComparisonCount());
     llvm::outs() << llvm::json::Value(std::move(output)) << "\n";
 }
