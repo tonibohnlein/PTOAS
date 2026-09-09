@@ -114,3 +114,25 @@ host-wall timing, binary deduplication and balanced arm rotation. Historical
 device results do not qualify new output. Known Conv2D, manual TopK and
 FlashAttention exclusions remain explicit. Local acceptance and device
 qualification are separate outcomes.
+
+## Native occurrence import progress
+
+`SyncOccurrences` imports caller-identified physical program points before any
+synchronization is selected. It preserves original loop coordinates, guarded
+execution domains, and lexicographic schedules while keeping physical IDs
+independent of schedule order. Positive constant steps retain exact integer
+congruences. Unsupported arithmetic, integer overflow, unavailable loop-local
+facts, duplicate physical phases, and bounded-work exhaustion are refused.
+
+Root-block scalar parameters identify actual SSA values. Their unmodeled
+arithmetic correlations are conservatively forgotten; these parameters are not
+new caller promises. Reconstruction must preserve their bindings. The existing
+string-based reference exporter has not yet migrated to this shared result.
+
+The focused native driver passed 15 cases: Boolean signedness and negation,
+extreme integer bounds, rejected induction/coefficient overflow, equivalent
+parity forms, nonunit steps, nested invocations, and reversed caller phase IDs.
+It also checks all 1,936 ordered phase pairs of unchanged online softmax against
+independently specified isl relations, including the zero-trip domain.
+These results validate occurrence import; they do not establish effect
+precision, handoff construction, key reuse, or milestone-one completion.

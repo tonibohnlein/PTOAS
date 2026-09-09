@@ -149,6 +149,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/HandoffFacts.cpp
   InsertSync/HandoffPlanning.cpp
   InsertSync/LogicalSyncRelations.cpp
+  InsertSync/SyncOccurrences.cpp
   InsertSync/LifecycleSynthesis.cpp
   InsertSync/LifecycleBoundarySynthesis.cpp
   InsertSync/StorageFrontierAccess.cpp

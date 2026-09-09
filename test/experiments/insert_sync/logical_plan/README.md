@@ -26,3 +26,18 @@ retention, conditional first acquisitions, nested reader boundaries, exact
 integer existential constraints, wrong invocations, absent maxima, continued
 completion queries, selected-barrier feedback and exhausted/incompatible queries.
 They do not establish native footprint correctness or emitted event safety.
+
+The native occurrence test parses actual MLIR and retains caller phase IDs:
+
+```sh
+cmake --build "$BUILD" --parallel 2 --target pto-sync-occurrences-test
+python test/experiments/insert_sync/logical_plan/check_occurrences.py \
+  --driver "$BUILD/tools/pto-test-opt/pto-sync-occurrences-test" \
+  --output "$NEW_OCCURRENCE_RESULTS"
+```
+
+The driver disables MLIR multithreading and the Python runner invokes cases
+serially. The 15 cases include narrow integer overflow refusal, signed Boolean
+conditions, nested loops, nonunit steps, reversed phase identities, and all
+1,936 phase-pair order relations in the unchanged looping online-softmax input.
+This checks input occurrence semantics, independently of selected synchronization.
