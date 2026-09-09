@@ -15,6 +15,7 @@ All output belongs to the supplied fresh disk-backed campaign directory.
 import argparse
 import hashlib
 import json
+import random
 from pathlib import Path
 import subprocess
 import sys
@@ -129,6 +130,11 @@ def main():
     diagonal = relation(eq=[[1,-1,0]])
     run("exact_existential_even_composition", {"op":"compose", "a":even, "b":diagonal},
         "{[d0] -> [r0]: d0=r0 and d0 mod 2=0}")
+    shift = relation(eq=[[1,-1,1]])
+    run("unit_local_substitution", {"op":"compose", "a":shift, "b":shift},
+        "{[d0] -> [r0]: r0=d0+2}")
+    run("nonunit_local_survives_substitution", {"op":"compose", "a":even, "b":shift},
+        "{[d0] -> [r0]: r0=d0+1 and d0 mod 2=0}")
     run("exact_even_complement", {"op":"subtract", "a":diagonal, "b":even},
         "{[d0] -> [r0]: d0=r0 and d0 mod 2=1}")
     run("even_is_not_all_integers", {"op":"contains", "a":even, "b":diagonal}, status="not-established")
@@ -142,6 +148,84 @@ def main():
     def edges(pairs):
         return relation(pieces=[{"locals":0,"eq":[[1,0,-a],[0,1,-b]],"ge":[]} for a,b in pairs])
     primitive = edges([(0,1),(1,2),(2,3)])
+    sparse = run("sparse_completion_joins_issue_order", {
+        "op":"completion", "a":edges([(1,3),(5,7)]),
+        "issue_order":edges([(0,0),(0,1),(1,1),(3,3),(3,4),(3,5),(4,4),(4,5),(5,5),(7,7),(7,8),(8,8)]),
+        "needs":[{"relation":edges([(0,8)])}, {"relation":edges([(4,3)])}]})
+    assert [v["status"] for v in sparse["answers"]] == ["proved","not-established"], sparse
+    no_completion = run("issue_order_alone_is_not_completion", {
+        "op":"completion", "a":edges([]), "issue_order":edges([(0,0),(0,1),(1,1)]),
+        "needs":[{"relation":edges([(0,1)])}]})
+    assert no_completion["answers"][0]["status"] == "not-established", no_completion
+    screened = run("absent_boundary_is_not_fixed_point", {
+        "op":"completion", "a":edges([(0,2),(3,5)]),
+        "issue_order":edges([(0,0),(0,1),(1,1),(2,2),(2,3),(3,3),(5,5)]),
+        "global_order":through,
+        "needs":[{"relation":edges([(1,2)])},{"relation":edges([(0,5)])}]})
+    assert screened["answers"][0] == {"status":"not-established","fixed":False}, screened
+    assert screened["answers"][1]["status"] == "proved", screened
+    necessary_only = run("global_issue_screen_supplies_nothing", {
+        "op":"completion", "a":edges([(3,5)]),
+        "issue_order":edges([(1,1),(3,3),(5,5)]), "global_order":through,
+        "needs":[{"relation":edges([(1,5)])}]})
+    assert necessary_only["answers"][0]["status"] == "not-established", necessary_only
+    # Independent finite reachability challenges cached source scopes across
+    # many successive queries, including branches with no completion supply.
+    # Plain lane issue edges may join handoffs but cannot prove completion alone.
+    rng = random.Random(8127)
+    for case in range(12):
+        size = 7
+        lanes = [rng.randrange(3) for _ in range(size)]
+        issue = {(a,b) for a in range(size) for b in range(a,size) if lanes[a] == lanes[b]}
+        handoffs = {(a,b) for a in range(size) for b in range(a+1,size) if rng.randrange(5) == 0}
+        def compose_pairs(left, right):
+            return {(a,c) for a,b in left for x,c in right if b == x}
+        supplied = compose_pairs(compose_pairs(issue, handoffs), issue)
+        while True:
+            following = supplied | compose_pairs(supplied, supplied)
+            if following == supplied:
+                break
+            supplied = following
+        pairs = [(a,b) for a in range(size) for b in range(size)]
+        rng.shuffle(pairs)
+        answer = run(f"scoped_finite_completion_{case}", {
+            "op":"completion", "a":edges(sorted(handoffs)), "issue_order":edges(sorted(issue)),
+            "global_order":through, "needs":[{"relation":edges([pair])} for pair in pairs]})
+        expected = ["proved" if pair in supplied else "not-established" for pair in pairs]
+        assert [a["status"] for a in answer["answers"]] == expected, (case, answer, expected)
+
+    def guarded_edges(values):
+        return relation(s=1, pieces=[{"locals":0,"eq":[[1,0,0,-a],[0,1,0,-b],[0,0,1,-guard]],"ge":[]}
+                                    for a,b,guard in values])
+    scoped_guard = run("scoped_cache_keeps_other_execution_domains", {
+        "op":"completion", "a":guarded_edges([(0,2,1),(0,3,0)]),
+        "issue_order":guarded_edges([(p,p,g) for p in (0,2,3) for g in (0,1)]),
+        "needs":[{"relation":guarded_edges([edge])} for edge in ((0,2,1),(0,3,0),(0,2,0))]})
+    assert [a["status"] for a in scoped_guard["answers"]] == ["proved","proved","not-established"], scoped_guard
+
+    chain = edges([(0,1),(1,2),(2,3),(3,4)])
+    continued_sparse = run("sparse_early_success_preserves_pending", {
+        "op":"completion", "a":chain, "issue_order":edges([(i,i) for i in range(5)]),
+        "needs":[{"relation":edges([(0,1)]),"rounds":0},
+                 {"relation":edges([(0,4)]),"rounds":2},
+                 {"relation":edges([(4,0)])}, {"relation":edges([(1,4)]),"rounds":2}]})
+    assert [a["status"] for a in continued_sparse["answers"]] == ["proved","proved","not-established","proved"], continued_sparse
+    # Nonconstant coordinate zero uses the whole actual O domain. A first
+    # narrow query must not truncate the cached sources for a later query.
+    positive_shift = relation(eq=[[1,-1,1]], ge=[[1,0,0]])
+    broad_cache = run("sparse_nonconstant_source_domain_expands", {
+        "op":"completion", "a":positive_shift, "issue_order":diagonal, "global_order":through,
+        "needs":[{"relation":relation(eq=[[1,-1,1]],ge=[[1,0,2],[1,0,0],[0,-1,4]])},
+                 {"relation":positive_shift},
+                 {"relation":relation(eq=[[1,-1,1]],ge=[[1,0,2]])}]})
+    assert [a["status"] for a in broad_cache["answers"]] == ["proved","proved","not-established"], broad_cache
+    replacement = run("replacement_keeps_only_immutable_order_cache", {
+        "op":"completion", "a":edges([(0,1),(1,2)]), "issue_order":edges([(i,i) for i in range(3)]),
+        "needs":[{"relation":edges([(0,2)])},
+                 {"relation":edges([(0,2)]),"replace_handoffs":edges([(1,2)])},
+                 {"relation":edges([(0,2)]),"replace_handoffs":edges([(0,1),(1,2)])}]})
+    assert [a["status"] for a in replacement["answers"]] == ["proved","not-established","proved"], replacement
+
     answer = run("continued_completion_query", {"op":"completion", "a":primitive, "needs":[
         {"relation":edges([(0,1)]), "rounds":0},
         {"relation":edges([(0,3)]), "rounds":2},

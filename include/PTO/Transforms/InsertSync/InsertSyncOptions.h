@@ -9,13 +9,19 @@
 #ifndef PTO_TRANSFORMS_INSERTSYNC_INSERTSYNCOPTIONS_H
 #define PTO_TRANSFORMS_INSERTSYNC_INSERTSYNCOPTIONS_H
 #include "mlir/Pass/Pass.h"
+#include <cstdint>
 #include <memory>
 #include <string>
 
 namespace mlir::pto {
+// Opt-in symbolic constructor allowance, calibrated on native looping input.
+// Counts checked relation work; this is not a wall-clock or memory limit.
+inline constexpr uint64_t kDefaultLogicalSyncWorkBudget = 128000000;
 // Component-local configuration avoids coupling every PTO transform to
 // InsertSync's rollout options. The zero-argument factory remains compatible.
 struct InsertSyncOptions {
+    std::string planner = "existing";
+    uint64_t logicalWorkBudget = kDefaultLogicalSyncWorkBudget;
     bool deferSamePipe = false;
     std::string gmAlias;
     std::string audit = "off";

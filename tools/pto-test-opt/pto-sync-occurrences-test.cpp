@@ -2,6 +2,7 @@
 // Licensed under the CANN Open Software License Agreement Version 2.0.
 // See LICENSE for details. Provided AS IS, WITHOUT WARRANTIES OF ANY KIND.
 #include "PTO/IR/PTO.h"
+#include "LogicalSyncTestJson.h"
 #include "PTO/Transforms/InsertSync/SyncOccurrences.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -14,28 +15,7 @@ using namespace mlir;
 using namespace mlir::pto::logical_sync;
 using llvm::json::Array;
 using llvm::json::Object;
-static Object encode(const Relation& relation) {
-    Array pieces;
-    for (const auto& p:relation.getAllDisjuncts()) {
-        Array eq, ge;
-        for (bool equality:{true,false}) {
-            unsigned count=equality?p.getNumEqualities():p.getNumInequalities();
-            for (unsigned i=0;i<count;++i) {
-                Array row;
-                for (unsigned j=0;j<p.getNumCols();++j) {
-                    std::string coefficient;
-                    llvm::raw_string_ostream stream(coefficient);
-                    stream << (equality?p.atEq(i,j):p.atIneq(i,j));
-                    row.push_back(coefficient);
-                }
-                (equality?eq:ge).push_back(std::move(row));
-            }
-        }
-        pieces.push_back(Object{{"locals",p.getNumLocalVars()},{"eq",std::move(eq)},{"ge",std::move(ge)}});
-    }
-    return Object{{"d",relation.getNumDomainVars()},{"r",relation.getNumRangeVars()},
-                  {"s",relation.getNumSymbolVars()},{"pieces",std::move(pieces)}};
-}
+
 int main(int argc,char** argv) {
     if (argc!=2) return 2;
     DialectRegistry registry;
@@ -67,11 +47,12 @@ int main(int argc,char** argv) {
                 parameters.push_back(std::move(binding));
             }
             for (unsigned p=0;p<facts.points.size();++p) {
-                points.push_back(encode(facts.domain(p)));
+                points.push_back(testing::encode(facts.domain(p)));
                 for (unsigned q=0;q<facts.points.size();++q) {
                     auto relation=facts.ordered(p,q);
                     if (!relation) return 3;
-                    orders.push_back(Object{{"source",p},{"target",q},{"relation",encode(*relation.relation)}});
+                    orders.push_back(
+                        Object{{"source", p}, {"target", q}, {"relation", testing::encode(*relation.relation)}});
                 }
             }
             result["parameters"]=std::move(parameters);

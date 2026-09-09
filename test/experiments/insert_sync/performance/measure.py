@@ -89,11 +89,17 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observ
     def record(stream, value):
         stream.update(json.dumps(value, sort_keys=True).encode() + b"\n")
 
+    def canonical(value, value_type):
+        # MLIR's Python IntegerAttr exposes i1 true as signed -1. Keep its
+        # single bit, so xor/and/or and comparisons use the same representation
+        # as computed Boolean results. Python's unbounded -1 xor True is -2.
+        return int(value) & 1 if str(value_type) == "i1" and isinstance(value, int) else value
+
     def block(body, values=(), depth=0):
         nonlocal remaining, executed
         if len(values) != len(body.arguments):
             raise ValueError("block argument mismatch")
-        env.update(zip(body.arguments, values))
+        env.update((arg, canonical(value, arg.type)) for arg, value in zip(body.arguments, values))
         for view in body.operations:
             remaining -= 1
             if remaining < 0:
@@ -137,6 +143,8 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observ
                 result = -operands[0] if isinstance(operands[0], (int, float)) else fingerprint([name, operands])
             elif name in ("arith.index_cast", "arith.index_castui", "arith.extsi", "arith.extui"):
                 result = operands[0]
+                if str(op.operands[0].type) == "i1" and name in ("arith.index_cast", "arith.extsi"):
+                    result = -(int(result) & 1)
             elif name in ("arith.addi", "arith.subi", "arith.muli", "arith.divsi", "arith.divui",
                           "arith.remsi", "arith.remui", "arith.andi", "arith.ori", "arith.xori"):
                 a, b = operands
@@ -157,6 +165,8 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observ
                 a, b = operands
                 if not isinstance(a, int) or not isinstance(b, int) or predicate > 5:
                     raise ValueError("unsupported comparison")
+                if str(op.operands[0].type) == "i1" and predicate >= 2:
+                    a, b = -(a & 1), -(b & 1)
                 result = (a == b, a != b, a < b, a <= b, a > b, a >= b)[predicate]
             elif name == "arith.select":
                 if not isinstance(operands[0], (int, bool)):
@@ -165,6 +175,8 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observ
             elif name in ("arith.maxsi", "arith.minsi"):
                 if not all(isinstance(v, int) for v in operands):
                     raise ValueError("unknown signed min/max operands")
+                if str(op.operands[0].type) == "i1":
+                    operands = [-(v & 1) for v in operands]
                 result = (max if name == "arith.maxsi" else min)(operands)
             elif name == "pto.get_block_idx":
                 result = block_idx
@@ -203,7 +215,7 @@ def replay(function, arguments, block_idx=0, block_num=1, budget=2000000, observ
             if len(op.results) == 1:
                 if result is None:
                     raise ValueError(f"missing result: {name}")
-                env[op.results[0]] = result
+                env[op.results[0]] = canonical(result, op.results[0].type)
             elif op.results:
                 raise ValueError(f"unsupported multiple results: {name}")
         return []

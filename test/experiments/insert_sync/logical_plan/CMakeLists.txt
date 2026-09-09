@@ -12,6 +12,9 @@ get_filename_component(PTO_RELATION_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.
 add_executable(pto-logical-relations-test relations_driver.cpp
   "${PTO_RELATION_ROOT}/lib/PTO/Transforms/InsertSync/LogicalSyncRelations.cpp")
 target_compile_features(pto-logical-relations-test PRIVATE cxx_std_17)
+if(NOT LLVM_ENABLE_RTTI)
+  target_compile_options(pto-logical-relations-test PRIVATE -fno-rtti)
+endif()
 target_include_directories(pto-logical-relations-test PRIVATE
   "${PTO_RELATION_ROOT}/include" ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
 target_link_libraries(pto-logical-relations-test PRIVATE MLIRPresburger LLVMSupport)

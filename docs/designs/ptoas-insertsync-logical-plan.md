@@ -12,7 +12,7 @@ but never obtains an ordinary InsertSync or lifecycle-constructor seed and never
 depends on their finalizer. Requirements survive changes to their implementation.
 Direct and recurring handoffs share one logical plan and one allocation interface.
 
-The planned selector is `--insert-sync-planner=existing|logical|logical-or-existing`.
+The implemented opt-in selector is `--insert-sync-planner=existing|logical|logical-or-existing`.
 Strict `logical` must independently construct the four unchanged milestone
 kernels. Hybrid fallback runs the current path on untouched input; its success
 is compilation compatibility, not new-constructor coverage. Unsupported effects,
@@ -61,8 +61,10 @@ domain/range preservation so that an unbounded family is not silently erased.
 
 Possible conflicts may be overapproximated. Proved completion and safe key reuse
 must be underapproximated or exact. Definite production must not exceed definitely
-written bytes. Byte identity remains present during last-producer/next-overwrite
-selection, and may-writes do not kill preceding definitions. These qualifications
+written bytes. The relation query API retains byte identity during last-producer/next-overwrite
+selection, and its reference tests retain may-write alternatives. The M1 native
+constructor currently uses conservative translated may-accesses and ordered
+conflicts, not definite-byte last-producer selection. These qualifications
 must also reach native effect export; descriptor-full is not itself a must-write
 contract.
 
@@ -76,7 +78,14 @@ The completion cache belongs to one immutable plan. A later event-reuse query
 can continue an earlier partial search; changing a plan requires invalidation.
 Query term accounting charges inputs, composition products and results. It is
 not an interruptible budget inside MLIR normalization or an asserted wall-time
-limit. The first implementation retains the existing eight-million-work default.
+limit. The opt-in constructor uses 128 million checked work units, calibrated from
+the measured 97.1-million-work online-softmax construction. This is a 16×
+increase over the initial eight-million setting, after reducing the first
+working construction from 457.5 million work units and about 30 seconds to
+97.1 million and about 7.4 seconds. The generic relation-test default remains
+eight million; production still selects the existing planner. Explicit small
+budgets must fail strictly or fall back transactionally. Compile cost remains
+a limitation; this allowance is neither a time limit nor a memory bound.
 
 ## Construction, realization and trust boundaries
 
@@ -126,13 +135,15 @@ facts, duplicate physical phases, and bounded-work exhaustion are refused.
 
 Root-block scalar parameters identify actual SSA values. Their unmodeled
 arithmetic correlations are conservatively forgotten; these parameters are not
-new caller promises. Reconstruction must preserve their bindings. The existing
-string-based reference exporter has not yet migrated to this shared result.
+new caller promises. Reconstruction must preserve their bindings. The logical-constructor test observer now exports this same result and the
+complete physical phase effects together with immutable typed requirements,
+before plan selection. The older string-based experimental exporter remains
+separate for the existing refiner; it is not a semantic input to this constructor.
 
 The focused native driver passed 15 cases: Boolean signedness and negation,
 extreme integer bounds, rejected induction/coefficient overflow, equivalent
 parity forms, nonunit steps, nested invocations, and reversed caller phase IDs.
 It also checks all 1,936 ordered phase pairs of unchanged online softmax against
 independently specified isl relations, including the zero-trip domain.
-These results validate occurrence import; they do not establish effect
-precision, handoff construction, key reuse, or milestone-one completion.
+These occurrence-only results are supplemented by the constructor and
+reconstruction campaign described in the milestone-one report.

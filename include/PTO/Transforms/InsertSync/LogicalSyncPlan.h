@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under the CANN Open Software License Agreement Version 2.0.
+// See LICENSE for details. Provided AS IS, WITHOUT WARRANTIES OF ANY KIND.
+#ifndef PTO_TRANSFORMS_INSERTSYNC_LOGICALSYNCPLAN_H
+#define PTO_TRANSFORMS_INSERTSYNC_LOGICALSYNCPLAN_H
+#include "PTO/Transforms/InsertSync/SyncOccurrences.h"
+#include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncGMAlias.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
+
+namespace mlir::pto::logical_sync {
+// Immutable obligations consumed by construction, completion and emitted checks.
+// Access pointers belong to the translated input and are valid during the
+// synchronous observation callback. The occurrence tuple retains all guards
+// and loop invocations; IDs are independent of any selected event or repair.
+struct OrderingRequirement {
+    enum Kind { RAW, WAR, WAW, AccResource, Exit } kind;
+    unsigned source, target;
+    const BaseMemInfo* sourceAccess = nullptr;
+    const BaseMemInfo* targetAccess = nullptr;
+    Relation occurrences;
+    // Native footprints are currently conservative may-accesses. This does
+    // not assert a definite overwrite or an exact last value production.
+};
+// Outcome describes the constructor that actually ran. Expected failure never
+// commits a partial candidate; InternalError is not a fallback permission.
+struct ConstructionResult {
+    enum Status { Applied, Unsupported, AnalysisLimit, Unproved, AllocationFailure, InternalError };
+    Status status = Unsupported;
+    std::string reason;
+    uint64_t work = 0;
+    unsigned requirements = 0, handoffs = 0, barriers = 0;
+};
+ConstructionResult constructLogicalSync(
+    func::FuncOp function, InsertSyncGMAliasMode gm, bool useMmad, uint64_t budget = kDefaultLogicalSyncWorkBudget);
+namespace testing {
+using RequirementObserver = llvm::function_ref<void(
+    const SyncOccurrences&, ArrayRef<const CompoundInstanceElement*>, ArrayRef<OrderingRequirement>)>;
+// Native reconstruction challenge only: mutation receives the emitted clone,
+// never planner facts or a way to override acceptance. No CLI/environment hook.
+ConstructionResult constructWithEmissionMutation(
+    func::FuncOp function, InsertSyncGMAliasMode gm, uint64_t budget, llvm::function_ref<void(func::FuncOp)> mutate,
+    RequirementObserver observe = {});
+} // namespace testing
+} // namespace mlir::pto::logical_sync
+#endif

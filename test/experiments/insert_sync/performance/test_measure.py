@@ -81,6 +81,79 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(b.before[-1]["completed"], {"PIPE_MTE2": 0})
 
 
+class BooleanReplayTests(unittest.TestCase):
+    def test_signed_boolean_minmax(self):
+        source = '''module { func.func @f(%p: i1) {
+          %true = arith.constant true
+          %false = arith.constant false
+          %min = arith.minsi %p, %false : i1
+          %max = arith.maxsi %p, %true : i1
+          %equal = arith.cmpi eq, %min, %max : i1
+          scf.if %equal { pto.barrier <PIPE_V> }
+          scf.if %min { pto.barrier <PIPE_MTE2> }
+          return
+        } }'''
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            module = ir.Module.parse(source)
+            function = next(children(module.operation))
+            for argument in (0, 1, -1):
+                result = replay(function, [argument])
+                self.assertEqual(result["counts"].get("pto.barrier", 0), 2 if argument else 1)
+                pipes = [key for key in result["counts"] if key.startswith("barrier:")]
+                self.assertEqual(any("PIPE_MTE2" in pipe for pipe in pipes), bool(argument))
+
+    def test_negated_first_iteration_has_no_unmatched_wait(self):
+        source = '''module { func.func @f() {
+          %z = arith.constant 0 : index
+          %one = arith.constant 1 : index
+          %two = arith.constant 2 : index
+          %true = arith.constant true
+          scf.for %i = %z to %two step %one {
+            %first = arith.cmpi eq, %i, %z : index
+            %later = arith.xori %first, %true : i1
+            scf.if %later { pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>] }
+            scf.if %first { pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>] }
+          }
+          return
+        } }'''
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            module = ir.Module.parse(source)
+            boundaries = Boundaries()
+            result = replay(next(children(module.operation)), [], observer=boundaries.observe)
+            self.assertEqual(result["counts"]["pto.set_flag"], 1)
+            self.assertEqual(result["counts"]["pto.wait_flag"], 1)
+            self.assertEqual(boundaries.tokens, {})
+
+    def test_boolean_arguments_comparisons_and_signed_extension(self):
+        source = '''module { func.func @f(%p: i1) {
+          %true = arith.constant true
+          %false = arith.constant false
+          %minus = arith.constant -1 : i64
+          %eq = arith.cmpi eq, %p, %true : i1
+          %negative = arith.cmpi slt, %p, %false : i1
+          %wide = arith.extsi %p : i1 to i64
+          %extended = arith.cmpi eq, %wide, %minus : i64
+          %a = arith.andi %eq, %negative : i1
+          %b = arith.andi %a, %extended : i1
+          scf.if %b { pto.barrier <PIPE_V> } else { pto.barrier <PIPE_MTE2> }
+          return
+        } }'''
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            module = ir.Module.parse(source)
+            function = next(children(module.operation))
+            for argument in (0, 1, -1):
+                result = replay(function, [argument])
+                pipes = [key for key in result["counts"] if key.startswith("barrier:")]
+                self.assertEqual(len(pipes), 1)
+                self.assertIn("PIPE_V" if argument else "PIPE_MTE2", pipes[0])
+
+
 class AccountingTests(unittest.TestCase):
     def test_lifecycle_participation_requires_new_committed_output(self):
         before = '// -----// IR Dump Before PTOInsertSync (pto-insert-sync) //----- //\n'

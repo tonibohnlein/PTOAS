@@ -11,6 +11,8 @@
 
 #include "mlir/Analysis/Presburger/PresburgerRelation.h"
 #include <cstdint>
+#include <map>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -32,10 +34,29 @@ struct RelationResult {
 class RelationQueries {
     uint64_t remaining, used = 0;
     bool charge(const Relation& relation);
+    RelationResult restrictCandidateOrder(const Relation& order, const Relation& candidates, bool sources);
+
 public:
     explicit RelationQueries(uint64_t budget = 8000000) : remaining(budget) {}
     uint64_t work() const { return used; }
+    uint64_t remainingWork() const { return remaining; }
+    bool spend(uint64_t amount)
+    {
+        if (amount > remaining) {
+            used += remaining;
+            remaining = 0;
+            return false;
+        }
+        remaining -= amount;
+        used += amount;
+        return true;
+    }
     RelationResult compose(const Relation& first, const Relation& second);
+    RelationResult normalize(const Relation& relation);
+    // Prune only endpoint coordinates proved incompatible with the candidate
+    // sets. The result may retain extra edges; it never removes a matching one.
+    RelationResult restrictEndpoints(
+        const Relation& relation, const presburger::PresburgerSet& sources, const presburger::PresburgerSet& targets);
     RelationResult subtract(const Relation& from, const Relation& remove);
     QueryStatus contains(const Relation& supply, const Relation& requirement);
 
@@ -58,11 +79,59 @@ public:
 // continue composition. Replacing a plan requires a new instance.
 class CompletionQueries {
     Relation known;
+    std::optional<Relation> issueOrder;
+    std::optional<Relation> globalIssueOrder;
+    Relation primitive;
+    Relation expanded;
     bool fixed = false;
+    struct SourceState {
+        Relation reached, pending;
+        bool saturated = false;
+    };
+    // A key restricts only the first source coordinate. All other coordinates,
+    // guards and parameters remain in the actual issue-order relation. This
+    // partition is algebraic; coordinate zero need not be a native phase ID.
+    std::map<std::optional<llvm::DynamicAPInt>, SourceState> sources;
+    std::optional<Relation> transitions;
+    using Coordinate = std::optional<llvm::DynamicAPInt>;
+    using OrderBlocks = std::map<std::pair<Coordinate, Coordinate>, Relation>;
+    std::shared_ptr<std::optional<OrderBlocks>> indexedIssues = std::make_shared<std::optional<OrderBlocks>>();
+    std::shared_ptr<std::optional<OrderBlocks>> indexedGlobal = std::make_shared<std::optional<OrderBlocks>>();
+    RelationResult selectOrder(
+        bool global, const presburger::PresburgerSet& source, const presburger::PresburgerSet& target,
+        RelationQueries& queries);
+    QueryStatus proveSparse(const Relation& requirement, RelationQueries& queries, unsigned rounds);
+
 public:
-    explicit CompletionQueries(Relation primitiveSupply) : known(std::move(primitiveSupply)) {}
+    explicit CompletionQueries(Relation primitiveSupply)
+        : known(std::move(primitiveSupply)), primitive(known), expanded(known)
+    {}
+    // A compact handoff maps source completion to destination issue. Issue
+    // order only extends/joins those handoffs; it is never completion by itself.
+    CompletionQueries(Relation handoffs, Relation orderedIssues, std::optional<Relation> globalOrder = {})
+        : known(std::move(handoffs)),
+          issueOrder(std::move(orderedIssues)),
+          globalIssueOrder(std::move(globalOrder)),
+          primitive(known),
+          expanded(Relation::getEmpty(known.getSpace()))
+    {}
     QueryStatus prove(const Relation& requirement, RelationQueries& queries, unsigned rounds = 8);
-    const Relation& supply() const { return known; }
+    // New plan, identical immutable issue-order universe. Reuse only the order
+    // index; all completion, pending-path and saturation state starts fresh.
+    CompletionQueries withHandoffs(Relation handoffs) const
+    {
+        CompletionQueries next(std::move(handoffs));
+        next.issueOrder = issueOrder;
+        next.globalIssueOrder = globalIssueOrder;
+        next.indexedIssues = indexedIssues;
+        next.indexedGlobal = indexedGlobal;
+        if (issueOrder)
+            next.expanded = Relation::getEmpty(next.known.getSpace());
+        return next;
+    }
+    // Compact mode exposes proved completion in the most recent query scope.
+    // Absence remains unproved; it is not evidence of required synchronization.
+    const Relation& supply() const { return issueOrder ? expanded : known; }
     bool fixedPoint() const { return fixed; }
 };
 } // namespace mlir::pto::logical_sync

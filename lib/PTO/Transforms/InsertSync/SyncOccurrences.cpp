@@ -78,12 +78,23 @@ class Importer {
     llvm::DenseMap<Value,Range> ranges;
     struct Pending { Operation* op; Alternatives domain; SmallVector<AffineExpr> time; SmallVector<unsigned> enclosing; };
     SmallVector<Pending, 0> pending;
+    SmallVector<std::pair<Value, Alternatives>, 0> predicates;
     SmallVector<Operation*> requested;
     llvm::SmallPtrSet<Operation*,32> physical;
     unsigned depth = 0, predicateDepth = 0, regionDepth = 0;
     uint64_t workLeft = 100000;
     AffineExpr constant(int64_t n) const { return getAffineConstantExpr(n,context); }
     bool fail(StringRef text) { if (result.reason.empty()) result.reason=text.str(); return false; }
+    bool limit(StringRef text)
+    {
+        result.limitExceeded = true;
+        return fail(text);
+    }
+    SyncOccurrences finish()
+    {
+        result.work = 100000 - workLeft;
+        return std::move(result);
+    }
     std::optional<AffineExpr> parameter(Value value) {
         if (!supportedInteger(value.getType())) return {};
         auto range=typeRange(value.getType());
@@ -93,7 +104,10 @@ class Importer {
     std::optional<AffineExpr> expression(Value value) {
         if (!supportedInteger(value.getType())) return {};
         if (auto found=expressions.find(value); found!=expressions.end()) return found->second;
-        if (depth>=64) return {};
+        if (depth >= 64) {
+            limit("occurrence expression nesting limit");
+            return {};
+        }
         llvm::SaveAndRestore<unsigned> recurse(depth,depth+1);
         if (auto n=literal(value)) {
             // AffineExpr coefficients are int64. Keep extreme constants as
@@ -168,13 +182,19 @@ class Importer {
         expressions[value]=expr; ranges[value]=r; return expr;
     }
     Alternatives product(const Alternatives& a,const Alternatives& b) {
-        if (a.size()*b.size()>256) { fail("occurrence guard product limit"); return {}; }
+        if (a.size() * b.size() > 256) {
+            limit("occurrence guard product limit");
+            return {};
+        }
         Alternatives out;
         for (const auto& x:a) for (const auto& y:b) { Conjunction c=x; llvm::append_range(c,y); out.push_back(std::move(c)); }
         return out;
     }
     std::optional<Alternatives> predicate(Value value,bool truth) {
-        if (predicateDepth >= 64 || workLeft == 0) return {};
+        if (predicateDepth >= 64 || workLeft == 0) {
+            limit("occurrence predicate work/nesting limit");
+            return {};
+        }
         --workLeft;
         llvm::SaveAndRestore<unsigned> recurse(predicateDepth, predicateDepth+1);
         if (auto n=literal(value)) return bool(*n)==truth ? Alternatives{Conjunction{}} : Alternatives{};
@@ -208,7 +228,10 @@ class Importer {
             auto a=predicate(op->getOperand(0),truth), b=predicate(op->getOperand(1),truth);
             if (!a || !b) return {};
             if (isa<arith::AndIOp>(op)==truth) return product(*a,*b);
-            if (a->size()+b->size()>256) return {};
+            if (a->size() + b->size() > 256) {
+                limit("occurrence guard union limit");
+                return {};
+            }
             llvm::append_range(*a,*b); return a;
         }
         if (value.getType().isInteger(1)) if (auto expr=expression(value))
@@ -216,12 +239,14 @@ class Importer {
         return {};
     }
     bool visit(Region& region,SmallVector<AffineExpr> time,Alternatives domain,SmallVector<unsigned> enclosing) {
-        if (regionDepth >= 64) return fail("occurrence region nesting limit");
+        if (regionDepth >= 64)
+            return limit("occurrence region nesting limit");
         llvm::SaveAndRestore<unsigned> recurse(regionDepth,regionDepth+1);
         if (!llvm::hasSingleElement(region)) return fail("multi-block occurrence region");
         unsigned rank=0;
         for (Operation& op:region.front()) {
-            if (workLeft == 0) return fail("occurrence import work limit");
+            if (workLeft == 0)
+                return limit("occurrence import work limit");
             --workLeft;
             auto here=time; here.push_back(constant(rank++));
             if (auto loop=dyn_cast<scf::ForOp>(op)) {
@@ -249,6 +274,8 @@ class Importer {
             if (auto branch=dyn_cast<scf::IfOp>(op)) {
                 auto yes=predicate(branch.getCondition(),true), no=predicate(branch.getCondition(),false);
                 if (!yes || !no) return fail("unqualified occurrence predicate");
+                if (llvm::none_of(predicates, [&](const auto& item) { return item.first == branch.getCondition(); }))
+                    predicates.push_back({branch.getCondition(), *yes});
                 auto branchTime=here; branchTime.push_back(constant(0));
                 if (!visit(branch.getThenRegion(),branchTime,product(domain,*yes),enclosing)) return false;
                 if (!branch.getElseRegion().empty()) {
@@ -274,12 +301,18 @@ public:
         result.loopDomains.resize(result.loops.size());
     }
     SyncOccurrences run() {
-        if (!result.reason.empty()) return std::move(result);
+        if (!result.reason.empty())
+            return finish();
         if (result.loops.size()>64 || physical.size()>1024) {
-            fail("occurrence projection size limit"); return std::move(result);
+            limit("occurrence projection size limit");
+            return finish();
         }
-        if (!visit(function.getBody(),{},Alternatives{Conjunction{}},{})) return std::move(result);
-        if (pending.size()!=physical.size()) { fail("missing physical occurrence"); return std::move(result); }
+        if (!visit(function.getBody(), {}, Alternatives{Conjunction{}}, {}))
+            return finish();
+        if (pending.size() != physical.size()) {
+            fail("missing physical occurrence");
+            return finish();
+        }
         unsigned dims=result.loops.size(), symbols=result.parameters.size();
         // The caller's phase identities survive insertion of synchronization
         // points. Schedule order is represented separately, never by this ID.
@@ -292,7 +325,10 @@ public:
                 for (unsigned d=0;d<dims;++d) if (!llvm::is_contained(point.enclosing,d))
                     conjunction.push_back({getAffineDimExpr(d,context),true});
                 auto flat=flatten(conjunction,dims,symbols,context);
-                if (!flat) { fail("non-affine occurrence constraint"); return std::move(result); }
+                if (!flat) {
+                    fail("non-affine occurrence constraint");
+                    return finish();
+                }
                 for (unsigned s=0;s<symbols;++s) {
                     Range bound=ranges[result.parameters[s]];
                     SmallVector<llvm::DynamicAPInt> row(flat->getNumCols());
@@ -307,7 +343,23 @@ public:
         }
         for (auto& point:result.points) while (point.schedule.size()<result.scheduleDimensions)
             point.schedule.push_back(constant(0));
-        result.complete=result.reason.empty(); return std::move(result);
+        // Reuse the same normalization for boundary lowering. These predicates
+        // carry no enclosing path assumption: a client must intersect with its
+        // actual insertion domain and check SSA dominance before materializing.
+        for (const auto& [value, alternatives] : predicates) {
+            auto domain = PresburgerSet::getEmpty(PresburgerSpace::getSetSpace(dims, symbols));
+            for (const auto& conjunction : alternatives) {
+                auto piece = flatten(conjunction, dims, symbols, context);
+                if (!piece) {
+                    fail("non-affine boundary predicate");
+                    return finish();
+                }
+                domain.unionInPlace(*piece);
+            }
+            result.predicates.push_back({value, std::move(domain)});
+        }
+        result.complete = result.reason.empty();
+        return finish();
     }
 };
 }
@@ -333,6 +385,13 @@ Relation SyncOccurrences::identity(unsigned p) const {
         out.unionInPlace(piece);
     }
     return out;
+}
+
+Relation SyncOccurrences::predicateDomain(unsigned predicate, unsigned point) const
+{
+    auto set = predicates[predicate].whenTrue;
+    set.insertVarInPlace(VarKind::SetDim, 0);
+    return domain(point).intersect(set);
 }
 
 RelationResult SyncOccurrences::ordered(unsigned source,unsigned target,bool inclusive) const {

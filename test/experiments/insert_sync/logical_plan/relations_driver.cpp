@@ -77,9 +77,17 @@ int main() {
     Object output;
     if (op == "completion") {
         CompletionQueries completion(a);
+        if (auto* order = root->getObject("issue_order")) {
+            std::optional<Relation> global;
+            if (auto* value = root->getObject("global_order"))
+                global = read(*value);
+            completion = CompletionQueries(a, read(*order), std::move(global));
+        }
         Array answers;
         for (const auto& value : *root->getArray("needs")) {
             const auto& need = *value.getAsObject();
+            if (auto* handoffs = need.getObject("replace_handoffs"))
+                completion = completion.withHandoffs(read(*handoffs));
             auto answer = completion.prove(read(*need.getObject("relation")), queries,
                                           need.getInteger("rounds").value_or(8));
             answers.push_back(Object{{"status", status(answer)}, {"fixed", completion.fixedPoint()}});

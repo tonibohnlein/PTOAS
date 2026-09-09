@@ -20,14 +20,21 @@ struct OccurrencePoint {
 // are never caller promises or independent copies of a repeated expression.
 struct SyncOccurrences {
     struct LoopDomain { AffineExpr lower, upper; int64_t step; };
+    struct PredicateDomain {
+        Value value;
+        presburger::PresburgerSet whenTrue;
+    };
     SmallVector<scf::ForOp> loops;
     SmallVector<LoopDomain> loopDomains;
     SmallVector<Value> parameters;
+    SmallVector<PredicateDomain, 0> predicates;
     SmallVector<OccurrencePoint, 0> points;
     llvm::DenseMap<Operation*, unsigned> ids;
     unsigned scheduleDimensions = 0;
     std::string reason;
     bool complete = false;
+    bool limitExceeded = false;
+    uint64_t work = 0;
     static SyncOccurrences build(func::FuncOp function, ArrayRef<Operation*> physicalPoints);
     // Uniform occurrence tuple: phase ID followed by one IV per original loop.
     unsigned dimensions() const { return 1 + loops.size(); }
@@ -37,6 +44,7 @@ struct SyncOccurrences {
     Relation domain(unsigned point) const;
     RelationResult ordered(unsigned source, unsigned target, bool inclusive = false) const;
     Relation identity(unsigned point) const;
+    Relation predicateDomain(unsigned predicate, unsigned point) const;
 };
 } // namespace mlir::pto::logical_sync
 #endif

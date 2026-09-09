@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+module attributes {pto.target_arch = "a3"} {
+  func.func @pipeline(%src: !pto.ptr<f32>, %dst: !pto.ptr<f16>, %trip: index, %take: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %depth = arith.constant 1 : index
+    %uses = arith.constant 1 : index
+    %rows = arith.muli %trip, %c16 : index
+    %outrows = arith.muli %rows, %uses : index
+    %source = pto.make_tensor_view %src, shape = [%rows, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %target = pto.make_tensor_view %dst, shape = [%outrows, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %slot0 = arith.constant 0 : index
+    %ia0 = arith.constant 0 : i64
+    %oa0 = arith.constant 2048 : i64
+    %in0 = pto.alloc_tile addr = %ia0 : !pto.tile_buf<vec, 16x16xf32>
+    %out0 = pto.alloc_tile addr = %oa0 : !pto.tile_buf<vec, 16x16xf16>
+    %ia1 = arith.constant 1024 : i64
+    %in1 = pto.alloc_tile addr = %ia1 : !pto.tile_buf<vec, 16x16xf32>
+    scf.for %iv = %c0 to %trip step %c1 {
+      %selector = arith.remui %iv, %depth : index
+      %row = arith.muli %iv, %c16 : index
+      %input = pto.partition_view %source, offsets = [%row, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+      %active0 = arith.cmpi eq, %selector, %slot0 : index
+      scf.if %active0 {
+        pto.tload ins(%input : !pto.partition_tensor_view<16x16xf32>) outs(%in0 : !pto.tile_buf<vec, 16x16xf32>)
+        pto.tload ins(%input : !pto.partition_tensor_view<16x16xf32>) outs(%in1 : !pto.tile_buf<vec, 16x16xf32>)
+        %u0_0 = arith.constant 0 : index
+        %base0_0 = arith.muli %iv, %uses : index
+        %oi0_0 = arith.addi %base0_0, %u0_0 : index
+        %or0_0 = arith.muli %oi0_0, %c16 : index
+        %output0_0 = pto.partition_view %target, offsets = [%or0_0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+        scf.if %take {
+        pto.tcvt ins(%in0 {rmode = #pto<round_mode ROUND>} : !pto.tile_buf<vec, 16x16xf32>) outs(%out0 : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tstore ins(%out0 : !pto.tile_buf<vec, 16x16xf16>) outs(%output0_0 : !pto.partition_tensor_view<16x16xf16>)
+        }
+      }
+    }
+    return
+  }
+}

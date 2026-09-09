@@ -28,6 +28,7 @@
 #include "PTO/Transforms/InsertSync/LifecycleSynthesis.h"
 #include "PTO/Transforms/InsertSync/HandoffFacts.h"
 #include "PTO/Transforms/InsertSync/HandoffPlanning.h"
+#include "PTO/Transforms/InsertSync/LogicalSyncPlan.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h" // [FIX] 确保 FuncOp 定义可见
@@ -132,6 +133,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         bufferGenerations = options.bufferGenerations;
         handoffFactsDirectory = options.handoffFactsDirectory;
         handoffPlanning = options.handoffPlanning;
+        planner = options.planner;
+        logicalWorkBudget = options.logicalWorkBudget;
     }
     PTOInsertSyncPass(const PTOInsertSyncPass& other) : PTOInsertSyncBase(other)
     {
@@ -147,8 +150,16 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         bufferGenerations = other.bufferGenerations;
         handoffFactsDirectory = other.handoffFactsDirectory;
         handoffPlanning = other.handoffPlanning;
+        planner = other.planner;
+        logicalWorkBudget = other.logicalWorkBudget;
     }
 
+    Option<std::string> planner{
+        *this, "planner", llvm::cl::init("existing"),
+        llvm::cl::desc("Planning engine: existing, logical, logical-or-existing")};
+    Option<uint64_t> logicalWorkBudget{
+        *this, "logical-work-budget", llvm::cl::init(kDefaultLogicalSyncWorkBudget),
+        llvm::cl::desc("Bound logical occurrence construction work")};
     Option<bool> deferSamePipe{
         *this, "defer-same-pipe", llvm::cl::init(false),
         llvm::cl::desc("Establish cross-pipe supply before same-pipe repair")};
@@ -230,14 +241,33 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
+    if (planner != "existing" && planner != "logical" && planner != "logical-or-existing") {
+        func.emitError("InsertSync planner must be existing, logical, or logical-or-existing");
+        signalPassFailure();
+        return;
+    }
+    if (planner != "existing") {
+        SmallVector<StringAttr> stale;
+        for (auto attr : func->getAttrs())
+            if (attr.getName().strref().starts_with("pto.insert_sync.logical_") ||
+                attr.getName().strref() == "pto.insert_sync.producer")
+                stale.push_back(attr.getName());
+        for (auto name : stale)
+            func->removeAttr(name);
+        func->setAttr("pto.insert_sync.requested_planner", StringAttr::get(&getContext(), planner));
+        func->setAttr("pto.insert_sync.producer", StringAttr::get(&getContext(), "none"));
+    }
     // Backend-partitioned PTODSL containers carry private func declarations
     // in the outer child module to model cross-child calls. Those declaration
     // funcs have a function type but no entry block arguments, so the
     // translator's argument walk must not run on them.
     if (func.isDeclaration()) {
-      if (!handoffFactsDirectory.empty() && failed(exportInsertSyncHandoffFacts(
-              func, handoffFactsDirectory, 8000000, "function declaration"))) signalPassFailure();
-      return;
+        if (planner != "existing")
+            func->setAttr("pto.insert_sync.producer", StringAttr::get(&getContext(), "declaration"));
+        if (!handoffFactsDirectory.empty() &&
+            failed(exportInsertSyncHandoffFacts(func, handoffFactsDirectory, 8000000, "function declaration")))
+            signalPassFailure();
+        return;
     }
     if (audit != "off" && audit != "report" && audit != "strict") {
         func.emitError("InsertSync audit must be off, report, or strict");
@@ -260,6 +290,13 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
             &getContext(), *contract == InsertSyncGMAliasMode::MayAlias ? "may-alias" : "assume-disjoint-arguments"));
 
     if (hasAtomicTileOpContract(func)) {
+        if (planner == "logical") {
+            func.emitError("logical construction unsupported: atomic helper contract");
+            signalPassFailure();
+            return;
+        }
+        if (planner != "existing")
+            func->setAttr("pto.insert_sync.producer", StringAttr::get(&getContext(), "existing-bypass"));
         if (!handoffFactsDirectory.empty() && failed(exportInsertSyncHandoffFacts(
                 func, handoffFactsDirectory, 8000000, "atomic helper contract"))) {
             signalPassFailure();
@@ -286,6 +323,13 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       return WalkResult::advance();
     });
     if (hasExplicitSync) {
+        if (planner == "logical") {
+            func.emitError("logical construction unsupported: explicit synchronization");
+            signalPassFailure();
+            return;
+        }
+        if (planner != "existing")
+            func->setAttr("pto.insert_sync.producer", StringAttr::get(&getContext(), "existing-bypass"));
         if (!handoffFactsDirectory.empty() && failed(exportInsertSyncHandoffFacts(
                 func, handoffFactsDirectory, 8000000, "explicit synchronization"))) {
             signalPassFailure();
@@ -299,6 +343,57 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     if (!handoffFactsDirectory.empty() && failed(exportInsertSyncHandoffFacts(func, handoffFactsDirectory))) {
         signalPassFailure();
         return;
+    }
+
+    if (planner != "existing") {
+        using Result = logical_sync::ConstructionResult;
+        bool fixed = false;
+        func.walk([&](Operation* op) { fixed |= isa<SetFlagDynOp, WaitFlagDynOp, BarrierOp>(op); });
+        Result result;
+        if (fixed)
+            result.reason = "fixed/dynamic synchronization summary not established";
+        else
+            result = logical_sync::constructLogicalSync(func, *contract, bool(mmadChains), uint64_t(logicalWorkBudget));
+        StringRef status;
+        switch (result.status) {
+            case Result::Applied:
+                status = "applied";
+                break;
+            case Result::Unsupported:
+                status = "unsupported";
+                break;
+            case Result::AnalysisLimit:
+                status = "analysis-limit";
+                break;
+            case Result::Unproved:
+                status = "unproved";
+                break;
+            case Result::AllocationFailure:
+                status = "allocation-failure";
+                break;
+            case Result::InternalError:
+                status = "internal-error";
+                break;
+        }
+        auto i64 = IntegerType::get(&getContext(), 64);
+        func->setAttr("pto.insert_sync.logical_status", StringAttr::get(&getContext(), status));
+        func->setAttr("pto.insert_sync.logical_reason", StringAttr::get(&getContext(), result.reason));
+        func->setAttr("pto.insert_sync.logical_work", IntegerAttr::get(i64, result.work));
+        func->setAttr("pto.insert_sync.logical_requirements", IntegerAttr::get(i64, result.requirements));
+        func->setAttr("pto.insert_sync.logical_streams", IntegerAttr::get(i64, result.handoffs));
+        func.emitRemark("InsertSync logical construction: ")
+            << status << "; " << result.reason << "; work=" << result.work;
+        if (result.status == Result::Applied) {
+            func->setAttr("pto.insert_sync.producer", StringAttr::get(&getContext(), "logical"));
+            auditOutput(func);
+            return;
+        }
+        if (planner == "logical" || result.status == Result::InternalError) {
+            func.emitError("logical synchronization construction failed: ") << status << "; " << result.reason;
+            signalPassFailure();
+            return;
+        }
+        func->setAttr("pto.insert_sync.producer", StringAttr::get(&getContext(), "existing-fallback"));
     }
 
     if (lifecycleSynthesis || bufferGenerations) {

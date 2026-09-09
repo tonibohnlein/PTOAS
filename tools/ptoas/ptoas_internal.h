@@ -72,6 +72,8 @@ extern llvm::cl::opt<bool> insertSyncLifecycleSynthesis;
 extern llvm::cl::opt<bool> insertSyncBufferGenerations;
 extern llvm::cl::opt<std::string> insertSyncHandoffFactsDirectory;
 extern llvm::cl::opt<bool> insertSyncHandoffPlanning;
+extern llvm::cl::opt<std::string> insertSyncPlanner;
+extern llvm::cl::opt<uint64_t> insertSyncLogicalWorkBudget;
 extern llvm::cl::opt<bool> enableBufidSync;
 extern llvm::cl::opt<bool> enableBufidSyncDebug;
 extern llvm::cl::opt<bool> enableInjectBarrierAllSync;

@@ -15,6 +15,7 @@
 #include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/BufferizableOpInterfaceImpl.h"
 #include "PTO/Transforms/CppPostprocess.h"
+#include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VPTOLLVMEmitter.h"
 #include "VPTOHostStubEmission.h"
@@ -243,6 +244,12 @@ llvm::cl::opt<bool> insertSyncBufferGenerations(
     "insert-sync-buffer-generations",
     llvm::cl::desc("Construct synchronization from per-buffer reaching generations; experimental"),
     llvm::cl::init(false));
+llvm::cl::opt<uint64_t> insertSyncLogicalWorkBudget(
+    "insert-sync-logical-work-budget", llvm::cl::desc("Bound logical occurrence construction work"),
+    llvm::cl::init(mlir::pto::kDefaultLogicalSyncWorkBudget));
+llvm::cl::opt<std::string> insertSyncPlanner(
+    "insert-sync-planner", llvm::cl::desc("InsertSync planning engine: existing, logical, logical-or-existing"),
+    llvm::cl::init("existing"));
 llvm::cl::opt<bool> insertSyncHandoffPlanning(
     "insert-sync-handoff-planning",
     llvm::cl::desc("Plan guarded prefix handoffs with combined completion (experimental)"),
