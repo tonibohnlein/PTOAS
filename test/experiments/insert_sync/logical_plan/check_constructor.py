@@ -31,6 +31,8 @@ def main():
     parser.add_argument("--native-driver", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--case", action="append", dest="cases")
+    parser.add_argument("--focused", action="store_true",
+                        help="Small automatic gate; excludes milestone buffering and four-kernel coverage")
     args = parser.parse_args()
     sys.path.insert(0, str(args.python_root.resolve()))
     args.output.mkdir(parents=True, exist_ok=False)
@@ -58,7 +60,8 @@ def main():
 
     prefix = [sys.executable, "-c", SERIAL_DRIVER, str(args.python_root.resolve()),
               "--pto-arch=a3", "--pto-level=level3", "--enable-insert-sync"]
-    selected = args.cases or ["one_buffer", "online_softmax", "q_proj", "qk_matmul"]
+    selected = args.cases or (["one_buffer"] if args.focused else
+                              ["one_buffer", "online_softmax", "q_proj", "qk_matmul"])
     cases = {case["case_id"]: case for case in population()}
     result, _ = run("guard-growth", [str(args.native_driver.resolve()),
         str(HERE / "inputs/emission_contract.pto"), "guard-growth"])
@@ -176,7 +179,7 @@ def main():
     # counts. Negative/empty bounds execute no payload or remainder; every
     # residue class, partial fill and subsequent reuse receives matched events.
     buffer_rows = []
-    for case_id in ("two_buffer", "three_buffer"):
+    for case_id in (() if args.focused else ("two_buffer", "three_buffer")):
         source = cases[case_id]["source"].resolve()
         common = [*prefix, "--insert-sync-gm-alias=assume-disjoint-arguments", "--emit-pto-ir", str(source)]
         outputs = {}
@@ -212,7 +215,8 @@ def main():
             "upstream": {"mechanisms": a["mechanisms"], "metrics": old},
             "logical": {"mechanisms": b["mechanisms"], "metrics": new}, "boundaries": boundaries})
         (args.output / "buffering.json").write_text(json.dumps(buffer_rows, indent=2) + "\n")
-    for mutation in ("none", "change-residue", "unguard-remainder", "change-slot-distance"):
+    for mutation in (() if args.focused else
+                     ("none", "change-residue", "unguard-remainder", "change-slot-distance")):
         result, _ = run("guard-reconstruction." + mutation, [str(args.native_driver.resolve()),
             str(cases["two_buffer"]["source"].resolve()), mutation])
         answer = json.loads(result.stdout)
@@ -257,7 +261,8 @@ def main():
     assert any(attrs.get("pto.insert_sync.logical_status") == '"analysis-limit"'
                and attrs.get("pto.insert_sync.producer") == '"existing-fallback"'
                for attrs in b["status_attributes"]), b
-    print("Native constructor acceptance passed; device validation remains separate")
+    print(("Focused constructor gate" if args.focused else "Native constructor acceptance") +
+          " passed; device validation remains separate")
 
 
 if __name__ == "__main__":

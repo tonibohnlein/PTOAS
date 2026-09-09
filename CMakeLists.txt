@@ -229,6 +229,10 @@ add_subdirectory(tools)
 # =========================================================
 if(BUILD_TESTING)
   enable_testing()
+  option(PTOAS_OAHS_TESTS "Register the test-only OAHS differential and mutation gate" ON)
+  if(PTOAS_OAHS_TESTS AND PTO_ENABLE_PYTHON_BINDING)
+    add_subdirectory(test/experiments/insert_sync/logical_plan)
+  endif()
   if(PTO_ENABLE_PYTHON_BINDING)
     get_filename_component(_pto_python_bin_dir "${Python3_EXECUTABLE}" DIRECTORY)
     set(_pto_python_test_pythonpath
@@ -320,7 +324,11 @@ if(BUILD_TESTING)
       PTOAS_Python
       PTODSLPackage
       ptoas_runtime_deps
-      ptobc)
+      ptobc
+      pto-logical-relations-test
+      pto-sync-occurrences-test
+      pto-logical-sync-test
+      pto-test-opt)
     if(TARGET ${_target})
       list(APPEND _pto_check_ctest_depends ${_target})
     endif()
