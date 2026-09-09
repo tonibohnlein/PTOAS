@@ -97,9 +97,26 @@ def main():
                 "origin": "frozen accepted M2 artifact", "sha256": artifact["sha256"],
                 "projection": analyze(output), "metrics": measure(output, case.get("scenarios", []))}
         checkpoint = row["arms"]["checkpoint"]
-        for key in ("payload", "allocations", "views", "abi", "mechanisms"):
+        for key in ("payload", "allocations", "views", "abi"):
             assert checkpoint["projection"][key] == row["arms"]["logical"]["projection"][key], (case_id, "checkpoint " + key)
-        assert checkpoint["metrics"] == row["arms"]["logical"]["metrics"], (case_id, "checkpoint execution changed")
+        # Frozen outputs retain the old exit policy. The current explicit
+        # retirement drain and endpoint normalization intentionally change the
+        # command/scalar inventory, never the payload or useful boundaries.
+        now = row["arms"]["logical"]
+        assert now["projection"]["mechanisms"]["PIPE_ALL"] == 1
+        row["checkpoint_costs"] = []
+        for scenario in case["scenarios"]:
+            name = scenario["name"]
+            old_metric = checkpoint["metrics"]["scenarios"][name]
+            new_metric = now["metrics"]["scenarios"][name]
+            assert old_metric["payload_sha256"] == new_metric["payload_sha256"]
+            for action in ("pto.set_flag", "pto.wait_flag"):
+                assert new_metric["counts"].get(action, 0) <= old_metric["counts"].get(action, 0), (case_id, name, action)
+            old_scalar = sum(old_metric["scalar_counts"].values())
+            new_scalar = sum(new_metric["scalar_counts"].values())
+            assert new_scalar <= old_scalar, (case_id, name, "scalar regression", old_scalar, new_scalar)
+            row["checkpoint_costs"].append({"scenario": name, "old_scalar": old_scalar, "new_scalar": new_scalar,
+                "old_commands": old_metric["counts"], "new_commands": new_metric["counts"]})
         baseline = row["arms"]["refiner"]
         current = row["arms"]["logical"]
         for key in ("payload", "allocations", "views", "abi"):
@@ -117,7 +134,7 @@ def main():
             old = baseline["metrics"]["scenarios"]["16"]["counts"]
             for action in ("pto.set_flag", "pto.wait_flag"):
                 assert new[action] <= old[action] and new[action] <= 96
-            assert current["projection"]["mechanisms"]["PIPE_ALL"] == 0
+            assert current["projection"]["mechanisms"]["PIPE_ALL"] == 1
         if case_id == "qk_matmul":
             row["first_panel_readiness"] = []
             for scenario in case["scenarios"]:

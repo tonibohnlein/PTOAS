@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// The preload executes even when the loop or every reader is skipped.
+// On nonempty reader paths the last physical operation is an MTE3 store.
+module attributes {pto.target_arch = "a3"} {
+  func.func @retirement_final_mte3(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>, %trip: index, %take: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 512 : i64
+    %in = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 16x16xf16>
+    %out = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 16x16xf16>
+    %source = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %target = pto.make_tensor_view %dst, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %input = pto.partition_view %source, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %output = pto.partition_view %target, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    pto.tload ins(%input : !pto.partition_tensor_view<16x16xf16>) outs(%in : !pto.tile_buf<vec, 16x16xf16>)
+    scf.for %iv = %c0 to %trip step %c1 {
+      scf.if %take {
+        pto.tabs ins(%in : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tstore ins(%out : !pto.tile_buf<vec, 16x16xf16>) outs(%output : !pto.partition_tensor_view<16x16xf16>)
+      }
+    }
+    return
+  }
+}

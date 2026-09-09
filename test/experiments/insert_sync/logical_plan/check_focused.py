@@ -78,6 +78,10 @@ def main():
     run("constructor", [sys.executable, HERE / "check_constructor.py", "--focused",
                          "--python-root", args.python_root, "--native-driver", args.native_driver,
                          "--output", output / "constructor"])
+    run("retirement", [sys.executable, HERE / "check_retirement.py", "--driver", args.native_driver,
+                        "--python-root", args.python_root, "--output", output / "retirement"])
+    run("endpoints", [sys.executable, HERE / "check_endpoints.py", "--driver", args.native_driver,
+                       "--python-root", args.python_root, "--output", output / "endpoints"])
     source = ROOT / "test/lit/pto/insert_sync_authored_dynamic.pto"
     base = [args.opt, "--mlir-disable-threading"]
     parsed = run("authored.input", [*base, source]).stdout
