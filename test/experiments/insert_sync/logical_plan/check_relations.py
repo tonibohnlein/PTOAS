@@ -138,10 +138,45 @@ def main():
         "{[d0] -> [r0]: d0=r0 and d0 mod 2=1}")
     run("even_is_not_all_integers", {"op":"contains", "a":even, "b":diagonal}, status="not-established")
 
+    # Challenge sufficient rational containment separately from exact integer
+    # subtraction. In particular, unmatched existential locals must never be
+    # identified just because the two relations have equally many columns.
+    def contains_case(name, supply, requirement):
+        remainder = isl.map(isl_text(requirement)) - isl.map(isl_text(supply))
+        status = "proved" if remainder.empty() else "not-established"
+        run(name, {"op": "contains", "a": supply, "b": requirement}, status=status)
+
+    odd = relation(eq=[[1,-1,0,0], [1,0,-2,-1]], locals=1)
+    contains_case("different_parity_witnesses", even, odd)
+    contains_case("same_parity_redundant_constraints", even,
+                  relation(eq=[[1,-1,0,0], [1,0,-2,0]], ge=[[1,0,0,0]], locals=1))
+    contains_case("unrelated_existential_witnesses", even,
+                  relation(eq=[[1,-1,0,0]], ge=[[0,0,1,0]], locals=1))
+    integer_empty = relation(eq=[[1,-1,0], [2,0,-1]])
+    contains_case("integer_empty_rationally_nonempty", even, integer_empty)
+    contains_case("rationally_empty_antecedent", diagonal,
+                  relation(ge=[[1,0,-2], [-1,0,1]]))
+    pieces = relation(pieces=[
+        {"locals":0, "eq":[[1,-1,0]], "ge":[[1,0,0], [-1,0,1]]},
+        {"locals":0, "eq":[[1,-1,0]], "ge":[[1,0,-2], [-1,0,3]]}])
+    contains_case("integer_union_only_coverage", pieces,
+                  relation(eq=[[1,-1,0]], ge=[[1,0,0], [-1,0,3]]))
+    contains_case("sample_preserves_parameter", relation(s=1, eq=[[1,-1,0,0], [0,0,1,0]]),
+                  relation(s=1, eq=[[1,-1,0,0], [0,0,1,-1]]))
+    large = 1 << 62
+    contains_case("sample_preserves_large_integer", relation(eq=[[1,0,0]]),
+                  relation(eq=[[1,-large,0], [0,1,-large]]))
+    contains_case("sample_in_second_union_piece", pieces,
+                  relation(eq=[[1,0,-2], [0,1,-2]]))
+
     # Complement must preserve residue restrictions in tightened bounds used
     # to discover quotient locals. Negating only the other constraints is unsound.
     tightened = relation(locals=1, ge=[[1, 0, -3, -1], [-1, 0, 3, 2]])
     quotient_eq = relation(locals=1, eq=[[1, 0, -3, -1]])
+    contains_case("tightened_floor_not_universal", tightened, diagonal)
+    contains_case("tightened_floor_matching_witness", tightened, quotient_eq)
+    contains_case("tightened_floor_shifted_witness", tightened,
+                  relation(locals=1, eq=[[1,0,-3,0]]))
     nested_divs = relation(locals=2, ge=[
         [1, 0, -3, 0, 0], [-1, 0, 3, 0, 2],
         [0, 0, 1, -2, -1], [0, 0, -1, 2, 1]])

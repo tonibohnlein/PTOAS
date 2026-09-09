@@ -13,9 +13,26 @@
 #include <map>
 #include <set>
 #include <cstdlib>
+#include <chrono>
 
 using namespace mlir::pto::logical_sync;
 namespace {
+// Existing opt-in diagnostics include expensive primitive queries so a small
+// checked-work count cannot be mistaken for a wall-clock bound.
+struct QueryTimer {
+    const char* name;
+    unsigned left, right;
+    bool enabled = std::getenv("PTOAS_LOGICAL_TRACE") != nullptr;
+    std::chrono::steady_clock::time_point start = enabled ? std::chrono::steady_clock::now() :
+                                                          std::chrono::steady_clock::time_point{};
+    ~QueryTimer() {
+        if (!enabled) return;
+        double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        if (seconds >= 0.25)
+            llvm::errs() << "logical query " << name << " pieces " << left << "/" << right
+                         << " seconds " << seconds << "\n";
+    }
+};
 RelationResult failure(QueryStatus status, const char* reason)
 {
     if (std::getenv("PTOAS_LOGICAL_TRACE"))
@@ -107,6 +124,7 @@ RelationResult RelationQueries::normalize(const Relation& relation)
 }
 
 RelationResult RelationQueries::compose(const Relation& first, const Relation& second) {
+    QueryTimer timer{"compose", first.getNumDisjuncts(), second.getNumDisjuncts()};
     if (!first.getSpace().getRangeSpace().isCompatible(second.getSpace().getDomainSpace()))
         return failure(QueryStatus::Unsupported, "incompatible composition spaces");
     if (!first.getNumDisjuncts() || !second.getNumDisjuncts()) {
@@ -219,6 +237,7 @@ RelationResult RelationQueries::compose(const Relation& first, const Relation& s
 }
 
 RelationResult RelationQueries::subtract(const Relation& from, const Relation& remove) {
+    QueryTimer timer{"subtract", from.getNumDisjuncts(), remove.getNumDisjuncts()};
     if (!sameSpace(from, remove)) return failure(QueryStatus::Unsupported, "incompatible difference spaces");
     if (!from.getNumDisjuncts()) {
         if (!charge(from))
@@ -408,6 +427,85 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
 }
 
 QueryStatus RelationQueries::contains(const Relation& supply, const Relation& requirement) {
+    QueryTimer timer{"contains", supply.getNumDisjuncts(), requirement.getNumDisjuncts()};
+    if (!sameSpace(supply, requirement)) return QueryStatus::Unsupported;
+    if (!charge(supply) || !charge(requirement)) return QueryStatus::BudgetExhausted;
+    // A sufficient piecewise implication avoids manufacturing an exact set
+    // difference for simple domain/bound comparisons. Local witnesses are
+    // aligned only by mergeLocalVars' proved division identities. Qualified
+    // total floor definitions extend the antecedent with integer witnesses,
+    // never with RHS membership restrictions. Unqualified supply locals remain
+    // unconstrained, giving a stronger sufficient test. Failure of this rational
+    // test supplies no negative answer.
+    bool covered = true;
+    unsigned testsLeft = 512;
+    for (const auto& needed : requirement.getAllDisjuncts()) {
+        bool found = false;
+        unsigned candidatesLeft = 8;
+        auto coordinates = fixedCoordinates(needed, 0, needed.getNumDomainVars() + needed.getNumRangeVars());
+        for (const auto& available : supply.getAllDisjuncts()) {
+            if (!spend(1)) return QueryStatus::BudgetExhausted;
+            if (incompatible(coordinates, fixedCoordinates(
+                    available, 0, available.getNumDomainVars() + available.getNumRangeVars()))) continue;
+            if (needed.isObviouslyEqual(available)) { found = true; break; }
+            if (!candidatesLeft || !testsLeft) break;
+            --candidatesLeft;
+            mlir::presburger::IntegerRelation lhs(needed), rhs(available);
+            unsigned membershipRows = rhs.getNumInequalities();
+            auto divisions = rhs.getLocalReprs();
+            if (divisions.hasAllReprs()) {
+                unsigned offset = rhs.getNumVars() - rhs.getNumLocalVars();
+                for (unsigned i = 0; i < rhs.getNumLocalVars(); ++i) {
+                    rhs.addInequality(mlir::presburger::getDivUpperBound(
+                        divisions.getDividend(i), divisions.getDenom(i), offset + i));
+                    rhs.addInequality(mlir::presburger::getDivLowerBound(
+                        divisions.getDividend(i), divisions.getDenom(i), offset + i));
+                }
+            }
+            lhs.mergeLocalVars(rhs);
+            for (unsigned i = membershipRows; i < rhs.getNumInequalities(); ++i)
+                lhs.addInequality(rhs.getInequality(i));
+            unsigned rows = membershipRows + 2 * rhs.getNumEqualities();
+            if (lhs.getNumCols() > 64 || lhs.getNumConstraints() > 128 || rows > testsLeft) continue;
+            bool implied = true, exhausted = false;
+            auto proves = [&](llvm::SmallVector<llvm::DynamicAPInt> row) {
+                --testsLeft;
+                if (!charge(Relation(lhs))) { exhausted = true; return false; }
+                mlir::presburger::Simplex simplex(lhs);
+                return simplex.isEmpty() || simplex.isRedundantInequality(row);
+            };
+            for (unsigned i = 0; implied && i < rhs.getNumEqualities(); ++i) {
+                llvm::SmallVector<llvm::DynamicAPInt> row(rhs.getEquality(i));
+                implied = proves(row);
+                for (auto& coefficient : row) coefficient = -coefficient;
+                if (implied) implied = proves(row);
+            }
+            for (unsigned i = 0; implied && i < membershipRows; ++i)
+                implied = proves(llvm::SmallVector<llvm::DynamicAPInt>(rhs.getInequality(i)));
+            if (exhausted) return QueryStatus::BudgetExhausted;
+            if (implied) { found = true; break; }
+        }
+        if (!found) { covered = false; break; }
+    }
+    if (covered) return QueryStatus::Proved;
+    // A concrete integer counterexample can refute an over-broad proposed
+    // guard without constructing its complement. Sampling never establishes
+    // containment: membership or an unavailable sample falls through to the
+    // exact difference. Drop only local witness coordinates, preserving all
+    // domain/range coordinates and symbols for the existential membership test.
+    unsigned samplesLeft = 2;
+    bool smallSupply = supply.getNumDisjuncts() <= 64 && llvm::all_of(
+        supply.getAllDisjuncts(), [](const auto& p) { return p.getNumCols() <= 16 && p.getNumConstraints() <= 64; });
+    for (const auto& needed : requirement.getAllDisjuncts()) {
+        if (!samplesLeft) break;
+        if (!smallSupply || needed.getNumCols() > 16 || needed.getNumConstraints() > 64) continue;
+        --samplesLeft;
+        if (!charge(Relation(needed)) || !charge(supply)) return QueryStatus::BudgetExhausted;
+        auto sample = needed.findIntegerSample();
+        if (!sample) continue;
+        sample->resize(needed.getNumVars() - needed.getNumLocalVars());
+        if (!supply.containsPoint(*sample)) return QueryStatus::NotEstablished;
+    }
     auto missing = subtract(requirement, supply);
     if (!missing) return missing.status;
     return missing.relation->isIntegerEmpty() ? QueryStatus::Proved : QueryStatus::NotEstablished;

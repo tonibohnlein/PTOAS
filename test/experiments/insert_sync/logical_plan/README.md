@@ -1,5 +1,9 @@
 # Native logical-constructor acceptance
 
+Guard generalization is currently paused as **WIP**; the complete gate is not
+green. See [GUARD_WIP.md](GUARD_WIP.md) for passed checks, the three-buffer timeout
+and outstanding validation. M1/M2 extraction remains the accepted checkpoint.
+
 Milestone one includes direct construction from unsynchronized PTO, exact
 query parity, shared native requirement export, and fresh emitted reconstruction.
 The query driver links the same C++ source used by the compiler; the Python test process compares it with libisl and
@@ -37,8 +41,9 @@ python test/experiments/insert_sync/logical_plan/check_occurrences.py \
 ```
 
 The driver disables MLIR multithreading and the Python runner invokes cases
-serially. The 15 cases include narrow integer overflow refusal, signed Boolean
-conditions, nested loops, nonunit steps, reversed phase identities, and all
+serially. The 28 cases include narrow integer overflow refusal, correlated
+addition/subtraction, division/remainder qualification at the original definition,
+signed Boolean conditions, nested loops, nonunit steps, reversed phase identities, and all
 1,936 phase-pair order relations in the unchanged looping online-softmax input.
 This checks input occurrence semantics, independently of selected synchronization.
 
@@ -60,9 +65,34 @@ defaults to **one_buffer, online_softmax, Q projection and QK**, the
 accepted M1/M2 population. It also checks skipped/empty structured execution, deliberate
 emission corruption, and explicit zero-budget strict failure versus unchanged
 hybrid fallback. `--case` selects other frozen inputs as strict probes; it does
-not turn fallback into acceptance. Two-buffer release-domain lowering remains
-unsupported at this milestone. The wider control ladder and historical GEMM remain outside this
-accepted strict-constructor population.
+not turn fallback into acceptance. The guard-generalization checks additionally
+require independent two-/three-buffer construction, short/empty/repeated slot
+participation, emitted C++ and guard-corruption rejection. Historical GEMM and
+broader allocation remain later milestones.
+
+The lowerer derives available bound differences and small parameter residues
+from the selected execution relations. Every proposed guard must exactly cover
+its requested integer domain. Difference arithmetic must fit on the full
+insertion domain; signed remainder executes beneath a proved nonnegative bound.
+This is a bounded vocabulary, not arbitrary affine predicate synthesis: residue
+divisors must occur in the relation and lie in 2..16, and threshold proposal skips
+at most eight proved-empty integer levels. Unknown cases retain explicit refusal.
+
+Ordered disjunctions short-circuit both failed clauses and unsafe arithmetic.
+Before allocation or emission, a shared 4096-operation estimate and depth-64 cap
+bound the actual recursive expansion. The native `guard-growth` check rejects
+32 two-literal clauses without emitting their exponential tree, while retaining
+supported linear guards. These are resource bounds, not solver wall-time limits.
+The test-only boundary-projection observer separates private synchronization
+arithmetic from payload; values escaping the region remain payload.
+
+Containment first tries bounded sufficient rational implication, including only
+canonical total floor definitions for qualified witnesses. Tightened residue
+membership remains an obligation. Bounded integer samples may refute containment
+but never prove it. All other cases retain the existing exact integer difference.
+The 75 native/reference query tests challenge those directions independently.
+`PTOAS_LOGICAL_TRACE=1` records slow primitive queries and guard preparation in
+addition to the existing stage work counts; it does not change planning.
 
 `--insert-sync-planner=logical` requests independent construction.
 `logical-or-existing` discards unsupported candidates and runs existing

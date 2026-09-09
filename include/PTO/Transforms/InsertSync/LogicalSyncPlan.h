@@ -39,6 +39,9 @@ struct ConstructionResult {
 ConstructionResult constructLogicalSync(
     func::FuncOp function, InsertSyncGMAliasMode gm, bool useMmad, uint64_t budget = kDefaultLogicalSyncWorkBudget);
 namespace testing {
+// Exercise the actual pre-emission expansion bound without constructing an
+// exponentially large IR. No production option or acceptance override.
+bool guardEmissionFits(ArrayRef<unsigned> clauseSizes, bool shortCircuit, uint64_t allowance);
 using RequirementObserver = llvm::function_ref<void(
     const SyncOccurrences&, ArrayRef<const CompoundInstanceElement*>, ArrayRef<OrderingRequirement>)>;
 // Native reconstruction challenge only: mutation receives the emitted clone,

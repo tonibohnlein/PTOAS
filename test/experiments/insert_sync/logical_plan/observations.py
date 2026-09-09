@@ -41,12 +41,18 @@ are recorded separately. Payload control, constants, views and effects remain.
     values, terms, records, placements, allocations, views, abi = {}, {}, [], [], [], [], []
     sync_control = Counter()
 
-    def only_sync(op):
+    control_arithmetic = {"arith.constant", "arith.cmpi", "arith.subi", "arith.addi", "arith.remsi", "arith.andi", "arith.ori", "arith.xori"}
+
+    def only_sync(op, local=None):
         if op.name in SYNC or op.name == "scf.yield":
             return not op.results
-        return (op.name == "scf.if" and not op.results and
-                all(only_sync(view.operation) for region in op.regions
-                    for block in region.blocks for view in block.operations))
+        if op.name in control_arithmetic and local is not None:
+            return all(use.owner in local for value in op.results for use in value.uses)
+        if op.name == "scf.if" and not op.results:
+            private = set(walk(op)) if local is None else local
+            return all(only_sync(view.operation, private) for region in op.regions
+                       for block in region.blocks for view in block.operations)
+        return False
 
     def walk(op):
         for child in children(op):
@@ -54,7 +60,6 @@ are recorded separately. Payload control, constants, views and effects remain.
             yield from walk(child)
 
     excluded = {op for op in walk(module.operation) if op.name == "scf.if" and only_sync(op)}
-    control_arithmetic = {"arith.constant", "arith.cmpi", "arith.subi", "arith.addi", "arith.andi", "arith.ori", "arith.xori"}
     while True:
         found = {op for op in walk(module.operation) if op not in excluded and op.name in control_arithmetic
                  and op.results and any(value.uses for value in op.results)

@@ -39,6 +39,39 @@ GM occurrence query handles the committed bounded, contiguous full-tile store
 subset and returns false when a proof needs an unmaterialized runtime guard.
 Neither query asserts definite production from an allocation footprint.
 
+## Production and experiment boundary
+
+OAHS is the `logical` planning mode of the existing InsertSync pass. Its C++
+constructor starts before upstream synchronization selection and allocation.
+The production dependencies are the qualified physical/occurrence utilities,
+MLIR Presburger queries, construction, realization and fresh reconstruction.
+The old research refiner is not a production dependency.
+
+Keep the experiment campaign separate from the eventual upstream merge:
+
+- `test/experiments/insert_sync/logical_plan/` contains the Python/libisl
+  reference, frozen planner outputs, historical reports and benchmark observers.
+  Its standalone relation-driver CMake project is not included by the compiler
+  build. None of these files is imported by production compilation.
+- `tools/pto-test-opt/pto-logical-sync-test.cpp` and
+  `pto-sync-occurrences-test.cpp` are native validation executables, not compiler
+  dependencies. Their targets currently live alongside the upstream test tools;
+  final merge packaging should decide whether to retain them under the normal
+  test-build gate or extract the necessary cases into upstream's test facilities.
+- The small `logical_sync::testing` observation/mutation entry point is currently
+  compiled with the constructor. It has no CLI or environment activation and is
+  called only by the native validation driver. Do not describe this shim as
+  already compiled out of production. Its declaration/packaging can be isolated
+  further when preparing the merge.
+- Preserve focused correctness regressions and production reconstruction even
+  if the research campaign, comparison artifacts and test-only adapter are
+  excluded from the merge. Compiler correctness must not depend on retaining
+  the experiment directory.
+
+New exploratory scripts and durable local campaign outputs belong outside the
+source worktree. Continuing guard work must not add a dependency from production
+code to the reference prototype, benchmark data or expected synchronization counts.
+
 ## Default behavior and supported scope
 
 `--insert-sync-planner=existing` remains the default and takes the upstream

@@ -94,6 +94,78 @@ def main():
   return
 } }''', False)
 
+    def difference_source(lower, inside_guard=False):
+        difference = '%d = arith.subi %n, %i : i8\n%p = arith.cmpi sge, %d, %three : i8'
+        body = ('%safe = arith.cmpi sge, %i, %z : i8\nscf.if %safe {\n' + difference +
+                '\nscf.if %p { "test.phase"() : () -> () }\n}') if inside_guard else (
+                difference + '\n%safe = arith.cmpi sge, %i, %z : i8\nscf.if %safe {\n' +
+                'scf.if %p { "test.phase"() : () -> () }\n}')
+        return f'''module {{ func.func @f(%n: i8) {{
+  %z = arith.constant 0 : i8
+  %lo = arith.constant {lower} : i8
+  %one = arith.constant 1 : i8
+  %three = arith.constant 3 : i8
+  scf.for %i = %lo to %n step %one : i8 {{ {body} }}
+  return
+}} }}'''
+
+    for name, lower, guarded in (("difference_loop_domain", 0, False),
+                                 ("difference_definition_domain", -1, True)):
+        result = run(name, difference_source(lower, guarded))
+        equals(result["points"][0], "[p0] -> {[] -> [0,i]: 0<=i and i+3<=p0<=127}")
+    # A safe use of the result does not make its earlier overflowing definition
+    # mathematical: n=127,i=-1 wraps before the later i>=0 branch is evaluated.
+    run("difference_unsafe_definition_safe_use", difference_source(-1), False)
+
+    result = run("correlated_safe_addition", '''module { func.func @f(%n: i8) {
+  %z = arith.constant 0 : i8
+  %one = arith.constant 1 : i8
+  scf.for %i = %z to %n step %one : i8 {
+    %d = arith.subi %n, %i : i8
+    %sum = arith.addi %d, %i : i8
+    %p = arith.cmpi eq, %sum, %n : i8
+    scf.if %p { "test.phase"() : () -> () }
+  }
+  return
+} }''')
+    equals(result["points"][0], "[p0] -> {[] -> [0,i]: 0<=i<p0<=127}")
+    run("addition_unsafe_definition_safe_use", '''module { func.func @f(%n: i8) {
+  %z = arith.constant 0 : i8
+  %one = arith.constant 1 : i8
+  scf.for %i = %z to %n step %one : i8 {
+    %sum = arith.addi %n, %i : i8
+    %safe = arith.cmpi eq, %i, %z : i8
+    scf.if %safe {
+      %p = arith.cmpi eq, %sum, %n : i8
+      scf.if %p { "test.phase"() : () -> () }
+    }
+  }
+  return
+} }''', False)
+
+    def division_source(opcode, guarded, divisor=3):
+        math = f'%x = arith.addi %n, %i : i8\n%r = {opcode} %x, %d : i8'
+        check = '%p = arith.cmpi eq, %r, %z : i8\nscf.if %p { "test.phase"() : () -> () }'
+        body = (f'scf.if %safe {{ {math}\n{check} }}' if guarded else
+                f'{math}\nscf.if %safe {{ {check} }}')
+        return f'''module {{ func.func @f(%n: i8) {{
+  %z = arith.constant 0 : i8
+  %one = arith.constant 1 : i8
+  %d = arith.constant {divisor} : i8
+  %safe = arith.cmpi sge, %n, %z : i8
+  scf.for %i = %z to %one step %one : i8 {{ {body} }}
+  return
+}} }}'''
+
+    for opcode in ("arith.remsi", "arith.divsi"):
+        name = opcode.split(".")[1]
+        result = run(name + "_guarded_definition", division_source(opcode, True))
+        wanted = "p0 mod 3=0" if name == "remsi" else "p0<3"
+        equals(result["points"][0], f"[p0] -> {{[] -> [0,i]: i=0 and 0<=p0<=127 and {wanted}}}")
+        run(name + "_unsafe_definition_safe_use", division_source(opcode, False), False)
+        for divisor in (0, -1):
+            run(name + "_invalid_divisor_" + str(divisor), division_source(opcode, True, divisor), False)
+
     for spelling in ("arith.remui", "arith.andi"):
         divisor = 2 if spelling.endswith("remui") else 1
         result = run(spelling.replace(".", "_"), f'''module {{ func.func @f(%n: index) {{

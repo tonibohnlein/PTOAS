@@ -575,14 +575,54 @@ namespace {
 // domain must equal their interpretation at the actual insertion point. No
 // guessed trip distance or unavailable future condition is emitted.
 struct BoundaryTest {
-    enum Kind { First, Last, Nonempty, Predicate, BooleanParameter, ConstantBound } kind;
+    enum Kind { First, Last, Nonempty, Predicate, BooleanParameter, ConstantBound, DifferenceBound,
+                ParameterBound, ParameterResidue } kind;
     unsigned loop;
     bool truth;
     int64_t bound = 0;
     arith::CmpIPredicate comparison = arith::CmpIPredicate::eq;
+    bool fromUpper = false;
+    int64_t modulus = 1;
 };
 using Clause = SmallVector<BoundaryTest, 2>;
 using Guard = SmallVector<Clause, 2>;
+// Short-circuit DNF can duplicate a suffix at each failed literal. Account for
+// that actual tree before allocation/emission, rather than depending on the
+// later occurrence importer to discover an already expanded function.
+bool chargeGuardEmission(const Guard& guard, uint64_t& remaining)
+{
+    constexpr uint64_t operationsPerLiteral = 12; // includes scalar ops and both region yields
+    constexpr unsigned maxDepth = 64;
+    uint64_t nodes = 0;
+    unsigned depth = 0;
+    for (const auto& clause : guard) {
+        if (clause.size() > maxDepth - depth) return false;
+        depth += clause.size();
+    }
+    const bool shortCircuit = llvm::any_of(guard, [](const Clause& clause) {
+        return llvm::any_of(clause, [](const BoundaryTest& test) {
+            return test.kind == BoundaryTest::ParameterResidue;
+        });
+    });
+    if (shortCircuit) {
+        for (const auto& clause : llvm::reverse(guard)) {
+            uint64_t suffix = nodes;
+            nodes = 1; // the action after a successful clause
+            for (unsigned i = 0; i < clause.size(); ++i) {
+                if (suffix > remaining || nodes > remaining - suffix ||
+                    operationsPerLiteral > remaining - suffix - nodes) return false;
+                nodes += suffix + operationsPerLiteral;
+            }
+        }
+    } else {
+        nodes = 4; // the action and optional guarding if/yield
+        for (const auto& clause : guard)
+            nodes += operationsPerLiteral * (clause.size() + 1);
+    }
+    if (nodes > remaining) return false;
+    remaining -= nodes;
+    return true;
+}
 struct Endpoint {
     unsigned point;
     bool publication;
@@ -603,14 +643,15 @@ class BoundaryLowering {
     }
     std::optional<Relation> condition(unsigned point, BoundaryTest test)
     {
-        if (test.kind == BoundaryTest::ConstantBound) {
+        if (test.kind == BoundaryTest::ConstantBound || test.kind == BoundaryTest::ParameterBound) {
             auto domain = facts.domain(point);
             auto restricted = Relation::getEmpty(domain.getSpace());
             for (auto piece : domain.getAllDisjuncts()) {
                 auto type = test.comparison == arith::CmpIPredicate::eq  ? BoundType::EQ :
                             test.comparison == arith::CmpIPredicate::sle ? BoundType::UB :
                                                                            BoundType::LB;
-                piece.addBound(type, test.loop + 1, test.bound);
+                piece.addBound(type, test.kind == BoundaryTest::ConstantBound ? test.loop + 1 :
+                                   facts.dimensions() + test.loop, test.bound);
                 restricted.unionInPlace(Relation(piece));
             }
             return restricted;
@@ -626,12 +667,16 @@ class BoundaryLowering {
         }
         auto* context = facts.points[point].operation->getContext();
         AffineExpr expression;
-        if (test.kind == BoundaryTest::BooleanParameter)
+        if (test.kind == BoundaryTest::ParameterResidue)
+            expression = getAffineSymbolExpr(test.loop, context) % test.modulus - test.bound;
+        else if (test.kind == BoundaryTest::BooleanParameter)
             expression = getAffineSymbolExpr(test.loop, context) - 1;
         else {
             auto loop = facts.loopDomains[test.loop];
             auto iv = getAffineDimExpr(test.loop, context);
-            expression = test.kind == BoundaryTest::First ? iv - loop.lower :
+            expression = test.kind == BoundaryTest::DifferenceBound ?
+                             (test.fromUpper ? loop.upper - iv : iv - loop.lower) :
+                         test.kind == BoundaryTest::First ? iv - loop.lower :
                          test.kind == BoundaryTest::Last  ? iv + loop.step - loop.upper :
                                                             loop.upper - loop.lower - 1;
         }
@@ -647,14 +692,21 @@ class BoundaryLowering {
             std::vector<SmallVector<int64_t, 8>> rows;
             if (failed(getFlattenedAffineExprs(set, &rows, &flat)))
                 return {};
-            if (equality)
-                flat.addEquality(rows.front());
-            else
-                flat.addInequality(rows.front());
+            SmallVector<llvm::DynamicAPInt> row;
+            for (int64_t coefficient : rows.front()) row.emplace_back(coefficient);
+            if (test.kind == BoundaryTest::DifferenceBound)
+                row.back() += test.comparison == arith::CmpIPredicate::sle ?
+                                  llvm::DynamicAPInt(test.bound) : -llvm::DynamicAPInt(test.bound);
+            if (equality) flat.addEquality(row);
+            else flat.addInequality(row);
             return facts.domain(point).intersect(Relation(flat));
         };
-        auto positive =
-            build(expression, test.kind == BoundaryTest::First || test.kind == BoundaryTest::BooleanParameter);
+        if (test.kind == BoundaryTest::DifferenceBound && test.comparison == arith::CmpIPredicate::sle)
+            expression = -expression;
+        auto positive = build(expression,
+            test.kind == BoundaryTest::First || test.kind == BoundaryTest::BooleanParameter ||
+            test.kind == BoundaryTest::ParameterResidue ||
+            (test.kind == BoundaryTest::DifferenceBound && test.comparison == arith::CmpIPredicate::eq));
         if (!positive || test.truth)
             return positive;
         auto negative = queries.subtract(facts.domain(point), *positive);
@@ -733,6 +785,12 @@ public:
         auto admit = [&](const Relation& domain, Clause clause) -> bool {
             if (domain.isIntegerEmpty())
                 return true;
+            // A candidate already covered by prior clauses cannot contribute.
+            // Test the intersection directly rather than subtracting and then
+            // proving that the difference still contains the entire remainder.
+            auto contribution = queries.normalize(domain.intersect(remaining));
+            if (!contribution) { outcome = contribution.status; return false; }
+            if (contribution.relation->isIntegerEmpty()) return true;
             auto included = queries.contains(target, domain);
             if (queryFailed(included))
                 return false;
@@ -743,30 +801,31 @@ public:
                 outcome = rest.status;
                 return false;
             }
-            auto unchanged = queries.contains(*rest.relation, remaining);
-            if (queryFailed(unchanged))
-                return false;
-            if (unchanged == QueryStatus::Proved)
-                return true;
             guard.push_back(std::move(clause));
             remaining = std::move(*rest.relation);
             return true;
         };
+        unsigned coveredCandidates = 0;
         auto cover = [&]() -> std::optional<bool> {
-            for (const auto& a : candidates) {
+            for (unsigned i = coveredCandidates; i < candidates.size(); ++i) {
+                const auto& a = candidates[i];
                 if (!admit(a.domain, Clause{a.test}))
                     return std::nullopt;
                 if (remaining.isIntegerEmpty())
                     return true;
             }
             for (unsigned i = 0; i < candidates.size(); ++i)
-                for (unsigned j = i + 1; j < candidates.size(); ++j) {
+                for (unsigned j = std::max(i + 1, coveredCandidates); j < candidates.size(); ++j) {
                     auto domain = candidates[i].domain.intersect(candidates[j].domain);
                     if (!admit(domain, Clause{candidates[i].test, candidates[j].test}))
                         return std::nullopt;
                     if (remaining.isIntegerEmpty())
                         return true;
                 }
+            // Target membership is immutable and accepted clauses only shrink
+            // remaining. Previously tried singles/pairs never become useful
+            // when new proposal forms are appended.
+            coveredCandidates = candidates.size();
             return false;
         };
         auto covered = cover();
@@ -838,7 +897,158 @@ public:
         covered = cover();
         if (covered && *covered)
             return guard;
+        if (!covered)
+            return {};
+        // General differences of available loop bounds and IVs. Thresholds
+        // come from the requested integer domain, not from a slot count or a
+        // kernel-specific last-use recipe. Prove arithmetic on the FULL anchor
+        // domain before considering any threshold's true subset.
+        auto* context = anchor->getContext();
+        const unsigned n = facts.dimensions(), ns = facts.parameters.size();
+        for (unsigned i = 0; i < facts.loops.size(); ++i) {
+            auto loop = facts.loops[i];
+            if (!loop->isProperAncestor(anchor))
+                continue;
+            for (bool fromUpper : {false, true}) {
+                SmallVector<AffineExpr> dims, syms;
+                for (unsigned d = 0; d < facts.loops.size(); ++d)
+                    dims.push_back(getAffineDimExpr(d + 1, context));
+                for (unsigned s = 0; s < ns; ++s)
+                    syms.push_back(getAffineSymbolExpr(s, context));
+                auto ld = facts.loopDomains[i];
+                auto iv = getAffineDimExpr(i, context);
+                auto expression = (fromUpper ? ld.upper - iv : iv - ld.lower).replaceDimsAndSymbols(dims, syms);
+                auto set = IntegerSet::get(n + 1, ns, {expression - getAffineDimExpr(n, context)}, {true});
+                FlatLinearConstraints flat(n + 1, ns);
+                std::vector<SmallVector<int64_t, 8>> rows;
+                if (failed(getFlattenedAffineExprs(set, &rows, &flat)))
+                    continue;
+                flat.addEquality(rows.front());
+                auto lift = [&](Relation domain) {
+                    domain.insertVarInPlace(VarKind::Range, n);
+                    return domain.intersect(Relation(flat));
+                };
+                auto full = takeRange(lift(ambient), n);
+                if (!full) {
+                    if (outcome == QueryStatus::BudgetExhausted) return {};
+                    continue;
+                }
+                unsigned width = isa<IndexType>(loop.getInductionVar().getType()) ? 64 :
+                                     cast<IntegerType>(loop.getInductionVar().getType()).getWidth();
+                if (!llvm::isIntN(width, full->first) || !llvm::isIntN(width, full->second))
+                    continue;
+                auto wantedRange = lift(remaining);
+                auto extrema = takeRange(wantedRange, n);
+                if (!extrema) {
+                    if (outcome == QueryStatus::BudgetExhausted) return {};
+                    continue;
+                }
+                // Relaxed floor witnesses can put the rational endpoint at an
+                // integer hole. Skip only proved-empty levels, with a fixed
+                // bound; exact guard-domain cover remains the acceptance gate.
+                for (auto comparison : {arith::CmpIPredicate::sge, arith::CmpIPredicate::sle}) {
+                    int64_t bound = comparison == arith::CmpIPredicate::sge ? extrema->first : extrema->second;
+                    for (unsigned step = 0; step < 8; ++step) {
+                        auto slice = Relation::getEmpty(wantedRange.getSpace());
+                        for (auto piece : wantedRange.getAllDisjuncts()) {
+                            piece.addBound(BoundType::EQ, n, bound);
+                            slice.unionInPlace(Relation(piece));
+                        }
+                        auto present = queries.normalize(slice);
+                        if (!present) { outcome = present.status; return {}; }
+                        if (!present.relation->isIntegerEmpty()) break;
+                        if ((comparison == arith::CmpIPredicate::sge && bound == INT64_MAX) ||
+                            (comparison == arith::CmpIPredicate::sle && bound == INT64_MIN)) break;
+                        bound += comparison == arith::CmpIPredicate::sge ? 1 : -1;
+                    }
+                    if (!llvm::isIntN(width, bound)) continue;
+                    BoundaryTest test{BoundaryTest::DifferenceBound, i, true, bound, comparison, fromUpper};
+                    auto domain = condition(point, test);
+                    if (!domain) return {};
+                    if (!admit(*domain, Clause{test})) return {};
+                    if (remaining.isIntegerEmpty()) return guard;
+                    // Reuse already qualified predicate alternatives where a
+                    // difference is needed only on part of the original path.
+                    for (const auto& candidate : candidates) {
+                        if (!admit(domain->intersect(candidate.domain), Clause{test, candidate.test})) return {};
+                        if (remaining.isIntegerEmpty()) return guard;
+                    }
+                }
+            }
+        }
+        // At an enclosing boundary, a final participating lane can depend on
+        // a parameter's residue. Recover only small divisors actually present
+        // in the selected relation. Neither loop counts nor buffer depth are
+        // consulted. A nonnegative bound is evaluated FIRST, so signed
+        // remainder is mathematical modulo wherever its definition executes.
+        std::set<int64_t> moduli;
+        for (const auto& piece : remaining.getAllDisjuncts()) {
+            auto divisions = piece.getLocalReprs();
+            for (auto denominator : divisions.getDenoms())
+                if (denominator >= 2 && denominator <= 16)
+                    moduli.insert(int64_t(denominator));
+        }
+        for (unsigned s = 0; s < facts.parameters.size(); ++s) {
+            Value value = facts.parameters[s];
+            if (!dominance.dominates(value, anchor) || value.getType().isInteger(1)) continue;
+            auto range = takeRange(remaining, n + s);
+            if (!range) {
+                if (outcome == QueryStatus::BudgetExhausted) return {};
+                continue;
+            }
+            int64_t lower = range->first;
+            for (unsigned step = 0; step < 8 && lower < INT64_MAX; ++step) {
+                auto slice = Relation::getEmpty(remaining.getSpace());
+                for (auto piece : remaining.getAllDisjuncts()) {
+                    piece.addBound(BoundType::EQ, n + s, lower);
+                    slice.unionInPlace(Relation(piece));
+                }
+                auto check = queries.normalize(slice);
+                if (!check) { outcome = check.status; return {}; }
+                if (!check.relation->isIntegerEmpty()) break;
+                ++lower;
+            }
+            if (lower < 0) continue;
+            unsigned width = isa<IndexType>(value.getType()) ? 64 : cast<IntegerType>(value.getType()).getWidth();
+            if (!llvm::isIntN(width, lower)) continue;
+            BoundaryTest bound{BoundaryTest::ParameterBound, s, true, lower, arith::CmpIPredicate::sge};
+            auto nonnegative = condition(point, bound);
+            if (!nonnegative) return {};
+            if (!admit(*nonnegative, Clause{bound})) return {};
+            if (remaining.isIntegerEmpty()) return guard;
+            for (int64_t modulus : moduli) {
+                if (!llvm::isIntN(width, modulus)) continue;
+                for (int64_t residue = 0; residue < modulus; ++residue) {
+                    BoundaryTest test{BoundaryTest::ParameterResidue, s, true, residue,
+                                      arith::CmpIPredicate::eq, false, modulus};
+                    auto domain = condition(point, test);
+                    if (!domain || !admit(domain->intersect(*nonnegative), Clause{bound, test})) return {};
+                    if (remaining.isIntegerEmpty()) return guard;
+                }
+            }
+        }
         return {};
+    }
+    std::optional<std::pair<int64_t, int64_t>> takeRange(const Relation& relation, unsigned coordinate)
+    {
+        std::optional<std::pair<int64_t, int64_t>> range;
+        for (const auto& piece : relation.getAllDisjuncts()) {
+            if (!queries.spend(uint64_t(piece.getNumConstraints() + 1) * piece.getNumCols() * 2)) {
+                outcome = QueryStatus::BudgetExhausted; return {};
+            }
+            Simplex simplex(piece);
+            if (simplex.isEmpty()) continue;
+            SmallVector<llvm::DynamicAPInt> objective(piece.getNumCols());
+            objective[coordinate] = 1;
+            auto lo = simplex.computeOptimum(Simplex::Direction::Down, objective);
+            auto hi = simplex.computeOptimum(Simplex::Direction::Up, objective);
+            if (!lo.isBounded() || !hi.isBounded()) return {};
+            auto low = presburger::ceil(*lo), high = presburger::floor(*hi);
+            if (low < INT64_MIN || high > INT64_MAX || low > high) return {};
+            int64_t a = int64_t(low), b = int64_t(high);
+            range = range ? std::make_pair(std::min(range->first, a), std::max(range->second, b)) : std::make_pair(a, b);
+        }
+        return range;
     }
     Value emitGuard(OpBuilder& builder, Location location, const Guard& guard) const
     {
@@ -853,9 +1063,21 @@ public:
                     value = facts.predicates[test.loop].value;
                 else if (test.kind == BoundaryTest::BooleanParameter)
                     value = facts.parameters[test.loop];
-                else if (test.kind == BoundaryTest::ConstantBound) {
+                else if (test.kind == BoundaryTest::ParameterBound || test.kind == BoundaryTest::ParameterResidue) {
+                    value = facts.parameters[test.loop];
+                    if (test.kind == BoundaryTest::ParameterResidue) {
+                        auto divisor = builder.create<arith::ConstantOp>(location, builder.getIntegerAttr(value.getType(), test.modulus));
+                        value = builder.create<arith::RemSIOp>(location, value, divisor);
+                    }
+                    auto bound = builder.create<arith::ConstantOp>(location, builder.getIntegerAttr(value.getType(), test.bound));
+                    value = builder.create<arith::CmpIOp>(location, test.comparison, value, bound);
+                }
+                else if (test.kind == BoundaryTest::ConstantBound || test.kind == BoundaryTest::DifferenceBound) {
                     auto loop = facts.loops[test.loop];
                     Value iv = loop.getInductionVar();
+                    if (test.kind == BoundaryTest::DifferenceBound)
+                        iv = test.fromUpper ? builder.create<arith::SubIOp>(location, loop.getUpperBound(), iv) :
+                                              builder.create<arith::SubIOp>(location, iv, loop.getLowerBound());
                     auto constant =
                         builder.create<arith::ConstantOp>(location, builder.getIntegerAttr(iv.getType(), test.bound));
                     value = builder.create<arith::CmpIOp>(location, test.comparison, iv, constant);
@@ -897,6 +1119,8 @@ bool Constructor::realize()
     // first use, skipped/empty readers and final-use occurrences.
     for (unsigned i = 0; i < streams.size(); ++i) {
         auto& stream = streams[i];
+        if (std::getenv("PTOAS_LOGICAL_TRACE"))
+            llvm::errs() << "logical prepare publication " << stream.source << " work " << queries.work() << "\n";
         auto publication = lowering.prepare(stream.source, stream.matching.getDomainSet());
         if (!publication) {
             if (std::getenv("PTOAS_LOGICAL_TRACE")) {
@@ -910,6 +1134,8 @@ bool Constructor::realize()
             auto domain = stream.matching.getRangeSet().intersect(facts.domain(p).getRangeSet());
             if (domain.isIntegerEmpty())
                 continue;
+            if (std::getenv("PTOAS_LOGICAL_TRACE"))
+                llvm::errs() << "logical prepare acquisition " << p << " work " << queries.work() << "\n";
             auto acquisition = lowering.prepare(p, domain);
             if (!acquisition) {
                 if (std::getenv("PTOAS_LOGICAL_TRACE")) {
@@ -927,6 +1153,13 @@ bool Constructor::realize()
             return expect(lowering.status(), "barrier domain has no qualified boundary lowering");
         barrierGuards.push_back(std::move(*guard));
     }
+    uint64_t emissionAllowance = 4096;
+    for (const auto& endpoint : endpoints)
+        if (!chargeGuardEmission(endpoint.guard, emissionAllowance))
+            return fail(ConstructionResult::AnalysisLimit, "guard emission size or depth limit");
+    for (const auto& guard : barrierGuards)
+        if (!chargeGuardEmission(guard, emissionAllowance))
+            return fail(ConstructionResult::AnalysisLimit, "guard emission size or depth limit");
     auto supply = primitive();
     if (!supply)
         return false;
@@ -979,6 +1212,30 @@ bool Constructor::realize()
         OpBuilder builder(anchor);
         if (after)
             builder.setInsertionPointAfter(anchor);
+        bool shortCircuit = llvm::any_of(guard, [](const Clause& clause) {
+            return llvm::any_of(clause, [](const BoundaryTest& test) {
+                return test.kind == BoundaryTest::ParameterResidue;
+            });
+        });
+        if (shortCircuit) {
+            // An ordered DNF: failed clauses try the next one; the first true
+            // clause emits exactly one action. Remainders execute only beneath
+            // their nonnegative bound, which fresh definition-domain import
+            // independently qualifies. No result-bearing scalar if is needed.
+            std::function<void(OpBuilder&, unsigned, unsigned)> emit;
+            emit = [&](OpBuilder& b, unsigned clause, unsigned literal) {
+                if (clause == guard.size()) return;
+                if (literal == guard[clause].size()) { action(b, anchor->getLoc()); return; }
+                auto condition = lowering.emitGuard(b, anchor->getLoc(), Guard{Clause{guard[clause][literal]}});
+                auto branch = b.create<scf::IfOp>(anchor->getLoc(), condition, true);
+                OpBuilder yes = OpBuilder::atBlockBegin(&branch.getThenRegion().front());
+                emit(yes, clause, literal + 1);
+                OpBuilder no = OpBuilder::atBlockBegin(&branch.getElseRegion().front());
+                emit(no, clause + 1, 0);
+            };
+            emit(builder, 0, 0);
+            return;
+        }
         Value condition = lowering.emitGuard(builder, anchor->getLoc(), guard);
         if (condition) {
             auto branch = builder.create<scf::IfOp>(anchor->getLoc(), condition, false);
@@ -1019,7 +1276,7 @@ bool Constructor::reconstruct()
             // even when the physical-effect translator would not count them.
             return isa<
                 SetFlagOp, WaitFlagOp, BarrierOp, scf::IfOp, scf::YieldOp, arith::ConstantOp, arith::CmpIOp,
-                arith::AddIOp, arith::AndIOp, arith::OrIOp, arith::XOrIOp>(op);
+                arith::AddIOp, arith::SubIOp, arith::RemSIOp, arith::AndIOp, arith::OrIOp, arith::XOrIOp>(op);
         }))
         return fail(
             ConstructionResult::InternalError, "emission changed original payload, control or allocation contract");
@@ -1303,4 +1560,16 @@ ConstructionResult mlir::pto::logical_sync::testing::constructWithEmissionMutati
     testing::RequirementObserver observe)
 {
     return construct(function, gm, budget, mutate, observe);
+}
+
+bool mlir::pto::logical_sync::testing::guardEmissionFits(
+    ArrayRef<unsigned> clauseSizes, bool shortCircuit, uint64_t allowance)
+{
+    Guard guard;
+    for (unsigned size : clauseSizes) {
+        if (size > 65 || guard.size() >= 65) return false;
+        guard.emplace_back(size, BoundaryTest{shortCircuit ? BoundaryTest::ParameterResidue : BoundaryTest::First,
+                                              0, true});
+    }
+    return chargeGuardEmission(guard, allowance);
 }

@@ -44,6 +44,17 @@ int main(int argc, char** argv)
         module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, "a3"));
     auto function = *module->getOps<func::FuncOp>().begin();
     StringRef mutation(argv[2]);
+    if (mutation == "guard-growth") {
+        SmallVector<unsigned> exponential(32, 2), linear(64, 1);
+        bool passed = testing::guardEmissionFits({2}, true, 4096) &&
+                      testing::guardEmissionFits({64}, false, 4096) &&
+                      testing::guardEmissionFits(linear, true, 4096) &&
+                      !testing::guardEmissionFits(exponential, true, 4096) &&
+                      !testing::guardEmissionFits({65}, true, 4096) &&
+                      !testing::guardEmissionFits({2}, true, 0);
+        llvm::outs() << llvm::json::Value(llvm::json::Object{{"passed", passed}, {"checks", 6}}) << "\n";
+        return passed ? 0 : 1;
+    }
     if (mutation == "access-queries") {
         SyncIRs ir;
         Buffer2MemInfoMap buffers;
@@ -113,6 +124,35 @@ int main(int argc, char** argv)
                     OpBuilder builder(selected);
                     auto value = builder.create<arith::ConstantIntOp>(selected.getLoc(), 1, 1);
                     selected.getConditionMutable().assign(value);
+                    changed = true;
+                }
+            } else if (mutation == "change-residue" || mutation == "unguard-remainder") {
+                arith::RemSIOp selected;
+                candidate.walk([&](arith::RemSIOp op) {
+                    if (!selected) selected = op;
+                });
+                if (selected && mutation == "change-residue") {
+                    OpBuilder builder(selected);
+                    auto one = builder.create<arith::ConstantOp>(selected.getLoc(),
+                        builder.getIntegerAttr(selected.getType(), 1));
+                    selected.setOperand(1, one);
+                    changed = true;
+                } else if (selected) {
+                    auto guard = selected->getParentOfType<scf::IfOp>();
+                    if (guard) {
+                        OpBuilder builder(guard);
+                        auto yes = builder.create<arith::ConstantIntOp>(guard.getLoc(), 1, 1);
+                        guard.getConditionMutable().assign(yes);
+                        changed = true;
+                    }
+                }
+            } else if (mutation == "change-slot-distance") {
+                arith::CmpIOp selected;
+                candidate.walk([&](arith::CmpIOp op) {
+                    if (!selected && op.getLhs().getDefiningOp<arith::SubIOp>()) selected = op;
+                });
+                if (selected) {
+                    selected.setPredicate(arith::CmpIPredicate::eq);
                     changed = true;
                 }
             } else if (mutation == "swap-loads") {
@@ -260,6 +300,8 @@ int main(int argc, char** argv)
     if (mutation == "swap-loads" || mutation == "change-rounding" || mutation == "add-allocation")
         return StringRef(result.reason).contains("original payload") ? 0 : 1;
     if (mutation == "swap-wait-keys")
+        return countsPreserved ? 0 : 1;
+    if (mutation == "change-residue" || mutation == "unguard-remainder" || mutation == "change-slot-distance")
         return countsPreserved ? 0 : 1;
     if (mutation == "erase-wait")
         return StringRef(result.reason).contains("emitted publication") ||

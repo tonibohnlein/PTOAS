@@ -60,6 +60,9 @@ def main():
               "--pto-arch=a3", "--pto-level=level3", "--enable-insert-sync"]
     selected = args.cases or ["one_buffer", "online_softmax", "q_proj", "qk_matmul"]
     cases = {case["case_id"]: case for case in population()}
+    result, _ = run("guard-growth", [str(args.native_driver.resolve()),
+        str(HERE / "inputs/emission_contract.pto"), "guard-growth"])
+    assert json.loads(result.stdout) == {"passed": True, "checks": 6}
     # No legacy seed is supplied to the logical arm. Each invocation reparses
     # the same frozen unsynchronized input independently.
     for case_id in selected:
@@ -169,31 +172,55 @@ def main():
                 structured.append({"fixture": fixture, "scenario": scenario, "logical": new})
     (args.output / "structured.json").write_text(json.dumps(structured, indent=2) + "\n")
 
-    # Preserve explicit refusal of the next buffering boundary; no fallback
-    # result is counted as independent construction. Upstream compilation is
-    # challenged separately using the identical input and selected options.
+    # Relation-derived guards must independently construct both physical slot
+    # counts. Negative/empty bounds execute no payload or remainder; every
+    # residue class, partial fill and subsequent reuse receives matched events.
     buffer_rows = []
     for case_id in ("two_buffer", "three_buffer"):
-        case = cases[case_id]
-        source = case["source"].resolve()
+        source = cases[case_id]["source"].resolve()
         common = [*prefix, "--insert-sync-gm-alias=assume-disjoint-arguments", "--emit-pto-ir", str(source)]
-        result, elapsed = run(case_id + ".strict", [*common, "--insert-sync-planner=logical",
-            "-o", str((args.output / (case_id + ".strict.pto")).resolve())], expected=1)
-        assert "logical synchronization construction failed: unsupported" in result.stderr, result.stderr
-        assert "publication domain has no qualified boundary lowering" in result.stderr, result.stderr
-        for arm, flags in (("existing", []), ("fallback", ["--insert-sync-planner=logical-or-existing"])):
+        outputs = {}
+        for arm, flags in (("existing", []), ("logical", ["--insert-sync-planner=logical"])):
             output = args.output / (case_id + "." + arm + ".pto")
-            run(case_id + "." + arm, [*common, *flags, "-o", str(output.resolve())])
-        a, b = (analyze(args.output / (case_id + "." + arm + ".pto")) for arm in ("existing", "fallback"))
-        for key in ("payload", "allocations", "views", "abi", "placements", "mechanisms", "sync_control"):
-            assert a[key] == b[key], (case_id, "fallback changed", key)
-        assert any(attrs.get("pto.insert_sync.producer") == '"existing-fallback"'
-                   and attrs.get("pto.insert_sync.logical_status") == '"unsupported"'
-                   and "publication domain has no qualified boundary lowering" in attrs.get("pto.insert_sync.logical_reason", "")
+            _, elapsed = run(case_id + "." + arm, [*common, *flags, "-o", str(output.resolve())])
+            outputs[arm] = output
+        a, b = (analyze(outputs[arm]) for arm in ("existing", "logical"))
+        for key in ("payload", "allocations", "views", "abi"):
+            assert a[key] == b[key], (case_id, "changed", key)
+        assert any(attrs.get("pto.insert_sync.producer") == '\"logical\"'
                    for attrs in b["status_attributes"]), b
-        buffer_rows.append({"case": case_id, "strict": "rejected", "seconds": elapsed,
-            "status_attributes": b["status_attributes"], "fallback": "matches-upstream"})
-    (args.output / "buffering.json").write_text(json.dumps(buffer_rows, indent=2) + "\n")
+        scenarios = [{"name": str(n), "arguments": ["src", "dst", n]}
+                     for n in (-1, 0, 1, 2, 3, 4, 5, 7, 16)]
+        old = measure(outputs["existing"], scenarios)
+        new = measure(outputs["logical"], scenarios)
+        for scenario in scenarios:
+            name = scenario["name"]
+            _, metric = observe(outputs["logical"], scenario)
+            assert metric["payload_sha256"] == old["scenarios"][name]["payload_sha256"]
+            assert metric["counts"].get("pto.set_flag", 0) == metric["counts"].get("pto.wait_flag", 0)
+            if int(name) <= 0:
+                assert metric["scalar_counts"].get("arith.remsi", 0) == 0
+                assert metric["counts"].get("pto.set_flag", 0) == 0
+        boundaries = boundary_evidence(outputs["existing"], outputs["logical"], scenarios)
+        assert all(row["status"] == "checked" for row in boundaries), boundaries
+        # Compile the checked emitted plan to C++; no second construction is
+        # needed to challenge its actual newly introduced guards in codegen.
+        run(case_id + ".cpp", [sys.executable, "-c", SERIAL_DRIVER, str(args.python_root.resolve()),
+            "--pto-arch=a3", "--pto-level=level3", str(outputs["logical"].resolve()),
+            "-o", str((args.output / (case_id + ".cpp")).resolve())])
+        buffer_rows.append({"case": case_id, "strict": "applied", "seconds": elapsed,
+            "upstream": {"mechanisms": a["mechanisms"], "metrics": old},
+            "logical": {"mechanisms": b["mechanisms"], "metrics": new}, "boundaries": boundaries})
+        (args.output / "buffering.json").write_text(json.dumps(buffer_rows, indent=2) + "\n")
+    for mutation in ("none", "change-residue", "unguard-remainder", "change-slot-distance"):
+        result, _ = run("guard-reconstruction." + mutation, [str(args.native_driver.resolve()),
+            str(cases["two_buffer"]["source"].resolve()), mutation])
+        answer = json.loads(result.stdout)
+        assert answer["invoked"], answer
+        if mutation == "none":
+            assert answer["applied"], answer
+        else:
+            assert answer["changed"] and answer["counts_preserved"] and not answer["applied"] and answer["original_preserved"], answer
 
     # Positive construction is required before each native mutation challenge.
     fixture = HERE / "inputs/emission_contract.pto"
