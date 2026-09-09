@@ -45,6 +45,9 @@ namespace testing {
 // Exercise the actual pre-emission expansion bound without constructing an
 // exponentially large IR. No production option or acceptance override.
 bool guardEmissionFits(ArrayRef<unsigned> clauseSizes, bool shortCircuit, uint64_t allowance);
+// Differential check of cached, directly complemented native boundary atoms
+// against general integer subtraction; no production acceptance override.
+bool checkBoundaryConditions(const SyncOccurrences& facts, uint64_t budget);
 using RequirementObserver = llvm::function_ref<void(
     const SyncOccurrences&, ArrayRef<const CompoundInstanceElement*>, ArrayRef<OrderingRequirement>)>;
 // Native reconstruction challenge only: mutation receives the emitted clone,

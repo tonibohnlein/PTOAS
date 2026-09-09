@@ -15,9 +15,11 @@
 #include "PTO/Transforms/InsertSync/SyncGlobalOccurrences.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
@@ -32,7 +34,7 @@ static std::string print(Operation* op)
 }
 int main(int argc, char** argv)
 {
-    if (argc != 3 && argc != 4)
+    if (argc < 3 || argc > 5)
         return 2;
     DialectRegistry registry;
     registry.insert<PTODialect, func::FuncDialect, scf::SCFDialect, arith::ArithDialect, DLTIDialect>();
@@ -188,16 +190,33 @@ int main(int argc, char** argv)
         return 0;
     }
     bool invoked = false, changed = false, exportComplete = true, countsPreserved = true;
+    bool originalUsesPreserved = true, discoveryWritten = false, discoveryFailed = false;
+    bool boundaryConditionsInvoked = false, boundaryConditionsPassed = false;
+    const bool slotMutation = mutation == "slot-guard-selector-binding" ||
+                              mutation == "slot-guard-known-parameter" ||
+                              mutation == "slot-guard-unbound-parameter";
+    llvm::DenseMap<Operation*, SmallVector<Value>> originalOperands;
+    SmallVector<Value> originalParameters;
     llvm::json::Array requirements, points, orders, accesses, physicalPhases;
     uint64_t budget = kDefaultLogicalSyncWorkBudget;
-    if (argc == 4 && StringRef(argv[3]).getAsInteger(10, budget))
-        return 2;
+    std::string discoveryPath;
+    bool explicitBudget = false;
+    for (int i = 3; i < argc; ++i) {
+        StringRef argument(argv[i]);
+        if (argument.consume_front("--discovery-output=")) {
+            if (argument.empty() || !discoveryPath.empty()) return 2;
+            discoveryPath = argument.str();
+        } else {
+            if (explicitBudget || argument.getAsInteger(10, budget)) return 2;
+            explicitBudget = true;
+        }
+    }
     auto original = print(function);
     auto result = testing::constructWithEmissionMutation(
         function, InsertSyncGMAliasMode::DisjointArguments, budget,
         [&](func::FuncOp candidate) {
             invoked = true;
-            if (mutation == "none" || mutation == "retirement")
+            if (mutation == "none" || mutation == "retirement" || mutation == "boundary-conditions")
                 return;
             auto counts = [](func::FuncOp f) {
                 unsigned sets = 0, waits = 0, barriers = 0;
@@ -209,7 +228,37 @@ int main(int argc, char** argv)
                 return std::make_tuple(sets, waits, barriers);
             };
             auto beforeCounts = counts(candidate);
-            if (mutation == "publication-before-source" || mutation == "acquisition-after-consumer" ||
+            if (slotMutation) {
+                DominanceInfo dominance(candidate);
+                candidate.walk([&](arith::CmpIOp compare) {
+                    if (changed || originalOperands.contains(compare)) return;
+                    for (OpOperand &operand : compare->getOpOperands()) {
+                        auto iv = dyn_cast<BlockArgument>(operand.get());
+                        if (!iv || !isa<scf::ForOp>(iv.getOwner()->getParentOp())) continue;
+                        Value replacement;
+                        if (mutation == "slot-guard-selector-binding") {
+                            candidate.walk([&](arith::RemUIOp remainder) {
+                                if (!replacement && originalOperands.contains(remainder) &&
+                                    remainder.getLhs() == iv && dominance.dominates(remainder.getResult(), compare))
+                                    replacement = remainder.getResult();
+                            });
+                        } else {
+                            bool known = mutation == "slot-guard-known-parameter";
+                            for (Value argument : candidate.getArguments())
+                                if (!replacement && argument.getType() == iv.getType() &&
+                                    llvm::is_contained(originalParameters, argument) == known)
+                                    replacement = argument;
+                        }
+                        if (replacement && replacement != iv && dominance.dominates(replacement, compare)) {
+                            operand.set(replacement);
+                            changed = true;
+                            break;
+                        }
+                    }
+                });
+                for (const auto &[op, operands] : originalOperands)
+                    originalUsesPreserved &= llvm::equal(op->getOperands(), operands);
+            } else if (mutation == "publication-before-source" || mutation == "acquisition-after-consumer" ||
                 mutation == "publication-after-independent-load" || mutation == "unrepresented-event-lane") {
                 SetFlagOp publication;
                 WaitFlagOp acquisition;
@@ -395,7 +444,18 @@ int main(int argc, char** argv)
         },
         [&](const SyncOccurrences& facts, ArrayRef<const CompoundInstanceElement*> phases,
             ArrayRef<OrderingRequirement> required) {
-            if (mutation != "facts" && mutation != "retirement")
+            if (mutation == "boundary-conditions") {
+                boundaryConditionsInvoked = true;
+                boundaryConditionsPassed = testing::checkBoundaryConditions(facts, kDefaultLogicalSyncWorkBudget);
+            }
+            if (slotMutation && !phases.empty()) {
+                auto candidate = phases.front()->elementOp->getParentOfType<func::FuncOp>();
+                candidate.walk([&](Operation *op) {
+                    originalOperands.try_emplace(op, op->getOperands().begin(), op->getOperands().end());
+                });
+                originalParameters.assign(facts.parameters.begin(), facts.parameters.end());
+            }
+            if (mutation != "facts" && mutation != "retirement" && discoveryPath.empty())
                 return;
             llvm::DenseMap<const BaseMemInfo*, unsigned> accessIds;
             llvm::DenseMap<Value, unsigned> roots;
@@ -462,6 +522,21 @@ int main(int argc, char** argv)
                         {"source_access", access(r.sourceAccess)},
                         {"target_access", access(r.targetAccess)},
                         {"occurrences", testing::encode(r.occurrences)}});
+            if (!discoveryPath.empty()) {
+                std::error_code error;
+                auto partial = discoveryPath + ".partial";
+                llvm::raw_fd_ostream stream(partial, error, llvm::sys::fs::OF_Text);
+                if (error) { discoveryFailed = true; return; }
+                stream << llvm::json::Value(llvm::json::Object{
+                    {"discovery_only", true}, {"export_complete", exportComplete},
+                    {"accesses", llvm::json::Array(accesses)}, {"phases", llvm::json::Array(physicalPhases)},
+                    {"requirements", llvm::json::Array(requirements)}, {"points", llvm::json::Array(points)},
+                    {"orders", llvm::json::Array(orders)}}) << "\n";
+                stream.close();
+                if (stream.has_error() || llvm::sys::fs::rename(partial, discoveryPath))
+                    discoveryFailed = true;
+                else discoveryWritten = true;
+            }
         });
     static constexpr const char *statuses[] = {
         "applied", "unsupported", "analysis-limit", "unproved", "allocation-failure", "internal-error"};
@@ -475,6 +550,11 @@ int main(int argc, char** argv)
                             {"changed", changed},
                             {"applied", applied},
                             {"counts_preserved", countsPreserved},
+                            {"original_scalar_uses_preserved", originalUsesPreserved},
+                            {"original_parameter_count", originalParameters.size()},
+                            {"discovery_written", discoveryWritten},
+                            {"boundary_conditions_invoked", boundaryConditionsInvoked},
+                            {"boundary_conditions_passed", boundaryConditionsPassed},
                             {"original_preserved", preserved},
                             {"reason", result.reason},
                             {"work", int64_t(result.work)},
@@ -486,10 +566,15 @@ int main(int argc, char** argv)
                             {"points", std::move(points)},
                             {"orders", std::move(orders)}})
                  << "\n";
+    if (discoveryFailed) return 2;
+    if (mutation == "boundary-conditions")
+        return boundaryConditionsInvoked && boundaryConditionsPassed && invoked && applied ? 0 : 1;
     if (mutation == "none" || mutation == "facts" || mutation == "retirement")
         return invoked && applied && exportComplete ? 0 : 1;
     if (!(invoked && changed && !applied && preserved))
         return 1;
+    if (slotMutation)
+        return countsPreserved && originalUsesPreserved && !StringRef(result.reason).contains("original payload") ? 0 : 1;
     if (mutation == "swap-loads" || mutation == "change-rounding" || mutation == "add-allocation")
         return StringRef(result.reason).contains("original payload") ? 0 : 1;
     if (mutation == "publication-before-source" || mutation == "acquisition-after-consumer" ||
