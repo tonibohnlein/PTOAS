@@ -15,6 +15,8 @@
 #include <set>
 #include <cstdlib>
 #include <chrono>
+#include <limits>
+#include <tuple>
 
 using namespace mlir::pto::logical_sync;
 namespace {
@@ -729,6 +731,164 @@ RelationResult RelationQueries::firstTargets(const Relation& requirements, const
     if (complete != QueryStatus::Proved)
         return failure(complete, "not every source has an established next overwrite");
     return first;
+}
+
+RelationResult RelationQueries::commonPeriodSuccessors(
+    const mlir::presburger::PresburgerSet& common, unsigned phaseCoordinate,
+    unsigned iterationCoordinate, int64_t period, llvm::ArrayRef<PeriodicPublication> atoms)
+{
+    using namespace mlir::presburger;
+    using llvm::DynamicAPInt;
+    const unsigned n = common.getNumRangeVars(), symbols = common.getNumSymbolVars();
+    if (common.getNumDomainVars() || phaseCoordinate >= n || iterationCoordinate >= n ||
+        phaseCoordinate == iterationCoordinate || period <= 0)
+        return ::failure(QueryStatus::Unsupported, "periodic population space or period unavailable");
+    auto result = Relation::getEmpty(PresburgerSpace::getRelationSpace(n, n, symbols));
+    if (!charge(common)) return ::failure(QueryStatus::BudgetExhausted, "periodic template budget");
+    if (!common.getNumDisjuncts()) return {QueryStatus::Proved, std::move(result), {}};
+    if (common.getNumDisjuncts() != 1)
+        return ::failure(QueryStatus::Unsupported, "periodic population needs one common interval template");
+    const auto& base = common.getAllDisjuncts().front();
+    std::vector<bool> fixed(n, false);
+    bool lower = false, upper = false;
+    for (bool equality : {true, false}) {
+        const unsigned count = equality ? base.getNumEqualities() : base.getNumInequalities();
+        for (unsigned i = 0; i < count; ++i) {
+            auto row = equality ? base.getEquality(i) : base.getInequality(i);
+            // Keep the compact path's per-cell memory bound independent of
+            // arbitrary-width coefficients supplied by other relation queries.
+            // Larger exact coefficients remain supported by the general path.
+            for (const auto& coefficient : row)
+                if (coefficient < std::numeric_limits<int64_t>::min() ||
+                    coefficient > std::numeric_limits<int64_t>::max())
+                    return ::failure(QueryStatus::Unsupported, "periodic template coefficient exceeds int64");
+            if (row[phaseCoordinate] != 0)
+                return ::failure(QueryStatus::Unsupported, "periodic common phase must be unconstrained");
+            unsigned coordinate = n;
+            for (unsigned j = 0; j < n; ++j) if (row[j] != 0) {
+                if (coordinate != n)
+                    return ::failure(QueryStatus::Unsupported, "periodic occurrence coordinates are coupled");
+                coordinate = j;
+            }
+            if (coordinate == n) continue; // Entirely parameter/local guard.
+            if (coordinate != iterationCoordinate) {
+                if (!equality || (row[coordinate] != 1 && row[coordinate] != -1))
+                    return ::failure(QueryStatus::Unsupported, "periodic enclosing coordinate is not fixed");
+                for (unsigned j = n; j < base.getNumVars(); ++j) if (row[j] != 0)
+                    return ::failure(QueryStatus::Unsupported, "periodic enclosing coordinate is parameter dependent");
+                fixed[coordinate] = true;
+                continue;
+            }
+            if (row[coordinate] != 1 && row[coordinate] != -1)
+                return ::failure(QueryStatus::Unsupported, "periodic interval has a nonunit coefficient");
+            for (unsigned j = n + symbols; j < base.getNumVars(); ++j) if (row[j] != 0)
+                return ::failure(QueryStatus::Unsupported, "periodic interval depends on a local witness");
+            lower |= equality || row[coordinate] == 1;
+            upper |= equality || row[coordinate] == -1;
+        }
+    }
+    for (unsigned j = 0; j < n; ++j)
+        if (j != phaseCoordinate && j != iterationCoordinate && !fixed[j])
+            return ::failure(QueryStatus::Unsupported, "periodic enclosing invocation is not fixed");
+    if (!lower || !upper)
+        return ::failure(QueryStatus::Unsupported, "periodic interval needs finite lower and upper bounds");
+    if (atoms.size() > std::numeric_limits<uint64_t>::max() / 4 || !spend(atoms.size() * 4))
+        return ::failure(QueryStatus::BudgetExhausted, "periodic population setup budget");
+    std::map<int64_t, int64_t> phaseRanks, rankPhases;
+    std::vector<PeriodicPublication> ordered(atoms.begin(), atoms.end()), scratch(ordered.size());
+    uint64_t mapWork = 1;
+    // Two balanced-tree lookups/inserts, each bounded by twice the height.
+    for (size_t count = atoms.size(); count; count /= 2) mapWork += 4;
+    for (const auto& atom : atoms) {
+        ++periodicAtomVisits;
+        if (!spend(mapWork)) return ::failure(QueryStatus::BudgetExhausted, "periodic atom qualification budget");
+        if (atom.residue < 0 || atom.residue >= period)
+            return ::failure(QueryStatus::Unsupported, "periodic residue is outside its period");
+        auto [phase, newPhase] = phaseRanks.emplace(atom.phase, atom.rank);
+        auto [rank, newRank] = rankPhases.emplace(atom.rank, atom.phase);
+        if ((!newPhase && phase->second != atom.rank) || (!newRank && rank->second != atom.phase))
+            return ::failure(QueryStatus::Unsupported, "periodic phase ranks are inconsistent or tied");
+    }
+    // Bounded bottom-up merge sort: charge every comparison and move, and stop
+    // immediately on exhaustion. No comparator continues after a failed budget
+    // request, and no period-sized table or all-pairs candidate map is built.
+    for (size_t width = 1; width < ordered.size();) {
+        for (size_t begin = 0; begin < ordered.size();) {
+            size_t middle = begin + std::min(width, ordered.size() - begin);
+            size_t end = middle + std::min(width, ordered.size() - middle);
+            size_t left = begin, right = middle;
+            for (size_t out = begin; out < end; ++out) {
+                if (!spend(1)) return ::failure(QueryStatus::BudgetExhausted, "periodic sort move budget");
+                bool takeLeft = right == end;
+                if (left != middle && right != end) {
+                    if (!spend(1)) return ::failure(QueryStatus::BudgetExhausted, "periodic sort comparison budget");
+                    ++periodicSortComparisons;
+                    takeLeft = std::tie(ordered[left].residue, ordered[left].rank) <=
+                               std::tie(ordered[right].residue, ordered[right].rank);
+                }
+                scratch[out] = takeLeft ? ordered[left++] : ordered[right++];
+            }
+            begin = end;
+        }
+        ordered.swap(scratch);
+        if (width > ordered.size() / 2) break;
+        width *= 2;
+    }
+    auto last = std::unique(ordered.begin(), ordered.end(), [](const auto& a, const auto& b) {
+        return a.phase == b.phase && a.residue == b.residue;
+    });
+    ordered.erase(last, ordered.end());
+    const uint64_t locals = 2 * uint64_t(base.getNumLocalVars()) + 1;
+    const uint64_t columns = 2 * uint64_t(n) + symbols + locals + 1;
+    const uint64_t rows = 2 * uint64_t(base.getNumConstraints()) + 4;
+    if (columns > std::numeric_limits<unsigned>::max() || rows > std::numeric_limits<unsigned>::max())
+        return ::failure(QueryStatus::Unsupported, "periodic output representation is too large");
+    for (size_t i = 0; i < ordered.size(); ++i) {
+        if (!spend(columns * rows))
+            return ::failure(QueryStatus::BudgetExhausted, "periodic successor output budget");
+        const auto& source = ordered[i];
+        const auto& target = ordered[(i + 1) % ordered.size()];
+        DynamicAPInt shift = DynamicAPInt(target.residue) - DynamicAPInt(source.residue);
+        if (i + 1 == ordered.size()) shift += DynamicAPInt(period);
+        IntegerRelation piece(PresburgerSpace::getRelationSpace(n, n, symbols, locals));
+        for (unsigned side = 0; side < 2; ++side) {
+            for (bool equality : {true, false}) {
+                unsigned count = equality ? base.getNumEqualities() : base.getNumInequalities();
+                for (unsigned j = 0; j < count; ++j) {
+                    auto original = equality ? base.getEquality(j) : base.getInequality(j);
+                    llvm::SmallVector<DynamicAPInt> row(columns);
+                    // Range qualification above permits exact narrowing here.
+                    // Rebuild the small representation: a small numeric value
+                    // can otherwise retain a wide-backed APInt after arithmetic.
+                    for (unsigned k = 0; k < n; ++k)
+                        row[side * n + k] = DynamicAPInt(int64_t(original[k]));
+                    for (unsigned k = 0; k < symbols; ++k)
+                        row[2 * n + k] = DynamicAPInt(int64_t(original[n + k]));
+                    for (unsigned k = 0; k < base.getNumLocalVars(); ++k)
+                        row[2 * n + symbols + side * base.getNumLocalVars() + k] =
+                            DynamicAPInt(int64_t(original[n + symbols + k]));
+                    row.back() = DynamicAPInt(int64_t(original.back()));
+                    if (equality) piece.addEquality(row); else piece.addInequality(row);
+                }
+            }
+        }
+        llvm::SmallVector<DynamicAPInt> row(columns);
+        row[phaseCoordinate] = 1; row.back() = -DynamicAPInt(source.phase);
+        piece.addEquality(row);
+        std::fill(row.begin(), row.end(), DynamicAPInt(0));
+        row[n + phaseCoordinate] = 1; row.back() = -DynamicAPInt(target.phase);
+        piece.addEquality(row);
+        std::fill(row.begin(), row.end(), DynamicAPInt(0));
+        row[iterationCoordinate] = -1; row[n + iterationCoordinate] = 1; row.back() = -shift;
+        piece.addEquality(row);
+        std::fill(row.begin(), row.end(), DynamicAPInt(0));
+        row[iterationCoordinate] = 1; row[columns - 2] = -DynamicAPInt(period);
+        row.back() = -DynamicAPInt(source.residue);
+        piece.addEquality(row);
+        result.unionInPlace(piece);
+        ++periodicOutputPieces;
+    }
+    return {QueryStatus::Proved, std::move(result), {}};
 }
 
 RelationResult RelationQueries::staircase(const Relation& latest, const Relation& sourceThrough,

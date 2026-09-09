@@ -225,6 +225,32 @@ int main() {
         auto b = root->getObject("b") ? read(*root->getObject("b")) : a;
         RelationResult result;
         if (op == "normalize") result = queries.normalize(a);
+        else if (op == "periodic_successors") {
+            if (a.getNumDomainVars()) return 2;
+            // Test-only exact positive row scaling exercises coefficients
+            // wider than the JSON reader's int64 input without truncating them.
+            if (auto scale = root->getInteger("template_scale")) {
+                if (*scale <= 0) return 2;
+                auto scaled = Relation::getEmpty(a.getSpace());
+                for (const auto& original : a.getAllDisjuncts()) {
+                    IntegerRelation piece(original);
+                    for (unsigned i = 0; i < piece.getNumEqualities(); ++i)
+                        for (unsigned j = 0; j < piece.getNumCols(); ++j) piece.atEq(i,j) *= *scale;
+                    for (unsigned i = 0; i < piece.getNumInequalities(); ++i)
+                        for (unsigned j = 0; j < piece.getNumCols(); ++j) piece.atIneq(i,j) *= *scale;
+                    scaled.unionInPlace(piece);
+                }
+                a = std::move(scaled);
+            }
+            std::vector<PeriodicPublication> atoms;
+            for (const auto& value : *root->getArray("atoms")) {
+                const auto& atom = *value.getAsObject();
+                atoms.push_back({*atom.getInteger("phase"), *atom.getInteger("rank"), *atom.getInteger("residue")});
+            }
+            result = queries.commonPeriodSuccessors(PresburgerSet(a),
+                *root->getInteger("phase_coordinate"), *root->getInteger("iteration_coordinate"),
+                *root->getInteger("period"), atoms);
+        }
         else if (op == "restrict_endpoints")
             result = queries.restrictEndpoints(a, PresburgerSet(read(*root->getObject("sources"))),
                                                PresburgerSet(read(*root->getObject("targets"))));
@@ -273,5 +299,8 @@ int main() {
     output["relation_endpoint_bucket_lookups"] = int64_t(queries.relationEndpointBucketLookupCount());
     output["difference_endpoint_comparisons"] = int64_t(queries.differenceEndpointComparisonCount());
     output["containment_endpoint_comparisons"] = int64_t(queries.containmentEndpointComparisonCount());
+    output["periodic_atom_visits"] = int64_t(queries.periodicAtomVisitCount());
+    output["periodic_sort_comparisons"] = int64_t(queries.periodicSortComparisonCount());
+    output["periodic_output_pieces"] = int64_t(queries.periodicOutputPieceCount());
     llvm::outs() << llvm::json::Value(std::move(output)) << "\n";
 }

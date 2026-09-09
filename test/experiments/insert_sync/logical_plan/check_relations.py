@@ -52,6 +52,137 @@ def isl_text(value):
     return "[" + ",".join(params) + "] -> {" + "; ".join(pieces) + "}"
 
 
+def check_periodic_successors(run, isl, output):
+    """Challenge the compact query against general native extrema and isl.
+
+    Only these small reference cases enumerate candidate phase pairs. Production
+    scaling cases below never construct a quadratic reference population.
+    """
+    def request(common, atoms, period, **kw):
+        return dict(op="periodic_successors", a=common, atoms=[dict(phase=p, rank=k, residue=r)
+                    for p, k, r in atoms], period=period, phase_coordinate=0, iteration_coordinate=1, **kw)
+
+    def challenge(name, atoms, period, lower, upper):
+        common = relation(d=0, r=2, s=1, ge=[[0, 1, 0, -lower], [0, -1, 1, upper]])
+        pieces = []
+        for p, rank, residue in atoms:
+            for q, next_rank, next_residue in atoms:
+                pieces.append(dict(locals=2, eq=[
+                    [1, 0, 0, 0, 0, 0, 0, -p], [0, 0, 1, 0, 0, 0, 0, -q],
+                    [0, 1, 0, 0, 0, -period, 0, -residue],
+                    [0, 0, 0, 1, 0, 0, -period, -next_residue]], ge=[
+                    [0, 1, 0, 0, 0, 0, 0, -lower], [0, -1, 0, 0, 1, 0, 0, upper],
+                    [0, 0, 0, 1, 0, 0, 0, -lower], [0, 0, 0, -1, 1, 0, 0, upper],
+                    [0, -1, 0, 1, 0, 0, 0, 0 if rank < next_rank else -1]]))
+        following = relation(d=2, r=2, s=1, pieces=pieces)
+        schedule = isl.map("[p0] -> {" + ";".join(
+            f"[p,i] -> [i,{rank}]: p={p}" for p, rank in sorted({(p,k) for p,k,r in atoms})) + "}")
+        expected = isl.map(isl_text(following)).then(schedule).lexmin().then(schedule.reverse())
+        answer = run(name, request(common, atoms, period), str(expected))
+        # The native general query independently removes dominated successors.
+        # The retained general implementation times out on the INT64-period
+        # case. isl remains an exact independent oracle there; do not make the
+        # automatic gate run that known expensive reference computation.
+        if period <= 7:
+            run(name + "_general", dict(op="first", a=following, b=following), str(expected))
+        assert answer["periodic_output_pieces"] == len({(p,r) for p,k,r in atoms}), answer
+
+    cases = [
+        ("periodic_single", [(17,0,0)], 1, 0, -1),
+        ("periodic_phase_rank", [(90,0,0),(3,1,0),(40,2,0)], 2, -3, 0),
+        ("periodic_multiple_residues", [(7,0,0),(7,0,2),(2,1,1),(7,0,0)], 3, -7, 2),
+        ("periodic_short_interval", [(4,0,1),(9,1,4)], 7, 0, -1),
+        ("periodic_large_period", [(-2**63+1,0,0),(2**63-1,1,2**63-2)], 2**63-1, -1, 0),
+    ]
+    rng = random.Random(20260910)
+    for i in range(12):
+        period = rng.choice((1,2,3,5))
+        atoms = [(phase, rank, rng.randrange(period)) for rank,phase in enumerate(rng.sample(range(40),3))]
+        cases.append((f"periodic_random_{i}", atoms, period, rng.randrange(-6,3), rng.randrange(-3,4)))
+    for case in cases:
+        challenge(*case)
+
+    singleton = relation(d=0, r=2, eq=[[0,1,-2]])
+    run("periodic_singleton_rank", request(singleton, [(9,0,0),(3,1,0)], 2),
+        "{[9,2] -> [3,2]}")
+    run("periodic_extreme_phase", request(singleton, [(-2**63,0,0),(2**63-1,1,0)], 2),
+        "{[-9223372036854775808,2] -> [9223372036854775807,2]}")
+    run("periodic_singleton_no_next", request(singleton, [(9,0,0)], 2), "{[p,i] -> [q,j]: false}")
+    empty_interval = relation(d=0, r=2, ge=[[0,1,0],[0,-1,-1]])
+    run("periodic_empty_interval", request(empty_interval, [(9,0,0)], 2), "{[p,i] -> [q,j]: false}")
+    run("periodic_empty_atoms", request(singleton, [], 2), "{[p,i] -> [q,j]: false}")
+    run("periodic_empty_common", request(relation(d=0,r=2,pieces=[]), [(9,0,-1)], 2),
+        "{[p,i] -> [q,j]: false}")
+    existential = relation(d=0,r=2,s=1,locals=1,eq=[[0,0,1,-2,0]],
+                           ge=[[0,1,0,0,1],[0,-1,0,0,3]])
+    run("periodic_parameter_local", request(existential, [(9,0,0)], 2),
+        "[p0] -> {[9,i] -> [9,j]: p0 mod 2=0 and i mod 2=0 and j=i+2 and -1<=i and j<=3}")
+    fixed = relation(d=0,r=3,eq=[[0,0,1,-7]],ge=[[0,1,0,0],[0,-1,0,4]])
+    run("periodic_fixed_invocation", request(fixed, [(9,0,0)], 2),
+        "{[9,i,7] -> [9,j,7]: i mod 2=0 and j=i+2 and 0<=i and j<=4}")
+    contradictory = relation(d=0,r=3,eq=[[0,0,1,-7],[0,0,1,-8]],ge=[[0,1,0,0],[0,-1,0,4]])
+    run("periodic_contradictory_invocation", request(contradictory, [(9,0,0)], 2),
+        "{[p,i,x] -> [q,j,y]: false}")
+    contradictory_parameter = relation(d=0,r=2,s=1,eq=[[0,0,1,-2],[0,0,1,-3]],
+                                       ge=[[0,1,0,0],[0,-1,0,4]])
+    run("periodic_contradictory_parameter", request(contradictory_parameter, [(9,0,0)], 2),
+        "[p0] -> {[p,i] -> [q,j]: false}")
+    invalid = [
+        ("phase_constrained", relation(d=0,r=2,eq=[[1,0,-9],[0,1,-2]]), [(9,0,0)], 2),
+        ("nonunit_interval", relation(d=0,r=2,ge=[[0,2,0],[0,-1,3]]), [(9,0,0)], 2),
+        ("iv_local", relation(d=0,r=2,locals=1,eq=[[0,1,-2,0]],ge=[[0,1,0,0],[0,-1,0,4]]), [(9,0,0)], 2),
+        ("unfixed_invocation", relation(d=0,r=3,ge=[[0,1,0,0],[0,-1,0,4]]), [(9,0,0)], 2),
+        ("rank_conflict", singleton, [(9,0,0),(9,1,1)], 2),
+        ("rank_tie", singleton, [(9,0,0),(3,0,1)], 2),
+        ("residue_out_of_range", singleton, [(9,0,2)], 2),
+        ("period_nonpositive", singleton, [(9,0,0)], 0),
+        ("missing_upper", relation(d=0,r=2,ge=[[0,1,0]]), [(9,0,0)], 2),
+        ("missing_lower", relation(d=0,r=2,ge=[[0,-1,4]]), [(9,0,0)], 2),
+        ("multiple_pieces", relation(d=0,r=2,pieces=singleton["pieces"]*2), [(9,0,0)], 2),
+    ]
+    for name, common, atoms, period in invalid:
+        answer = run("periodic_refuse_" + name, request(common, atoms, period), status="unsupported")
+        assert "relation" not in answer, answer
+    for coordinates in ((2,1),(0,2),(0,0)):
+        query = request(singleton, [(9,0,0)], 2)
+        query.update(phase_coordinate=coordinates[0],iteration_coordinate=coordinates[1])
+        run(f"periodic_invalid_coordinates_{coordinates[0]}_{coordinates[1]}", query, status="unsupported")
+    wide = relation(d=0,r=2,s=1,eq=[[0,0,1,2**62]],ge=[[0,1,0,0],[0,-1,0,4]])
+    answer = run("periodic_wide_coefficient", request(wide, [(9,0,0)], 2, template_scale=2),
+                 status="unsupported")
+    assert "coefficient exceeds int64" in answer["reason"], answer
+    atoms = [(100-i,i,i % 3) for i in range(32)]
+    unlimited = run("periodic_budget_reference", request(singleton, atoms, 3))
+    for budget in (0,20,100,600,unlimited["work"]-1):
+        answer = run(f"periodic_budget_{budget}", request(singleton, atoms, 3, budget=budget),
+                     status="budget-exhausted")
+        assert "relation" not in answer, answer
+    scaling = []
+    for count in (8,32,128,512):
+        for period in (1,2**31-1):
+            atoms = [(10000-i,i,0) for i in range(count)]
+            common = relation(d=0,r=2,ge=[[0,1,0],[0,-1,period]])
+            answer = run(f"periodic_scaling_{count}_{period}", request(common, atoms, period))
+            # Compare each nonempty piece, then require the exact population.
+            # A 512-piece union-equality check itself exceeds the reference's
+            # solver allowance; these disjoint fixed-phase pieces avoid that
+            # unrelated test-oracle Cartesian work.
+            actual = answer["relation"]
+            assert len(actual["pieces"]) == count, answer
+            for i, piece in enumerate(actual["pieces"]):
+                expected = (f"{{[{10000-i},t] -> [{10000-i-1},t]: t=0 or t={period}}}"
+                            if i+1 < count else f"{{[{10000-count+1},0] -> [10000,{period}]}}")
+                single = dict(actual, pieces=[piece])
+                assert isl.map(isl_text(single)).equal(isl.map(expected)), (count,period,i)
+            assert answer["periodic_atom_visits"] == count, answer
+            assert answer["periodic_output_pieces"] == count, answer
+            assert answer["periodic_sort_comparisons"] <= count * (count-1).bit_length(), answer
+            assert answer["work"] <= 200*count*((count-1).bit_length()+1), answer
+            scaling.append(dict(atoms=count,period=period,work=answer["work"],
+                                comparisons=answer["periodic_sort_comparisons"],pieces=answer["periodic_output_pieces"]))
+    (output / "periodic_scaling.json").write_text(json.dumps(scaling,indent=2)+"\n")
+
+
 def main():
     if not __debug__:
         raise RuntimeError("Run relation checks without Python -O; assertions are required")
@@ -742,6 +873,8 @@ def main():
                             ("nonunit_nonempty",nonunit_possible,nonunit_impossible)):
         run("unit_emptiness_"+name,{"op":"subtract","a":left,"b":right},
             str(isl.map(isl_text(left))-isl.map(isl_text(right))))
+
+    check_periodic_successors(run, isl, args.output)
 
     summary = {"status":"passed", "checks":results, "isl_version":isl.version,
                "driver_sha256":hashlib.sha256(args.driver.read_bytes()).hexdigest()}

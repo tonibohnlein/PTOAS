@@ -30,6 +30,13 @@ struct RelationResult {
     explicit operator bool() const { return status == QueryStatus::Proved && relation.has_value(); }
 };
 
+// A point in a common periodic publication population. Rank is the strict
+// within-iteration schedule rank, not the numeric phase identity. One phase
+// may have several residues; identical atoms are harmless duplicates.
+struct PeriodicPublication {
+    int64_t phase, rank, residue;
+};
+
 // All operations retain integer existential variables. Never use projectOut,
 // rational shadows, or the pinned union PWMA lexopt implementation here.
 // Work accounting bounds query requests/term growth, not time inside MLIR.
@@ -78,6 +85,7 @@ private:
     uint64_t differenceCommonRows = 0;
     uint64_t relationEndpointIndexPieces = 0, relationEndpointBucketLookups = 0;
     uint64_t differenceEndpointComparisons = 0, containmentEndpointComparisons = 0;
+    uint64_t periodicAtomVisits = 0, periodicSortComparisons = 0, periodicOutputPieces = 0;
     bool profiling;
     Profile queryProfile;
     bool charge(const Relation& relation, uint64_t* chargedCost = nullptr);
@@ -101,6 +109,9 @@ public:
     uint64_t relationEndpointBucketLookupCount() const { return relationEndpointBucketLookups; }
     uint64_t differenceEndpointComparisonCount() const { return differenceEndpointComparisons; }
     uint64_t containmentEndpointComparisonCount() const { return containmentEndpointComparisons; }
+    uint64_t periodicAtomVisitCount() const { return periodicAtomVisits; }
+    uint64_t periodicSortComparisonCount() const { return periodicSortComparisons; }
+    uint64_t periodicOutputPieceCount() const { return periodicOutputPieces; }
     bool profilingEnabled() const { return profiling; }
     const Profile& profile() const { return queryProfile; }
     bool spend(uint64_t amount)
@@ -132,6 +143,26 @@ public:
     // family must not silently become an empty set of requirements.
     RelationResult latestSources(const Relation& requirements, const Relation& sourceBefore);
     RelationResult firstTargets(const Relation& requirements, const Relation& targetBefore);
+    // Exact next-publication relation for the WHOLE population described by
+    // common and atoms. common is one set disjunct: phase is unconstrained;
+    // every other occurrence coordinate except iteration is a fixed constant;
+    // iteration has a finite contiguous integer interval given by +/-1 rows
+    // with shared parameter coefficients. Parameter-only guards/existential
+    // locals are allowed; iteration-dependent locals or holes are unsupported.
+    // Template coefficients must fit int64; output arithmetic remains exact.
+    // The helper checks this grammar, residues and phase/rank consistency.
+    // A zero-disjunct common set returns empty before validating unused atoms.
+    // It does not certify that these atoms describe a native event program:
+    // the caller must establish exact equality with ALL selected publications
+    // and supply actual ranks, coordinate meaning and shared SSA bindings.
+    // Construction sorts K atoms and links cyclic neighbours: O(K log K) plus
+    // O(K * template size) output, at most K pieces, independent of period's
+    // magnitude. Native selected-domain equivalence checking is separate work.
+    // Empty/clipped populations have no invented terminal successors. Failure
+    // returns no partial relation and never proves event reuse by itself.
+    RelationResult commonPeriodSuccessors(
+        const presburger::PresburgerSet& common, unsigned phaseCoordinate,
+        unsigned iterationCoordinate, int64_t period, llvm::ArrayRef<PeriodicPublication> atoms);
     // latest: source -> target; sourceThrough is inclusive source order.
     // Only acquisitions in that execution can dominate a later demand.
     RelationResult staircase(const Relation& latest, const Relation& sourceThrough,
