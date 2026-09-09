@@ -183,6 +183,107 @@ def check_periodic_successors(run, isl, output):
     (output / "periodic_scaling.json").write_text(json.dumps(scaling,indent=2)+"\n")
 
 
+def check_boolean_containment(run, isl, output):
+    """The Boolean DFS and materialized client share partition semantics.
+
+    libisl remains an independent union/complement oracle. The required DFS
+    counters prevent these tests passing entirely through the old cheap screens.
+    """
+    def challenge(name, supply, needed, require_dfs=False):
+        difference = isl.map(isl_text(needed)) - isl.map(isl_text(supply))
+        status = "proved" if difference.empty() else "not-established"
+        actual = run("boolean_" + name, dict(op="contains", a=supply, b=needed), status=status)
+        materialized = run("boolean_" + name + "_materialized",
+                           dict(op="subtract", a=needed, b=supply), str(difference))
+        if require_dfs:
+            assert actual["boolean_partition_nodes"] > 0, (name,actual)
+            assert actual["boolean_witness_leaves"] == (status != "proved"), (name,actual)
+        assert materialized["boolean_partition_nodes"] == 0, materialized
+        return actual, materialized
+
+    universe = relation(d=0,r=1)
+    low = relation(d=0,r=1,ge=[[-1,0]])
+    def union(*relations):
+        first = relations[0]
+        return dict(first,pieces=[p for r in relations for p in r["pieces"]])
+    cover = union(low, relation(d=0,r=1,ge=[[1,-1]]))
+    covered, _ = challenge("outside_first_inside_second", cover, universe, True)
+    hole = union(low, relation(d=0,r=1,ge=[[1,-2]]))
+    challenge("witness_must_exclude_all_rhs", hole, universe, True)
+    challenge("overlapping_rhs_union", union(relation(d=0,r=1,ge=[[-1,3]]),
+              relation(d=0,r=1,ge=[[1,0]])), universe, True)
+    challenge("late_required_piece", hole, relation(d=0,r=1,pieces=[
+              {"locals":0,"eq":[[1,0]],"ge":[]},
+              {"locals":0,"eq":[[1,-2]],"ge":[]},
+              {"locals":0,"eq":[],"ge":[]}]), True)
+    even = relation(d=0,r=1,locals=1,eq=[[1,-2,0]])
+    odd = relation(d=0,r=1,locals=1,eq=[[1,-2,-1]])
+    challenge("parity_union_is_all", union(even,odd), universe, True)
+    # Tightened division rows constrain membership, not just a total quotient.
+    nonzero = relation(d=0,r=1,locals=1,ge=[[1,-3,-1],[-1,3,2]])
+    residue0 = relation(d=0,r=1,locals=1,eq=[[1,-3,0]])
+    challenge("tightened_floor_union", union(nonzero,residue0), universe, True)
+    challenge("nonunit_left_witness", union(even,odd),
+              relation(d=0,r=1,locals=1,eq=[[3,-2,0]]))
+    challenge("integer_empty_uncovered_branch", even,
+              relation(d=0,r=1,eq=[[2,-1]]))
+    guarded = relation(d=0,r=1,s=1,ge=[[0,1,0]])
+    guarded_supply = union(relation(d=0,r=1,s=1,ge=[[-1,0,0],[0,1,0]]),
+                           relation(d=0,r=1,s=1,ge=[[1,0,-1],[0,1,0]]))
+    challenge("parameter_identity", guarded_supply, guarded, True)
+    # More RHS pieces than the optional sampling screen permits. Exactly one
+    # uncovered leaf is returned after all 65 population pieces are excluded.
+    chain = union(*(relation(d=0,r=1,ge=[[1,-i]]) for i in range(65)))
+    result, _ = challenge("explicit_stack_depth", chain, universe, True)
+    assert result["boolean_max_depth"] == 65, result
+    assert result["boolean_witness_leaves"] == 1, result
+
+    rng = random.Random(20260911)
+    for i in range(16):
+        intervals=[]
+        for _ in range(rng.randrange(1,5)):
+            lo, hi = sorted((rng.randrange(-9,10),rng.randrange(-9,10)))
+            intervals.append(relation(d=0,r=1,ge=[[1,-lo],[-1,hi]]))
+        challenge(f"bounded_union_{i}",union(*intervals),
+                  relation(d=0,r=1,ge=[[1,7],[-1,8]]))
+    # Exhaustion after a live DFS prefix must not report coverage or a witness.
+    for budget in (0,covered["work"]-1):
+        answer=run(f"boolean_exhaustion_{budget}",dict(op="contains",a=cover,b=universe,budget=budget),
+                   status="budget-exhausted")
+        assert answer["boolean_witness_leaves"] == 0, answer
+        if budget:
+            assert answer["boolean_partition_nodes"] > 0, answer
+    run("boolean_incompatible_spaces",dict(op="contains",a=cover,b=relation(d=0,r=2)),
+        status="unsupported")
+
+    # A positive orthant's complement has D disjoint first-violation pieces.
+    # Containment needs only its first feasible one. This checks output work,
+    # not a linear-time claim about the shared implication/qualification cost.
+    # Equality-violation witnesses precede all inequality partitions, so they
+    # need no optional RHS inequality-redundancy solver calls at all.
+    early_supply=relation(d=0,r=4,eq=[[1,0,0,0,0]],
+                          ge=[[0,1,0,0,0],[0,0,1,0,0],[0,0,0,1,0]])
+    early, full=challenge("equality_witness_skips_inequality_queries",early_supply,
+                          relation(d=0,r=4),True)
+    assert early["difference_implication_tests"] == 0, early
+    assert full["difference_implication_tests"] == 3, full
+    scaling=[]
+    for dimensions in (2,4,8,16):
+        rows=[[int(i==j) for j in range(dimensions)]+[0] for i in range(dimensions)]
+        actual, full=challenge(f"early_witness_dimension_{dimensions}",
+                              relation(d=0,r=dimensions,ge=rows),
+                              relation(d=0,r=dimensions),True)
+        assert actual["boolean_partition_nodes"] == 1, actual
+        assert actual["difference_partition_pieces"] == 1, actual
+        assert full["difference_partition_pieces"] == dimensions, full
+        assert len(full["relation"]["pieces"]) == dimensions, full
+        scaling.append(dict(dimensions=dimensions, boolean_work=actual["work"],
+                            materialized_work=full["work"],
+                            boolean_pieces=actual["difference_partition_pieces"],
+                            materialized_pieces=full["difference_partition_pieces"]))
+    (output/"boolean_containment_scaling.json").write_text(json.dumps(scaling,indent=2)+"\n")
+
+
 def main():
     if not __debug__:
         raise RuntimeError("Run relation checks without Python -O; assertions are required")
@@ -875,6 +976,7 @@ def main():
             str(isl.map(isl_text(left))-isl.map(isl_text(right))))
 
     check_periodic_successors(run, isl, args.output)
+    check_boolean_containment(run, isl, args.output)
 
     summary = {"status":"passed", "checks":results, "isl_version":isl.version,
                "driver_sha256":hashlib.sha256(args.driver.read_bytes()).hexdigest()}

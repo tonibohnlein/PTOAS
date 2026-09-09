@@ -105,11 +105,58 @@ int main(int argc,char** argv) {
                     }
                     selected=std::move(narrowed);
                 }
+                if (auto locals=f->getAttrOfType<IntegerAttr>("test.periodic_cell_locals")) {
+                    // Synthetic relation qualification, not scalar-import
+                    // precision: conjoin caller-described existential rows to
+                    // actual point domains, so every occurrence remains in
+                    // the original immutable universe.
+                    if (locals.getInt()<0 || locals.getInt()>32 || facts.dimensions()<2) return 2;
+                    unsigned added=locals.getInt(), fixed=facts.dimensions()+facts.parameters.size();
+                    auto cells=presburger::PresburgerSet::getEmpty(selected.getSpace());
+                    for (auto piece:selected.getAllDisjuncts()) {
+                        unsigned first=piece.getNumVars();
+                        piece.appendVar(presburger::VarKind::Local,added);
+                        for (bool equality:{true,false}) {
+                            auto rows=f->getAttrOfType<ArrayAttr>(equality ? "test.periodic_cell_eq" : "test.periodic_cell_ge");
+                            if (!rows) continue;
+                            for (auto attribute:rows) {
+                                auto coefficients=dyn_cast<ArrayAttr>(attribute);
+                                if (!coefficients || coefficients.size()!=fixed+added+1) return 2;
+                                SmallVector<llvm::DynamicAPInt> row(piece.getNumCols());
+                                for (unsigned c=0;c<coefficients.size();++c) {
+                                    auto value=dyn_cast<IntegerAttr>(coefficients[c]);
+                                    if (!value || !value.getValue().isSignedIntN(64)) return 2;
+                                    unsigned target=c<fixed ? c : c<fixed+added ? first+c-fixed : piece.getNumVars();
+                                    row[target]=llvm::DynamicAPInt(value.getInt());
+                                }
+                                if (equality) piece.addEquality(row); else piece.addInequality(row);
+                            }
+                        }
+                        cells.unionInPlace(piece);
+                    }
+                    selected=std::move(cells);
+                    result["synthetic_periodic_refinement"]=true;
+                }
                 if (f->hasAttr("test.periodic_empty")) selected=presburger::PresburgerSet::getEmpty(selected.getSpace());
                 auto allowance=f->getAttrOfType<IntegerAttr>("test.periodic_budget");
                 if (allowance && allowance.getInt()<0) return 2;
+                if (f->hasAttr("test.periodic_cell_probe")) {
+                    Array probes;
+                    for (const auto& piece:selected.getAllDisjuncts()) {
+                        RelationQueries cellQueries(allowance ? uint64_t(allowance.getInt()) : 1000000);
+                        auto simplified=testing::simplifyPeriodicCell(piece,1,cellQueries);
+                        Object probe{{"original",testing::encode(Relation(piece))},
+                            {"work",int64_t(cellQueries.work())},
+                            {"status",simplified.status==QueryStatus::Proved ? "proved" :
+                                simplified.status==QueryStatus::BudgetExhausted ? "budget-exhausted" : "unsupported"}};
+                        if (simplified) probe["simplified"]=testing::encode(*simplified.relation);
+                        probes.push_back(std::move(probe));
+                    }
+                    result["periodic_cells"]=std::move(probes);
+                }
                 RelationQueries queries(allowance ? uint64_t(allowance.getInt()) : 1000000);
-                auto successors=facts.periodicSuccessors(selected,queries);
+                auto successors=f->hasAttr("test.periodic_cell_only") ?
+                    RelationResult{QueryStatus::Unsupported,{},"cell-only test"} : facts.periodicSuccessors(selected,queries);
                 Object periodic{{"domain",testing::encode(selected)},{"reason",successors.reason},
                     {"status",successors.status==QueryStatus::Proved ? "proved" :
                               successors.status==QueryStatus::BudgetExhausted ? "budget-exhausted" : "unsupported"},

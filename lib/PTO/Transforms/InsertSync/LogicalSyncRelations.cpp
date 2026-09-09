@@ -355,56 +355,99 @@ RelationResult RelationQueries::composeImpl(
     return {QueryStatus::Proved, std::move(result), {}};
 }
 
-RelationResult RelationQueries::subtract(const Relation& from, const Relation& remove) {
-    QueryTimer timer{"subtract", profiling ? &queryProfile.subtract : nullptr,
-                     from.getNumDisjuncts(), remove.getNumDisjuncts()};
-    if (!sameSpace(from, remove)) return failure(QueryStatus::Unsupported, "incompatible difference spaces");
-    if (!from.getNumDisjuncts()) {
-        if (!charge(from))
-            return failure(QueryStatus::BudgetExhausted, "empty difference budget");
-        return {QueryStatus::Proved, from, {}};
+
+// One exact partitioner serves both materialized subtraction and the Boolean
+// containment fallback. A cursor emits first-violated-membership pieces lazily;
+// only the Boolean consumer changes traversal order and stops at a witness.
+class RelationQueries::DifferenceEngine {
+    using IntegerRelation = mlir::presburger::IntegerRelation;
+    using Row = llvm::SmallVector<llvm::DynamicAPInt>;
+    struct PreparedRight {
+        IntegerRelation membership;
+        std::optional<IntegerRelation> total;
+    };
+    struct Child { IntegerRelation piece; bool knownNonempty; };
+    RelationQueries& q;
+    const Relation& from;
+    const Relation& remove;
+    QueryStatus outcome = QueryStatus::Proved;
+    std::string reason;
+    std::optional<EndpointCandidates> endpoints;
+    std::map<std::vector<unsigned>, std::vector<PreparedRight>> qualifiedSubsets;
+    bool fail(QueryStatus status, const char* text) {
+        outcome = status; reason = text; return false;
     }
-    if (!charge(from) || !charge(remove)) return failure(QueryStatus::BudgetExhausted, "difference budget");
-    // Distribute difference over the left union, ignoring only right pieces
-    // proved disjoint by fixed endpoint coordinates. Qualify each distinct
-    // right subset once; unrelated phase pairs need no integer elimination.
-    unsigned dimensions = from.getNumDomainVars() + from.getNumRangeVars();
-    EndpointCandidates endpoints(remove);
-    relationEndpointIndexPieces += remove.getNumDisjuncts();
-    std::map<std::vector<unsigned>, Relation> qualifiedSubsets;
-    auto result = Relation::getEmpty(from.getSpace());
-    for (const auto& piece : from.getAllDisjuncts()) {
+    bool propagate(const RelationResult& value) {
+        outcome = value.status; reason = value.reason; return false;
+    }
+    RelationResult failed() const { return {outcome, {}, reason}; }
+    bool chargeMatrix(uint64_t rows, uint64_t cols) {
+        // Account matrix work without first copying it into a relation merely
+        // to measure that copy. Use the ordinary one-piece charge formula.
+        uint64_t remaining = q.remainingWork();
+        if (rows > remaining || cols > remaining ||
+            rows > (remaining - std::min<uint64_t>(1, remaining)) / cols) {
+            q.spend(remaining);
+            return false;
+        }
+        return q.spend(1 + rows * cols);
+    }
+    bool chargePiece(const IntegerRelation& piece) {
+        return chargeMatrix(uint64_t(piece.getNumConstraints()) + 1,
+                            uint64_t(piece.getNumVars()) + 1);
+    }
+    bool prepareRight(PreparedRight& right) {
+        if (right.total) return true;
+        QueryTimer timer{"subtract_qualification", q.profiling ? &q.queryProfile.subtractQualification : nullptr, 1};
+        if (!chargePiece(right.membership))
+            return fail(QueryStatus::BudgetExhausted, "difference RHS preparation budget");
+        auto divisions = right.membership.getLocalReprs();
+        if (!divisions.hasAllReprs())
+            return fail(QueryStatus::Unsupported, "difference requires defined RHS divisions");
+        if (!chargeMatrix(uint64_t(right.membership.getNumConstraints()) +
+                              2 * uint64_t(right.membership.getNumLocalVars()) + 1,
+                          uint64_t(right.membership.getNumVars()) + 1))
+            return fail(QueryStatus::BudgetExhausted, "difference RHS definitions budget");
+        right.total.emplace(right.membership);
+        unsigned offset = right.membership.getNumVars() - right.membership.getNumLocalVars();
+        // Prepare canonical TOTAL definitions once per visited RHS. Keeping
+        // preparation lazy preserves early coverage when later pieces need an
+        // unsupported qualification. Membership rows remain separate.
+        for (unsigned i = 0; i < right.membership.getNumLocalVars(); ++i) {
+            right.total->addInequality(mlir::presburger::getDivUpperBound(
+                divisions.getDividend(i), divisions.getDenom(i), offset + i));
+            right.total->addInequality(mlir::presburger::getDivLowerBound(
+                divisions.getDividend(i), divisions.getDenom(i), offset + i));
+        }
+        return true;
+    }
+    bool rights(const IntegerRelation& piece, std::vector<PreparedRight>*& result) {
+        unsigned dimensions = from.getNumDomainVars() + from.getNumRangeVars();
         auto coordinates = fixedCoordinates(piece, 0, dimensions);
-        auto possible = endpoints.select(coordinates, *this, relationEndpointBucketLookups);
-        if (!possible)
-            return failure(QueryStatus::BudgetExhausted, "difference endpoint lookup budget");
+        auto possible = endpoints->select(coordinates, q, q.relationEndpointBucketLookups);
+        if (!possible) return fail(QueryStatus::BudgetExhausted, "difference endpoint lookup budget");
         std::vector<unsigned> selected;
         for (unsigned i : *possible) {
-            if (!spend(1))
-                return failure(QueryStatus::BudgetExhausted, "difference endpoint budget");
-            ++differenceEndpointComparisons;
-            if (!incompatible(coordinates, endpoints.coordinates[i]))
-                selected.push_back(i);
+            if (!q.spend(1)) return fail(QueryStatus::BudgetExhausted, "difference endpoint budget");
+            ++q.differenceEndpointComparisons;
+            if (!incompatible(coordinates, endpoints->coordinates[i])) selected.push_back(i);
         }
-        if (selected.empty()) {
-            result.unionInPlace(Relation(piece));
-            continue;
-        }
+        if (selected.empty()) { result = nullptr; return true; }
         auto found = qualifiedSubsets.find(selected);
         if (found == qualifiedSubsets.end()) {
-            QueryTimer qualificationTimer{"subtract_qualification",
-                profiling ? &queryProfile.subtractQualification : nullptr, selected.size()};
+            QueryTimer timer{"subtract_qualification", q.profiling ? &q.queryProfile.subtractQualification : nullptr,
+                             selected.size()};
             auto subset = Relation::getEmpty(remove.getSpace());
             for (unsigned i : selected)
                 subset.unionInPlace(Relation(remove.getAllDisjuncts()[i]));
             // Exact conversion satisfies difference's division-local RHS
             // precondition; this is not rational projection or union lexopt.
-            auto compact = normalize(subset);
+            auto compact = q.normalize(subset);
             if (!compact.relation)
-                return compact;
+                return propagate(compact);
             auto qualified = compact.relation->computeReprWithOnlyDivLocals();
-            if (!charge(qualified))
-                return failure(QueryStatus::BudgetExhausted, "division normalization budget");
+            if (!q.charge(qualified))
+                return fail(QueryStatus::BudgetExhausted, "division normalization budget");
             // The pinned symbolic-domain conversion can expose another bounded
             // existential witness (e.g. 1 <= e < n <= 2) in its result. Qualify
             // those pieces again, without rewriting already-qualified divs.
@@ -413,200 +456,295 @@ RelationResult RelationQueries::subtract(const Relation& from, const Relation& r
             for (unsigned attempt = 0; !qualified.hasOnlyDivLocals() && attempt < 8; ++attempt) {
                 auto next = Relation::getEmpty(qualified.getSpace());
                 for (const auto& p : qualified.getAllDisjuncts()) {
-                    if (!charge(Relation(p)))
-                        return failure(QueryStatus::BudgetExhausted, "division requalification budget");
+                    if (!q.charge(Relation(p)))
+                        return fail(QueryStatus::BudgetExhausted, "division requalification budget");
                     next.unionInPlace(p.hasOnlyDivLocals() ? Relation(p) : p.computeReprWithOnlyDivLocals());
                 }
-                if (!charge(next))
-                    return failure(QueryStatus::BudgetExhausted, "division requalification result budget");
+                if (!q.charge(next))
+                    return fail(QueryStatus::BudgetExhausted, "division requalification result budget");
                 qualified = std::move(next);
             }
-            found = qualifiedSubsets.emplace(std::move(selected), std::move(qualified)).first;
-        }
-        // The pinned native difference uses a Simplex redundancy/rollback
-        // optimization that asserts on the Q-projection completion query.
-        // Instead partition by the first violated RHS constraint. A RHS local
-        // must be a total, uniquely defined floor division before complement:
-        // negating an arbitrary existential witness would be incorrect.
-        auto pending = normalize(Relation(piece));
-        if (!pending.relation)
-            return pending;
-        for (const auto& right : found->second.getAllDisjuncts()) {
-            QueryTimer partitionTimer{"subtract_partition",
-                profiling ? &queryProfile.subtractPartition : nullptr,
-                pending.relation->getNumDisjuncts(), 1};
-            auto divisions = right.getLocalReprs();
-            if (!divisions.hasAllReprs()) {
-                if (std::getenv("PTOAS_LOGICAL_TRACE")) {
-                    llvm::errs() << "unqualified difference RHS\n";
-                    right.print(llvm::errs());
-                }
-                return failure(QueryStatus::Unsupported, "difference requires defined RHS divisions");
+
+            std::vector<PreparedRight> prepared;
+            for (const auto& right : qualified.getAllDisjuncts()) {
+                if (!chargePiece(right))
+                    return fail(QueryStatus::BudgetExhausted, "difference RHS cache budget");
+                prepared.push_back({right, {}});
             }
-            auto next = Relation::getEmpty(from.getSpace());
-            for (const auto& left : pending.relation->getAllDisjuncts()) {
-                if (!charge(Relation(left)) || !charge(Relation(right)))
-                    return failure(QueryStatus::BudgetExhausted, "difference partition budget");
-                // Add canonical TOTAL definitions before merging equivalent
-                // division witnesses. Membership constraints remain separate:
-                // a tightened bound must never become an unconditional fact.
-                mlir::presburger::IntegerRelation rhs(right);
-                unsigned originalInequalities = rhs.getNumInequalities();
-                unsigned localOffset = rhs.getNumVars() - rhs.getNumLocalVars();
-                for (unsigned i = 0; i < rhs.getNumLocalVars(); ++i) {
-                    rhs.addInequality(
-                        mlir::presburger::getDivUpperBound(
-                            divisions.getDividend(i), divisions.getDenom(i), localOffset + i));
-                    rhs.addInequality(
-                        mlir::presburger::getDivLowerBound(
-                            divisions.getDividend(i), divisions.getDenom(i), localOffset + i));
-                }
-                mlir::presburger::IntegerRelation prefix(left);
-                prefix.mergeLocalVars(rhs);
-                for (unsigned i = originalInequalities; i < rhs.getNumInequalities(); ++i)
-                    prefix.addInequality(rhs.getInequality(i));
-                auto copyRow = [](llvm::ArrayRef<llvm::DynamicAPInt> row) {
-                    return llvm::SmallVector<llvm::DynamicAPInt>(row);
-                };
-                // After local witnesses are aligned, a literal prefix row is
-                // already true throughout that prefix. Do not partition its
-                // impossible complement. Equalities may differ only by sign;
-                // inequalities must match exactly. Hashes select candidates,
-                // while exact coefficient equality establishes membership.
-                struct KnownRows {
-                    using Row = llvm::SmallVector<llvm::DynamicAPInt>;
-                    bool equality;
-                    std::map<size_t, std::vector<Row>> buckets;
-                    std::optional<bool> insert(llvm::ArrayRef<llvm::DynamicAPInt> input,
-                                               RelationQueries& queries) {
-                        if (!queries.spend(uint64_t(input.size()) + 1)) return {};
-                        Row row(input);
-                        if (equality)
-                            for (const auto& coefficient : row) {
-                                if (coefficient == 0) continue;
-                                if (coefficient < 0)
-                                    for (auto& entry : row) entry = -entry;
-                                break;
-                            }
-                        auto& bucket = buckets[size_t(llvm::hash_combine_range(row.begin(), row.end()))];
-                        for (const auto& existing : bucket) {
-                            if (!queries.spend(uint64_t(row.size()) + 1)) return {};
-                            if (existing == row) return false;
-                        }
-                        bucket.push_back(std::move(row));
-                        return true;
-                    }
-                };
-                KnownRows knownEqualities{true, {}}, knownInequalities{false, {}};
-                for (unsigned i = 0; i < prefix.getNumEqualities(); ++i)
-                    if (!knownEqualities.insert(prefix.getEquality(i), *this).has_value())
-                        return failure(QueryStatus::BudgetExhausted, "difference common-row index budget");
-                for (unsigned i = 0; i < prefix.getNumInequalities(); ++i)
-                    if (!knownInequalities.insert(prefix.getInequality(i), *this).has_value())
-                        return failure(QueryStatus::BudgetExhausted, "difference common-row index budget");
-                std::vector<KnownRows::Row> equalities, rows;
-                for (unsigned i = 0; i < rhs.getNumEqualities(); ++i) {
-                    auto inserted = knownEqualities.insert(rhs.getEquality(i), *this);
-                    if (!inserted)
-                        return failure(QueryStatus::BudgetExhausted, "difference common equality budget");
-                    if (*inserted) equalities.push_back(copyRow(rhs.getEquality(i)));
-                    else ++differenceCommonRows;
-                }
-                for (unsigned i = 0; i < originalInequalities; ++i) {
-                    auto inserted = knownInequalities.insert(rhs.getInequality(i), *this);
-                    if (!inserted)
-                        return failure(QueryStatus::BudgetExhausted, "difference common inequality budget");
-                    if (*inserted) rows.push_back(copyRow(rhs.getInequality(i)));
-                    else ++differenceCommonRows;
-                }
-                // Every RHS membership condition is already present. The
-                // canonical division extension is total, so this whole left
-                // piece lies in the RHS without an emptiness/partition query.
-                if (equalities.empty() && rows.empty()) continue;
-                // Remove only constraints proved redundant in the full
-                // intersection, one at a time. Construct a fresh simplex for
-                // each implication query; never relax/restore a constraint row
-                // with detectRedundant(), the pinned assertion's source.
-                auto intersection = prefix;
-                for (const auto& row : equalities)
-                    intersection.addEquality(row);
-                for (const auto& row : rows)
-                    intersection.addInequality(row);
-                if (!charge(Relation(intersection)))
-                    return failure(QueryStatus::BudgetExhausted, "difference intersection budget");
-                if (CompactPiece::emptyAfterUnitSubstitution(intersection)) {
-                    next.unionInPlace(Relation(left));
-                    continue;
-                }
-                // Keep equality structure in the retained prefix. Replacing
-                // e=0 with two inequalities loses unit-local elimination and
-                // fixed occurrence coordinates in subsequent compositions.
-                for (const auto& equality : equalities) {
-                    for (bool negative : {false, true}) {
-                        if (!charge(Relation(prefix)))
-                            return failure(QueryStatus::BudgetExhausted, "difference equality budget");
-                        auto row = equality;
-                        if (negative)
-                            for (auto& coefficient : row)
-                                coefficient = -coefficient;
-                        --row.back();
-                        CompactPiece excluded(prefix);
-                        excluded.addInequality(row);
-                        excluded.compact();
-                        if (!CompactPiece::emptyAfterUnitSubstitution(excluded))
-                            next.unionInPlace(Relation(excluded));
-                    }
-                    prefix.addEquality(equality);
-                }
-                intersection = prefix;
-                for (const auto& row : rows)
-                    intersection.addInequality(row);
-                std::vector<bool> keep(rows.size(), true);
-                unsigned base = prefix.getNumInequalities();
-                {
-                    QueryTimer implicationTimer{"subtract_implication",
-                        profiling ? &queryProfile.subtractImplication : nullptr, 1};
-                    for (unsigned i = rows.size(); i > 0; --i) {
-                        intersection.removeInequality(base + i - 1);
-                        if (!charge(Relation(intersection)))
-                            return failure(QueryStatus::BudgetExhausted, "difference implication budget");
-                        mlir::presburger::Simplex simplex(intersection);
-                        if (simplex.isRedundantInequality(rows[i - 1]))
-                            keep[i - 1] = false;
-                        else
-                            intersection.addInequality(rows[i - 1]);
-                    }
-                }
-                // Complement every remaining membership constraint, including
-                // tightened bounds used to infer a division. Only canonical
-                // total definitions hold unconditionally; 1 <= x-3q <= 2 also
-                // restricts residues and its complement must retain x mod 3=0.
-                for (unsigned i = 0; i < rows.size(); ++i) {
-                    if (!keep[i])
-                        continue;
-                    if (!charge(Relation(prefix)))
-                        return failure(QueryStatus::BudgetExhausted, "difference partition budget");
-                    CompactPiece excluded(prefix);
-                    auto negated = rows[i];
-                    for (auto& coefficient : negated)
-                        coefficient = -coefficient;
-                    --negated.back(); // Integer negation of e >= 0.
-                    excluded.addInequality(negated);
-                    excluded.compact();
-                    if (!CompactPiece::emptyAfterUnitSubstitution(excluded))
-                        next.unionInPlace(Relation(excluded));
-                    prefix.addInequality(rows[i]);
-                }
-            }
-            pending = normalize(next);
-            if (!pending.relation)
-                return pending;
-            if (!pending.relation->getNumDisjuncts())
-                break;
+            found = qualifiedSubsets.emplace(std::move(selected), std::move(prepared)).first;
         }
-        result.unionInPlace(*pending.relation);
+        result = &found->second;
+        return true;
     }
-    return normalize(result);
+    class Cursor {
+        DifferenceEngine& owner;
+        IntegerRelation original, prefix;
+        std::vector<Row> equalities, rows;
+        std::vector<bool> keep;
+        unsigned equalityIndex = 0, inequalityIndex = 0;
+        bool secondSign = false, unchanged = false, finished = false, inequalitiesReady = false;
+    public:
+        Cursor(DifferenceEngine& owner, const IntegerRelation& left)
+            : owner(owner), original(left), prefix(left) {}
+        bool prepare(const PreparedRight& prepared) {
+            QueryTimer partitionTimer{"subtract_partition", owner.q.profiling ? &owner.q.queryProfile.subtractPartition : nullptr, 1};
+            auto rhs = *prepared.total;
+            unsigned originalInequalities = prepared.membership.getNumInequalities();
+            prefix.mergeLocalVars(rhs);
+            for (unsigned i = originalInequalities; i < rhs.getNumInequalities(); ++i)
+                prefix.addInequality(rhs.getInequality(i));
+            auto copyRow = [](llvm::ArrayRef<llvm::DynamicAPInt> row) {
+                return llvm::SmallVector<llvm::DynamicAPInt>(row);
+            };
+            // After local witnesses are aligned, a literal prefix row is
+            // already true throughout that prefix. Do not partition its
+            // impossible complement. Equalities may differ only by sign;
+            // inequalities must match exactly. Hashes select candidates,
+            // while exact coefficient equality establishes membership.
+            struct KnownRows {
+                using Row = llvm::SmallVector<llvm::DynamicAPInt>;
+                bool equality;
+                std::map<size_t, std::vector<Row>> buckets;
+                std::optional<bool> insert(llvm::ArrayRef<llvm::DynamicAPInt> input,
+                                           RelationQueries& queries) {
+                    if (!queries.spend(uint64_t(input.size()) + 1)) return {};
+                    Row row(input);
+                    if (equality)
+                        for (const auto& coefficient : row) {
+                            if (coefficient == 0) continue;
+                            if (coefficient < 0)
+                                for (auto& entry : row) entry = -entry;
+                            break;
+                        }
+                    auto& bucket = buckets[size_t(llvm::hash_combine_range(row.begin(), row.end()))];
+                    for (const auto& existing : bucket) {
+                        if (!queries.spend(uint64_t(row.size()) + 1)) return {};
+                        if (existing == row) return false;
+                    }
+                    bucket.push_back(std::move(row));
+                    return true;
+                }
+            };
+            KnownRows knownEqualities{true, {}}, knownInequalities{false, {}};
+            for (unsigned i = 0; i < prefix.getNumEqualities(); ++i)
+                if (!knownEqualities.insert(prefix.getEquality(i), owner.q).has_value())
+                    return owner.fail(QueryStatus::BudgetExhausted, "difference common-row index budget");
+            for (unsigned i = 0; i < prefix.getNumInequalities(); ++i)
+                if (!knownInequalities.insert(prefix.getInequality(i), owner.q).has_value())
+                    return owner.fail(QueryStatus::BudgetExhausted, "difference common-row index budget");
+
+            for (unsigned i = 0; i < rhs.getNumEqualities(); ++i) {
+                auto inserted = knownEqualities.insert(rhs.getEquality(i), owner.q);
+                if (!inserted)
+                    return owner.fail(QueryStatus::BudgetExhausted, "difference common equality budget");
+                if (*inserted) equalities.push_back(copyRow(rhs.getEquality(i)));
+                else ++owner.q.differenceCommonRows;
+            }
+            for (unsigned i = 0; i < originalInequalities; ++i) {
+                auto inserted = knownInequalities.insert(rhs.getInequality(i), owner.q);
+                if (!inserted)
+                    return owner.fail(QueryStatus::BudgetExhausted, "difference common inequality budget");
+                if (*inserted) rows.push_back(copyRow(rhs.getInequality(i)));
+                else ++owner.q.differenceCommonRows;
+            }
+
+            // Total definitions extend every point. If all membership rows are
+            // already true, the entire branch is covered by this RHS.
+            if (equalities.empty() && rows.empty()) { finished = true; return true; }
+            if (!owner.chargeMatrix(uint64_t(prefix.getNumConstraints()) + equalities.size() + rows.size() + 1,
+                                    uint64_t(prefix.getNumVars()) + 1))
+                return owner.fail(QueryStatus::BudgetExhausted, "difference intersection budget");
+            auto intersection = prefix;
+            for (const auto& row : equalities) intersection.addEquality(row);
+            for (const auto& row : rows) intersection.addInequality(row);
+            if (CompactPiece::emptyAfterUnitSubstitution(intersection)) {
+                unchanged = true; return true;
+            }
+            return true;
+        }
+        bool prepareInequalities() {
+            // Equality-violation children are requested first. A Boolean
+            // witness there needs none of these optional redundancy queries.
+            // At this point the retained prefix contains EVERY RHS equality.
+            if (rows.empty()) return true;
+            // Redundancy is only a partition-size optimization. This is the
+            // same fresh-Simplex implication as materialized subtraction, with
+            // all equalities retained in the intersection and no tableau undo.
+            if (!owner.chargeMatrix(uint64_t(prefix.getNumConstraints()) + rows.size() + 1,
+                                    uint64_t(prefix.getNumVars()) + 1))
+                return owner.fail(QueryStatus::BudgetExhausted, "difference implication copy budget");
+            auto intersection = prefix;
+            for (const auto& row : rows) intersection.addInequality(row);
+            keep.assign(rows.size(), true);
+            unsigned base = prefix.getNumInequalities();
+            QueryTimer implicationTimer{"subtract_implication", owner.q.profiling ? &owner.q.queryProfile.subtractImplication : nullptr, 1};
+            for (unsigned i = rows.size(); i > 0; --i) {
+                intersection.removeInequality(base + i - 1);
+                if (!owner.chargePiece(intersection))
+                    return owner.fail(QueryStatus::BudgetExhausted, "difference implication budget");
+                ++owner.q.differenceImplicationTests;
+                mlir::presburger::Simplex simplex(intersection);
+                if (simplex.isRedundantInequality(rows[i - 1])) keep[i - 1] = false;
+                else intersection.addInequality(rows[i - 1]);
+            }
+            return true;
+        }
+        std::optional<Child> next() {
+            QueryTimer partitionTimer{"subtract_partition", owner.q.profiling ? &owner.q.queryProfile.subtractPartition : nullptr, 1};
+            if (finished) return {};
+            if (unchanged) { finished = true; return Child{std::move(original), false}; }
+            while (equalityIndex < equalities.size()) {
+                if (!owner.chargePiece(prefix)) {
+                    owner.fail(QueryStatus::BudgetExhausted, "difference equality budget"); return {};
+                }
+                Row row = equalities[equalityIndex];
+                if (secondSign) for (auto& coefficient : row) coefficient = -coefficient;
+                --row.back();
+                CompactPiece excluded(prefix);
+                excluded.addInequality(row);
+                if (secondSign) { prefix.addEquality(equalities[equalityIndex++]); secondSign = false; }
+                else secondSign = true;
+                excluded.compact();
+                if (!CompactPiece::emptyAfterUnitSubstitution(excluded)) {
+                    ++owner.q.differencePartitionPieces;
+                    return Child{std::move(excluded), true};
+                }
+            }
+            if (!inequalitiesReady) {
+                if (!prepareInequalities()) return {};
+                inequalitiesReady = true;
+            }
+            while (inequalityIndex < rows.size()) {
+                unsigned i = inequalityIndex++;
+                if (!keep[i]) continue;
+                if (!owner.chargePiece(prefix)) {
+                    owner.fail(QueryStatus::BudgetExhausted, "difference partition budget"); return {};
+                }
+                Row negated = rows[i];
+                for (auto& coefficient : negated) coefficient = -coefficient;
+                --negated.back();
+                CompactPiece excluded(prefix);
+                excluded.addInequality(negated);
+                prefix.addInequality(rows[i]);
+                excluded.compact();
+                if (!CompactPiece::emptyAfterUnitSubstitution(excluded)) {
+                    ++owner.q.differencePartitionPieces;
+                    return Child{std::move(excluded), true};
+                }
+            }
+            finished = true;
+            return {};
+        }
+    };
+    std::unique_ptr<Cursor> cursor(const IntegerRelation& left, PreparedRight& right) {
+        if (!prepareRight(right)) return {};
+        // Local alignment expands BOTH matrices to the union of witnesses.
+        // Charge those possible dimensions before mergeLocalVars allocates
+        // them. Sums of the original matrix sizes do not bound the aligned
+        // RHS. This is the existing cell-work model, not a wall-time bound.
+        uint64_t alignedColumns = uint64_t(left.getNumVars()) + right.total->getNumLocalVars() + 1;
+        uint64_t prefixRows = uint64_t(left.getNumConstraints()) +
+                              2 * uint64_t(right.membership.getNumLocalVars()) + 1;
+        if (!q.spend(1) || !chargePiece(left) || !chargeMatrix(prefixRows, alignedColumns) ||
+            !chargeMatrix(uint64_t(right.total->getNumConstraints()) + 1, alignedColumns)) {
+            fail(QueryStatus::BudgetExhausted, "difference alignment budget"); return {};
+        }
+        auto value = std::make_unique<Cursor>(*this, left);
+        if (!value->prepare(right)) return {};
+        return value;
+    }
+    bool nonempty(const Child& child) {
+        if (child.knownNonempty) return true;
+        if (!chargePiece(child.piece)) { fail(QueryStatus::BudgetExhausted, "difference leaf budget"); return false; }
+        return !CompactPiece::emptyAfterUnitSubstitution(child.piece);
+    }
+public:
+    DifferenceEngine(RelationQueries& queries, const Relation& from, const Relation& remove)
+        : q(queries), from(from), remove(remove) {}
+    RelationResult run(bool stopAtWitness) {
+        if (!sameSpace(from, remove)) return failure(QueryStatus::Unsupported, "incompatible difference spaces");
+        if (!from.getNumDisjuncts()) {
+            if (!q.charge(from)) return failure(QueryStatus::BudgetExhausted, "empty difference budget");
+            return {QueryStatus::Proved, from, {}};
+        }
+        if (!q.charge(from) || !q.charge(remove)) return failure(QueryStatus::BudgetExhausted, "difference budget");
+        endpoints.emplace(remove);
+        q.relationEndpointIndexPieces += remove.getNumDisjuncts();
+        auto result = Relation::getEmpty(from.getSpace());
+        for (const auto& piece : from.getAllDisjuncts()) {
+            std::vector<PreparedRight>* right = nullptr;
+            if (!rights(piece, right)) return failed();
+            if (!right || right->empty()) {
+                if (stopAtWitness) {
+                    if (!chargePiece(piece)) return failure(QueryStatus::BudgetExhausted, "difference leaf copy budget");
+                    if (nonempty({piece, false})) {
+                        ++q.booleanWitnessLeaves;
+                        return {QueryStatus::Proved, Relation(piece), {}};
+                    }
+                    if (outcome != QueryStatus::Proved) return failed();
+                } else result.unionInPlace(piece);
+                continue;
+            }
+            auto pending = q.normalize(Relation(piece));
+            if (!pending) return pending;
+            if (!stopAtWitness) {
+                for (auto& rhs : *right) {
+                    auto next = Relation::getEmpty(from.getSpace());
+                    for (const auto& left : pending.relation->getAllDisjuncts()) {
+                        auto step = cursor(left, rhs);
+                        if (!step) return failed();
+                        while (auto child = step->next()) next.unionInPlace(child->piece);
+                        if (outcome != QueryStatus::Proved) return failed();
+                    }
+                    pending = q.normalize(next);
+                    if (!pending) return pending;
+                    if (!pending.relation->getNumDisjuncts()) break;
+                }
+                result.unionInPlace(*pending.relation);
+                continue;
+            }
+            // Depth-first traversal retains one active branch per RHS level,
+            // never the full uncovered union. A feasible leaf is a witness
+            // ONLY after every relevant RHS piece has been excluded.
+            struct Frame { unsigned right; std::unique_ptr<Cursor> step; };
+            for (const auto& left : pending.relation->getAllDisjuncts()) {
+                std::vector<Frame> stack;
+                auto initial = cursor(left, right->front());
+                if (!initial) return failed();
+                stack.push_back({0, std::move(initial)});
+                ++q.booleanPartitionNodes;
+                q.booleanMaxDepth = std::max<uint64_t>(q.booleanMaxDepth, stack.size());
+                while (!stack.empty()) {
+                    auto child = stack.back().step->next();
+                    if (outcome != QueryStatus::Proved) return failed();
+                    if (!child) { stack.pop_back(); continue; }
+                    unsigned nextRight = stack.back().right + 1;
+                    if (nextRight == right->size()) {
+                        if (nonempty(*child)) {
+                            if (!chargePiece(child->piece))
+                                return failure(QueryStatus::BudgetExhausted, "difference witness copy budget");
+                            ++q.booleanWitnessLeaves;
+                            return {QueryStatus::Proved, Relation(child->piece), {}};
+                        }
+                        if (outcome != QueryStatus::Proved) return failed();
+                    } else {
+                        auto next = cursor(child->piece, (*right)[nextRight]);
+                        if (!next) return failed();
+                        stack.push_back({nextRight, std::move(next)});
+                        ++q.booleanPartitionNodes;
+                        q.booleanMaxDepth = std::max<uint64_t>(q.booleanMaxDepth, stack.size());
+                    }
+                }
+            }
+        }
+        return stopAtWitness ? RelationResult{QueryStatus::Proved, std::move(result), {}} : q.normalize(result);
+    }
+};
+
+RelationResult RelationQueries::subtract(const Relation& from, const Relation& remove) {
+    QueryTimer timer{"subtract", profiling ? &queryProfile.subtract : nullptr,
+                     from.getNumDisjuncts(), remove.getNumDisjuncts()};
+    return DifferenceEngine(*this, from, remove).run(false);
 }
 
 QueryStatus RelationQueries::contains(const Relation& supply, const Relation& requirement) {
@@ -700,9 +838,12 @@ QueryStatus RelationQueries::contains(const Relation& supply, const Relation& re
         sample->resize(needed.getNumVars() - needed.getNumLocalVars());
         if (!supply.containsPoint(*sample)) return QueryStatus::NotEstablished;
     }
-    auto missing = subtract(requirement, supply);
+    // The shared exact partitioner searches lazily here. An uncovered witness
+    // is accepted only after excluding every relevant supply disjunct. Empty
+    // branches and covered subtrees are pruned without materializing a union.
+    auto missing = DifferenceEngine(*this, requirement, supply).run(true);
     if (!missing) return missing.status;
-    return missing.relation->isIntegerEmpty() ? QueryStatus::Proved : QueryStatus::NotEstablished;
+    return missing.relation->getNumDisjuncts() == 0 ? QueryStatus::Proved : QueryStatus::NotEstablished;
 }
 
 RelationResult RelationQueries::latestSources(const Relation& requirements, const Relation& sourceBefore) {

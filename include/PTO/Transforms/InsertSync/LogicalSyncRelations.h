@@ -71,18 +71,21 @@ public:
     };
     struct Profile {
         PrimitiveStats normalize, compose, subtract, contains, restrictEndpoints;
-        // Nested attribution within subtract; implication is itself included
-        // in partition. These opt-in times are not additive exclusive totals.
+        // Shared subtraction/Boolean-containment partitioner attribution;
+        // implication is included in partition. These times are not additive
+        // exclusive totals and Boolean search is included in contains.
         PrimitiveStats subtractQualification, subtractPartition, subtractImplication;
     };
 
 private:
+    class DifferenceEngine;
     friend class CompletionQueries;
     uint64_t remaining, used = 0;
     uint64_t endpointComparisons = 0;
     uint64_t compositionIndexBuilds = 0, compositionIndexPieces = 0;
     uint64_t endpointProjections = 0, endpointProjectionPieces = 0;
-    uint64_t differenceCommonRows = 0;
+    uint64_t differenceCommonRows = 0, differencePartitionPieces = 0, differenceImplicationTests = 0;
+    uint64_t booleanPartitionNodes = 0, booleanWitnessLeaves = 0, booleanMaxDepth = 0;
     uint64_t relationEndpointIndexPieces = 0, relationEndpointBucketLookups = 0;
     uint64_t differenceEndpointComparisons = 0, containmentEndpointComparisons = 0;
     uint64_t periodicAtomVisits = 0, periodicSortComparisons = 0, periodicOutputPieces = 0;
@@ -105,6 +108,13 @@ public:
     uint64_t endpointProjectionCount() const { return endpointProjections; }
     uint64_t endpointProjectionPieceCount() const { return endpointProjectionPieces; }
     uint64_t differenceCommonRowCount() const { return differenceCommonRows; }
+    uint64_t differencePartitionPieceCount() const { return differencePartitionPieces; }
+    uint64_t differenceImplicationTestCount() const { return differenceImplicationTests; }
+    // Exact Boolean-containment DFS only. Depth counts selected RHS pieces,
+    // not input dimensions; matrix size can grow along a retained branch.
+    uint64_t booleanPartitionNodeCount() const { return booleanPartitionNodes; }
+    uint64_t booleanWitnessLeafCount() const { return booleanWitnessLeaves; }
+    uint64_t booleanMaximumDepth() const { return booleanMaxDepth; }
     uint64_t relationEndpointIndexPieceCount() const { return relationEndpointIndexPieces; }
     uint64_t relationEndpointBucketLookupCount() const { return relationEndpointBucketLookups; }
     uint64_t differenceEndpointComparisonCount() const { return differenceEndpointComparisons; }

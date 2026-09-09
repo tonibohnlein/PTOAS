@@ -704,6 +704,318 @@ RelationResult SyncOccurrences::filterEqualScalars(const Relation& originalOccur
     return queries.normalize(originalOccurrences.intersect(*equality.relation));
 }
 
+// Exact optional cell normalization; deliberately does not call projectOut.
+namespace {
+struct PeriodicCellResult {
+    QueryStatus status;
+    std::optional<IntegerRelation> cell;
+};
+
+class PeriodicCellElimination {
+    using Int = llvm::DynamicAPInt;
+    using Row = std::vector<Int>;
+    using Rows = std::vector<Row>;
+    RelationQueries& queries;
+    QueryStatus state = QueryStatus::Proved;
+    unsigned variables;
+    Rows equations, inequalities;
+    bool empty = false;
+    static constexpr unsigned maxRows = 256, maxColumns = 64, maxLocals = 16;
+
+    bool spend(uint64_t work) {
+        if (state != QueryStatus::Proved) return false;
+        if (!queries.spend(work)) { state = QueryStatus::BudgetExhausted; return false; }
+        return true;
+    }
+    bool bounded(const Int& value) {
+        // Input and every stored intermediate have bounded numerical width.
+        // A multiply of two qualified cells is therefore itself bounded before
+        // this check, independently of DynamicAPInt's storage representation.
+        const Int bound = Int(INT64_MAX) * Int(INT64_MAX);
+        if (value < -bound || value > bound) { state = QueryStatus::Unsupported; return false; }
+        return true;
+    }
+    Int canonical(const Int& value) {
+        // Rebuild at most 126 numerical bits in a fixed-size representation;
+        // a numerically small DynamicAPInt can otherwise retain wide storage.
+        const Int base = Int(INT64_MAX) + Int(1);
+        return Int(int64_t(value / base)) * base + Int(int64_t(value % base));
+    }
+    Int abs(Int value) { return value < 0 ? -value : value; }
+    std::optional<Int> gcd(Int a, Int b) {
+        a = abs(a); b = abs(b);
+        while (b != 0) {
+            if (!spend(1)) return {};
+            Int remainder = a % b; a = b; b = remainder;
+        }
+        return a;
+    }
+    bool normalizeRow(Row& row, bool equality) {
+        if (!spend(row.size())) return false;
+        Int divisor(0);
+        for (unsigned c = 0; c < variables; ++c) {
+            if (!bounded(row[c])) return false;
+            row[c] = canonical(row[c]);
+            auto next = gcd(divisor, row[c]);
+            if (!next) return false;
+            divisor = *next;
+        }
+        if (!bounded(row.back())) return false;
+        row.back() = canonical(row.back());
+        if (divisor == 0) {
+            if (equality ? row.back() != 0 : row.back() < 0) empty = true;
+            row.clear(); return true;
+        }
+        if (equality && row.back() % divisor != 0) {
+            empty = true; row.clear(); return true;
+        }
+        for (unsigned c = 0; c < variables; ++c) row[c] /= divisor;
+        auto constant = row.back() / divisor;
+        // C++/DynamicAPInt signed division truncates; integer inequality
+        // normalization requires floor(constant / positive divisor).
+        if (!equality && row.back() < 0 && row.back() % divisor != 0) --constant;
+        row.back() = constant;
+        if (equality) {
+            for (unsigned c = 0; c < variables; ++c) if (row[c] != 0) {
+                if (row[c] < 0) for (auto& value : row) value = -value;
+                break;
+            }
+        }
+        return true;
+    }
+    bool normalize() {
+        if (equations.size() + inequalities.size() > maxRows) {
+            state = QueryStatus::Unsupported; return false;
+        }
+        unsigned logarithm = 1;
+        for (size_t count = equations.size() + inequalities.size(); count; count /= 2) ++logarithm;
+        if (!spend(uint64_t(equations.size() + inequalities.size()) * (variables + 1) * logarithm)) return false;
+        std::set<Row> uniqueEquations;
+        // Equal coefficient vectors share the strongest (smallest) constant.
+        std::map<Row, Int> strongest;
+        for (auto& row : equations) {
+            if (!normalizeRow(row, true)) return false;
+            if (!row.empty()) uniqueEquations.insert(std::move(row));
+        }
+        for (auto& row : inequalities) {
+            if (!normalizeRow(row, false)) return false;
+            if (row.empty()) continue;
+            Int constant = row.back(); row.pop_back();
+            auto [found, inserted] = strongest.emplace(std::move(row), constant);
+            if (!inserted && constant < found->second) found->second = constant;
+        }
+        // Opposite inequalities with opposite constants give an equality.
+        // This is an exact row identity, not rational redundancy removal.
+        inequalities.clear();
+        for (const auto& [coefficients, constant] : strongest) {
+            if (!spend(variables + 1)) return false;
+            Row opposite = coefficients;
+            for (auto& value : opposite) value = -value;
+            auto other = strongest.find(opposite);
+            Row row = coefficients; row.push_back(constant);
+            if (other != strongest.end() && other->second + constant < 0) empty = true;
+            if (other != strongest.end() && other->second == -constant) {
+                if (!normalizeRow(row, true)) return false;
+                if (!row.empty()) uniqueEquations.insert(std::move(row));
+            } else inequalities.push_back(std::move(row));
+        }
+        equations.assign(uniqueEquations.begin(), uniqueEquations.end());
+        return true;
+    }
+    bool eliminateEquality(unsigned column, unsigned pivot) {
+        if (!spend(uint64_t(equations.size() + inequalities.size()) * (variables + 1))) return false;
+        const Row source = equations[pivot];
+        if (source[column] != 1 && source[column] != -1) {
+            state = QueryStatus::Unsupported; return false;
+        }
+        auto substitute = [&](Row& row) {
+            Int multiplier = row[column] * source[column];
+            for (unsigned c = 0; c <= variables; ++c) {
+                row[c] -= multiplier * source[c];
+                if (!bounded(row[c])) return false;
+            }
+            return true;
+        };
+        for (unsigned r = 0; r < equations.size(); ++r)
+            if (r != pivot && !substitute(equations[r])) return false;
+        for (auto& row : inequalities) if (!substitute(row)) return false;
+        equations.erase(equations.begin() + pivot);
+        for (auto& row : equations) row.erase(row.begin() + column);
+        for (auto& row : inequalities) row.erase(row.begin() + column);
+        --variables;
+        return normalize();
+    }
+    bool eliminateInequalities(unsigned column) {
+        // Caller has established that no equality mentions this column.
+        std::vector<unsigned> lower, upper;
+        bool lowerUnit = true, upperUnit = true;
+        for (unsigned r = 0; r < inequalities.size(); ++r) {
+            const auto& coefficient = inequalities[r][column];
+            if (coefficient > 0) { lower.push_back(r); lowerUnit &= coefficient == 1; }
+            if (coefficient < 0) { upper.push_back(r); upperUnit &= coefficient == -1; }
+        }
+        // With an integral lower (or upper) frontier, rational nonemptiness
+        // of this interval admits an integer endpoint. Two nonunit frontiers
+        // would need divisibility reasoning, and are deliberately refused.
+        if (!lower.empty() && !upper.empty() && !lowerUnit && !upperUnit) return false;
+        uint64_t combinations = uint64_t(lower.size()) * upper.size();
+        uint64_t outputRows = inequalities.size() - lower.size() - upper.size() + combinations;
+        if (outputRows + equations.size() > maxRows) return false;
+        if (!spend((outputRows + equations.size() + lower.size() + upper.size()) * (variables + 1))) return false;
+        Rows next;
+        next.reserve(outputRows);
+        for (const auto& row : inequalities) if (row[column] == 0) next.push_back(row);
+        for (unsigned a : lower) for (unsigned b : upper) {
+            Row row(variables + 1);
+            Int lowerMultiplier = -inequalities[b][column];
+            Int upperMultiplier = inequalities[a][column];
+            for (unsigned c = 0; c <= variables; ++c) {
+                row[c] = lowerMultiplier * inequalities[a][c] + upperMultiplier * inequalities[b][c];
+                if (!bounded(row[c])) return false;
+            }
+            next.push_back(std::move(row));
+        }
+        inequalities = std::move(next);
+        for (auto& row : equations) row.erase(row.begin() + column);
+        for (auto& row : inequalities) row.erase(row.begin() + column);
+        --variables;
+        return normalize();
+    }
+public:
+    explicit PeriodicCellElimination(RelationQueries& queries) : queries(queries), variables(0) {}
+    PeriodicCellResult run(const IntegerRelation& original, unsigned iteration) {
+        auto refuse = [&]() -> PeriodicCellResult {
+            return {state == QueryStatus::BudgetExhausted ? state : QueryStatus::Unsupported, {}};
+        };
+        if (original.getNumCols() + 1 > maxColumns || original.getNumLocalVars() > maxLocals ||
+            original.getNumConstraints() > maxRows || iteration >= original.getNumDimAndSymbolVars()) return refuse();
+        if (!spend(uint64_t(original.getNumCols()) * (original.getNumConstraints() + 1))) return refuse();
+        variables = original.getNumVars();
+        for (bool equality : {true, false}) {
+            unsigned count = equality ? original.getNumEqualities() : original.getNumInequalities();
+            for (unsigned r = 0; r < count; ++r) {
+                auto input = equality ? original.getEquality(r) : original.getInequality(r);
+                Row row(variables + 1);
+                for (unsigned c = 0; c <= variables; ++c) {
+                    if (!bounded(input[c])) return refuse();
+                    row[c] = canonical(input[c]);
+                }
+                (equality ? equations : inequalities).push_back(std::move(row));
+            }
+        }
+        // Recover exact implicit equalities BEFORE choosing the quotient.
+        // For example i-2*q>=1 and i-2*q<=1 are the same congruence
+        // as i-2*q-1=0; treating this cell as period one loses that structure.
+        if (!normalize()) return refuse();
+        if (empty) {
+            IntegerRelation result(original.getSpaceWithoutLocals());
+            SmallVector<Int> contradiction(result.getNumCols()); contradiction.back() = -1;
+            result.addInequality(contradiction);
+            return {QueryStatus::Proved, std::move(result)};
+        }
+        Int period(1), residue(0);
+        // Pick one actual congruence. The new quotient is a distinct protected
+        // coordinate, so signs, unnormalized residues and aliases of original
+        // locals cannot accidentally change its meaning.
+        if (!spend(uint64_t(equations.size()) * (variables + 1))) return refuse();
+        for (const auto& row : equations) {
+            if (row[iteration] != 1 && row[iteration] != -1) continue;
+            std::optional<unsigned> local;
+            bool pure = true;
+            for (unsigned c = 0; c < variables; ++c) if (c != iteration && row[c] != 0) {
+                if (c < original.getNumDimAndSymbolVars() || local) pure = false;
+                else local = c;
+            }
+            if (!pure || !local) continue;
+            period = abs(row[*local]);
+            if (period > INT64_MAX) return refuse();
+            residue = (-row.back() * row[iteration]) % period;
+            if (residue < 0) residue += period;
+            break;
+        }
+        if (!spend(uint64_t(equations.size() + inequalities.size()) * (variables + 2))) return refuse();
+        const unsigned protectedQuotient = variables++;
+        for (bool equality : {true, false}) {
+            for (auto& row : equality ? equations : inequalities) {
+                row.insert(row.end() - 1, Int(0));
+                row.back() += row[iteration] * residue;
+                row[protectedQuotient] = row[iteration] * period;
+                row[iteration] = 0;
+                if (!bounded(row.back()) || !bounded(row[protectedQuotient])) return refuse();
+            }
+        }
+        if (!normalize()) return refuse();
+        const unsigned firstLocal = original.getNumDimAndSymbolVars();
+        // Every successful iteration eliminates exactly one ORIGINAL local.
+        // The last column is the protected quotient and is never a candidate.
+        for (unsigned remaining = original.getNumLocalVars(); remaining && !empty; --remaining) {
+            bool changed = false;
+            if (!spend(uint64_t(variables - firstLocal) * (equations.size() + inequalities.size() + 1))) return refuse();
+            for (unsigned c = firstLocal; c + 1 < variables && !changed; ++c)
+                for (unsigned r = 0; r < equations.size(); ++r)
+                    if (equations[r][c] == 1 || equations[r][c] == -1) {
+                        if (!eliminateEquality(c, r)) return refuse();
+                        changed = true; break;
+                    }
+            for (unsigned c = firstLocal; c + 1 < variables && !changed; ++c) {
+                bool mentioned = false;
+                for (const auto& row : equations) mentioned |= row[c] != 0;
+                if (mentioned) continue;
+                if (eliminateInequalities(c)) changed = true;
+                else if (state != QueryStatus::Proved) return refuse();
+            }
+            if (!changed) return refuse();
+        }
+        IntegerRelation result(original.getSpaceWithoutLocals());
+        if (empty) {
+            SmallVector<Int> contradiction(result.getNumCols()); contradiction.back() = -1;
+            result.addInequality(contradiction);
+            return {QueryStatus::Proved, std::move(result)};
+        }
+        if (variables != firstLocal + 1) return refuse();
+        result.appendVar(VarKind::Local);
+        if (!spend(uint64_t(equations.size() + inequalities.size() + 1) * result.getNumCols())) return refuse();
+        // Replace q by (i-r)/p in each remaining row using positive scaling.
+        // The separate anchor retains exact divisibility; no rational
+        // projection or floor constraint is silently removed.
+        for (bool equality : {true, false}) {
+            for (const auto& source : equality ? equations : inequalities) {
+                Row row = source;
+                Int quotient = row[firstLocal];
+                for (auto& coefficient : row) {
+                    coefficient *= period;
+                    if (!bounded(coefficient)) return refuse();
+                }
+                row[firstLocal] = 0;
+                row[iteration] += quotient;
+                row.back() -= quotient * residue;
+                if (!bounded(row[iteration]) || !bounded(row.back()) || !normalizeRow(row, equality)) return refuse();
+                if (row.empty()) continue;
+                if (equality) result.addEquality(row); else result.addInequality(row);
+            }
+        }
+        if (empty) {
+            IntegerRelation contradiction(result.getSpaceWithoutLocals());
+            SmallVector<Int> row(contradiction.getNumCols()); row.back() = -1;
+            contradiction.addInequality(row);
+            return {QueryStatus::Proved, std::move(contradiction)};
+        }
+        SmallVector<Int> anchor(result.getNumCols());
+        anchor[iteration] = 1; anchor[firstLocal] = -period; anchor.back() = -residue;
+        result.addEquality(anchor);
+        return {QueryStatus::Proved, std::move(result)};
+    }
+};
+}
+
+RelationResult mlir::pto::logical_sync::testing::simplifyPeriodicCell(
+    const IntegerRelation& cell, unsigned iterationCoordinate, RelationQueries& queries) {
+    auto simplified = PeriodicCellElimination(queries).run(cell, iterationCoordinate);
+    if (simplified.cell) return {QueryStatus::Proved, Relation(*simplified.cell), {}};
+    return {simplified.status, {}, simplified.status == QueryStatus::BudgetExhausted ?
+        "periodic cell elimination budget" : "periodic cell requires unsupported integer elimination"};
+}
+
 RelationResult SyncOccurrences::periodicSuccessors(const PresburgerSet& publications,
                                                    RelationQueries& queries) const {
     using llvm::DynamicAPInt;
@@ -732,9 +1044,11 @@ RelationResult SyncOccurrences::periodicSuccessors(const PresburgerSet& publicat
     if (!normalized) return normalized;
     if (!normalized.relation->getNumDisjuncts())
         return {QueryStatus::Proved, Relation::getEmpty(PresburgerSpace::getRelationSpace(n, n, symbols)), {}};
-    // Candidate extraction may forget local constraints. No forgotten fact is
-    // used as a proof: the WHOLE proposed population is compared in both
-    // directions with the original selected population before construction.
+    // Exact cell elimination supplies another representation of the WHOLE
+    // original population. Unsupported cells stay unchanged in this union.
+    // Candidate extraction below may forget constraints, but its result is
+    // compared in both directions with this exact union before construction.
+    auto exactPopulation = PresburgerSet::getEmpty(normalized.relation->getSpace());
     using Row = std::vector<int64_t>;
     using Rows = std::set<std::pair<bool, Row>>;
     std::optional<Rows> commonRows;
@@ -743,11 +1057,12 @@ RelationResult SyncOccurrences::periodicSuccessors(const PresburgerSet& publicat
     std::vector<PeriodicPublication> atoms;
     std::map<unsigned, std::vector<int64_t>> phaseSchedules;
     std::vector<int64_t> schedulePrefix;
-    for (const auto& piece : normalized.relation->getAllDisjuncts()) {
-        const uint64_t cells = uint64_t(piece.getNumCols()) * (piece.getNumConstraints() + 1);
+    for (const auto& originalPiece : normalized.relation->getAllDisjuncts()) {
+        const uint64_t cells = uint64_t(originalPiece.getNumCols()) * (originalPiece.getNumConstraints() + 1);
         uint64_t treeCharge = 1;
-        for (unsigned k = piece.getNumConstraints(); k; k /= 2) treeCharge += 2;
+        for (unsigned k = originalPiece.getNumConstraints(); k; k /= 2) treeCharge += 2;
         if (cells > UINT64_MAX / treeCharge || !queries.spend(cells * treeCharge)) return exhausted();
+        auto piece = originalPiece;
         std::optional<unsigned> phase;
         for (unsigned r = 0; r < piece.getNumEqualities(); ++r) {
             auto row = piece.getEquality(r);
@@ -785,6 +1100,18 @@ RelationResult SyncOccurrences::periodicSuccessors(const PresburgerSet& publicat
             phaseSchedules.emplace(*phase, std::move(constants));
         }
         unsigned iv = 1 + *activeLoop;
+        if (piece.getNumLocalVars()) {
+            auto simplified = PeriodicCellElimination(queries).run(piece, iv);
+            if (simplified.status == QueryStatus::BudgetExhausted) return exhausted();
+            if (simplified.cell) piece = std::move(*simplified.cell);
+            // Unsupported local elimination keeps the previous proposal path;
+            // its whole-population equality gate still decides qualification.
+        }
+        if (!queries.spend(uint64_t(piece.getNumCols()) * (piece.getNumConstraints() + 1) + 1)) return exhausted();
+        // Only a proved empty conjunct can disappear from the population.
+        // Empty cells need no residue/interval proposal of their own.
+        if (piece.isObviouslyEmpty()) continue;
+        exactPopulation.unionInPlace(piece);
         std::optional<std::pair<int64_t, int64_t>> congruence;
         Rows rows;
         for (bool equality : {true, false}) {
@@ -830,11 +1157,37 @@ RelationResult SyncOccurrences::periodicSuccessors(const PresburgerSet& publicat
         auto [p, residue] = congruence.value_or(std::make_pair(int64_t(1), int64_t(0)));
         if (period && *period != p) return unsupported("native periodic population uses different periods");
         period = p;
-        if (commonRows && *commonRows != rows)
-            return unsupported("native periodic population uses different interval templates");
-        commonRows = std::move(rows);
+        if (!commonRows) commonRows = std::move(rows);
+        else {
+            // One relation-derived envelope, not a list of guessed bounds:
+            // retain coefficient patterns common to every cell and weaken an
+            // inequality only to the weakest actual constant. Equalities must
+            // be identical. The final bidirectional population proof rejects
+            // any holes or extra occurrences introduced by this proposal.
+            Rows envelope;
+            for (const auto& [equality, row] : *commonRows) {
+                unsigned lookupCharge = 1;
+                for (size_t count = rows.size(); count; count /= 2) ++lookupCharge;
+                if (!queries.spend(uint64_t(row.size()) * lookupCharge)) return exhausted();
+                if (equality) {
+                    if (rows.count({true, row})) envelope.emplace(true, row);
+                    continue;
+                }
+                Row probe = row; probe.back() = INT64_MIN;
+                auto other = rows.lower_bound({false, probe});
+                if (other != rows.end() && !other->first && other->second.size() == row.size() &&
+                    std::equal(row.begin(), row.end() - 1, other->second.begin())) {
+                    auto combined = row;
+                    combined.back() = std::max(combined.back(), other->second.back());
+                    envelope.emplace(false, std::move(combined));
+                }
+            }
+            commonRows = std::move(envelope);
+        }
         atoms.push_back({int64_t(*phase), 0, residue});
     }
+    if (atoms.empty())
+        return {QueryStatus::Proved, Relation::getEmpty(PresburgerSpace::getRelationSpace(n, n, symbols)), {}};
     // Rank by the actual imported lexicographic schedule, independently of the
     // physical-point enumeration. One phase can contribute multiple residues.
     uint64_t sortCharge = 1;
@@ -868,7 +1221,10 @@ RelationResult SyncOccurrences::periodicSuccessors(const PresburgerSet& publicat
         proposed.unionInPlace(part);
     }
     for (auto direction : {true, false}) {
-        auto status = direction ? queries.contains(proposed, publications) : queries.contains(publications, proposed);
+        // The exact cell rewrite relates this representation back to the
+        // untouched selected population. Re-expanding its original existential
+        // witnesses here would repeat the eliminated integer problem.
+        auto status = direction ? queries.contains(proposed, exactPopulation) : queries.contains(exactPopulation, proposed);
         if (status == QueryStatus::BudgetExhausted) return exhausted();
         if (status != QueryStatus::Proved) {
             profile("equality-unavailable");
