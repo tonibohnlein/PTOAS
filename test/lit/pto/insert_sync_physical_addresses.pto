@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=existing' %s | FileCheck %s
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=logical' %s | FileCheck %s
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=logical-or-existing' %s | FileCheck %s
+//
+// No canonicalization: truncating 65536 to i16 produces zero at runtime.
+// Both explicit allocations therefore occupy the same physical bytes, even
+// though their root SSA values differ. A terminal drain cannot supply the
+// required load completion before the vector reader.
+// CHECK-LABEL: func.func @trunc_extui_alias
+// CHECK: arith.trunci
+// CHECK: arith.extui
+// CHECK: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: pto.tabs
+// CHECK: pto.barrier <PIPE_ALL>
+// CHECK: return
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @trunc_extui_alias(%src: !pto.ptr<f16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 0 : i64
+    %output_address = arith.constant 1048576 : i64
+    %large = arith.constant 65536 : i64
+    %narrow = arith.trunci %large : i64 to i16
+    %address = arith.extui %narrow : i16 to i64
+    %a = pto.alloc_tile addr = %address : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %other : !pto.tile_buf<vec, 16x16xf16>
+    %output = pto.alloc_tile addr = %output_address : !pto.tile_buf<vec, 16x16xf16>
+    %view = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%output : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}

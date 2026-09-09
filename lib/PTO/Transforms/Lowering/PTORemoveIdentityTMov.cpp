@@ -225,9 +225,13 @@ static bool isStaticallyAddressableValue(Value value) {
 
 static bool hasExactSameAddressRange(const BaseMemInfo *srcInfo,
                                      const BaseMemInfo *dstInfo) {
-  if (!srcInfo || !dstInfo) {
+  if (!srcInfo || !dstInfo || srcInfo->aliasesUnknownRange || dstInfo->aliasesUnknownRange) {
     return false;
   }
+  // Equal may-address unions need not select the same dynamic slot. This
+  // identity shortcut requires one exact interval on each side.
+  if (srcInfo->baseAddresses.size() != 1 || dstInfo->baseAddresses.size() != 1)
+    return false;
   if (srcInfo->scope != dstInfo->scope) {
     return false;
   }
@@ -381,7 +385,7 @@ struct PTORemoveIdentityTMovPass
       Buffer2MemInfoMap buffer2MemInfoMap;
       PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func,
                                  SyncAnalysisMode::NORMALSYNC);
-      translator.Build();
+      if (failed(translator.Build())) { signalPassFailure(); return; }
 
       for (TMovOp op : memInfoCandidates) {
         if (isIdentityTMovByMemInfo(op, buffer2MemInfoMap)) {

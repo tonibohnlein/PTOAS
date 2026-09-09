@@ -260,10 +260,14 @@ class Constructor {
     }
     bool discover()
     {
+        auto admission = qualifySyncPhysicalAddresses(function);
+        if (admission.status == SyncAddressAdmission::Rejected)
+            return fail(ConstructionResult::Unsupported, admission.reason);
         if (!supportsLogicalSyncTranslation(function))
             return fail(ConstructionResult::Unsupported, "memory loop forwarding requires qualified translation");
         PTOIRTranslator translator(ir, memory, buffers, function, SyncAnalysisMode::NORMALSYNC);
-        translator.Build();
+        if (failed(translator.Build()))
+            return fail(ConstructionResult::Unsupported, "physical translation failed");
         auto coverage = inspectInsertSyncEffectCoverage(function, ir, false);
         if (failed(coverage))
             return fail(ConstructionResult::InternalError, "effect inspection failed");
@@ -1651,10 +1655,13 @@ bool Constructor::reconstruct()
             ConstructionResult::InternalError, "emission changed original payload, control or allocation contract");
     // Re-translate actual payload effects after emission. Insertion metadata and
     // the selected plan's claims are not semantic input to this reconstruction.
+    if (qualifySyncPhysicalAddresses(function).status == SyncAddressAdmission::Rejected)
+        return fail(ConstructionResult::Unproved, "reconstructed physical-address admission failed");
     SyncIRs rebuiltIR;
     Buffer2MemInfoMap rebuiltBuffers;
     PTOIRTranslator translator(rebuiltIR, memory, rebuiltBuffers, function, SyncAnalysisMode::NORMALSYNC);
-    translator.Build();
+    if (failed(translator.Build()))
+        return fail(ConstructionResult::Unproved, "reconstructed physical translation failed");
     std::map<Operation*, const CompoundInstanceElement*> rebuiltPhases;
     for (const auto& element : rebuiltIR)
         if (auto* phase = dyn_cast<CompoundInstanceElement>(element.get())) {

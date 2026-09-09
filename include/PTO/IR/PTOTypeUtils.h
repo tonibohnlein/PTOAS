@@ -24,8 +24,17 @@ struct StaticMultiTileSlotLayout {
 };
 // The physical layout used by multi_tile_get address lowering. This does not
 // infer a selector, assign addresses, or qualify a translated access. Rejects
-// dynamic/zero/overflowing footprints before unsigned arithmetic can wrap.
+// dynamic/zero/overflowing footprints and RowPlusOne compaction, whose padded
+// physical footprint does not satisfy the dense multi-tile layout contract.
 FailureOr<StaticMultiTileSlotLayout> getPTOStaticMultiTileSlotLayout(TileBufType type);
+// Checked address arithmetic for that layout. Offsets, addresses and exclusive
+// footprint ends stay within nonnegative i64, matching local-address IR and
+// planner metadata. Stride includes alignment padding; footprint does not.
+// The caller checks the allocation's slot count; neither helper wraps indices.
+FailureOr<uint64_t> getPTOStaticMultiTileSlotOffset(
+    const StaticMultiTileSlotLayout &layout, uint64_t slot);
+FailureOr<uint64_t> getPTOStaticMultiTileSlotAddress(
+    const StaticMultiTileSlotLayout &layout, uint64_t base, uint64_t slot);
 
 namespace detail {
 template <typename MemRefT>

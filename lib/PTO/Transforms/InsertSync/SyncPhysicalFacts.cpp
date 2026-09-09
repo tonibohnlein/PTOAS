@@ -102,20 +102,19 @@ std::optional<SyncPhysicalSlotMapping> mlir::pto::qualifySyncPhysicalSlots(
     for (unsigned i = 0; i < bases.size(); ++i)
       if (planned[i] < 0 || uint64_t(planned[i]) != bases[i]) return {};
   } else {
-    // The unchanged translator currently spaces explicit bases by raw bytes;
-    // lowering rounds up to address alignment. Decline a mismatch rather than
-    // silently claiming the translated union denotes the lowered addresses.
-    if (!root.getAddr() || layout->strideBytes != layout->footprintBytes) return {};
+    // Translation and lowering share checked aligned-stride addressing. The
+    // effect remains the unpadded footprint at each resulting slot base.
+    if (!root.getAddr()) return {};
     for (unsigned i = 0; i < bases.size(); ++i) {
-      if (uint64_t(i) > (std::numeric_limits<uint64_t>::max() - bases.front()) / layout->strideBytes ||
-          bases[i] != bases.front() + uint64_t(i) * layout->strideBytes) return {};
+      auto address = getPTOStaticMultiTileSlotAddress(*layout, bases.front(), i);
+      if (failed(address) || bases[i] != *address) return {};
     }
   }
   SmallVector<uint64_t> sorted(bases);
   llvm::sort(sorted);
   for (unsigned i = 0; i < sorted.size(); ++i) {
-    if (sorted[i] % layout->alignmentBytes || sorted[i] > uint64_t(INT64_MAX) - layout->footprintBytes ||
-        sorted[i] > std::numeric_limits<uint64_t>::max() - layout->footprintBytes ||
+    if (sorted[i] % layout->alignmentBytes ||
+        failed(getPTOStaticMultiTileSlotAddress(*layout, sorted[i], 0)) ||
         (i && sorted[i - 1] + layout->footprintBytes > sorted[i])) return {};
   }
   IntegerAttr literal;
@@ -309,16 +308,13 @@ class Importer {
         if (failed(layout) || layout->footprintBytes > uint64_t(INT64_MAX) ||
             type.getCompactModeI32() == int32_t(CompactMode::RowPlusOne))
           return fail("unqualified multi-tile physical layout");
-        if (!alloc->hasAttr(kPtoMultiBufferAddrsAttrName) &&
-            layout->strideBytes != layout->footprintBytes)
-          return fail("multi-tile translator spacing differs from lowered aligned stride");
         // This admission precedes all interval/alias candidate pruning. Merely
         // declining optional selector refinement would be too late if the
         // original translated range had already missed a real lowered overlap.
         if (auto planned = alloc->getAttrOfType<DenseI64ArrayAttr>(kPtoMultiBufferAddrsAttrName))
           for (int64_t base : planned.asArrayRef())
             if (base < 0 || uint64_t(base) % layout->alignmentBytes ||
-                uint64_t(base) > uint64_t(INT64_MAX) - layout->footprintBytes)
+                failed(getPTOStaticMultiTileSlotAddress(*layout, uint64_t(base), 0)))
               return fail("unqualified planned multi-tile physical interval");
         continue;
       }

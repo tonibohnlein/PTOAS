@@ -24,7 +24,8 @@ constexpr unsigned kPackedLdgStgBitWidth64 = 64;
 
 FailureOr<StaticMultiTileSlotLayout>
 mlir::pto::getPTOStaticMultiTileSlotLayout(TileBufType type) {
-  if (!type) return failure();
+  if (!type || type.getCompactModeI32() == int32_t(CompactMode::RowPlusOne))
+    return failure();
   uint64_t bytes = getPTOStorageElemByteSize(type.getElementType());
   if (!bytes) return failure();
   for (int64_t dim : type.getShape()) {
@@ -48,6 +49,29 @@ mlir::pto::getPTOStaticMultiTileSlotLayout(TileBufType type) {
   }
   if (bytes > std::numeric_limits<uint64_t>::max() - (alignment - 1)) return failure();
   return StaticMultiTileSlotLayout{bytes, alignment, ((bytes + alignment - 1) / alignment) * alignment};
+}
+
+FailureOr<uint64_t> mlir::pto::getPTOStaticMultiTileSlotOffset(
+    const StaticMultiTileSlotLayout &layout, uint64_t slot) {
+  constexpr uint64_t addressLimit = std::numeric_limits<int64_t>::max();
+  if (!layout.footprintBytes || !layout.alignmentBytes ||
+      layout.strideBytes < layout.footprintBytes ||
+      layout.strideBytes % layout.alignmentBytes ||
+      layout.strideBytes > addressLimit || slot > addressLimit / layout.strideBytes)
+    return failure();
+  return slot * layout.strideBytes;
+}
+
+FailureOr<uint64_t> mlir::pto::getPTOStaticMultiTileSlotAddress(
+    const StaticMultiTileSlotLayout &layout, uint64_t base, uint64_t slot) {
+  constexpr uint64_t addressLimit = std::numeric_limits<int64_t>::max();
+  auto offset = getPTOStaticMultiTileSlotOffset(layout, slot);
+  if (failed(offset) || layout.footprintBytes > addressLimit ||
+      base > addressLimit - *offset)
+    return failure();
+  uint64_t address = base + *offset;
+  if (address > addressLimit - layout.footprintBytes) return failure();
+  return address;
 }
 
 bool mlir::pto::isPTOFloat8Type(Type t) {

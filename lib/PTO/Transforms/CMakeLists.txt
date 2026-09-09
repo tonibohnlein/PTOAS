@@ -173,6 +173,7 @@ add_mlir_dialect_library(PTOTransforms
   VPTO/VPTONormalizeContainer.cpp
   VPTOSplitCVModule.cpp
   InsertSync/PTOIRTranslator.cpp
+  InsertSync/SyncAddressAnalysis.cpp
   InsertSync/SyncMacroModel.cpp
   InsertSync/LogicalSyncPlan.cpp
   InsertSync/LogicalSyncRelations.cpp

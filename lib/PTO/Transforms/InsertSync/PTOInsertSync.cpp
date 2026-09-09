@@ -176,6 +176,12 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       return;
     }
 
+    auto admission = qualifySyncPhysicalAddresses(func);
+    if (admission.status == SyncAddressAdmission::Rejected) {
+      func.emitError("InsertSync physical-address admission failed: ") << admission.reason;
+      signalPassFailure();
+      return;
+    }
     if (tryLogical(func, hasBarrier)) return;
 
     // 0. 数据结构准备
@@ -186,7 +192,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
     // 1. Translator: 构建 SyncIR
     PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func, SyncAnalysisMode::NORMALSYNC);
-    translator.Build();
+    if (failed(translator.Build())) { signalPassFailure(); return; }
 
     // 如果 IR 太简单，直接跳过
     if (syncIR.size() <= 1) {

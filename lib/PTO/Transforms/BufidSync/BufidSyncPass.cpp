@@ -85,7 +85,7 @@ void PTOBufidSyncPass::runOnOperation() {
   MemoryDependentAnalyzer memAnalyzer;
   PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func,
                              SyncAnalysisMode::NORMALSYNC);
-  translator.Build();
+  if (failed(translator.Build())) { signalPassFailure(); return; }
   if (enableBufidSyncDebug) {
     llvm::outs() << "[bufid_sync] STEP 0 done: syncIR size=" << syncIR.size() << "\n";
   }

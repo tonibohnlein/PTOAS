@@ -48,37 +48,14 @@ static uint64_t getStaticBufferSizeInBytes(ArrayRef<int64_t> shape,
     return 0;
   }
   for (int64_t dim : shape) {
-    if (dim == ShapedType::kDynamic) {
-      return 0;
-    }
+    if (dim <= 0 || size > uint64_t(INT64_MAX) / uint64_t(dim)) return 0;
     size *= static_cast<uint64_t>(dim);
   }
   return size;
 }
 
 static uint64_t getTileBufferFootprintBytes(pto::TileBufType type) {
-  ArrayRef<int64_t> shape = type.getShape();
-  uint64_t elemBytes = pto::getPTOStorageElemByteSize(type.getElementType());
-  if (elemBytes == 0) {
-    return 0;
-  }
-  if (type.getCompactModeI32() !=
-      static_cast<int32_t>(pto::CompactMode::RowPlusOne)) {
-    return getStaticBufferSizeInBytes(shape, type.getElementType());
-  }
-  if (shape.size() != kTileRank2D ||
-      llvm::is_contained(shape, ShapedType::kDynamic)) {
-    return 0;
-  }
-
-  bool rowMajor =
-      type.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor);
-  uint64_t major = static_cast<uint64_t>(rowMajor ? shape[0] : shape[1]);
-  uint64_t minor = static_cast<uint64_t>(rowMajor ? shape[1] : shape[0]);
-  if (major == 0 || minor == 0) {
-    return 0;
-  }
-  return ((major - 1) * (minor + 1) + minor) * elemBytes;
+  return getSyncTileFootprintBytes(type);
 }
 
 static pto::AddressSpace getTileAddressSpace(pto::TileBufType type) {
@@ -105,50 +82,11 @@ appendUniqueMemInfo(SmallVectorImpl<std::unique_ptr<BaseMemInfo>> &infos,
 
 } // namespace
 
-static bool getConstIndexValue(Value value, int64_t &out) {
-  while (true) {
-    if (auto castOp = value.getDefiningOp<arith::IndexCastOp>()) {
-      value = castOp.getIn();
-      continue;
-    }
-    if (auto extOp = value.getDefiningOp<arith::ExtSIOp>()) {
-      value = extOp.getIn();
-      continue;
-    }
-    if (auto extOp = value.getDefiningOp<arith::ExtUIOp>()) {
-      value = extOp.getIn();
-      continue;
-    }
-    if (auto truncOp = value.getDefiningOp<arith::TruncIOp>()) {
-      value = truncOp.getIn();
-      continue;
-    }
-    break;
-  }
-  if (auto constIndex = value.getDefiningOp<arith::ConstantIndexOp>()) {
-    out = constIndex.value();
-    return true;
-  }
-  if (auto constInt = value.getDefiningOp<arith::ConstantIntOp>()) {
-    out = constInt.value();
-    return true;
-  }
-  auto constOp = value.getDefiningOp<arith::ConstantOp>();
-  auto intAttr =
-      constOp ? dyn_cast<IntegerAttr>(constOp.getValue()) : IntegerAttr();
-  if (!intAttr) {
-    return false;
-  }
-  out = intAttr.getInt();
-  return true;
-}
-
-static std::optional<uint64_t> getKnownPhysicalAddress(Value value) {
-  int64_t address = 0;
-  if (!getConstIndexValue(value, address) || address < 0) {
-    return std::nullopt;
-  }
-  return static_cast<uint64_t>(address);
+static std::optional<uint64_t> getKnownPhysicalAddress(
+    SyncAddressEvaluator &evaluator, Value value) {
+  auto address = evaluator.signedValue(value);
+  if (!address || *address < 0) return {};
+  return static_cast<uint64_t>(*address);
 }
 
 static bool isLocalAddressSpace(pto::AddressSpace space) {
@@ -184,7 +122,7 @@ static int64_t getTileMajorStride(pto::TileBufType type) {
 }
 
 static std::optional<SmallVector<uint64_t>>
-getPtoSubViewBaseAddresses(pto::SubViewOp op, pto::TileBufType sourceType,
+getPtoSubViewBaseAddresses(SyncAddressEvaluator &evaluator, pto::SubViewOp op, pto::TileBufType sourceType,
                            int64_t elemBytes) {
   if (!isStaticRank2Shape(sourceType.getShape())) {
     return std::nullopt;
@@ -197,12 +135,10 @@ getPtoSubViewBaseAddresses(pto::SubViewOp op, pto::TileBufType sourceType,
     return std::nullopt;
   }
 
-  int64_t rowOffset = 0;
-  int64_t colOffset = 0;
-  if (!getConstIndexValue(op.getOffsets()[0], rowOffset) ||
-      !getConstIndexValue(op.getOffsets()[1], colOffset)) {
-    return std::nullopt;
-  }
+  auto row = evaluator.signedValue(op.getOffsets()[0]);
+  auto col = evaluator.signedValue(op.getOffsets()[1]);
+  if (!row || !col) return std::nullopt;
+  int64_t rowOffset = *row, colOffset = *col;
   if (rowOffset < 0 || colOffset < 0) {
     return std::nullopt;
   }
@@ -219,21 +155,23 @@ getPtoSubViewBaseAddresses(pto::SubViewOp op, pto::TileBufType sourceType,
 
   bool rowMajor =
       sourceType.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor);
+  if (!getTileBufferFootprintBytes(sourceType)) return {};
   int64_t majorStride = getTileMajorStride(sourceType);
-
+  if (majorStride <= 0) return {};
+  uint64_t segments = uint64_t(rowMajor ? rowSize : colSize);
+  if (segments > 4096) return {}; // use conservative geometry, not an enormous row list
+  auto checkedAdd = [](uint64_t a, uint64_t b) -> std::optional<uint64_t> {
+    if (a > uint64_t(INT64_MAX) - b) return {};
+    return a + b;
+  };
   SmallVector<uint64_t> addresses;
-  if (rowMajor) {
-    addresses.reserve(static_cast<size_t>(rowSize));
-    for (int64_t row = 0; row < rowSize; ++row) {
-      int64_t elemOffset = (rowOffset + row) * majorStride + colOffset;
-      addresses.push_back(static_cast<uint64_t>(elemOffset * elemBytes));
-    }
-  } else {
-    addresses.reserve(static_cast<size_t>(colSize));
-    for (int64_t col = 0; col < colSize; ++col) {
-      int64_t elemOffset = (colOffset + col) * majorStride + rowOffset;
-      addresses.push_back(static_cast<uint64_t>(elemOffset * elemBytes));
-    }
+  addresses.reserve(segments);
+  for (uint64_t segment = 0; segment < segments; ++segment) {
+    auto major = checkedAdd(uint64_t(rowMajor ? rowOffset : colOffset), segment);
+    if (!major || *major > uint64_t(INT64_MAX) / uint64_t(majorStride)) return {};
+    auto element = checkedAdd(*major * uint64_t(majorStride), uint64_t(rowMajor ? colOffset : rowOffset));
+    if (!element || *element > uint64_t(INT64_MAX) / uint64_t(elemBytes)) return {};
+    addresses.push_back(*element * uint64_t(elemBytes));
   }
 
   return addresses;
@@ -293,10 +231,14 @@ static pto::TCoreType getSyncHelperCoreType(pto::PipelineType pipe) {
 // ============================================================================
 // 1. 构建入口
 // ============================================================================
-void PTOIRTranslator::Build() {
+LogicalResult PTOIRTranslator::Build() {
+  auto admission = qualifySyncPhysicalAddresses(func_);
+  if (admission.status == SyncAddressAdmission::Rejected)
+    return func_.emitError("InsertSync physical-address admission failed: ") << admission.reason;
   Region &funcRegion = func_.getBody();
   UpdateKernelArgMemInfo();
   RecursionIR(&funcRegion);
+  return failure(translationFailed_);
 }
 
 // ============================================================================
@@ -451,7 +393,9 @@ PTOIRTranslator::dispatchControlAndComputeOp(Operation *op) {
 }
 
 void PTOIRTranslator::RecursionIR(Region *region) {
+  if (translationFailed_) return;
   auto result = region->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (translationFailed_) return WalkResult::interrupt();
     // 保持原有 if/else-if 链的互斥匹配顺序：A 内存分配 → B 别名/视图 →
     // C/D 控制流与计算指令，任一类别命中后不再尝试后续类别。
     if (auto allocResult = dispatchAllocOp(op)) {
@@ -465,9 +409,7 @@ void PTOIRTranslator::RecursionIR(Region *region) {
     }
     return WalkResult::advance();
   });
-  if (result == WalkResult::interrupt()) {
-    llvm_unreachable("PTO InjectSync Traverse IR Failed!");
-  }
+  if (result == WalkResult::interrupt()) translationFailed_ = true;
 }
 
 // ============================================================================
@@ -483,7 +425,7 @@ LogicalResult PTOIRTranslator::UpdateAllocTileOpMemInfo(pto::AllocTileOp op) {
 
   // If alloc_tile carries an explicit address, record it when it's a constant.
   if (Value addr = op.getAddr()) {
-    knownPhysicalAddress = getKnownPhysicalAddress(addr);
+    knownPhysicalAddress = getKnownPhysicalAddress(addressEvaluator_, addr);
     if (knownPhysicalAddress) {
       baseAddr = *knownPhysicalAddress;
     }
@@ -513,7 +455,8 @@ LogicalResult PTOIRTranslator::UpdateAllocTileOpMemInfo(pto::AllocTileOp op) {
   // 3. 注册 Buffer 信息
   auto newMemInfo = std::make_unique<BaseMemInfo>(
       res, res, space, SmallVector<uint64_t>{baseAddr}, sizeInBytes,
-      knownPhysicalAddress.has_value() && isLocalAddressSpace(space));
+      knownPhysicalAddress.has_value() && isLocalAddressSpace(space),
+      bool(op.getAddr()) && !knownPhysicalAddress && isLocalAddressSpace(space));
 
   buffer2MemInfoMap_[res].emplace_back(newMemInfo->clone());
   return success();
@@ -525,10 +468,9 @@ PTOIRTranslator::UpdateAllocMultiTileOpMemInfo(pto::AllocMultiTileOp op) {
   auto multiType = op.getResult().getType();
   pto::TileBufType slotType = multiType.getSlotType();
 
-  uint64_t slotBytes = getTileBufferFootprintBytes(slotType);
-  if (slotBytes == 0) {
-    return failure();
-  }
+  auto layout = getPTOStaticMultiTileSlotLayout(slotType);
+  if (failed(layout)) return op.emitError("unrepresentable multi-tile physical layout");
+  uint64_t slotBytes = layout->footprintBytes;
 
   pto::AddressSpace space = pto::AddressSpace::MAT;
   if (auto attr = dyn_cast_or_null<pto::AddressSpaceAttr>(
@@ -544,26 +486,35 @@ PTOIRTranslator::UpdateAllocMultiTileOpMemInfo(pto::AllocMultiTileOp op) {
       return op.emitError("planned address count does not match slot count");
     }
     for (int64_t address : planned.asArrayRef()) {
-      addresses.push_back(static_cast<uint64_t>(address));
+      auto checked = address < 0 ? FailureOr<uint64_t>(failure()) :
+          getPTOStaticMultiTileSlotAddress(*layout, uint64_t(address), 0);
+      if (failed(checked)) return op.emitError("invalid planned multi-tile physical interval");
+      addresses.push_back(*checked);
     }
     hasKnownAddresses = true;
   } else if (Value base = op.getAddr()) {
-    if (std::optional<uint64_t> knownBase = getKnownPhysicalAddress(base)) {
+    if (std::optional<uint64_t> knownBase = getKnownPhysicalAddress(addressEvaluator_, base)) {
       for (uint32_t slot = 0; slot < multiType.getCount(); ++slot) {
-        addresses.push_back(*knownBase + slot * slotBytes);
+        auto address = getPTOStaticMultiTileSlotAddress(*layout, *knownBase, slot);
+        if (failed(address)) return op.emitError("invalid multi-tile physical interval");
+        addresses.push_back(*address);
       }
       hasKnownAddresses = true;
+    } else {
+      // The runtime address may coincide with ANY root in this local space.
+      // Placeholder offsets are never used to exclude a conflict.
+      addresses.assign(multiType.getCount(), 0);
     }
   }
 
   if (addresses.empty()) {
-    return op.emitError(
-        "requires planner-assigned slot addresses or a constant level3 base");
+    return op.emitError("requires planned slot addresses or an explicit base");
   }
 
   auto info = std::make_unique<BaseMemInfo>(
       result, result, space, std::move(addresses), slotBytes,
-      hasKnownAddresses && isLocalAddressSpace(space));
+      hasKnownAddresses && isLocalAddressSpace(space),
+      !hasKnownAddresses && isLocalAddressSpace(space));
   buffer2MemInfoMap_[result].emplace_back(info->clone());
   return success();
 }
@@ -1018,16 +969,20 @@ void PTOIRTranslator::UpdateSlotSelectedAliasBufferInfo(Value result,
 }
 
 // 计算 SubView 结果 segment 的大小（按主序维度取连续方向的大小）。
-static uint64_t getSubViewSegmentSize(pto::SubViewOp op,
-                                      pto::TileBufType sourceType,
-                                      unsigned elemBytes) {
+// 返回 std::nullopt 表示几何不可表示（溢出），调用方应退化为保守别名。
+static std::optional<uint64_t> getSubViewSegmentSize(pto::SubViewOp op,
+                                                     pto::TileBufType sourceType,
+                                                     unsigned elemBytes) {
   auto sizesAttr = op.getSizes();
   int64_t rowSize = cast<IntegerAttr>(sizesAttr[0]).getInt();
   int64_t colSize = cast<IntegerAttr>(sizesAttr[1]).getInt();
   bool rowMajor =
       sourceType.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor);
-  return static_cast<uint64_t>((rowMajor ? colSize : rowSize) *
-                               static_cast<int64_t>(elemBytes));
+  uint64_t elements = static_cast<uint64_t>(rowMajor ? colSize : rowSize);
+  if (!elemBytes || elements > uint64_t(INT64_MAX) / elemBytes) {
+    return std::nullopt;
+  }
+  return elements * elemBytes;
 }
 
 // 校验所有父 buffer 的 MemInfo 均为单基地址且已分配，方可精确推导别名。
@@ -1062,13 +1017,20 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
   auto subViewAddresses =
       elemBytes == 0 ? std::nullopt
                      : getPtoSubViewBaseAddresses(
-                           op, sourceType, static_cast<int64_t>(elemBytes));
+                           addressEvaluator_, op, sourceType, static_cast<int64_t>(elemBytes));
   if (!subViewAddresses || subViewAddresses->empty()) {
     UpdateConservativeAliasBufferInfo(result, source);
+    for (auto &info : buffer2MemInfoMap_[result]) info->aliasesUnknownRange = true;
     return;
   }
 
-  uint64_t segmentSize = getSubViewSegmentSize(op, sourceType, elemBytes);
+  auto segmentSizeOr = getSubViewSegmentSize(op, sourceType, elemBytes);
+  if (!segmentSizeOr) {
+    UpdateConservativeAliasBufferInfo(result, source);
+    for (auto &info : buffer2MemInfoMap_[result]) info->aliasesUnknownRange = true;
+    return;
+  }
+  uint64_t segmentSize = *segmentSizeOr;
 
   if (!hasSingleBaseAllocatedParents(buffer2MemInfoMap_[source])) {
     UpdateConservativeAliasBufferInfo(result, source);
@@ -1082,6 +1044,12 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
     addresses.reserve(subViewAddresses->size());
     uint64_t parentBase = parentInfo->baseAddresses[0];
     for (uint64_t offset : *subViewAddresses) {
+      if (offset > uint64_t(INT64_MAX) - segmentSize ||
+          parentBase > uint64_t(INT64_MAX) - offset - segmentSize) {
+        newInfo->aliasesUnknownRange = true;
+        addresses.clear();
+        break;
+      }
       addresses.push_back(parentBase + offset);
     }
     newInfo->baseAddresses = std::move(addresses);

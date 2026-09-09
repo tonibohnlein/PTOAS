@@ -1,5 +1,9 @@
 # Native logical-constructor acceptance
 
+[PHYSICAL_ADDRESS_RESULTS.md](PHYSICAL_ADDRESS_RESULTS.md) records the shared
+cast/address, aligned-stride, safe-fallback and identity-copy fixes and their
+direct all-mode, actual-lowering and default-pipeline regression evidence.
+
 The authored-event and retirement/endpoint checkpoints are accepted; see
 [RETIREMENT_ENDPOINT_RESULTS.md](RETIREMENT_ENDPOINT_RESULTS.md). Computation
 and reconstruction improvements are documented in
