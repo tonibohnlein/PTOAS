@@ -64,6 +64,9 @@ public:
     };
     struct Profile {
         PrimitiveStats normalize, compose, subtract, contains, restrictEndpoints;
+        // Nested attribution within subtract; implication is itself included
+        // in partition. These opt-in times are not additive exclusive totals.
+        PrimitiveStats subtractQualification, subtractPartition, subtractImplication;
     };
 
 private:

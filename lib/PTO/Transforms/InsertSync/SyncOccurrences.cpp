@@ -11,9 +11,11 @@
 #include "mlir/Analysis/Presburger/Simplex.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/IntegerSet.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/Support/SaveAndRestore.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include <limits>
 
@@ -80,12 +82,15 @@ class Importer {
     MLIRContext* context;
     SyncOccurrences result;
     llvm::DenseMap<Value,AffineExpr> expressions;
+    llvm::DenseSet<Value> unavailableExpressions;
+    bool definitionDomainsComplete = false;
     llvm::DenseMap<Value,Range> ranges;
     llvm::DenseMap<Operation*, Alternatives> definitionDomains;
     struct Pending { Operation* op; Alternatives domain; SmallVector<AffineExpr> time; SmallVector<unsigned> enclosing; };
     SmallVector<Pending, 0> pending;
     SmallVector<std::pair<Value, Alternatives>, 0> predicates;
     SmallVector<Operation*> requested;
+    SmallVector<Value> requestedScalars;
     llvm::SmallPtrSet<Operation*,32> physical;
     unsigned depth = 0, predicateDepth = 0, regionDepth = 0;
     uint64_t workLeft = 100000;
@@ -148,6 +153,21 @@ class Importer {
         return total;
     }
     std::optional<AffineExpr> expression(Value value) {
+        // Charge recursive visits, including cache hits. An unsupported shared
+        // SSA DAG must not expand exponentially without spending import work.
+        if (result.limitExceeded) return {};
+        if (!workLeft) { limit("occurrence expression work limit"); return {}; }
+        --workLeft;
+        if (definitionDomainsComplete && unavailableExpressions.contains(value)) return {};
+        auto normalized = expressionImpl(value);
+        // During the control walk, an original definition domain may not yet
+        // have been recorded. Only cache definite unknowns after that walk;
+        // depth/work failures remain explicit limits, never cached unknowns.
+        if (definitionDomainsComplete && !normalized && !result.limitExceeded)
+            unavailableExpressions.insert(value);
+        return normalized;
+    }
+    std::optional<AffineExpr> expressionImpl(Value value) {
         if (!supportedInteger(value.getType())) return {};
         if (auto found=expressions.find(value); found!=expressions.end()) return found->second;
         if (depth >= 64) {
@@ -350,7 +370,8 @@ class Importer {
         return true;
     }
 public:
-    Importer(func::FuncOp f,ArrayRef<Operation*> points):function(f),context(f.getContext()),requested(points) {
+    Importer(func::FuncOp f,ArrayRef<Operation*> points, ArrayRef<Value> scalars)
+        : function(f),context(f.getContext()),requested(points),requestedScalars(scalars) {
         for (Operation* op:points) if (!physical.insert(op).second)
             fail("multiple physical phases share one operation");
         f.walk<WalkOrder::PreOrder>([&](scf::ForOp loop){result.loops.push_back(loop);});
@@ -359,7 +380,7 @@ public:
     SyncOccurrences run() {
         if (!result.reason.empty())
             return finish();
-        if (result.loops.size()>64 || physical.size()>1024) {
+        if (result.loops.size()>64 || physical.size()>1024 || requestedScalars.size()>256) {
             limit("occurrence projection size limit");
             return finish();
         }
@@ -368,6 +389,19 @@ public:
         if (pending.size() != physical.size()) {
             fail("missing physical occurrence");
             return finish();
+        }
+        // Reuse the scalar interpreter only after visiting every original
+        // definition domain, and before freezing the common parameter space.
+        // Unknown syntax/ranges leave no scalar projection but preserve core
+        // control import. Exhausted analysis limits remain explicit failures.
+        definitionDomainsComplete = true;
+        for (Value value : requestedScalars) {
+            if (!value || result.scalarExpressions.count(value)) continue;
+            if (!workLeft) { limit("optional scalar import work limit"); return finish(); }
+            --workLeft;
+            auto projected = expression(value);
+            if (result.limitExceeded) return finish();
+            if (projected) result.scalarExpressions.try_emplace(value, *projected);
         }
         unsigned dims=result.loops.size(), symbols=result.parameters.size();
         // The caller's phase identities survive insertion of synchronization
@@ -420,7 +454,9 @@ public:
 };
 }
 
-SyncOccurrences SyncOccurrences::build(func::FuncOp f,ArrayRef<Operation*> points) { return Importer(f,points).run(); }
+SyncOccurrences SyncOccurrences::build(func::FuncOp f,ArrayRef<Operation*> points, ArrayRef<Value> scalars) {
+    return Importer(f,points,scalars).run();
+}
 
 Relation SyncOccurrences::domain(unsigned p) const {
     auto set=points[p].domain;
@@ -448,6 +484,50 @@ Relation SyncOccurrences::predicateDomain(unsigned predicate, unsigned point) co
     auto set = predicates[predicate].whenTrue;
     set.insertVarInPlace(VarKind::SetDim, 0);
     return domain(point).intersect(set);
+}
+
+RelationResult SyncOccurrences::scalarDomain(Value value, unsigned point, int64_t lower,
+                                             int64_t upper, RelationQueries& queries) const {
+    if (!complete || point >= points.size())
+        return {QueryStatus::Unsupported, {}, "scalar query requires a complete occurrence point"};
+    auto found = scalarExpressions.find(value);
+    if (found == scalarExpressions.end())
+        return {QueryStatus::Unsupported, {}, "requested scalar normalization unavailable"};
+    DominanceInfo dominance;
+    if (!dominance.dominates(value, points[point].operation))
+        return {QueryStatus::Unsupported, {}, "scalar does not dominate the queried occurrence"};
+    if (!queries.spend(dimensions() + parameters.size() + 1))
+        return {QueryStatus::BudgetExhausted, {}, "scalar domain setup budget"};
+    auto ambient = domain(point);
+    if (lower > upper) return queries.normalize(Relation::getEmpty(ambient.getSpace()));
+    auto* context = points[point].operation->getContext();
+    SmallVector<AffineExpr> dims, symbols;
+    for (unsigned d = 0; d < loops.size(); ++d) dims.push_back(getAffineDimExpr(d + 1, context));
+    for (unsigned s = 0; s < parameters.size(); ++s) symbols.push_back(getAffineSymbolExpr(s, context));
+    auto expr = found->second.replaceDimsAndSymbols(dims, symbols);
+    if (coefficientMass(expr) > coefficientLimit)
+        return {QueryStatus::Unsupported, {}, "scalar coefficient bound unavailable"};
+    auto set = IntegerSet::get(dimensions(), parameters.size(), {expr}, {false});
+    FlatLinearConstraints flat(dimensions(), parameters.size());
+    std::vector<SmallVector<int64_t, 8>> flattened;
+    if (failed(getFlattenedAffineExprs(set, &flattened, &flat)))
+        return {QueryStatus::Unsupported, {}, "scalar domain flattening unavailable"};
+    // Add query constants as APInts after flattening; subtracting INT64_MIN
+    // inside an AffineExpr would overflow before Presburger could check it.
+    SmallVector<llvm::DynamicAPInt> low, high;
+    for (int64_t coefficient : flattened.front()) {
+        low.emplace_back(coefficient);
+        high.emplace_back(-llvm::DynamicAPInt(coefficient));
+    }
+    low.back() -= llvm::DynamicAPInt(lower);
+    high.back() += llvm::DynamicAPInt(upper);
+    flat.addInequality(low);
+    flat.addInequality(high);
+    uint64_t cells = uint64_t(flat.getNumCols() + 1) * (flat.getNumConstraints() + 1) *
+                     (ambient.getNumDisjuncts() + 1);
+    if (!queries.spend(cells))
+        return {QueryStatus::BudgetExhausted, {}, "scalar domain intersection budget"};
+    return queries.normalize(ambient.intersect(Relation(flat)));
 }
 
 RelationResult SyncOccurrences::ordered(unsigned source,unsigned target,bool inclusive) const {

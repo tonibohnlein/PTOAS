@@ -16,6 +16,17 @@
 
 namespace mlir::pto {
 
+class TileBufType;
+struct StaticMultiTileSlotLayout {
+  uint64_t footprintBytes;
+  uint64_t alignmentBytes;
+  uint64_t strideBytes;
+};
+// The physical layout used by multi_tile_get address lowering. This does not
+// infer a selector, assign addresses, or qualify a translated access. Rejects
+// dynamic/zero/overflowing footprints before unsigned arithmetic can wrap.
+FailureOr<StaticMultiTileSlotLayout> getPTOStaticMultiTileSlotLayout(TileBufType type);
+
 namespace detail {
 template <typename MemRefT>
 inline auto getPTOMemRefStridesAndOffsetImpl(

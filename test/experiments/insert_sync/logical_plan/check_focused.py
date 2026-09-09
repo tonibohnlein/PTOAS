@@ -25,7 +25,7 @@ def main():
     if not __debug__:
         raise RuntimeError("OAHS acceptance requires assertions")
     parser = argparse.ArgumentParser()
-    for name in ("relation-driver", "occurrence-driver", "native-driver", "candidates-driver", "opt",
+    for name in ("relation-driver", "occurrence-driver", "native-driver", "candidates-driver", "slot-mapping-driver", "opt",
                  "python-root", "output-root"):
         parser.add_argument("--" + name, required=True, type=Path)
     args = parser.parse_args()
@@ -70,6 +70,8 @@ def main():
     # libisl is unavailable. Python/libisl remain test-only dependencies.
     for script, driver in (("check_relations", args.relation_driver),
                            ("check_occurrences", args.occurrence_driver),
+                           ("check_scalars", args.occurrence_driver),
+                           ("check_slot_mapping", args.slot_mapping_driver),
                            ("check_requirements", args.native_driver),
                            ("check_qualification", args.native_driver)):
         run(script, [sys.executable, HERE / (script + ".py"), "--driver", driver,

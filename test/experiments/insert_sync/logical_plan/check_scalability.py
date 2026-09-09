@@ -33,7 +33,8 @@ from observations import analyze
 HERE = Path(__file__).resolve().parent
 SIZES = (8, 16, 32, 64)
 STAGES = ("discovery", "handoffs", "barriers", "realization")
-PRIMITIVES = {"normalize", "compose", "subtract", "contains", "restrictEndpoints"}
+PRIMITIVES = {"normalize", "compose", "subtract", "contains", "restrictEndpoints",
+              "subtractQualification", "subtractPartition", "subtractImplication"}
 COUNTERS = ("order_requests", "order_built", "endpoint_comparisons")
 
 

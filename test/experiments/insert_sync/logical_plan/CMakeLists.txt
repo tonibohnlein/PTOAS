@@ -31,6 +31,7 @@ if(TARGET pto-logical-sync-test AND PTO_ENABLE_PYTHON_BINDING)
     --occurrence-driver "$<TARGET_FILE:pto-sync-occurrences-test>"
     --native-driver "$<TARGET_FILE:pto-logical-sync-test>"
     --candidates-driver "$<TARGET_FILE:pto-sync-candidates-test>"
+    --slot-mapping-driver "$<TARGET_FILE:pto-sync-slots-test>"
     --opt "$<TARGET_FILE:pto-test-opt>"
     --python-root "${CMAKE_BINARY_DIR}/python"
     --output-root "${CMAKE_BINARY_DIR}/test-results/oahs")
@@ -39,7 +40,7 @@ if(TARGET pto-logical-sync-test AND PTO_ENABLE_PYTHON_BINDING)
   add_custom_target(check-oahs-focused
     COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure -R "^oahs_focused$" --parallel 1
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
-    DEPENDS pto-logical-relations-test pto-sync-occurrences-test pto-logical-sync-test pto-sync-candidates-test
+    DEPENDS pto-logical-relations-test pto-sync-occurrences-test pto-logical-sync-test pto-sync-candidates-test pto-sync-slots-test
             pto-test-opt PTOAS_Python PTOASCompiler
     USES_TERMINAL)
 endif()
