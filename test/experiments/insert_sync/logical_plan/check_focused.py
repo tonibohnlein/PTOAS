@@ -80,6 +80,8 @@ def main():
     run("physical-addresses", [sys.executable, HERE / "check_physical_addresses.py", "--opt", args.opt,
                                  "--driver", args.native_driver, "--python-root", args.python_root,
                                  "--output", output / "physical-addresses"])
+    run("slots", [sys.executable, HERE / "check_slots.py", "--focused", "--driver", args.native_driver,
+                  "--python-root", args.python_root, "--output", output / "slots"])
     run("scalability", [sys.executable, HERE / "check_scalability.py", "--opt", args.opt,
                         "--python-root", args.python_root, "--output", output / "scalability", "--repetitions", "1"])
     run("reconstruction-cuts", [sys.executable, HERE / "check_reconstruction_cuts.py", "--driver", args.native_driver,

@@ -35,7 +35,8 @@ SIZES = (8, 16, 32, 64)
 STAGES = ("discovery", "handoffs", "barriers", "realization")
 PRIMITIVES = {"normalize", "compose", "subtract", "contains", "restrictEndpoints",
               "subtractQualification", "subtractPartition", "subtractImplication"}
-COUNTERS = ("order_requests", "order_built", "endpoint_comparisons")
+COUNTERS = ("order_requests", "order_built", "endpoint_comparisons",
+            "acquisition_projections", "acquisition_candidates")
 
 
 def source_for(readers, scalar_noise):
@@ -73,13 +74,18 @@ def parse_trace(text, required):
     for line in text.splitlines():
         match = re.fullmatch(
             r"logical stage (\S+) work (\d+) complete ([01]) seconds (\S+) "
-            r"order_requests (\d+) order_built (\d+) endpoint_comparisons (\d+)", line)
+            r"order_requests (\d+) order_built (\d+)"
+            r"(?: acquisition_projections (\d+) acquisition_candidates (\d+))? endpoint_comparisons (\d+)", line)
         if match:
-            name, work, complete, seconds, requests, built, comparisons = match.groups()
+            name, work, complete, seconds, requests, built, projections, candidates, comparisons = match.groups()
+            if required:
+                assert projections is not None and candidates is not None, "missing acquisition index counters"
             assert name not in stages, ("duplicate constructor stage", name)
             stages[name] = {"work": int(work), "complete": complete == "1", "seconds": float(seconds),
                             "order_requests": int(requests), "order_built": int(built),
-                            "endpoint_comparisons": int(comparisons)}
+                            "endpoint_comparisons": int(comparisons),
+                            "acquisition_projections": int(projections or 0),
+                            "acquisition_candidates": int(candidates or 0)}
         match = re.fullmatch(r"logical substage (\S+) work (\d+) seconds (\S+)", line)
         if match:
             name, work, seconds = match.groups()
@@ -217,6 +223,11 @@ def main():
                     assert all(observer.drained.get(pipe, -1) >= point for pipe, point in observer.issued.items())
             traces = [run_result["trace"] for run_result in row["runs"]]
             row["counters"] = {key: traces[0]["stages"]["realization"][key] for key in COUNTERS}
+            # This population has one actual handoff target regardless of how
+            # many later payload phases acquire its already supplied prefix.
+            # Guard preparation must not scan those unrelated endpoints.
+            assert row["counters"]["acquisition_projections"] == 1, row["counters"]
+            assert row["counters"]["acquisition_candidates"] == 1, row["counters"]
             row["stage_work"] = {stage: traces[0]["stages"][stage]["work"] for stage in STAGES}
             assert sum(row["stage_work"].values()) == row["work"], name
             for trace in traces[1:]:

@@ -63,6 +63,11 @@ struct NativeOrder {
     std::map<unsigned, unsigned> clearPredecessor;
     std::map<std::tuple<unsigned, unsigned, bool>, Relation> cache;
     uint64_t requests = 0, built = 0, selections = 0;
+    uint64_t acquisitionProjections = 0, acquisitionCandidates = 0;
+    struct AcquisitionTargets {
+        PresburgerSet domain;
+        std::set<unsigned> phases;
+    };
     Relation empty() const {
         return Relation::getEmpty(PresburgerSpace::getRelationSpace(
             facts.dimensions(), facts.dimensions(), facts.parameters.size()));
@@ -94,12 +99,24 @@ struct NativeOrder {
                 if (isolated) { fixed = row[0] == 1 ? -row.back() : row.back(); break; }
             }
             if (!fixed) {
-                for (unsigned p = 0; p < lanes.size(); ++p) ids.insert(p);
+                // Unknown coordinates retain every candidate, but that dense
+                // output still consumes work. Refuse before allocating it if
+                // the remaining allowance cannot pay for all phase entries.
+                if (!queries.spend(lanes.size())) return {};
+                for (unsigned p = 0; p < lanes.size(); ++p) ids.insert(ids.end(), p);
                 return ids;
             }
             if (*fixed >= 0 && *fixed < int64_t(lanes.size())) ids.insert(unsigned(int64_t(*fixed)));
         }
         return ids;
+    }
+    std::optional<AcquisitionTargets> acquisitionTargets(const Relation& matching, RelationQueries& queries)
+    {
+        ++acquisitionProjections;
+        auto domain = matching.getRangeSet();
+        auto ids = phaseIds(domain, queries);
+        if (!ids) return {};
+        return AcquisitionTargets{std::move(domain), std::move(*ids)};
     }
     RelationResult select(const PresburgerSet& sources, const PresburgerSet& targets,
                           bool sameLane, bool inclusive, RelationQueries& queries) {
@@ -791,7 +808,10 @@ public:
             if (std::getenv("PTOAS_LOGICAL_TRACE"))
                 llvm::errs() << "logical stage " << name << " work " << queries.work() - start << " complete " << ok
                              << " seconds " << std::chrono::duration<double>(std::chrono::steady_clock::now() - time).count()
-                             << " order_requests " << orders->requests << " order_built " << orders->built
+                             << " order_requests " << (orders ? orders->requests : 0)
+                             << " order_built " << (orders ? orders->built : 0)
+                             << " acquisition_projections " << (orders ? orders->acquisitionProjections : 0)
+                             << " acquisition_candidates " << (orders ? orders->acquisitionCandidates : 0)
                              << " endpoint_comparisons " << queries.endpointComparisonCount() << "\n";
             if (!ok)
                 result.reason += " (stage work " + std::to_string(queries.work() - start) + ")";
@@ -895,6 +915,22 @@ class BoundaryLowering {
     DominanceInfo dominance;
     QueryStatus outcome = QueryStatus::Unsupported;
     using TestKey = std::tuple<unsigned, unsigned, bool, int64_t, unsigned, bool, int64_t>;
+    static TestKey keyFor(BoundaryTest test)
+    {
+        return {test.kind, test.loop, test.truth, test.bound, unsigned(test.comparison),
+                test.fromUpper, test.modulus};
+    }
+    // One immutable occurrence universe, before emission. A point is part of
+    // the key: identical scalar tests can have different ambient domains and
+    // operand bindings at different cuts. Map nodes own stable, borrowed
+    // candidate domains, so repeated endpoints do not copy large relations.
+    std::map<std::pair<unsigned, TestKey>, Relation> conditionDomains;
+    struct DifferenceRange {
+        Relation definition;
+        std::optional<std::pair<int64_t, int64_t>> full;
+    };
+    std::map<std::tuple<unsigned, unsigned, bool>, DifferenceRange> differenceRanges;
+    uint64_t conditionRequests = 0, conditionBuilds = 0, rangeRequests = 0, rangeBuilds = 0;
     // Cache only within a block and check the actual insertion cursor. Endpoint
     // traversal is not necessarily lexical; a later definition cannot be reused
     // at an earlier cut. In particular, no remainder escapes its guarding block.
@@ -906,7 +942,32 @@ class BoundaryLowering {
         outcome = status;
         return true;
     }
-    std::optional<Relation> condition(unsigned point, BoundaryTest test)
+    const Relation* condition(unsigned point, BoundaryTest test)
+    {
+        ++conditionRequests;
+        if (!queries.spend(1)) {
+            outcome = QueryStatus::BudgetExhausted;
+            return nullptr;
+        }
+        auto key = std::make_pair(point, keyFor(test));
+        if (auto found = conditionDomains.find(key); found != conditionDomains.end())
+            return &found->second;
+        ++conditionBuilds;
+        auto domain = buildCondition(point, test);
+        if (!domain) return nullptr;
+        // Charge retained storage once; a failed/exhausted query never enters
+        // the cache as an empty domain. Keep the existing normalization and
+        // proof queries at the consumers, rather than doing extra solver work
+        // merely to intern an immutable domain.
+        for (const auto& piece : domain->getAllDisjuncts()) {
+            if (!queries.spend(uint64_t(piece.getNumConstraints() + 1) * piece.getNumCols())) {
+                outcome = QueryStatus::BudgetExhausted;
+                return nullptr;
+            }
+        }
+        return &conditionDomains.emplace(std::move(key), std::move(*domain)).first->second;
+    }
+    std::optional<Relation> buildCondition(unsigned point, BoundaryTest test)
     {
         if (test.kind == BoundaryTest::ConstantBound || test.kind == BoundaryTest::ParameterBound) {
             auto domain = facts.domain(point);
@@ -915,9 +976,13 @@ class BoundaryLowering {
                 auto type = test.comparison == arith::CmpIPredicate::eq  ? BoundType::EQ :
                             test.comparison == arith::CmpIPredicate::sle ? BoundType::UB :
                                                                            BoundType::LB;
-                piece.addBound(type, test.kind == BoundaryTest::ConstantBound ? test.loop + 1 :
-                                   facts.dimensions() + test.loop, test.bound);
-                restricted.unionInPlace(Relation(piece));
+                unsigned coordinate = test.kind == BoundaryTest::ConstantBound ? test.loop + 1 :
+                                          facts.dimensions() + test.loop;
+                SmallVector<llvm::DynamicAPInt> row(piece.getNumCols());
+                row[coordinate] = type == BoundType::UB ? -1 : 1;
+                row.back() = type == BoundType::UB ? llvm::DynamicAPInt(test.bound) :
+                                                     -llvm::DynamicAPInt(test.bound);
+                restricted.unionInPlace(membership(piece, row, type == BoundType::EQ, test.truth));
             }
             return restricted;
         }
@@ -962,27 +1027,169 @@ class BoundaryLowering {
             if (test.kind == BoundaryTest::DifferenceBound)
                 row.back() += test.comparison == arith::CmpIPredicate::sle ?
                                   llvm::DynamicAPInt(test.bound) : -llvm::DynamicAPInt(test.bound);
-            if (equality) flat.addEquality(row);
-            else flat.addInequality(row);
-            return facts.domain(point).intersect(Relation(flat));
+            // Flattening contributes total floor/mod definitions. Complement
+            // only the final membership atom, never those existential witness
+            // definitions. APInt arithmetic also handles INT64_MIN/MAX bounds.
+            return facts.domain(point).intersect(membership(flat, row, equality, test.truth));
         };
         if (test.kind == BoundaryTest::DifferenceBound && test.comparison == arith::CmpIPredicate::sle)
             expression = -expression;
-        auto positive = build(expression,
+        return build(expression,
             test.kind == BoundaryTest::First || test.kind == BoundaryTest::BooleanParameter ||
             test.kind == BoundaryTest::ParameterResidue ||
             (test.kind == BoundaryTest::DifferenceBound && test.comparison == arith::CmpIPredicate::eq));
-        if (!positive || test.truth)
-            return positive;
-        auto negative = queries.subtract(facts.domain(point), *positive);
-        if (!negative)
-            outcome = negative.status;
-        return negative ? std::move(negative.relation) : std::nullopt;
+    }
+
+    static Relation membership(const IntegerRelation& definitions, ArrayRef<llvm::DynamicAPInt> row,
+                               bool equality, bool truth)
+    {
+        auto result = Relation::getEmpty(definitions.getSpaceWithoutLocals());
+        auto append = [&](SmallVector<llvm::DynamicAPInt> atom, bool eq) {
+            auto piece = definitions;
+            if (eq) piece.addEquality(atom);
+            else piece.addInequality(atom);
+            result.unionInPlace(Relation(piece));
+        };
+        if (truth) {
+            append(SmallVector<llvm::DynamicAPInt>(row), equality);
+        } else {
+            SmallVector<llvm::DynamicAPInt> negative;
+            for (const auto& value : row) negative.push_back(-value);
+            --negative.back();
+            append(std::move(negative), false);
+            if (equality) {
+                SmallVector<llvm::DynamicAPInt> positive(row);
+                --positive.back();
+                append(std::move(positive), false);
+            }
+        }
+        return result;
+    }
+
+    const DifferenceRange* differenceRange(unsigned point, unsigned loopIndex, bool fromUpper)
+    {
+        ++rangeRequests;
+        if (!queries.spend(1)) { outcome = QueryStatus::BudgetExhausted; return nullptr; }
+        auto key = std::make_tuple(point, loopIndex, fromUpper);
+        if (auto found = differenceRanges.find(key); found != differenceRanges.end()) return &found->second;
+        ++rangeBuilds;
+        auto* context = facts.points[point].operation->getContext();
+        const unsigned n = facts.dimensions(), ns = facts.parameters.size();
+        SmallVector<AffineExpr> dims, syms;
+        for (unsigned d = 0; d < facts.loops.size(); ++d) dims.push_back(getAffineDimExpr(d + 1, context));
+        for (unsigned s = 0; s < ns; ++s) syms.push_back(getAffineSymbolExpr(s, context));
+        auto ld = facts.loopDomains[loopIndex];
+        auto iv = getAffineDimExpr(loopIndex, context);
+        auto expr = (fromUpper ? ld.upper - iv : iv - ld.lower).replaceDimsAndSymbols(dims, syms);
+        auto set = IntegerSet::get(n + 1, ns, {expr - getAffineDimExpr(n, context)}, {true});
+        FlatLinearConstraints flat(n + 1, ns);
+        std::vector<SmallVector<int64_t, 8>> rows;
+        if (failed(getFlattenedAffineExprs(set, &rows, &flat))) return nullptr;
+        flat.addEquality(rows.front());
+        auto ambient = facts.domain(point);
+        ambient.insertVarInPlace(VarKind::Range, n);
+        auto full = takeRange(ambient.intersect(Relation(flat)), n);
+        if (outcome == QueryStatus::BudgetExhausted) return nullptr;
+        if (!queries.spend(uint64_t(flat.getNumConstraints() + 1) * flat.getNumCols())) {
+            outcome = QueryStatus::BudgetExhausted;
+            return nullptr;
+        }
+        return &differenceRanges.emplace(key, DifferenceRange{Relation(flat), full}).first->second;
     }
 
 public:
     BoundaryLowering(const SyncOccurrences& f, RelationQueries& q) : facts(f), queries(q) {}
+    ~BoundaryLowering()
+    {
+        if (std::getenv("PTOAS_LOGICAL_TRACE"))
+            llvm::errs() << "logical guard domains " << conditionBuilds << "/" << conditionRequests
+                         << " ranges " << rangeBuilds << "/" << rangeRequests << "\n";
+    }
     QueryStatus status() const { return outcome; }
+    bool checkConditions()
+    {
+        // Test-only differential challenge: compare the direct atom complement
+        // with the existing general integer subtraction, including unbounded
+        // parameters and extrema that cannot be negated in int64 arithmetic.
+        auto check = [&](unsigned point, BoundaryTest test) {
+            test.truth = true;
+            const auto* positive = condition(point, test);
+            test.truth = false;
+            const auto* negative = condition(point, test);
+            if (!positive || !negative) return false;
+            auto builds = conditionBuilds;
+            auto stored = conditionDomains.size();
+            for (unsigned repetitions : {8, 32, 128}) {
+                auto start = queries.work();
+                for (unsigned i = 0; i < repetitions; ++i)
+                    if (condition(point, test) != negative) return false;
+                if (conditionBuilds != builds || conditionDomains.size() != stored ||
+                    queries.work() - start != repetitions) return false;
+            }
+            auto expected = queries.subtract(facts.domain(point), *positive);
+            return expected && queries.contains(*expected.relation, *negative) == QueryStatus::Proved &&
+                   queries.contains(*negative, *expected.relation) == QueryStatus::Proved;
+        };
+        std::set<unsigned> checkedLoops;
+        bool checkedParameters = false;
+        for (unsigned point = 0; point < facts.points.size(); ++point) {
+            auto* anchor = facts.points[point].operation;
+            if (!anchor) continue;
+            for (unsigned i = 0; i < facts.loops.size(); ++i) {
+                auto loop = facts.loops[i];
+                if (!loop->isProperAncestor(anchor)) continue;
+                if (!checkedLoops.insert(i).second) {
+                    // Same test, different phase/guard domain in ONE cache.
+                    // A cache accidentally keyed by the atom alone must fail.
+                    if (!check(point, BoundaryTest{BoundaryTest::First, i, true})) return false;
+                    continue;
+                }
+                for (auto kind : {BoundaryTest::First, BoundaryTest::Last, BoundaryTest::Nonempty})
+                    if (!check(point, BoundaryTest{kind, i, true})) return false;
+                for (int64_t bound : {INT64_MIN, int64_t(-2), int64_t(0), int64_t(3), INT64_MAX})
+                    for (auto cmp : {arith::CmpIPredicate::eq, arith::CmpIPredicate::sle,
+                                     arith::CmpIPredicate::sge}) {
+                        if (!check(point, BoundaryTest{BoundaryTest::ConstantBound, i, true, bound, cmp}))
+                            return false;
+                        for (bool upper : {false, true})
+                            if (!check(point, BoundaryTest{BoundaryTest::DifferenceBound, i, true, bound,
+                                                           cmp, upper})) return false;
+                    }
+                for (bool upper : {false, true}) {
+                    const auto* cached = differenceRange(point, i, upper);
+                    if (!cached) return false;
+                    auto builds = rangeBuilds, stored = differenceRanges.size();
+                    for (unsigned repetitions : {8, 32, 128}) {
+                        auto start = queries.work();
+                        for (unsigned r = 0; r < repetitions; ++r)
+                            if (differenceRange(point, i, upper) != cached) return false;
+                        if (rangeBuilds != builds || differenceRanges.size() != stored ||
+                            queries.work() - start != repetitions) return false;
+                    }
+                    auto ambient = facts.domain(point);
+                    ambient.insertVarInPlace(VarKind::Range, facts.dimensions());
+                    if (takeRange(ambient.intersect(cached->definition), facts.dimensions()) != cached->full)
+                        return false;
+                }
+            }
+            if (checkedParameters) continue;
+            checkedParameters = true;
+            for (unsigned s = 0; s < facts.parameters.size(); ++s) {
+                if (facts.parameters[s].getType().isInteger(1)) {
+                    if (!check(point, BoundaryTest{BoundaryTest::BooleanParameter, s, true})) return false;
+                    continue;
+                }
+                for (int64_t bound : {INT64_MIN, int64_t(-1), int64_t(0), INT64_MAX})
+                    if (!check(point, BoundaryTest{BoundaryTest::ParameterBound, s, true, bound,
+                                                  arith::CmpIPredicate::sge})) return false;
+                for (int64_t modulus : {2, 3})
+                    for (int64_t residue = 0; residue < modulus; ++residue)
+                        if (!check(point, BoundaryTest{BoundaryTest::ParameterResidue, s, true, residue,
+                                                       arith::CmpIPredicate::eq, false, modulus})) return false;
+            }
+        }
+        return conditionBuilds != 0 && queries.remainingWork() != 0;
+    }
     std::optional<Guard> prepare(unsigned point, const PresburgerSet& wanted)
     {
         outcome = QueryStatus::Unsupported;
@@ -995,7 +1202,7 @@ public:
             return {};
         struct Candidate {
             BoundaryTest test;
-            Relation domain;
+            const Relation* domain;
         };
         std::vector<Candidate> candidates;
         Operation* anchor = facts.points[point].operation;
@@ -1012,7 +1219,7 @@ public:
                     auto domain = condition(point, test);
                     if (!domain)
                         return {};
-                    candidates.push_back({test, std::move(*domain)});
+                    candidates.push_back({test, domain});
                 }
             }
         }
@@ -1024,7 +1231,7 @@ public:
                 auto domain = condition(point, test);
                 if (!domain)
                     return {};
-                candidates.push_back({test, std::move(*domain)});
+                candidates.push_back({test, domain});
             }
         }
         // A normalized branch can be an equivalent spelling of an already
@@ -1040,7 +1247,7 @@ public:
                 auto domain = condition(point, test);
                 if (!domain)
                     return {};
-                candidates.push_back({test, std::move(*domain)});
+                candidates.push_back({test, domain});
             }
         }
         if (candidates.size() > 32)
@@ -1074,14 +1281,14 @@ public:
         auto cover = [&]() -> std::optional<bool> {
             for (unsigned i = coveredCandidates; i < candidates.size(); ++i) {
                 const auto& a = candidates[i];
-                if (!admit(a.domain, Clause{a.test}))
+                if (!admit(*a.domain, Clause{a.test}))
                     return std::nullopt;
                 if (remaining.isIntegerEmpty())
                     return true;
             }
             for (unsigned i = 0; i < candidates.size(); ++i)
                 for (unsigned j = std::max(i + 1, coveredCandidates); j < candidates.size(); ++j) {
-                    auto domain = candidates[i].domain.intersect(candidates[j].domain);
+                    auto domain = candidates[i].domain->intersect(*candidates[j].domain);
                     if (!admit(domain, Clause{candidates[i].test, candidates[j].test}))
                         return std::nullopt;
                     if (remaining.isIntegerEmpty())
@@ -1157,7 +1364,7 @@ public:
                 return {};
             if (candidates.size() == 32)
                 break;
-            candidates.push_back({test, std::move(*domain)});
+            candidates.push_back({test, domain});
         }
         covered = cover();
         if (covered && *covered)
@@ -1168,40 +1375,28 @@ public:
         // come from the requested integer domain, not from a slot count or a
         // kernel-specific last-use recipe. Prove arithmetic on the FULL anchor
         // domain before considering any threshold's true subset.
-        auto* context = anchor->getContext();
-        const unsigned n = facts.dimensions(), ns = facts.parameters.size();
+        const unsigned n = facts.dimensions();
         for (unsigned i = 0; i < facts.loops.size(); ++i) {
             auto loop = facts.loops[i];
             if (!loop->isProperAncestor(anchor))
                 continue;
             for (bool fromUpper : {false, true}) {
-                SmallVector<AffineExpr> dims, syms;
-                for (unsigned d = 0; d < facts.loops.size(); ++d)
-                    dims.push_back(getAffineDimExpr(d + 1, context));
-                for (unsigned s = 0; s < ns; ++s)
-                    syms.push_back(getAffineSymbolExpr(s, context));
-                auto ld = facts.loopDomains[i];
-                auto iv = getAffineDimExpr(i, context);
-                auto expression = (fromUpper ? ld.upper - iv : iv - ld.lower).replaceDimsAndSymbols(dims, syms);
-                auto set = IntegerSet::get(n + 1, ns, {expression - getAffineDimExpr(n, context)}, {true});
-                FlatLinearConstraints flat(n + 1, ns);
-                std::vector<SmallVector<int64_t, 8>> rows;
-                if (failed(getFlattenedAffineExprs(set, &rows, &flat)))
-                    continue;
-                flat.addEquality(rows.front());
-                auto lift = [&](Relation domain) {
-                    domain.insertVarInPlace(VarKind::Range, n);
-                    return domain.intersect(Relation(flat));
-                };
-                auto full = takeRange(lift(ambient), n);
-                if (!full) {
+                const auto* range = differenceRange(point, i, fromUpper);
+                if (!range || !range->full) {
                     if (outcome == QueryStatus::BudgetExhausted) return {};
                     continue;
                 }
                 unsigned width = isa<IndexType>(loop.getInductionVar().getType()) ? 64 :
                                      cast<IntegerType>(loop.getInductionVar().getType()).getWidth();
-                if (!llvm::isIntN(width, full->first) || !llvm::isIntN(width, full->second))
+                if (!llvm::isIntN(width, range->full->first) || !llvm::isIntN(width, range->full->second))
                     continue;
+                // Only the full-ambient arithmetic qualification is cached.
+                // Thresholds and extrema still follow this endpoint's changing
+                // uncovered domain and cannot be reused across preparations.
+                auto lift = [&](Relation domain) {
+                    domain.insertVarInPlace(VarKind::Range, n);
+                    return domain.intersect(range->definition);
+                };
                 auto wantedRange = lift(remaining);
                 auto extrema = takeRange(wantedRange, n);
                 if (!extrema) {
@@ -1235,7 +1430,7 @@ public:
                     // Reuse already qualified predicate alternatives where a
                     // difference is needed only on part of the original path.
                     for (const auto& candidate : candidates) {
-                        if (!admit(domain->intersect(candidate.domain), Clause{test, candidate.test})) return {};
+                        if (!admit(domain->intersect(*candidate.domain), Clause{test, candidate.test})) return {};
                         if (remaining.isIntegerEmpty()) return guard;
                     }
                 }
@@ -1317,8 +1512,7 @@ public:
     }
     Value emitTest(OpBuilder& builder, Location location, BoundaryTest test) const
     {
-        TestKey key{test.kind, test.loop, test.truth, test.bound, unsigned(test.comparison),
-                    test.fromUpper, test.modulus};
+        auto key = keyFor(test);
         auto& cache = emittedTests[builder.getBlock()];
         if (auto found = cache.find(key); found != cache.end()) {
             auto* definition = found->second.getDefiningOp();
@@ -1414,8 +1608,12 @@ bool Constructor::realize()
             return expect(lowering.status(), "publication domain has no qualified boundary lowering");
         }
         endpoints.push_back({stream.source, true, i, std::move(*publication), stream.matching.getDomainSet()});
-        for (unsigned p = 0; p < lanes.size(); ++p) {
-            auto domain = stream.matching.getRangeSet().intersect(facts.domain(p).getRangeSet());
+        auto targets = orders->acquisitionTargets(stream.matching, queries);
+        if (!targets)
+            return fail(ConstructionResult::AnalysisLimit, "acquisition endpoint indexing budget");
+        for (unsigned p : targets->phases) {
+            ++orders->acquisitionCandidates;
+            auto domain = targets->domain.intersect(facts.domain(p).getRangeSet());
             if (domain.isIntegerEmpty())
                 continue;
             if (std::getenv("PTOAS_LOGICAL_TRACE"))
@@ -2121,4 +2319,40 @@ bool mlir::pto::logical_sync::testing::guardEmissionFits(
                                               0, true});
     }
     return chargeGuardEmission(guard, allowance);
+}
+
+bool mlir::pto::logical_sync::testing::checkBoundaryConditions(const SyncOccurrences& facts, uint64_t budget)
+{
+    RelationQueries queries(budget);
+    // The production target-index helper must depend on represented endpoint
+    // pieces, not the number of unrelated phases. An unknown phase coordinate
+    // is deliberately the dense control and must retain the whole universe.
+    for (unsigned streams : {1, 4, 8}) {
+        std::optional<uint64_t> indexedWork;
+        for (unsigned phases : {8, 32, 128}) {
+            NativeOrder order;
+            order.lanes.resize(phases);
+            uint64_t start = queries.work(), candidates = 0;
+            for (unsigned s = 0; s < streams; ++s) {
+                IntegerRelation piece(PresburgerSpace::getRelationSpace(1, 1));
+                piece.addBound(BoundType::EQ, 0, 0);
+                piece.addBound(BoundType::EQ, 1, s);
+                auto targets = order.acquisitionTargets(Relation(piece), queries);
+                if (!targets || targets->phases != std::set<unsigned>{s}) return false;
+                candidates += targets->phases.size();
+            }
+            auto work = queries.work() - start;
+            if (order.acquisitionProjections != streams || candidates != streams ||
+                (indexedWork && work != *indexedWork)) return false;
+            indexedWork = work;
+            auto wildcard = Relation::getUniverse(PresburgerSpace::getRelationSpace(1, 1));
+            auto denseStart = queries.work();
+            auto targets = order.acquisitionTargets(wildcard, queries);
+            if (!targets || targets->phases.size() != phases) return false;
+            if (queries.work() - denseStart < phases) return false;
+            RelationQueries tooSmall(phases);
+            if (order.acquisitionTargets(wildcard, tooSmall)) return false;
+        }
+    }
+    return BoundaryLowering(facts, queries).checkConditions();
 }

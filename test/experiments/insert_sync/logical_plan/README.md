@@ -11,6 +11,13 @@ and reconstruction improvements are documented in
 acceptance and occurrence-dependent slot refinement remain the next gate.
 [SLOT_WIP.md](SLOT_WIP.md) records the paused slot-refinement work, its first
 native precision result and the outstanding performance/coverage gates.
+[SLOT_QUALIFICATION_RESULTS.md](SLOT_QUALIFICATION_RESULTS.md) records the
+expanded slot campaign and mandatory guard-binding/partial-byte-overlap tests.
+[EXACT_GUARD_QUERY_RESULTS.md](EXACT_GUARD_QUERY_RESULTS.md) records the bounded
+cache, atom-complement and target-index changes and their rebuilt acceptance.
+The [exact-query cost review](../../../../docs/designs/oahs-exact-query-cost-review.md)
+defines the compact recurrence algorithms and data-structure acceptance gates;
+cache improvements alone do not complete those gates.
 [GUARD_WIP.md](GUARD_WIP.md) preserves the earlier guard checkpoint and its
 limitations; it is not a report for the current source.
 
@@ -160,6 +167,12 @@ fallback and dynamic-only authored synchronization in all three planner modes.
 The gate also requires the independent physical-candidate oracle, native fanout
 scaling checks, and actual endpoint/barrier mutation tests. These tests protect
 qualified fast paths as well as their conservative fallbacks.
+Six small native slot cases must construct strictly, including actual partial
+byte overlap and conservative unknown/out-of-range selectors. Generated-only
+guard mutations must preserve original operands and command counts while
+failing fresh reconstruction. Boundary-condition tests compare exact atom
+complements with general integer subtraction and check cache identity, charged
+warm lookups, sparse endpoint scaling and budgeted wildcard enumeration.
 Fresh run directories and commands/timings are retained under the build tree's
 `test-results/oahs/`. Production compilation has no Python/libisl dependency.
 
