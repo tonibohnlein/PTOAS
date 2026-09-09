@@ -1785,6 +1785,8 @@ def _resolve_sample_root(input_cpp: Path) -> Path:
         return parent.parent
     if parent.parent.name == "npu_validation":
         return parent.parent.parent
+    if parent.name in {"aic", "aiv"} and parent.parent.name == "kernels":
+        return parent.parent.parent
     return parent
 
 
@@ -2708,12 +2710,14 @@ def generate_testcase(
         sample_root.name,
         testcase,
     )
-    for name, count in pointer_count_minimums.items():
-        inferred_counts[name] = max(inferred_counts.get(name, 0), int(count))
     ptr_elem_counts = {}
     for p in data_ptrs:
         inferred = inferred_counts.get(p["name"])
-        ptr_elem_counts[p["name"]] = int(inferred) if inferred and int(inferred) > 0 else logical_elem_count
+        computed = int(inferred) if inferred and int(inferred) > 0 else logical_elem_count
+        # A backing-allocation floor cannot replace a larger default or claim
+        # a larger defined output extent. Keep inferred_counts unchanged for
+        # the existing output-prefix comparison policy below.
+        ptr_elem_counts[p["name"]] = max(computed, int(pointer_count_minimums.get(p["name"], 0)))
     if testcase in {"rmsnorm_incore_0", "decode_projection_incore_0"}:
         # These repro kernels partition a [16, hidden] ND view with a row
         # offset. Board validation runs a single-block case, so keep bf16
@@ -3539,6 +3543,8 @@ endif()
 def main():
     parser = argparse.ArgumentParser(description="Generate NPU validation testcase from PTOAS kernel.")
     parser.add_argument("--input", required=True, help="Input PTOAS .cpp file")
+    parser.add_argument("--print-sample-root", action="store_true",
+                        help="Print the shared sample-root resolution and exit without generating files")
     parser.add_argument("--testcase", default=None, help="Testcase name (default: derived from input filename)")
     parser.add_argument("--output-root", default=None, help="Output testcases root directory")
     parser.add_argument("--run-mode", default="npu", choices=["sim", "npu"], help="Run mode for run.sh")
@@ -3549,6 +3555,10 @@ def main():
         help="Override AICore arch passed to bisheng (e.g. dav-c220-vec|dav-c220-cube|dav-c310-vec|dav-c310-cube)",
     )
     args = parser.parse_args()
+
+    if args.print_sample_root:
+        print(_resolve_sample_root(Path(args.input)))
+        return
 
     output_root = Path(args.output_root) if args.output_root else None
     testcase = args.testcase or _derive_testcase_name(Path(args.input))
