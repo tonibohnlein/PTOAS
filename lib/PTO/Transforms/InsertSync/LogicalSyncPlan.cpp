@@ -993,7 +993,12 @@ public:
                 << " composition_pieces " << queries.compositionIndexPieceCount()
                 << " endpoint_projections " << queries.endpointProjectionCount()
                 << " endpoint_pieces " << queries.endpointProjectionPieceCount() << "\n";
-            llvm::errs() << "logical difference common_rows " << queries.differenceCommonRowCount() << "\n";
+            llvm::errs() << "logical difference common_rows " << queries.differenceCommonRowCount()
+                         << " partition_pieces " << queries.differencePartitionPieceCount()
+                         << " implication_tests " << queries.differenceImplicationTestCount()
+                         << " boolean_nodes " << queries.booleanPartitionNodeCount()
+                         << " boolean_witnesses " << queries.booleanWitnessLeafCount()
+                         << " boolean_max_depth " << queries.booleanMaximumDepth() << "\n";
         }
         return result;
     }

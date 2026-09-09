@@ -99,5 +99,11 @@ private:
                                             Value targetValue, unsigned targetPoint,
                                             RelationQueries& queries) const;
 };
+namespace testing {
+// Test only: exact local elimination in one conjunct, before the adapter's
+// candidate-envelope and whole-population qualification stages.
+RelationResult simplifyPeriodicCell(const presburger::IntegerRelation& cell,
+                                   unsigned iterationCoordinate, RelationQueries& queries);
+}
 } // namespace mlir::pto::logical_sync
 #endif

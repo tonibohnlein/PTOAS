@@ -295,6 +295,11 @@ int main() {
     output["endpoint_projections"] = int64_t(queries.endpointProjectionCount());
     output["endpoint_projection_pieces"] = int64_t(queries.endpointProjectionPieceCount());
     output["difference_common_rows"] = int64_t(queries.differenceCommonRowCount());
+    output["difference_partition_pieces"] = int64_t(queries.differencePartitionPieceCount());
+    output["difference_implication_tests"] = int64_t(queries.differenceImplicationTestCount());
+    output["boolean_partition_nodes"] = int64_t(queries.booleanPartitionNodeCount());
+    output["boolean_witness_leaves"] = int64_t(queries.booleanWitnessLeafCount());
+    output["boolean_max_depth"] = int64_t(queries.booleanMaximumDepth());
     output["relation_endpoint_index_pieces"] = int64_t(queries.relationEndpointIndexPieceCount());
     output["relation_endpoint_bucket_lookups"] = int64_t(queries.relationEndpointBucketLookupCount());
     output["difference_endpoint_comparisons"] = int64_t(queries.differenceEndpointComparisonCount());

@@ -284,6 +284,143 @@ func.func @f(%p: i1) attributes {test.reverse_phases} {
     assert "whole-population equality" in refusal["reason"], refusal
     assert not isl.map(isl_text(refusal["domain"])).empty(), refusal
 
+    # Synthetic conjuncts refine actual phase domains. These tests challenge
+    # exact integer elimination independently of imported scalar precision.
+    def cell_case(name, locals_count, equations=(), inequalities=(), *, lower=0,
+                  status="proved", wanted=None, budget=None, successor=False):
+        def rows_attribute(label, rows):
+            return ", " + label + " = [" + ", ".join(
+                "[" + ", ".join(f"{value} : i64" for value in row) + "]" for row in rows) + "]"
+        attributes = f", test.periodic_cell_locals = {locals_count} : i64, test.periodic_cell_probe"
+        if not successor:
+            attributes += ", test.periodic_cell_only"
+        attributes += rows_attribute("test.periodic_cell_eq", equations)
+        attributes += rows_attribute("test.periodic_cell_ge", inequalities)
+        if budget is not None:
+            attributes += f", test.periodic_budget = {budget} : i64"
+        source = periodic_source(attributes=attributes, body='"test.phase"() : () -> ()')
+        source = source.replace("%z = arith.constant 0 : index", f"%z = arith.constant {lower} : index")
+        answer = run(name, source)
+        assert answer["synthetic_periodic_refinement"] is True, answer
+        fixed = ["phase", "i", "p0"]
+        local_names = [f"l{k}" for k in range(locals_count)]
+        def expression(row):
+            assert len(row) == len(fixed) + locals_count + 1
+            terms = [f"({coefficient}*{variable})" for coefficient, variable
+                     in zip(row[:-1], fixed + local_names) if coefficient]
+            return "(" + " + ".join(terms + [str(row[-1])]) + ")"
+        constraints = [expression(row) + " = 0" for row in equations]
+        constraints += [expression(row) + " >= 0" for row in inequalities]
+        condition = " and ".join(constraints) if constraints else "true"
+        if locals_count:
+            condition = "exists (" + ",".join(local_names) + " : " + condition + ")"
+        bounds = f"phase=0 and {lower}<=i<p0 and {-2**63}<=p0<={2**63-1}"
+        expected = isl.map("[p0] -> {[] -> [phase,i] : " + bounds + " and " + condition + "}")
+        probes = answer["periodic_cells"]
+        assert len(probes) == 1, (name, probes)
+        probe = probes[0]
+        assert probe["status"] == status, (name, probe)
+        original = isl.map(isl_text(probe["original"]))
+        assert original.equal(expected), (name, "synthetic row placement", str(original), str(expected))
+        if status == "proved":
+            simplified = isl.map(isl_text(probe["simplified"]))
+            assert simplified.equal(expected), (name, "integer elimination", str(simplified), str(expected))
+            if wanted:
+                target = isl.map("[p0] -> {[] -> [phase,i] : " + bounds + " and " + wanted + "}")
+                assert simplified.equal(target), (name, str(simplified), str(target))
+        else:
+            assert "simplified" not in probe, (name, probe)
+        if successor:
+            periodic = answer["periodic"]
+            assert periodic["status"] == "proved", (name, periodic)
+            # A single actual phase: strict iteration order gives the complete
+            # reference successor, independent of the native cell algorithm.
+            order = isl.map("[p0] -> {[phase,i] -> [other,j] : i<j}")
+            expected_next = (expected.reverse().then(expected) & order).lexmin()
+            assert isl.map(isl_text(periodic["relation"])).equal(expected_next), (name, periodic)
+        cases[-1]["cell_status"] = status
+        cases[-1]["cell_work"] = probe["work"]
+        return probe
+
+    cell_case("cell_gcd_negative_constant", 0, inequalities=[[0, 2, 2, -3]], wanted="i+p0>=2")
+    cell_case("cell_unit_lower_frontier", 1,
+              inequalities=[[0,-1,0,1,0], [0,0,1,-3,0]], wanted="3*i<=p0", lower=-5)
+    cell_case("cell_unit_upper_frontier", 1,
+              inequalities=[[0,-1,0,3,0], [0,0,1,-1,0]], wanted="i<=3*p0", lower=-5)
+    cell_case("cell_nonunit_both_frontiers", 1,
+              inequalities=[[0,-1,0,3,0], [0,0,1,-2,0]], status="unsupported")
+    cell_case("cell_nonunit_coupled_equality", 1,
+              equations=[[0,-1,-1,2,0]], status="unsupported")
+    cell_case("cell_free_local", 1, wanted="true", lower=-5)
+    cell_case("cell_one_sided_lower", 1,
+              inequalities=[[0,-1,0,3,0]], wanted="true", lower=-5)
+    cell_case("cell_one_sided_upper", 1,
+              inequalities=[[0,0,1,-3,0]], wanted="true", lower=-5)
+    cell_case("cell_gcd_impossible_equality", 1,
+              equations=[[0,2,0,2,1]], wanted="false")
+    cell_case("cell_implicit_congruence", 1,
+              inequalities=[[0,1,0,-2,-1], [0,-1,0,2,1]],
+              wanted="i mod 2=1", lower=-7, successor=True)
+    cell_case("cell_contradictory_opposite_bounds", 1,
+              inequalities=[[0,1,0,-2,0], [0,-1,0,2,-1]], wanted="false")
+    cell_case("cell_all_empty_population", 1,
+              equations=[[0,2,0,2,1]], wanted="false", successor=True)
+    cell_case("cell_empty_equality", 0, equations=[[0,0,0,1]], wanted="false")
+    cell_case("cell_empty_inequality", 0, inequalities=[[0,0,0,-1]], wanted="false")
+    cell_case("cell_shifted_negative_quotient", 2,
+              equations=[[0,1,0,2,0,3], [0,0,0,-1,1,0]],
+              wanted="i mod 2=1", lower=-7)
+    cell_case("cell_redundant_quotients", 2,
+              equations=[[0,1,0,-3,0,0], [0,1,0,0,-3,0]],
+              wanted="i mod 3=0", lower=-7)
+
+    def hidden_next(period):
+        # Original locals a,b,j,c: i=p*a, j=p*b, c=floor((i+1)/p),
+        # i<j<n, j<=2*i-p*c+p. On the selected residue c=a and j=i+p.
+        equations = [[0,1,0,-period,0,0,0,0], [0,0,0,0,-period,1,0,0]]
+        inequalities = [[0,-1,0,0,0,1,0,-1], [0,0,1,0,0,-1,0,-1],
+                        [0,2,0,0,0,-1,-period,period],
+                        [0,1,0,0,0,0,-period,1], [0,-1,0,0,0,0,period,period-2]]
+        return equations, inequalities
+
+    for period in (2,3,2147483647):
+        eq, ge = hidden_next(period)
+        receipt = cell_case(f"cell_hidden_next_{period}", 4, eq, ge,
+                            wanted=f"i mod {period}=0 and i+{period}<p0", successor=True)
+        if period == 2:
+            cell_case("cell_hidden_next_negative", 4, eq, ge, lower=-7,
+                      wanted="i mod 2=0 and i+2<p0", successor=True)
+            cell_case("cell_budget_before_output", 4, eq, ge,
+                      budget=receipt["work"]-1, status="budget-exhausted")
+
+    growth = [[0,-k,0,1,0] for k in range(1,18)]
+    growth += [[0,0,k,-1,1] for k in range(1,18)]
+    cell_case("cell_fm_output_growth", 1, inequalities=growth, status="unsupported")
+    check_periodic("periodic_cell_interval_envelope", periodic_source(body='''%r = arith.remui %i, %d : index
+    %p = arith.cmpi eq, %r, %z : index
+    scf.if %p { "test.phase"() : () -> () } else { "test.phase"() : () -> () }'''))
+    mixed = check_periodic("periodic_mixed_empty_residues", periodic_source(body='''%one = arith.constant 1 : index
+    %r = arith.remui %i, %d : index
+    %p = arith.cmpi eq, %r, %z : index
+    %q = arith.cmpi eq, %r, %one : index
+    scf.if %p { "test.phase"() : () -> () } else {
+      scf.if %q { "test.phase"() : () -> () } else { "test.phase"() : () -> () }
+    }'''))
+    mixed_domain = isl.map(isl_text(mixed["domain"]))
+    for phase in (0, 1, 2):
+        selected_phase = mixed_domain & isl.map(f"[p0] -> {{[] -> [phase,i] : phase={phase}}}")
+        assert selected_phase.empty() == (phase == 2), (phase, mixed)
+    # The weakest interval spanning both cells is only a proposal. Here it
+    # would publish both phases at every iteration, adding real occurrences.
+    mismatch = check_periodic("periodic_mismatched_phase_intervals", periodic_source(body='''%four = arith.constant 4 : index
+    %p = arith.cmpi slt, %i, %four : index
+    scf.if %p { "test.phase"() : () -> () } else { "test.phase"() : () -> () }'''), "unsupported")
+    assert "whole-population equality" in mismatch["reason"], mismatch
+    mismatch_domain = isl.map(isl_text(mismatch["domain"]))
+    for phase in (0, 1):
+        phase_filter = isl.map(f"[p0] -> {{[] -> [phase,i] : phase={phase}}}")
+        assert not (mismatch_domain & phase_filter).empty(), (phase, mismatch)
+
     root = Path(__file__).resolve().parents[4]
     fixture = root / "test/samples/Qwen3DecodeA3/kernels/aiv/online_softmax.pto"
     source = fixture.read_text()
