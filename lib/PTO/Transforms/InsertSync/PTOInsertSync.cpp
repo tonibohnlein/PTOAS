@@ -80,14 +80,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
   Option<std::string> gmAlias{*this, "gm-alias", llvm::cl::init(""),
       llvm::cl::desc("Logical constructor GM caller contract")};
 
-  // True means construction completed or strict construction failed. False
-  // invokes untouched upstream construction on the original payload.
-  bool tryLogical(func::FuncOp func) {
-    if (planner == "existing") return false;
-    if (planner != "logical" && planner != "logical-or-existing") {
-      func.emitError("InsertSync planner must be existing, logical, or logical-or-existing");
-      signalPassFailure(); return true;
-    }
+  void initializeLogicalMetadata(func::FuncOp func) {
     SmallVector<StringAttr> stale;
     for (auto attr : func->getAttrs())
       if (attr.getName().strref().starts_with("pto.insert_sync.logical_") ||
@@ -95,16 +88,18 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     for (auto name : stale) func->removeAttr(name);
     func->setAttr("pto.insert_sync.requested_planner", StringAttr::get(&getContext(), planner));
     func->setAttr("pto.insert_sync.producer", StringAttr::get(&getContext(), "none"));
+  }
+
+  // True means construction completed or strict construction failed. False
+  // invokes upstream construction only after authored-event admission.
+  bool tryLogical(func::FuncOp func, bool hasBarrier) {
+    if (planner == "existing") return false;
+    initializeLogicalMetadata(func);
     auto contract = resolveInsertSyncGMAlias(func, gmAlias);
     if (failed(contract)) { signalPassFailure(); return true; }
     using Result = logical_sync::ConstructionResult;
-    bool fixed = false;
-    func.walk([&](Operation *op) {
-      fixed |= isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp,
-                   BarrierOp, RecordEventOp, WaitEventOp>(op);
-    });
     Result result;
-    if (fixed) result.reason = "explicit synchronization summary not established";
+    if (hasBarrier) result.reason = "explicit synchronization summary not established";
     else result = logical_sync::constructLogicalSync(func, *contract, false, logicalWorkBudget);
     StringRef status;
     switch (result.status) {
@@ -146,26 +141,42 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       return;
     }
 
-    if (tryLogical(func)) return;
-
-    // If the function already contains explicit synchronization ops (either
-    // low-level pipe flags or the higher-level record/wait events), do not run
-    // the automatic insertion pass again. Re-inserting on top of manual sync
-    // can introduce duplicated/mismatched event dependencies that may lead to
-    // runtime failures on NPU.
-    //
+    if (planner != "existing" && planner != "logical" && planner != "logical-or-existing") {
+      func.emitError("InsertSync planner must be existing, logical, or logical-or-existing");
+      signalPassFailure(); return;
+    }
+    // Neither constructor imports authored event ownership. Classify once,
+    // before selection: unsupported logical input is not necessarily safe for
+    // legacy insertion. A standalone barrier does not imply a complete manual
+    // protocol and retains the existing barrier/fallback policy.
     bool hasExplicitSync = false;
+    bool hasBarrier = false;
     func.walk([&](Operation *op) {
-      if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::RecordEventOp,
-              pto::WaitEventOp>(op)) {
+      hasBarrier |= isa<pto::BarrierOp>(op);
+      if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::SetFlagDynOp,
+              pto::WaitFlagDynOp, pto::RecordEventOp, pto::WaitEventOp>(op)) {
         hasExplicitSync = true;
         return WalkResult::interrupt();
       }
       return WalkResult::advance();
     });
     if (hasExplicitSync) {
+      if (planner != "existing") {
+        initializeLogicalMetadata(func);
+        func->setAttr("pto.insert_sync.logical_status", StringAttr::get(&getContext(), "unsupported"));
+        func->setAttr("pto.insert_sync.logical_reason",
+                      StringAttr::get(&getContext(), "authored event protocol has no qualified summary"));
+        if (planner == "logical") {
+          func.emitError("logical synchronization construction failed: unsupported; authored event protocol has no qualified summary");
+          signalPassFailure();
+        } else {
+          func->setAttr("pto.insert_sync.producer", StringAttr::get(&getContext(), "authored"));
+        }
+      }
       return;
     }
+
+    if (tryLogical(func, hasBarrier)) return;
 
     // 0. 数据结构准备
     MemoryDependentAnalyzer memAnalyzer;

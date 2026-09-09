@@ -129,3 +129,36 @@ Run `check_qualification.py --driver "$BUILD/tools/pto-test-opt/pto-logical-sync
 for the extracted physical-import refusal checks. Use a fresh disk-backed
 campaign directory. The original M1/M2 reports describe research-checkpoint
 results; clean extraction results are recorded separately.
+
+## Required focused development gate
+
+With `BUILD_TESTING=ON`, Python bindings and `PTOAS_OAHS_TESTS=ON` (the test-build
+default), run:
+
+```sh
+cmake --build "$BUILD" --parallel 2 --target check-oahs-focused
+```
+
+The target builds the native drivers and runs the registered `oahs_focused`
+CTest serially. CI runs this target explicitly. The libisl runtime must be
+available; an unavailable reference fails the gate rather than skipping it.
+It covers native/reference relation parity, occurrence and arithmetic import,
+known-local requirements, physical admission, observer challenges, one-buffer
+and skipped/empty native construction, emitted corruption/rollback, budget
+fallback and dynamic-only authored synchronization in all three planner modes.
+Fresh run directories and commands/timings are retained under the build tree's
+`test-results/oahs/`. Production compilation has no Python/libisl dependency.
+
+`check_constructor.py --focused` deliberately excludes the four-kernel and
+multi-buffer milestone campaign. Passing the focused gate does not qualify
+three-buffer support, the unfinished guard milestone, or device behavior. The
+ordinary runner still requires those buffering effectiveness checks.
+
+The first integration run passed in 41.45 seconds (same Release `-O1` assertion
+build). Compiler, architecture and performance reviewers accepted the authored
+admission and focused-gate change. This does not accept the WIP guard milestone.
+The performance reviewer blocks avoidable all-pairs order materialization,
+repeated full requirement scans and structural quadratic deduplication before
+broader coverage is accepted. Dense, genuinely overlapping requirements may
+still have quadratic output size; that is reported separately from avoidable
+bookkeeping. Work allowances must not be raised to satisfy these gates.

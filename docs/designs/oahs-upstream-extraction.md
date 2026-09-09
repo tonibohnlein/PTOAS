@@ -51,8 +51,9 @@ Keep the experiment campaign separate from the eventual upstream merge:
 
 - `test/experiments/insert_sync/logical_plan/` contains the Python/libisl
   reference, frozen planner outputs, historical reports and benchmark observers.
-  Its standalone relation-driver CMake project is not included by the compiler
-  build. None of these files is imported by production compilation.
+  Its relation driver and differential/mutation gate are included only with
+  `BUILD_TESTING`, Python bindings and `PTOAS_OAHS_TESTS`. None of these files
+  is imported by production compilation; libisl is a test runtime dependency.
 - `tools/pto-test-opt/pto-logical-sync-test.cpp` and
   `pto-sync-occurrences-test.cpp` are native validation executables, not compiler
   dependencies. Their targets currently live alongside the upstream test tools;
@@ -82,7 +83,13 @@ function pipeline sites forward the same logical options.
 `logical` requires successful independent construction. `logical-or-existing`
 may invoke upstream insertion on the untouched input payload when semantics,
 realization, work or allocation are unsupported. Internal inconsistencies are
-hard failures. Reports distinguish strict construction from fallback.
+hard failures. Reports distinguish strict construction from fallback. Authored
+static/dynamic flags and record/wait events are classified before selecting a
+constructor: existing mode preserves them, hybrid mode reports `authored` and
+preserves them, and strict mode refuses their unmodeled protocol. A standalone
+barrier does not imply a complete authored protocol and retains the existing
+barrier policy. Unsupported logical input alone never authorizes inserting
+another protocol around authored events.
 
 Memory-valued `scf.for` carried arguments and all `scf.while` operations are
 explicitly refused before translation: their research-only forwarding changes

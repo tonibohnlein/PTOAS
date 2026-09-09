@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+//
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=existing' %s | FileCheck %s --check-prefix=BODY --implicit-check-not='pto.set_flag[' --implicit-check-not='pto.wait_flag[' --implicit-check-not='pto.barrier'
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=logical-or-existing' %s | FileCheck %s --check-prefixes=HYBRID,BODY --implicit-check-not='pto.set_flag[' --implicit-check-not='pto.wait_flag[' --implicit-check-not='pto.barrier'
+// RUN: not pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=logical' %s 2>&1 | FileCheck %s --check-prefix=STRICT
+// No static flag may be added to this fixture: it would hide dynamic-only admission.
+// HYBRID: pto.insert_sync.logical_status = "unsupported"
+// HYBRID-SAME: pto.insert_sync.producer = "authored"
+// BODY: pto.tload
+// BODY-NEXT: pto.set_flag_dyn
+// BODY-NEXT: pto.wait_flag_dyn
+// BODY-NEXT: pto.tabs
+// BODY-NEXT: return
+// STRICT: logical synchronization construction failed: unsupported; authored event protocol has no qualified summary
+module attributes {pto.target_arch = "a3"} {
+  func.func @authored_dynamic(%src: !pto.ptr<f16>, %key: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a = arith.constant 0 : i64
+    %b = arith.constant 512 : i64
+    %input = pto.alloc_tile addr = %a : !pto.tile_buf<vec, 16x16xf16>
+    %output = pto.alloc_tile addr = %b : !pto.tile_buf<vec, 16x16xf16>
+    %view = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%input : !pto.tile_buf<vec, 16x16xf16>)
+    pto.set_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, %key]
+    pto.wait_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, %key]
+    pto.tabs ins(%input : !pto.tile_buf<vec, 16x16xf16>) outs(%output : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}
