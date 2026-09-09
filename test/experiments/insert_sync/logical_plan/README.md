@@ -15,6 +15,11 @@ native precision result and the outstanding performance/coverage gates.
 expanded slot campaign and mandatory guard-binding/partial-byte-overlap tests.
 [EXACT_GUARD_QUERY_RESULTS.md](EXACT_GUARD_QUERY_RESULTS.md) records the bounded
 cache, atom-complement and target-index changes and their rebuilt acceptance.
+[COMPACT_SLOT_EQUALITY_RESULTS.md](COMPACT_SLOT_EQUALITY_RESULTS.md) records
+exact selector equality, component-consistent representation, symbolic parity
+with the general slot calculation and the expanded strict slot results.
+This representation improvement does not complete the ordinary buffering
+compile-time gate or the later allocation/GEMM milestones.
 The [exact-query cost review](../../../../docs/designs/oahs-exact-query-cost-review.md)
 defines the compact recurrence algorithms and data-structure acceptance gates;
 cache improvements alone do not complete those gates.

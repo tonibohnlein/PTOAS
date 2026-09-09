@@ -62,6 +62,33 @@ struct SyncOccurrences {
     // using ordinary slot-index equality; multi_tile_get does not imply mod N.
     RelationResult scalarDomain(Value value, unsigned point, int64_t inclusiveLower,
                                 int64_t inclusiveUpper, RelationQueries& queries) const;
+    // Exact subset of source/target point domains where the two normalized
+    // scalar values are equal. Each expression uses its OWN occurrence's loop
+    // coordinates; actual parameter SSA bindings remain shared. Even identical
+    // Value handles do not imply equality across different loop occurrences.
+    // Both optional projections and dominance at the corresponding points are
+    // required. This supplies neither execution order nor physical-slot alias
+    // qualification; clients must establish those independently.
+    RelationResult equalScalars(Value sourceValue, unsigned sourcePoint,
+                                Value targetValue, unsigned targetPoint,
+                                RelationQueries& queries) const;
+    // Filter an ALREADY QUALIFIED original occurrence relation by the same
+    // equality, without adding the ambient-domain product again. Precondition:
+    // originalOccurrences is contained in domain(sourcePoint) x
+    // domain(targetPoint), with this exact source/range tuple layout and the
+    // same immutable SSA parameter bindings. A matching dimensional space alone
+    // does not establish that precondition. NativeOrder requirement relations
+    // provide it; arbitrary caller-supplied relations do not.
+    // Both APIs refuse unavailable normalization/dominance and explicitly
+    // report exhausted work. Neither interprets failure as an empty relation.
+    RelationResult filterEqualScalars(const Relation& originalOccurrences,
+                                     Value sourceValue, unsigned sourcePoint,
+                                     Value targetValue, unsigned targetPoint,
+                                     RelationQueries& queries) const;
+private:
+    RelationResult scalarEqualityConstraint(Value sourceValue, unsigned sourcePoint,
+                                            Value targetValue, unsigned targetPoint,
+                                            RelationQueries& queries) const;
 };
 } // namespace mlir::pto::logical_sync
 #endif
