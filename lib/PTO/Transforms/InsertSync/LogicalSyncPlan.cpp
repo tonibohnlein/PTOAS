@@ -908,12 +908,22 @@ class Constructor {
     QueryStatus reuseSafe(const Relation& matching, Lane pipe, CompletionQueries& completed)
     {
         auto domain = matching.getDomainSet();
-        auto before = selectedOrder(domain, domain);
-        if (!before)
-            return result.status == ConstructionResult::AnalysisLimit ? QueryStatus::BudgetExhausted :
-                                                                        QueryStatus::Unsupported;
-        auto following = before->intersectDomain(domain).intersectRange(domain);
-        auto next = queries.firstTargets(following, *before);
+        auto periodicStart = std::chrono::steady_clock::now();
+        auto periodicWork = queries.work();
+        auto next = facts.periodicSuccessors(domain, queries);
+        if (std::getenv("PTOAS_LOGICAL_TRACE"))
+            llvm::errs() << "logical periodic_successor applied " << bool(next)
+                         << " work " << queries.work() - periodicWork << " seconds "
+                         << std::chrono::duration<double>(std::chrono::steady_clock::now() - periodicStart).count()
+                         << " reason " << next.reason << "\n";
+        if (!next && next.status == QueryStatus::Unsupported) {
+            auto before = selectedOrder(domain, domain);
+            if (!before)
+                return result.status == ConstructionResult::AnalysisLimit ? QueryStatus::BudgetExhausted :
+                                                                            QueryStatus::Unsupported;
+            auto following = before->intersectDomain(domain).intersectRange(domain);
+            next = queries.firstTargets(following, *before);
+        }
         if (!next)
             return next.status;
         auto inverse = matching;
@@ -2308,6 +2318,22 @@ bool Constructor::reconstruct()
             firstTarget = take(queries.firstTargets(suffix, *targetBefore));
         }
         if (!lastSource || !firstTarget) return false;
+        // Payload-cut relations must not erase actual notifications. Recover
+        // every endpoint, and require distinct publications on this concrete
+        // key to have distinct preceding payload cuts. Otherwise two balanced
+        // episodes can collapse into one logical edge and evade the later
+        // consumption-before-rearm challenge. Since lastSource is the actual
+        // greatest preceding cut, this injectivity also preserves its order.
+        if (!expect(queries.contains(lastSource->getRangeSet(), pubDomain),
+                    "emitted publication has no recovered payload cut") ||
+            !expect(queries.contains(firstTarget->getDomainSet(), waitDomain),
+                    "emitted acquisition has no recovered payload cut")) return false;
+        auto inverseCut = *lastSource;
+        inverseCut.inverse();
+        auto publicationsPerCut = compose(inverseCut, *lastSource);
+        if (!publicationsPerCut ||
+            !expect(queries.contains(diagonal, *publicationsPerCut),
+                    "emitted publications collapse onto one payload cut")) return false;
         // Compare freshly recovered cuts with the selected boundaries below.
         // Same-block adjacency does not trust stream identities or certificates.
         auto a = compose(*lastSource, *matched);

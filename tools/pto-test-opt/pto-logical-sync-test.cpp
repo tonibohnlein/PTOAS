@@ -390,6 +390,30 @@ int main(int argc, char** argv)
                     }
                     changed = true;
                 }
+            } else if (mutation == "duplicate-episode" || mutation == "orphan-head-episode" ||
+                       mutation == "orphan-tail-episode") {
+                SetFlagOp publication;
+                WaitFlagOp acquisition;
+                // This mutation is used on a straight-line fixture. Preserve
+                // actual key/lane semantics, adding a balanced second episode
+                // with no new payload between publications.
+                for (Operation& op : candidate.getBody().front()) {
+                    if (!publication) publication = dyn_cast<SetFlagOp>(&op);
+                    if (publication) if (auto wait = dyn_cast<WaitFlagOp>(&op)) {
+                        if (wait.getSrcPipe() == publication.getSrcPipe() &&
+                            wait.getDstPipe() == publication.getDstPipe() &&
+                            wait.getEventId() == publication.getEventId()) { acquisition = wait; break; }
+                    }
+                }
+                if (publication && acquisition) {
+                    OpBuilder builder(acquisition);
+                    if (mutation == "duplicate-episode") builder.setInsertionPointAfter(acquisition);
+                    else if (mutation == "orphan-head-episode") builder.setInsertionPointToStart(&candidate.getBody().front());
+                    else builder.setInsertionPoint(candidate.getBody().front().getTerminator()->getPrevNode());
+                    builder.clone(*publication);
+                    builder.clone(*acquisition);
+                    changed = true;
+                }
             } else if (mutation == "erase-wait") {
                 WaitFlagOp selected;
                 candidate.walk([&](WaitFlagOp wait) {
@@ -635,7 +659,8 @@ int main(int argc, char** argv)
         return StringRef(result.reason).contains("original payload") ? 0 : 1;
     if (mutation == "publication-before-source" || mutation == "acquisition-after-consumer" ||
         mutation == "publication-after-independent-load")
-        return countsPreserved && StringRef(result.reason).contains("handoff boundary") ? 0 : 1;
+        return countsPreserved && (StringRef(result.reason).contains("handoff boundary") ||
+                                  StringRef(result.reason).contains("payload cut")) ? 0 : 1;
     if (mutation == "unrepresented-event-lane")
         return countsPreserved && StringRef(result.reason).contains("event domain") ? 0 : 1;
     if (mutation == "barrier-after-consumer" || mutation == "unrepresented-barrier-lane")
@@ -649,6 +674,8 @@ int main(int argc, char** argv)
                        StringRef(result.reason).contains("emitted acquisition") ?
                    0 :
                    1;
+    if (mutation == "duplicate-episode" || mutation == "orphan-head-episode" || mutation == "orphan-tail-episode")
+        return StringRef(result.reason).contains("payload cut") ? 0 : 1;
     if (mutation == "erase-retirement" || mutation == "wrong-retirement-pipe" ||
         mutation == "early-retirement" || mutation == "hint-retirement")
         return StringRef(result.reason).contains("retirement drain") ? 0 : 1;

@@ -18,6 +18,9 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include <limits>
+#include <map>
+#include <set>
+#include <chrono>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -699,6 +702,181 @@ RelationResult SyncOccurrences::filterEqualScalars(const Relation& originalOccur
             return {QueryStatus::BudgetExhausted, {}, "scalar equality filter intersection budget"};
     }
     return queries.normalize(originalOccurrences.intersect(*equality.relation));
+}
+
+RelationResult SyncOccurrences::periodicSuccessors(const PresburgerSet& publications,
+                                                   RelationQueries& queries) const {
+    using llvm::DynamicAPInt;
+    auto unsupported = [](StringRef reason) -> RelationResult {
+        return {QueryStatus::Unsupported, {}, reason.str()};
+    };
+    auto exhausted = []() -> RelationResult {
+        return {QueryStatus::BudgetExhausted, {}, "native periodic population qualification budget"};
+    };
+    const unsigned n = dimensions(), symbols = parameters.size();
+    if (!complete || publications.getNumDomainVars() || publications.getNumRangeVars() != n ||
+        publications.getNumSymbolVars() != symbols)
+        return unsupported("native periodic occurrence universe unavailable");
+    auto profileTime = std::chrono::steady_clock::now();
+    uint64_t profileWork = queries.work();
+    auto profile = [&](StringRef stage) {
+        auto now = std::chrono::steady_clock::now();
+        if (queries.profilingEnabled())
+            llvm::errs() << "logical periodic_stage " << stage << " pieces " << publications.getNumDisjuncts()
+                         << " work " << queries.work() - profileWork << " seconds "
+                         << std::chrono::duration<double>(now - profileTime).count() << "\n";
+        profileTime = now; profileWork = queries.work();
+    };
+    auto normalized = queries.normalize(publications);
+    profile("normalize");
+    if (!normalized) return normalized;
+    if (!normalized.relation->getNumDisjuncts())
+        return {QueryStatus::Proved, Relation::getEmpty(PresburgerSpace::getRelationSpace(n, n, symbols)), {}};
+    // Candidate extraction may forget local constraints. No forgotten fact is
+    // used as a proof: the WHOLE proposed population is compared in both
+    // directions with the original selected population before construction.
+    using Row = std::vector<int64_t>;
+    using Rows = std::set<std::pair<bool, Row>>;
+    std::optional<Rows> commonRows;
+    std::optional<unsigned> activeLoop, scheduleIV;
+    std::optional<int64_t> period;
+    std::vector<PeriodicPublication> atoms;
+    std::map<unsigned, std::vector<int64_t>> phaseSchedules;
+    std::vector<int64_t> schedulePrefix;
+    for (const auto& piece : normalized.relation->getAllDisjuncts()) {
+        const uint64_t cells = uint64_t(piece.getNumCols()) * (piece.getNumConstraints() + 1);
+        uint64_t treeCharge = 1;
+        for (unsigned k = piece.getNumConstraints(); k; k /= 2) treeCharge += 2;
+        if (cells > UINT64_MAX / treeCharge || !queries.spend(cells * treeCharge)) return exhausted();
+        std::optional<unsigned> phase;
+        for (unsigned r = 0; r < piece.getNumEqualities(); ++r) {
+            auto row = piece.getEquality(r);
+            if (row[0] != 1 && row[0] != -1) continue;
+            bool isolated = true;
+            for (unsigned c = 1; c < piece.getNumVars(); ++c) isolated &= row[c] == 0;
+            if (!isolated) continue;
+            DynamicAPInt value = -row.back() * row[0];
+            if (value < 0 || value >= int64_t(points.size())) return unsupported("native periodic phase unavailable");
+            unsigned p = int64_t(value);
+            if (phase && *phase != p) return unsupported("native periodic contradictory phase");
+            phase = p;
+        }
+        if (!phase) return unsupported("native periodic phase not fixed");
+        if (!phaseSchedules.count(*phase)) {
+            const auto& schedule = points[*phase].schedule;
+            if (!queries.spend(schedule.size() + 1)) return exhausted();
+            std::optional<unsigned> loop, ivPosition;
+            std::vector<int64_t> constants;
+            for (unsigned s = 0; s < schedule.size(); ++s) {
+                if (auto iv = dyn_cast<AffineDimExpr>(schedule[s])) {
+                    if (loop) return unsupported("native periodic nested invocation");
+                    loop = iv.getPosition(); ivPosition = s; constants.push_back(0);
+                } else if (auto c = dyn_cast<AffineConstantExpr>(schedule[s])) constants.push_back(c.getValue());
+                else return unsupported("native periodic schedule is not constant/iteration");
+            }
+            if (!loop || *loop >= loopDomains.size() || loopDomains[*loop].step != 1)
+                return unsupported("native periodic schedule needs one unit-step loop");
+            if (activeLoop && (*activeLoop != *loop || *scheduleIV != *ivPosition))
+                return unsupported("native periodic publications span different loop invocations");
+            std::vector<int64_t> prefix(constants.begin(), constants.begin() + *ivPosition);
+            if (activeLoop && prefix != schedulePrefix)
+                return unsupported("native periodic publications have different schedule prefixes");
+            activeLoop = loop; scheduleIV = ivPosition; schedulePrefix = std::move(prefix);
+            phaseSchedules.emplace(*phase, std::move(constants));
+        }
+        unsigned iv = 1 + *activeLoop;
+        std::optional<std::pair<int64_t, int64_t>> congruence;
+        Rows rows;
+        for (bool equality : {true, false}) {
+            unsigned count = equality ? piece.getNumEqualities() : piece.getNumInequalities();
+            for (unsigned r = 0; r < count; ++r) {
+                auto row = equality ? piece.getEquality(r) : piece.getInequality(r);
+                bool small = true;
+                for (const auto& coefficient : row)
+                    small &= coefficient >= INT64_MIN && coefficient <= INT64_MAX;
+                // Large range guards can be redundant under the selected loop
+                // bounds (e.g. n >= INT64_MIN in a nonempty nonnegative loop).
+                // Omit them only from the proposal; whole-domain equality must
+                // still prove every original constraint before using it.
+                if (!small) continue;
+                if (row[0] != 0) continue;
+                std::optional<unsigned> local;
+                bool multipleLocals = false;
+                for (unsigned c = n + symbols; c < piece.getNumVars(); ++c) if (row[c] != 0) {
+                    if (local) multipleLocals = true;
+                    local = c;
+                }
+                if (local) {
+                    bool onlyIV = equality && !multipleLocals && (row[iv] == 1 || row[iv] == -1);
+                    for (unsigned c = 0; c < n + symbols; ++c) if (c != iv && row[c] != 0) onlyIV = false;
+                    if (onlyIV) {
+                        auto modulus = row[*local] < 0 ? -row[*local] : row[*local];
+                        if (modulus > INT64_MAX) return unsupported("native periodic modulus exceeds int64");
+                        auto residue = (-row.back() * row[iv]) % modulus;
+                        if (residue < 0) residue += modulus;
+                        std::pair<int64_t, int64_t> value{int64_t(modulus), int64_t(residue)};
+                        if (congruence && *congruence != value)
+                            return unsupported("native periodic needs one common congruence");
+                        congruence = value;
+                    }
+                    continue;
+                }
+                Row compact(n + symbols + 1);
+                for (unsigned c = 0; c < n + symbols; ++c) compact[c] = int64_t(row[c]);
+                compact.back() = int64_t(row.back());
+                rows.emplace(equality, std::move(compact));
+            }
+        }
+        auto [p, residue] = congruence.value_or(std::make_pair(int64_t(1), int64_t(0)));
+        if (period && *period != p) return unsupported("native periodic population uses different periods");
+        period = p;
+        if (commonRows && *commonRows != rows)
+            return unsupported("native periodic population uses different interval templates");
+        commonRows = std::move(rows);
+        atoms.push_back({int64_t(*phase), 0, residue});
+    }
+    // Rank by the actual imported lexicographic schedule, independently of the
+    // physical-point enumeration. One phase can contribute multiple residues.
+    uint64_t sortCharge = 1;
+    for (size_t k = phaseSchedules.size(); k; k /= 2) sortCharge += 2;
+    if (!queries.spend(sortCharge * phaseSchedules.size() * (scheduleDimensions + 1))) return exhausted();
+    std::map<std::vector<int64_t>, unsigned> scheduled;
+    for (const auto& [phase, schedule] : phaseSchedules)
+        if (!scheduled.emplace(schedule, phase).second) return unsupported("native periodic schedule ranks tied");
+    std::map<unsigned, int64_t> ranks;
+    for (const auto& [schedule, phase] : scheduled) ranks[phase] = ranks.size();
+    for (auto& atom : atoms) atom.rank = ranks.at(unsigned(atom.phase));
+    IntegerRelation common(PresburgerSpace::getSetSpace(n, symbols));
+    for (const auto& [equality, row] : *commonRows)
+        if (equality) common.addEquality(row); else common.addInequality(row);
+    profile("extract");
+    // Reject an unsupported model grammar before expensive population
+    // equality. This result remains private until native qualification below.
+    auto candidate = queries.commonPeriodSuccessors(PresburgerSet(Relation(common)), 0, 1 + *activeLoop, *period, atoms);
+    profile("helper");
+    if (!candidate) return candidate;
+    auto proposed = PresburgerSet::getEmpty(common.getSpace());
+    for (const auto& atom : atoms) {
+        if (!queries.spend(uint64_t(common.getNumCols() + 1) * (common.getNumConstraints() + 3))) return exhausted();
+        auto part = common;
+        part.appendVar(VarKind::Local);
+        part.addBound(BoundType::EQ, 0, atom.phase);
+        SmallVector<DynamicAPInt> row(part.getNumCols());
+        row[1 + *activeLoop] = 1; row[part.getNumVars() - 1] = -DynamicAPInt(*period);
+        row.back() = -DynamicAPInt(atom.residue);
+        part.addEquality(row);
+        proposed.unionInPlace(part);
+    }
+    for (auto direction : {true, false}) {
+        auto status = direction ? queries.contains(proposed, publications) : queries.contains(publications, proposed);
+        if (status == QueryStatus::BudgetExhausted) return exhausted();
+        if (status != QueryStatus::Proved) {
+            profile("equality-unavailable");
+            return unsupported("native periodic whole-population equality not established");
+        }
+    }
+    profile("equality");
+    return candidate;
 }
 
 RelationResult SyncOccurrences::ordered(unsigned source,unsigned target,bool inclusive) const {
