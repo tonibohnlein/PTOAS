@@ -11,6 +11,7 @@
 // compilePTOASModule entry.
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
 #include "ptoas_internal.h"
 
 #include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
@@ -605,7 +606,8 @@ struct SerialAutoSyncPass
     OpPassManager functionPM(func::FuncOp::getOperationName());
     switch (mode) {
     case Mode::InsertSync:
-      functionPM.addPass(pto::createPTOInsertSyncPass());
+      functionPM.addPass(pto::createPTOInsertSyncPass(pto::InsertSyncOptions{
+          insertSyncPlanner, insertSyncLogicalWorkBudget, insertSyncGMAlias}));
       break;
     case Mode::Bufid: {
       PTOBufidSyncOptions options;
@@ -1297,7 +1299,8 @@ static void appendAutoSyncPasses(PassManager &pm) {
       pm.addPass(std::make_unique<SerialAutoSyncPass>(
           SerialAutoSyncPass::Mode::InsertSync, false));
     } else {
-      pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
+      pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass(pto::InsertSyncOptions{
+          insertSyncPlanner, insertSyncLogicalWorkBudget, insertSyncGMAlias}));
     }
   }
   else if (enableBufidSync) {

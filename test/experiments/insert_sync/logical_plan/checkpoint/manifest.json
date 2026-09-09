@@ -1,0 +1,422 @@
+{
+  "source_checkpoint": "5d6766d69",
+  "upstream": "7e2ec3e29420e297dcf5b3c59ba4d90841464821",
+  "note": "Immutable outputs from accepted M1/M2 worktree builds; not rebuilt old refiner. Inputs and outputs are hash checked.",
+  "cases": [
+    {
+      "case_id": "one_buffer",
+      "source": "test/experiments/insert_sync/logical_plan/inputs/one_buffer.auto.pto",
+      "sha256": "600c7fa8959c5cfb97660a9a54fb585905434bc332e73ed709274f4dd7700011",
+      "scenarios": [
+        {
+          "name": "trips_0",
+          "arguments": [
+            "src",
+            "dst",
+            0
+          ]
+        },
+        {
+          "name": "trips_1",
+          "arguments": [
+            "src",
+            "dst",
+            1
+          ]
+        },
+        {
+          "name": "trips_2",
+          "arguments": [
+            "src",
+            "dst",
+            2
+          ]
+        },
+        {
+          "name": "trips_3",
+          "arguments": [
+            "src",
+            "dst",
+            3
+          ]
+        },
+        {
+          "name": "trips_16",
+          "arguments": [
+            "src",
+            "dst",
+            16
+          ]
+        }
+      ],
+      "artifacts": {
+        "revised": {
+          "path": "checkpoint/one_buffer.revised.pto",
+          "sha256": "f3213ca1b3109032736d79536194d61f516bb12aebfe47cf7fc00647b3ff7f96",
+          "campaign": "acceptance44"
+        },
+        "refiner": {
+          "path": "checkpoint/one_buffer.refiner.pto",
+          "sha256": "6c407df4e9bd6dd309af5a1cab8130383ca63571b10b8ba8410baaa910e77f5c",
+          "campaign": "acceptance44"
+        },
+        "logical": {
+          "path": "checkpoint/one_buffer.logical.pto",
+          "sha256": "c659a1d828ab21fafdf93a4dca66a3d05df49d5f67cf50bb3a58fd539091921b",
+          "campaign": "acceptance44"
+        }
+      }
+    },
+    {
+      "case_id": "two_buffer",
+      "source": "test/experiments/insert_sync/logical_plan/inputs/two_buffer.auto.pto",
+      "sha256": "1903800616d0505b007c51eaaa8e2bb76ec5a96ff9ce10829d700f24a4af56fd",
+      "scenarios": [
+        {
+          "name": "trips_0",
+          "arguments": [
+            "src",
+            "dst",
+            0
+          ]
+        },
+        {
+          "name": "trips_1",
+          "arguments": [
+            "src",
+            "dst",
+            1
+          ]
+        },
+        {
+          "name": "trips_2",
+          "arguments": [
+            "src",
+            "dst",
+            2
+          ]
+        },
+        {
+          "name": "trips_3",
+          "arguments": [
+            "src",
+            "dst",
+            3
+          ]
+        },
+        {
+          "name": "trips_5",
+          "arguments": [
+            "src",
+            "dst",
+            5
+          ]
+        },
+        {
+          "name": "trips_16",
+          "arguments": [
+            "src",
+            "dst",
+            16
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "three_buffer",
+      "source": "test/experiments/insert_sync/logical_plan/inputs/three_buffer.auto.pto",
+      "sha256": "fd6f6c876a11ed322ebb26ce8687b6ee1ca2fe717a4d53f77b6c4ff37a800eda",
+      "scenarios": [
+        {
+          "name": "trips_0",
+          "arguments": [
+            "src",
+            "dst",
+            0
+          ]
+        },
+        {
+          "name": "trips_1",
+          "arguments": [
+            "src",
+            "dst",
+            1
+          ]
+        },
+        {
+          "name": "trips_2",
+          "arguments": [
+            "src",
+            "dst",
+            2
+          ]
+        },
+        {
+          "name": "trips_3",
+          "arguments": [
+            "src",
+            "dst",
+            3
+          ]
+        },
+        {
+          "name": "trips_4",
+          "arguments": [
+            "src",
+            "dst",
+            4
+          ]
+        },
+        {
+          "name": "trips_7",
+          "arguments": [
+            "src",
+            "dst",
+            7
+          ]
+        },
+        {
+          "name": "trips_16",
+          "arguments": [
+            "src",
+            "dst",
+            16
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "four_use",
+      "source": "test/experiments/insert_sync/logical_plan/inputs/four_use.auto.pto",
+      "sha256": "ebb3365784b3f35a51098505ba764f038ea57f670f8ca27c5d77707b19af2128",
+      "scenarios": [
+        {
+          "name": "trips_0",
+          "arguments": [
+            "src",
+            "dst",
+            0
+          ]
+        },
+        {
+          "name": "trips_1",
+          "arguments": [
+            "src",
+            "dst",
+            1
+          ]
+        },
+        {
+          "name": "trips_2",
+          "arguments": [
+            "src",
+            "dst",
+            2
+          ]
+        },
+        {
+          "name": "trips_3",
+          "arguments": [
+            "src",
+            "dst",
+            3
+          ]
+        },
+        {
+          "name": "trips_5",
+          "arguments": [
+            "src",
+            "dst",
+            5
+          ]
+        },
+        {
+          "name": "trips_16",
+          "arguments": [
+            "src",
+            "dst",
+            16
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "online_softmax",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aiv/online_softmax.pto",
+      "sha256": "1d67f50a2b7ae1225093444ca010ca46c9d6b726ce0f8f03c529e51889a7c534",
+      "scenarios": [
+        {
+          "name": "0",
+          "arguments": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "name": "1",
+          "arguments": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "name": "2",
+          "arguments": [
+            0,
+            0,
+            0,
+            0,
+            2,
+            0,
+            0
+          ]
+        },
+        {
+          "name": "16",
+          "arguments": [
+            0,
+            0,
+            0,
+            0,
+            16,
+            0,
+            0
+          ]
+        }
+      ],
+      "artifacts": {
+        "revised": {
+          "path": "checkpoint/online_softmax.revised.pto",
+          "sha256": "4977498a8855c1b30750796c236dc0656ad82d18057caf39838c2c50fe75152e",
+          "campaign": "acceptance44"
+        },
+        "refiner": {
+          "path": "checkpoint/online_softmax.refiner.pto",
+          "sha256": "84c45a6a9ce0ae371ae81b97aa45b95616effec365426ac077071d81f30557d7",
+          "campaign": "acceptance44"
+        },
+        "logical": {
+          "path": "checkpoint/online_softmax.logical.pto",
+          "sha256": "7553709521a9c1c4177108d62ea2074f9dbf40f3a57e63077c252cabdb9b61ae",
+          "campaign": "acceptance44"
+        }
+      }
+    },
+    {
+      "case_id": "qk_matmul",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aic/qk_matmul.pto",
+      "sha256": "1f6d0e3a0f44ec4e77b4405fd5990ef3f7738b578acfae3c902545a1eed896cb",
+      "scenarios": [
+        {
+          "name": "0",
+          "arguments": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "name": "1",
+          "arguments": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            1
+          ]
+        },
+        {
+          "name": "2",
+          "arguments": [
+            0,
+            0,
+            0,
+            0,
+            2,
+            0,
+            1
+          ]
+        },
+        {
+          "name": "16",
+          "arguments": [
+            0,
+            0,
+            0,
+            0,
+            16,
+            0,
+            1
+          ]
+        }
+      ],
+      "artifacts": {
+        "revised": {
+          "path": "checkpoint/qk_matmul.revised.pto",
+          "sha256": "3b671119618692775416858ad0428342937bde8002f4247fc84a3e76d202a771",
+          "campaign": "acceptance43"
+        },
+        "refiner": {
+          "path": "checkpoint/qk_matmul.refiner.pto",
+          "sha256": "4944553458f9f75cc98c0b7127f6af0ae6ab378e1459646b83fbc8a045a0c241",
+          "campaign": "acceptance43"
+        },
+        "logical": {
+          "path": "checkpoint/qk_matmul.logical.pto",
+          "sha256": "a85b2d1c1c6a7bccb89c800244d3d374a55e9f4c3d78563b352df4181ed473de",
+          "campaign": "acceptance43"
+        }
+      }
+    },
+    {
+      "case_id": "q_proj",
+      "source": "test/samples/Qwen3DecodeA3/kernels/aic/q_proj.pto",
+      "sha256": "5aa01e4f14bb7db12e44ddf67c66c4887b003d50d6cff85fee7b2d2aa1958f06",
+      "scenarios": [
+        {
+          "name": "core0",
+          "arguments": [
+            0,
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      ],
+      "artifacts": {
+        "revised": {
+          "path": "checkpoint/q_proj.revised.pto",
+          "sha256": "8ded9fb402cd28ccac94d2e7b5f38a902a5c3a5057ce8bb539d160ac1b6bfc99",
+          "campaign": "acceptance43"
+        },
+        "refiner": {
+          "path": "checkpoint/q_proj.refiner.pto",
+          "sha256": "7be7cccc55cffeab941473d0892b95fa5b3718bc948cf9313c7593ca1bedfb3b",
+          "campaign": "acceptance43"
+        },
+        "logical": {
+          "path": "checkpoint/q_proj.logical.pto",
+          "sha256": "c488cfd6d84aac1533d62cd2ebbe8ed822898416e4475738a719ce2a26299b5e",
+          "campaign": "acceptance43"
+        }
+      }
+    }
+  ]
+}

@@ -6,6 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
+
 #include "ptoas_internal.h"
 
 #include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
@@ -138,6 +140,16 @@ llvm::cl::opt<bool> vptoSchedulerTrace(
 llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
+llvm::cl::opt<std::string> insertSyncPlanner(
+    "insert-sync-planner", llvm::cl::desc("InsertSync planning engine: existing, logical, logical-or-existing"),
+    llvm::cl::init("existing"));
+llvm::cl::opt<uint64_t> insertSyncLogicalWorkBudget(
+    "insert-sync-logical-work-budget", llvm::cl::desc("Bound logical occurrence construction work"),
+    llvm::cl::init(mlir::pto::kDefaultLogicalSyncWorkBudget));
+llvm::cl::opt<std::string> insertSyncGMAlias(
+    "insert-sync-gm-alias", llvm::cl::desc("Logical constructor GM contract: may-alias or assume-disjoint-arguments"),
+    llvm::cl::init(""));
+
 
 llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",

@@ -174,6 +174,14 @@ add_mlir_dialect_library(PTOTransforms
   VPTOSplitCVModule.cpp
   InsertSync/PTOIRTranslator.cpp
   InsertSync/SyncMacroModel.cpp
+  InsertSync/LogicalSyncPlan.cpp
+  InsertSync/LogicalSyncRelations.cpp
+  InsertSync/SyncOccurrences.cpp
+  InsertSync/SyncEffectCoverage.cpp
+  InsertSync/SyncGMAlias.cpp
+  InsertSync/SyncGlobalOccurrences.cpp
+  InsertSync/SyncPhysicalFacts.cpp
+
   InsertSync/SyncCommon.cpp
   InsertSync/InsertSyncAnalysis.cpp
   InsertSync/MemoryDependentAnalyzer.cpp
@@ -200,6 +208,7 @@ add_mlir_dialect_library(PTOTransforms
 
   LINK_LIBS
   PUBLIC
+  MLIRPresburger
   PTOAnalysis
   PTOIR
   MLIRAnalysis

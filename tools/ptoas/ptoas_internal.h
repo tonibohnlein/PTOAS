@@ -121,6 +121,10 @@ enum class VPTOSchedulerCLIMode { Off, Analyze, On };
 extern llvm::cl::opt<VPTOSchedulerCLIMode> vptoSchedulerMode;
 extern llvm::cl::opt<bool> vptoSchedulerTrace;
 extern llvm::cl::opt<bool> enableInsertSync;
+extern llvm::cl::opt<std::string> insertSyncPlanner;
+extern llvm::cl::opt<uint64_t> insertSyncLogicalWorkBudget;
+extern llvm::cl::opt<std::string> insertSyncGMAlias;
+
 extern llvm::cl::opt<bool> enableBufidSync;
 extern llvm::cl::opt<bool> enableBufidSyncDebug;
 extern llvm::cl::opt<bool> enableInjectBarrierAllSync;

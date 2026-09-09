@@ -1,0 +1,1889 @@
+{
+  "source_commit": "68a31b6c869d3255969bfc05324c76d71ca06df3",
+  "binary_provenance": "Incremental build43 from the M2 worktree later committed unchanged as 68a31b6c8; acceptance43 completed Q projection/QK before pause, acceptance44 completed M1 and negative checks after resumption. No independent clean rebuild or device run.",
+  "binary_sha256": {
+    "tools/pto-test-opt/pto-logical-sync-test": "5faa17c3b14e62d07b5ff41602c8229d8c768ca6b5a7ae2940d745523ca5c572",
+    "python/ptoas/mlir/_mlir_libs/libPTOASCompiler.so": "7b809f1816981ee144f475d783eef768ff8d44ac253055ed8c52a0471eec0b03"
+  },
+  "relation_checks": 63,
+  "structured_executions": 24,
+  "device_validation": "NOT_RUN",
+  "rows": [
+    {
+      "case": "q_proj",
+      "source_sha256": "5aa01e4f14bb7db12e44ddf67c66c4887b003d50d6cff85fee7b2d2aa1958f06",
+      "arms": {
+        "revised": {
+          "seconds": 0.4837166100041941,
+          "projection": {
+            "payload": "2ed6abee15b98e8fa69f9f96c3afc894217b272fe3593088d07b98aa917b4341",
+            "allocations": "ebaffe3fb20c7b0cb95398d6000d2887869ac277db8e4352ab0bc8ae7bcc612e",
+            "views": "a30b09d795c2fb56d73ec43904d5e96e06923fba7c8909a79722eceaaf74d756",
+            "abi": "aeb4a880a1814e374051ae52708df875b83f0edf94a9cde72b8ddaa3fe33949d",
+            "mechanisms": {
+              "sets": 39,
+              "waits": 39,
+              "PIPE_ALL": 1,
+              "named": {
+                "PIPE_M": 6
+              }
+            },
+            "status_attributes": [
+              {
+                "pto.insert_sync.buffer_generations": "unit",
+                "pto.insert_sync.effect_coverage": "\"complete\"",
+                "pto.insert_sync.generation_barriers_removed": "0 : i64",
+                "pto.insert_sync.generation_global_witnesses": "0 : i64",
+                "pto.insert_sync.generation_initial_pairs_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+                "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+                "pto.insert_sync.generation_publication_work": "0 : i64",
+                "pto.insert_sync.generation_publications_advanced": "0 : i64",
+                "pto.insert_sync.generation_publications_guarded": "0 : i64",
+                "pto.insert_sync.generation_ready_sets_removed": "6 : i64",
+                "pto.insert_sync.generation_ready_streams_supplied": "4 : i64",
+                "pto.insert_sync.generation_ready_waits_removed": "6 : i64",
+                "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+                "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+                "pto.insert_sync.lifecycle_channels": "10 : i64",
+                "pto.insert_sync.lifecycle_completion_pairs": "0 : i64",
+                "pto.insert_sync.lifecycle_completion_witnesses": "0 : i64",
+                "pto.insert_sync.lifecycle_completion_work": "36936 : i64",
+                "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+                "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+                "pto.insert_sync.lifecycle_retries": "0 : i64",
+                "pto.insert_sync.lifecycle_supplied_pairs": "156 : i64",
+                "pto.insert_sync.mmad_chain_targets": "0 : i64",
+                "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+                "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+              }
+            ]
+          },
+          "metrics": {
+            "scenarios": {
+              "core0": {
+                "counts": {
+                  "pto.set_flag": 651,
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 515,
+                  "pto.partition_view": 129,
+                  "pto.wait_flag": 651,
+                  "pto.tload": 128,
+                  "pto.textract": 256,
+                  "pto.barrier": 129,
+                  "barrier:#pto.pipe<PIPE_M>:loop": 128,
+                  "pto.tmatmul": 1,
+                  "pto.tmatmul.acc": 127,
+                  "pto.tstore": 1,
+                  "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 15,
+                  "arith.index_cast": 1,
+                  "arith.muli": 65,
+                  "scf.for": 1,
+                  "arith.addi": 32,
+                  "arith.maxsi": 193,
+                  "arith.cmpi": 32,
+                  "scf.if": 32,
+                  "scf.yield": 64
+                },
+                "payload_sha256": "46afaad55e9a15d60d9e581502916f2972d3837a24dad472481faf3944a42b9a",
+                "action_trace_sha256": "b83cf364112fd559be35c87ce6299d3c5c20c03022394cd70e0d1412aeb73c66",
+                "scalar_steps": 3027
+              }
+            }
+          }
+        },
+        "refiner": {
+          "seconds": 0.5183451949851587,
+          "projection": {
+            "payload": "2ed6abee15b98e8fa69f9f96c3afc894217b272fe3593088d07b98aa917b4341",
+            "allocations": "ebaffe3fb20c7b0cb95398d6000d2887869ac277db8e4352ab0bc8ae7bcc612e",
+            "views": "a30b09d795c2fb56d73ec43904d5e96e06923fba7c8909a79722eceaaf74d756",
+            "abi": "aeb4a880a1814e374051ae52708df875b83f0edf94a9cde72b8ddaa3fe33949d",
+            "mechanisms": {
+              "sets": 29,
+              "waits": 29,
+              "PIPE_ALL": 1,
+              "named": {
+                "PIPE_M": 6
+              }
+            },
+            "status_attributes": [
+              {
+                "pto.insert_sync.buffer_generations": "unit",
+                "pto.insert_sync.effect_coverage": "\"complete\"",
+                "pto.insert_sync.generation_barriers_removed": "0 : i64",
+                "pto.insert_sync.generation_global_witnesses": "0 : i64",
+                "pto.insert_sync.generation_initial_pairs_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+                "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+                "pto.insert_sync.generation_publication_work": "0 : i64",
+                "pto.insert_sync.generation_publications_advanced": "0 : i64",
+                "pto.insert_sync.generation_publications_guarded": "0 : i64",
+                "pto.insert_sync.generation_ready_sets_removed": "6 : i64",
+                "pto.insert_sync.generation_ready_streams_supplied": "4 : i64",
+                "pto.insert_sync.generation_ready_waits_removed": "6 : i64",
+                "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+                "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+                "pto.insert_sync.handoff_advanced": "0 : i64",
+                "pto.insert_sync.handoff_delayed": "0 : i64",
+                "pto.insert_sync.handoff_reason": "\"retained unproved candidate: unproved requirement 4294967295 -> 4294967295; event node 66\"",
+                "pto.insert_sync.handoff_sets_removed": "10 : i64",
+                "pto.insert_sync.handoff_split": "0 : i64",
+                "pto.insert_sync.handoff_waits_removed": "10 : i64",
+                "pto.insert_sync.handoff_work": "1190535 : i64",
+                "pto.insert_sync.lifecycle_channels": "10 : i64",
+                "pto.insert_sync.lifecycle_completion_pairs": "0 : i64",
+                "pto.insert_sync.lifecycle_completion_witnesses": "0 : i64",
+                "pto.insert_sync.lifecycle_completion_work": "36936 : i64",
+                "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+                "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+                "pto.insert_sync.lifecycle_retries": "0 : i64",
+                "pto.insert_sync.lifecycle_supplied_pairs": "156 : i64",
+                "pto.insert_sync.mmad_chain_targets": "0 : i64",
+                "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+                "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+              }
+            ]
+          },
+          "metrics": {
+            "scenarios": {
+              "core0": {
+                "counts": {
+                  "pto.set_flag": 519,
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 515,
+                  "pto.partition_view": 129,
+                  "pto.wait_flag": 519,
+                  "pto.tload": 128,
+                  "pto.textract": 256,
+                  "pto.barrier": 129,
+                  "barrier:#pto.pipe<PIPE_M>:loop": 128,
+                  "pto.tmatmul": 1,
+                  "pto.tmatmul.acc": 127,
+                  "pto.tstore": 1,
+                  "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 15,
+                  "arith.index_cast": 1,
+                  "arith.muli": 65,
+                  "scf.for": 1,
+                  "arith.addi": 32,
+                  "arith.maxsi": 193,
+                  "arith.cmpi": 32,
+                  "scf.if": 32,
+                  "scf.yield": 64
+                },
+                "payload_sha256": "46afaad55e9a15d60d9e581502916f2972d3837a24dad472481faf3944a42b9a",
+                "action_trace_sha256": "d32a9ec9ef0418e395a5ebb5717462697b1b7a0eb2ef435c795a1308ee1aab15",
+                "scalar_steps": 2763
+              }
+            }
+          }
+        },
+        "logical": {
+          "seconds": 21.934046726993984,
+          "projection": {
+            "payload": "2ed6abee15b98e8fa69f9f96c3afc894217b272fe3593088d07b98aa917b4341",
+            "allocations": "ebaffe3fb20c7b0cb95398d6000d2887869ac277db8e4352ab0bc8ae7bcc612e",
+            "views": "a30b09d795c2fb56d73ec43904d5e96e06923fba7c8909a79722eceaaf74d756",
+            "abi": "aeb4a880a1814e374051ae52708df875b83f0edf94a9cde72b8ddaa3fe33949d",
+            "mechanisms": {
+              "sets": 24,
+              "waits": 27,
+              "PIPE_ALL": 0,
+              "named": {
+                "PIPE_M": 5
+              }
+            },
+            "status_attributes": [
+              {
+                "pto.insert_sync.logical_reason": "\"constructed and reconstructed occurrence handoffs\"",
+                "pto.insert_sync.logical_requirements": "190 : i64",
+                "pto.insert_sync.logical_status": "\"applied\"",
+                "pto.insert_sync.logical_streams": "24 : i64",
+                "pto.insert_sync.logical_work": "272718457 : i64",
+                "pto.insert_sync.producer": "\"logical\"",
+                "pto.insert_sync.requested_planner": "\"logical\""
+              }
+            ]
+          },
+          "metrics": {
+            "scenarios": {
+              "core0": {
+                "counts": {
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 515,
+                  "pto.partition_view": 129,
+                  "pto.tload": 128,
+                  "pto.set_flag": 509,
+                  "pto.wait_flag": 509,
+                  "pto.textract": 256,
+                  "pto.tmatmul": 1,
+                  "pto.barrier": 127,
+                  "barrier:#pto.pipe<PIPE_M>:loop": 127,
+                  "pto.tmatmul.acc": 127,
+                  "pto.tstore": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 493,
+                  "arith.index_cast": 1,
+                  "arith.muli": 65,
+                  "scf.for": 1,
+                  "arith.addi": 286,
+                  "arith.maxsi": 193,
+                  "arith.cmpi": 766,
+                  "arith.xori": 350,
+                  "arith.andi": 64,
+                  "scf.if": 542,
+                  "arith.ori": 160,
+                  "scf.yield": 406
+                },
+                "payload_sha256": "46afaad55e9a15d60d9e581502916f2972d3837a24dad472481faf3944a42b9a",
+                "action_trace_sha256": "29378704126725b64120009cd502e6806200abae887874cdd771c4d34328fe50",
+                "scalar_steps": 5633
+              }
+            }
+          }
+        }
+      },
+      "boundaries": [
+        {
+          "scenario": "core0",
+          "status": "checked",
+          "weaker_prefixes": []
+        }
+      ],
+      "cpp_seconds": 25.345368356007384,
+      "campaign": "acceptance43"
+    },
+    {
+      "case": "qk_matmul",
+      "source_sha256": "1f6d0e3a0f44ec4e77b4405fd5990ef3f7738b578acfae3c902545a1eed896cb",
+      "arms": {
+        "revised": {
+          "seconds": 0.6007216790167149,
+          "projection": {
+            "payload": "b1117bcef40361a34d951d61de54dfbf62dcaef15c3092e47b4b247dd965f57e",
+            "allocations": "c8ab3b542f23e34b2b26212cfcb908e2dcafa4adc83b2caec67ca5e0de6d6c1d",
+            "views": "1021ef4b1b8efa0e9a275885a59e88061feb94bd9becfb56e2078849920be97b",
+            "abi": "ab50d55e9fb33f6c42e369a00a676d86e8e7ece57485931935244591a5d6d5b9",
+            "mechanisms": {
+              "sets": 22,
+              "waits": 21,
+              "PIPE_ALL": 0,
+              "named": {
+                "PIPE_M": 2
+              }
+            },
+            "status_attributes": [
+              {
+                "pto.insert_sync.buffer_generations": "unit",
+                "pto.insert_sync.effect_coverage": "\"complete\"",
+                "pto.insert_sync.generation_barriers_removed": "1 : i64",
+                "pto.insert_sync.generation_global_witnesses": "0 : i64",
+                "pto.insert_sync.generation_initial_pairs_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+                "pto.insert_sync.generation_publication_edges_removed": "1 : i64",
+                "pto.insert_sync.generation_publication_work": "13456 : i64",
+                "pto.insert_sync.generation_publications_advanced": "1 : i64",
+                "pto.insert_sync.generation_publications_guarded": "1 : i64",
+                "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+                "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+                "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+                "pto.insert_sync.lifecycle_channels": "4 : i64",
+                "pto.insert_sync.lifecycle_completion_pairs": "11 : i64",
+                "pto.insert_sync.lifecycle_completion_witnesses": "6 : i64",
+                "pto.insert_sync.lifecycle_completion_work": "12080 : i64",
+                "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+                "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+                "pto.insert_sync.lifecycle_retries": "0 : i64",
+                "pto.insert_sync.lifecycle_supplied_pairs": "144 : i64",
+                "pto.insert_sync.mmad_chain_targets": "0 : i64",
+                "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+                "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+              }
+            ]
+          },
+          "metrics": {
+            "scenarios": {
+              "0": {
+                "counts": {
+                  "pto.set_flag": 5,
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 2,
+                  "pto.tload": 2,
+                  "pto.wait_flag": 5
+                },
+                "scalar_counts": {
+                  "arith.constant": 16,
+                  "arith.index_cast": 1,
+                  "arith.muli": 6,
+                  "arith.addi": 3,
+                  "arith.maxsi": 2,
+                  "arith.cmpi": 2,
+                  "scf.if": 2,
+                  "scf.yield": 1,
+                  "scf.for": 1
+                },
+                "payload_sha256": "ee6019ed10530d2f035739803d4a0a65ad23339793c0b038acdf1feecd31914a",
+                "action_trace_sha256": "b76e088e20108bcfe49649a07d98435f9a3691ff2c3dff6b2fb810b170579b2d",
+                "scalar_steps": 54
+              },
+              "1": {
+                "counts": {
+                  "pto.set_flag": 21,
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 20,
+                  "pto.partition_view": 6,
+                  "pto.tload": 4,
+                  "pto.wait_flag": 21,
+                  "pto.textract": 8,
+                  "pto.tmatmul": 2,
+                  "pto.barrier": 2,
+                  "barrier:#pto.pipe<PIPE_M>:loop": 2,
+                  "pto.tmatmul.acc": 2,
+                  "pto.tstore": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 16,
+                  "arith.index_cast": 1,
+                  "arith.muli": 15,
+                  "arith.addi": 9,
+                  "arith.maxsi": 6,
+                  "arith.cmpi": 2,
+                  "scf.if": 2,
+                  "scf.yield": 2,
+                  "scf.for": 1
+                },
+                "payload_sha256": "ef9d376063802b9279e276a98286af8aef6a70e8def7a8ac1f68f36c1e846ade",
+                "action_trace_sha256": "9b52c84e985a5430d3b7fec845fd70e3c308cc28ec1cb68f76824a4ed0608d36",
+                "scalar_steps": 146
+              },
+              "2": {
+                "counts": {
+                  "pto.set_flag": 37,
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 38,
+                  "pto.partition_view": 10,
+                  "pto.tload": 6,
+                  "pto.wait_flag": 37,
+                  "pto.textract": 16,
+                  "pto.tmatmul": 4,
+                  "pto.barrier": 4,
+                  "barrier:#pto.pipe<PIPE_M>:loop": 4,
+                  "pto.tmatmul.acc": 4,
+                  "pto.tstore": 4
+                },
+                "scalar_counts": {
+                  "arith.constant": 16,
+                  "arith.index_cast": 1,
+                  "arith.muli": 24,
+                  "arith.addi": 15,
+                  "arith.maxsi": 10,
+                  "arith.cmpi": 2,
+                  "scf.if": 2,
+                  "scf.yield": 3,
+                  "scf.for": 1
+                },
+                "payload_sha256": "9a75b640956b690770149d04ecb4437449f13bd47597cf6e7d0283c03f27fe95",
+                "action_trace_sha256": "79586c8a55e5045f62c6c08a4708b24c9a22fb10577c0fd2b89e39b87fa35266",
+                "scalar_steps": 238
+              },
+              "16": {
+                "counts": {
+                  "pto.set_flag": 261,
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 290,
+                  "pto.partition_view": 66,
+                  "pto.tload": 34,
+                  "pto.wait_flag": 261,
+                  "pto.textract": 128,
+                  "pto.tmatmul": 32,
+                  "pto.barrier": 32,
+                  "barrier:#pto.pipe<PIPE_M>:loop": 32,
+                  "pto.tmatmul.acc": 32,
+                  "pto.tstore": 32
+                },
+                "scalar_counts": {
+                  "arith.constant": 16,
+                  "arith.index_cast": 1,
+                  "arith.muli": 150,
+                  "arith.addi": 99,
+                  "arith.maxsi": 66,
+                  "arith.cmpi": 2,
+                  "scf.if": 2,
+                  "scf.yield": 17,
+                  "scf.for": 1
+                },
+                "payload_sha256": "f94f5d649596f9ab40e5f1e136f4df7962bc19198b6f53a82b16853cbb69aa21",
+                "action_trace_sha256": "0a8aef32433fcc13cb2247f41750a163902b36a30033e18a0fb87c793e03f52e",
+                "scalar_steps": 1526
+              }
+            }
+          }
+        },
+        "refiner": {
+          "seconds": 0.6179534300172236,
+          "projection": {
+            "payload": "b1117bcef40361a34d951d61de54dfbf62dcaef15c3092e47b4b247dd965f57e",
+            "allocations": "c8ab3b542f23e34b2b26212cfcb908e2dcafa4adc83b2caec67ca5e0de6d6c1d",
+            "views": "1021ef4b1b8efa0e9a275885a59e88061feb94bd9becfb56e2078849920be97b",
+            "abi": "ab50d55e9fb33f6c42e369a00a676d86e8e7ece57485931935244591a5d6d5b9",
+            "mechanisms": {
+              "sets": 22,
+              "waits": 21,
+              "PIPE_ALL": 0,
+              "named": {
+                "PIPE_M": 2
+              }
+            },
+            "status_attributes": [
+              {
+                "pto.insert_sync.buffer_generations": "unit",
+                "pto.insert_sync.effect_coverage": "\"complete\"",
+                "pto.insert_sync.generation_barriers_removed": "1 : i64",
+                "pto.insert_sync.generation_global_witnesses": "0 : i64",
+                "pto.insert_sync.generation_initial_pairs_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+                "pto.insert_sync.generation_publication_edges_removed": "1 : i64",
+                "pto.insert_sync.generation_publication_work": "13456 : i64",
+                "pto.insert_sync.generation_publications_advanced": "1 : i64",
+                "pto.insert_sync.generation_publications_guarded": "1 : i64",
+                "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+                "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+                "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+                "pto.insert_sync.handoff_advanced": "0 : i64",
+                "pto.insert_sync.handoff_delayed": "0 : i64",
+                "pto.insert_sync.handoff_reason": "\"retained unproved candidate: unproved requirement 4294967295 -> 4294967295; event node 137\"",
+                "pto.insert_sync.handoff_sets_removed": "0 : i64",
+                "pto.insert_sync.handoff_split": "0 : i64",
+                "pto.insert_sync.handoff_waits_removed": "0 : i64",
+                "pto.insert_sync.handoff_work": "188207 : i64",
+                "pto.insert_sync.lifecycle_channels": "4 : i64",
+                "pto.insert_sync.lifecycle_completion_pairs": "11 : i64",
+                "pto.insert_sync.lifecycle_completion_witnesses": "6 : i64",
+                "pto.insert_sync.lifecycle_completion_work": "12080 : i64",
+                "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+                "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+                "pto.insert_sync.lifecycle_retries": "0 : i64",
+                "pto.insert_sync.lifecycle_supplied_pairs": "144 : i64",
+                "pto.insert_sync.mmad_chain_targets": "0 : i64",
+                "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+                "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+              }
+            ]
+          },
+          "metrics": {
+            "scenarios": {
+              "0": {
+                "counts": {
+                  "pto.set_flag": 5,
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 2,
+                  "pto.tload": 2,
+                  "pto.wait_flag": 5
+                },
+                "scalar_counts": {
+                  "arith.constant": 16,
+                  "arith.index_cast": 1,
+                  "arith.muli": 6,
+                  "arith.addi": 3,
+                  "arith.maxsi": 2,
+                  "arith.cmpi": 2,
+                  "scf.if": 2,
+                  "scf.yield": 1,
+                  "scf.for": 1
+                },
+                "payload_sha256": "ee6019ed10530d2f035739803d4a0a65ad23339793c0b038acdf1feecd31914a",
+                "action_trace_sha256": "b76e088e20108bcfe49649a07d98435f9a3691ff2c3dff6b2fb810b170579b2d",
+                "scalar_steps": 54
+              },
+              "1": {
+                "counts": {
+                  "pto.set_flag": 21,
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 20,
+                  "pto.partition_view": 6,
+                  "pto.tload": 4,
+                  "pto.wait_flag": 21,
+                  "pto.textract": 8,
+                  "pto.tmatmul": 2,
+                  "pto.barrier": 2,
+                  "barrier:#pto.pipe<PIPE_M>:loop": 2,
+                  "pto.tmatmul.acc": 2,
+                  "pto.tstore": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 16,
+                  "arith.index_cast": 1,
+                  "arith.muli": 15,
+                  "arith.addi": 9,
+                  "arith.maxsi": 6,
+                  "arith.cmpi": 2,
+                  "scf.if": 2,
+                  "scf.yield": 2,
+                  "scf.for": 1
+                },
+                "payload_sha256": "ef9d376063802b9279e276a98286af8aef6a70e8def7a8ac1f68f36c1e846ade",
+                "action_trace_sha256": "9b52c84e985a5430d3b7fec845fd70e3c308cc28ec1cb68f76824a4ed0608d36",
+                "scalar_steps": 146
+              },
+              "2": {
+                "counts": {
+                  "pto.set_flag": 37,
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 38,
+                  "pto.partition_view": 10,
+                  "pto.tload": 6,
+                  "pto.wait_flag": 37,
+                  "pto.textract": 16,
+                  "pto.tmatmul": 4,
+                  "pto.barrier": 4,
+                  "barrier:#pto.pipe<PIPE_M>:loop": 4,
+                  "pto.tmatmul.acc": 4,
+                  "pto.tstore": 4
+                },
+                "scalar_counts": {
+                  "arith.constant": 16,
+                  "arith.index_cast": 1,
+                  "arith.muli": 24,
+                  "arith.addi": 15,
+                  "arith.maxsi": 10,
+                  "arith.cmpi": 2,
+                  "scf.if": 2,
+                  "scf.yield": 3,
+                  "scf.for": 1
+                },
+                "payload_sha256": "9a75b640956b690770149d04ecb4437449f13bd47597cf6e7d0283c03f27fe95",
+                "action_trace_sha256": "79586c8a55e5045f62c6c08a4708b24c9a22fb10577c0fd2b89e39b87fa35266",
+                "scalar_steps": 238
+              },
+              "16": {
+                "counts": {
+                  "pto.set_flag": 261,
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 290,
+                  "pto.partition_view": 66,
+                  "pto.tload": 34,
+                  "pto.wait_flag": 261,
+                  "pto.textract": 128,
+                  "pto.tmatmul": 32,
+                  "pto.barrier": 32,
+                  "barrier:#pto.pipe<PIPE_M>:loop": 32,
+                  "pto.tmatmul.acc": 32,
+                  "pto.tstore": 32
+                },
+                "scalar_counts": {
+                  "arith.constant": 16,
+                  "arith.index_cast": 1,
+                  "arith.muli": 150,
+                  "arith.addi": 99,
+                  "arith.maxsi": 66,
+                  "arith.cmpi": 2,
+                  "scf.if": 2,
+                  "scf.yield": 17,
+                  "scf.for": 1
+                },
+                "payload_sha256": "f94f5d649596f9ab40e5f1e136f4df7962bc19198b6f53a82b16853cbb69aa21",
+                "action_trace_sha256": "0a8aef32433fcc13cb2247f41750a163902b36a30033e18a0fb87c793e03f52e",
+                "scalar_steps": 1526
+              }
+            }
+          }
+        },
+        "logical": {
+          "seconds": 4.2049625079962425,
+          "projection": {
+            "payload": "b1117bcef40361a34d951d61de54dfbf62dcaef15c3092e47b4b247dd965f57e",
+            "allocations": "c8ab3b542f23e34b2b26212cfcb908e2dcafa4adc83b2caec67ca5e0de6d6c1d",
+            "views": "1021ef4b1b8efa0e9a275885a59e88061feb94bd9becfb56e2078849920be97b",
+            "abi": "ab50d55e9fb33f6c42e369a00a676d86e8e7ece57485931935244591a5d6d5b9",
+            "mechanisms": {
+              "sets": 19,
+              "waits": 20,
+              "PIPE_ALL": 0,
+              "named": {
+                "PIPE_M": 2
+              }
+            },
+            "status_attributes": [
+              {
+                "pto.insert_sync.logical_reason": "\"constructed and reconstructed occurrence handoffs\"",
+                "pto.insert_sync.logical_requirements": "150 : i64",
+                "pto.insert_sync.logical_status": "\"applied\"",
+                "pto.insert_sync.logical_streams": "19 : i64",
+                "pto.insert_sync.logical_work": "43247211 : i64",
+                "pto.insert_sync.producer": "\"logical\"",
+                "pto.insert_sync.requested_planner": "\"logical\""
+              }
+            ]
+          },
+          "metrics": {
+            "scenarios": {
+              "0": {
+                "counts": {
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 2,
+                  "pto.tload": 2,
+                  "pto.set_flag": 1,
+                  "pto.wait_flag": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 18,
+                  "arith.index_cast": 1,
+                  "arith.muli": 6,
+                  "arith.addi": 3,
+                  "arith.maxsi": 2,
+                  "arith.cmpi": 5,
+                  "scf.if": 5,
+                  "arith.xori": 2,
+                  "scf.yield": 2,
+                  "scf.for": 1
+                },
+                "payload_sha256": "ee6019ed10530d2f035739803d4a0a65ad23339793c0b038acdf1feecd31914a",
+                "action_trace_sha256": "2c58a1f7c87a154b594903cb0b376b23b0c200bb62d7c8bb4b39ecfbf3337920",
+                "scalar_steps": 57
+              },
+              "1": {
+                "counts": {
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 20,
+                  "pto.partition_view": 6,
+                  "pto.tload": 4,
+                  "pto.set_flag": 15,
+                  "pto.wait_flag": 15,
+                  "pto.textract": 8,
+                  "pto.tmatmul": 2,
+                  "pto.barrier": 2,
+                  "barrier:#pto.pipe<PIPE_M>:loop": 2,
+                  "pto.tmatmul.acc": 2,
+                  "pto.tstore": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 25,
+                  "arith.index_cast": 1,
+                  "arith.muli": 15,
+                  "arith.addi": 13,
+                  "arith.maxsi": 6,
+                  "arith.cmpi": 14,
+                  "scf.if": 14,
+                  "scf.yield": 6,
+                  "arith.xori": 9,
+                  "scf.for": 1
+                },
+                "payload_sha256": "ef9d376063802b9279e276a98286af8aef6a70e8def7a8ac1f68f36c1e846ade",
+                "action_trace_sha256": "2c4e37134f353618c080b1b4f4d5bf712378e2e9cdc61d666b5d70e3186aaa6f",
+                "scalar_steps": 184
+              },
+              "2": {
+                "counts": {
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 38,
+                  "pto.partition_view": 10,
+                  "pto.tload": 6,
+                  "pto.set_flag": 31,
+                  "pto.wait_flag": 31,
+                  "pto.textract": 16,
+                  "pto.tmatmul": 4,
+                  "pto.barrier": 4,
+                  "barrier:#pto.pipe<PIPE_M>:loop": 4,
+                  "pto.tmatmul.acc": 4,
+                  "pto.tstore": 4
+                },
+                "scalar_counts": {
+                  "arith.constant": 32,
+                  "arith.index_cast": 1,
+                  "arith.muli": 24,
+                  "arith.addi": 23,
+                  "arith.maxsi": 10,
+                  "arith.cmpi": 23,
+                  "scf.if": 23,
+                  "scf.yield": 14,
+                  "arith.xori": 16,
+                  "scf.for": 1
+                },
+                "payload_sha256": "9a75b640956b690770149d04ecb4437449f13bd47597cf6e7d0283c03f27fe95",
+                "action_trace_sha256": "914ee9e130a87c0deefc4b91691f570ffc94f28b4f7e4b8f70be14fea4b15769",
+                "scalar_steps": 319
+              },
+              "16": {
+                "counts": {
+                  "pto.make_tensor_view": 3,
+                  "pto.alloc_tile": 290,
+                  "pto.partition_view": 66,
+                  "pto.tload": 34,
+                  "pto.set_flag": 255,
+                  "pto.wait_flag": 255,
+                  "pto.textract": 128,
+                  "pto.tmatmul": 32,
+                  "pto.barrier": 32,
+                  "barrier:#pto.pipe<PIPE_M>:loop": 32,
+                  "pto.tmatmul.acc": 32,
+                  "pto.tstore": 32
+                },
+                "scalar_counts": {
+                  "arith.constant": 130,
+                  "arith.index_cast": 1,
+                  "arith.muli": 150,
+                  "arith.addi": 163,
+                  "arith.maxsi": 66,
+                  "arith.cmpi": 149,
+                  "scf.if": 149,
+                  "scf.yield": 126,
+                  "arith.xori": 114,
+                  "scf.for": 1
+                },
+                "payload_sha256": "f94f5d649596f9ab40e5f1e136f4df7962bc19198b6f53a82b16853cbb69aa21",
+                "action_trace_sha256": "5689e11dfed1e7046b6fd41bf7d5982a7fd96d9db1faf6bbd1ae1b3e81a269ce",
+                "scalar_steps": 2209
+              }
+            }
+          }
+        }
+      },
+      "boundaries": [
+        {
+          "scenario": "0",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "1",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "2",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "16",
+          "status": "checked",
+          "weaker_prefixes": []
+        }
+      ],
+      "first_panel_readiness": [
+        {
+          "scenario": "1",
+          "first_preload": 0,
+          "independent_preload": 1,
+          "first_reader": 3,
+          "acquired_mte2_prefix": 0
+        },
+        {
+          "scenario": "2",
+          "first_preload": 0,
+          "independent_preload": 1,
+          "first_reader": 3,
+          "acquired_mte2_prefix": 0
+        },
+        {
+          "scenario": "16",
+          "first_preload": 0,
+          "independent_preload": 1,
+          "first_reader": 3,
+          "acquired_mte2_prefix": 0
+        }
+      ],
+      "cpp_seconds": 3.9591226050106343,
+      "campaign": "acceptance43"
+    },
+    {
+      "case": "online_softmax",
+      "source_sha256": "1d67f50a2b7ae1225093444ca010ca46c9d6b726ce0f8f03c529e51889a7c534",
+      "arms": {
+        "revised": {
+          "seconds": 0.8594122630020138,
+          "projection": {
+            "payload": "3dd3271cb24b0b24b4d89fef4cdf04fbf9b9188a47fdfb83c17ac9e06665b656",
+            "allocations": "48de53d0536b92c9ddabc65aa570c93418887211db13536699f4c2074b59a33c",
+            "views": "17ef99dd151f6233a886ea5bfc458e2a0612c9b4d67560b918faf78b21070eb6",
+            "abi": "bd298bf9440176be38348dd0475074ec747c666ecc5e82198c41c59ed29daf60",
+            "mechanisms": {
+              "sets": 20,
+              "waits": 20,
+              "PIPE_ALL": 1,
+              "named": {
+                "PIPE_V": 20
+              }
+            },
+            "status_attributes": [
+              {
+                "pto.insert_sync.buffer_generations": "unit",
+                "pto.insert_sync.effect_coverage": "\"complete\"",
+                "pto.insert_sync.generation_barriers_removed": "0 : i64",
+                "pto.insert_sync.generation_global_witnesses": "0 : i64",
+                "pto.insert_sync.generation_initial_pairs_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+                "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+                "pto.insert_sync.generation_publication_work": "62861 : i64",
+                "pto.insert_sync.generation_publications_advanced": "0 : i64",
+                "pto.insert_sync.generation_publications_guarded": "0 : i64",
+                "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+                "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_residual_keys_shared": "3 : i64",
+                "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+                "pto.insert_sync.lifecycle_channels": "2 : i64",
+                "pto.insert_sync.lifecycle_completion_pairs": "0 : i64",
+                "pto.insert_sync.lifecycle_completion_witnesses": "0 : i64",
+                "pto.insert_sync.lifecycle_completion_work": "20216 : i64",
+                "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+                "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+                "pto.insert_sync.lifecycle_retries": "0 : i64",
+                "pto.insert_sync.lifecycle_supplied_pairs": "27 : i64",
+                "pto.insert_sync.mmad_chain_targets": "0 : i64",
+                "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+                "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+              }
+            ]
+          },
+          "metrics": {
+            "scenarios": {
+              "0": {
+                "counts": {
+                  "pto.set_flag": 8,
+                  "pto.make_tensor_view": 4,
+                  "pto.alloc_tile": 12,
+                  "pto.partition_view": 8,
+                  "pto.tload": 6,
+                  "pto.wait_flag": 8,
+                  "pto.barrier": 4,
+                  "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                  "pto.trowexpanddiv": 2,
+                  "pto.tcvt": 2,
+                  "pto.tstore": 2,
+                  "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 26,
+                  "arith.index_cast": 1,
+                  "arith.muli": 12,
+                  "arith.addi": 1,
+                  "arith.maxsi": 8,
+                  "scf.for": 1
+                },
+                "payload_sha256": "97d37bda021bb8fae0a5f77283feed36f37d52e2a15db37346062ef3f088ddae",
+                "action_trace_sha256": "ec673a7fdfc2469eaa2d44b28a6decfdebca60ff999410aa801631c22581b4bd",
+                "scalar_steps": 106
+              },
+              "1": {
+                "counts": {
+                  "pto.set_flag": 8,
+                  "pto.make_tensor_view": 4,
+                  "pto.alloc_tile": 12,
+                  "pto.partition_view": 8,
+                  "pto.tload": 6,
+                  "pto.wait_flag": 8,
+                  "pto.barrier": 4,
+                  "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                  "pto.trowexpanddiv": 2,
+                  "pto.tcvt": 2,
+                  "pto.tstore": 2,
+                  "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 26,
+                  "arith.index_cast": 1,
+                  "arith.muli": 12,
+                  "arith.addi": 1,
+                  "arith.maxsi": 8,
+                  "scf.for": 1
+                },
+                "payload_sha256": "97d37bda021bb8fae0a5f77283feed36f37d52e2a15db37346062ef3f088ddae",
+                "action_trace_sha256": "ec673a7fdfc2469eaa2d44b28a6decfdebca60ff999410aa801631c22581b4bd",
+                "scalar_steps": 106
+              },
+              "2": {
+                "counts": {
+                  "pto.set_flag": 20,
+                  "pto.make_tensor_view": 4,
+                  "pto.alloc_tile": 90,
+                  "pto.partition_view": 14,
+                  "pto.tload": 12,
+                  "pto.wait_flag": 20,
+                  "pto.barrier": 21,
+                  "barrier:#pto.pipe<PIPE_V>:loop": 17,
+                  "pto.tmax": 2,
+                  "pto.tsub": 4,
+                  "pto.texp": 4,
+                  "pto.tmul": 4,
+                  "pto.tadd": 4,
+                  "pto.trowexpandmul": 4,
+                  "pto.tmov": 4,
+                  "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                  "pto.trowexpanddiv": 2,
+                  "pto.tcvt": 2,
+                  "pto.tstore": 2,
+                  "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 26,
+                  "arith.index_cast": 1,
+                  "arith.muli": 24,
+                  "arith.addi": 7,
+                  "arith.maxsi": 14,
+                  "scf.for": 1,
+                  "scf.yield": 1
+                },
+                "payload_sha256": "a4b7cb2fb6e4d3f48e5bbb30c2dd7413845955012818ffa8603ab66cde687f0d",
+                "action_trace_sha256": "88ad2976d1f4c56e747e2c825759fb449211a11362818b16d9ecfc2c5150e465",
+                "scalar_steps": 288
+              },
+              "16": {
+                "counts": {
+                  "pto.set_flag": 188,
+                  "pto.make_tensor_view": 4,
+                  "pto.alloc_tile": 1182,
+                  "pto.partition_view": 98,
+                  "pto.tload": 96,
+                  "pto.wait_flag": 188,
+                  "pto.barrier": 259,
+                  "barrier:#pto.pipe<PIPE_V>:loop": 255,
+                  "pto.tmax": 30,
+                  "pto.tsub": 60,
+                  "pto.texp": 60,
+                  "pto.tmul": 60,
+                  "pto.tadd": 60,
+                  "pto.trowexpandmul": 60,
+                  "pto.tmov": 60,
+                  "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                  "pto.trowexpanddiv": 2,
+                  "pto.tcvt": 2,
+                  "pto.tstore": 2,
+                  "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 26,
+                  "arith.index_cast": 1,
+                  "arith.muli": 192,
+                  "arith.addi": 91,
+                  "arith.maxsi": 98,
+                  "scf.for": 1,
+                  "scf.yield": 15
+                },
+                "payload_sha256": "9c0c5b3318f91ceb17e9b32ff8df88b1ace83f19bdb0a5544c1bf8ff355ec083",
+                "action_trace_sha256": "8a62103edb4ead2f0635865e09b4a50582ad680a5a03f5a53a2df0e556123095",
+                "scalar_steps": 2836
+              }
+            }
+          }
+        },
+        "refiner": {
+          "seconds": 0.5176757799927145,
+          "projection": {
+            "payload": "3dd3271cb24b0b24b4d89fef4cdf04fbf9b9188a47fdfb83c17ac9e06665b656",
+            "allocations": "48de53d0536b92c9ddabc65aa570c93418887211db13536699f4c2074b59a33c",
+            "views": "17ef99dd151f6233a886ea5bfc458e2a0612c9b4d67560b918faf78b21070eb6",
+            "abi": "bd298bf9440176be38348dd0475074ec747c666ecc5e82198c41c59ed29daf60",
+            "mechanisms": {
+              "sets": 12,
+              "waits": 12,
+              "PIPE_ALL": 1,
+              "named": {
+                "PIPE_V": 20
+              }
+            },
+            "status_attributes": [
+              {
+                "pto.insert_sync.buffer_generations": "unit",
+                "pto.insert_sync.effect_coverage": "\"complete\"",
+                "pto.insert_sync.generation_barriers_removed": "0 : i64",
+                "pto.insert_sync.generation_global_witnesses": "0 : i64",
+                "pto.insert_sync.generation_initial_pairs_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+                "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+                "pto.insert_sync.generation_publication_work": "62861 : i64",
+                "pto.insert_sync.generation_publications_advanced": "0 : i64",
+                "pto.insert_sync.generation_publications_guarded": "0 : i64",
+                "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+                "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_residual_keys_shared": "3 : i64",
+                "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+                "pto.insert_sync.handoff_advanced": "0 : i64",
+                "pto.insert_sync.handoff_delayed": "0 : i64",
+                "pto.insert_sync.handoff_reason": "\"retained unproved candidate: unproved requirement 22 -> 8; event node 4294967295\"",
+                "pto.insert_sync.handoff_sets_removed": "8 : i64",
+                "pto.insert_sync.handoff_split": "0 : i64",
+                "pto.insert_sync.handoff_waits_removed": "8 : i64",
+                "pto.insert_sync.handoff_work": "1480185 : i64",
+                "pto.insert_sync.lifecycle_channels": "2 : i64",
+                "pto.insert_sync.lifecycle_completion_pairs": "0 : i64",
+                "pto.insert_sync.lifecycle_completion_witnesses": "0 : i64",
+                "pto.insert_sync.lifecycle_completion_work": "20216 : i64",
+                "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+                "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+                "pto.insert_sync.lifecycle_retries": "0 : i64",
+                "pto.insert_sync.lifecycle_supplied_pairs": "27 : i64",
+                "pto.insert_sync.mmad_chain_targets": "0 : i64",
+                "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+                "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+              }
+            ]
+          },
+          "metrics": {
+            "scenarios": {
+              "0": {
+                "counts": {
+                  "pto.make_tensor_view": 4,
+                  "pto.alloc_tile": 12,
+                  "pto.partition_view": 8,
+                  "pto.set_flag": 6,
+                  "pto.tload": 6,
+                  "pto.wait_flag": 6,
+                  "pto.barrier": 4,
+                  "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                  "pto.trowexpanddiv": 2,
+                  "pto.tcvt": 2,
+                  "pto.tstore": 2,
+                  "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 26,
+                  "arith.index_cast": 1,
+                  "arith.muli": 12,
+                  "arith.addi": 1,
+                  "arith.maxsi": 8,
+                  "scf.for": 1
+                },
+                "payload_sha256": "97d37bda021bb8fae0a5f77283feed36f37d52e2a15db37346062ef3f088ddae",
+                "action_trace_sha256": "cc22b36bfaa576ae1281b78724834da242b16eb48c9f68516426e6b8bdb80118",
+                "scalar_steps": 102
+              },
+              "1": {
+                "counts": {
+                  "pto.make_tensor_view": 4,
+                  "pto.alloc_tile": 12,
+                  "pto.partition_view": 8,
+                  "pto.set_flag": 6,
+                  "pto.tload": 6,
+                  "pto.wait_flag": 6,
+                  "pto.barrier": 4,
+                  "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                  "pto.trowexpanddiv": 2,
+                  "pto.tcvt": 2,
+                  "pto.tstore": 2,
+                  "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 26,
+                  "arith.index_cast": 1,
+                  "arith.muli": 12,
+                  "arith.addi": 1,
+                  "arith.maxsi": 8,
+                  "scf.for": 1
+                },
+                "payload_sha256": "97d37bda021bb8fae0a5f77283feed36f37d52e2a15db37346062ef3f088ddae",
+                "action_trace_sha256": "cc22b36bfaa576ae1281b78724834da242b16eb48c9f68516426e6b8bdb80118",
+                "scalar_steps": 102
+              },
+              "2": {
+                "counts": {
+                  "pto.make_tensor_view": 4,
+                  "pto.alloc_tile": 90,
+                  "pto.partition_view": 14,
+                  "pto.set_flag": 12,
+                  "pto.tload": 12,
+                  "pto.wait_flag": 12,
+                  "pto.barrier": 21,
+                  "barrier:#pto.pipe<PIPE_V>:loop": 17,
+                  "pto.tmax": 2,
+                  "pto.tsub": 4,
+                  "pto.texp": 4,
+                  "pto.tmul": 4,
+                  "pto.tadd": 4,
+                  "pto.trowexpandmul": 4,
+                  "pto.tmov": 4,
+                  "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                  "pto.trowexpanddiv": 2,
+                  "pto.tcvt": 2,
+                  "pto.tstore": 2,
+                  "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 26,
+                  "arith.index_cast": 1,
+                  "arith.muli": 24,
+                  "arith.addi": 7,
+                  "arith.maxsi": 14,
+                  "scf.for": 1,
+                  "scf.yield": 1
+                },
+                "payload_sha256": "a4b7cb2fb6e4d3f48e5bbb30c2dd7413845955012818ffa8603ab66cde687f0d",
+                "action_trace_sha256": "1f4dff29d9d7727d74d0c83ada0833ebc29f6b3ad36c50e933b19f6d5e37e2fd",
+                "scalar_steps": 272
+              },
+              "16": {
+                "counts": {
+                  "pto.make_tensor_view": 4,
+                  "pto.alloc_tile": 1182,
+                  "pto.partition_view": 98,
+                  "pto.set_flag": 96,
+                  "pto.tload": 96,
+                  "pto.wait_flag": 96,
+                  "pto.barrier": 259,
+                  "barrier:#pto.pipe<PIPE_V>:loop": 255,
+                  "pto.tmax": 30,
+                  "pto.tsub": 60,
+                  "pto.texp": 60,
+                  "pto.tmul": 60,
+                  "pto.tadd": 60,
+                  "pto.trowexpandmul": 60,
+                  "pto.tmov": 60,
+                  "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                  "pto.trowexpanddiv": 2,
+                  "pto.tcvt": 2,
+                  "pto.tstore": 2,
+                  "barrier:#pto.pipe<PIPE_ALL>:outside-loop": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 26,
+                  "arith.index_cast": 1,
+                  "arith.muli": 192,
+                  "arith.addi": 91,
+                  "arith.maxsi": 98,
+                  "scf.for": 1,
+                  "scf.yield": 15
+                },
+                "payload_sha256": "9c0c5b3318f91ceb17e9b32ff8df88b1ace83f19bdb0a5544c1bf8ff355ec083",
+                "action_trace_sha256": "74a91d109b40619612d7755d1e38b4c34c097a5ff432d108db950be7f2898733",
+                "scalar_steps": 2652
+              }
+            }
+          }
+        },
+        "logical": {
+          "seconds": 9.333731596998405,
+          "projection": {
+            "payload": "3dd3271cb24b0b24b4d89fef4cdf04fbf9b9188a47fdfb83c17ac9e06665b656",
+            "allocations": "48de53d0536b92c9ddabc65aa570c93418887211db13536699f4c2074b59a33c",
+            "views": "17ef99dd151f6233a886ea5bfc458e2a0612c9b4d67560b918faf78b21070eb6",
+            "abi": "bd298bf9440176be38348dd0475074ec747c666ecc5e82198c41c59ed29daf60",
+            "mechanisms": {
+              "sets": 13,
+              "waits": 13,
+              "PIPE_ALL": 0,
+              "named": {
+                "PIPE_V": 20
+              }
+            },
+            "status_attributes": [
+              {
+                "pto.insert_sync.logical_reason": "\"constructed and reconstructed occurrence handoffs\"",
+                "pto.insert_sync.logical_requirements": "484 : i64",
+                "pto.insert_sync.logical_status": "\"applied\"",
+                "pto.insert_sync.logical_streams": "13 : i64",
+                "pto.insert_sync.logical_work": "133409415 : i64",
+                "pto.insert_sync.producer": "\"logical\"",
+                "pto.insert_sync.requested_planner": "\"logical\""
+              }
+            ]
+          },
+          "metrics": {
+            "scenarios": {
+              "0": {
+                "counts": {
+                  "pto.make_tensor_view": 4,
+                  "pto.alloc_tile": 12,
+                  "pto.partition_view": 8,
+                  "pto.tload": 6,
+                  "pto.set_flag": 7,
+                  "pto.wait_flag": 7,
+                  "pto.trowexpanddiv": 2,
+                  "pto.barrier": 2,
+                  "barrier:#pto.pipe<PIPE_V>:outside-loop": 2,
+                  "pto.tcvt": 2,
+                  "pto.tstore": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 30,
+                  "arith.index_cast": 1,
+                  "arith.muli": 12,
+                  "arith.addi": 1,
+                  "arith.maxsi": 8,
+                  "arith.cmpi": 5,
+                  "arith.xori": 4,
+                  "scf.if": 5,
+                  "scf.yield": 4,
+                  "scf.for": 1
+                },
+                "payload_sha256": "97d37bda021bb8fae0a5f77283feed36f37d52e2a15db37346062ef3f088ddae",
+                "action_trace_sha256": "ddf21b554798e0891334ed3e01d9e4b11576ab6c126b22d579dc59ec3fdd72e3",
+                "scalar_steps": 124
+              },
+              "1": {
+                "counts": {
+                  "pto.make_tensor_view": 4,
+                  "pto.alloc_tile": 12,
+                  "pto.partition_view": 8,
+                  "pto.tload": 6,
+                  "pto.set_flag": 7,
+                  "pto.wait_flag": 7,
+                  "pto.trowexpanddiv": 2,
+                  "pto.barrier": 2,
+                  "barrier:#pto.pipe<PIPE_V>:outside-loop": 2,
+                  "pto.tcvt": 2,
+                  "pto.tstore": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 30,
+                  "arith.index_cast": 1,
+                  "arith.muli": 12,
+                  "arith.addi": 1,
+                  "arith.maxsi": 8,
+                  "arith.cmpi": 5,
+                  "arith.xori": 4,
+                  "scf.if": 5,
+                  "scf.yield": 4,
+                  "scf.for": 1
+                },
+                "payload_sha256": "97d37bda021bb8fae0a5f77283feed36f37d52e2a15db37346062ef3f088ddae",
+                "action_trace_sha256": "ddf21b554798e0891334ed3e01d9e4b11576ab6c126b22d579dc59ec3fdd72e3",
+                "scalar_steps": 124
+              },
+              "2": {
+                "counts": {
+                  "pto.make_tensor_view": 4,
+                  "pto.alloc_tile": 90,
+                  "pto.partition_view": 14,
+                  "pto.tload": 12,
+                  "pto.set_flag": 10,
+                  "pto.wait_flag": 10,
+                  "pto.tmax": 2,
+                  "pto.barrier": 19,
+                  "barrier:#pto.pipe<PIPE_V>:loop": 16,
+                  "pto.tsub": 4,
+                  "pto.texp": 4,
+                  "pto.tmul": 4,
+                  "pto.tadd": 4,
+                  "pto.trowexpandmul": 4,
+                  "pto.tmov": 4,
+                  "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                  "pto.trowexpanddiv": 2,
+                  "pto.tcvt": 2,
+                  "pto.tstore": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 33,
+                  "arith.index_cast": 1,
+                  "arith.muli": 24,
+                  "arith.addi": 8,
+                  "arith.maxsi": 14,
+                  "arith.cmpi": 8,
+                  "arith.xori": 7,
+                  "scf.if": 8,
+                  "scf.for": 1,
+                  "scf.yield": 2
+                },
+                "payload_sha256": "a4b7cb2fb6e4d3f48e5bbb30c2dd7413845955012818ffa8603ab66cde687f0d",
+                "action_trace_sha256": "c0db8aede1d7f37edb378accae7d2c494ac9bc14f6b7c76c94be6899d80d997f",
+                "scalar_steps": 298
+              },
+              "16": {
+                "counts": {
+                  "pto.make_tensor_view": 4,
+                  "pto.alloc_tile": 1182,
+                  "pto.partition_view": 98,
+                  "pto.tload": 96,
+                  "pto.set_flag": 94,
+                  "pto.wait_flag": 94,
+                  "pto.tmax": 30,
+                  "pto.barrier": 257,
+                  "barrier:#pto.pipe<PIPE_V>:loop": 254,
+                  "pto.tsub": 60,
+                  "pto.texp": 60,
+                  "pto.tmul": 60,
+                  "pto.tadd": 60,
+                  "pto.trowexpandmul": 60,
+                  "pto.tmov": 60,
+                  "barrier:#pto.pipe<PIPE_V>:outside-loop": 3,
+                  "pto.trowexpanddiv": 2,
+                  "pto.tcvt": 2,
+                  "pto.tstore": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 75,
+                  "arith.index_cast": 1,
+                  "arith.muli": 192,
+                  "arith.addi": 106,
+                  "arith.maxsi": 98,
+                  "arith.cmpi": 50,
+                  "arith.xori": 49,
+                  "scf.if": 50,
+                  "scf.for": 1,
+                  "scf.yield": 58
+                },
+                "payload_sha256": "9c0c5b3318f91ceb17e9b32ff8df88b1ace83f19bdb0a5544c1bf8ff355ec083",
+                "action_trace_sha256": "2370332d0fe86aff13963f92d5334b97a72066b921b2f5d3ba3feeed4608c00e",
+                "scalar_steps": 2902
+              }
+            }
+          }
+        }
+      },
+      "boundaries": [
+        {
+          "scenario": "0",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "1",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "2",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "16",
+          "status": "checked",
+          "weaker_prefixes": []
+        }
+      ],
+      "cpp_seconds": 9.29047852900112,
+      "campaign": "acceptance44"
+    },
+    {
+      "case": "one_buffer",
+      "source_sha256": "600c7fa8959c5cfb97660a9a54fb585905434bc332e73ed709274f4dd7700011",
+      "arms": {
+        "revised": {
+          "seconds": 0.42049546900670975,
+          "projection": {
+            "payload": "62fceef97721e6fdf65df6973ee55f422d986672660cc57476dc46d49f286ce5",
+            "allocations": "5fe9e59ffbddb91ff82b5b9578f2e145667a9b792f05e1b8c99dd0525c33a20f",
+            "views": "299889a13906da02c5f1db789817eec4711ff82eb43f230b3a14c8ee1a52d326",
+            "abi": "af4ebc14a03161a082f18d62ef6bc08c3a72ddff7e6a19538189bf9b1dbbee8c",
+            "mechanisms": {
+              "sets": 6,
+              "waits": 6,
+              "PIPE_ALL": 0,
+              "named": {}
+            },
+            "status_attributes": [
+              {
+                "pto.insert_sync.buffer_generations": "unit",
+                "pto.insert_sync.effect_coverage": "\"complete\"",
+                "pto.insert_sync.generation_barriers_removed": "1 : i64",
+                "pto.insert_sync.generation_global_witnesses": "0 : i64",
+                "pto.insert_sync.generation_initial_pairs_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+                "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+                "pto.insert_sync.generation_publication_work": "0 : i64",
+                "pto.insert_sync.generation_publications_advanced": "0 : i64",
+                "pto.insert_sync.generation_publications_guarded": "0 : i64",
+                "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+                "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+                "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+                "pto.insert_sync.lifecycle_channels": "2 : i64",
+                "pto.insert_sync.lifecycle_completion_pairs": "1 : i64",
+                "pto.insert_sync.lifecycle_completion_witnesses": "1 : i64",
+                "pto.insert_sync.lifecycle_completion_work": "3346 : i64",
+                "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+                "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+                "pto.insert_sync.lifecycle_retries": "0 : i64",
+                "pto.insert_sync.lifecycle_supplied_pairs": "11 : i64",
+                "pto.insert_sync.mmad_chain_targets": "0 : i64",
+                "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+                "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+              }
+            ]
+          },
+          "metrics": {
+            "scenarios": {
+              "trips_0": {
+                "counts": {
+                  "pto.set_flag": 2,
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.wait_flag": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 6,
+                  "arith.muli": 1,
+                  "scf.for": 1
+                },
+                "payload_sha256": "67b2435f53e584fae446b8fb5b09e9f049c6867e59169e4816da1c9c7886dd78",
+                "action_trace_sha256": "780d3da45b0c9d0e44eb8187ed18fe26034047f15a4ef6b739a4015d6c1884e1",
+                "scalar_steps": 17
+              },
+              "trips_1": {
+                "counts": {
+                  "pto.set_flag": 6,
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 2,
+                  "pto.wait_flag": 6,
+                  "pto.tload": 1,
+                  "pto.tabs": 1,
+                  "pto.tstore": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 6,
+                  "arith.muli": 3,
+                  "scf.for": 1,
+                  "scf.if": 1,
+                  "scf.yield": 2
+                },
+                "payload_sha256": "94eecea40b00cc3f80fccd0de7118b23cdbbd5c61385cd62577f1bf394dbae69",
+                "action_trace_sha256": "f0b90bb46b2496dce7cd074f8d29d74b027fe23683e58aec1e1fca6e83924b1f",
+                "scalar_steps": 35
+              },
+              "trips_2": {
+                "counts": {
+                  "pto.set_flag": 10,
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 4,
+                  "pto.wait_flag": 10,
+                  "pto.tload": 2,
+                  "pto.tabs": 2,
+                  "pto.tstore": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 6,
+                  "arith.muli": 5,
+                  "scf.for": 1,
+                  "scf.if": 2,
+                  "scf.yield": 4
+                },
+                "payload_sha256": "52df812e0e019d2e23517e8d27c0477c71fd5b288e47b44e4123a9705b5fa8a5",
+                "action_trace_sha256": "813e39678815f4d97fd45fe4dd248e70b753ecf3ebe1d96e5f7870b5cef56876",
+                "scalar_steps": 53
+              },
+              "trips_3": {
+                "counts": {
+                  "pto.set_flag": 14,
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 6,
+                  "pto.wait_flag": 14,
+                  "pto.tload": 3,
+                  "pto.tabs": 3,
+                  "pto.tstore": 3
+                },
+                "scalar_counts": {
+                  "arith.constant": 6,
+                  "arith.muli": 7,
+                  "scf.for": 1,
+                  "scf.if": 3,
+                  "scf.yield": 6
+                },
+                "payload_sha256": "84cc43e83984e74739c41e9d8d88e57ecd1e6968e2ee57926793d3c162fc90c8",
+                "action_trace_sha256": "9ca220255fa114e12593d7aff1fc3e6e7861e0b96c51d383f5621bfaf2415945",
+                "scalar_steps": 71
+              },
+              "trips_16": {
+                "counts": {
+                  "pto.set_flag": 66,
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 32,
+                  "pto.wait_flag": 66,
+                  "pto.tload": 16,
+                  "pto.tabs": 16,
+                  "pto.tstore": 16
+                },
+                "scalar_counts": {
+                  "arith.constant": 6,
+                  "arith.muli": 33,
+                  "scf.for": 1,
+                  "scf.if": 16,
+                  "scf.yield": 32
+                },
+                "payload_sha256": "56420698011087c49ecee4b7e7531298d1b39dc63bf9e3779c49d1200009ac27",
+                "action_trace_sha256": "6f3fb199abd47606177b654182885e5f15a418eb6b4b3bd38e3490b8a4a4b3cb",
+                "scalar_steps": 305
+              }
+            }
+          }
+        },
+        "refiner": {
+          "seconds": 0.41206085798330605,
+          "projection": {
+            "payload": "62fceef97721e6fdf65df6973ee55f422d986672660cc57476dc46d49f286ce5",
+            "allocations": "5fe9e59ffbddb91ff82b5b9578f2e145667a9b792f05e1b8c99dd0525c33a20f",
+            "views": "299889a13906da02c5f1db789817eec4711ff82eb43f230b3a14c8ee1a52d326",
+            "abi": "af4ebc14a03161a082f18d62ef6bc08c3a72ddff7e6a19538189bf9b1dbbee8c",
+            "mechanisms": {
+              "sets": 6,
+              "waits": 6,
+              "PIPE_ALL": 0,
+              "named": {}
+            },
+            "status_attributes": [
+              {
+                "pto.insert_sync.buffer_generations": "unit",
+                "pto.insert_sync.effect_coverage": "\"complete\"",
+                "pto.insert_sync.generation_barriers_removed": "1 : i64",
+                "pto.insert_sync.generation_global_witnesses": "0 : i64",
+                "pto.insert_sync.generation_initial_pairs_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_initial_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_mmad_witnesses": "0 : i64",
+                "pto.insert_sync.generation_publication_edges_removed": "0 : i64",
+                "pto.insert_sync.generation_publication_work": "0 : i64",
+                "pto.insert_sync.generation_publications_advanced": "0 : i64",
+                "pto.insert_sync.generation_publications_guarded": "0 : i64",
+                "pto.insert_sync.generation_ready_sets_removed": "0 : i64",
+                "pto.insert_sync.generation_ready_streams_supplied": "0 : i64",
+                "pto.insert_sync.generation_ready_waits_removed": "0 : i64",
+                "pto.insert_sync.generation_residual_keys_shared": "0 : i64",
+                "pto.insert_sync.generation_slot_witnesses": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_guarded": "0 : i64",
+                "pto.insert_sync.generation_storage_barriers_removed": "0 : i64",
+                "pto.insert_sync.handoff_advanced": "0 : i64",
+                "pto.insert_sync.handoff_delayed": "0 : i64",
+                "pto.insert_sync.handoff_reason": "\"retained unproved candidate: unproved requirement 4294967295 -> 4294967295; event node 70\"",
+                "pto.insert_sync.handoff_sets_removed": "0 : i64",
+                "pto.insert_sync.handoff_split": "0 : i64",
+                "pto.insert_sync.handoff_waits_removed": "0 : i64",
+                "pto.insert_sync.handoff_work": "10116 : i64",
+                "pto.insert_sync.lifecycle_channels": "2 : i64",
+                "pto.insert_sync.lifecycle_completion_pairs": "1 : i64",
+                "pto.insert_sync.lifecycle_completion_witnesses": "1 : i64",
+                "pto.insert_sync.lifecycle_completion_work": "3346 : i64",
+                "pto.insert_sync.lifecycle_consumer_regions": "0 : i64",
+                "pto.insert_sync.lifecycle_guarded_actions": "0 : i64",
+                "pto.insert_sync.lifecycle_retries": "0 : i64",
+                "pto.insert_sync.lifecycle_supplied_pairs": "11 : i64",
+                "pto.insert_sync.mmad_chain_targets": "0 : i64",
+                "pto.insert_sync.mmad_dependency_groups_elided": "0 : i64",
+                "pto.insert_sync.status": "\"lifecycle-plus-residuals\""
+              }
+            ]
+          },
+          "metrics": {
+            "scenarios": {
+              "trips_0": {
+                "counts": {
+                  "pto.set_flag": 2,
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.wait_flag": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 6,
+                  "arith.muli": 1,
+                  "scf.for": 1
+                },
+                "payload_sha256": "67b2435f53e584fae446b8fb5b09e9f049c6867e59169e4816da1c9c7886dd78",
+                "action_trace_sha256": "780d3da45b0c9d0e44eb8187ed18fe26034047f15a4ef6b739a4015d6c1884e1",
+                "scalar_steps": 17
+              },
+              "trips_1": {
+                "counts": {
+                  "pto.set_flag": 6,
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 2,
+                  "pto.wait_flag": 6,
+                  "pto.tload": 1,
+                  "pto.tabs": 1,
+                  "pto.tstore": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 6,
+                  "arith.muli": 3,
+                  "scf.for": 1,
+                  "scf.if": 1,
+                  "scf.yield": 2
+                },
+                "payload_sha256": "94eecea40b00cc3f80fccd0de7118b23cdbbd5c61385cd62577f1bf394dbae69",
+                "action_trace_sha256": "f0b90bb46b2496dce7cd074f8d29d74b027fe23683e58aec1e1fca6e83924b1f",
+                "scalar_steps": 35
+              },
+              "trips_2": {
+                "counts": {
+                  "pto.set_flag": 10,
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 4,
+                  "pto.wait_flag": 10,
+                  "pto.tload": 2,
+                  "pto.tabs": 2,
+                  "pto.tstore": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 6,
+                  "arith.muli": 5,
+                  "scf.for": 1,
+                  "scf.if": 2,
+                  "scf.yield": 4
+                },
+                "payload_sha256": "52df812e0e019d2e23517e8d27c0477c71fd5b288e47b44e4123a9705b5fa8a5",
+                "action_trace_sha256": "813e39678815f4d97fd45fe4dd248e70b753ecf3ebe1d96e5f7870b5cef56876",
+                "scalar_steps": 53
+              },
+              "trips_3": {
+                "counts": {
+                  "pto.set_flag": 14,
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 6,
+                  "pto.wait_flag": 14,
+                  "pto.tload": 3,
+                  "pto.tabs": 3,
+                  "pto.tstore": 3
+                },
+                "scalar_counts": {
+                  "arith.constant": 6,
+                  "arith.muli": 7,
+                  "scf.for": 1,
+                  "scf.if": 3,
+                  "scf.yield": 6
+                },
+                "payload_sha256": "84cc43e83984e74739c41e9d8d88e57ecd1e6968e2ee57926793d3c162fc90c8",
+                "action_trace_sha256": "9ca220255fa114e12593d7aff1fc3e6e7861e0b96c51d383f5621bfaf2415945",
+                "scalar_steps": 71
+              },
+              "trips_16": {
+                "counts": {
+                  "pto.set_flag": 66,
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 32,
+                  "pto.wait_flag": 66,
+                  "pto.tload": 16,
+                  "pto.tabs": 16,
+                  "pto.tstore": 16
+                },
+                "scalar_counts": {
+                  "arith.constant": 6,
+                  "arith.muli": 33,
+                  "scf.for": 1,
+                  "scf.if": 16,
+                  "scf.yield": 32
+                },
+                "payload_sha256": "56420698011087c49ecee4b7e7531298d1b39dc63bf9e3779c49d1200009ac27",
+                "action_trace_sha256": "6f3fb199abd47606177b654182885e5f15a418eb6b4b3bd38e3490b8a4a4b3cb",
+                "scalar_steps": 305
+              }
+            }
+          }
+        },
+        "logical": {
+          "seconds": 0.536218225985067,
+          "projection": {
+            "payload": "62fceef97721e6fdf65df6973ee55f422d986672660cc57476dc46d49f286ce5",
+            "allocations": "5fe9e59ffbddb91ff82b5b9578f2e145667a9b792f05e1b8c99dd0525c33a20f",
+            "views": "299889a13906da02c5f1db789817eec4711ff82eb43f230b3a14c8ee1a52d326",
+            "abi": "af4ebc14a03161a082f18d62ef6bc08c3a72ddff7e6a19538189bf9b1dbbee8c",
+            "mechanisms": {
+              "sets": 4,
+              "waits": 5,
+              "PIPE_ALL": 0,
+              "named": {}
+            },
+            "status_attributes": [
+              {
+                "pto.insert_sync.logical_reason": "\"constructed and reconstructed occurrence handoffs\"",
+                "pto.insert_sync.logical_requirements": "10 : i64",
+                "pto.insert_sync.logical_status": "\"applied\"",
+                "pto.insert_sync.logical_streams": "4 : i64",
+                "pto.insert_sync.logical_work": "1901094 : i64",
+                "pto.insert_sync.producer": "\"logical\"",
+                "pto.insert_sync.requested_planner": "\"logical\""
+              }
+            ]
+          },
+          "metrics": {
+            "scenarios": {
+              "trips_0": {
+                "counts": {
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 6,
+                  "arith.muli": 1,
+                  "scf.for": 1,
+                  "arith.cmpi": 1,
+                  "scf.if": 1
+                },
+                "payload_sha256": "67b2435f53e584fae446b8fb5b09e9f049c6867e59169e4816da1c9c7886dd78",
+                "action_trace_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "scalar_steps": 15
+              },
+              "trips_1": {
+                "counts": {
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 2,
+                  "pto.tload": 1,
+                  "pto.set_flag": 3,
+                  "pto.wait_flag": 3,
+                  "pto.tabs": 1,
+                  "pto.tstore": 1
+                },
+                "scalar_counts": {
+                  "arith.constant": 9,
+                  "arith.muli": 3,
+                  "scf.for": 1,
+                  "scf.if": 5,
+                  "arith.cmpi": 4,
+                  "arith.xori": 3,
+                  "arith.addi": 1,
+                  "scf.yield": 3
+                },
+                "payload_sha256": "94eecea40b00cc3f80fccd0de7118b23cdbbd5c61385cd62577f1bf394dbae69",
+                "action_trace_sha256": "fd2049ecf117be50c80691334667bde9f08e120b00ea600cdae7987c5796f8fd",
+                "scalar_steps": 45
+              },
+              "trips_2": {
+                "counts": {
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 4,
+                  "pto.tload": 2,
+                  "pto.set_flag": 7,
+                  "pto.wait_flag": 7,
+                  "pto.tabs": 2,
+                  "pto.tstore": 2
+                },
+                "scalar_counts": {
+                  "arith.constant": 12,
+                  "arith.muli": 5,
+                  "scf.for": 1,
+                  "scf.if": 9,
+                  "arith.cmpi": 7,
+                  "arith.xori": 6,
+                  "arith.addi": 2,
+                  "scf.yield": 8
+                },
+                "payload_sha256": "52df812e0e019d2e23517e8d27c0477c71fd5b288e47b44e4123a9705b5fa8a5",
+                "action_trace_sha256": "555c8773e2e697e465cb64d27f8afd17aacc8c99af35b85975ad71689958b1d2",
+                "scalar_steps": 79
+              },
+              "trips_3": {
+                "counts": {
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 6,
+                  "pto.tload": 3,
+                  "pto.set_flag": 11,
+                  "pto.wait_flag": 11,
+                  "pto.tabs": 3,
+                  "pto.tstore": 3
+                },
+                "scalar_counts": {
+                  "arith.constant": 15,
+                  "arith.muli": 7,
+                  "scf.for": 1,
+                  "scf.if": 13,
+                  "arith.cmpi": 10,
+                  "arith.xori": 9,
+                  "arith.addi": 3,
+                  "scf.yield": 13
+                },
+                "payload_sha256": "84cc43e83984e74739c41e9d8d88e57ecd1e6968e2ee57926793d3c162fc90c8",
+                "action_trace_sha256": "bf0e18df551d9c921c28e6233479de4a336f216570bb7124052446989ea1ddf1",
+                "scalar_steps": 113
+              },
+              "trips_16": {
+                "counts": {
+                  "pto.make_tensor_view": 2,
+                  "pto.alloc_tile": 2,
+                  "pto.partition_view": 32,
+                  "pto.tload": 16,
+                  "pto.set_flag": 63,
+                  "pto.wait_flag": 63,
+                  "pto.tabs": 16,
+                  "pto.tstore": 16
+                },
+                "scalar_counts": {
+                  "arith.constant": 54,
+                  "arith.muli": 33,
+                  "scf.for": 1,
+                  "scf.if": 65,
+                  "arith.cmpi": 49,
+                  "arith.xori": 48,
+                  "arith.addi": 16,
+                  "scf.yield": 78
+                },
+                "payload_sha256": "56420698011087c49ecee4b7e7531298d1b39dc63bf9e3779c49d1200009ac27",
+                "action_trace_sha256": "85cd9b119a3f467493589e6b43278372018ae3c69c54cb3f7aea284b25e2cec4",
+                "scalar_steps": 555
+              }
+            }
+          }
+        }
+      },
+      "boundaries": [
+        {
+          "scenario": "trips_0",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "trips_1",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "trips_2",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "trips_3",
+          "status": "checked",
+          "weaker_prefixes": []
+        },
+        {
+          "scenario": "trips_16",
+          "status": "checked",
+          "weaker_prefixes": []
+        }
+      ],
+      "cpp_seconds": 0.5525736100098584,
+      "campaign": "acceptance44"
+    }
+  ]
+}
