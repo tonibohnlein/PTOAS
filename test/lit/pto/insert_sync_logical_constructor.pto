@@ -13,7 +13,7 @@
 // LOGICAL-SAME: pto.insert_sync.producer = "logical"
 // LOGICAL: pto.set_flag
 // LOGICAL: pto.wait_flag
-// LOGICAL-NOT: pto.barrier <PIPE_ALL>
+// LOGICAL: pto.barrier <PIPE_ALL>
 // LOGICAL: return
 // LIMIT: logical synchronization construction failed: analysis-limit
 // FALLBACK: pto.insert_sync.logical_status = "analysis-limit"

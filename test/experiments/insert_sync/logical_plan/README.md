@@ -162,3 +162,14 @@ repeated full requirement scans and structural quadratic deduplication before
 broader coverage is accepted. Dense, genuinely overlapping requirements may
 still have quadratic output size; that is reported separately from avoidable
 bookkeeping. Work allowances must not be raised to satisfy these gates.
+
+## Retirement and endpoint normalization
+
+Current construction uses the explicit [retirement contract](../../../../docs/designs/oahs-retirement.md)
+and retains one plain terminal ALL. The frozen M1/M2 artifacts remain historical
+comparison inputs; the acceptance runner preserves payload/ABI/allocation and
+useful boundaries, bounds executed pairs and scalar work against them, and
+records changed exit inventories rather than requiring obsolete exact counts.
+[Step-2 results](RETIREMENT_ENDPOINT_RESULTS.md) report the four native cases.
+The focused gate now includes actual complementary-endpoint coalescing, real
+overlapping-write obligations, retirement and emitted-corruption checks.

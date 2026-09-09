@@ -19,11 +19,14 @@ namespace mlir::pto::logical_sync {
 // synchronous observation callback. The occurrence tuple retains all guards
 // and loop invocations; IDs are independent of any selected event or repair.
 struct OrderingRequirement {
-    enum Kind { RAW, WAR, WAW, AccResource, Exit } kind;
+    enum Kind { RAW, WAR, WAW, AccResource, Retirement } kind;
     unsigned source, target;
     const BaseMemInfo* sourceAccess = nullptr;
     const BaseMemInfo* targetAccess = nullptr;
     Relation occurrences;
+    // Retirement targets the original function return, not a physical lane.
+    // Its conservative realization is an explicit all-pipeline terminal drain;
+    // ordinary destination-lane completion cannot discharge this obligation.
     // Native footprints are currently conservative may-accesses. This does
     // not assert a definite overwrite or an exact last value production.
 };

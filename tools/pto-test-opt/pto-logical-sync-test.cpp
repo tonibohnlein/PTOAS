@@ -92,7 +92,7 @@ int main(int argc, char** argv)
         function, InsertSyncGMAliasMode::DisjointArguments, budget,
         [&](func::FuncOp candidate) {
             invoked = true;
-            if (mutation == "none")
+            if (mutation == "none" || mutation == "retirement")
                 return;
             auto counts = [](func::FuncOp f) {
                 unsigned sets = 0, waits = 0;
@@ -103,7 +103,28 @@ int main(int argc, char** argv)
                 return std::make_pair(sets, waits);
             };
             auto beforeCounts = counts(candidate);
-            if (mutation == "erase-wait") {
+            if (mutation == "erase-retirement" || mutation == "wrong-retirement-pipe" ||
+                mutation == "early-retirement" || mutation == "hint-retirement" ||
+                mutation == "unconsumed-before-retirement") {
+                auto terminal = dyn_cast_or_null<BarrierOp>(candidate.getBody().front().getTerminator()->getPrevNode());
+                if (terminal && terminal.getPipe().getPipe() == PIPE::PIPE_ALL) {
+                    if (mutation == "erase-retirement")
+                        terminal.erase();
+                    else if (mutation == "wrong-retirement-pipe")
+                        terminal.setPipeAttr(PipeAttr::get(&context, PIPE::PIPE_MTE1));
+                    else if (mutation == "early-retirement")
+                        terminal->moveBefore(&candidate.getBody().front().front());
+                    else if (mutation == "hint-retirement") {
+                        terminal->setAttr("pto.auto_sync_tail_barrier", UnitAttr::get(&context));
+                        terminal->setAttr("pto.auto_sync_tail_hint", StringAttr::get(&context, "setwait_mte3_to_s_event0"));
+                    } else {
+                        OpBuilder builder(terminal);
+                        builder.create<SetFlagOp>(terminal.getLoc(), PipeAttr::get(&context, PIPE::PIPE_MTE2),
+                            PipeAttr::get(&context, PIPE::PIPE_V), EventAttr::get(&context, EVENT::EVENT_ID7));
+                    }
+                    changed = true;
+                }
+            } else if (mutation == "erase-wait") {
                 WaitFlagOp selected;
                 candidate.walk([&](WaitFlagOp wait) {
                     if (!selected)
@@ -204,7 +225,7 @@ int main(int argc, char** argv)
         },
         [&](const SyncOccurrences& facts, ArrayRef<const CompoundInstanceElement*> phases,
             ArrayRef<OrderingRequirement> required) {
-            if (mutation != "facts")
+            if (mutation != "facts" && mutation != "retirement")
                 return;
             llvm::DenseMap<const BaseMemInfo*, unsigned> accessIds;
             llvm::DenseMap<Value, unsigned> roots;
@@ -258,7 +279,7 @@ int main(int argc, char** argv)
                         exportComplete = false;
                 }
             }
-            static constexpr const char* kinds[] = {"RAW", "WAR", "WAW", "ACC-resource", "exit"};
+            static constexpr const char* kinds[] = {"RAW", "WAR", "WAW", "ACC-resource", "retirement"};
             for (const auto& r : required)
                 requirements.push_back(
                     llvm::json::Object{
@@ -266,7 +287,8 @@ int main(int argc, char** argv)
                         {"kind", kinds[r.kind]},
                         {"source", r.source},
                         {"target", r.target},
-                        {"property", "source-completion-before-target"},
+                        {"property", r.kind == OrderingRequirement::Retirement ? "completed-before-kernel-retirement" :
+                                                                               "source-completion-before-target"},
                         {"source_access", access(r.sourceAccess)},
                         {"target_access", access(r.targetAccess)},
                         {"occurrences", testing::encode(r.occurrences)}});
@@ -286,6 +308,7 @@ int main(int argc, char** argv)
                             {"original_preserved", preserved},
                             {"reason", result.reason},
                             {"work", int64_t(result.work)},
+                            {"emitted_ir", mutation == "retirement" && applied ? print(function) : ""},
                             {"export_complete", exportComplete},
                             {"accesses", std::move(accesses)},
                             {"phases", std::move(physicalPhases)},
@@ -293,7 +316,7 @@ int main(int argc, char** argv)
                             {"points", std::move(points)},
                             {"orders", std::move(orders)}})
                  << "\n";
-    if (mutation == "none" || mutation == "facts")
+    if (mutation == "none" || mutation == "facts" || mutation == "retirement")
         return invoked && applied && exportComplete ? 0 : 1;
     if (!(invoked && changed && !applied && preserved))
         return 1;
@@ -308,6 +331,12 @@ int main(int argc, char** argv)
                        StringRef(result.reason).contains("emitted acquisition") ?
                    0 :
                    1;
+    if (mutation == "erase-retirement" || mutation == "wrong-retirement-pipe" ||
+        mutation == "early-retirement" || mutation == "hint-retirement")
+        return StringRef(result.reason).contains("retirement drain") ? 0 : 1;
+    if (mutation == "unconsumed-before-retirement")
+        return StringRef(result.reason).contains("emitted publication") ||
+                       StringRef(result.reason).contains("emitted acquisition") ? 0 : 1;
     if (mutation == "widen-barrier")
         return StringRef(result.reason).contains("barrier domain") ? 0 : 1;
     return 2;

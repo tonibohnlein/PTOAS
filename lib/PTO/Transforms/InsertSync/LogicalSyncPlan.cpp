@@ -44,6 +44,11 @@ struct Barrier {
     PresburgerSet domain;
     std::optional<Relation> logical;
 };
+struct RetirementSink {
+    // Stable occurrence identity for the original return. Deliberately absent
+    // from the physical lane vector and ordinary handoff completion relation.
+    unsigned point = 0;
+};
 class Constructor {
     func::FuncOp function;
     SyncPayloadSnapshot payload;
@@ -66,7 +71,7 @@ class Constructor {
     std::optional<Relation> issueCache;
     std::optional<CompletionQueries> completionOrder;
     ConstructionResult result;
-    unsigned exitPoint = 0;
+    RetirementSink retirement;
     // Requirements are immutable after discovery. Receipts certify all of a
     // target's requirements for this selected logical plan version. Adding a
     // barrier preserves existing receipts; deletion needs a fresh full proof.
@@ -225,9 +230,8 @@ class Constructor {
         if (!llvm::hasSingleElement(function.getBody()) ||
             !isa<func::ReturnOp>(function.getBody().front().getTerminator()))
             return fail(ConstructionResult::Unsupported, "logical function exit shape");
-        exitPoint = points.size();
+        retirement.point = points.size();
         points.push_back(function.getBody().front().getTerminator());
-        lanes.push_back(physical.cube ? Lane::PIPE_MTE1 : Lane::PIPE_V);
         facts = SyncOccurrences::build(function, points);
         if (!queries.spend(facts.work))
             return fail(ConstructionResult::AnalysisLimit, "occurrence import work budget");
@@ -272,7 +276,7 @@ class Constructor {
                                 return false;
             }
         for (unsigned p = 0; p < phases.size(); ++p)
-            if (!add(p, exitPoint, nullptr, nullptr, Requirement::Exit))
+            if (!add(p, retirement.point, nullptr, nullptr, Requirement::Retirement))
                 return false;
         result.requirements = requirements.size();
         if (observeRequirements)
@@ -298,7 +302,7 @@ class Constructor {
         std::map<Domain, Relation> missing;
         std::set<std::pair<unsigned, unsigned>> seen;
         for (const auto& r : requirements)
-            if (lanes[r.source] != lanes[r.target]) {
+            if (r.kind != Requirement::Retirement && lanes[r.source] != lanes[r.target]) {
                 // Multiple immutable access obligations can name the same phase
                 // occurrence relation; construction needs that relation only once.
                 if (!seen.emplace(r.source, r.target).second)
@@ -407,7 +411,7 @@ class Constructor {
         auto value = empty();
         std::set<unsigned> seen;
         for (const auto& r : requirements)
-            if (r.target == point && seen.insert(r.source).second)
+            if (r.kind != Requirement::Retirement && r.target == point && seen.insert(r.source).second)
                 value.unionInPlace(r.occurrences);
         return value;
     }
@@ -561,7 +565,7 @@ public:
             result.status = ConstructionResult::Applied;
             result.reason = "constructed and reconstructed occurrence handoffs";
             result.handoffs = streams.size();
-            result.barriers = barriers.size();
+            result.barriers = barriers.size() + 1; // Includes the explicit retirement drain.
         } else
             result.reason = stage.str() + ": " + result.reason;
         result.work = queries.work();
@@ -628,12 +632,18 @@ struct Endpoint {
     bool publication;
     unsigned stream;
     Guard guard;
+    PresburgerSet domain;
 };
 class BoundaryLowering {
     const SyncOccurrences& facts;
     RelationQueries& queries;
     DominanceInfo dominance;
     QueryStatus outcome = QueryStatus::Unsupported;
+    using TestKey = std::tuple<unsigned, unsigned, bool, int64_t, unsigned, bool, int64_t>;
+    // Cache only within a block and check the actual insertion cursor. Endpoint
+    // traversal is not necessarily lexical; a later definition cannot be reused
+    // at an earlier cut. In particular, no remainder escapes its guarding block.
+    mutable std::map<Block*, std::map<TestKey, Value>> emittedTests;
     bool queryFailed(QueryStatus status)
     {
         if (status == QueryStatus::Proved || status == QueryStatus::NotEstablished)
@@ -1050,6 +1060,66 @@ public:
         }
         return range;
     }
+    Value emitTest(OpBuilder& builder, Location location, BoundaryTest test) const
+    {
+        TestKey key{test.kind, test.loop, test.truth, test.bound, unsigned(test.comparison),
+                    test.fromUpper, test.modulus};
+        auto& cache = emittedTests[builder.getBlock()];
+        if (auto found = cache.find(key); found != cache.end()) {
+            auto* definition = found->second.getDefiningOp();
+            auto cursor = builder.getInsertionPoint();
+            if (!definition || (definition->getBlock() == builder.getBlock() &&
+                (cursor == builder.getBlock()->end() ||
+                 (definition != &*cursor && definition->isBeforeInBlock(&*cursor)))))
+                return found->second;
+        }
+        if (!test.truth) {
+            test.truth = true;
+            auto value = emitTest(builder, location, test);
+            auto one = builder.create<arith::ConstantIntOp>(location, 1, 1);
+            return cache[key] = builder.create<arith::XOrIOp>(location, value, one);
+        }
+        Value value;
+        if (test.kind == BoundaryTest::Predicate)
+            value = facts.predicates[test.loop].value;
+        else if (test.kind == BoundaryTest::BooleanParameter)
+            value = facts.parameters[test.loop];
+        else if (test.kind == BoundaryTest::ParameterBound || test.kind == BoundaryTest::ParameterResidue) {
+            value = facts.parameters[test.loop];
+            if (test.kind == BoundaryTest::ParameterResidue) {
+                auto divisor = builder.create<arith::ConstantOp>(location, builder.getIntegerAttr(value.getType(), test.modulus));
+                value = builder.create<arith::RemSIOp>(location, value, divisor);
+            }
+            auto bound = builder.create<arith::ConstantOp>(location, builder.getIntegerAttr(value.getType(), test.bound));
+            value = builder.create<arith::CmpIOp>(location, test.comparison, value, bound);
+        }
+        else if (test.kind == BoundaryTest::ConstantBound || test.kind == BoundaryTest::DifferenceBound) {
+            auto loop = facts.loops[test.loop];
+            Value iv = loop.getInductionVar();
+            if (test.kind == BoundaryTest::DifferenceBound)
+                iv = test.fromUpper ? builder.create<arith::SubIOp>(location, loop.getUpperBound(), iv) :
+                                      builder.create<arith::SubIOp>(location, iv, loop.getLowerBound());
+            auto constant =
+                builder.create<arith::ConstantOp>(location, builder.getIntegerAttr(iv.getType(), test.bound));
+            value = builder.create<arith::CmpIOp>(location, test.comparison, iv, constant);
+        } else {
+            auto loop = facts.loops[test.loop];
+            if (test.kind == BoundaryTest::Nonempty)
+                value = builder.create<arith::CmpIOp>(
+                    location, arith::CmpIPredicate::slt, loop.getLowerBound(), loop.getUpperBound());
+            else if (test.kind == BoundaryTest::First)
+                value = builder.create<arith::CmpIOp>(
+                    location, arith::CmpIPredicate::eq, loop.getInductionVar(), loop.getLowerBound());
+            else {
+                // The occurrence importer proves this induction increment
+                // representable in the actual induction type.
+                auto next = builder.create<arith::AddIOp>(location, loop.getInductionVar(), loop.getStep());
+                value = builder.create<arith::CmpIOp>(
+                    location, arith::CmpIPredicate::sge, next, loop.getUpperBound());
+            }
+        }
+        return cache[key] = value;
+    }
     Value emitGuard(OpBuilder& builder, Location location, const Guard& guard) const
     {
         if (guard.size() == 1 && guard.front().empty())
@@ -1058,49 +1128,7 @@ public:
         for (const auto& clause : guard) {
             Value conjunction;
             for (const auto& test : clause) {
-                Value value;
-                if (test.kind == BoundaryTest::Predicate)
-                    value = facts.predicates[test.loop].value;
-                else if (test.kind == BoundaryTest::BooleanParameter)
-                    value = facts.parameters[test.loop];
-                else if (test.kind == BoundaryTest::ParameterBound || test.kind == BoundaryTest::ParameterResidue) {
-                    value = facts.parameters[test.loop];
-                    if (test.kind == BoundaryTest::ParameterResidue) {
-                        auto divisor = builder.create<arith::ConstantOp>(location, builder.getIntegerAttr(value.getType(), test.modulus));
-                        value = builder.create<arith::RemSIOp>(location, value, divisor);
-                    }
-                    auto bound = builder.create<arith::ConstantOp>(location, builder.getIntegerAttr(value.getType(), test.bound));
-                    value = builder.create<arith::CmpIOp>(location, test.comparison, value, bound);
-                }
-                else if (test.kind == BoundaryTest::ConstantBound || test.kind == BoundaryTest::DifferenceBound) {
-                    auto loop = facts.loops[test.loop];
-                    Value iv = loop.getInductionVar();
-                    if (test.kind == BoundaryTest::DifferenceBound)
-                        iv = test.fromUpper ? builder.create<arith::SubIOp>(location, loop.getUpperBound(), iv) :
-                                              builder.create<arith::SubIOp>(location, iv, loop.getLowerBound());
-                    auto constant =
-                        builder.create<arith::ConstantOp>(location, builder.getIntegerAttr(iv.getType(), test.bound));
-                    value = builder.create<arith::CmpIOp>(location, test.comparison, iv, constant);
-                } else {
-                    auto loop = facts.loops[test.loop];
-                    if (test.kind == BoundaryTest::Nonempty)
-                        value = builder.create<arith::CmpIOp>(
-                            location, arith::CmpIPredicate::slt, loop.getLowerBound(), loop.getUpperBound());
-                    else if (test.kind == BoundaryTest::First)
-                        value = builder.create<arith::CmpIOp>(
-                            location, arith::CmpIPredicate::eq, loop.getInductionVar(), loop.getLowerBound());
-                    else {
-                        // The occurrence importer proves this induction increment
-                        // representable in the actual induction type.
-                        auto next = builder.create<arith::AddIOp>(location, loop.getInductionVar(), loop.getStep());
-                        value = builder.create<arith::CmpIOp>(
-                            location, arith::CmpIPredicate::sge, next, loop.getUpperBound());
-                    }
-                }
-                if (!test.truth) {
-                    auto one = builder.create<arith::ConstantIntOp>(location, 1, 1);
-                    value = builder.create<arith::XOrIOp>(location, value, one);
-                }
+                Value value = emitTest(builder, location, test);
                 conjunction = conjunction ? builder.create<arith::AndIOp>(location, conjunction, value) : value;
             }
             disjunction = disjunction ? builder.create<arith::OrIOp>(location, disjunction, conjunction) : conjunction;
@@ -1129,7 +1157,7 @@ bool Constructor::realize()
             }
             return expect(lowering.status(), "publication domain has no qualified boundary lowering");
         }
-        endpoints.push_back({stream.source, true, i, std::move(*publication)});
+        endpoints.push_back({stream.source, true, i, std::move(*publication), stream.matching.getDomainSet()});
         for (unsigned p = 0; p < lanes.size(); ++p) {
             auto domain = stream.matching.getRangeSet().intersect(facts.domain(p).getRangeSet());
             if (domain.isIntegerEmpty())
@@ -1144,7 +1172,7 @@ bool Constructor::realize()
                 }
                 return expect(lowering.status(), "acquisition domain has no qualified boundary lowering");
             }
-            endpoints.push_back({p, false, i, std::move(*acquisition)});
+            endpoints.push_back({p, false, i, std::move(*acquisition), std::move(domain)});
         }
     }
     for (const auto& barrier : barriers) {
@@ -1207,6 +1235,84 @@ bool Constructor::realize()
                 ConstructionResult::AllocationFailure,
                 "no proved assignment within the event domain; boundaries retained");
     }
+    // Only adjacent identical commands at the exact same insertion boundary
+    // may coalesce. Concrete-key sharing alone does not identify a token: the
+    // occurrence domains must be disjoint, preserving one action per execution.
+    // Index boundaries once; do not search every endpoint against every other.
+    std::map<std::pair<unsigned, bool>, SmallVector<unsigned>> atBoundary;
+    for (unsigned i = 0; i < endpoints.size(); ++i)
+        atBoundary[{endpoints[i].point, endpoints[i].publication}].push_back(i);
+    std::vector<bool> omitted(endpoints.size(), false);
+    // Optional simplification cannot spend the mandatory reconstruction budget.
+    // Its actual work is charged back below; unknown/limit retains originals.
+    RelationQueries normalization(std::min<uint64_t>(100000, queries.remainingWork() / 32));
+    auto sameCommand = [&](unsigned a, unsigned b) {
+        const auto& x = streams[endpoints[a].stream];
+        const auto& y = streams[endpoints[b].stream];
+        return x.pipes == y.pipes && x.key == y.key;
+    };
+    for (const auto& [boundary, indices] : atBoundary) {
+        for (unsigned begin = 0; begin < indices.size();) {
+            unsigned end = begin + 1;
+            while (end < indices.size() && sameCommand(indices[begin], indices[end])) ++end;
+            if (end - begin > 1) {
+                using Merged = std::pair<PresburgerSet, Guard>;
+                // Balanced unions keep structural copying O(E log E), rather
+                // than repeatedly copying the growing prefix. Exact overlap
+                // checks still have relation-dependent cost and share the budget.
+                std::function<std::optional<Merged>(unsigned, unsigned)> merge =
+                    [&](unsigned a, unsigned b) -> std::optional<Merged> {
+                    if (b - a == 1)
+                        return Merged{endpoints[indices[a]].domain, endpoints[indices[a]].guard};
+                    unsigned middle = a + (b - a) / 2;
+                    auto left = merge(a, middle), right = merge(middle, b);
+                    if (!left || !right) return {};
+                    uint64_t aPieces = left->first.getNumDisjuncts(), bPieces = right->first.getNumDisjuncts();
+                    if (aPieces > 128 || bPieces > 128 || aPieces * bPieces > 128) return {};
+                    uint64_t rows = 1, columns = 1;
+                    for (const auto* side : {&left->first, &right->first})
+                        for (const auto& piece : side->getAllDisjuncts()) {
+                            rows = std::max(rows, uint64_t(piece.getNumConstraints()));
+                            columns = std::max(columns, uint64_t(piece.getNumCols()));
+                        }
+                    if (rows > 128 || columns > 64) return {};
+                    uint64_t cells = aPieces * bPieces * (2 * rows + 1) * (2 * columns + 1);
+                    if (cells > 32768 || !normalization.spend(cells + 1)) return {};
+                    auto overlap = normalization.normalize(left->first.intersect(right->first));
+                    if (!overlap || !overlap.relation->isIntegerEmpty()) return {};
+                    left->first.unionInPlace(right->first);
+                    left->second.append(right->second.begin(), right->second.end());
+                    return left;
+                };
+                auto joined = merge(begin, end);
+                if (joined) {
+                    auto ambient = facts.domain(boundary.first).getRangeSet();
+                    auto unconditional = normalization.contains(joined->first, ambient);
+                    if (unconditional == QueryStatus::Unsupported || unconditional == QueryStatus::BudgetExhausted) {
+                        begin = end;
+                        continue;
+                    }
+                    if (unconditional == QueryStatus::Proved) joined->second = Guard{Clause{}};
+                    uint64_t oldAllowance = 4096, newAllowance = 4096;
+                    bool oldFits = true;
+                    for (unsigned j = begin; j < end; ++j)
+                        oldFits &= chargeGuardEmission(endpoints[indices[j]].guard, oldAllowance);
+                    // Combining short-circuit clauses can grow a decision tree.
+                    // Retain the original endpoints unless the emitted bound improves.
+                    if (oldFits && chargeGuardEmission(joined->second, newAllowance) &&
+                        newAllowance > oldAllowance) {
+                        auto& first = endpoints[indices[begin]];
+                        first.domain = std::move(joined->first);
+                        first.guard = std::move(joined->second);
+                        for (unsigned j = begin + 1; j < end; ++j) omitted[indices[j]] = true;
+                    }
+                }
+            }
+            begin = end;
+        }
+    }
+    if (!queries.spend(normalization.work()))
+        return fail(ConstructionResult::AnalysisLimit, "endpoint normalization accounting");
     auto at = [&](unsigned p, bool after, const Guard& guard, auto action) {
         auto* anchor = facts.points[p].operation;
         OpBuilder builder(anchor);
@@ -1243,7 +1349,9 @@ bool Constructor::realize()
         }
         action(builder, anchor->getLoc());
     };
-    for (const auto& endpoint : endpoints) {
+    for (unsigned i = 0; i < endpoints.size(); ++i) {
+        if (omitted[i]) continue;
+        const auto& endpoint = endpoints[i];
         auto& stream = streams[endpoint.stream];
         at(endpoint.point, endpoint.publication, endpoint.guard, [&](OpBuilder& builder, Location location) {
             auto source = PipeAttr::get(function.getContext(), static_cast<PIPE>(stream.pipes.first));
@@ -1261,6 +1369,13 @@ bool Constructor::realize()
             builder.create<BarrierOp>(location, PipeAttr::get(function.getContext(), static_cast<PIPE>(barrier.pipe)));
         });
     }
+    // The supported single physical function returns only after this explicit
+    // drain. Do not use the auto-sync-tail marker: its optional MTE3->S hint is
+    // not a qualified substitute for whole-kernel retirement. This policy also
+    // covers zero-trip paths with a preload outside the loop. PIPE_ALL does not
+    // consume event tokens; their participation remains independently checked.
+    OpBuilder retirementBuilder(facts.points[retirement.point].operation);
+    retirementBuilder.create<BarrierOp>(function.getLoc(), PipeAttr::get(function.getContext(), PIPE::PIPE_ALL));
     if (emissionMutation)
         emissionMutation(function);
     if (failed(verify(function)))
@@ -1308,6 +1423,15 @@ bool Constructor::reconstruct()
             !sameEffects(old->useVec, found->second->useVec) || !sameEffects(old->defVec, found->second->defVec))
             return fail(ConstructionResult::InternalError, "emission changed physical access contract");
     }
+    // Reconstruct the actual retirement mechanism, not a planner certificate.
+    // The current policy requires an unconditional, unmarked ALL immediately
+    // before the original return. This also excludes any later payload issue or
+    // key operation and does not depend on ordinary MTE1/V wait semantics.
+    auto* returnOp = facts.points[retirement.point].operation;
+    auto terminalDrain = dyn_cast_or_null<BarrierOp>(returnOp->getPrevNode());
+    if (!terminalDrain || terminalDrain.getPipe().getPipe() != PIPE::PIPE_ALL ||
+        terminalDrain->hasAttr("pto.auto_sync_tail_barrier") || terminalDrain->hasAttr("pto.auto_sync_tail_hint"))
+        return fail(ConstructionResult::Unproved, "explicit terminal retirement drain unavailable");
     SmallVector<Operation*> points;
     for (const auto& point : facts.points)
         points.push_back(point.operation);
@@ -1317,6 +1441,7 @@ bool Constructor::reconstruct()
     };
     std::map<Key, Events> groups;
     SmallVector<std::pair<unsigned, Lane>> actualBarriers;
+    unsigned actualRetirement = 0;
     function.walk([&](Operation* op) {
         if (auto set = dyn_cast<SetFlagOp>(op)) {
             auto key =
@@ -1331,7 +1456,10 @@ bool Constructor::reconstruct()
             groups[key].acquisitions.push_back(points.size());
             points.push_back(op);
         } else if (auto barrier = dyn_cast<BarrierOp>(op)) {
-            actualBarriers.push_back({points.size(), static_cast<Lane>(barrier.getPipe().getPipe())});
+            if (barrier == terminalDrain)
+                actualRetirement = points.size();
+            else
+                actualBarriers.push_back({points.size(), static_cast<Lane>(barrier.getPipe().getPipe())});
             points.push_back(op);
         }
     });
@@ -1365,6 +1493,23 @@ bool Constructor::reconstruct()
         return normalized;
     };
     auto supply = empty();
+    // Preserve and check each immutable retirement requirement under its actual
+    // guards/invocations. The terminal drain's all-pipeline contract establishes
+    // completion across this composed cut; it supplies no event-consumption
+    // facts and is not added to the ordinary payload completion relation.
+    auto drainToReturn = before(actualRetirement, retirement.point);
+    if (!drainToReturn)
+        return false;
+    for (const auto& r : requirements)
+        if (r.kind == Requirement::Retirement) {
+            auto prefix = before(r.source, actualRetirement);
+            if (!prefix)
+                return false;
+            auto retired = compose(*prefix, *drainToReturn);
+            if (!retired || !expect(
+                    queries.contains(*retired, r.occurrences), "reconstructed retirement misses payload occurrences"))
+                return false;
+        }
     std::vector<std::pair<Key, Relation>> actualMatching;
     for (const auto& [key, events] : groups) {
         auto [sourceLane, targetLane, keyNumber] = key;
@@ -1511,7 +1656,7 @@ bool Constructor::reconstruct()
     auto completed = completion(supply);
     if (!completed)
         return false;
-    if (!expect(proveRequirements(*completed), "reconstructed ordering or exit retirement unavailable"))
+    if (!expect(proveRequirements(*completed), "reconstructed payload ordering unavailable"))
         return false;
     for (const auto& [key, matching] : actualMatching)
         if (!expect(
