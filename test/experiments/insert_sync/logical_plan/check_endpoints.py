@@ -41,6 +41,7 @@ def main():
     env = dict(os.environ, OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1")
     for name, source, arguments in (
             ("alternatives", original, [["src", p] for p in (0, 1)]),
+            ("straight", original[:start] + "    " + load + "\n" + original[end:], [["src", 0]]),
             ("overlap", overlap, [["src", p, q] for p in (0, 1) for q in (0, 1)])):
         path = args.output / (name + ".pto")
         path.write_text(source)
@@ -85,6 +86,15 @@ def main():
         assert negative.returncode == 0, negative.stderr
         rejected = json.loads(negative.stdout)
         assert rejected["changed"] and not rejected["applied"] and rejected["original_preserved"], rejected
+        if name == "straight":
+            for mutation in ("duplicate-episode", "orphan-head-episode", "orphan-tail-episode"):
+                negative = subprocess.run([str(args.driver), str(path), mutation], text=True,
+                                          capture_output=True, env=env, timeout=60)
+                (args.output / (name + "." + mutation + ".json")).write_text(negative.stdout)
+                assert negative.returncode == 0, (mutation, negative.stdout, negative.stderr)
+                rejected = json.loads(negative.stdout)
+                assert rejected["changed"] and not rejected["applied"] and rejected["original_preserved"], rejected
+                assert "payload cut" in rejected["reason"], rejected
     (args.output / "results.json").write_text(json.dumps(summary, indent=2) + "\n")
     print("Endpoint coalescing: alternatives, real overlaps and missing-wait negatives passed")
 

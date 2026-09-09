@@ -85,6 +85,15 @@ struct SyncOccurrences {
                                      Value sourceValue, unsigned sourcePoint,
                                      Value targetValue, unsigned targetPoint,
                                      RelationQueries& queries) const;
+    // Exact successor of an ENTIRE selected publication population, qualified
+    // already qualified within point domains of this immutable occurrence
+    // universe (matching tuple dimensions alone do not establish provenance).
+    // The compact single-loop adapter
+    // proves its candidate domain equal to the supplied domain before using
+    // commonPeriodSuccessors. Unsupported is permission to use the general
+    // exact successor query, never an empty relation or proof of event reuse.
+    RelationResult periodicSuccessors(const presburger::PresburgerSet& publications,
+                                     RelationQueries& queries) const;
 private:
     RelationResult scalarEqualityConstraint(Value sourceValue, unsigned sourcePoint,
                                             Value targetValue, unsigned targetPoint,

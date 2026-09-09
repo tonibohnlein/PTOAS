@@ -89,6 +89,34 @@ int main(int argc,char** argv) {
             result["parameters"]=std::move(parameters);
             result["points"]=std::move(points);
             result["orders"]=std::move(orders);
+            if (f->hasAttr("test.periodic")) {
+                auto selected=presburger::PresburgerSet::getEmpty(facts.domain(0).getRangeSet().getSpace());
+                for (unsigned p=0;p<facts.points.size();++p)
+                    selected.unionInPlace(facts.domain(p).getRangeSet());
+                auto lower=f->getAttrOfType<IntegerAttr>("test.periodic_lower");
+                auto upper=f->getAttrOfType<IntegerAttr>("test.periodic_upper");
+                if ((lower || upper) && facts.dimensions()<2) return 2;
+                if (lower || upper) {
+                    auto narrowed=presburger::PresburgerSet::getEmpty(selected.getSpace());
+                    for (auto piece:selected.getAllDisjuncts()) {
+                        if (lower) piece.addBound(presburger::BoundType::LB,1,lower.getInt());
+                        if (upper) piece.addBound(presburger::BoundType::UB,1,upper.getInt());
+                        narrowed.unionInPlace(piece);
+                    }
+                    selected=std::move(narrowed);
+                }
+                if (f->hasAttr("test.periodic_empty")) selected=presburger::PresburgerSet::getEmpty(selected.getSpace());
+                auto allowance=f->getAttrOfType<IntegerAttr>("test.periodic_budget");
+                if (allowance && allowance.getInt()<0) return 2;
+                RelationQueries queries(allowance ? uint64_t(allowance.getInt()) : 1000000);
+                auto successors=facts.periodicSuccessors(selected,queries);
+                Object periodic{{"domain",testing::encode(selected)},{"reason",successors.reason},
+                    {"status",successors.status==QueryStatus::Proved ? "proved" :
+                              successors.status==QueryStatus::BudgetExhausted ? "budget-exhausted" : "unsupported"},
+                    {"work",int64_t(queries.work())}};
+                if (successors) periodic["relation"]=testing::encode(*successors.relation);
+                result["periodic"]=std::move(periodic);
+            }
             Array scalars;
             for (Operation* query:scalarQueries) {
                 auto point=query->getAttrOfType<IntegerAttr>("point");

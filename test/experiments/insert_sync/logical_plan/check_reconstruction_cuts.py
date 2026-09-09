@@ -120,7 +120,10 @@ def main():
             assert "original payload" not in result["reason"], (name, "mutation moved payload instead of endpoint", result)
             expected_reason = ("barrier" if mutation in ("barrier-after-consumer", "unrepresented-barrier-lane") else
                                "event domain" if mutation == "unrepresented-event-lane" else "handoff boundary")
-            assert expected_reason in result["reason"], result
+            # Total endpoint recovery can reject an orphaned endpoint before
+            # the later selected-boundary equality challenge runs.
+            assert expected_reason in result["reason"] or (
+                expected_reason == "handoff boundary" and "payload cut" in result["reason"]), result
             rejected.append({"mutation": mutation, "reason": result["reason"]})
         rows.append({"case": name, "observations": observations, "rejected": rejected,
                      "mechanisms": actual_projection["mechanisms"], "work": positive["work"]})

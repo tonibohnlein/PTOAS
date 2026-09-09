@@ -229,6 +229,61 @@ func.func @f(%p: i1) attributes {test.reverse_phases} {
     equals(result["points"][0], "{[] -> [0,i]: i=1 or i=4 or i=7}")
     equals(result["orders"][0]["relation"], "{[0,1] -> [0,4]; [0,1] -> [0,7]; [0,4] -> [0,7]}")
 
+    # The native adapter must qualify the entire selected population, and use
+    # actual schedule ranks even when point IDs are deliberately reversed.
+    def periodic_source(period=2, attributes="", body=None, step=1):
+        if body is None:
+            body = '''%r = arith.remui %i, %d : index
+    %p = arith.cmpi eq, %r, %z : index
+    scf.if %p { "test.phase"() : () -> ()
+                "test.phase"() : () -> () }'''
+        return f'''module {{ func.func @f(%n: index) attributes {{test.periodic {attributes}}} {{
+  %z = arith.constant 0 : index
+  %step = arith.constant {step} : index
+  %d = arith.constant {period} : index
+  scf.for %i = %z to %n step %step {{ {body} }}
+  return
+}} }}'''
+
+    def check_periodic(name, source, status="proved", reversed_ids=False):
+        answer = run(name, source)
+        periodic = answer["periodic"]
+        assert periodic["status"] == status, (name, periodic)
+        if status != "proved":
+            assert "relation" not in periodic
+            return periodic
+        domain = isl.map(isl_text(periodic["domain"]))
+        selected = domain.reverse().then(domain)
+        before = isl.map("[p0] -> {[a,i] -> [b,j]: false}")
+        for edge in answer["orders"]:
+            before = before | isl.map(isl_text(edge["relation"]))
+        count = len(answer["points"])
+        rank = f"{count - 1}-p" if reversed_ids else "p"
+        schedule = isl.map(f"[p0] -> {{[p,i] -> [i,{rank}]}}")
+        wanted = (before & selected).then(schedule).lexmin().then(schedule.reverse())
+        actual = isl.map(isl_text(periodic["relation"]))
+        assert actual.equal(wanted), (name, str(actual), str(wanted))
+        return periodic
+
+    check_periodic("periodic_mod2", periodic_source())
+    check_periodic("periodic_mod3", periodic_source(3))
+    check_periodic("periodic_reverse_ranks", periodic_source(attributes=", test.reverse_phases"), reversed_ids=True)
+    check_periodic("periodic_selected_subdomain", periodic_source(attributes=", test.periodic_lower = 3 : i64, test.periodic_upper = 12 : i64"))
+    check_periodic("periodic_empty", periodic_source(attributes=", test.periodic_empty"))
+    check_periodic("periodic_exhausted", periodic_source(attributes=", test.periodic_budget = 0 : i64"), "budget-exhausted")
+    check_periodic("periodic_nonunit", periodic_source(step=2).replace(
+        "scf.for %i = %z to %n", "%hi = arith.constant 8 : index\n  scf.for %i = %z to %hi"), "unsupported")
+    check_periodic("periodic_nested", periodic_source(body='''scf.for %j = %z to %n step %step {
+      "test.phase"() : () -> () }'''), "unsupported")
+    check_periodic("periodic_once", periodic_source(body='"test.phase"() : () -> ()'))
+    # Local inequalities encode holes without a single selected residue. The
+    # candidate extractor drops those constraints; the final equality gate must
+    # reject the resulting overly broad period-one proposal.
+    refusal = check_periodic("periodic_unrepresented_holes", periodic_source(3).replace(
+        "arith.cmpi eq, %r, %z", "arith.cmpi ne, %r, %z"), "unsupported")
+    assert "whole-population equality" in refusal["reason"], refusal
+    assert not isl.map(isl_text(refusal["domain"])).empty(), refusal
+
     root = Path(__file__).resolve().parents[4]
     fixture = root / "test/samples/Qwen3DecodeA3/kernels/aiv/online_softmax.pto"
     source = fixture.read_text()
