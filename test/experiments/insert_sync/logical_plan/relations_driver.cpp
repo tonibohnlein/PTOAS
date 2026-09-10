@@ -11,6 +11,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
+#include <limits>
 #include <set>
 
 using namespace mlir::pto::logical_sync;
@@ -25,7 +26,14 @@ static Relation read(const Object& object) {
         IntegerRelation piece(PresburgerSpace::getRelationSpace(d, r, s, *p.getInteger("locals")));
         for (auto kind : {"eq", "ge"}) for (const auto& row : *p.getArray(kind)) {
             llvm::SmallVector<int64_t> coefficients;
-            for (const auto& x : *row.getAsArray()) coefficients.push_back(*x.getAsInteger());
+            for (const auto& x : *row.getAsArray()) {
+                auto coefficient = x.getAsInteger();
+                if (!coefficient) {
+                    llvm::errs() << "relation coefficient must be a signed integer JSON number\n";
+                    std::exit(2);
+                }
+                coefficients.push_back(*coefficient);
+            }
             if (coefficients.size() != piece.getNumCols()) std::exit(2);
             if (llvm::StringRef(kind) == "eq") piece.addEquality(coefficients);
             else piece.addInequality(coefficients);
@@ -252,6 +260,64 @@ int main() {
         output["inner"] = inner;
         output["outer_second"] = outerSecond;
         output["outer_over"] = outerOver;
+        // Independent populations keep expected charges small even when a
+        // request is UINT64_MAX. Exercise the actual production budget class.
+        Array cases;
+        auto probe = [&](const char* name, uint64_t capacity, uint64_t allowance,
+                         uint64_t request) {
+            RelationQueries q(capacity);
+            bool accepted = false, exhausted = false;
+            uint64_t localRemaining = 0;
+            {
+                auto scope = q.scopedBudget(allowance);
+                accepted = q.spend(request);
+                exhausted = scope.exhausted();
+                localRemaining = q.remainingWork();
+            }
+            cases.push_back(Object{{"name", name}, {"accepted", accepted},
+                {"exhausted", exhausted}, {"local_remaining", int64_t(localRemaining)},
+                {"parent_remaining", int64_t(q.remainingWork())}, {"work", int64_t(q.work())}});
+        };
+        probe("local-overrun", 100, 10, 11);
+        probe("parent-overrun", 100, 10, 101);
+        probe("maximum-request", 100, 10, std::numeric_limits<uint64_t>::max());
+        probe("zero-scope", 100, 0, 101);
+        probe("exact-scope", 100, 10, 10);
+        probe("partial-scope", 100, 10, 3);
+        probe("zero-request", 100, 0, 0);
+        probe("whole-parent", 100, 100, 101);
+        probe("clipped-scope", 10, 100, 11);
+        probe("empty-parent", 0, 10, 1);
+        output["scope_cases"] = std::move(cases);
+        {
+            RelationQueries q(100);
+            bool first = false, rejected = false, childExhausted = false;
+            bool resumed = false, over = true, parentExhausted = false;
+            uint64_t afterChild = 0;
+            {
+                auto outer = q.scopedBudget(10);
+                first = q.spend(3);
+                {
+                    auto child = q.scopedBudget(4);
+                    rejected = !q.spend(101);
+                    childExhausted = child.exhausted();
+                }
+                afterChild = q.remainingWork();
+                resumed = q.spend(3);
+                over = q.spend(1);
+                parentExhausted = outer.exhausted();
+            }
+            output["nested_overrun"] = Object{{"first", first}, {"rejected", rejected},
+                {"child_exhausted", childExhausted}, {"after_child", int64_t(afterChild)},
+                {"resumed", resumed}, {"over", over}, {"parent_exhausted", parentExhausted},
+                {"parent_remaining", int64_t(q.remainingWork())}, {"work", int64_t(q.work())}};
+        }
+        {
+            RelationQueries q(10);
+            const bool accepted = q.spend(11);
+            output["unscoped_overrun"] = Object{{"accepted", accepted},
+                {"remaining", int64_t(q.remainingWork())}, {"work", int64_t(q.work())}};
+        }
     } else {
         auto b = root->getObject("b") ? read(*root->getObject("b")) : a;
         RelationResult result;
