@@ -148,16 +148,18 @@ public:
     const Profile& profile() const { return queryProfile; }
     bool spend(uint64_t amount)
     {
-        if (amount > remaining) {
-            used += remaining;
-            remaining = 0;
-            return false;
-        }
-        if (scopedRemaining && amount > *scopedRemaining) {
-            used += *scopedRemaining;
-            remaining -= *scopedRemaining;
-            *scopedRemaining = 0;
-            scopedExhausted = true;
+        // An optional request may exceed BOTH allowances. Debit only the
+        // effective (innermost) allowance, leaving the parent's reserve for
+        // mandatory fallback. The same rule also handles an empty scope and
+        // UINT64_MAX requests without forming amount + 1.
+        const uint64_t limit = effectiveRemaining();
+        if (amount > limit) {
+            used += limit;
+            remaining -= limit;
+            if (scopedRemaining) {
+                *scopedRemaining -= limit;
+                scopedExhausted = true;
+            }
             return false;
         }
         remaining -= amount;
