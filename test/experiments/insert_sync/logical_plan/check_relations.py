@@ -334,6 +334,16 @@ def check_deferred_completion(run, isl, output):
                        ["proved","proved"])
     assert added["steps"][1]["frontier_resets"] == 1, added
     assert added["steps"][1]["frontier_resolutions"] == 0, added
+    assert added["steps"][1]["frontier_replay_updates"] == 1, added
+
+    # A zero-round query leaves a small materialized frontier. Adding a
+    # handoff that an already reached endpoint can enter must use the exact
+    # new-entry equation rather than replaying the whole reached relation.
+    incremental=run_sequence("incremental_small_materialized",[
+        need(2,0),need(5,0,add_handoffs=edges([(1,5)]))],
+        ["not-established","proved"])
+    assert incremental["steps"][1]["frontier_incremental_updates"] == 1, incremental
+    assert incremental["steps"][1]["frontier_replay_updates"] == 0, incremental
     removed=run_sequence("replacement_discards_receipt",[
         need(2),need(2,0,replace_handoffs=edges([(0,1)])),need(2)],
         ["proved","not-established","not-established"])

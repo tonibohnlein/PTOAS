@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/InsertSync/LogicalSyncPlan.h"
+#include "PTO/Transforms/InsertSync/LogicalSyncCompactForms.h"
 #include "PTO/Transforms/InsertSync/SyncPhysicalFacts.h"
 #include "PTO/Transforms/InsertSync/SyncGlobalOccurrences.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
@@ -1098,9 +1099,14 @@ class BoundaryLowering {
         std::optional<unsigned> coordinate;
         Relation ambient;
     };
+    static constexpr uint64_t kDirectAttemptAllowance = 50000;
+    static constexpr uint64_t kDirectTotalAllowance = 500000;
     std::map<unsigned, DirectForms> directForms;
     uint64_t directAttempts = 0, directAccepted = 0, directRows = 0, directMatches = 0,
-             directFormBuilds = 0, legacyGrids = 0;
+             directFormBuilds = 0, legacyGrids = 0, directWork = 0;
+    uint64_t directAllowance = 0;
+    uint64_t directAttemptLimit = kDirectAttemptAllowance;
+    bool directSelfTestPassed = true;
     // Cache only within a block and check the actual insertion cursor. Endpoint
     // traversal is not necessarily lexical; a later definition cannot be reused
     // at an earlier cut. In particular, no remainder escapes its guarding block.
@@ -1295,9 +1301,19 @@ class BoundaryLowering {
         for (unsigned c = 0; c < nonlocal; ++c) row[c] /= divisor;
         row.back() = constant;
         if (equality) for (unsigned c = 0; c < nonlocal; ++c) if (row[c] != 0) {
-            if (row[c] < 0) for (auto& value : row) value = -value;
+            if (row[c] < 0) {
+                for (const auto& value : row)
+                    if (value == std::numeric_limits<int64_t>::min()) return {};
+                for (auto& value : row) value = -value;
+            }
             break;
         }
+        // Direct-form keys and emitted bounds use signed int64 constants. Do
+        // not let a normalized or sign-flipped APInt narrow through
+        // getSExtValue() with an assertion in the native LLVM build.
+        for (const auto& value : row)
+            if (value < std::numeric_limits<int64_t>::min() ||
+                value > std::numeric_limits<int64_t>::max()) return {};
         return row;
     }
     std::optional<Relation> directPopulation(const Relation& input, std::optional<unsigned> coordinate)
@@ -1403,8 +1419,13 @@ class BoundaryLowering {
                     addBound(*row);
                     if (equality) {
                         equalities.insert(*row);
-                        for (auto& value : *row) value = -value;
-                        addBound(*row);
+                        bool canNegate = llvm::all_of(*row, [](const auto& value) {
+                            return value != std::numeric_limits<int64_t>::min();
+                        });
+                        if (canNegate) {
+                            for (auto& value : *row) value = -value;
+                            addBound(*row);
+                        }
                     }
                 }
             }
@@ -1524,14 +1545,34 @@ class BoundaryLowering {
         return guard;
     }
 public:
-    BoundaryLowering(const SyncOccurrences& f, RelationQueries& q) : facts(f), queries(q) {}
+    BoundaryLowering(const SyncOccurrences& f, RelationQueries& q) : facts(f), queries(q)
+    {
+        directAllowance = std::min(kDirectTotalAllowance, queries.remainingWork() / 8);
+        // Diagnostic-only controls used by the native focused gate. They do
+        // not affect ordinary compilation unless explicitly requested.
+        if (const char *value = std::getenv("PTOAS_LOGICAL_DIRECT_ATTEMPT_ALLOWANCE")) {
+            char *end = nullptr;
+            const auto parsed = std::strtoull(value, &end, 10);
+            if (end != value && *end == '\0') directAttemptLimit = parsed;
+        }
+        if (std::getenv("PTOAS_LOGICAL_DIRECT_SELF_TEST")) {
+            DirectRow extreme{llvm::DynamicAPInt(std::numeric_limits<int64_t>::min()),
+                              llvm::DynamicAPInt(1), llvm::DynamicAPInt(0)};
+            bool empty = false;
+            // This is the live directRow path: normalizing the equality would
+            // require negating INT64_MIN, so it must be refused safely.
+            directSelfTestPassed = !directRow(extreme, true, 2, empty);
+        }
+    }
     ~BoundaryLowering()
     {
         if (std::getenv("PTOAS_LOGICAL_TRACE"))
             llvm::errs() << "logical guard domains " << conditionBuilds << "/" << conditionRequests
                          << " ranges " << rangeBuilds << "/" << rangeRequests
                          << " direct " << directAccepted << "/" << directAttempts << " forms " << directFormBuilds
-                         << " rows " << directRows << " matched " << directMatches << " grids " << legacyGrids << "\n";
+                         << " rows " << directRows << " matched " << directMatches << " grids " << legacyGrids
+                         << " work " << directWork << " remaining " << directAllowance
+                         << " self_test " << (directSelfTestPassed ? 1 : 0) << "\n";
     }
     QueryStatus status() const { return outcome; }
     bool checkConditions()
@@ -1628,8 +1669,29 @@ public:
             return Guard{Clause{}};
         if (queryFailed(status))
             return {};
-        if (auto direct = prepareDirect(point, target)) return direct;
-        if (outcome == QueryStatus::BudgetExhausted) return {};
+        if (directAllowance) {
+            const uint64_t before = queries.work();
+            bool optionalExhausted = false;
+            std::optional<Guard> direct;
+            {
+                auto scope = queries.scopedBudget(std::min(directAttemptLimit, directAllowance));
+                direct = prepareDirect(point, target);
+                optionalExhausted = scope.exhausted();
+            }
+            const uint64_t spent = queries.work() - before;
+            directWork += spent;
+            directAllowance -= std::min(directAllowance, spent);
+            if (direct) return direct;
+            if (optionalExhausted) {
+                // The optional proposal exhausted only its local allowance.
+                // Preserve the mandatory fallback while still stopping if the
+                // parent allowance itself is genuinely exhausted.
+                if (!queries.remainingWork()) return {};
+                outcome = QueryStatus::Unsupported;
+            } else if (outcome == QueryStatus::BudgetExhausted) {
+                return {};
+            }
+        }
         outcome = QueryStatus::Unsupported;
         ++legacyGrids;
         struct Candidate {
@@ -2092,13 +2154,24 @@ bool Constructor::realize()
     auto assignmentCompletion = completion(*supply);
     if (!assignmentCompletion)
         return false;
+    std::map<Domain, size_t> streamPopulation;
+    for (const auto& stream : streams) ++streamPopulation[stream.pipes];
+    uint64_t dedicatedAssignments = 0, sharingTrials = 0;
     for (auto& stream : streams) {
         bool assigned = false;
-        for (unsigned k = 0; k < 8; ++k) {
+        const auto trialOrder = compact::eventKeyTrialOrder(
+            8, streamPopulation[stream.pipes], [&](unsigned k) {
+                return assignments.count(std::make_tuple(stream.pipes.first, stream.pipes.second, k)) != 0;
+            });
+        for (unsigned k : trialOrder) {
             auto key = std::make_tuple(stream.pipes.first, stream.pipes.second, k);
             auto matching = stream.matching;
-            if (auto found = assignments.find(key); found != assignments.end())
+            auto found = assignments.find(key);
+            const bool occupied = found != assignments.end();
+            if (occupied) {
+                ++sharingTrials;
                 matching.unionInPlace(found->second);
+            }
             auto participation = functional(matching);
             if (queryFailed(participation, "assignment participation query"))
                 return false;
@@ -2111,6 +2184,7 @@ bool Constructor::realize()
                 continue;
             assignments.insert_or_assign(key, std::move(matching));
             stream.key = k;
+            if (!occupied) ++dedicatedAssignments;
             assigned = true;
             break;
         }
@@ -2119,6 +2193,9 @@ bool Constructor::realize()
                 ConstructionResult::AllocationFailure,
                 "no proved assignment within the event domain; boundaries retained");
     }
+    if (std::getenv("PTOAS_LOGICAL_TRACE"))
+        llvm::errs() << "logical allocation dedicated " << dedicatedAssignments
+                     << " sharing_trials " << sharingTrials << " streams " << streams.size() << "\n";
     profile.next("endpoint_normalization");
     // Only adjacent identical commands at the exact same insertion boundary
     // may coalesce. Concrete-key sharing alone does not identify a token: the

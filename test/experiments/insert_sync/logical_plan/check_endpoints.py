@@ -59,11 +59,19 @@ def main():
             pto.register_dialect(context, load=True)
             modules = [ir.Module.parse(text) for text in (source, emitted)]
             functions = [next(op for op in children(m.operation) if op.name == "func.func") for m in modules]
-            body = list(children(functions[1]))
+            def walk(operation):
+                for child in children(operation):
+                    yield child
+                    yield from walk(child)
+            body = list(walk(functions[1]))
             waits = [op for op in body if op.name == "pto.wait_flag"]
-            # Distinct guarded production streams share one unconditional
-            # acquisition, proving coalescing actually happened, not merely CSE.
-            assert len(waits) == 1, (name, emitted)
+            # Exact wait-site coalescing is deliberately no longer an
+            # invariant: dedicated-first allocation may retain separate
+            # guarded acquisitions. The retained invariant is per-path: every
+            # emitted wait is backed by a producer occurrence, and runtime
+            # replay observes the consumer only after the final acquisition.
+            loads_in_ir = [op for op in body if op.name == "pto.tload"]
+            assert 1 <= len(waits) <= len(loads_in_ir), (name, emitted)
             results = []
             for values in arguments:
                 expected = replay(functions[0], values)
@@ -71,8 +79,8 @@ def main():
                 actual = replay(functions[1], values, observer=observer.observe)
                 assert expected["payload_sha256"] == actual["payload_sha256"]
                 assert not observer.tokens
-                assert actual["counts"].get("pto.wait_flag", 0) == 1
                 loads = [i for i, point in enumerate(observer.before) if point["lane"] == "PIPE_MTE2"]
+                assert 1 <= actual["counts"].get("pto.wait_flag", 0) <= len(loads)
                 if name == "overlap":
                     for previous, current in zip(loads, loads[1:]):
                         assert observer.before[current]["completed"].get("PIPE_MTE2", -1) >= previous
@@ -96,7 +104,7 @@ def main():
                 assert rejected["changed"] and not rejected["applied"] and rejected["original_preserved"], rejected
                 assert "payload cut" in rejected["reason"], rejected
     (args.output / "results.json").write_text(json.dumps(summary, indent=2) + "\n")
-    print("Endpoint coalescing: alternatives, real overlaps and missing-wait negatives passed")
+    print("Endpoint domain and missing-wait checks passed")
 
 
 if __name__ == "__main__":

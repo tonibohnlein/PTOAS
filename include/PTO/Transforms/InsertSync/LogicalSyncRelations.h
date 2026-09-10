@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_INSERTSYNC_LOGICALSYNCRELATIONS_H
 #define PTO_TRANSFORMS_INSERTSYNC_LOGICALSYNCRELATIONS_H
 
+#include <algorithm>
 #include "mlir/Analysis/Presburger/PresburgerRelation.h"
 #include <cstdint>
 #include <functional>
@@ -82,6 +83,8 @@ private:
     class DifferenceEngine;
     friend class CompletionQueries;
     uint64_t remaining, used = 0;
+    std::optional<uint64_t> scopedRemaining;
+    bool scopedExhausted = false;
     uint64_t endpointComparisons = 0;
     uint64_t compositionIndexBuilds = 0, compositionIndexPieces = 0;
     uint64_t endpointProjections = 0, endpointProjectionPieces = 0;
@@ -92,15 +95,33 @@ private:
     uint64_t periodicAtomVisits = 0, periodicSortComparisons = 0, periodicOutputPieces = 0;
     bool profiling;
     Profile queryProfile;
+    uint64_t effectiveRemaining() const
+    {
+        return scopedRemaining ? std::min(remaining, *scopedRemaining) : remaining;
+    }
+    bool exhaustAvailableBudget();
     bool charge(const Relation& relation, uint64_t* chargedCost = nullptr);
     RelationResult composeImpl(const Relation& first, const Relation& second,
                                std::optional<CompositionRHS::Index>& index);
     RelationResult restrictCandidateOrder(const Relation& order, const Relation& candidates, bool sources);
 
 public:
+    class ScopedBudget {
+        RelationQueries& owner;
+        std::optional<uint64_t> previousRemaining;
+        bool previousExhausted;
+        uint64_t initialRemaining;
+    public:
+        ScopedBudget(RelationQueries& queries, uint64_t allowance);
+        ~ScopedBudget();
+        bool exhausted() const { return owner.scopedExhausted; }
+        ScopedBudget(const ScopedBudget&) = delete;
+        ScopedBudget& operator=(const ScopedBudget&) = delete;
+    };
+
     explicit RelationQueries(uint64_t budget = 8000000);
     uint64_t work() const { return used; }
-    uint64_t remainingWork() const { return remaining; }
+    uint64_t remainingWork() const { return effectiveRemaining(); }
     uint64_t endpointComparisonCount() const { return endpointComparisons; }
     uint64_t compositionIndexBuildCount() const { return compositionIndexBuilds; }
     uint64_t compositionIndexPieceCount() const { return compositionIndexPieces; }
@@ -132,10 +153,19 @@ public:
             remaining = 0;
             return false;
         }
+        if (scopedRemaining && amount > *scopedRemaining) {
+            used += *scopedRemaining;
+            remaining -= *scopedRemaining;
+            *scopedRemaining = 0;
+            scopedExhausted = true;
+            return false;
+        }
         remaining -= amount;
         used += amount;
+        if (scopedRemaining) *scopedRemaining -= amount;
         return true;
     }
+    ScopedBudget scopedBudget(uint64_t allowance) { return ScopedBudget(*this, allowance); }
     RelationResult compose(const Relation& first, const Relation& second);
     RelationResult compose(const Relation& first, CompositionRHS& second);
     RelationResult normalize(const Relation& relation);
@@ -206,6 +236,7 @@ class CompletionQueries {
     };
     uint64_t frontierExtensions = 0, frontierDifferences = 0;
     uint64_t frontierDeferrals = 0, frontierResolutions = 0, frontierResets = 0;
+    uint64_t frontierIncrementalUpdates = 0, frontierReplayUpdates = 0;
     uint64_t deferredSources = 0, deferredCells = 0, peakDeferredCells = 0;
     QueryStatus resolveFrontier(SourceState& state, RelationQueries& queries);
     // A key restricts only the first source coordinate. All other coordinates,
@@ -283,10 +314,11 @@ public:
         return next;
     }
     // Monotonic construction only: retain already proved paths while adding
-    // actual handoffs. Seed new direct paths and paths entering added handoffs
-    // for compact frontiers, preserving deferred/materialized state; large
-    // frontiers may use the bounded conservative replay. Removal/movement
-    // must still use withHandoffs().
+    // actual handoffs. Small materialized frontiers seed new direct paths and
+    // paths entering added handoffs. Deferred or large frontiers are converted
+    // to a bounded conservative replay before the update. Relation state is
+    // charged before transactional copies. Removal/movement must still use
+    // withHandoffs().
     QueryStatus addHandoffs(const Relation& additional, RelationQueries& queries);
     // Compact mode exposes proved completion in the most recent query scope.
     // Absence remains unproved; it is not evidence of required synchronization.
@@ -300,6 +332,8 @@ public:
     uint64_t frontierDeferralCount() const { return frontierDeferrals; }
     uint64_t frontierResolutionCount() const { return frontierResolutions; }
     uint64_t frontierResetCount() const { return frontierResets; }
+    uint64_t frontierIncrementalUpdateCount() const { return frontierIncrementalUpdates; }
+    uint64_t frontierReplayUpdateCount() const { return frontierReplayUpdates; }
     uint64_t deferredSourceCount() const { return deferredSources; }
     uint64_t deferredCellCount() const { return deferredCells; }
     uint64_t peakDeferredCellCount() const { return peakDeferredCells; }

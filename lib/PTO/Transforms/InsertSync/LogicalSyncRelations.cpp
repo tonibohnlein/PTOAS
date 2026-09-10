@@ -185,18 +185,54 @@ RelationQueries::RelationQueries(uint64_t budget)
     : remaining(budget), profiling(std::getenv("PTOAS_LOGICAL_TRACE") != nullptr)
 {}
 
+RelationQueries::ScopedBudget::ScopedBudget(RelationQueries& queries, uint64_t allowance)
+    : owner(queries), previousRemaining(queries.scopedRemaining), previousExhausted(queries.scopedExhausted),
+      initialRemaining(0)
+{
+    const uint64_t inherited = queries.scopedRemaining ? *queries.scopedRemaining : queries.remaining;
+    queries.scopedRemaining = std::min(allowance, inherited);
+    initialRemaining = *queries.scopedRemaining;
+    queries.scopedExhausted = false;
+}
+
+RelationQueries::ScopedBudget::~ScopedBudget()
+{
+    // Nested scopes spend the enclosing scope's allowance as well. Restoring
+    // the old value unconditionally would make a child scope's work free to
+    // its parent and could let speculative work exceed the parent's cap.
+    const uint64_t childRemaining = owner.scopedRemaining.value_or(0);
+    const uint64_t consumed = initialRemaining - std::min(initialRemaining, childRemaining);
+    if (previousRemaining) {
+        const uint64_t parentRemaining = *previousRemaining;
+        owner.scopedRemaining = consumed >= parentRemaining ? 0 : parentRemaining - consumed;
+        owner.scopedExhausted = previousExhausted || owner.remaining == 0 ||
+                                (consumed >= parentRemaining);
+    } else {
+        owner.scopedRemaining = std::nullopt;
+        owner.scopedExhausted = previousExhausted;
+    }
+}
+
+bool RelationQueries::exhaustAvailableBudget()
+{
+    const uint64_t limit = effectiveRemaining();
+    return spend(limit == std::numeric_limits<uint64_t>::max() ? limit : limit + 1);
+}
+
 bool RelationQueries::charge(const Relation& relation, uint64_t* chargedCost) {
+    const uint64_t limit = effectiveRemaining();
     uint64_t cost = 1;
     for (const auto& piece : relation.getAllDisjuncts()) {
         uint64_t rows = uint64_t(piece.getNumEqualities()) + piece.getNumInequalities() + 1;
         uint64_t cols = uint64_t(piece.getNumVars()) + 1;
-        if (rows > remaining || cols > remaining || rows > (remaining - std::min(cost, remaining)) / cols) {
-            used += remaining; remaining = 0; return false;
+        if (rows > limit || cols > limit || rows > (limit - std::min(cost, limit)) / cols) {
+            exhaustAvailableBudget();
+            return false;
         }
         cost += rows * cols;
     }
-    if (cost > remaining) { used += remaining; remaining = 0; return false; }
-    remaining -= cost; used += cost;
+    if (cost > limit) { exhaustAvailableBudget(); return false; }
+    if (!spend(cost)) return false;
     if (chargedCost) *chargedCost = cost;
     return true;
 }
@@ -292,10 +328,8 @@ RelationResult RelationQueries::composeImpl(
         for (unsigned j : candidates) {
             const auto& right = second.getAllDisjuncts()[j];
             // Bound enumeration even when the joined coordinates cannot match.
-            if (!remaining)
+            if (!spend(1))
                 return failure(QueryStatus::BudgetExhausted, "composition enumeration budget");
-            --remaining;
-            ++used;
             if (incompatible(constants, joined[j]))
                 continue;
             if (!charge(Relation(left)) || !charge(Relation(right)))
@@ -310,10 +344,8 @@ RelationResult RelationQueries::composeImpl(
             bool duplicate = false;
             auto& bucket = fingerprints[pieceFingerprint(piece)];
             for (unsigned index : bucket) {
-                if (!remaining)
+                if (!spend(1))
                     return failure(QueryStatus::BudgetExhausted, "composition deduplication budget");
-                --remaining;
-                ++used;
                 if (piece.isObviouslyEqual(result.getAllDisjuncts()[index])) {
                     duplicate = true;
                     break;
@@ -387,7 +419,7 @@ class RelationQueries::DifferenceEngine {
         uint64_t remaining = q.remainingWork();
         if (rows > remaining || cols > remaining ||
             rows > (remaining - std::min<uint64_t>(1, remaining)) / cols) {
-            q.spend(remaining);
+            q.exhaustAvailableBudget();
             return false;
         }
         return q.spend(1 + rows * cols);
@@ -1254,8 +1286,8 @@ QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQ
     auto incomingSources = additional.getDomainSet();
     ++queries.endpointProjections;
     queries.endpointProjectionPieces += additional.getNumDisjuncts();
-    uint64_t deferredCellIncrease = 0;
     uint64_t deferredSourceRelease = 0, deferredCellRelease = 0;
+    uint64_t incrementalUpdates = 0, replayUpdates = 0;
     // The update is transactional: work on a copy until the primitive
     // relation can be committed. Avoid copying large deferred receipts just
     // to replace them with the conservative d55a frontier below. Compact
@@ -1273,8 +1305,21 @@ QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQ
     for (const auto& [scope, original] : sources) {
         const bool conservative = std::get_if<DeferredFrontier>(&original.frontier) ||
                                    isLargeUpdate(original);
+        // Account for the relation state before copying it into the
+        // transactional update. Piece count alone is not sufficient: a small
+        // disjunct population can still carry a wide constraint matrix.
+        if (!queries.charge(original.reached))
+            return QueryStatus::BudgetExhausted;
         if (!conservative) {
-            updated.emplace(scope, original);
+            const auto* frontier = std::get_if<MaterializedFrontier>(&original.frontier);
+            if (!frontier || !queries.charge(frontier->delta))
+                return QueryStatus::BudgetExhausted;
+            // reachedTargets is a cache of the old reached relation. The new
+            // handoffs invalidate it immediately below, so do not copy a
+            // potentially large cache into the transactional state only to
+            // discard it after the update.
+            updated.emplace(scope, SourceState{original.reached,
+                MaterializedFrontier{frontier->delta}, original.saturated, std::nullopt});
             continue;
         }
         if (auto* deferred = std::get_if<DeferredFrontier>(&original.frontier)) {
@@ -1310,6 +1355,7 @@ QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQ
         // large cross product with the newly added handoff; replaying the
         // complete frontier is then the bounded, cheaper representation.
         if (conservativeScopes.count(scope)) {
+            ++replayUpdates;
             state.reached.unionInPlace(seeds);
             auto normalized = queries.normalize(state.reached);
             if (!normalized)
@@ -1322,6 +1368,7 @@ QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQ
             state.saturated = false;
             continue;
         }
+        ++incrementalUpdates;
         // New paths either start through an added handoff, or first enter one
         // after an established completion path. Issue order never supplies
         // completion without a real handoff.
@@ -1342,8 +1389,7 @@ QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQ
                 return throughAdded.status;
             seeds.unionInPlace(*throughAdded.relation);
         }
-        uint64_t seedCost = 0;
-        if (!queries.charge(seeds, &seedCost))
+        if (!queries.charge(seeds))
             return QueryStatus::BudgetExhausted;
         state.reached.unionInPlace(seeds);
         auto normalizedReached = queries.normalize(state.reached);
@@ -1351,30 +1397,18 @@ QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQ
             return normalizedReached.status;
         state.reached = std::move(*normalizedReached.relation);
         state.reachedTargets.reset();
-        if (auto* frontier = std::get_if<MaterializedFrontier>(&state.frontier)) {
-            frontier->delta.unionInPlace(seeds);
-            auto normalizedPending = queries.normalize(frontier->delta);
-            if (!normalizedPending)
-                return normalizedPending.status;
-            frontier->delta = std::move(*normalizedPending.relation);
-            state.saturated = frontier->delta.getNumDisjuncts() == 0;
-        } else if (auto* frontier = std::get_if<DeferredFrontier>(&state.frontier)) {
-            // If D = generated \ before, then adding S is represented exactly
-            // by (generated union S) \ before. Paths in S already in before
-            // are already reached and need no pending work.
-            frontier->generated.unionInPlace(seeds);
-            if (frontier->retainedCells > UINT64_MAX - deferredCellIncrease ||
-                seedCost > UINT64_MAX - deferredCellIncrease - frontier->retainedCells)
-                return QueryStatus::BudgetExhausted;
-            frontier->retainedCells += seedCost;
-            deferredCellIncrease += seedCost;
-            state.saturated = false;
-        } else {
+        auto* frontier = std::get_if<MaterializedFrontier>(&state.frontier);
+        if (!frontier) {
             return QueryStatus::Unsupported;
         }
+        frontier->delta.unionInPlace(seeds);
+        auto normalizedPending = queries.normalize(frontier->delta);
+        if (!normalizedPending)
+            return normalizedPending.status;
+        frontier->delta = std::move(*normalizedPending.relation);
+        state.saturated = frontier->delta.getNumDisjuncts() == 0;
     }
-    if (deferredSourceRelease > deferredSources || deferredCellRelease > deferredCells ||
-        deferredCells - deferredCellRelease > UINT64_MAX - deferredCellIncrease)
+    if (deferredSourceRelease > deferredSources || deferredCellRelease > deferredCells)
         return QueryStatus::BudgetExhausted;
     if (!queries.charge(primitive.value()) || !queries.charge(additional))
         return QueryStatus::BudgetExhausted;
@@ -1386,8 +1420,9 @@ QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQ
     sources = std::move(updated);
     deferredSources -= deferredSourceRelease;
     deferredCells -= deferredCellRelease;
-    deferredCells += deferredCellIncrease;
     frontierResets += deferredSourceRelease;
+    frontierIncrementalUpdates += incrementalUpdates;
+    frontierReplayUpdates += replayUpdates;
     transitions.reset();
     expanded = Relation::getEmpty(primitive.value().getSpace());
     fixed = false;
