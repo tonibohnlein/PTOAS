@@ -41,7 +41,7 @@ are recorded separately. Payload control, constants, views and effects remain.
     values, terms, records, placements, allocations, views, abi = {}, {}, [], [], [], [], []
     sync_control = Counter()
 
-    control_arithmetic = {"arith.constant", "arith.cmpi", "arith.subi", "arith.addi", "arith.remsi", "arith.andi", "arith.ori", "arith.xori"}
+    control_arithmetic = {"arith.constant", "arith.cmpi", "arith.subi", "arith.addi", "arith.remsi", "arith.remui", "arith.andi", "arith.ori", "arith.xori"}
 
     def only_sync(op, local=None):
         if op.name in SYNC or op.name == "scf.yield":

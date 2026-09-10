@@ -27,6 +27,10 @@ struct SyncPhysicalFacts {
 };
 // Qualification of translated phases only: no lifecycle graph or planner.
 SyncPhysicalFacts importSyncPhysicalFacts(func::FuncOp function, const SyncIRs &ir, uint64_t budget);
+// Same operation/address qualification, without heuristic visitation ceilings.
+// Structured construction terminates by its finite admitted model, not a work
+// quota. This does not change the historical reference-import entry above.
+SyncPhysicalFacts importStructuredSyncPhysicalFacts(func::FuncOp function, const SyncIRs &ir);
 // Reject unsupported memory forwarding before using the upstream translator.
 bool supportsLogicalSyncTranslation(func::FuncOp function);
 // Conservative physical overlap with a separately qualified caller contract.

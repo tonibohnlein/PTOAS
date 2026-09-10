@@ -328,6 +328,8 @@ if(BUILD_TESTING)
       pto-logical-relations-test
       pto-sync-occurrences-test
       pto-logical-sync-test
+      pto-structured-sync-test
+      pto-structured-core-test
       pto-test-opt)
     if(TARGET ${_target})
       list(APPEND _pto_check_ctest_depends ${_target})

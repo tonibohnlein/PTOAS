@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=structured gm-alias=assume-disjoint-arguments' %s | FileCheck %s --check-prefix=STRUCTURED
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=structured logical-work-budget=0 gm-alias=assume-disjoint-arguments' %s | FileCheck %s --check-prefix=NOQUOTA
+// RUN: not pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=bogus' %s 2>&1 | FileCheck %s --check-prefix=INVALID
+
+// STRUCTURED: pto.insert_sync.logical_status = "applied"
+// STRUCTURED-SAME: pto.insert_sync.producer = "structured"
+
+// Two independent panels must receive two separate readiness handoffs. A single
+// publication after both loads would be safe but would add a false dependency
+// from the second load to the first reader, so the prefix staircase is the
+// property under test here -- not merely the number of emitted commands.
+// STRUCTURED: pto.tload
+// STRUCTURED-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// STRUCTURED-NEXT: pto.tload
+// STRUCTURED-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+// STRUCTURED-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// STRUCTURED-NEXT: pto.tabs
+// STRUCTURED-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+// STRUCTURED-NEXT: pto.tabs
+// STRUCTURED-NEXT: pto.barrier <PIPE_ALL>
+// STRUCTURED-NEXT: return
+
+// The structured engine must construct independently of the reference planner.
+// With the reference work allowance pinned to zero it must still apply: any
+// hidden delegation to the Presburger-backed engine would report analysis-limit.
+// NOQUOTA: pto.insert_sync.logical_status = "applied"
+// NOQUOTA-SAME: pto.insert_sync.producer = "structured"
+
+// INVALID: InsertSync planner must be existing, logical, logical-or-existing, or structured
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @independent_panels(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 512 : i64
+    %a2 = arith.constant 1024 : i64
+    %a3 = arith.constant 1536 : i64
+    %panelA = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 16x16xf16>
+    %panelB = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 16x16xf16>
+    %outA = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 16x16xf16>
+    %outB = pto.alloc_tile addr = %a3 : !pto.tile_buf<vec, 16x16xf16>
+    %view = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%panelA : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%panelB : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%panelA : !pto.tile_buf<vec, 16x16xf16>) outs(%outA : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%panelB : !pto.tile_buf<vec, 16x16xf16>) outs(%outB : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}

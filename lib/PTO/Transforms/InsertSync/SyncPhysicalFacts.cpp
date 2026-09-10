@@ -258,7 +258,8 @@ bool memoryType(Type t) {
 class Importer {
   func::FuncOp function;
   uint64_t budget;
-  unsigned fragments = 0;
+  bool bounded;
+  uint64_t fragments = 0;
   llvm::DenseMap<Operation *, const CompoundInstanceElement *> compounds;
   SyncPhysicalFacts result;
   bool fail(StringRef reason, bool limit = false) {
@@ -269,10 +270,10 @@ class Importer {
   bool access(const BaseMemInfo *info) {
     if (!info || info->scope == AddressSpace::Zero || info->aliasesUnknownRange) return false;
     fragments += info->baseAddresses.size();
-    if (fragments > 2048) return fail("physical fragment budget", true);
+    if (bounded && fragments > 2048) return fail("physical fragment budget", true);
     if (info->scope == AddressSpace::GM) return true;
     if (!info->hasKnownPhysicalAddresses || !info->allocateSize ||
-        info->baseAddresses.empty() || info->baseAddresses.size() > 64) return false;
+        info->baseAddresses.empty() || (bounded && info->baseAddresses.size() > 64)) return false;
     if (info->rootBuffer && info->rootBuffer.getDefiningOp<AllocMultiTileOp>() &&
         (info->allocateSize > uint64_t(INT64_MAX) ||
          llvm::any_of(info->baseAddresses, [&](uint64_t base) {
@@ -283,10 +284,11 @@ class Importer {
     });
   }
   bool region(Region &r, unsigned depth) {
-    if (depth > 24) return fail("region nesting budget", true);
+    if (bounded && depth > 24) return fail("region nesting budget", true);
     if (!llvm::hasSingleElement(r)) return fail("unsupported multi-block region");
     for (Operation &op : r.front()) {
-      if (++result.work > budget || result.work > 8192) return fail("IR visitation budget", true);
+      ++result.work;
+      if (bounded && (result.work > budget || result.work > 8192)) return fail("IR visitation budget", true);
       if (isa<scf::ForOp, scf::IfOp, SectionCubeOp, SectionVectorOp>(op)) {
         for (Region &child : op.getRegions())
           if (!child.empty() && !region(child, depth + 1)) return false;
@@ -344,7 +346,7 @@ class Importer {
             !mappedPayloadEffects(&op, phase)) return fail("translated payload effect is incomplete");
         unsigned count = phase->useVec.size() + phase->defVec.size();
         if (!count) return fail("empty physical summary");
-        if (count > 16 || result.phases.size() >= 256) return fail("phase/access budget", true);
+        if (bounded && (count > 16 || result.phases.size() >= 256)) return fail("phase/access budget", true);
         for (auto *info : phase->useVec) if (!access(info)) {
           if (result.reason.empty()) fail("unproved read footprint");
           return false;
@@ -361,7 +363,7 @@ class Importer {
     return true;
   }
 public:
-  Importer(func::FuncOp f, uint64_t b) : function(f), budget(b) {}
+  Importer(func::FuncOp f, uint64_t b, bool bounded = true) : function(f), budget(b), bounded(bounded) {}
   SyncPhysicalFacts run(const SyncIRs &ir) {
     auto module = function->getParentOfType<ModuleOp>();
     auto arch = module ? module->getAttrOfType<StringAttr>("pto.target_arch") : StringAttr();
@@ -401,6 +403,9 @@ public:
 
 SyncPhysicalFacts mlir::pto::importSyncPhysicalFacts(func::FuncOp f, const SyncIRs &ir, uint64_t budget) {
   return Importer(f, budget).run(ir);
+}
+SyncPhysicalFacts mlir::pto::importStructuredSyncPhysicalFacts(func::FuncOp f, const SyncIRs &ir) {
+  return Importer(f, 0, false).run(ir);
 }
 bool mlir::pto::supportsLogicalSyncTranslation(func::FuncOp function) {
   bool supported = true;
