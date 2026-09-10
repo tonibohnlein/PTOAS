@@ -1247,47 +1247,135 @@ QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQ
 {
     if (!sparse() || !sameSpace(primitive.value(), additional))
         return QueryStatus::Unsupported;
-    // The new plan needs the reached sets, but neither old delta receipts
-    // nor old endpoint caches survive. Copy only that necessary transaction
-    // state; copying deferred generated/pre-image matrices just to discard
-    // them would add avoidable work proportional to their retained size.
-    decltype(sources) updated;
-    for (const auto& [scope, state] : sources) {
-        if (!queries.spend(1) || !queries.charge(state.reached)) return QueryStatus::BudgetExhausted;
-        updated.emplace(scope, SourceState{state.reached,
-            MaterializedFrontier{Relation::getEmpty(state.reached.getSpace())}, false});
-    }
+    if (!additional.getNumDisjuncts())
+        return QueryStatus::Proved;
     if (!queries.charge(additional)) return QueryStatus::BudgetExhausted;
     RelationQueries::CompositionRHS incoming(additional);
-    std::optional<mlir::presburger::PresburgerSet> incomingSources;
+    auto incomingSources = additional.getDomainSet();
+    ++queries.endpointProjections;
+    queries.endpointProjectionPieces += additional.getNumDisjuncts();
+    uint64_t deferredCellIncrease = 0;
+    uint64_t deferredSourceRelease = 0, deferredCellRelease = 0;
+    // The update is transactional: work on a copy until the primitive
+    // relation can be committed. Avoid copying large deferred receipts just
+    // to replace them with the conservative d55a frontier below. Compact
+    // materialized states retain their old delta for the exact new-entry
+    // update; large/deferred states copy only their reached relation.
+    decltype(sources) updated;
+    std::set<std::optional<llvm::DynamicAPInt>> conservativeScopes;
+    auto isLargeUpdate = [&](const SourceState& state) {
+        const uint64_t reachedPieces = state.reached.getNumDisjuncts();
+        const uint64_t addedPieces = additional.getNumDisjuncts();
+        return reachedPieces > 16 ||
+            (addedPieces && reachedPieces > UINT64_MAX / addedPieces) ||
+            (reachedPieces * addedPieces > 256);
+    };
+    for (const auto& [scope, original] : sources) {
+        const bool conservative = std::get_if<DeferredFrontier>(&original.frontier) ||
+                                   isLargeUpdate(original);
+        if (!conservative) {
+            updated.emplace(scope, original);
+            continue;
+        }
+        if (auto* deferred = std::get_if<DeferredFrontier>(&original.frontier)) {
+            if (deferredCellRelease > deferredCells ||
+                deferred->retainedCells > deferredCells - deferredCellRelease)
+                return QueryStatus::BudgetExhausted;
+            deferredCellRelease += deferred->retainedCells;
+            ++deferredSourceRelease;
+        }
+        updated.emplace(scope, SourceState{original.reached,
+            MaterializedFrontier{Relation::getEmpty(original.reached.getSpace())}, false});
+        conservativeScopes.insert(scope);
+    }
     for (auto& [scope, state] : updated) {
         mlir::presburger::IntegerRelation filter(primitive.value().getSpace().getDomainSpace());
         if (scope)
             filter.addBound(mlir::presburger::BoundType::EQ, 0, *scope);
-        if (!incomingSources) {
-            incomingSources = additional.getDomainSet();
-            ++queries.endpointProjections;
-            queries.endpointProjectionPieces += additional.getNumDisjuncts();
-        }
         auto before =
-            selectOrder(false, mlir::presburger::PresburgerSet(Relation(filter)), *incomingSources, queries);
+            selectOrder(false, mlir::presburger::PresburgerSet(Relation(filter)), incomingSources, queries);
         if (!before)
             return before.status;
         auto initial = queries.compose(*before.relation, incoming);
         if (!initial)
             return initial.status;
-        state.reached.unionInPlace(*initial.relation);
-        auto normalized = queries.normalize(state.reached);
-        if (!normalized)
-            return normalized.status;
-        state.reached = std::move(*normalized.relation);
+        Relation seeds = std::move(*initial.relation);
+        // The exact new-entry seed is useful while the frontier is compact.
+        // For d55a deferred receipts, or once the reached relation is large,
+        // use the old whole-frontier replay instead. This is a sound bounded
+        // fallback: it may do more work, but never drops a path and avoids
+        // expanding a large R;O;A composition during ordinary repair.
+        // Keep the exact new-entry update for genuinely compact states. The
+        // ordinary buffering path can have a modest reached-piece count but a
+        // large cross product with the newly added handoff; replaying the
+        // complete frontier is then the bounded, cheaper representation.
+        if (conservativeScopes.count(scope)) {
+            state.reached.unionInPlace(seeds);
+            auto normalized = queries.normalize(state.reached);
+            if (!normalized)
+                return normalized.status;
+            state.reached = std::move(*normalized.relation);
+            if (!queries.charge(state.reached))
+                return QueryStatus::BudgetExhausted;
+            state.frontier = MaterializedFrontier{state.reached};
+            state.reachedTargets.reset();
+            state.saturated = false;
+            continue;
+        }
+        // New paths either start through an added handoff, or first enter one
+        // after an established completion path. Issue order never supplies
+        // completion without a real handoff.
+        if (state.reached.getNumDisjuncts()) {
+            if (!state.reachedTargets) {
+                state.reachedTargets = state.reached.getRangeSet();
+                ++queries.endpointProjections;
+                queries.endpointProjectionPieces += state.reached.getNumDisjuncts();
+            }
+            auto between = selectOrder(false, *state.reachedTargets, incomingSources, queries);
+            if (!between)
+                return between.status;
+            auto reachedBefore = queries.compose(state.reached, *between.relation);
+            if (!reachedBefore)
+                return reachedBefore.status;
+            auto throughAdded = queries.compose(*reachedBefore.relation, incoming);
+            if (!throughAdded)
+                return throughAdded.status;
+            seeds.unionInPlace(*throughAdded.relation);
+        }
+        uint64_t seedCost = 0;
+        if (!queries.charge(seeds, &seedCost))
+            return QueryStatus::BudgetExhausted;
+        state.reached.unionInPlace(seeds);
+        auto normalizedReached = queries.normalize(state.reached);
+        if (!normalizedReached)
+            return normalizedReached.status;
+        state.reached = std::move(*normalizedReached.relation);
         state.reachedTargets.reset();
-        // Old paths can now enter a newly added handoff. Reprocessing them is
-        // necessary even when no new direct path starts in this source scope.
-        if (!queries.charge(state.reached)) return QueryStatus::BudgetExhausted;
-        state.frontier = MaterializedFrontier{state.reached};
-        state.saturated = false;
+        if (auto* frontier = std::get_if<MaterializedFrontier>(&state.frontier)) {
+            frontier->delta.unionInPlace(seeds);
+            auto normalizedPending = queries.normalize(frontier->delta);
+            if (!normalizedPending)
+                return normalizedPending.status;
+            frontier->delta = std::move(*normalizedPending.relation);
+            state.saturated = frontier->delta.getNumDisjuncts() == 0;
+        } else if (auto* frontier = std::get_if<DeferredFrontier>(&state.frontier)) {
+            // If D = generated \ before, then adding S is represented exactly
+            // by (generated union S) \ before. Paths in S already in before
+            // are already reached and need no pending work.
+            frontier->generated.unionInPlace(seeds);
+            if (frontier->retainedCells > UINT64_MAX - deferredCellIncrease ||
+                seedCost > UINT64_MAX - deferredCellIncrease - frontier->retainedCells)
+                return QueryStatus::BudgetExhausted;
+            frontier->retainedCells += seedCost;
+            deferredCellIncrease += seedCost;
+            state.saturated = false;
+        } else {
+            return QueryStatus::Unsupported;
+        }
     }
+    if (deferredSourceRelease > deferredSources || deferredCellRelease > deferredCells ||
+        deferredCells - deferredCellRelease > UINT64_MAX - deferredCellIncrease)
+        return QueryStatus::BudgetExhausted;
     if (!queries.charge(primitive.value()) || !queries.charge(additional))
         return QueryStatus::BudgetExhausted;
     primitive.relation.unionInPlace(additional);
@@ -1296,8 +1384,10 @@ QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQ
     primitiveTargets.reset();
     known = primitive.value();
     sources = std::move(updated);
-    frontierResets += deferredSources;
-    deferredSources = deferredCells = 0;
+    deferredSources -= deferredSourceRelease;
+    deferredCells -= deferredCellRelease;
+    deferredCells += deferredCellIncrease;
+    frontierResets += deferredSourceRelease;
     transitions.reset();
     expanded = Relation::getEmpty(primitive.value().getSpace());
     fixed = false;

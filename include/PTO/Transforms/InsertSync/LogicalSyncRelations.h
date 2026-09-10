@@ -283,8 +283,10 @@ public:
         return next;
     }
     // Monotonic construction only: retain already proved paths while adding
-    // actual handoffs. Reopen every source's delta search, including formerly
-    // saturated scopes. Removal/movement must still use withHandoffs().
+    // actual handoffs. Seed new direct paths and paths entering added handoffs
+    // for compact frontiers, preserving deferred/materialized state; large
+    // frontiers may use the bounded conservative replay. Removal/movement
+    // must still use withHandoffs().
     QueryStatus addHandoffs(const Relation& additional, RelationQueries& queries);
     // Compact mode exposes proved completion in the most recent query scope.
     // Absence remains unproved; it is not evidence of required synchronization.

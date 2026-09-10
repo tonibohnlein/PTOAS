@@ -96,6 +96,8 @@ def main():
                          "--output", output / "constructor"])
     run("retirement", [sys.executable, HERE / "check_retirement.py", "--driver", args.native_driver,
                         "--python-root", args.python_root, "--output", output / "retirement"])
+    run("compact-updates", [sys.executable, HERE / "check_compact_updates.py",
+                             "--driver", args.relation_driver, "--output", output / "compact-updates"])
     run("endpoints", [sys.executable, HERE / "check_endpoints.py", "--driver", args.native_driver,
                        "--python-root", args.python_root, "--output", output / "endpoints"])
     source = ROOT / "test/lit/pto/insert_sync_authored_dynamic.pto"
