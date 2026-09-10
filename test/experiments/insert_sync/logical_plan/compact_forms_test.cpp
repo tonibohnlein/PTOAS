@@ -6,12 +6,14 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/InsertSync/LogicalSyncCompactForms.h"
+#include "compact_forms_candidate.h"
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <random>
 #include <string>
 using namespace mlir::pto::logical_sync::compact;
+using namespace mlir::pto::logical_sync::compact_candidate;
 namespace {
 uint64_t checks = 0;
 void require(bool condition, const char* message) {

@@ -2,18 +2,32 @@
 
 ## Status and base
 
-Manual merge of C1 into `codex/oahs-upstream` at
-`d55a7c3968c07593a90da6685b63a38330085d7a`, retaining the upstream allocator
-and guard-lowering behavior where it conflicts with the candidate patch.
+Manual merge of C1 into `codex/oahs-upstream`, retaining the upstream guard
+lowering where it conflicts with the candidate patch and connecting the
+fitting-pool key policy to the native allocator.
 
-The native C++ integration was compiled with the pinned LLVM/MLIR 19.1.7
-build. Compact-update, endpoint, one-buffer, retirement, and scalability checks
-passed. The full focused gate remains blocked by the unavailable system `libisl`
-runtime; the three-buffer logical compilation also exceeds the local 90-second
-harness limit, and device correctness/performance remain unqualified.
+The native C++ integration is built with the pinned LLVM/MLIR 19.1.7 build.
+The qualification results below must be rerun for the current follow-up; the
+full focused gate may remain blocked by the unavailable system `libisl` runtime,
+and device correctness/performance remain unqualified.
 
-The portable production helpers compile and pass under GCC and Clang with
-ASan/UBSan. Finite relation-update tests pass. These results do not substitute
+For the current follow-up build, the affected native targets and focused
+constructor, retirement, scalability, endpoint, allocation, and compact-update
+checks passed individually. The complete `oahs_focused` CTest remains blocked
+at its first relation-oracle check because `libisl` is unavailable. One
+preliminary serial diagnostic sample measured about 14.0 s logical versus 0.39
+s existing for two-buffer, and 58.2 s versus 0.38 s for three-buffer; emitted
+C++ took about 0.4 s in both cases. This is not a five-pair acceptance campaign,
+does not meet the <=2x compilation gate, and is not a device benchmark. The
+logical trace attributes the two-buffer sample primarily to `contains`,
+subtraction qualification/partitioning, and realization; these component
+timings are diagnostic, not an acceptance result.
+
+The portable production event-key helper and the explicitly candidate-only
+affine/residue recognizers pass in the default unsanitized `c++` run. A separate
+`clang++` ASan/UBSan run also passes with leak detection disabled; the default
+compiler's sanitizer link is unavailable here, so no GCC sanitizer result is
+claimed. Finite relation-update tests pass. These results do not substitute
 for the full ordinary-buffer or device acceptance gates.
 
 ## Synthesis of the two reviews
@@ -47,19 +61,20 @@ public option, effect whitelist, or target capability is introduced here.
 
 ### Recognized forms
 
-The direct adapter derives a conjunction/disjunction from the actual endpoint
-set's rows. It recognizes comparisons of:
+The native direct adapter derives a conjunction/disjunction from the actual
+endpoint set's rows. It recognizes comparisons of:
 
 - an available original induction variable against a constant;
 - an available original integer parameter against a constant;
 - `upper_bound - iv` or `iv - lower_bound` against a constant;
-- a loop/parameter scalar's residue, exposed by a unit equality with one local.
+- qualified loop-bound differences.
 
-The arithmetic matcher in `LogicalSyncCompactForms.h` recognizes equal or
-opposite affine coefficient vectors and safely computes the comparison bound.
-It does not scale inequalities, perform projection, solve a dependence, or
-pretend unrelated occurrence coordinates are equal. INT64_MIN/MAX behavior is
-covered by the production-helper tests.
+The native implementation does not use the candidate affine/residue matcher
+from the portable review prototype. Its direct-row conversion remains local to
+`LogicalSyncPlan.cpp`; it does not expose a `LoopResidue` lowering atom.
+Residue-aware cases remain on the existing general lowering path. The native
+row conversion explicitly refuses normalized or sign-flipped coefficients that
+do not fit signed `int64_t`, including the `INT64_MIN` sign-normalization edge.
 
 The adapter never treats a constrained existential as a freely usable floor.
 A row such as `x - m*q - r = 0` proposes `x mod m = r`; other constraints on q
@@ -83,10 +98,6 @@ the actual integer type. Difference expressions need an existing full-ambient
 range proof before emitting subtraction. A remainder requires a full-ambient
 nonnegative numerator and a positive representable divisor. Negative-numerator
 cases that lack this qualification fall back to existing guard lowering.
-
-`LoopResidue` is one additional lowering atom, not a loop-pattern recognizer.
-It refers to the original IV through the existing occurrence universe. It is
-not a new PTO operation/attribute and does not change the payload schedule.
 
 The optional direct proposal gets at most 50,000 existing query work units per
 attempt and at most min(500,000, one eighth of remaining work at lowerer
@@ -113,7 +124,8 @@ stays compact through the complete pipeline.
 
 ## 2. Fitting-pool assignment
 
-Before assigning keys, count logical streams per directed pipe pair.
+Before assigning keys, count logical streams per directed pipe pair. The native
+allocator calls `compact::eventKeyTrialOrder()` with that population count.
 
 When the complete population fits in the already qualified eight-key pool, try
 unused keys before occupied keys. Prove that stream's own functionality and
@@ -167,22 +179,38 @@ relations with guards, parameters, and invocation coordinates. It updates a
 copy and commits only after every needed query succeeds. Removing/moving a
 handoff still uses `withHandoffs()` and resets plan-dependent proof state.
 
-This replaces `state.pending = state.reached`. It does NOT replace general
-completion relations with guarded-prefix antichains and does not eliminate all
-materialized subtraction. That larger representation change is the next
-algorithmic task, not an implied capability of this patch.
+This replaces `state.pending = state.reached` for small materialized states. If
+the source has a deferred receipt, more than 16 reached pieces, or a reached
+and added-piece product above 256, the update takes the conservative replay
+path: it retains the reached relation and reopens the complete frontier. The
+deferred receipt is not incrementally grown. Relation state is charged before
+the transactional copies, including the reached and materialized frontier
+relations. This does NOT replace general completion relations with
+guarded-prefix antichains and does not eliminate all materialized subtraction.
+That larger representation change is the next algorithmic task, not an implied
+capability of this patch.
 
 ## 4. Tests included
 
-`check_compact_updates.py` compiles the actual production header's tests, runs a
-finite delta-vs-fresh-search comparison, and optionally drives the existing
-native relation executable through eleven completion-update scenarios. The
+`check_compact_updates.py` compiles the production event-key helper together
+with explicitly candidate-only affine/residue matcher tests, runs a finite
+delta-vs-fresh-search comparison, and optionally drives the existing native
+relation executable through eleven completion-update scenarios. The
 existing `oahs_focused` runner now passes that native driver, making those
 scenarios mandatory when the native gate is run.
 
-Portable helper coverage includes exact/opposite rows, comparison bound overflow,
-INT64_MIN coefficients, extreme residue constants, coupled/nonunit refusal,
-and exhaustive fitting/scarce key-order checks for pools through 12 keys.
+Portable candidate coverage includes exact/opposite rows, comparison bound
+overflow, INT64_MIN coefficients, extreme residue constants, and
+coupled/nonunit refusal. The production helper is separately covered by
+exhaustive fitting/scarce key-order checks for pools through 12 keys. Native
+allocation trace tests check that an ordinary fitting population uses the
+unused-key-first order rather than occupied-family trials, and that an
+over-capacity population retains occupied-key trials. Native direct-guard tests
+exercise optional-attempt exhaustion, the existing fallback, and the live
+`INT64_MIN` direct-row refusal. Native completion threshold tests cover both
+piece-count boundaries and both sides of the 256-product boundary, compare the
+result with the corresponding finite fresh relation, and verify nested budget
+consumption.
 The production pool itself remains eight.
 
 Finite update tests exercise 4,320 warmed/partially explored graph states and
@@ -194,8 +222,10 @@ loops or a hardware event interpreter.
 The supplied native requests exercise explicit and callback issue-order
 providers, fresh tails after old saturation, retained pending work, new source
 paths, empty/repeated additions, distinct invocation identities, and a rejected
-incompatible-space update that must preserve earlier state. The native requests
-were GENERATED, NOT EXECUTED in the preparation runtime.
+incompatible-space update that must preserve earlier state. The standalone
+native direct-guard, allocator, threshold, and compact-update checks execute
+these paths when their build dependencies are available. The complete focused
+gate remains blocked in this environment by the unavailable `libisl` runtime.
 
 All existing physical-slot, generated-guard, event-cut, mutation, retirement,
 and relation tests remain in the focused gate. No negative test was removed.

@@ -94,10 +94,17 @@ def main():
     run("constructor", [sys.executable, HERE / "check_constructor.py", "--focused",
                          "--python-root", args.python_root, "--native-driver", args.native_driver,
                          "--output", output / "constructor"])
+    run("allocation", [sys.executable, HERE / "check_allocation.py",
+                        "--python-root", args.python_root, "--output", output / "allocation"])
+    run("direct-guards", [sys.executable, HERE / "check_direct_guards.py",
+                           "--python-root", args.python_root, "--output", output / "direct-guards"])
     run("retirement", [sys.executable, HERE / "check_retirement.py", "--driver", args.native_driver,
                         "--python-root", args.python_root, "--output", output / "retirement"])
     run("compact-updates", [sys.executable, HERE / "check_compact_updates.py",
                              "--driver", args.relation_driver, "--output", output / "compact-updates"])
+    run("completion-thresholds", [sys.executable, HERE / "check_completion_thresholds.py",
+                                   "--driver", args.relation_driver,
+                                   "--output", output / "completion-thresholds"])
     run("endpoints", [sys.executable, HERE / "check_endpoints.py", "--driver", args.native_driver,
                        "--python-root", args.python_root, "--output", output / "endpoints"])
     source = ROOT / "test/lit/pto/insert_sync_authored_dynamic.pto"

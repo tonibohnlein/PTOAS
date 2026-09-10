@@ -214,6 +214,8 @@ int main() {
                     {"frontier_deferrals", int64_t(completion.frontierDeferralCount())},
                     {"frontier_resolutions", int64_t(completion.frontierResolutionCount())},
                     {"frontier_resets", int64_t(completion.frontierResetCount())},
+                    {"frontier_incremental_updates", int64_t(completion.frontierIncrementalUpdateCount())},
+                    {"frontier_replay_updates", int64_t(completion.frontierReplayUpdateCount())},
                     {"deferred_sources", int64_t(completion.deferredSourceCount())},
                     {"deferred_cells", int64_t(completion.deferredCellCount())},
                     {"peak_deferred_cells", int64_t(completion.peakDeferredCellCount())},
@@ -230,6 +232,26 @@ int main() {
         output["answers"] = std::move(answers);
         if (root->getBoolean("record_steps").value_or(false)) output["steps"] = std::move(steps);
         output["relation"] = write(completion.supply());
+    } else if (op == "budget_scope") {
+        // A child allowance must debit its enclosing allowance when the child
+        // scope is destroyed. This is intentionally independent of relation
+        // construction so the nested-budget contract is directly testable.
+        bool outerFirst = false, inner = false, outerSecond = false, outerOver = true;
+        {
+            auto outer = queries.scopedBudget(10);
+            outerFirst = queries.spend(3);
+            {
+                auto child = queries.scopedBudget(4);
+                inner = queries.spend(4);
+            }
+            outerSecond = queries.spend(3);
+            outerOver = queries.spend(1);
+        }
+        output["status"] = "proved";
+        output["outer_first"] = outerFirst;
+        output["inner"] = inner;
+        output["outer_second"] = outerSecond;
+        output["outer_over"] = outerOver;
     } else {
         auto b = root->getObject("b") ? read(*root->getObject("b")) : a;
         RelationResult result;
