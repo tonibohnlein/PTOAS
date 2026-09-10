@@ -284,6 +284,112 @@ def check_boolean_containment(run, isl, output):
     (output/"boolean_containment_scaling.json").write_text(json.dumps(scaling,indent=2)+"\n")
 
 
+def check_deferred_completion(run, isl, output):
+    def edges(pairs):
+        return relation(pieces=[{"locals":0,"eq":[[1,0,-a],[0,1,-b]],"ge":[]} for a,b in pairs])
+    identity=relation(eq=[[1,-1,0]])
+    handoffs=edges([(0,1),(1,2),(2,3),(3,4)])
+    def need(target, rounds=1, **kw):
+        return dict(relation=edges([(0,target)]),rounds=rounds,**kw)
+    def run_sequence(name, needs, statuses, supply=handoffs, order=identity):
+        request=dict(op="completion",a=supply,issue_order=order,record_steps=True,needs=needs)
+        actual=run("deferred_"+name,request)
+        assert [a["status"] for a in actual["answers"]] == statuses, actual
+        assert len(actual["steps"]) == len(needs), actual
+        # Independently reconstruct finite transitive completion on each plan.
+        # No result with merely equal command counts is treated as proof.
+        primitive=isl.map(isl_text(supply)); issue=isl.map(isl_text(order))
+        for query,answer,step in zip(needs,actual["answers"],actual["steps"]):
+            if "replace_handoffs" in query:
+                primitive=isl.map(isl_text(query["replace_handoffs"]))
+            if "add_handoffs" in query and answer["status"] != "budget-exhausted":
+                primitive=primitive | isl.map(isl_text(query["add_handoffs"]))
+            closed=issue.then(primitive)
+            transition=issue.then(primitive)
+            for _ in range(8):
+                following=closed | closed.then(transition)
+                if following.equal(closed): break
+                closed=following
+            supplied=isl.map(isl_text(step["supply"]))
+            assert (supplied-closed.then(issue)).empty(), (name,step)
+            if answer["status"] == "proved":
+                assert (isl.map(isl_text(query["relation"]))-supplied).empty(), (name,step)
+        return actual
+
+    sequence=run_sequence("resume_zero_round_and_saturation",[
+        need(2),need(2,0),need(4,0),need(3),need(4),need(7),need(7,8)],
+        ["proved","proved","not-established","proved","proved","not-established","not-established"])
+    steps=sequence["steps"]
+    assert steps[0]["frontier_extensions"] == 1 and steps[0]["frontier_differences"] == 0, steps
+    assert steps[0]["deferred_sources"] == 1 and steps[0]["deferred_cells"] > 0, steps
+    assert steps[1]["frontier_resolutions"] == steps[2]["frontier_resolutions"] == 0, steps
+    assert steps[1]["frontier_extensions"] == steps[2]["frontier_extensions"] == 1, steps
+    assert steps[3]["frontier_resolutions"] == 1 and steps[3]["frontier_extensions"] == 2, steps
+    assert steps[4]["frontier_resolutions"] == 2 and steps[4]["frontier_extensions"] == 3, steps
+    assert steps[5]["deferred_sources"] == steps[5]["deferred_cells"] == 0, steps
+    assert steps[5]["saturated_sources"] == 1, steps
+    assert steps[6]["frontier_extensions"] == steps[5]["frontier_extensions"], steps
+
+    added=run_sequence("addition_resets_receipt",[need(2),need(5,add_handoffs=edges([(2,5)]))],
+                       ["proved","proved"])
+    assert added["steps"][1]["frontier_resets"] == 1, added
+    assert added["steps"][1]["frontier_resolutions"] == 0, added
+    removed=run_sequence("replacement_discards_receipt",[
+        need(2),need(2,0,replace_handoffs=edges([(0,1)])),need(2)],
+        ["proved","not-established","not-established"])
+    assert removed["steps"][1]["deferred_sources"] == 0, removed
+
+    # Derive a budget that enters and exhausts exact receipt resolution. This
+    # test-only fresh query budget leaves the same CompletionQueries alive for
+    # a later full-budget retry; attempted counters may advance on failure.
+    budget_target=steps[3]["work"]-steps[2]["work"]
+    failures=[]
+    for budget in sorted({0,max(1,budget_target//4),max(1,3*budget_target//8),
+                          max(1,budget_target//2)}):
+        attempt=run_sequence(f"resolution_budget_{budget}",[
+            need(2),need(3,query_budget=budget),need(3)],
+            ["proved","budget-exhausted","proved"])
+        before,failed,resumed=attempt["steps"]
+        if failed["frontier_resolutions"] == 0:
+            assert failed["deferred_sources"] == before["deferred_sources"] == 1, attempt
+            assert failed["deferred_cells"] == before["deferred_cells"], attempt
+            if failed["frontier_differences"] > before["frontier_differences"]: failures.append(budget)
+        else:
+            # Resolution may finish atomically before a later extension query
+            # exhausts. Its exact materialized delta is then valid progress.
+            assert failed["frontier_resolutions"] == 1 and failed["deferred_sources"] == 0, attempt
+        assert resumed["frontier_resolutions"] == 1, attempt
+    assert failures, "budget tests must reach deferred materialization"
+    failed_add=run_sequence("failed_addition_preserves_receipt",[
+        need(2),need(5,add_handoffs=edges([(2,5)]),query_budget=0),need(3)],
+        ["proved","budget-exhausted","proved"])
+    assert failed_add["steps"][1]["deferred_sources"] == 1, failed_add
+    assert failed_add["steps"][1]["frontier_resets"] == 0, failed_add
+
+    def nested_edge(a,b):
+        return {"locals":0,"eq":[[1,0,0,0,0,0,0,-a],[0,0,0,1,0,0,0,-b],
+                [0,1,0,0,-1,0,0,0],[0,0,1,0,0,-1,0,0]],
+                "ge":[[0,1,0,0,0,0,0,0],[0,-1,0,0,0,0,0,1],
+                      [0,0,1,0,0,0,0,0],[0,0,-1,0,0,0,1,-1]]}
+    nested=lambda pairs: relation(d=3,r=3,s=1,pieces=[nested_edge(a,b) for a,b in pairs])
+    nested_order=relation(d=3,r=3,s=1,eq=[[1,0,0,-1,0,0,0,0],
+                           [0,1,0,0,-1,0,0,0],[0,0,1,0,0,-1,0,0]])
+    narrow=nested([(0,2)])
+    narrow["pieces"][0]["eq"] += [[0,1,0,0,0,0,0,0],[0,0,1,0,0,0,0,0]]
+    full=nested([(0,3)])
+    wrong=nested([(0,3)])
+    wrong["pieces"][0]["eq"][2][-1]=1
+    guarded=run_sequence("narrow_then_nested_full_invocation",[
+        dict(relation=narrow,rounds=1),dict(relation=full,rounds=0),
+        dict(relation=full,rounds=1),dict(relation=wrong,rounds=1)],
+        ["proved","not-established","proved","not-established"],
+        supply=nested([(0,1),(1,2),(2,3)]),order=nested_order)
+    assert guarded["steps"][2]["frontier_resolutions"] == 1, guarded
+    (output/"deferred_completion.json").write_text(json.dumps(dict(
+        sequence=sequence,added=added,removed=removed,guarded=guarded,
+        resolution_exhaustion_budgets=failures),indent=2)+"\n")
+
+
 def main():
     if not __debug__:
         raise RuntimeError("Run relation checks without Python -O; assertions are required")
@@ -977,6 +1083,7 @@ def main():
 
     check_periodic_successors(run, isl, args.output)
     check_boolean_containment(run, isl, args.output)
+    check_deferred_completion(run, isl, args.output)
 
     summary = {"status":"passed", "checks":results, "isl_version":isl.version,
                "driver_sha256":hashlib.sha256(args.driver.read_bytes()).hexdigest()}

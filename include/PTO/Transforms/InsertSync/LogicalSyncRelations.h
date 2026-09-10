@@ -17,6 +17,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <variant>
 
 namespace mlir::pto::logical_sync {
 using Relation = presburger::PresburgerRelation;
@@ -190,11 +191,23 @@ class CompletionQueries {
     std::optional<presburger::PresburgerSet> primitiveSources, primitiveTargets;
     Relation expanded;
     bool fixed = false;
+    struct MaterializedFrontier { Relation delta; };
+    struct DeferredFrontier {
+        // Exactly generated \ before. before is the PRE-extension reached
+        // relation; using the current reached union would erase the delta.
+        Relation generated, before;
+        uint64_t retainedCells;
+    };
     struct SourceState {
-        Relation reached, pending;
+        Relation reached;
+        std::variant<MaterializedFrontier, DeferredFrontier> frontier;
         bool saturated = false;
         std::optional<presburger::PresburgerSet> reachedTargets;
     };
+    uint64_t frontierExtensions = 0, frontierDifferences = 0;
+    uint64_t frontierDeferrals = 0, frontierResolutions = 0, frontierResets = 0;
+    uint64_t deferredSources = 0, deferredCells = 0, peakDeferredCells = 0;
+    QueryStatus resolveFrontier(SourceState& state, RelationQueries& queries);
     // A key restricts only the first source coordinate. All other coordinates,
     // guards and parameters remain in the actual issue-order relation. This
     // partition is algebraic; coordinate zero need not be a native phase ID.
@@ -280,6 +293,20 @@ public:
     // Individual source/target block probes, excluding group lookups and
     // algebra/solver work. Narrow queries must not scan the entire index.
     uint64_t orderIndexLookups() const { return indexedLookups; }
+    uint64_t frontierExtensionCount() const { return frontierExtensions; }
+    uint64_t frontierDifferenceCount() const { return frontierDifferences; }
+    uint64_t frontierDeferralCount() const { return frontierDeferrals; }
+    uint64_t frontierResolutionCount() const { return frontierResolutions; }
+    uint64_t frontierResetCount() const { return frontierResets; }
+    uint64_t deferredSourceCount() const { return deferredSources; }
+    uint64_t deferredCellCount() const { return deferredCells; }
+    uint64_t peakDeferredCellCount() const { return peakDeferredCells; }
+    // Test/diagnostic inspection only; not part of ordinary query evaluation.
+    unsigned saturatedSourceCount() const {
+        unsigned count = 0;
+        for (const auto& [scope, state] : sources) { (void)scope; count += state.saturated; }
+        return count;
+    }
 };
 } // namespace mlir::pto::logical_sync
 #endif

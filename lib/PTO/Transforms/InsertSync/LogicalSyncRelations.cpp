@@ -1247,7 +1247,17 @@ QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQ
 {
     if (!sparse() || !sameSpace(primitive.value(), additional))
         return QueryStatus::Unsupported;
-    auto updated = sources;
+    // The new plan needs the reached sets, but neither old delta receipts
+    // nor old endpoint caches survive. Copy only that necessary transaction
+    // state; copying deferred generated/pre-image matrices just to discard
+    // them would add avoidable work proportional to their retained size.
+    decltype(sources) updated;
+    for (const auto& [scope, state] : sources) {
+        if (!queries.spend(1) || !queries.charge(state.reached)) return QueryStatus::BudgetExhausted;
+        updated.emplace(scope, SourceState{state.reached,
+            MaterializedFrontier{Relation::getEmpty(state.reached.getSpace())}, false});
+    }
+    if (!queries.charge(additional)) return QueryStatus::BudgetExhausted;
     RelationQueries::CompositionRHS incoming(additional);
     std::optional<mlir::presburger::PresburgerSet> incomingSources;
     for (auto& [scope, state] : updated) {
@@ -1270,19 +1280,24 @@ QueryStatus CompletionQueries::addHandoffs(const Relation& additional, RelationQ
         auto normalized = queries.normalize(state.reached);
         if (!normalized)
             return normalized.status;
-        state.reached = *normalized.relation;
+        state.reached = std::move(*normalized.relation);
         state.reachedTargets.reset();
         // Old paths can now enter a newly added handoff. Reprocessing them is
         // necessary even when no new direct path starts in this source scope.
-        state.pending = state.reached;
+        if (!queries.charge(state.reached)) return QueryStatus::BudgetExhausted;
+        state.frontier = MaterializedFrontier{state.reached};
         state.saturated = false;
     }
+    if (!queries.charge(primitive.value()) || !queries.charge(additional))
+        return QueryStatus::BudgetExhausted;
     primitive.relation.unionInPlace(additional);
     primitive.index.reset();
     primitiveSources.reset();
     primitiveTargets.reset();
     known = primitive.value();
     sources = std::move(updated);
+    frontierResets += deferredSources;
+    deferredSources = deferredCells = 0;
     transitions.reset();
     expanded = Relation::getEmpty(primitive.value().getSpace());
     fixed = false;
@@ -1299,6 +1314,31 @@ const mlir::presburger::PresburgerSet& CompletionQueries::primitiveEndpoints(
         queries.endpointProjectionPieces += primitive.value().getNumDisjuncts();
     }
     return *cached;
+}
+
+QueryStatus CompletionQueries::resolveFrontier(SourceState& state, RelationQueries& queries)
+{
+    auto* deferred = std::get_if<DeferredFrontier>(&state.frontier);
+    if (!deferred) return QueryStatus::Proved;
+    ++frontierDifferences;
+    auto fresh = queries.subtract(deferred->generated, deferred->before);
+    if (!fresh) return fresh.status;
+    if (!queries.charge(*fresh.relation) || !queries.charge(deferred->before))
+        return QueryStatus::BudgetExhausted;
+    bool empty = fresh.relation->isIntegerEmpty();
+    Relation reached = deferred->before;
+    reached.unionInPlace(*fresh.relation);
+    // Commit only after all fallible operations. The set is unchanged, but
+    // R_before union delta restores the semi-naive representation instead of
+    // indefinitely retaining overlapping generated waves.
+    deferredCells -= deferred->retainedCells;
+    --deferredSources;
+    ++frontierResolutions;
+    state.reached = std::move(reached);
+    state.frontier = MaterializedFrontier{std::move(*fresh.relation)};
+    state.reachedTargets.reset();
+    state.saturated = empty;
+    return QueryStatus::Proved;
 }
 
 QueryStatus CompletionQueries::proveSparse(const Relation& requirement, RelationQueries& queries, unsigned rounds)
@@ -1330,7 +1370,10 @@ QueryStatus CompletionQueries::proveSparse(const Relation& requirement, Relation
             auto initial = queries.compose(*before.relation, primitive);
             if (!initial)
                 return initial.status;
-            found = sources.emplace(scope, SourceState{*initial.relation, *initial.relation, false}).first;
+            if (!queries.spend(1) || !queries.charge(*initial.relation)) return QueryStatus::BudgetExhausted;
+            Relation pending = *initial.relation;
+            found = sources.emplace(scope, SourceState{std::move(*initial.relation),
+                MaterializedFrontier{std::move(pending)}, false}).first;
         }
         auto& state = found->second;
         // These sets describe this exact demand, whereas the cached source
@@ -1338,22 +1381,24 @@ QueryStatus CompletionQueries::proveSparse(const Relation& requirement, Relation
         const auto requiredSources = required.getDomainSet();
         const auto requiredTargets = required.getRangeSet();
         Relation available = Relation::getEmpty(requirement.getSpace());
-        auto coverage = [&]() -> QueryStatus {
-            if (!state.reachedTargets) {
-                state.reachedTargets = state.reached.getRangeSet();
+        auto coverage = [&](const Relation& reached,
+                            std::optional<mlir::presburger::PresburgerSet>& reachedTargets,
+                            Relation& supplied) -> QueryStatus {
+            if (!reachedTargets) {
+                reachedTargets = reached.getRangeSet();
                 ++queries.endpointProjections;
-                queries.endpointProjectionPieces += state.reached.getNumDisjuncts();
+                queries.endpointProjectionPieces += reached.getNumDisjuncts();
             }
-            auto after = selectOrder(false, *state.reachedTargets, requiredTargets, queries);
+            auto after = selectOrder(false, *reachedTargets, requiredTargets, queries);
             if (!after)
                 return after.status;
-            auto value = queries.compose(state.reached, *after.relation);
+            auto value = queries.compose(reached, *after.relation);
             if (!value)
                 return value.status;
-            available = std::move(*value.relation);
-            return queries.contains(available, required);
+            supplied = std::move(*value.relation);
+            return queries.contains(supplied, required);
         };
-        auto covered = coverage();
+        auto covered = coverage(state.reached, state.reachedTargets, available);
         if (covered == QueryStatus::NotEstablished && !state.saturated && hasGlobalOrder()) {
             // Rejection-only upper bounds: every completion path must enter
             // and leave through a real handoff. Global issue order is never
@@ -1395,6 +1440,12 @@ QueryStatus CompletionQueries::proveSparse(const Relation& requirement, Relation
         // Resumed queries retain earlier reachability and pending work.
         unsigned steps = (1u << std::min(rounds, 8u)) - 1;
         for (unsigned step = 0; covered == QueryStatus::NotEstablished && !state.saturated && step < steps; ++step) {
+            // A zero-round query makes no extension request and retains this
+            // receipt. Otherwise resolve it BEFORE composing, without consuming
+            // a round. Exact empty novelty, never early coverage, saturates.
+            auto resolved = resolveFrontier(state, queries);
+            if (resolved != QueryStatus::Proved) return resolved;
+            if (state.saturated) break;
             if (!transitions) {
                 auto between = selectOrder(false, primitiveEndpoints(false, queries), primitiveEndpoints(true, queries), queries);
                 if (!between)
@@ -1404,20 +1455,53 @@ QueryStatus CompletionQueries::proveSparse(const Relation& requirement, Relation
                     return value.status;
                 transitions.emplace(std::move(*value.relation));
             }
-            auto next = queries.compose(state.pending, *transitions);
-            if (!next)
-                return next.status;
-            auto fresh = queries.subtract(*next.relation, state.reached);
-            if (!fresh)
-                return fresh.status;
-            state.pending = std::move(*fresh.relation);
-            if (state.pending.isIntegerEmpty()) {
-                state.saturated = true;
+            const auto& pending = std::get<MaterializedFrontier>(state.frontier).delta;
+            auto next = queries.compose(pending, *transitions);
+            if (!next) return next.status;
+            ++frontierExtensions;
+            uint64_t oldCost = 0, generatedCost = 0;
+            if (!queries.spend(1) || !queries.charge(state.reached, &oldCost) ||
+                !queries.charge(*next.relation, &generatedCost)) return QueryStatus::BudgetExhausted;
+            Relation candidate = state.reached;
+            candidate.unionInPlace(*next.relation);
+            std::optional<mlir::presburger::PresburgerSet> candidateTargets;
+            Relation candidateSupply = Relation::getEmpty(requirement.getSpace());
+            auto candidateCovered = coverage(candidate, candidateTargets, candidateSupply);
+            if (candidateCovered == QueryStatus::Unsupported || candidateCovered == QueryStatus::BudgetExhausted)
+                return candidateCovered;
+            if (candidateCovered == QueryStatus::Proved) {
+                // Both relations are moved into the one owning receipt for
+                // this source. Its pre-image is R, not the enlarged R union N.
+                uint64_t cells = oldCost + generatedCost - 2;
+                if (cells > UINT64_MAX - deferredCells) return QueryStatus::BudgetExhausted;
+                DeferredFrontier receipt{std::move(*next.relation), std::move(state.reached), cells};
+                state.reached = std::move(candidate);
+                state.frontier = std::move(receipt);
+                state.reachedTargets = std::move(candidateTargets);
+                ++frontierDeferrals;
+                ++deferredSources;
+                deferredCells += cells;
+                peakDeferredCells = std::max(peakDeferredCells, deferredCells);
+                available = std::move(candidateSupply);
+                covered = QueryStatus::Proved;
                 break;
             }
-            state.reached.unionInPlace(state.pending);
+            ++frontierDifferences;
+            auto fresh = queries.subtract(*next.relation, state.reached);
+            if (!fresh) return fresh.status;
+            if (!queries.charge(*fresh.relation) || !queries.charge(state.reached))
+                return QueryStatus::BudgetExhausted;
+            bool empty = fresh.relation->isIntegerEmpty();
+            Relation reached = state.reached;
+            reached.unionInPlace(*fresh.relation);
+            state.reached = std::move(reached);
+            state.frontier = MaterializedFrontier{std::move(*fresh.relation)};
             state.reachedTargets.reset();
-            covered = coverage();
+            state.saturated = empty;
+            // R union (N \ R) equals the candidate already checked. Keep its
+            // exact answer/supply, avoiding another equivalent coverage query.
+            available = std::move(candidateSupply);
+            covered = candidateCovered;
         }
         if (covered == QueryStatus::Unsupported || covered == QueryStatus::BudgetExhausted)
             return covered;
