@@ -141,10 +141,10 @@ llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
 llvm::cl::opt<std::string> insertSyncPlanner(
-    "insert-sync-planner", llvm::cl::desc("InsertSync planning engine: existing, logical, logical-or-existing"),
+    "insert-sync-planner", llvm::cl::desc("InsertSync planning engine: existing, logical, logical-or-existing, structured"),
     llvm::cl::init("existing"));
 llvm::cl::opt<uint64_t> insertSyncLogicalWorkBudget(
-    "insert-sync-logical-work-budget", llvm::cl::desc("Bound logical occurrence construction work"),
+    "insert-sync-logical-work-budget", llvm::cl::desc("Reference logical engine work allowance (not used by structured)"),
     llvm::cl::init(mlir::pto::kDefaultLogicalSyncWorkBudget));
 llvm::cl::opt<std::string> insertSyncGMAlias(
     "insert-sync-gm-alias", llvm::cl::desc("Logical constructor GM contract: may-alias or assume-disjoint-arguments"),

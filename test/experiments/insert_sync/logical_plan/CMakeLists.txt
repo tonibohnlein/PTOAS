@@ -44,3 +44,24 @@ if(TARGET pto-logical-sync-test AND PTO_ENABLE_PYTHON_BINDING)
             pto-test-opt PTOAS_Python PTOASCompiler
     USES_TERMINAL)
 endif()
+
+# This core is deliberately buildable without linking MLIR or Presburger.
+add_executable(pto-structured-core-test structured_core_test.cpp
+  "${PTO_RELATION_ROOT}/lib/PTO/Transforms/InsertSync/StructuredSyncCore.cpp")
+target_compile_features(pto-structured-core-test PRIVATE cxx_std_17)
+target_include_directories(pto-structured-core-test PRIVATE "${PTO_RELATION_ROOT}/include")
+if(TARGET pto-structured-sync-test AND PTO_ENABLE_PYTHON_BINDING)
+  add_test(NAME oahs_structured_core COMMAND pto-structured-core-test)
+  add_test(NAME oahs_structured
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/check_structured.py"
+      --driver "$<TARGET_FILE:pto-structured-sync-test>"
+      --opt "$<TARGET_FILE:pto-test-opt>"
+      --python-root "${CMAKE_BINARY_DIR}/python"
+      --output "${CMAKE_BINARY_DIR}/test-results/oahs-structured")
+  set_tests_properties(oahs_structured oahs_structured_core PROPERTIES LABELS "OAHS" RUN_SERIAL TRUE)
+  add_custom_target(check-oahs-structured
+    COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure -R "^oahs_structured(_core)?$" --parallel 1
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+    DEPENDS pto-structured-sync-test pto-structured-core-test pto-test-opt PTOAS_Python PTOASCompiler
+    USES_TERMINAL)
+endif()

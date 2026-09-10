@@ -93,3 +93,9 @@ target_link_libraries(pto-vfsimt-size-patcher-test PRIVATE
   LLVMSupport
   MLIRSupport
 )
+
+# S1 structured OAHS: same production engine, independently mutated emitted IR.
+add_llvm_executable(pto-structured-sync-test pto-structured-sync-test.cpp PARTIAL_SOURCES_INTENDED)
+target_link_libraries(pto-structured-sync-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRFuncDialect MLIRSCFDialect MLIRArithDialect MLIRDLTIDialect)
+add_dependencies(pto-structured-sync-test PTOOpsIncGen PTOPassesIncGen)

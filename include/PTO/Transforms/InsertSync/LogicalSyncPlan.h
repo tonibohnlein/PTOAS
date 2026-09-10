@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #ifndef PTO_TRANSFORMS_INSERTSYNC_LOGICALSYNCPLAN_H
 #define PTO_TRANSFORMS_INSERTSYNC_LOGICALSYNCPLAN_H
+#include "PTO/Transforms/InsertSync/SyncConstruction.h"
 #include "PTO/Transforms/InsertSync/SyncOccurrences.h"
 #include "PTO/Transforms/InsertSync/InsertSyncOptions.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
@@ -32,13 +33,7 @@ struct OrderingRequirement {
 };
 // Outcome describes the constructor that actually ran. Expected failure never
 // commits a partial candidate; InternalError is not a fallback permission.
-struct ConstructionResult {
-    enum Status { Applied, Unsupported, AnalysisLimit, Unproved, AllocationFailure, InternalError };
-    Status status = Unsupported;
-    std::string reason;
-    uint64_t work = 0;
-    unsigned requirements = 0, handoffs = 0, barriers = 0;
-};
+// ConstructionResult is shared with the structured, non-relational engine.
 ConstructionResult constructLogicalSync(
     func::FuncOp function, InsertSyncGMAliasMode gm, bool useMmad, uint64_t budget = kDefaultLogicalSyncWorkBudget);
 namespace testing {
