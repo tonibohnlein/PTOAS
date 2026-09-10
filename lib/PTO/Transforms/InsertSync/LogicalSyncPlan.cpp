@@ -1026,6 +1026,7 @@ using Guard = SmallVector<Clause, 2>;
 // later occurrence importer to discover an already expanded function.
 bool chargeGuardEmission(const Guard& guard, uint64_t& remaining)
 {
+    if (guard.empty()) return true; // an empty disjunction emits no action
     constexpr uint64_t operationsPerLiteral = 12; // includes scalar ops and both region yields
     constexpr unsigned maxDepth = 64;
     uint64_t nodes = 0;
@@ -1087,6 +1088,19 @@ class BoundaryLowering {
     };
     std::map<std::tuple<unsigned, unsigned, bool>, DifferenceRange> differenceRanges;
     uint64_t conditionRequests = 0, conditionBuilds = 0, rangeRequests = 0, rangeBuilds = 0;
+    using DirectKey = std::vector<int64_t>;
+    using DirectRow = std::vector<llvm::DynamicAPInt>;
+    struct DirectForm { BoundaryTest test; int64_t offset; bool negative; };
+    struct DirectForms {
+        std::map<DirectKey, std::vector<DirectForm>> forms;
+        std::map<DirectKey, llvm::DynamicAPInt> ambientBounds;
+        std::set<DirectRow> ambientEqualities;
+        std::optional<unsigned> coordinate;
+        Relation ambient;
+    };
+    std::map<unsigned, DirectForms> directForms;
+    uint64_t directAttempts = 0, directAccepted = 0, directRows = 0, directMatches = 0,
+             directFormBuilds = 0, legacyGrids = 0;
     // Cache only within a block and check the actual insertion cursor. Endpoint
     // traversal is not necessarily lexical; a later definition cannot be reused
     // at an earlier cut. In particular, no remainder escapes its guarding block.
@@ -1253,13 +1267,271 @@ class BoundaryLowering {
         return &differenceRanges.emplace(key, DifferenceRange{Relation(flat), full}).first->second;
     }
 
+    std::optional<DirectRow> directRow(ArrayRef<llvm::DynamicAPInt> input, bool equality,
+                                       unsigned nonlocal, bool& empty)
+    {
+        if (!queries.spend(input.size() * 3)) { outcome = QueryStatus::BudgetExhausted; return {}; }
+        for (unsigned c = nonlocal; c + 1 < input.size(); ++c)
+            if (input[c] != 0) return {}; // not a directly emit-able affine atom
+        llvm::DynamicAPInt divisor(0);
+        DirectRow row(nonlocal + 1);
+        for (unsigned c = 0; c < nonlocal; ++c) {
+            if (input[c] < INT64_MIN || input[c] > INT64_MAX) return {};
+            row[c] = llvm::DynamicAPInt(int64_t(input[c]));
+            auto value = row[c] < 0 ? -row[c] : row[c];
+            while (value != 0) {
+                if (!queries.spend(1)) { outcome = QueryStatus::BudgetExhausted; return {}; }
+                auto rest = divisor % value; divisor = value; value = rest;
+            }
+        }
+        row.back() = input.back();
+        if (divisor == 0) {
+            empty |= equality ? row.back() != 0 : row.back() < 0;
+            return {};
+        }
+        if (equality && row.back() % divisor != 0) { empty = true; return {}; }
+        auto constant = row.back() / divisor;
+        if (!equality && row.back() < 0 && row.back() % divisor != 0) --constant;
+        for (unsigned c = 0; c < nonlocal; ++c) row[c] /= divisor;
+        row.back() = constant;
+        if (equality) for (unsigned c = 0; c < nonlocal; ++c) if (row[c] != 0) {
+            if (row[c] < 0) for (auto& value : row) value = -value;
+            break;
+        }
+        return row;
+    }
+    std::optional<Relation> directPopulation(const Relation& input, std::optional<unsigned> coordinate)
+    {
+        auto normalized = queries.normalize(input);
+        if (!normalized) { outcome = normalized.status; return {}; }
+        if (normalized.relation->getNumDisjuncts() > 32) return {};
+        auto result = Relation::getEmpty(input.getSpace());
+        for (const auto& original : normalized.relation->getAllDisjuncts()) {
+            std::optional<Relation> rewritten;
+            if (coordinate && original.getNumLocalVars()) {
+                auto cell = normalizeOccurrenceCell(original, *coordinate, queries);
+                if (cell.status == QueryStatus::BudgetExhausted) { outcome = cell.status; return {}; }
+                if (cell) rewritten = std::move(cell.relation);
+            }
+            const auto& piece = rewritten ? rewritten->getAllDisjuncts().front() : original;
+            if (piece.getNumConstraints() > 256 || piece.getNumCols() > 64) return {};
+            if (!queries.spend(uint64_t(piece.getNumConstraints() + 1) * piece.getNumCols())) {
+                outcome = QueryStatus::BudgetExhausted; return {};
+            }
+            if (!piece.isObviouslyEmpty()) result.unionInPlace(piece);
+        }
+        return result;
+    }
+    const DirectForms* availableDirectForms(unsigned point)
+    {
+        if (!queries.spend(1)) { outcome = QueryStatus::BudgetExhausted; return nullptr; }
+        if (auto found = directForms.find(point); found != directForms.end()) return &found->second;
+        ++directFormBuilds;
+        const unsigned n = facts.dimensions(), ns = facts.parameters.size(), width = n + ns;
+        if (width > 63) return nullptr;
+        auto* anchor = facts.points[point].operation;
+        auto* context = anchor->getContext();
+        DirectForms available{{}, {}, {}, {}, Relation::getEmpty(facts.domain(point).getSpace())};
+        auto append = [&](DirectKey key, int64_t offset, BoundaryTest test) {
+            if (!queries.spend(uint64_t(width + 1) * 4)) { outcome = QueryStatus::BudgetExhausted; return false; }
+            available.forms[key].push_back({test, offset, false});
+            for (auto& coefficient : key) {
+                if (coefficient == INT64_MIN) return true;
+                coefficient = -coefficient;
+            }
+            available.forms[key].push_back({test, offset, true});
+            return true;
+        };
+        for (unsigned i = 0; i < facts.loops.size(); ++i) {
+            auto loop = facts.loops[i];
+            if (!loop->isProperAncestor(anchor)) continue;
+            available.coordinate = i + 1; // actual innermost active IV, never a zero-filled inactive IV
+            DirectKey key(width); key[i + 1] = 1;
+            if (!append(std::move(key), 0, BoundaryTest{BoundaryTest::ConstantBound, i, true})) return nullptr;
+        }
+        for (unsigned s = 0; s < ns; ++s) {
+            Value value = facts.parameters[s];
+            if (value.getType().isInteger(1) || !dominance.dominates(value, anchor)) continue;
+            if (!isa<IndexType, IntegerType>(value.getType())) continue;
+            if (!available.coordinate) available.coordinate = n + s;
+            DirectKey key(width); key[n + s] = 1;
+            if (!append(std::move(key), 0, BoundaryTest{BoundaryTest::ParameterBound, s, true})) return nullptr;
+        }
+        SmallVector<AffineExpr> dims, symbols;
+        for (unsigned i = 0; i < facts.loops.size(); ++i) dims.push_back(getAffineDimExpr(i + 1, context));
+        for (unsigned i = 0; i < ns; ++i) symbols.push_back(getAffineSymbolExpr(i, context));
+        for (unsigned i = 0; i < facts.loops.size(); ++i) {
+            auto loop = facts.loops[i];
+            if (!loop->isProperAncestor(anchor) || !dominance.dominates(loop.getLowerBound(), anchor) ||
+                !dominance.dominates(loop.getUpperBound(), anchor)) continue;
+            auto iv = getAffineDimExpr(i, context);
+            for (bool upper : {false, true}) {
+                auto expression = upper ? facts.loopDomains[i].upper - iv : iv - facts.loopDomains[i].lower;
+                expression = expression.replaceDimsAndSymbols(dims, symbols);
+                if (!queries.spend(width + 1)) { outcome = QueryStatus::BudgetExhausted; return nullptr; }
+                FlatLinearConstraints flat(n, ns);
+                std::vector<SmallVector<int64_t, 8>> rows;
+                auto set = IntegerSet::get(n, ns, {expression}, {false});
+                if (failed(getFlattenedAffineExprs(set, &rows, &flat)) || flat.getNumLocalVars()) continue;
+                DirectKey key(rows.front().begin(), rows.front().end() - 1);
+                if (!append(std::move(key), rows.front().back(),
+                            BoundaryTest{BoundaryTest::DifferenceBound, i, true, 0, arith::CmpIPredicate::eq, upper}))
+                    return nullptr;
+            }
+        }
+        if (available.forms.size() > 64) return nullptr;
+        auto ambient = directPopulation(facts.domain(point), available.coordinate);
+        if (!ambient) return nullptr;
+        available.ambient = std::move(*ambient);
+        bool first = true;
+        for (const auto& piece : available.ambient.getAllDisjuncts()) {
+            std::map<DirectKey, llvm::DynamicAPInt> bounds;
+            std::set<DirectRow> equalities;
+            bool empty = false;
+            auto addBound = [&](const DirectRow& row) {
+                DirectKey key;
+                for (unsigned c = 0; c < width; ++c) key.push_back(int64_t(row[c]));
+                auto [found, inserted] = bounds.emplace(std::move(key), row.back());
+                if (!inserted && row.back() < found->second) found->second = row.back();
+            };
+            for (bool equality : {true, false}) {
+                unsigned count = equality ? piece.getNumEqualities() : piece.getNumInequalities();
+                for (unsigned r = 0; r < count; ++r) {
+                    auto row = directRow(equality ? piece.getEquality(r) : piece.getInequality(r), equality, width, empty);
+                    if (outcome == QueryStatus::BudgetExhausted) return nullptr;
+                    if (!row) continue;
+                    addBound(*row);
+                    if (equality) {
+                        equalities.insert(*row);
+                        for (auto& value : *row) value = -value;
+                        addBound(*row);
+                    }
+                }
+            }
+            if (empty) continue;
+            if (first) { available.ambientBounds = std::move(bounds); available.ambientEqualities = std::move(equalities); }
+            else {
+                for (auto it = available.ambientBounds.begin(); it != available.ambientBounds.end();) {
+                    auto found = bounds.find(it->first);
+                    if (found == bounds.end()) it = available.ambientBounds.erase(it);
+                    else { it->second = std::max(it->second, found->second); ++it; }
+                }
+                for (auto it = available.ambientEqualities.begin(); it != available.ambientEqualities.end();)
+                    if (!equalities.count(*it)) it = available.ambientEqualities.erase(it); else ++it;
+            }
+            first = false;
+        }
+        return &directForms.emplace(point, std::move(available)).first->second;
+    }
+    std::optional<Guard> prepareDirect(unsigned point, const Relation& wanted)
+    {
+        ++directAttempts;
+        const auto* available = availableDirectForms(point);
+        if (!available) return {};
+        auto target = directPopulation(wanted, available->coordinate);
+        if (!target) return {};
+        const unsigned width = facts.dimensions() + facts.parameters.size();
+        struct DerivedClause { Clause tests; IntegerRelation rows; };
+        std::map<std::vector<TestKey>, DerivedClause> clauses;
+        unsigned literals = 0;
+        for (const auto& piece : target->getAllDisjuncts()) {
+            std::map<TestKey, std::pair<BoundaryTest, std::pair<DirectRow, bool>>> selected;
+            bool empty = false;
+            for (bool equality : {true, false}) {
+                unsigned count = equality ? piece.getNumEqualities() : piece.getNumInequalities();
+                for (unsigned r = 0; r < count; ++r) {
+                    ++directRows;
+                    auto row = directRow(equality ? piece.getEquality(r) : piece.getInequality(r), equality, width, empty);
+                    if (outcome == QueryStatus::BudgetExhausted) return {};
+                    if (!row) continue;
+                    if (equality && available->ambientEqualities.count(*row)) continue;
+                    DirectKey key;
+                    for (unsigned c = 0; c < width; ++c) key.push_back(int64_t((*row)[c]));
+                    if (!equality) {
+                        auto common = available->ambientBounds.find(key);
+                        if (common != available->ambientBounds.end() && common->second <= row->back()) continue;
+                    }
+                    auto forms = available->forms.find(key);
+                    if (forms == available->forms.end()) continue; // lossy PROPOSAL only
+                    for (const auto& form : forms->second) {
+                        auto test = form.test;
+                        auto bound = llvm::DynamicAPInt(form.offset) + (form.negative ? row->back() : -row->back());
+                        if (bound < INT64_MIN || bound > INT64_MAX) continue;
+                        test.bound = int64_t(bound);
+                        test.comparison = equality ? arith::CmpIPredicate::eq : form.negative ?
+                            arith::CmpIPredicate::sle : arith::CmpIPredicate::sge;
+                        Type type;
+                        if (test.kind == BoundaryTest::ParameterBound) {
+                            type = facts.parameters[test.loop].getType();
+                        } else {
+                            auto loop = facts.loops[test.loop];
+                            type = loop.getInductionVar().getType();
+                        }
+                        unsigned bits = isa<IndexType>(type) ? 64 : cast<IntegerType>(type).getWidth();
+                        if (!llvm::isIntN(bits, test.bound)) continue;
+                        if (test.kind == BoundaryTest::DifferenceBound) {
+                            const auto* range = differenceRange(point, test.loop, test.fromUpper);
+                            if (outcome == QueryStatus::BudgetExhausted) return {};
+                            if (!range || !range->full || !llvm::isIntN(bits, range->full->first) ||
+                                !llvm::isIntN(bits, range->full->second)) continue;
+                        }
+                        selected.emplace(keyFor(test), std::make_pair(test, std::make_pair(*row, equality)));
+                        ++directMatches;
+                        break;
+                    }
+                }
+            }
+            if (empty) continue;
+            if (selected.size() > 16 || literals + selected.size() > 64) return {};
+            std::vector<TestKey> key;
+            DerivedClause clause{{}, IntegerRelation(available->ambient.getSpace())};
+            for (const auto& [testKey, entry] : selected) {
+                key.push_back(testKey); clause.tests.push_back(entry.first);
+                if (entry.second.second) clause.rows.addEquality(entry.second.first);
+                else clause.rows.addInequality(entry.second.first);
+            }
+            auto [it, inserted] = clauses.emplace(std::move(key), std::move(clause));
+            if (inserted) literals += it->second.tests.size();
+        }
+        Guard guard;
+        auto proposed = Relation::getEmpty(wanted.getSpace());
+        for (const auto& [key, clause] : clauses) {
+            bool covered = false;
+            for (const auto& [other, ignored] : clauses) {
+                if (other.size() >= key.size()) continue;
+                if (!queries.spend(other.size() + key.size() + 1)) { outcome = QueryStatus::BudgetExhausted; return {}; }
+                if (std::includes(key.begin(), key.end(), other.begin(), other.end())) { covered = true; break; }
+            }
+            if (covered) continue;
+            if (!queries.spend(uint64_t(clause.rows.getNumConstraints() + 1) * clause.rows.getNumCols())) {
+                outcome = QueryStatus::BudgetExhausted; return {};
+            }
+            proposed.unionInPlace(available->ambient.intersect(Relation(clause.rows)));
+            guard.push_back(clause.tests);
+        }
+        uint64_t emission = 4096;
+        if (!chargeGuardEmission(guard, emission)) return {};
+        // No clause or omitted row supplies a proof by itself. Both directions
+        // establish the ENTIRE desired domain at these actual SSA bindings.
+        auto forward = queries.contains(proposed, *target);
+        if (queryFailed(forward)) return {};
+        if (forward != QueryStatus::Proved) return {};
+        auto backward = queries.contains(*target, proposed);
+        if (queryFailed(backward)) return {};
+        if (backward != QueryStatus::Proved) return {};
+        ++directAccepted;
+        outcome = QueryStatus::Proved;
+        return guard;
+    }
 public:
     BoundaryLowering(const SyncOccurrences& f, RelationQueries& q) : facts(f), queries(q) {}
     ~BoundaryLowering()
     {
         if (std::getenv("PTOAS_LOGICAL_TRACE"))
             llvm::errs() << "logical guard domains " << conditionBuilds << "/" << conditionRequests
-                         << " ranges " << rangeBuilds << "/" << rangeRequests << "\n";
+                         << " ranges " << rangeBuilds << "/" << rangeRequests
+                         << " direct " << directAccepted << "/" << directAttempts << " forms " << directFormBuilds
+                         << " rows " << directRows << " matched " << directMatches << " grids " << legacyGrids << "\n";
     }
     QueryStatus status() const { return outcome; }
     bool checkConditions()
@@ -1356,6 +1628,10 @@ public:
             return Guard{Clause{}};
         if (queryFailed(status))
             return {};
+        if (auto direct = prepareDirect(point, target)) return direct;
+        if (outcome == QueryStatus::BudgetExhausted) return {};
+        outcome = QueryStatus::Unsupported;
+        ++legacyGrids;
         struct Candidate {
             BoundaryTest test;
             const Relation* domain;
@@ -1924,6 +2200,7 @@ bool Constructor::realize()
         return fail(ConstructionResult::AnalysisLimit, "endpoint normalization accounting");
     profile.next("emission");
     auto at = [&](unsigned p, bool after, const Guard& guard, auto action) {
+        if (guard.empty()) return; // empty DNF is false, not unconditional
         auto* anchor = facts.points[p].operation;
         OpBuilder builder(anchor);
         if (after)

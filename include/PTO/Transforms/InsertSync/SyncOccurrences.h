@@ -99,6 +99,11 @@ private:
                                             Value targetValue, unsigned targetPoint,
                                             RelationQueries& queries) const;
 };
+// Optional integer-exact normalization of one occurrence conjunct, preserving
+// the selected coordinate and all other named coordinates/parameter bindings.
+// Unsupported returns no rewrite; it never weakens the input relation.
+RelationResult normalizeOccurrenceCell(const presburger::IntegerRelation& cell,
+                                       unsigned preservedCoordinate, RelationQueries& queries);
 namespace testing {
 // Test only: exact local elimination in one conjunct, before the adapter's
 // candidate-envelope and whole-population qualification stages.

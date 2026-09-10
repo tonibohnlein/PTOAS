@@ -196,24 +196,33 @@ int main() {
             const auto& need = *value.getAsObject();
             if (auto* handoffs = need.getObject("replace_handoffs"))
                 completion = completion.withHandoffs(read(*handoffs));
-            if (auto* additional = need.getObject("add_handoffs")) {
-                auto added = completion.addHandoffs(read(*additional), queries);
-                if (added != QueryStatus::Proved) {
-                    answers.push_back(Object{{"status", status(added)}, {"fixed", completion.fixedPoint()}});
-                    continue;
-                }
-            }
-            auto answer = completion.prove(read(*need.getObject("relation")), queries,
+            std::unique_ptr<RelationQueries> limited;
+            if (auto budget = need.getInteger("query_budget")) limited = std::make_unique<RelationQueries>(*budget);
+            auto& active = limited ? *limited : queries;
+            QueryStatus answer = QueryStatus::Proved;
+            if (auto* additional = need.getObject("add_handoffs"))
+                answer = completion.addHandoffs(read(*additional), active);
+            if (answer == QueryStatus::Proved)
+                answer = completion.prove(read(*need.getObject("relation")), active,
                                           need.getInteger("rounds").value_or(8));
             answers.push_back(Object{{"status", status(answer)}, {"fixed", completion.fixedPoint()}});
             if (root->getBoolean("record_steps").value_or(false))
-                steps.push_back(Object{{"supply", write(completion.supply())}, {"work", int64_t(queries.work())},
+                steps.push_back(Object{{"supply", write(completion.supply())}, {"work", int64_t(active.work())},
                     {"index_lookups", int64_t(completion.orderIndexLookups())},
-                    {"endpoint_comparisons", int64_t(queries.endpointComparisonCount())},
-                    {"composition_index_builds", int64_t(queries.compositionIndexBuildCount())},
-                    {"composition_index_pieces", int64_t(queries.compositionIndexPieceCount())},
-                    {"endpoint_projections", int64_t(queries.endpointProjectionCount())},
-                    {"endpoint_projection_pieces", int64_t(queries.endpointProjectionPieceCount())},
+                    {"frontier_extensions", int64_t(completion.frontierExtensionCount())},
+                    {"frontier_differences", int64_t(completion.frontierDifferenceCount())},
+                    {"frontier_deferrals", int64_t(completion.frontierDeferralCount())},
+                    {"frontier_resolutions", int64_t(completion.frontierResolutionCount())},
+                    {"frontier_resets", int64_t(completion.frontierResetCount())},
+                    {"deferred_sources", int64_t(completion.deferredSourceCount())},
+                    {"deferred_cells", int64_t(completion.deferredCellCount())},
+                    {"peak_deferred_cells", int64_t(completion.peakDeferredCellCount())},
+                    {"saturated_sources", int64_t(completion.saturatedSourceCount())},
+                    {"endpoint_comparisons", int64_t(active.endpointComparisonCount())},
+                    {"composition_index_builds", int64_t(active.compositionIndexBuildCount())},
+                    {"composition_index_pieces", int64_t(active.compositionIndexPieceCount())},
+                    {"endpoint_projections", int64_t(active.endpointProjectionCount())},
+                    {"endpoint_projection_pieces", int64_t(active.endpointProjectionPieceCount())},
                     {"provider_calls", int64_t(counts->calls)}, {"provider_global_calls", int64_t(counts->globalCalls)},
                     {"provider_block_lookups", int64_t(counts->blockLookups)},
                     {"provider_returned_pieces", int64_t(counts->returnedPieces)}});

@@ -1008,12 +1008,17 @@ public:
 };
 }
 
-RelationResult mlir::pto::logical_sync::testing::simplifyPeriodicCell(
+RelationResult mlir::pto::logical_sync::normalizeOccurrenceCell(
     const IntegerRelation& cell, unsigned iterationCoordinate, RelationQueries& queries) {
     auto simplified = PeriodicCellElimination(queries).run(cell, iterationCoordinate);
     if (simplified.cell) return {QueryStatus::Proved, Relation(*simplified.cell), {}};
     return {simplified.status, {}, simplified.status == QueryStatus::BudgetExhausted ?
         "periodic cell elimination budget" : "periodic cell requires unsupported integer elimination"};
+}
+
+RelationResult mlir::pto::logical_sync::testing::simplifyPeriodicCell(
+    const IntegerRelation& cell, unsigned iterationCoordinate, RelationQueries& queries) {
+    return normalizeOccurrenceCell(cell, iterationCoordinate, queries);
 }
 
 RelationResult SyncOccurrences::periodicSuccessors(const PresburgerSet& publications,
