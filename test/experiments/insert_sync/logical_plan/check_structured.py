@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Native S1/S2/S3 acceptance: unchanged input hashes, strict dispatch, real mutations.
+"""Native S1/S2/S3/S4 acceptance: unchanged input hashes, strict dispatch, real mutations.
 No libisl dependency. Device and <=2x compilation acceptance remain separate.
 """
 import argparse, hashlib, json, os, subprocess, sys, time
@@ -32,8 +32,9 @@ def main():
         (args.output/(name+'.stderr')).write_text(result.stderr)
         assert result.returncode==0,(name,result.returncode,result.stderr[-5000:],result.stdout[-5000:])
         return result,elapsed
+    run('s4_utilities',[sys.executable,here/'check_s4_utilities.py'])
     for case in population():
-        if case['case_id'] not in ('one_buffer','two_buffer','three_buffer','qk_matmul'): continue
+        if case['case_id'] not in ('one_buffer','two_buffer','three_buffer','four_use','online_softmax','qk_matmul','q_proj'): continue
         name=case['case_id']; source=case['source']
         if name=='qk_matmul': qk_case=case
         # Actual CLI admission at the ordinary pipeline point, with quota zero:
@@ -63,13 +64,13 @@ def main():
             executed.append(dict(scenario=scenario['name'],metrics=metric))
         assert any(x.get('pto.insert_sync.producer')=='"structured"' for x in report['status_attributes']),report
         rows.append(dict(case=name,seconds=seconds,mechanisms=report['mechanisms'],
-            scalar_sites=report['sync_control'],executed=executed,source_sha256=hashlib.sha256(source.read_bytes()).hexdigest()))
+            scalar_sites=report['sync_control'],keys_by_direction=report['event_ids_by_direction'],executed=executed,source_sha256=hashlib.sha256(source.read_bytes()).hexdigest()))
         # Use the driver on unchanged, explicitly addressed input as well.
         for mutation in ('none','drop-wait','drop-set','duplicate-set','wrong-key','drop-retirement','wrong-participation'):
             result,_=run(name+'.'+mutation,[args.driver,source,mutation,args.output/(name+'.'+mutation+'.pto')])
             verdict=json.loads(result.stdout)
             assert verdict['expected'] and verdict['atomic'],verdict
-    assert len(rows)==4,rows
+    assert len(rows)==7,rows
     fixtures=here/'structured_inputs'
     for name,mutation in (('independent_preloads','none'),('independent_preloads','late-set'),
                           ('nested_loop','none'),('unknown_guard','none')):
@@ -173,7 +174,57 @@ def main():
     invocation_rows.append(dict(case='qk_nested_derivative',seconds=seconds,verdict=verdict,
         original_source_sha256=hashlib.sha256(qk_case['source'].read_bytes()).hexdigest(),
         derived_source_sha256=hashlib.sha256(derived.read_bytes()).hexdigest()))
-    summary=dict(invocation_rows=invocation_rows,boundary_rows=boundary_rows,status='passed',rows=rows,driver_sha256=hashlib.sha256(args.driver.read_bytes()).hexdigest(),
+    ordinal_rows=[]
+    for name in ('ordinal_offset','ordinal_stride','ordinal_constant_slot',
+                 'ordinal_shifted_mask','ordinal_signed_remainder','ordinal_startup',
+                 'ordinal_scaled_startup','ordinal_slots'):
+        source=fixtures/(name+'.pto');output=args.output/(name+'.pto')
+        result,seconds=run(name,[args.driver,source,'none',output])
+        verdict=json.loads(result.stdout)
+        assert verdict['accepted'] and verdict['requirements']>0 and verdict['handoffs']>0,verdict
+        original=analyze(source);actual=analyze(output)
+        for field in ('payload','allocations','views','abi'):
+            assert actual[field]==original[field],(name,field)
+        executed=[]
+        for upper in (-1,0,1,2,3,4,5,6,7,8,9,16,23):
+            scenario={'name':str(upper),'arguments':['src','dst',upper]}
+            before,_=observe(source,scenario);after,metrics=observe(output,scenario)
+            assert before.payload==after.payload and not after.tokens,(name,upper)
+            assert actual['mechanisms']['PIPE_ALL']==1,(name,'retirement policy')
+            executed.append(dict(upper=upper,metrics=metrics))
+        for mutation in ('drop-wait','drop-set','duplicate-set','wrong-key','drop-retirement'):
+            run(name+'.'+mutation,[args.driver,source,mutation,args.output/(name+'.'+mutation+'.pto')])
+        ordinal_rows.append(dict(case=name,seconds=seconds,mechanisms=actual['mechanisms'],
+            keys_by_direction=actual['event_ids_by_direction'],executed=executed))
+    for name,mutation in (('ordinal_startup','wrong-startup'),
+                          ('ordinal_startup','wrong-empty-case'),
+                          ('ordinal_scaled_startup','wrong-startup'),
+                          ('ordinal_slots','wrong-ordinal')):
+        result,_=run(name+'.'+mutation,[args.driver,fixtures/(name+'.pto'),mutation,
+                                        args.output/(name+'.'+mutation+'.pto')])
+        verdict=json.loads(result.stdout)
+        assert verdict['mutation_applied'] and verdict['expected'] and verdict['atomic'],verdict
+    for name in ('ordinal_negative_lower','ordinal_dynamic_step'):
+        run(name,[args.driver,fixtures/(name+'.pto'),'expect-unsupported',args.output/(name+'.pto')])
+    # Raw native import, not a pipeline whose canonicalization could hide the
+    # signed-i1 bug. Empty imported models must fail the handoff/readiness checks.
+    boolean_outputs=[]
+    for name in ('signed_i1_periodic','signed_i1_control'):
+        source=fixtures/(name+'.pto');output=args.output/(name+'.pto')
+        result,_=run(name,[args.driver,source,'none',output]);verdict=json.loads(result.stdout)
+        assert verdict['accepted'] and verdict['requirements']>0 and verdict['handoffs']>0,verdict
+        observed=[]
+        for upper in (0,1,2,3,7):
+            scenario={'name':str(upper),'arguments':['src','dst',upper,True]}
+            before,_=observe(source,scenario);after,_=observe(output,scenario)
+            assert before.payload==after.payload and not after.tokens,(name,upper)
+            for i,payload in enumerate(after.payload):
+                if payload[0]=='pto.tabs':
+                    assert after.before[i]['completed'].get('PIPE_MTE2',-1)>=i-1,(name,upper,i)
+            observed.append((after.payload,after.before))
+        boolean_outputs.append(observed)
+    assert boolean_outputs[0]==boolean_outputs[1],'equivalent Boolean guards changed actual execution/order'
+    summary=dict(ordinal_rows=ordinal_rows,invocation_rows=invocation_rows,boundary_rows=boundary_rows,status='passed',rows=rows,driver_sha256=hashlib.sha256(args.driver.read_bytes()).hexdigest(),
                  timing='single diagnostics only; repeated matched <=2x campaign NOT_RUN',device='NOT_RUN')
     (args.output/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))

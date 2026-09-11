@@ -9,6 +9,7 @@
 
 #include "PTO/Transforms/InsertSync/StructuredSyncPlan.h"
 #include "PTO/Transforms/InsertSync/StructuredSyncCore.h"
+#include "PTO/Transforms/InsertSync/StructuredSyncOrdinal.h"
 #include "PTO/Transforms/InsertSync/SyncPhysicalFacts.h"
 #include "PTO/Transforms/InsertSync/SyncAddressAnalysis.h"
 #include "PTO/Transforms/InsertSync/SyncPayloadSnapshot.h"
@@ -70,102 +71,190 @@ std::optional<int64_t> literal(Value value) {
     return a.getValue().getSExtValue();
 }
 
-// Exact syntax-directed periodic scalar fragment. Only a remainder of the
-// original nonnegative IV (or equivalent low-bit mask) represents that IV.
-// A bare IV, narrowing cast, mutable parameter or arbitrary expression is not
-// accidentally evaluated using its residue as if that were its full value.
+// Exact scalar interpretation in ITERATION ORDINALS. A first-only predicate
+// has a finite initial phase; it is never evaluated at residue zero and then
+// extrapolated to every iteration. Arithmetic used to recognize that predicate
+// must be representable throughout the original loop's admitted domain.
 class PeriodicScalar {
     Value iv;
+    ss::LoopOrdinal induction;
+    uint64_t offset = 0;
+    bool initial = false, split = false;
+    uint64_t lastOrdinal = 0;
     llvm::DenseMap<Value,std::optional<uint64_t>> periods;
-public:
-    std::set<uint64_t> cuts{0};
-    explicit PeriodicScalar(Value iv) : iv(iv) {}
-    std::optional<uint64_t> period(Value value) {
-        auto found=periods.find(value);
-        if (found!=periods.end()) return found->second;
-        auto result=computePeriod(value);
-        periods[value]=result; return result;
+    struct Affine { int64_t coefficient, constant; };
+    llvm::DenseMap<Value,std::optional<Affine>> affineCache;
+
+    std::optional<Affine> affine(Value value) {
+        auto found=affineCache.find(value);
+        if(found!=affineCache.end())return found->second;
+        auto compute=[&]() -> std::optional<Affine> {
+            if(!isa<IndexType>(value.getType()))return {};
+            if(value==iv)return Affine{induction.step,induction.lower};
+            if(auto c=literal(value))return Affine{0,*c};
+            auto *op=value.getDefiningOp();
+            if(!op||op->getNumOperands()!=2||
+               !isa<arith::AddIOp,arith::SubIOp,arith::MulIOp>(op))return {};
+            auto x=affine(op->getOperand(0)),y=affine(op->getOperand(1));
+            if(!x||!y)return {};
+            std::optional<int64_t> a,b;
+            if(isa<arith::MulIOp>(op)) {
+                if(x->coefficient&&y->coefficient)return {};
+                if(y->coefficient)std::swap(x,y);
+                a=ss::ordinalMultiply(x->coefficient,y->constant);
+                b=ss::ordinalMultiply(x->constant,y->constant);
+            } else {
+                if(isa<arith::SubIOp>(op)) {
+                    auto ya=ss::ordinalNegate(y->coefficient),yb=ss::ordinalNegate(y->constant);
+                    if(!ya||!yb)return {};
+                    y=Affine{*ya,*yb};
+                }
+                a=ss::ordinalAdd(x->coefficient,y->coefficient);
+                b=ss::ordinalAdd(x->constant,y->constant);
+            }
+            if(!a||!b||lastOrdinal>uint64_t(INT64_MAX))return {};
+            auto product=ss::ordinalMultiply(*a,int64_t(lastOrdinal));
+            if(!product||!ss::ordinalAdd(*product,*b))return {};
+            return Affine{*a,*b};
+        };
+        auto result=compute();affineCache[value]=result;return result;
     }
-    std::optional<uint64_t> computePeriod(Value value) {
-        if (auto c=literal(value)) {
-            if (*c>=0) { cuts.insert(uint64_t(*c)); if (*c<INT64_MAX) cuts.insert(uint64_t(*c)+1); }
-            return 1;
-        }
-        Operation *op=value.getDefiningOp();
-        if (!op) return {};
-        if (isa<arith::RemSIOp,arith::RemUIOp>(op) && op->getOperand(0)==iv) {
-            auto d=literal(op->getOperand(1));
-            return d && *d>0 ? std::optional<uint64_t>(uint64_t(*d)) : std::nullopt;
-        }
-        if (auto mask=dyn_cast<arith::AndIOp>(op)) {
+    // Return the value at ordinal zero of an eq/ne that flips permanently
+    // after ordinal zero. Difference is used only after width/range checks.
+    std::optional<bool> firstTest(Value value) {
+        auto cmp=value.getDefiningOp<arith::CmpIOp>();
+        if(!cmp||(cmp.getPredicate()!=arith::CmpIPredicate::eq &&
+                  cmp.getPredicate()!=arith::CmpIPredicate::ne))return {};
+        auto x=affine(cmp.getLhs()),y=affine(cmp.getRhs());
+        if(!x||!y)return {};
+        auto ya=ss::ordinalNegate(y->coefficient),yb=ss::ordinalNegate(y->constant);
+        if(!ya||!yb)return {};
+        auto a=ss::ordinalAdd(x->coefficient,*ya),b=ss::ordinalAdd(x->constant,*yb);
+        if(!a||!b||!*a||*b)return {};
+        return cmp.getPredicate()==arith::CmpIPredicate::eq;
+    }
+    std::optional<ss::OrdinalResidue> cycle(Value value) const {
+        auto *op=value.getDefiningOp();if(!op)return {};
+        std::optional<int64_t> modulus;
+        if(isa<arith::RemSIOp,arith::RemUIOp>(op)&&op->getOperand(0)==iv)
+            modulus=literal(op->getOperand(1));
+        if(auto mask=dyn_cast<arith::AndIOp>(op)) {
             Value other=mask.getLhs()==iv?mask.getRhs():(mask.getRhs()==iv?mask.getLhs():Value());
-            if (other) {
-                auto c=literal(other);
-                if (!c || *c<0 || *c==INT64_MAX) return {};
-                uint64_t d=uint64_t(*c)+1;
-                if ((d&(d-1))==0) return d;
-                return {};
+            if(other) {
+                auto bits=literal(other);
+                if(!bits||*bits<0||*bits==INT64_MAX)return {};
+                const uint64_t m=uint64_t(*bits)+1;
+                if(m&(m-1))return {};
+                modulus=int64_t(m);
             }
         }
-        if (!isa<arith::CmpIOp>(op) &&
-            !(value.getType().isInteger(1) && isa<arith::AndIOp,arith::OrIOp,arith::XOrIOp>(op))) return {};
+        if(!modulus||*modulus<=0)return {};
+        return ss::OrdinalResidue::get(induction,uint64_t(*modulus),offset);
+    }
+    void cut(const ss::OrdinalResidue &c,uint64_t raw) {
+        if(auto r=c.preimage(raw)) {
+            cuts.insert(*r);
+            if(*r<UINT64_MAX)cuts.insert(*r+1);
+        }
+    }
+public:
+    std::set<uint64_t> cuts{0};
+    PeriodicScalar(Value originalIV,ss::LoopOrdinal loop={},uint64_t start=0,
+                   bool first=false,bool startup=false,std::optional<int64_t> upper={})
+        :iv(originalIV),induction(loop),offset(start),initial(first),split(startup) {
+        auto count=induction.count(upper.value_or(INT64_MAX));
+        lastOrdinal=count&&*count?*count-1:0;
+    }
+    bool hasInitialization(Value value) {
+        if(firstTest(value))return true;
+        auto *op=value.getDefiningOp();
+        if(!op||!value.getType().isInteger(1)||
+           !isa<arith::CmpIOp,arith::AndIOp,arith::OrIOp,arith::XOrIOp>(op))return false;
+        for(Value operand:op->getOperands())if(hasInitialization(operand))return true;
+        return false;
+    }
+    std::optional<uint64_t> selectorPeriod(Value value) const {
+        if(auto c=cycle(value))return c->period;
+        return {};
+    }
+    std::optional<uint64_t> period(Value value) {
+        auto found=periods.find(value);
+        if(found!=periods.end())return found->second;
+        auto result=computePeriod(value);periods[value]=result;return result;
+    }
+    std::optional<uint64_t> computePeriod(Value value) {
+        if(literal(value))return 1;
+        if(firstTest(value))return split?std::optional<uint64_t>(1):std::nullopt;
+        if(auto c=cycle(value))return initial?uint64_t(1):c->period;
+        auto *op=value.getDefiningOp();if(!op)return {};
+        if(!isa<arith::CmpIOp>(op)&&
+           !(value.getType().isInteger(1)&&isa<arith::AndIOp,arith::OrIOp,arith::XOrIOp>(op)))return {};
         uint64_t p=1;
-        for (Value operand:op->getOperands()) {
+        for(Value operand:op->getOperands()) {
             auto q=period(operand);
-            if (!q || (p!=1 && *q!=1 && p!=*q)) return {};
+            if(!q||(p!=1&&*q!=1&&p!=*q))return {};
             p=std::max(p,*q);
+        }
+        if(auto cmp=dyn_cast<arith::CmpIOp>(op)) {
+            for(unsigned side=0;side<2;++side) {
+                auto c=cycle(op->getOperand(side));auto bound=literal(op->getOperand(1-side));
+                if(!c||!bound||initial)continue;
+                bool equality=cmp.getPredicate()==arith::CmpIPredicate::eq||cmp.getPredicate()==arith::CmpIPredicate::ne;
+                // General strided threshold permutations are not flattened to
+                // intervals. Equality has one modular preimage; unit stride
+                // also admits threshold and wrap cuts. Other shapes decline.
+                if(!equality&&induction.step!=1&&c->period!=1)return {};
+                cut(*c,0);
+                if(*bound>=0) {
+                    cut(*c,uint64_t(*bound));
+                    if(*bound<INT64_MAX)cut(*c,uint64_t(*bound)+1);
+                }
+            }
         }
         return p;
     }
-    std::optional<int64_t> evaluate(Value value,uint64_t residue) const {
+    std::optional<int64_t> evaluate(Value value,uint64_t residue) {
         llvm::DenseMap<Value,std::optional<int64_t>> cache;
         return eval(value,residue,cache);
     }
 private:
     std::optional<int64_t> eval(Value value,uint64_t residue,
-        llvm::DenseMap<Value,std::optional<int64_t>> &cache) const {
-        auto found=cache.find(value);
-        if (found!=cache.end()) return found->second;
+        llvm::DenseMap<Value,std::optional<int64_t>> &cache) {
+        auto found=cache.find(value);if(found!=cache.end())return found->second;
         auto compute=[&]() -> std::optional<int64_t> {
-            if (auto c=literal(value)) return c;
-            auto *op=value.getDefiningOp(); if (!op) return {};
-            if (isa<arith::RemSIOp,arith::RemUIOp>(op) && op->getOperand(0)==iv) {
-                auto d=literal(op->getOperand(1));
-                if (!d || *d<=0) return {};
-                return int64_t(residue%uint64_t(*d));
+            if(auto c=literal(value))return c;
+            if(auto first=firstTest(value)) {
+                if(!split)return {};
+                return initial?*first:!*first;
             }
-            if (auto mask=dyn_cast<arith::AndIOp>(op)) {
-                Value other=mask.getLhs()==iv?mask.getRhs():(mask.getRhs()==iv?mask.getLhs():Value());
-                if (other) {
-                    auto c=literal(other);
-                    if (!c || *c<0 || *c==INT64_MAX || ((uint64_t(*c)+1)&uint64_t(*c))) return {};
-                    return int64_t(residue&uint64_t(*c));
-                }
-            }
-            if (op->getNumOperands()!=2) return {};
-            auto a=eval(op->getOperand(0),residue,cache), b=eval(op->getOperand(1),residue,cache);
-            if (!a || !b) return {};
-            if (auto cmp=dyn_cast<arith::CmpIOp>(op)) {
+            if(auto c=cycle(value))return int64_t(c->at(initial?0:residue));
+            auto *op=value.getDefiningOp();if(!op||op->getNumOperands()!=2)return {};
+            auto a=eval(op->getOperand(0),residue,cache),b=eval(op->getOperand(1),residue,cache);
+            if(!a||!b)return {};
+            if(auto cmp=dyn_cast<arith::CmpIOp>(op)) {
+                ss::OrdinalCompare kind;
                 switch(cmp.getPredicate()) {
-                case arith::CmpIPredicate::eq: return *a==*b;
-                case arith::CmpIPredicate::ne: return *a!=*b;
-                case arith::CmpIPredicate::slt: return *a<*b;
-                case arith::CmpIPredicate::sle: return *a<=*b;
-                case arith::CmpIPredicate::sgt: return *a>*b;
-                case arith::CmpIPredicate::sge: return *a>=*b;
-                case arith::CmpIPredicate::ult: return uint64_t(*a)<uint64_t(*b);
-                case arith::CmpIPredicate::ule: return uint64_t(*a)<=uint64_t(*b);
-                case arith::CmpIPredicate::ugt: return uint64_t(*a)>uint64_t(*b);
-                case arith::CmpIPredicate::uge: return uint64_t(*a)>=uint64_t(*b);
+                case arith::CmpIPredicate::eq: kind=ss::OrdinalCompare::EQ;break;
+                case arith::CmpIPredicate::ne: kind=ss::OrdinalCompare::NE;break;
+                case arith::CmpIPredicate::slt: kind=ss::OrdinalCompare::SLT;break;
+                case arith::CmpIPredicate::sle: kind=ss::OrdinalCompare::SLE;break;
+                case arith::CmpIPredicate::sgt: kind=ss::OrdinalCompare::SGT;break;
+                case arith::CmpIPredicate::sge: kind=ss::OrdinalCompare::SGE;break;
+                case arith::CmpIPredicate::ult: kind=ss::OrdinalCompare::ULT;break;
+                case arith::CmpIPredicate::ule: kind=ss::OrdinalCompare::ULE;break;
+                case arith::CmpIPredicate::ugt: kind=ss::OrdinalCompare::UGT;break;
+                case arith::CmpIPredicate::uge: kind=ss::OrdinalCompare::UGE;break;
+                default:return {};
                 }
+                return ss::ordinalCompare(kind,*a,*b,cmp.getLhs().getType().isInteger(1));
             }
-            if (!value.getType().isInteger(1)) return {};
-            if (isa<arith::AndIOp>(op)) return bool(*a)&&bool(*b);
-            if (isa<arith::OrIOp>(op)) return bool(*a)||bool(*b);
-            if (isa<arith::XOrIOp>(op)) return bool(*a)!=bool(*b);
+            if(!value.getType().isInteger(1))return {};
+            if(isa<arith::AndIOp>(op))return bool(*a)&&bool(*b);
+            if(isa<arith::OrIOp>(op))return bool(*a)||bool(*b);
+            if(isa<arith::XOrIOp>(op))return bool(*a)!=bool(*b);
             return {};
         };
-        auto answer=compute(); cache[value]=answer; return answer;
+        auto answer=compute();cache[value]=answer;return answer;
     }
 };
 
@@ -211,7 +300,8 @@ class RegionLayout {
     bool fail(StringRef s){reason=s.str();return false;}
     bool normalized(scf::ForOp loop) {
         if(literal(loop.getLowerBound())!=std::optional<int64_t>(0)||
-           literal(loop.getStep())!=std::optional<int64_t>(1)||!isa<IndexType>(loop.getInductionVar().getType()))
+           literal(loop.getStep())!=std::optional<int64_t>(1)||!isa<IndexType>(loop.getInductionVar().getType())||
+           loop->hasAttr("unsignedCmp"))
             return fail("invocation wrappers require zero-based unit-step index loops");
         SyncAddressEvaluator integers(inventory.function);auto value=integers.evaluate(loop.getLowerBound());
         if(!value||value->getBitWidth()!=64)return fail("unqualified invocation index layout");
@@ -265,6 +355,9 @@ public:
     bool build(){return collect(inventory.function.getBody(),{});}
 };
 
+enum class StartupCase { Whole, Nonempty, Empty };
+enum class AtomRole { Outside, Ordinary, Initial, Steady };
+
 struct NativeFacts {
     func::FuncOp function;
     InsertSyncGMAliasMode gm;
@@ -274,6 +367,12 @@ struct NativeFacts {
     Buffer2MemInfoMap &buffers;
     SyncPhysicalFacts physical;
     scf::ForOp loop;
+    ss::LoopOrdinal induction;
+    std::optional<int64_t> knownUpper;
+    StartupCase startupCase=StartupCase::Whole;
+    bool startup=false,caseGuard=false,needsEmptyCase=false;
+    uint64_t ordinalOffset=0;
+    std::vector<AtomRole> roles;
     ss::Model model;
     std::vector<ss::InvocationRequirement> carried;
     std::vector<unsigned> origin;
@@ -283,8 +382,18 @@ struct NativeFacts {
     std::vector<std::vector<uint64_t>> residues;
     std::map<const BaseMemInfo*,std::optional<SyncPhysicalSlotMapping>> mappings;
     std::string reason;
-    NativeFacts(NativeInventory &i,const InvocationScope &unit,InsertSyncGMAliasMode contract)
-        :function(i.function),gm(contract),inventory(i),scope(unit.region),wrappers(unit.wrappers),buffers(i.buffers) {}
+    NativeFacts(NativeInventory &i,const InvocationScope &unit,InsertSyncGMAliasMode contract,
+                StartupCase selected=StartupCase::Whole)
+        :function(i.function),gm(contract),inventory(i),scope(unit.region),wrappers(unit.wrappers),
+         buffers(i.buffers),startupCase(selected) {}
+    int64_t bodyBase() const { return *induction.value(ordinalOffset); }
+    PeriodicScalar scalar(bool first=false) const {
+        // An op class is a value-semantic handle: const protects the handle,
+        // not the IR, and the generated accessors are non-const. Copy it.
+        scf::ForOp body=loop;
+        return PeriodicScalar(body?body.getInductionVar():Value(),induction,
+                              first?0:ordinalOffset,first,startup,knownUpper);
+    }
     ss::InvocationModel invocationModel() const {return {model,carried};}
     bool fail(StringRef message) { reason=message.str(); return false; }
 
@@ -299,13 +408,13 @@ struct NativeFacts {
             return fail("physical phase identity width overflow");
         model.recurring=bool(loop);
         if (loop) {
-            if (literal(loop.getLowerBound())!=std::optional<int64_t>(0) ||
-                literal(loop.getStep())!=std::optional<int64_t>(1) ||
-                !isa<IndexType>(loop.getInductionVar().getType()))
-                return fail("structured loop requires normalized zero-based unit-step index induction");
-            SyncAddressEvaluator integers(function);
-            auto lower=integers.evaluate(loop.getLowerBound());
-            if (!lower || lower->getBitWidth()!=64)
+            auto lower=literal(loop.getLowerBound()),step=literal(loop.getStep());
+            if(!lower||!step||*lower<0||*step<=0||!isa<IndexType>(loop.getInductionVar().getType())||
+               loop->hasAttr("unsignedCmp"))
+                return fail("structured ordinal loop requires constant nonnegative lower and positive step, signed index");
+            induction={*lower,*step};knownUpper=literal(loop.getUpperBound());
+            SyncAddressEvaluator integers(function);auto value=integers.evaluate(loop.getLowerBound());
+            if(!value||value->getBitWidth()!=64)
                 return fail("structured loop requires the qualified signed-64-bit PTO index layout");
         }
         if(!wrappers.empty()&&loop) {
@@ -313,108 +422,143 @@ struct NativeFacts {
             if(!dominance.properlyDominates(loop.getUpperBound(),wrappers.front().getOperation()))
                 return fail("inner bound varies across enclosing invocations");
         }
-        PeriodicScalar scalar(loop?loop.getInductionVar():Value());
-        guards.resize(physical.phases.size()); residues.resize(physical.phases.size());
+        guards.resize(physical.phases.size());residues.resize(physical.phases.size());
         segments.assign(physical.phases.size(),ss::Segment::Body);
-        llvm::DenseMap<Operation*,bool> beforeLoop;
-        bool passedLoop=false;
-        for (Operation &op:scope->front()) {
-            if (&op==loop.getOperation()) passedLoop=true;
+        llvm::DenseMap<Operation*,bool> beforeLoop;bool passedLoop=false;
+        for(Operation &op:scope->front()) {
+            if(&op==loop.getOperation())passedLoop=true;
             beforeLoop[&op]=!passedLoop;
         }
-        uint64_t period=1;
-        auto mergePeriod=[&](uint64_t p) {
-            if (p!=1 && period!=1 && p!=period) return false;
-            period=std::max(period,p); return true;
-        };
-        for (unsigned p=0;p<physical.phases.size();++p) {
-            auto *op=physical.phases[p]->elementOp; phaseId[op]=p;
-            if (loop && !loop->isAncestor(op)) {
-                // A single invocation with unconditional prefix/suffix effects.
-                // Do not flatten a conditional or nested loop into this model.
-                if (loop->getBlock()!=&scope->front() || op->getBlock()!=&scope->front())
+        auto discover=scalar();
+        for(unsigned p=0;p<physical.phases.size();++p) {
+            auto *op=physical.phases[p]->elementOp;phaseId[op]=p;
+            if(loop&&!loop->isAncestor(op)) {
+                if(loop->getBlock()!=&scope->front()||op->getBlock()!=&scope->front())
                     return fail("boundary payload requires a direct, unconditional loop invocation");
                 segments[p]=beforeLoop.lookup(op)?ss::Segment::Prelude:ss::Segment::Epilogue;
             }
-            for (Operation *parent=op->getParentOp(); parent && parent!=scope->getParentOp();
-                 parent=parent->getParentOp()) {
-                if (parent==loop.getOperation()) continue;
+            for(Operation *parent=op->getParentOp();parent&&parent!=scope->getParentOp();parent=parent->getParentOp()) {
+                if(parent==loop.getOperation())continue;
                 auto branch=dyn_cast<scf::IfOp>(parent);
-                if (!branch) return fail("unrepresented physical control region");
+                if(!branch)return fail("unrepresented physical control region");
                 Region *r=op->getParentRegion();
-                while (r && r->getParentOp()!=parent) r=r->getParentOp()->getParentRegion();
-                if (!r) return fail("invalid control ancestry");
+                while(r&&r->getParentOp()!=parent)r=r->getParentOp()->getParentRegion();
+                if(!r)return fail("invalid control ancestry");
                 guards[p].push_back({branch.getCondition(),r==&branch.getThenRegion()});
-                auto d=scalar.period(branch.getCondition());
-                if (!d || !mergePeriod(*d)) return fail("payload guard is outside the common-period scalar fragment");
+                startup|=loop&&discover.hasInitialization(branch.getCondition());
             }
-            auto visit=[&](const auto &accesses) {
-                for (auto *a:accesses) {
-                    auto mapping=qualifySyncPhysicalSlots(a,buffers);
-                    if (mapping && mapping->selector) {
-                        auto d=scalar.period(mapping->selector);
-                        // Unknown selectors retain their entire physical may
-                        // footprint; they do not acquire a fixed slot identity.
-                        if (d && !mergePeriod(*d)) return false;
+            for(const auto *accesses:{&physical.phases[p]->useVec,&physical.phases[p]->defVec})
+                for(auto *access:*accesses)mappings.emplace(access,qualifySyncPhysicalSlots(access,buffers));
+        }
+        // Exactly two structural cases, not an unrolling count: empty, and
+        // first iteration followed by the periodic tail. The first iteration
+        // is a VIRTUAL prefix; all original operations remain in their blocks.
+        if(startup) {
+            auto trips=knownUpper?induction.count(*knownUpper):std::optional<uint64_t>();
+            if(startupCase==StartupCase::Whole)
+                startupCase=trips&&!*trips?StartupCase::Empty:StartupCase::Nonempty;
+            needsEmptyCase=startupCase==StartupCase::Nonempty&&!trips;
+            caseGuard=!trips;
+            ordinalOffset=startupCase==StartupCase::Nonempty?1:0;
+            if(!induction.value(ordinalOffset))return fail("unrepresentable startup-tail origin");
+        } else if(startupCase!=StartupCase::Whole) {
+            return fail("startup case requested without a qualified initialization predicate");
+        }
+        if(startupCase==StartupCase::Empty) {
+            model.recurring=false;model.period=1;
+            for(unsigned p=0;p<physical.phases.size();++p)if(segments[p]!=ss::Segment::Body) {
+                auto lane=pipe(static_cast<PIPE>(physical.phases[p]->kPipeValue));
+                if(!lane)return fail("unqualified physical pipe");
+                origin.push_back(p);roles.push_back(AtomRole::Outside);
+                model.atoms.push_back({0,p,{physical.cube?ss::Core::AIC:ss::Core::AIV,*lane},ss::Segment::Body});
+            }
+        } else {
+            auto recurring=scalar(),first=scalar(true);
+            uint64_t period=1;
+            auto mergePeriod=[&](uint64_t p) {
+                if(p!=1&&period!=1&&p!=period)return false;
+                period=std::max(period,p);return true;
+            };
+            for(unsigned p=0;p<physical.phases.size();++p) {
+                for(auto [condition,take]:guards[p]) {
+                    (void)take;
+                    auto d=recurring.period(condition);
+                    if(!d||!mergePeriod(*d))
+                        return fail("payload guard is outside the ordinal periodic/initialization fragment");
+                    if(startup&&!first.period(condition))return fail("initial guard has no qualified scalar interpretation");
+                }
+                for(const auto *accesses:{&physical.phases[p]->useVec,&physical.phases[p]->defVec})
+                    for(auto *access:*accesses) {
+                        const auto &mapping=mappings.at(access);
+                        if(mapping&&mapping->selector) {
+                            auto d=recurring.period(mapping->selector);
+                            if(d&&!mergePeriod(*d))return fail("incompatible ordinal slot periods");
+                        }
                     }
-                    mappings.emplace(a,std::move(mapping));
-                }
-                return true;
-            };
-            if (!visit(physical.phases[p]->useVec) || !visit(physical.phases[p]->defVec))
-                return fail("incompatible slot periods require a more general transfer");
-        }
-        model.period=period;
-        scalar.cuts.insert(period);
-        std::vector<uint64_t> breaks;
-        for (uint64_t c:scalar.cuts) if (c<=period) breaks.push_back(c);
-        for (unsigned p=0;p<physical.phases.size();++p) {
-            bool explicitSlots=false;
-            auto inspect=[&](const auto &v) {
-                for (auto *a:v) {
-                    const auto &map=mappings.at(a);
-                    if (map && map->selector && map->bases.size()==period && scalar.period(map->selector))
-                        explicitSlots=true;
-                }
-            };
-            inspect(physical.phases[p]->useVec); inspect(physical.phases[p]->defVec);
-            if (segments[p]!=ss::Segment::Body) residues[p].push_back(0);
-            for (std::size_t i=1;segments[p]==ss::Segment::Body && i<breaks.size();++i) {
-                uint64_t lo=breaks[i-1],hi=breaks[i]; bool active=true;
-                for (auto [condition,take]:guards[p]) {
-                    auto v=scalar.evaluate(condition,lo);
-                    if (!v) return fail("periodic guard evaluation unavailable");
-                    active &= bool(*v)==take;
-                }
-                if (!active || lo==hi) continue;
-                // Do not enumerate a numeric modulus. A multi-residue payload
-                // is expanded only when those slots already exist explicitly
-                // in its qualified physical table. Otherwise decline this
-                // representation, not run a solver under a larger allowance.
-                if (hi-lo>1 && !explicitSlots)
-                    return fail("multi-residue payload needs an interval-phase transfer");
-                for (uint64_t r=lo;r<hi;++r) residues[p].push_back(r);
             }
-            auto lane=pipe(static_cast<PIPE>(physical.phases[p]->kPipeValue));
-            if (!lane) return fail("unqualified physical pipe");
-            for (uint64_t r:residues[p]) {
-                origin.push_back(p);
-                model.atoms.push_back({r,p,{physical.cube?ss::Core::AIC:ss::Core::AIV,*lane},segments[p]});
+            model.period=period;recurring.cuts.insert(period);
+            std::vector<uint64_t> breaks;
+            for(uint64_t cut:recurring.cuts)if(cut<=period)breaks.push_back(cut);
+            auto enabled=[&](unsigned p,PeriodicScalar &values,uint64_t r) -> std::optional<bool> {
+                bool active=true;
+                for(auto [condition,take]:guards[p]) {
+                    auto value=values.evaluate(condition,r);
+                    if(!value)return {};
+                    active&=bool(*value)==take;
+                }
+                return active;
+            };
+            for(unsigned p=0;p<physical.phases.size();++p) {
+                auto lane=pipe(static_cast<PIPE>(physical.phases[p]->kPipeValue));
+                if(!lane)return fail("unqualified physical pipe");
+                auto append=[&](uint64_t r,ss::Segment segment,AtomRole role) {
+                    origin.push_back(p);roles.push_back(role);
+                    model.atoms.push_back({r,p,{physical.cube?ss::Core::AIC:ss::Core::AIV,*lane},segment});
+                };
+                if(segments[p]!=ss::Segment::Body) {
+                    append(0,segments[p],AtomRole::Outside);continue;
+                }
+                if(startup) {
+                    auto active=enabled(p,first,0);
+                    if(!active)return fail("initial guard evaluation unavailable");
+                    if(*active)append(0,ss::Segment::Prelude,AtomRole::Initial);
+                }
+                bool explicitSlots=false;
+                for(const auto *accesses:{&physical.phases[p]->useVec,&physical.phases[p]->defVec})
+                    for(auto *access:*accesses) {
+                        const auto &mapping=mappings.at(access);
+                        if(mapping&&mapping->selector&&mapping->bases.size()>=period&&recurring.period(mapping->selector))
+                            explicitSlots=true;
+                    }
+                for(std::size_t i=1;i<breaks.size();++i) {
+                    uint64_t lo=breaks[i-1],hi=breaks[i];auto active=enabled(p,recurring,lo);
+                    if(!active)return fail("ordinal periodic guard evaluation unavailable");
+                    if(!*active||lo==hi)continue;
+                    if(hi-lo>1&&!explicitSlots)return fail("multi-residue payload needs an interval-phase transfer");
+                    for(uint64_t r=lo;r<hi;++r) {
+                        residues[p].push_back(r);
+                        append(r,ss::Segment::Body,startup?AtomRole::Steady:AtomRole::Ordinary);
+                    }
+                }
             }
         }
-        auto alias=[&](const BaseMemInfo *a,uint64_t ra,const BaseMemInfo *b,uint64_t rb) {
+        model.allowBoundaryKeyReuse=startup&&startupCase==StartupCase::Nonempty;
+        auto recurringScalar=scalar(),initialScalar=scalar(true);
+        auto alias=[&](const BaseMemInfo *a,std::size_t pa,const BaseMemInfo *b,std::size_t pb) {
             if (!logicalSyncMayAlias(a,b,function,gm)) return false;
             const auto &ma=mappings.at(a), &mb=mappings.at(b);
             if (!ma || !mb || ma->scope!=mb->scope) return true;
-            auto selected=[&](const SyncPhysicalSlotMapping &m,uint64_t r) -> std::optional<uint64_t> {
+            auto selected=[&](const SyncPhysicalSlotMapping &m,std::size_t atom) -> std::optional<uint64_t> {
+                auto &values=roles[atom]==AtomRole::Initial?initialScalar:recurringScalar;
+                uint64_t r=model.atoms[atom].residue;
                 if (!m.selector) return m.bases.size()==1?std::optional<uint64_t>(m.bases.front()):std::nullopt;
-                auto d=scalar.period(m.selector);
+                auto d=values.period(m.selector);
                 if (!d || model.period%*d) return {};
-                auto s=scalar.evaluate(m.selector,r);
+                auto s=values.evaluate(m.selector,r);
                 if (!s || *s<0 || uint64_t(*s)>=m.bases.size()) return {};
                 return m.bases[uint64_t(*s)];
             };
-            auto x=selected(*ma,ra),y=selected(*mb,rb);
+            auto x=selected(*ma,pa),y=selected(*mb,pb);
             if (!x || !y) return true;
             return *x<*y+mb->bytes && *y<*x+ma->bytes;
         };
@@ -427,7 +571,7 @@ struct NativeFacts {
                     bool resource=!writeA&&!writeB && x->scope==AddressSpace::ACC &&
                         y->scope==AddressSpace::ACC && model.atoms[p].lane!=model.atoms[q].lane;
                     if (!writeA&&!writeB&&!resource) continue;
-                    if (!alias(x,model.atoms[p].residue,y,model.atoms[q].residue)) continue;
+                    if (!alias(x,p,y,q)) continue;
                     conflict=true; acc|=resource;
                     // Do not conflate a legal direction with same-address GM
                     // publication or scalar-cache coherence. This fragment has
@@ -454,24 +598,35 @@ Value indexConstant(OpBuilder &builder,Location loc,uint64_t value) {
 }
 bool legalBoundaryOperands(NativeFacts &facts,const std::vector<ss::Action> &actions,std::string &why) {
     DominanceInfo dominance(facts.function);
-    for (const auto &a:actions) {
-        if (a.distanceInIterations>uint64_t(INT64_MAX) || a.guardResidue>uint64_t(INT64_MAX) ||
-            facts.model.period>uint64_t(INT64_MAX)) {
-            why="unrepresentable synchronization guard constant";return false;
+    const ss::LoopOrdinal body{facts.bodyBase(),facts.induction.step};
+    for(const auto &a:actions) {
+        if(a.anchor>=facts.roles.size()) {why="invalid native occurrence anchor";return false;}
+        if(a.distanceInIterations>uint64_t(INT64_MAX)||
+           !facts.induction.distance(a.distanceInIterations)||!body.value(a.distanceInIterations)||
+           !body.value(a.guardResidue)||!body.value(a.invocationGuardResidue)||
+           !body.value(facts.model.atoms[a.anchor].residue)||!facts.induction.distance(facts.model.period)) {
+            why="unrepresentable ordinal endpoint constant";return false;
         }
         if(a.invocation!=ss::Action::Local&&facts.wrappers.empty()) {
             why="invocation endpoint has no enclosing frame";return false;
         }
-        if(a.invocationGuardResidue>uint64_t(INT64_MAX)) {
-            why="unrepresentable invocation existence condition";return false;
-        }
-        if (a.participation!=ss::Action::IfBody && !a.invocationBodyGuard) continue;
+        bool needsUpper=facts.caseGuard||a.participation==ss::Action::IfBody||a.invocationBodyGuard;
+        if(!needsUpper)continue;
         auto *anchor=facts.physical.phases[facts.origin[a.anchor]]->elementOp;
-        if (!facts.loop || !dominance.properlyDominates(facts.loop.getUpperBound(),anchor)) {
+        if(!facts.loop||!dominance.properlyDominates(facts.loop.getUpperBound(),anchor)) {
             why="loop bound is unavailable at the selected early publication";return false;
         }
     }
     return true;
+}
+Value emitOrdinal(OpBuilder &builder,Location loc,const NativeFacts &facts) {
+    // Used only inside the executing ordinary/tail body (and below the tail
+    // phase guard). Its numerator is therefore nonnegative and representable.
+    scf::ForOp body=facts.loop; // non-const handle copy; see NativeFacts::scalar
+    Value value=body.getInductionVar();
+    if(facts.bodyBase())value=builder.create<arith::SubIOp>(loc,value,indexConstant(builder,loc,uint64_t(facts.bodyBase())));
+    if(facts.induction.step!=1)value=builder.create<arith::DivUIOp>(loc,value,indexConstant(builder,loc,uint64_t(facts.induction.step)));
+    return value;
 }
 void emitNative(NativeFacts &facts,const std::vector<ss::Action> &actions) {
     std::map<std::pair<Operation*,bool>,std::vector<ss::Action>> points;
@@ -489,6 +644,18 @@ void emitNative(NativeFacts &facts,const std::vector<ss::Action> &actions) {
                 auto branch=builder.create<scf::IfOp>(anchor->getLoc(),c,false);
                 builder.setInsertionPointToStart(&branch.getThenRegion().front());
             };
+            if(facts.caseGuard) {
+                auto lower=indexConstant(builder,anchor->getLoc(),uint64_t(facts.induction.lower));
+                auto pred=facts.startupCase==StartupCase::Empty?arith::CmpIPredicate::sle:arith::CmpIPredicate::sgt;
+                guard(builder.create<arith::CmpIOp>(anchor->getLoc(),pred,facts.loop.getUpperBound(),lower));
+            }
+            const auto role=facts.roles[a.anchor];
+            if(role==AtomRole::Initial||role==AtomRole::Steady) {
+                auto lower=indexConstant(builder,anchor->getLoc(),uint64_t(facts.induction.lower));
+                auto pred=role==AtomRole::Initial?arith::CmpIPredicate::eq:arith::CmpIPredicate::ne;
+                guard(builder.create<arith::CmpIOp>(anchor->getLoc(),pred,facts.loop.getInductionVar(),lower));
+            }
+            const ss::LoopOrdinal body{facts.bodyBase(),facts.induction.step};
             if(a.invocation!=ss::Action::Local) {
                 Value predicate;
                 for(auto frame:facts.wrappers) {
@@ -507,33 +674,34 @@ void emitNative(NativeFacts &facts,const std::vector<ss::Action> &actions) {
                 guard(predicate);
             }
             if(a.invocationBodyGuard) {
-                auto r=indexConstant(builder,anchor->getLoc(),a.invocationGuardResidue);
+                auto r=indexConstant(builder,anchor->getLoc(),uint64_t(*body.value(a.invocationGuardResidue)));
                 guard(builder.create<arith::CmpIOp>(anchor->getLoc(),arith::CmpIPredicate::sgt,
                     facts.loop.getUpperBound(),r));
             }
-            if (facts.residues[p].size()>1) {
+            if ((role==AtomRole::Ordinary||role==AtomRole::Steady) && facts.residues[p].size()>1) {
                 auto d=indexConstant(builder,anchor->getLoc(),facts.model.period);
-                auto r=builder.create<arith::RemUIOp>(anchor->getLoc(),facts.loop.getInductionVar(),d);
+                auto r=builder.create<arith::RemUIOp>(anchor->getLoc(),emitOrdinal(builder,anchor->getLoc(),facts),d);
                 auto c=indexConstant(builder,anchor->getLoc(),facts.model.atoms[a.anchor].residue);
                 guard(builder.create<arith::CmpIOp>(anchor->getLoc(),arith::CmpIPredicate::eq,r,c));
             }
             if (a.participation==ss::Action::IfBody) {
-                auto r=indexConstant(builder,anchor->getLoc(),a.guardResidue);
+                auto r=indexConstant(builder,anchor->getLoc(),uint64_t(*body.value(a.guardResidue)));
                 guard(builder.create<arith::CmpIOp>(anchor->getLoc(),arith::CmpIPredicate::sgt,
                     facts.loop.getUpperBound(),r));
             } else if (a.participation==ss::Action::First) {
-                auto r=indexConstant(builder,anchor->getLoc(),facts.model.atoms[a.anchor].residue);
+                auto r=indexConstant(builder,anchor->getLoc(),uint64_t(*body.value(facts.model.atoms[a.anchor].residue)));
                 guard(builder.create<arith::CmpIOp>(anchor->getLoc(),arith::CmpIPredicate::eq,
                     facts.loop.getInductionVar(),r));
             } else if (a.participation==ss::Action::Last) {
                 // In an executing body: 0 <= iv < upper <= INDEX_MAX.
                 // This subtraction is representable even near INDEX_MAX.
                 auto left=builder.create<arith::SubIOp>(anchor->getLoc(),facts.loop.getUpperBound(),facts.loop.getInductionVar());
-                auto period=indexConstant(builder,anchor->getLoc(),facts.model.period);
+                auto period=indexConstant(builder,anchor->getLoc(),uint64_t(*facts.induction.distance(facts.model.period)));
                 guard(builder.create<arith::CmpIOp>(anchor->getLoc(),arith::CmpIPredicate::sle,left,period));
             }
             if (a.distanceInIterations) {
-                auto c=indexConstant(builder,anchor->getLoc(),a.distanceInIterations);
+                auto amount=a.kind==ss::Action::Set?facts.induction.distance(a.distanceInIterations):body.value(a.distanceInIterations);
+                auto c=indexConstant(builder,anchor->getLoc(),uint64_t(*amount));
                 if (a.kind==ss::Action::Set) {
                     // Inside the original loop: 0 <= iv < upper <= INDEX_MAX.
                     // upper-iv is representable. iv+distance need not be.
@@ -564,7 +732,8 @@ class Reconstruct {
     uint64_t ordinal=0;
     unsigned retirement=0;
     std::string why;
-    enum GuardKind { Residue, Previous, Next, First, Last, IfBody, InvocationPrevious, InvocationNext };
+    enum GuardKind { Residue, OrdinalResidue, Previous, Next, First, Last, IfBody,
+                     InvocationPrevious, InvocationNext, InitialPhase, SteadyPhase, EmptyCase, NonemptyCase };
     struct Condition { GuardKind kind; Value value; uint64_t distance=0; };
 
     bool fail(StringRef s) { why=s.str(); return false; }
@@ -600,46 +769,81 @@ class Reconstruct {
         }
         return frames.size()==facts.wrappers.size();
     }
+    bool isOrdinal(Value value) const {
+        if(facts.induction.step!=1) {
+            auto div=value.getDefiningOp<arith::DivUIOp>();
+            if(!div||literal(div.getRhs())!=std::optional<int64_t>(facts.induction.step))return false;
+            value=div.getLhs();
+        }
+        if(facts.bodyBase()) {
+            auto sub=value.getDefiningOp<arith::SubIOp>();
+            if(!sub||literal(sub.getRhs())!=std::optional<int64_t>(facts.bodyBase()))return false;
+            value=sub.getLhs();
+        }
+        return value==facts.loop.getInductionVar();
+    }
     std::optional<Condition> condition(Value v) {
         if(invocationCondition(v,true)){allowExpression(v);return Condition{InvocationNext,v,0};}
         if(invocationCondition(v,false)){allowExpression(v);return Condition{InvocationPrevious,v,0};}
-        if (!facts.loop) {
-            if (literal(v)) { allowExpression(v); return Condition{Residue,v,0}; }
+        if(!facts.loop) {
+            if(literal(v)){allowExpression(v);return Condition{Residue,v,0};}
             return {};
         }
-        if (auto cmp=v.getDefiningOp<arith::CmpIOp>()) {
+        const ss::LoopOrdinal body{facts.bodyBase(),facts.induction.step};
+        if(auto cmp=v.getDefiningOp<arith::CmpIOp>()) {
             auto c=literal(cmp.getRhs());
-            if (c && *c>=0) {
-                if (cmp.getPredicate()==arith::CmpIPredicate::eq && cmp.getLhs()==facts.loop.getInductionVar()) {
-                    allowExpression(v); return Condition{First,v,uint64_t(*c)};
-                }
-                if (cmp.getPredicate()==arith::CmpIPredicate::sgt && cmp.getLhs()==facts.loop.getUpperBound()) {
-                    allowExpression(v); return Condition{IfBody,v,uint64_t(*c)};
-                }
-                if (auto sub=cmp.getLhs().getDefiningOp<arith::SubIOp>()) {
-                    if (cmp.getPredicate()==arith::CmpIPredicate::sle &&
-                        sub.getLhs()==facts.loop.getUpperBound() && sub.getRhs()==facts.loop.getInductionVar() &&
-                        uint64_t(*c)==facts.model.period) {
-                        allowExpression(v); return Condition{Last,v,uint64_t(*c)};
+            if(c) {
+                if(facts.caseGuard&&cmp.getLhs()==facts.loop.getUpperBound()&&*c==facts.induction.lower) {
+                    if(cmp.getPredicate()==arith::CmpIPredicate::sle) {
+                        allowExpression(v);return Condition{EmptyCase,v,0};
+                    }
+                    if(cmp.getPredicate()==arith::CmpIPredicate::sgt) {
+                        allowExpression(v);return Condition{NonemptyCase,v,0};
                     }
                 }
-            }
-            if (c && *c>0) {
-                if (cmp.getPredicate()==arith::CmpIPredicate::sge && cmp.getLhs()==facts.loop.getInductionVar()) {
-                    allowExpression(v); return Condition{Previous,v,uint64_t(*c)};
+                if(facts.startup&&cmp.getLhs()==facts.loop.getInductionVar()&&*c==facts.induction.lower) {
+                    if(cmp.getPredicate()==arith::CmpIPredicate::eq) {
+                        allowExpression(v);return Condition{InitialPhase,v,0};
+                    }
+                    if(cmp.getPredicate()==arith::CmpIPredicate::ne) {
+                        allowExpression(v);return Condition{SteadyPhase,v,0};
+                    }
                 }
-                if (auto sub=cmp.getLhs().getDefiningOp<arith::SubIOp>()) {
-                    if (cmp.getPredicate()==arith::CmpIPredicate::sgt && sub.getLhs()==facts.loop.getUpperBound() &&
-                        sub.getRhs()==facts.loop.getInductionVar()) {
-                        allowExpression(v); return Condition{Next,v,uint64_t(*c)};
+                auto ordinal=body.index(*c);
+                if(ordinal) {
+                    if(cmp.getPredicate()==arith::CmpIPredicate::eq&&cmp.getLhs()==facts.loop.getInductionVar()) {
+                        allowExpression(v);return Condition{First,v,*ordinal};
+                    }
+                    if(cmp.getPredicate()==arith::CmpIPredicate::sgt&&cmp.getLhs()==facts.loop.getUpperBound()) {
+                        allowExpression(v);return Condition{IfBody,v,*ordinal};
+                    }
+                    if(*ordinal&&cmp.getPredicate()==arith::CmpIPredicate::sge&&cmp.getLhs()==facts.loop.getInductionVar()) {
+                        allowExpression(v);return Condition{Previous,v,*ordinal};
+                    }
+                }
+                if(auto sub=cmp.getLhs().getDefiningOp<arith::SubIOp>()) {
+                    if(sub.getLhs()==facts.loop.getUpperBound()&&sub.getRhs()==facts.loop.getInductionVar()&&
+                       *c>0&&uint64_t(*c)%uint64_t(facts.induction.step)==0) {
+                        uint64_t distance=uint64_t(*c)/uint64_t(facts.induction.step);
+                        if(cmp.getPredicate()==arith::CmpIPredicate::sle&&distance==facts.model.period) {
+                            allowExpression(v);return Condition{Last,v,distance};
+                        }
+                        if(cmp.getPredicate()==arith::CmpIPredicate::sgt) {
+                            allowExpression(v);return Condition{Next,v,distance};
+                        }
+                    }
+                }
+                if(*c>=0&&uint64_t(*c)<facts.model.period&&cmp.getPredicate()==arith::CmpIPredicate::eq) {
+                    auto rem=cmp.getLhs().getDefiningOp<arith::RemUIOp>();
+                    if(rem&&literal(rem.getRhs())==std::optional<int64_t>(int64_t(facts.model.period))&&isOrdinal(rem.getLhs())) {
+                        allowExpression(v);return Condition{OrdinalResidue,v,uint64_t(*c)};
                     }
                 }
             }
         }
-        PeriodicScalar scalar(facts.loop.getInductionVar());
-        auto p=scalar.period(v);
-        if (!p || facts.model.period%*p) return {};
-        allowExpression(v); return Condition{Residue,v,0};
+        auto scalar=facts.scalar();auto period=scalar.period(v);
+        if(!period||facts.model.period%*period)return {};
+        allowExpression(v);return Condition{Residue,v,0};
     }
     bool generated(Operation *op,Operation *previous,Operation *next,std::vector<Condition> guards) {
         if (auto branch=dyn_cast<scf::IfOp>(op)) {
@@ -649,6 +853,8 @@ class Reconstruct {
                 if (!isa<scf::YieldOp>(x) || x.getNumOperands()) return fail("generated else path has actions");
             auto c=condition(branch.getCondition());
             if (!c) return fail("generated predicate is not a qualified original-bound/residue expression");
+            if((c->kind==EmptyCase&&facts.startupCase!=StartupCase::Empty)||
+               (c->kind==NonemptyCase&&facts.startupCase!=StartupCase::Nonempty))return true;
             guards.push_back(*c); allowed.insert(op);
             for (Region &region:op->getRegions()) if (!region.empty()) {
                 if (!llvm::hasSingleElement(region)) return fail("generated multiblock guard");
@@ -663,7 +869,7 @@ class Reconstruct {
             }
             return true;
         }
-        if (isa<arith::ConstantOp,arith::CmpIOp,arith::SubIOp,arith::RemUIOp,arith::OrIOp>(op)) return true;
+        if (isa<arith::ConstantOp,arith::CmpIOp,arith::SubIOp,arith::DivUIOp,arith::RemUIOp,arith::OrIOp>(op)) return true;
         ss::Action a;
         if (auto set=dyn_cast<SetFlagOp>(op)) {
             a.kind=ss::Action::Set; a.after=true; a.key=unsigned(set.getEventId().getEvent());
@@ -691,9 +897,17 @@ class Reconstruct {
         } else return fail("unexpected operation added by structured emission");
         auto id=facts.phaseId.find(a.after?previous:next);
         if (id==facts.phaseId.end()) return fail("event/barrier lacks its actual original payload cut");
-        std::optional<Condition> participation,invocation,existence;
+        std::optional<Condition> participation,invocation,existence,phase,caseDomain;
         for(const auto &g:guards) {
-            if(g.kind==Residue)continue;
+            if(g.kind==Residue||g.kind==OrdinalResidue)continue;
+            if(g.kind==EmptyCase||g.kind==NonemptyCase) {
+                if(caseDomain)return fail("duplicate startup case predicate");
+                caseDomain=g;continue;
+            }
+            if(g.kind==InitialPhase||g.kind==SteadyPhase) {
+                if(phase)return fail("duplicate initial/steady phase predicate");
+                phase=g;continue;
+            }
             if(g.kind==InvocationNext||g.kind==InvocationPrevious) {
                 if(invocation)return fail("duplicate invocation guard");
                 invocation=g;
@@ -705,6 +919,10 @@ class Reconstruct {
                 participation=g;
             }
         }
+        if(facts.caseGuard&&!caseDomain)return fail("missing original-loop empty/nonempty case predicate");
+        const bool originalBody=facts.segments[id->second]==ss::Segment::Body&&bool(facts.loop);
+        if(facts.startup&&originalBody&&!phase)return fail("missing initial/steady occurrence predicate");
+        if(phase&&(!facts.startup||!originalBody))return fail("initial/steady predicate has no body occurrence");
         if(invocation) {
             a.invocation=invocation->kind==InvocationNext?ss::Action::ToNextInvocation:ss::Action::FromPreviousInvocation;
             if(existence){a.invocationBodyGuard=true;a.invocationGuardResidue=existence->distance;}
@@ -724,18 +942,26 @@ class Reconstruct {
             else if (g.kind==IfBody) {a.participation=ss::Action::IfBody;a.guardResidue=g.distance;}
         }
         a.order=ordinal++;
-        PeriodicScalar scalar(facts.loop?facts.loop.getInductionVar():Value());
+        auto recurring=facts.scalar(),initial=facts.scalar(true);
         for (std::size_t atom=0;atom<facts.origin.size();++atom) if (facts.origin[atom]==id->second) {
             const auto &represented=facts.model.atoms[atom];
+            if(phase&&((phase->kind==InitialPhase)!=(facts.roles[atom]==AtomRole::Initial)))continue;
+            auto &scalar=facts.roles[atom]==AtomRole::Initial?initial:recurring;
             if (participation && (participation->kind==First || participation->kind==Last ||
                                  participation->kind==Previous || participation->kind==Next) &&
                 represented.segment!=ss::Segment::Body)
                 return fail("loop-local endpoint guard outside the body");
             bool active=true;
-            for (const auto &g:guards) if (g.kind==Residue) {
-                auto v=scalar.evaluate(g.value,represented.residue);
-                if (!v) return fail("reconstructed residue predicate is unavailable");
-                active &= bool(*v);
+            for (const auto &g:guards) {
+                if(g.kind==OrdinalResidue) {
+                    if(represented.segment!=ss::Segment::Body||facts.roles[atom]==AtomRole::Outside)
+                        return fail("ordinal residue outside the periodic tail");
+                    active&=represented.residue==g.distance;
+                } else if(g.kind==Residue) {
+                    auto v=scalar.evaluate(g.value,represented.residue);
+                    if(!v)return fail("reconstructed residue predicate is unavailable");
+                    active&=bool(*v);
+                }
             }
             if (active) {
                 if (participation && participation->kind==First && participation->distance!=represented.residue)
@@ -824,15 +1050,37 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<vo
     std::vector<std::vector<ss::Action>> selected;
     uint64_t atoms=0,views=0;
     for(const auto &scope:layout.scopes) {
-        auto facts=std::make_unique<NativeFacts>(inventory,scope,gm);
-        if(!facts->build()){out.reason=facts->reason;return out;}
+      std::vector<std::unique_ptr<NativeFacts>> cases;
+      auto first=std::make_unique<NativeFacts>(inventory,scope,gm);
+      if(!first->build()){out.reason=first->reason;return out;}
+      bool needsEmpty=first->needsEmptyCase;cases.push_back(std::move(first));
+      if(needsEmpty) {
+          auto empty=std::make_unique<NativeFacts>(inventory,scope,gm,StartupCase::Empty);
+          if(!empty->build()){out.reason=empty->reason;return out;}
+          cases.push_back(std::move(empty));
+      }
+      for(auto &facts:cases) {
         std::vector<ss::Action> actions;
         ss::Status status;std::string reason;
         if(facts->wrappers.empty()) {
-            auto result=ss::construct(facts->model);status=result.status;reason=result.reason;
+            auto result=ss::construct(facts->model);
+            if(result.status==ss::Status::AllocationFailure&&!facts->model.allowBoundaryKeyReuse) {
+                // One alternative realization policy, never different payload
+                // requirements or endpoints. Successfully allocated S1-S3
+                // plans keep their old assignment. A mixed family is accepted
+                // only by the causal continuation check, also run after emit.
+                facts->model.allowBoundaryKeyReuse=true;
+                result=ss::construct(facts->model);
+            }
+            status=result.status;reason=result.reason;
             if(status==ss::Status::Applied)actions=ss::actionsForPlan(facts->model,result.plan);
         } else {
-            auto result=ss::constructInvocations(facts->invocationModel());status=result.status;reason=result.reason;
+            auto result=ss::constructInvocations(facts->invocationModel());
+            if(result.status==ss::Status::AllocationFailure&&!facts->model.allowBoundaryKeyReuse) {
+                facts->model.allowBoundaryKeyReuse=true;
+                result=ss::constructInvocations(facts->invocationModel());
+            }
+            status=result.status;reason=result.reason;
             if(status==ss::Status::Applied)actions=ss::actionsForInvocations(facts->invocationModel(),result.plan);
             views+=result.proofViews;
         }
@@ -843,6 +1091,7 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<vo
         }
         if(!legalBoundaryOperands(*facts,actions,out.reason))return out;
         atoms+=facts->model.atoms.size();selected.push_back(std::move(actions));units.push_back(std::move(facts));
+      }
     }
     SyncPayloadSnapshot snapshot(working);llvm::SmallPtrSet<Operation*,32> original;
     working.walk([&](Operation *op){original.insert(op);});

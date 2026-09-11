@@ -15,6 +15,7 @@
 #include "mlir/Parser/Parser.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
@@ -37,6 +38,14 @@ int main(int argc,char **argv) {
     auto mutate=[&](func::FuncOp working) {
         if (mode=="none" || mode=="expect-unsupported") return;
         Operation *chosen=nullptr;
+        auto syncOnly=[](scf::IfOp branch) {
+            bool event=false,payload=false;
+            branch.walk([&](Operation *x) {
+                event|=isa<SetFlagOp,WaitFlagOp,BarrierOp>(x);
+                payload|=isa<OpPipeInterface>(x)&&!isa<SetFlagOp,WaitFlagOp,BarrierOp>(x);
+            });
+            return event&&!payload;
+        };
         working.walk([&](Operation *op) {
             if (chosen) return;
             if (mode=="late-boundary-set" || mode=="late-nested-set") {
@@ -52,6 +61,33 @@ int main(int argc,char **argv) {
                         branch.walk([&](SetFlagOp){hasSet=true;});
                         if (hasSet) for (Operation *next=op->getNextNode();next;next=next->getNextNode())
                             if (isa<TLoadOp>(next)) {chosen=op;break;}
+                    }
+                }
+            }
+            if (mode=="wrong-startup" || mode=="wrong-empty-case") {
+                if (auto branch=dyn_cast<scf::IfOp>(op)) {
+                    auto cmp=branch.getCondition().getDefiningOp<arith::CmpIOp>();
+                    if(cmp&&syncOnly(branch)) {
+                        auto iv=dyn_cast<BlockArgument>(cmp.getLhs());
+                        const bool phase=iv&&isa<scf::ForOp>(iv.getOwner()->getParentOp())&&
+                            (cmp.getPredicate()==arith::CmpIPredicate::eq||cmp.getPredicate()==arith::CmpIPredicate::ne);
+                        const bool empty=cmp.getPredicate()==arith::CmpIPredicate::sle&&
+                            !cmp.getLhs().getDefiningOp<arith::SubIOp>();
+                        if((mode=="wrong-startup"&&phase)||(mode=="wrong-empty-case"&&empty))chosen=cmp.getOperation();
+                    }
+                }
+            }
+            if(mode=="wrong-ordinal") {
+                if(auto branch=dyn_cast<scf::IfOp>(op)) if(syncOnly(branch)) {
+                    // Follow only this generated condition's SSA ancestry.
+                    SmallVector<Value> pending{branch.getCondition()};
+                    llvm::SmallPtrSet<Operation*,16> visited;
+                    while(!pending.empty()&&!chosen) {
+                        Value v=pending.pop_back_val();auto *definition=v.getDefiningOp();
+                        if(!definition||!visited.insert(definition).second)continue;
+                        if(isa<arith::DivUIOp>(definition)){chosen=definition;break;}
+                        if(definition->getName().getDialectNamespace()=="arith")
+                            for(Value operand:definition->getOperands())pending.push_back(operand);
                     }
                 }
             }
@@ -110,6 +146,13 @@ int main(int argc,char **argv) {
             b.create<WaitFlagOp>(w.getLoc(),w.getSrcPipe(),w.getDstPipe(),
                 EventAttr::get(&context,static_cast<EVENT>((unsigned(w.getEventId().getEvent())+1)%6)));
             w.erase(); changed=true;
+        } else if(mode=="wrong-startup"||mode=="wrong-empty-case"||mode=="wrong-ordinal") {
+            IntegerAttr value;
+            if(chosen->getNumOperands()!=2||!matchPattern(chosen->getOperand(1),m_Constant(&value))||
+               !value.getValue().isSignedIntN(63))return;
+            OpBuilder b(chosen);
+            auto wrong=b.create<arith::ConstantIndexOp>(chosen->getLoc(),value.getValue().getSExtValue()+1);
+            chosen->setOperand(1,wrong);changed=true;
         } else if (mode=="wrong-participation") {
             auto cmp=dyn_cast<arith::CmpIOp>(chosen);
             if (!cmp) return;

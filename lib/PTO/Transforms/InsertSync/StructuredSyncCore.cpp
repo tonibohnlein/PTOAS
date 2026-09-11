@@ -8,6 +8,7 @@
 
 #include "PTO/Transforms/InsertSync/StructuredSyncCore.h"
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -22,6 +23,7 @@ bool hasBoundaries(const Model &m) {
     return std::any_of(m.atoms.begin(),m.atoms.end(),[](const Atom &a){return a.segment!=Segment::Body;});
 }
 Result constructRegion(const Model &);
+bool mixedBoundaryReuse(const Model &,const Plan &,const std::vector<Action> * = nullptr);
 Result verifyRegion(const Model &,const std::vector<Action> &);
 bool suppliesRegion(const Model &,const Plan &,const Requirement &);
 constexpr uint64_t Inf = std::numeric_limits<uint64_t>::max();
@@ -440,7 +442,8 @@ Result selectPeriodic(const Model &m) {
     out.status=Status::Applied;
     return out;
 }
-Result allocatePeriodic(const Model &m,Result out) {
+Result allocatePeriodic(const Model &m,Result out,
+                        const std::function<bool(const Plan &,std::size_t)> &boundaryCheck = {}) {
     using Domain=std::pair<Lane,Lane>;
     std::map<Domain,std::size_t> population;
     for (const auto &e:out.plan.handoffs) ++population[{m.atoms[e.source].lane,m.atoms[e.target].lane}];
@@ -469,7 +472,9 @@ Result allocatePeriodic(const Model &m,Result out) {
             auto candidate=occupied==assigned[d].end()?std::vector<std::size_t>{}:occupied->second;
             candidate.push_back(i);
             if (causal.recycles(candidate)) {
-                e.key=key; assigned[d][key]=std::move(candidate); found=true; break;
+                const unsigned before=e.key;e.key=key;
+                if(boundaryCheck&&!boundaryCheck(out.plan,i+1)){e.key=before;continue;}
+                assigned[d][key]=std::move(candidate); found=true; break;
             }
         }
         if (!found) { out.reason="no boundary-preserving key assignment established";
@@ -667,8 +672,8 @@ Result verifyRegion(const Model &m,const std::vector<Action> &actions) {
         boundary[{a.source,a.target,a.key}].push_back(&a);
     }
     for (const auto &family:boundary) {
-        if (family.second.size()!=2 || recurringKeys.count(family.first)) {
-            out.reason="boundary key must own exactly one pair and no recurring episodes";return out;
+        if (family.second.size()!=2 || (!m.allowBoundaryKeyReuse&&recurringKeys.count(family.first))) {
+            out.reason="boundary key must own exactly one pair; recurring continuation is not enabled";return out;
         }
         const Action *s=family.second[0],*w=family.second[1];
         if (s->kind==Action::Wait) std::swap(s,w);
@@ -695,6 +700,9 @@ Result verifyRegion(const Model &m,const std::vector<Action> &actions) {
         h.source=body.original[h.source];h.target=body.original[h.target];out.plan.handoffs.push_back(h);
     }
     for (auto q:inside.plan.barriers) out.plan.barriers.push_back(body.original[q]);
+    if(m.allowBoundaryKeyReuse&&!mixedBoundaryReuse(m,out.plan,&actions)) {
+        out.reason="boundary/recurring notification consumption before reuse is not established";return out;
+    }
     uint64_t work=0;
     if (!boundaryCoverage(m,out.plan,work)) {
         out.reason="entry, exit or zero-trip requirement is not supplied";return out;
@@ -782,12 +790,25 @@ Result constructRegion(const Model &m) {
         Domain d{m.atoms[h.source].lane,m.atoms[h.target].lane};bool assigned=false;
         for (unsigned k:m.target.compilerKeys) if (m.target.available(d.first,d.second,k) &&
                 !boundaryKeys[d].count(k)) {
-            h.key=k;boundaryKeys[d].insert(k);body.model.target.reservations.push_back({d.first,d.second,k});
+            h.key=k;boundaryKeys[d].insert(k);
+            if(!m.allowBoundaryKeyReuse)body.model.target.reservations.push_back({d.first,d.second,k});
             assigned=true;break;
         }
         if (!assigned) {out.status=Status::AllocationFailure;out.reason="distinct boundary keys do not fit";return out;}
     }
-    auto allocated=allocatePeriodic(body.model,std::move(selected));
+    std::function<bool(const Plan &,std::size_t)> continuation;
+    if(m.allowBoundaryKeyReuse)continuation=[&](const Plan &inside,std::size_t assignedCount) {
+        Plan trial=out.plan;std::size_t i=0;
+        for(auto &h:trial.handoffs)if(periodicEdge(m,h)) {
+            // Unassigned streams participate in logical causality but do not
+            // collide with a proposed physical family. The sentinel is NEVER
+            // emitted or accepted by the final physical-key validator.
+            h.key=i<assignedCount?inside.handoffs[i].key:unsigned(8);
+            ++i;
+        }
+        return mixedBoundaryReuse(m,trial);
+    };
+    auto allocated=allocatePeriodic(body.model,std::move(selected),continuation);
     if (allocated.status!=Status::Applied) return allocated;
     std::size_t index=0;
     for (auto &h:out.plan.handoffs) if (periodicEdge(m,h)) h.key=allocated.plan.handoffs[index++].key;
@@ -851,7 +872,7 @@ struct End {
     bool after=false;
     uint64_t order=0;
 };
-struct LocalEpisode { End set,wait; Lane source,target;unsigned key=0; };
+struct LocalEpisode { End set,wait; Lane source,target;unsigned key=0;bool periodic=false; };
 struct BarrierPort { End at;Lane lane; };
 struct Interface {
     std::vector<Point> payloads;
@@ -924,7 +945,7 @@ Interface interfaceFor(const Model &m,const Plan &p,const InterfaceCase &c,const
             points.insert(s);points.insert(w);
             out.episodes.push_back({{s,true,actions[handoffBase+2*j].order},
                                     {w,false,actions[handoffBase+2*j+1].order},
-                                    m.atoms[h.source].lane,m.atoms[h.target].lane,h.key});
+                                    m.atoms[h.source].lane,m.atoms[h.target].lane,h.key,periodicEdge(m,h)});
         };
         if (periodicEdge(m,h) && m.recurring) {
             const int64_t d=int64_t(h.distance),end=lastEpoch(m,h.target,c)-d;
@@ -981,7 +1002,7 @@ class InvocationGraph {
     mutable std::map<std::size_t,std::vector<bool>> cache;
     std::map<std::tuple<unsigned,std::size_t,int64_t>,std::pair<std::size_t,std::size_t>> payload;
     using Key=std::tuple<Lane,Lane,unsigned>;
-    struct EpisodeNodes { End source;std::size_t fire=0,take=0; };
+    struct EpisodeNodes { End source;std::size_t fire=0,take=0;bool periodic=false; };
     std::map<Key,std::vector<EpisodeNodes>> local[2];
     std::vector<std::pair<std::size_t,std::size_t>> reentryReuse;
     static constexpr std::size_t Absent=std::numeric_limits<std::size_t>::max();
@@ -1062,7 +1083,7 @@ public:
         for(unsigned inv=0;inv<2;++inv)for(std::size_t j=0;j<ports.episodes.size();++j) {
             const auto &e=ports.episodes[j];const auto nodes=localNodes[inv][j];
             edge(nodes.first,nodes.second);
-            local[inv][{e.source,e.target,e.key}].push_back({e.set,nodes.first,nodes.second});
+            local[inv][{e.source,e.target,e.key}].push_back({e.set,nodes.first,nodes.second,e.periodic});
         }
         for(std::size_t j=0;j<p.handoffs.size();++j)if(carrySets[0][j]!=Absent) {
             edge(carrySets[0][j],carryWaits[j]);
@@ -1085,6 +1106,24 @@ public:
         if(r.property==Property::Visibility)return false;
         const auto s=*ports.last[r.source],t=*ports.first[r.target];
         return reaches(payload.at({0,s.atom,s.epoch}).second,payload.at({1,t.atom,t.epoch}).first);
+    }
+    bool mixedLocalReuse() const {
+        for(const auto &family:local[0]) {
+            auto episodes=family.second;
+            const bool boundary=std::any_of(episodes.begin(),episodes.end(),[](const auto &e){return !e.periodic;});
+            const bool periodic=std::any_of(episodes.begin(),episodes.end(),[](const auto &e){return e.periodic;});
+            if(!boundary||!periodic)continue;
+            std::sort(episodes.begin(),episodes.end(),[&](const auto &a,const auto &b){return endRank(m,a.source)<endRank(m,b.source);});
+            for(std::size_t j=1;j<episodes.size();++j) {
+                // Body/body successors are already proved for ALL epochs by
+                // EventCausality. The reduced first/last interface may omit
+                // intermediate body episodes, so it must not pretend these
+                // two retained endpoints are immediate recurring successors.
+                if(episodes[j-1].periodic&&episodes[j].periodic)continue;
+                if(!reaches(episodes[j-1].take,episodes[j].fire))return false;
+            }
+        }
+        return true;
     }
     bool recycles() const {
         for(const auto &f:local[0]) {
@@ -1113,6 +1152,29 @@ std::vector<std::unique_ptr<InvocationGraph>> invocationGraphs(const Model &m,co
     for(const auto &c:interfaceCases(m,p))result.emplace_back(new InvocationGraph(m,p,c,recovered));
     return result;
 }
+bool mixedBoundaryReuse(const Model &m,const Plan &p,const std::vector<Action> *recovered) {
+    using Key=std::tuple<Lane,Lane,unsigned>;
+    std::map<Key,unsigned> populations;
+    for(const auto &h:p.handoffs)
+        populations[{m.atoms[h.source].lane,m.atoms[h.target].lane,h.key}]|=periodicEdge(m,h)?1u:2u;
+    bool mixed=false;for(const auto &entry:populations)mixed|=entry.second==3;
+    if(!mixed)return true;
+    InvocationPlan projected;projected.local=p;
+    if(recovered) {
+        std::set<InvocationSignature> expected,actual;
+        auto commands=actionsForPlan(m,p);
+        for(const auto &a:commands)expected.insert(invocationSignature(a));
+        for(const auto &a:*recovered)actual.insert(invocationSignature(a));
+        if(expected.size()!=commands.size()||actual.size()!=recovered->size()||expected!=actual)return false;
+    }
+    auto cases=interfaceCases(m,projected);if(cases.empty())return false;
+    for(const auto &c:cases) {
+        InvocationGraph graph(m,projected,c,recovered);
+        if(!graph.acyclic()||!graph.mixedLocalReuse())return false;
+    }
+    return true;
+}
+
 bool invocationCovered(const std::vector<std::unique_ptr<InvocationGraph>> &g,const InvocationRequirement &r) {
     return !g.empty()&&std::all_of(g.begin(),g.end(),[&](const auto &x){return x->has(r);});
 }

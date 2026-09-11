@@ -74,6 +74,10 @@ struct Model {
     // Multiple readers are not collapsed during discovery.
     std::vector<Requirement> requirements;
     Target target;
+    // S4's virtual startup prefix may continue a recurring notification on
+    // the same key. Enable only with the complete mixed-boundary causal check;
+    // this is not a request to serialize or change a handoff boundary.
+    bool allowBoundaryKeyReuse = false;
 };
 struct Handoff {
     std::size_t source = 0, target = 0;
