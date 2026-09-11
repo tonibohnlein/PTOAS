@@ -24,12 +24,13 @@
 // BOUNDARY-NEXT: scf.if
 // BOUNDARY-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 
-// A zero-trip execution still carries a real Load A -> store requirement, so
-// that publication is unconditional rather than guarded by the loop.
-// BOUNDARY: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
-
-// Panel B receives its own separate publication after its own load.
-// BOUNDARY-NEXT: pto.tload
+// Panel B receives its own separate publication after its own load. This
+// follows A's publication directly: refinement removed the separate MTE2-to-
+// MTE3 pair that used to sit between them, because the MTE2 barrier before the
+// overwrite already orders the first load against it. The zero-trip Load A ->
+// store requirement is still supplied, and is checked at the epilogue below
+// rather than by pinning that intermediate publication.
+// BOUNDARY: pto.tload
 // BOUNDARY-NEXT: arith.constant
 // BOUNDARY-NEXT: arith.cmpi sgt, %arg2
 // BOUNDARY-NEXT: scf.if
@@ -55,6 +56,13 @@
 // BOUNDARY: arith.cmpi sgt, %arg2
 // BOUNDARY-NEXT: scf.if
 // BOUNDARY-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+
+// The overwrite itself is still published to the store, so the requirement
+// that survives a zero-trip execution is supplied here rather than earlier.
+// BOUNDARY: pto.tload
+// BOUNDARY-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
+// BOUNDARY-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
+// BOUNDARY-NEXT: pto.tstore
 
 module attributes {pto.target_arch = "a3"} {
   func.func @preload_body_epilogue(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>, %n: index, %take: i1)
