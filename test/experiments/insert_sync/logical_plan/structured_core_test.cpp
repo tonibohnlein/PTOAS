@@ -26,6 +26,9 @@ static void invocationTests();
 static void ordinalTests();
 static void startupTests();
 static void s5Tests();
+static void s6Tests();
+static uint64_t regionModels=0,regionTrials=0,regionRemoved=0;
+static uint64_t startupModels=0,startupRekeyTrials=0,startupRekeys=0,startupSiteMerges=0;
 static uint64_t refinementModels=0,refinementTrials=0,refinementRemoved=0;
 static void invocationQKTest(const InvocationModel &);
 static void require(bool p,const char *message) {
@@ -402,8 +405,15 @@ if(conflict)m.requirements.push_back({p,q,*d,acc?Property::AccResource:Property:
     }
     invocationTests();
     s5Tests();
-    ordinalTests();startupTests();
+    ordinalTests();startupTests();s6Tests();
     std::cout<<"{\"status\":\"passed\",\"checks\":"<<checks<<",\"accepted_models\":"<<acceptedModels
+             <<",\"region_refinement_models\":"<<regionModels
+             <<",\"region_refinement_trials\":"<<regionTrials
+             <<",\"region_refinement_removed\":"<<regionRemoved
+             <<",\"startup_coalescing_models\":"<<startupModels
+             <<",\"startup_rekey_trials\":"<<startupRekeyTrials
+             <<",\"startup_rekeys\":"<<startupRekeys
+             <<",\"startup_site_merges\":"<<startupSiteMerges
              <<",\"refinement_models\":"<<refinementModels
              <<",\"refinement_trials\":"<<refinementTrials
              <<",\"refinement_removed\":"<<refinementRemoved
@@ -412,6 +422,7 @@ if(conflict)m.requirements.push_back({p,q,*d,acc?Property::AccResource:Property:
         <<",\"invocation_accepted_models\":"<<invocationAccepted<<",\"invocation_allocation_refusals\":"<<invocationRefused
         <<",\"invocation_finite_executions\":"<<invocationRuns
         <<",\"seconds\":"<<std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count()<<"}\n";
+    return 0;
 }
 
 // S3 finite oracle. This executes ALL occurrences of several real finite
@@ -907,4 +918,210 @@ static void s5Tests() {
             missing.constructionStatus()==Status::InvalidPlan,"missing completion mislabeled as allocation");
     InvocationResult progress;progress.status=Status::InvalidPlan;progress.failure=InvocationFailure::Progress;
     require(progress.constructionStatus()==Status::InvalidPlan,"progress failure mislabeled as allocation");
+}
+
+
+// S6 tests execute the ACTUAL complete-region refiner and site planner. The
+// finite oracle above is separate from their closure and matching algorithms.
+static std::vector<Action> decodeS6Sites(const Model &m,const std::vector<SiteOrigin> &origins,
+                                       const std::vector<Action> &actions) {
+    auto sites=startupEmissionSites(m,origins,actions);
+    require(bool(sites),"S6 emission mapping refused");
+    std::vector<unsigned> seen(actions.size(),0);std::vector<Action> result;
+    std::map<std::pair<std::size_t,bool>,std::vector<std::size_t>> oldOrder,newOrder;
+    std::vector<std::size_t> sorted(actions.size());std::iota(sorted.begin(),sorted.end(),0);
+    std::stable_sort(sorted.begin(),sorted.end(),[&](auto a,auto b){return actions[a].order<actions[b].order;});
+    for(auto i:sorted)oldOrder[{actions[i].anchor,actions[i].after}].push_back(i);
+    for(std::size_t i=0;i<sites->size();++i) {
+        const auto &members=(*sites)[i].members;
+        require(!members.empty()&&members.size()<=2,"invalid S6 site size");
+        if(members.size()==2) {
+            const auto &a=actions[members[0]],&b=actions[members[1]];
+            require(origins[a.anchor].payload==origins[b.anchor].payload &&
+                origins[a.anchor].phase==SiteOrigin::Initial && origins[b.anchor].phase==SiteOrigin::Steady,
+                "coalescing crossed original operation or phase identity");
+            require(std::tie(a.kind,a.source,a.target,a.key,a.after)==std::tie(b.kind,b.source,b.target,b.key,b.after),
+                "coalescing changed direction/key/cut");
+            for(auto index:members) {
+                const auto &x=actions[index];
+                require(x.invocation==Action::Local&&!x.invocationBodyGuard&&!x.invocationGuardResidue&&
+                    x.participation==Action::Every&&!x.distanceInIterations&&!x.guardResidue,
+                    "coalescing widened a non-exhaustive domain");
+            }
+        }
+        for(auto index:members) {
+            require(index<actions.size()&&!seen[index]++,"action dropped or duplicated in site partition");
+            auto a=actions[index];a.order=i;result.push_back(a);
+            newOrder[{a.anchor,a.after}].push_back(index);
+        }
+    }
+    require(std::all_of(seen.begin(),seen.end(),[](auto n){return n==1;}),"site partition incomplete");
+    require(oldOrder==newOrder,"coalescing reordered one phase's FIFO");
+    return result;
+}
+static Result checkS6Region(const Model &m,const Plan &before,const std::vector<SiteOrigin> &origins) {
+    auto refined=refineRegionHandoffs(m,before);
+    require(refined.status==Status::Applied,"S6 full-region refinement");
+    require(refined.refinementAttempts==before.handoffs.size(),"S6 unbounded/repeated deletion sweep");
+    require(refined.plan.barriers==before.barriers&&refined.plan.firstBarriers==before.firstBarriers,
+            "S6 silently deleted or moved a barrier");
+    ++regionModels;regionTrials+=refined.refinementAttempts;regionRemoved+=refined.removedHandoffs;
+    // Every surviving handoff must be an ordered exact subsequence, including
+    // its key. Rekeying is a DIFFERENT, explicitly checked transformation below.
+    std::size_t from=0;
+    for(const auto &h:refined.plan.handoffs) {
+        bool matched=false;
+        while(from<before.handoffs.size()) {
+            const auto &old=before.handoffs[from++];
+            if(std::tie(h.source,h.target,h.distance,h.key)==std::tie(old.source,old.target,old.distance,old.key)) {
+                matched=true;break;
+            }
+        }
+        require(matched,"S6 survivor not in original plan");
+    }
+    auto out=coalesceStartupHandoffs(m,origins,refined.plan);
+    require(out.status==Status::Applied,"S6 startup coalescing rejected a verified region");
+    ++startupModels;startupRekeyTrials+=out.rekeyAttempts;startupRekeys+=out.rekeyedHandoffs;startupSiteMerges+=out.coalescedSites;
+    require(out.plan.handoffs.size()==refined.plan.handoffs.size(),"coalescing changed logical population");
+    for(std::size_t i=0;i<out.plan.handoffs.size();++i) {
+        const auto &a=out.plan.handoffs[i],&b=refined.plan.handoffs[i];
+        require(std::tie(a.source,a.target,a.distance)==std::tie(b.source,b.target,b.distance),"coalescing moved endpoints");
+    }
+    auto actual=decodeS6Sites(m,origins,actionsForPlan(m,out.plan));
+    require(verify(m,actual).status==Status::Applied,"coalesced actual command check");
+    for(uint64_t n:{0,1,2,3,5,9}) {
+        require(finiteCorrect(m,actionsForPlan(m,before),n),"S6 baseline finite oracle");
+        require(finiteCorrect(m,actionsForPlan(m,refined.plan),n),"S6 region deletion finite oracle");
+        require(finiteCorrect(m,actual,n),"S6 coalesced finite oracle");
+    }
+    // Missing a real endpoint must still reject even with phase coalescing.
+    auto mutation=actual;
+    auto wait=std::find_if(mutation.begin(),mutation.end(),[](const Action &a){return a.kind==Action::Wait;});
+    if(wait!=mutation.end()) {
+        mutation.erase(wait);
+        require(verify(m,mutation).status!=Status::Applied,"coalescing hid a missing actual wait");
+    }
+    return out;
+}
+
+struct S6QProjection {Model model;std::vector<SiteOrigin> origins;};
+static S6QProjection s6QProjection() {
+    // Hand-transcribed conservative footprints of the unchanged q_proj fixture,
+    // NOT a native importer or new device result. Corresponding original cuts
+    // in the two first/else arms remain DISTINCT; only common operations share
+    // an original identity. No shape-based hardware ordering is credited.
+    struct Access {int space;uint64_t base,bytes;bool write;};
+    S6QProjection f;auto &m=f.model;m.allowBoundaryKeyReuse=true;
+    std::vector<std::vector<Access>> effects;
+    auto add=[&](Segment s,Pipe lane,std::vector<Access> a) {
+        auto n=m.atoms.size();m.atoms.push_back({0,n,{Core::AIC,lane},s});effects.push_back(std::move(a));
+    };
+    for(bool first:{true,false}) {
+        auto s=first?Segment::Prelude:Segment::Body;
+        add(s,Pipe::MTE2,{{1,0,4096,false},{10,0,4096,true}});
+        add(s,Pipe::MTE2,{{2,0,65536,false},{10,4096,65536,true}});
+        add(s,Pipe::MTE2,{{1,0,4096,false},{10,69632,4096,true}});
+        add(s,Pipe::MTE2,{{2,0,65536,false},{10,73728,65536,true}});
+        auto extract=[&](uint64_t l1,uint64_t bytes,int l0,uint64_t addr,uint64_t size) {
+            add(s,Pipe::MTE1,{{10,l1,bytes,false},{l0,addr,size,true}});
+        };
+        auto mm=[&](uint64_t a,uint64_t b,bool accum) {
+            std::vector<Access> access{{11,a,2048,false},{12,b,32768,false},{13,0,16384,true}};
+            if(accum)access.push_back({13,0,16384,false});
+            add(s,Pipe::M,std::move(access));
+        };
+        extract(0,4096,11,6144,2048);extract(4096,65536,12,0,32768);
+        extract(0,4096,11,0,2048);extract(4096,65536,12,32768,32768);
+        mm(6144,0,!first);mm(0,32768,true);
+        extract(69632,4096,11,2048,2048);extract(73728,65536,12,0,32768);
+        extract(69632,4096,11,4096,2048);extract(73728,65536,12,32768,32768);
+        mm(2048,0,true);mm(4096,32768,true);
+    }
+    add(Segment::Epilogue,Pipe::FIX,{{13,0,16384,false},{3,0,16384,true}});
+    for(std::size_t i=0;i<effects.size();++i)for(std::size_t j=0;j<effects.size();++j) {
+        bool conflict=false,resource=false;
+        for(auto a:effects[i])for(auto b:effects[j]) {
+            if(a.space!=b.space||a.base>=b.base+b.bytes||b.base>=a.base+a.bytes)continue;
+            bool acc=a.space==13&&!a.write&&!b.write&&m.atoms[i].lane!=m.atoms[j].lane;
+            conflict|=a.write||b.write||acc;resource|=acc;
+        }
+        if(conflict)hazard(m,i,j,resource?Property::AccResource:Property::Completion);
+    }
+    for(std::size_t a=0;a<m.atoms.size();++a) {
+        std::size_t identity=a;
+        if(a>=16&&a<32&&(a%16<4||a%16>=10))identity=a%16;
+        f.origins.push_back({a<16?SiteOrigin::Initial:a<32?SiteOrigin::Steady:SiteOrigin::Other,identity});
+    }
+    return f;
+}
+static void s6Tests() {
+    auto q=s6QProjection();auto initial=construct(q.model);
+    require(initial.status==Status::Applied&&initial.plan.handoffs.size()==35&&initial.plan.barriers.size()==7,
+            "Q-projection 78-site baseline changed; review its witness");
+    auto out=checkS6Region(q.model,initial.plan,q.origins);
+    auto sites=startupEmissionSites(q.model,q.origins,actionsForPlan(q.model,out.plan));
+    require(out.plan.handoffs.size()==34&&sites&&sites->size()+1==63&&out.coalescedSites==13,
+            "Q-projection complete-region/coalesced 63-site result changed");
+    require(out.rekeyedHandoffs==1,"Q-projection new key change needs review");
+    require(finiteCorrect(q.model,decodeS6Sites(q.model,q.origins,actionsForPlan(q.model,out.plan)),31),
+            "Q-projection actual 31-iteration tail");
+    auto audit=auditRegionHandoffs(q.model,out.plan);
+    require(audit&&audit->size()==out.plan.handoffs.size(),"complete-region audit missing");
+
+    Model ack;ack.atoms={{0,0,{Core::AIV,Pipe::MTE2}},{0,1,{Core::AIV,Pipe::V}}};hazard(ack,0,1);
+    Plan cycle;cycle.handoffs={{0,1,0,0},{1,0,1,0}};
+    auto kept=refineRegionHandoffs(ack,cycle);
+    require(kept.status==Status::Applied&&!kept.removedHandoffs,"region deletion lost event-only acknowledgement");
+    auto why=auditRegionHandoffs(ack,cycle);
+    require(why&&(*why)[1].completionLost.empty()&&!(*why)[1].protocolWithout,
+            "audit conflates memory completion with flag consumption");
+    Plan malformed;malformed.handoffs={{9999,0,0,0}};Model noDemands=ack;noDemands.requirements.clear();
+    require(refineRegionHandoffs(noDemands,malformed).status==Status::InvalidPlan,"invalid empty-ledger plan accepted");
+    require(coalesceStartupHandoffs(noDemands,{},malformed).status==Status::InvalidPlan,"malformed coalescing input");
+    require(!auditRegionHandoffs(noDemands,malformed),"malformed audit input");
+
+    // Crossing candidate matches must not change either phase's command order.
+    // This is a SITE-MAPPING unit test, not a claimed valid event protocol.
+    Model sequence;sequence.atoms={{0,0,{Core::AIV,Pipe::MTE2},Segment::Prelude},
+                                  {0,0,{Core::AIV,Pipe::MTE2},Segment::Body}};
+    std::vector<SiteOrigin> same={{SiteOrigin::Initial,7},{SiteOrigin::Steady,7}};
+    Lane source{Core::AIV,Pipe::MTE2},target{Core::AIV,Pipe::V};
+    std::vector<Action> commands={{Action::Set,0,true,0,source,target,0,0},
+        {Action::Set,0,true,1,source,target,1,0},{Action::Set,1,true,2,source,target,1,0},
+        {Action::Set,1,true,3,source,target,0,0}};
+    auto aligned=startupEmissionSites(sequence,same,commands);
+    require(aligned&&aligned->size()==3,"crossing common-cut FIFO matches were both merged");
+    decodeS6Sites(sequence,same,commands);
+    auto wrong=same;wrong[1].payload=8;
+    require(startupEmissionSites(sequence,wrong,commands)->size()==4,"different original cuts were merged");
+    auto guarded=commands;for(auto &a:guarded)a.distanceInIterations=1;
+    require(startupEmissionSites(sequence,same,guarded)->size()==4,"next-use predicates were widened");
+    wrong=same;wrong[1].phase=SiteOrigin::Initial;
+    require(!startupEmissionSites(sequence,wrong,commands),"duplicate initial origin admitted");
+    auto duplicate=commands;duplicate.push_back(commands[0]);
+    require(!startupEmissionSites(sequence,same,duplicate),"ambiguous action ordinal admitted");
+
+    std::mt19937 random(0x50606);const Pipe lanes[]={Pipe::MTE2,Pipe::V,Pipe::MTE3};
+    unsigned accepted=0,refused=0;
+    for(unsigned test=0;test<128;++test) {
+        Model m;m.allowBoundaryKeyReuse=true;std::vector<SiteOrigin> origins;
+        unsigned n=3+random()%4;
+        std::vector<unsigned> lane(n),cell(n),write(n);
+        for(unsigned i=0;i<n;++i){lane[i]=random()%3;cell[i]=random()%3;write[i]=random()%2;}
+        std::vector<unsigned> cells,writes;
+        for(bool first:{true,false})for(unsigned i=0;i<n;++i) {
+            m.atoms.push_back({0,i,{Core::AIV,lanes[lane[i]]},first?Segment::Prelude:Segment::Body});
+            origins.push_back({first?SiteOrigin::Initial:SiteOrigin::Steady,i});cells.push_back(cell[i]);writes.push_back(write[i]);
+        }
+        m.atoms.push_back({0,n,{Core::AIV,lanes[random()%3]},Segment::Epilogue});
+        origins.push_back({SiteOrigin::Other,n});cells.push_back(random()%3);writes.push_back(random()%2);
+        for(std::size_t p=0;p<cells.size();++p)for(std::size_t t=0;t<cells.size();++t)
+            if(cells[p]==cells[t]&&(writes[p]||writes[t]))hazard(m,p,t);
+        auto before=construct(m);
+        if(before.status!=Status::Applied) {
+            require(before.status==Status::AllocationFailure,"unexpected random startup construction failure");++refused;continue;
+        }
+        ++accepted;checkS6Region(m,before.plan,origins);
+    }
+    require(accepted>=64&&accepted+refused==128,"startup random population silently lost");
 }

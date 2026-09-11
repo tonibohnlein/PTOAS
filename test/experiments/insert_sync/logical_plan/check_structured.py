@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Native S1/S2/S3/S4 acceptance: unchanged input hashes, strict dispatch, real mutations.
+"""Native S1-S6 acceptance: unchanged input hashes, strict dispatch, real mutations.
 No libisl dependency. Device and <=2x compilation acceptance remain separate.
 """
 import argparse, hashlib, json, os, subprocess, sys, time
@@ -23,16 +23,22 @@ def main():
     sys.path.insert(0,str(args.python_root))
     from observations import population,analyze,SERIAL_DRIVER
     from compare_boundaries import run as observe
+    from s6_report import parse_reports, validate_report
     rows=[]; qk_case=None
-    def run(name,command):
+    def run(name,command,audit=False):
+        env=dict(os.environ)
+        env.pop('PTOAS_STRUCTURED_PLAN_JSON',None)
+        env.pop('PTOAS_LOGICAL_TRACE',None)
+        if audit: env['PTOAS_STRUCTURED_PLAN_JSON']='1'
         before=time.perf_counter()
-        result=subprocess.run([str(x) for x in command],text=True,capture_output=True)
+        result=subprocess.run([str(x) for x in command],text=True,capture_output=True,env=env)
         elapsed=time.perf_counter()-before
         (args.output/(name+'.stdout')).write_text(result.stdout)
         (args.output/(name+'.stderr')).write_text(result.stderr)
         assert result.returncode==0,(name,result.returncode,result.stderr[-5000:],result.stdout[-5000:])
         return result,elapsed
     run('s4_utilities',[sys.executable,here/'check_s4_utilities.py'])
+    run('s6_utilities',[sys.executable,here/'check_s6_utilities.py'])
     for case in population():
         if case['case_id'] not in ('one_buffer','two_buffer','three_buffer','four_use','online_softmax','qk_matmul','q_proj'): continue
         name=case['case_id']; source=case['source']
@@ -46,6 +52,26 @@ def main():
                  '--insert-sync-gm-alias=assume-disjoint-arguments','--emit-pto-ir',source,'-o',output]
         _,seconds=run(name,command)
         report=analyze(output)
+        # Separate diagnostic compilation: per-deletion proof queries must NOT
+        # enter the reported normal compile time or the paired campaign.
+        audited=args.output/(name+'.audited.pto')
+        audit_command=list(command);audit_command[-1]=audited
+        diagnostic,_=run(name+'.audit',audit_command,audit=True)
+        reports=parse_reports(diagnostic.stderr)
+        assert len(reports)==1,(name,'expected one kernel report')
+        accounting=validate_report(reports[0])
+        counts=report['mechanisms']
+        actual_sites=counts['sets']+counts['waits']+sum(counts['named'].values())+counts['PIPE_ALL']
+        assert accounting['static_sites']==actual_sites,(name,accounting,counts)
+        assert output.read_bytes()==audited.read_bytes(),(name,'diagnostic mode changed IR')
+        (args.output/(name+'.plan.json')).write_text(json.dumps(reports[0],indent=2)+'\n')
+        if name=='q_proj':
+            assert actual_sites<=76,(name,'whole-startup refinement did not improve 78-site baseline',counts)
+            assert sum(u['coalesced_sites'] for u in accounting['units'])>0,(name,'startup sites not coalesced')
+            for mutation in ('narrow-coalesced','duplicate-coalesced','late-coalesced-set'):
+                result,_=run(name+'.'+mutation,[args.driver,source,mutation,args.output/(name+'.'+mutation+'.pto')])
+                verdict=json.loads(result.stdout)
+                assert verdict['mutation_applied'] and verdict['expected'] and verdict['atomic'],verdict
         if name=='four_use':
             # Quality regression, separate from correctness: after all barriers
             # exist, remove a redundant pair without changing survivor keys.
@@ -70,7 +96,8 @@ def main():
             executed.append(dict(scenario=scenario['name'],metrics=metric))
         assert any(x.get('pto.insert_sync.producer')=='"structured"' for x in report['status_attributes']),report
         rows.append(dict(case=name,seconds=seconds,mechanisms=report['mechanisms'],
-            scalar_sites=report['sync_control'],keys_by_direction=report['event_ids_by_direction'],executed=executed,source_sha256=hashlib.sha256(source.read_bytes()).hexdigest()))
+            scalar_sites=report['sync_control'],keys_by_direction=report['event_ids_by_direction'],executed=executed,
+            s6_accounting=accounting,source_sha256=hashlib.sha256(source.read_bytes()).hexdigest()))
         # Use the driver on unchanged, explicitly addressed input as well.
         for mutation in ('none','drop-wait','drop-set','duplicate-set','wrong-key','drop-retirement','wrong-participation'):
             result,_=run(name+'.'+mutation,[args.driver,source,mutation,args.output/(name+'.'+mutation+'.pto')])
@@ -237,7 +264,33 @@ def main():
             observed.append((after.payload,after.before))
         boolean_outputs.append(observed)
     assert boolean_outputs[0]==boolean_outputs[1],'equivalent Boolean guards changed actual execution/order'
-    summary=dict(ordinal_rows=ordinal_rows,invocation_rows=invocation_rows,boundary_rows=boundary_rows,status='passed',rows=rows,driver_sha256=hashlib.sha256(args.driver.read_bytes()).hexdigest(),
+    # New synthetic split-K GEMM, NOT the frozen historical workload. It
+    # exercises the exact initial/steady payload split with ordinary events.
+    gemm_source=fixtures/'s6_startup_gemm.pto';gemm_output=args.output/'s6_startup_gemm.pto'
+    response,gemm_seconds=run('s6_startup_gemm',[args.driver,gemm_source,'none',gemm_output],audit=True)
+    verdict=json.loads(response.stdout)
+    assert verdict['accepted'] and verdict['atomic'],verdict
+    gemm_reports=parse_reports(response.stderr)
+    assert len(gemm_reports)==1
+    gemm_accounting=validate_report(gemm_reports[0])
+    original=analyze(gemm_source);compiled=analyze(gemm_output)
+    for field in ('payload','allocations','views','abi'):
+        assert original[field]==compiled[field],('s6_startup_gemm',field)
+    assert compiled['mechanisms']['PIPE_ALL']==1
+    scenario={'name':'M16_N256_K2048','arguments':['a','b','c']}
+    before,_=observe(gemm_source,scenario);after,metrics=observe(gemm_output,scenario)
+    assert before.payload==after.payload and not after.tokens
+    for mutation in ('drop-wait','drop-set','wrong-key','duplicate-set','drop-retirement',
+                     'narrow-coalesced','duplicate-coalesced','late-coalesced-set'):
+        result,_=run('s6_startup_gemm.'+mutation,[args.driver,gemm_source,mutation,
+                       args.output/('s6_startup_gemm.'+mutation+'.pto')])
+        verdict=json.loads(result.stdout)
+        assert verdict['mutation_applied'] and verdict['expected'] and verdict['atomic'],verdict
+    (args.output/'s6_startup_gemm.plan.json').write_text(json.dumps(gemm_reports[0],indent=2)+'\n')
+    gemm_row=dict(case='s6_startup_gemm',source_sha256=hashlib.sha256(gemm_source.read_bytes()).hexdigest(),
+                  synthetic=True,historical_gemm=False,accounting=gemm_accounting,executed=metrics,
+                  diagnostic_seconds=gemm_seconds,device='NOT_RUN')
+    summary=dict(s6_gemm=gemm_row,ordinal_rows=ordinal_rows,invocation_rows=invocation_rows,boundary_rows=boundary_rows,status='passed',rows=rows,driver_sha256=hashlib.sha256(args.driver.read_bytes()).hexdigest(),
                  timing='single diagnostics only; repeated matched <=2x campaign NOT_RUN',device='NOT_RUN')
     (args.output/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))

@@ -48,6 +48,12 @@ int main(int argc,char **argv) {
         };
         working.walk([&](Operation *op) {
             if (chosen) return;
+            if(mode=="narrow-coalesced"||mode=="duplicate-coalesced"||mode=="late-coalesced-set") {
+                // A shared startup publication is directly in its original
+                // loop body, not in an initial/steady generated guard. This
+                // fixture's nonzero first/steady population is checked by S6.
+                if(isa<SetFlagOp>(op)&&isa<scf::ForOp>(op->getParentOp()))chosen=op;
+            }
             if (mode=="late-boundary-set" || mode=="late-nested-set") {
                 if (auto branch=dyn_cast<scf::IfOp>(op)) {
                     if (mode=="late-boundary-set") {
@@ -139,8 +145,15 @@ int main(int argc,char **argv) {
             }
         });
         if (!chosen) return;
-        if (mode=="drop-wait" || mode=="drop-set" || mode=="drop-retirement") { chosen->erase(); changed=true; }
-        else if (mode=="duplicate-set") { OpBuilder b(chosen); b.setInsertionPointAfter(chosen); b.clone(*chosen); changed=true; }
+        if(mode=="narrow-coalesced") {
+            auto loop=cast<scf::ForOp>(chosen->getParentOp());OpBuilder b(chosen);
+            auto first=b.create<arith::CmpIOp>(chosen->getLoc(),arith::CmpIPredicate::eq,
+                loop.getInductionVar(),loop.getLowerBound());
+            auto branch=b.create<scf::IfOp>(chosen->getLoc(),first,false);
+            chosen->moveBefore(&branch.getThenRegion().front(),branch.getThenRegion().front().begin());changed=true;
+        }
+        else if (mode=="drop-wait" || mode=="drop-set" || mode=="drop-retirement") { chosen->erase(); changed=true; }
+        else if (mode=="duplicate-set" || mode=="duplicate-coalesced") { OpBuilder b(chosen); b.setInsertionPointAfter(chosen); b.clone(*chosen); changed=true; }
         else if (mode=="wrong-key") {
             auto w=cast<WaitFlagOp>(chosen); OpBuilder b(w);
             b.create<WaitFlagOp>(w.getLoc(),w.getSrcPipe(),w.getDstPipe(),
@@ -167,7 +180,7 @@ int main(int argc,char **argv) {
             if (!matchPattern(cmp.getRhs(),m_Constant(&value)) || !value.getValue().isSignedIntN(63)) return;
             OpBuilder b(cmp);auto wrong=b.create<arith::ConstantIndexOp>(cmp.getLoc(),value.getValue().getSExtValue()+1);
             cmp->setOperand(1,wrong);changed=true;
-        } else if (mode=="late-set" || mode=="late-boundary-set" || mode=="late-nested-set") {
+        } else if (mode=="late-set" || mode=="late-boundary-set" || mode=="late-nested-set" || mode=="late-coalesced-set") {
             for(Operation *next=chosen->getNextNode();next;next=next->getNextNode())
                 if(isa<TLoadOp>(next)) { chosen->moveAfter(next); changed=true; break; }
         }
