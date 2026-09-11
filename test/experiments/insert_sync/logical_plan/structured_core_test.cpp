@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/InsertSync/StructuredSyncCore.h"
+#include "PTO/Transforms/InsertSync/StructuredSyncOrdinal.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -22,6 +23,8 @@ using namespace mlir::pto::structured_sync;
 static uint64_t checks=0, finiteRuns=0, acceptedModels=0;
 static uint64_t invocationRuns=0,invocationAccepted=0,invocationRefused=0;
 static void invocationTests();
+static void ordinalTests();
+static void startupTests();
 static void invocationQKTest(const InvocationModel &);
 static void require(bool p,const char *message) {
     ++checks;
@@ -396,6 +399,7 @@ if(conflict)m.requirements.push_back({p,q,*d,acc?Property::AccResource:Property:
         }
     }
     invocationTests();
+    ordinalTests();startupTests();
     std::cout<<"{\"status\":\"passed\",\"checks\":"<<checks<<",\"accepted_models\":"<<acceptedModels
         <<",\"finite_executions\":"<<finiteRuns<<",\"random_allocation_refusals\":"<<refused
         <<",\"boundary_accepted_models\":"<<boundaryAccepted<<",\"boundary_allocation_refusals\":"<<boundaryRefused
@@ -621,4 +625,155 @@ static void invocationQKTest(const InvocationModel &m) {
         require(!x.reaches(x.occurrences.at({inv,2,0}).second,x.occurrences.at({inv,3,0}).first),
                 "QK nested first reader blocked by independent K load");
     }
+}
+
+
+// Independent wide-integer checks exercise the ACTUAL production ordinal and
+// bit-width helpers, not a reimplementation copied out of the native adapter.
+static void ordinalTests() {
+    using Wide=__int128_t;
+    const auto fits=[](Wide v){return v>=Wide(INT64_MIN)&&v<=Wide(INT64_MAX);};
+    for(int64_t lower=0;lower<17;++lower)for(int64_t step=1;step<17;++step) {
+        LoopOrdinal loop{lower,step};
+        for(int64_t upper=-3;upper<65;++upper) {
+            uint64_t count=0;for(int64_t raw=lower;raw<upper;raw+=step)++count;
+            require(loop.count(upper)==std::optional<uint64_t>(count),"ordinal trip count differs from original loop");
+            for(uint64_t k=0;k<count;++k) {
+                auto raw=loop.value(k);
+                require(raw&&*raw==lower+step*int64_t(k),"ordinal-to-original-IV mapping");
+                require(loop.index(*raw)==std::optional<uint64_t>(k),"raw-IV roundtrip");
+                for(uint64_t delta:{0,1,2,5}) {
+                    auto distance=loop.distance(delta),threshold=loop.value(delta);
+                    require(distance&&threshold,"small endpoint threshold missing");
+                    require((upper-*raw>*distance)==(k+delta<count),"set guard scaled distance is wrong");
+                    require((*raw>=*threshold)==(k>=delta),"wait guard scaled threshold is wrong");
+                }
+            }
+        }
+        for(uint64_t d=1;d<=19;++d)for(uint64_t offset:{0,1}) {
+            auto cycle=OrdinalResidue::get(loop,d,offset);require(bool(cycle),"residue qualification");
+            for(uint64_t r=0;r<cycle->period*2;++r)
+                require(cycle->at(r)==uint64_t(lower+step*int64_t(r+offset))%d,"selector incorrectly substituted ordinal for raw IV");
+            for(uint64_t raw=0;raw<d;++raw) {
+                std::optional<uint64_t> expected;
+                for(uint64_t r=0;r<cycle->period;++r)if(cycle->at(r)==raw) {expected=r;break;}
+                require(cycle->preimage(raw)==expected,"modular selector preimage mismatch");
+            }
+        }
+    }
+    for(unsigned predicate=0;predicate<10;++predicate)for(int64_t a:{0,1})for(int64_t b:{0,1}) {
+        bool expected=false;const auto sa=-a,sb=-b;
+        switch(predicate){case 0:expected=a==b;break;case 1:expected=a!=b;break;
+        case 2:expected=sa<sb;break;case 3:expected=sa<=sb;break;case 4:expected=sa>sb;break;
+        case 5:expected=sa>=sb;break;case 6:expected=a<b;break;case 7:expected=a<=b;break;
+        case 8:expected=a>b;break;case 9:expected=a>=b;break;}
+        require(ordinalCompare(OrdinalCompare(predicate),a,b,true)==expected,"signed i1 must interpret true as minus one");
+    }
+    std::mt19937_64 rng(0x4a05);
+    for(unsigned trial=0;trial<40000;++trial) {
+        int64_t a=int64_t(rng()),b=int64_t(rng());
+        Wide sum=Wide(a)+Wide(b),product=Wide(a)*Wide(b);
+        auto x=ordinalAdd(a,b),y=ordinalMultiply(a,b);
+        require(bool(x)==fits(sum)&&(!x||Wide(*x)==sum),"checked affine addition overflow");
+        require(bool(y)==fits(product)&&(!y||Wide(*y)==product),"checked affine multiply overflow");
+        LoopOrdinal loop{int64_t(rng()>>1),int64_t((rng()>>1)|1)};
+        int64_t upper=int64_t(rng());Wide extent=Wide(upper)-loop.lower;
+        uint64_t count=extent<=0?0:uint64_t(1+(extent-1)/loop.step);
+        require(loop.count(upper)==std::optional<uint64_t>(count),"extreme trip count");
+        uint64_t k=rng();auto raw=loop.value(k);
+        // k*S can exceed signed 128, use division-based independently bounded check.
+        bool representable=k<=uint64_t((Wide(INT64_MAX)-loop.lower)/loop.step);
+        require(bool(raw)==representable&&(!raw||Wide(*raw)==Wide(loop.lower)+Wide(k)*loop.step),"ordinal threshold overflow");
+    }
+    require(!LoopOrdinal{-1,1}.count(10)&&!LoopOrdinal{0,0}.value(1),"unsupported induction accepted");
+    require(!LoopOrdinal{INT64_MAX,1}.value(1),"overflowing startup origin accepted");
+    auto constant=OrdinalResidue::get({0,2},2);
+    require(constant&&constant->period==1&&constant->at(1)==0,"stride-two selector invented alternating slots");
+    auto huge=OrdinalResidue::get({17,31},uint64_t(INT64_MAX));
+    require(huge&&huge->at(999)==uint64_t((Wide(17)+Wide(31)*999)%INT64_MAX),"large numerical modulus expanded or overflowed");
+}
+
+static void startupTests() {
+    // A hand-transcribed Q-projection storage summary, NOT native compilation.
+    // First iteration initializes ACC; later iterations read/update it. The
+    // first copies of common phases remain at their true original positions.
+    {
+        struct Access {unsigned space;uint64_t begin,end;bool write;};
+        Model m;m.allowBoundaryKeyReuse=true;std::vector<std::vector<Access>> access;
+        auto phase=[&](Pipe p,Segment seg,std::vector<Access> a) {
+            m.atoms.push_back({0,m.atoms.size(),{Core::AIC,p},seg});access.push_back(std::move(a));
+        };
+        for(Segment seg:{Segment::Prelude,Segment::Body}) {
+            phase(Pipe::MTE2,seg,{{1,0,4096,true}});
+            phase(Pipe::MTE2,seg,{{1,4096,69632,true}});
+            phase(Pipe::MTE2,seg,{{1,69632,73728,true}});
+            phase(Pipe::MTE2,seg,{{1,73728,139264,true}});
+            for(unsigned half=0;half<2;++half) {
+                uint64_t a=half?69632:0,b=half?73728:4096,l0=half?2048:6144,l1=half?4096:0;
+                phase(Pipe::MTE1,seg,{{1,a,a+4096,false},{2,l0,l0+2048,true}});
+                phase(Pipe::MTE1,seg,{{1,b,b+65536,false},{3,0,32768,true}});
+                phase(Pipe::MTE1,seg,{{1,a,a+4096,false},{2,l1,l1+2048,true}});
+                phase(Pipe::MTE1,seg,{{1,b,b+65536,false},{3,32768,65536,true}});
+                std::vector<Access> first{{2,l0,l0+2048,false},{3,0,32768,false},{4,0,16384,true}};
+                if(seg==Segment::Body||half)first.push_back({4,0,16384,false});
+                phase(Pipe::M,seg,std::move(first));
+                phase(Pipe::M,seg,{{2,l1,l1+2048,false},{3,32768,65536,false},{4,0,16384,true},{4,0,16384,false}});
+            }
+        }
+        phase(Pipe::FIX,Segment::Epilogue,{{4,0,16384,false},{5,0,1,true}});
+        for(std::size_t p=0;p<access.size();++p)for(std::size_t q=0;q<access.size();++q) {
+            auto d=priorDistance(m,p,q);if(!d)continue;bool conflict=false,acc=false;
+            for(auto a:access[p])for(auto b:access[q])if(a.space==b.space&&a.begin<b.end&&b.begin<a.end) {
+                bool resource=a.space==4&&m.atoms[p].lane!=m.atoms[q].lane;
+                conflict|=a.write||b.write||resource;acc|=resource;
+            }
+            if(conflict)m.requirements.push_back({p,q,*d,acc?Property::AccResource:Property::Completion});
+        }
+        auto isolated=m;isolated.allowBoundaryKeyReuse=false;
+        require(construct(isolated).status==Status::AllocationFailure,"Q projection witness no longer needs continuation sharing; update test");
+        auto plan=construct(m);
+        require(plan.status==Status::Applied,"Q projection initial/steady model cannot allocate");
+        ++acceptedModels;auto commands=actionsForPlan(m,plan.plan);
+        for(uint64_t tail:{0,1,2,7,31})require(finiteCorrect(m,commands,tail),"Q projection startup/tail independent execution oracle");
+        std::map<Key,unsigned> kinds;
+        for(auto h:plan.plan.handoffs)kinds[{m.atoms[h.source].lane,m.atoms[h.target].lane,h.key}]|=
+            m.atoms[h.source].segment==Segment::Body&&m.atoms[h.target].segment==Segment::Body?1:2;
+        require(std::any_of(kinds.begin(),kinds.end(),[](const auto &x){return x.second==3;}),"continuation sharing was not exercised");
+        auto changed=commands;
+        auto first=std::find_if(changed.begin(),changed.end(),[](const Action &a){return a.kind==Action::Wait&&a.participation==Action::First;});
+        require(first!=changed.end(),"startup lacks a first acquisition");
+        changed.erase(first);
+        require(verify(m,changed).status!=Status::Applied,"missing initial-to-tail acquisition accepted");
+    }
+    // Sharing is accepted only by a causal transition proof, never by a
+    // textual live range. Challenge all physical recolorings on small models.
+    std::mt19937 gen(0x4004);const Pipe lanes[]={Pipe::MTE2,Pipe::V,Pipe::MTE3};
+    uint64_t accepted=0,refused=0;
+    for(unsigned test=0;test<150;++test) {
+        Model m;m.period=1+gen()%3;m.allowBoundaryKeyReuse=true;
+        unsigned n=3+gen()%5;std::vector<unsigned> storage(n),write(n);
+        for(unsigned i=0;i<n;++i) {
+            auto segment=i==0?Segment::Prelude:i+1==n?Segment::Epilogue:Segment::Body;
+            m.atoms.push_back({segment==Segment::Body?gen()%m.period:0,i,{Core::AIV,lanes[gen()%3]},segment});
+            storage[i]=gen()%3;write[i]=gen()%2;
+        }
+        for(unsigned p=0;p<n;++p)for(unsigned q=0;q<n;++q)
+            if(storage[p]==storage[q]&&(write[p]||write[q]))hazard(m,p,q);
+        auto result=construct(m);
+        if(result.status!=Status::Applied) {
+            require(result.status==Status::AllocationFailure,"unexpected startup allocation refusal");++refused;continue;
+        }
+        ++accepted;++acceptedModels;auto actions=actionsForPlan(m,result.plan);
+        for(uint64_t trips=0;trips<3*m.period+2;++trips)
+            require(finiteCorrect(m,actions,trips),"mixed startup/recurrence key assignment is unsafe");
+        for(unsigned trial=0;trial<4;++trial) {
+            auto mutation=actions;
+            unsigned from=gen()%6,to=gen()%6;
+            for(auto &a:mutation)if(a.kind!=Action::Barrier&&a.key==from)a.key=to;
+            auto verdict=verify(m,mutation);
+            if(verdict.status==Status::Applied)for(uint64_t trips:{0,1,2,5,11})
+                require(finiteCorrect(m,mutation,trips),"mixed-key verifier accepted invalid recycling");
+        }
+    }
+    require(accepted>100&&accepted+refused==150,"startup random population did not exercise native core");
 }

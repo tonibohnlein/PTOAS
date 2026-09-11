@@ -18,6 +18,7 @@ def main():
     here=Path(__file__).resolve().parent; root=here.parents[3]
     core=root/'lib/PTO/Transforms/InsertSync/StructuredSyncCore.cpp'
     header=root/'include/PTO/Transforms/InsertSync/StructuredSyncCore.h'
+    ordinal=root/'include/PTO/Transforms/InsertSync/StructuredSyncOrdinal.h'
     source=here/'structured_core_test.cpp'; binary=args.output/'structured-core-test'
     command=[args.compiler,'-std=c++17','-O2','-Wall','-Wextra','-Werror','-fno-exceptions',
              '-I'+str(root/'include'),str(source),str(core),'-o',str(binary)]
@@ -32,7 +33,7 @@ def main():
         raise RuntimeError(f"core test exited {result.returncode}: {result.stderr}")
     summary=json.loads(result.stdout)
     summary.update(command=command,compiler_version=subprocess.check_output([args.compiler,'--version'],text=True),
-                   source_sha256={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in (core,header,source)},
+                   source_sha256={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in (core,header,ordinal,source)},
                    native_adapter='NOT_RUN',device='NOT_RUN')
     (args.output/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
     (args.output/'stderr.txt').write_text(result.stderr)

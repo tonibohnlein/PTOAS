@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @ordinal_slots(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>, %upper: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %c16 = arith.constant 16 : index
+    %sv = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %dv = pto.make_tensor_view %dst, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %in = pto.partition_view %sv, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %out = pto.partition_view %dv, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %slots = pto.alloc_multi_tile {pto.multi_buffer_addrs = array<i64: 0, 512, 1024>} : !pto.multi_tile_buf<vec, 16x16xf16, count=3>
+    %outputs = pto.alloc_multi_tile {pto.multi_buffer_addrs = array<i64: 2048, 2560, 3072>} : !pto.multi_tile_buf<vec, 16x16xf16, count=3>
+    scf.for %iv = %c1 to %upper step %c2 {
+      %slot = arith.remui %iv, %c3 : index
+      %a = pto.multi_tile_get %slots[%slot] : !pto.multi_tile_buf<vec, 16x16xf16, count=3> -> !pto.tile_buf<vec, 16x16xf16>
+      %x = pto.multi_tile_get %outputs[%slot] : !pto.multi_tile_buf<vec, 16x16xf16, count=3> -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%in : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%x : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
