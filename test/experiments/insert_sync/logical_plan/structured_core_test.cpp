@@ -20,6 +20,9 @@
 #include <vector>
 using namespace mlir::pto::structured_sync;
 static uint64_t checks=0, finiteRuns=0, acceptedModels=0;
+static uint64_t invocationRuns=0,invocationAccepted=0,invocationRefused=0;
+static void invocationTests();
+static void invocationQKTest(const InvocationModel &);
 static void require(bool p,const char *message) {
     ++checks;
     if (!p) { std::cerr<<"FAILED: "<<message<<'\n'; std::exit(1); }
@@ -351,6 +354,16 @@ if(conflict)m.requirements.push_back({p,q,*d,acc?Property::AccResource:Property:
             "QK second Q preload blocks first panel extraction");
     require(!qkGraph.reaches(qkGraph.payload.at({2,0}).second,qkGraph.payload.at({3,0}).first),
             "QK independent K load blocks first panel extraction");
+    InvocationModel repeated{m,{}};
+    for(std::size_t p=0;p<access.size();++p)for(std::size_t q=0;q<access.size();++q) {
+        bool conflict=false,acc=false;
+        for(auto a:access[p])for(auto b:access[q])if(a.space==b.space&&a.begin<b.end&&b.begin<a.end) {
+            bool resource=a.space==4&&m.atoms[p].lane!=m.atoms[q].lane;
+            conflict|=a.write||b.write||resource;acc|=resource;
+        }
+        if(conflict)repeated.carried.push_back({p,q,acc?Property::AccResource:Property::Completion});
+    }
+    invocationQKTest(repeated);
     }
     // Randomized complete conflict populations, not hand-picked channel names.
     // Finite checking independently tests every older conflicting occurrence.
@@ -382,8 +395,230 @@ if(conflict)m.requirements.push_back({p,q,*d,acc?Property::AccResource:Property:
             require(true,"random boundary finite asynchronous reference");
         }
     }
+    invocationTests();
     std::cout<<"{\"status\":\"passed\",\"checks\":"<<checks<<",\"accepted_models\":"<<acceptedModels
         <<",\"finite_executions\":"<<finiteRuns<<",\"random_allocation_refusals\":"<<refused
         <<",\"boundary_accepted_models\":"<<boundaryAccepted<<",\"boundary_allocation_refusals\":"<<boundaryRefused
+        <<",\"invocation_accepted_models\":"<<invocationAccepted<<",\"invocation_allocation_refusals\":"<<invocationRefused
+        <<",\"invocation_finite_executions\":"<<invocationRuns
         <<",\"seconds\":"<<std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count()<<"}\n";
+}
+
+// S3 finite oracle. This executes ALL occurrences of several real finite
+// invocations. It does not use the production first/last interface projection,
+// its K cells, its pairing, or its reachability cache.
+struct InvocationExecution : Expanded {
+    std::map<std::tuple<uint64_t,std::size_t,uint64_t>,std::pair<unsigned,unsigned>> occurrences;
+};
+static InvocationExecution expandInvocations(const InvocationModel &input,const std::vector<Action> &actions,
+                                            uint64_t trips,uint64_t invocations) {
+    const auto &m=input.region;
+    struct Item {uint64_t invocation;Segment segment;uint64_t t,rank;unsigned side;uint64_t order;
+                 std::size_t atom;const Action *action;};
+    std::vector<Item> items;
+    for(uint64_t inv=0;inv<invocations;++inv)for(std::size_t p=0;p<m.atoms.size();++p) {
+        const auto &atom=m.atoms[p];
+        auto append=[&](uint64_t t) {
+            items.push_back({inv,atom.segment,t,atom.order,1,0,p,nullptr});
+            for(const auto &a:actions)if(a.anchor==p) {
+                bool active=a.invocation==Action::Local ||
+                    (a.invocation==Action::ToNextInvocation?inv+1<invocations:inv>0);
+                if(a.invocationBodyGuard)active&=trips>a.invocationGuardResidue;
+                if(a.participation==Action::IfBody)active&=trips>a.guardResidue;
+                else if(a.participation==Action::First)active&=t==atom.residue;
+                else if(a.participation==Action::Last)active&=trips-t<=m.period;
+                else if(m.recurring&&atom.segment==Segment::Body)active&=
+                    a.kind==Action::Set?a.distanceInIterations<trips-t:
+                    a.kind==Action::Wait?t>=a.distanceInIterations:true;
+                if(active)items.push_back({inv,atom.segment,t,atom.order,a.after?2u:0u,a.order,p,&a});
+            }
+        };
+        if(!m.recurring||atom.segment!=Segment::Body)append(0);
+        else for(uint64_t t=0;t<trips;++t)if(t%m.period==atom.residue)append(t);
+    }
+    std::sort(items.begin(),items.end(),[](const auto &a,const auto &b){return
+        std::tie(a.invocation,a.segment,a.t,a.rank,a.side,a.order)<
+        std::tie(b.invocation,b.segment,b.t,b.rank,b.side,b.order);});
+    InvocationExecution x;std::map<Lane,unsigned> previous;
+    std::map<Lane,std::vector<unsigned>> completed;std::map<Key,std::deque<unsigned>> pending;
+    auto issue=[&](Lane lane){auto n=x.node();auto p=previous.find(lane);
+        if(p!=previous.end())x.edge(p->second,n);
+        previous[lane]=n;return n;};
+    for(const auto &item:items) {
+        if(!item.action) {
+            const auto lane=m.atoms[item.atom].lane;auto start=issue(lane),done=x.node();x.edge(start,done);
+            if(m.target.synchronous(lane))previous[lane]=done;
+            completed[lane].push_back(done);x.occurrences[{item.invocation,item.atom,m.recurring?item.t/m.period:0}]={start,done};
+        } else {
+            const auto &a=*item.action;const Key key{a.source,a.target,a.key};
+            if(a.kind==Action::Set) {
+                auto queued=issue(a.source),fire=x.node();x.edge(queued,fire);
+                for(auto done:completed[a.source])x.edge(done,fire);
+                pending[key].push_back(fire);
+            } else if(a.kind==Action::Wait) {
+                auto take=issue(a.target);if(pending[key].empty()){x.valid=false;continue;}
+                auto fire=pending[key].front();pending[key].pop_front();x.edge(fire,take);
+                x.episodes[key].push_back({fire,take});
+            } else {auto pass=issue(a.source);for(auto done:completed[a.source])x.edge(done,pass);}
+        }
+    }
+    for(const auto &p:pending)if(!p.second.empty())x.valid=false;
+    return x;
+}
+static bool finiteInvocationCorrect(const InvocationModel &m,const std::vector<Action> &a,
+                                    uint64_t trips,uint64_t invocations) {
+    ++invocationRuns;auto x=expandInvocations(m,a,trips,invocations);
+    if(!x.valid||!x.acyclic())return false;
+    for(const auto &q:x.occurrences)for(const auto &p:x.occurrences) {
+        const auto [pi,pa,pk]=p.first;const auto [qi,qa,qk]=q.first;bool required=false;
+        if(pi==qi) {
+            const auto &ap=m.region.atoms[pa],&aq=m.region.atoms[qa];
+            if(std::tie(ap.segment,pk,ap.residue,ap.order)>=std::tie(aq.segment,qk,aq.residue,aq.order))continue;
+            for(const auto &r:m.region.requirements)required|=r.source==pa&&r.target==qa;
+        } else if(pi<qi)for(const auto &r:m.carried)required|=r.source==pa&&r.target==qa;
+        if(required&&!x.reaches(p.second.second,q.second.first))return false;
+    }
+    for(const auto &f:x.episodes)for(std::size_t i=1;i<f.second.size();++i)
+        if(!x.reaches(f.second[i-1].second,f.second[i].first))return false;
+    return true;
+}
+static InvocationModel invocationModel(Model m,const std::vector<unsigned> &storage,const std::vector<unsigned> &writes) {
+    InvocationModel out{std::move(m),{}};
+    out.region.requirements.clear();
+    for(std::size_t p=0;p<storage.size();++p)for(std::size_t q=0;q<storage.size();++q)
+        if(storage[p]==storage[q]&&(writes[p]||writes[q])) {
+            hazard(out.region,p,q);out.carried.push_back({p,q,Property::Completion});
+        }
+    return out;
+}
+static InvocationResult invocationChallenge(const InvocationModel &m,const char *name) {
+    auto result=constructInvocations(m);
+    if(result.status!=Status::Applied)std::cerr<<name<<": "<<result.reason<<'\n';
+    require(result.status==Status::Applied,name);++invocationAccepted;
+    auto actions=actionsForInvocations(m,result.plan);
+    require(verifyInvocations(m,actions).status==Status::Applied,"invocation self reconstruction");
+    for(auto trips:{uint64_t(0),uint64_t(1),uint64_t(2),uint64_t(3),uint64_t(7),uint64_t(11)})
+        for(auto calls:{uint64_t(0),uint64_t(1),uint64_t(2),uint64_t(4)})
+            require(finiteInvocationCorrect(m,actions,trips,calls),"invocation finite asynchronous oracle");
+    return result;
+}
+static void invocationTests() {
+    // Two independent outer preloads, repeated inner readers, no artificial
+    // post-body payload to make the release conveniently easy.
+    Model m;m.period=1;
+    m.atoms={{0,0,{Core::AIV,Pipe::MTE2},Segment::Prelude},
+             {0,1,{Core::AIV,Pipe::MTE2},Segment::Prelude},
+             {0,2,{Core::AIV,Pipe::V},Segment::Body},
+             {0,3,{Core::AIV,Pipe::V},Segment::Body}};
+    auto repeated=invocationModel(m,{0,1,0,1},{1,1,0,0});
+    auto result=invocationChallenge(repeated,"nested preloads/readers");
+    require(!result.plan.handoffs.empty(),"nested reuse was assumed at region return");
+    require(result.plan.barriers.size()<=2,"unexpected broad invocation drain population");
+    auto actions=actionsForInvocations(repeated,result.plan);
+    auto execution=expandInvocations(repeated,actions,3,3);
+    for(uint64_t call=0;call<3;++call)
+        require(!execution.reaches(execution.occurrences.at({call,1,0}).second,
+                                   execution.occurrences.at({call,2,0}).first),
+                "second current preload blocks first current reader");
+    // A local S2 plan is NOT safe just because it leaves no tokens textually.
+    InvocationPlan noCarry;noCarry.local=construct(repeated.region).plan;
+    require(verifyInvocations(repeated,actionsForInvocations(repeated,noCarry)).status!=Status::Applied,
+            "one-shot events blindly rearmed at outer loop boundary");
+    require(!finiteInvocationCorrect(repeated,actionsForInvocations(repeated,noCarry),3,3),
+            "negative control lacks actual cross-invocation witness");
+    auto corrupt=actions;
+    auto carriedWait=std::find_if(corrupt.begin(),corrupt.end(),[](const Action &a){return a.kind==Action::Wait&&a.invocation!=Action::Local;});
+    require(carriedWait!=corrupt.end(),"no carried wait in nested fixture");
+    carriedWait->invocation=Action::Local;
+    require(verifyInvocations(repeated,corrupt).status!=Status::Applied,"wrong-invocation acquisition accepted");
+    require(!finiteInvocationCorrect(repeated,corrupt,3,3),"wrong-invocation mutation lacks token witness");
+    corrupt=actions;
+    for(auto &a:corrupt)if(a.invocation!=Action::Local&&a.kind==Action::Set){a.participation=Action::First;break;}
+    require(verifyInvocations(repeated,corrupt).status!=Status::Applied,"first reader substituted for final reader");
+    bool missingReleaseWitness=false;
+    for(std::size_t i=0;i<result.plan.handoffs.size();++i) {
+        auto p=result.plan;p.handoffs.erase(p.handoffs.begin()+i);
+        if(!finiteInvocationCorrect(repeated,actionsForInvocations(repeated,p),3,3))missingReleaseWitness=true;
+    }
+    require(missingReleaseWitness,"removing complete release has no witness");
+    // A same-lane self write across otherwise empty invocations is a real WAW.
+    Model single;single.recurring=false;single.atoms={{0,0,{Core::AIV,Pipe::MTE2}}};
+    auto self=invocationModel(single,{0},{1});auto sp=invocationChallenge(self,"static repeated WAW");
+    require(sp.plan.barriers.size()==1&&sp.plan.handoffs.empty(),"self WAW not repaired at next first issue");
+    auto scalar=single;scalar.atoms[0].lane.pipe=Pipe::S;
+    auto sr=invocationChallenge(invocationModel(scalar,{0},{1}),"nested scalar intrinsic ordering");
+    require(sr.plan.barriers.empty(),"scalar barrier introduced");
+    // Rotating inner slots and a return through a different reader lane.
+    for(unsigned slots=1;slots<=3;++slots) {
+        auto body=buffering(slots);
+        std::vector<unsigned> storage,writes;
+        // Use conservative pair conflicts sufficient for this abstract model;
+        // the explicit local buffering requirements include both tile families.
+        InvocationModel ring;ring.region=body;
+        for(const auto &r:body.requirements)ring.carried.push_back({r.source,r.target,r.property});
+        for(std::size_t p=0;p<body.atoms.size();++p)for(std::size_t q=0;q<body.atoms.size();++q)
+            if(body.atoms[p].residue==body.atoms[q].residue)
+                ring.carried.push_back({p,q,Property::Completion});
+        auto rr=invocationChallenge(ring,"nested rotating body");
+        require(rr.proofViews<=32*slots,"numeric trip/period enumeration in invocation interface");
+    }
+    auto huge=repeated;huge.region.period=uint64_t(INT64_MAX);
+    auto h=constructInvocations(huge);
+    require(h.status==Status::Applied&&h.proofViews<32,"numeric period enumerated in nested proof");
+    auto reserved=repeated;reserved.region.target.compilerKeys={0};
+    require(constructInvocations(reserved).status==Status::AllocationFailure,"scarcity silently introduced an outer drain");
+    auto visibility=repeated;visibility.carried[0].property=Property::Visibility;
+    require(constructInvocations(visibility).status==Status::Unsupported,"nested event supplied visibility");
+    // Recovered order, not sorted numeric keys, must govern the proof graph.
+    // All permutations here remain checked against independent finite semantics.
+    for(unsigned shuffle=0;shuffle<12;++shuffle) {
+        auto changed=actions;std::mt19937 gen(991+shuffle);
+        for(auto &a:changed)a.order=gen();
+        auto verified=verifyInvocations(repeated,changed);
+        if(verified.status==Status::Applied)require(finiteInvocationCorrect(repeated,changed,5,3),
+            "reconstruction ignored actual common-boundary event order");
+    }
+    std::mt19937 gen(0x0a450053);const Pipe lanes[]={Pipe::MTE2,Pipe::V,Pipe::MTE3};
+    for(unsigned test=0;test<300;++test) {
+        Model region;region.period=1+gen()%4;
+        unsigned n=2+gen()%6;std::vector<unsigned> storage(n),writes(n);
+        for(unsigned j=0;j<n;++j) {
+            Segment seg=Segment(gen()%3);
+            region.atoms.push_back({seg==Segment::Body?gen()%region.period:0,j,
+                                   {Core::AIV,lanes[gen()%3]},seg});
+            storage[j]=gen()%3;writes[j]=gen()%2;
+        }
+        auto input=invocationModel(region,storage,writes);auto r=constructInvocations(input);
+        if(r.status!=Status::Applied) {
+            require(r.status==Status::AllocationFailure,"unexpected nested model refusal");++invocationRefused;continue;
+        }
+        ++invocationAccepted;auto a=actionsForInvocations(input,r.plan);
+        require(verifyInvocations(input,a).status==Status::Applied,"random nested self reconstruction");
+        for(uint64_t trips=0;trips<=3*region.period+1;++trips)for(uint64_t calls:{1,2,3}) {
+            if(!finiteInvocationCorrect(input,a,trips,calls)) {
+                std::cerr<<"nested random "<<test<<" N="<<trips<<" calls="<<calls<<" D="<<region.period<<'\n';
+                for(unsigned j=0;j<n;++j)std::cerr<<j<<":"<<unsigned(region.atoms[j].segment)<<","<<region.atoms[j].residue
+                    <<","<<unsigned(region.atoms[j].lane.pipe)<<" storage="<<storage[j]<<" write="<<writes[j]<<'\n';
+                require(false,"random nested finite oracle");
+            }
+            require(true,"random nested finite oracle");
+        }
+    }
+}
+
+static void invocationQKTest(const InvocationModel &m) {
+    auto result=constructInvocations(m);
+    if(result.status!=Status::Applied)std::cerr<<"nested QK: "<<result.reason<<"\n";
+    require(result.status==Status::Applied,"QK-shaped nested invocation construction");
+    ++invocationAccepted;auto actions=actionsForInvocations(m,result.plan);
+    require(verifyInvocations(m,actions).status==Status::Applied,"QK-shaped nested verification");
+    for(uint64_t trips:{0,1,2,3,7})for(unsigned calls:{1,2,3})
+        require(finiteInvocationCorrect(m,actions,trips,calls),"QK nested asynchronous oracle");
+    auto x=expandInvocations(m,actions,3,3);
+    for(unsigned inv=0;inv<3;++inv) {
+        require(!x.reaches(x.occurrences.at({inv,1,0}).second,x.occurrences.at({inv,3,0}).first),
+                "QK nested first reader blocked by independent Q preload");
+        require(!x.reaches(x.occurrences.at({inv,2,0}).second,x.occurrences.at({inv,3,0}).first),
+                "QK nested first reader blocked by independent K load");
+    }
 }

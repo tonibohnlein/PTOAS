@@ -30,6 +30,7 @@
 #include <cstdlib>
 #include <limits>
 #include <map>
+#include <memory>
 #include <set>
 #include <tuple>
 
@@ -168,15 +169,113 @@ private:
     }
 };
 
-struct NativeFacts {
+// One shared physical import for every mutually exclusive region arm.
+// Choice composition follows ORIGINAL region nesting, never a Cartesian
+// product of independently enumerated Boolean assignments.
+bool belongsTo(Region &region,Operation *op) {
+    for(Region *r=op->getParentRegion();r;r=r->getParentOp()->getParentRegion())
+        if(r==&region)return true;
+    return false;
+}
+struct NativeInventory {
     func::FuncOp function;
-    InsertSyncGMAliasMode gm;
     MemoryDependentAnalyzer memory;
     SyncIRs ir;
     Buffer2MemInfoMap buffers;
     SyncPhysicalFacts physical;
+    std::string reason;
+    explicit NativeInventory(func::FuncOp f):function(f) {}
+    bool build() {
+        if(!supportsLogicalSyncTranslation(function)){reason="unsupported loop forwarding or while transfer";return false;}
+        if(qualifySyncPhysicalAddresses(function).status==SyncAddressAdmission::Rejected) {
+            reason="unqualified physical address";return false;
+        }
+        PTOIRTranslator translator(ir,memory,buffers,function,SyncAnalysisMode::NORMALSYNC);
+        if(failed(translator.Build())){reason="physical translation failed";return false;}
+        physical=importStructuredSyncPhysicalFacts(function,ir);
+        if(physical.status!=SyncPhysicalFacts::Status::Complete){reason=physical.reason;return false;}
+        if(physical.lifetimeScope!=function.getOperation()) {
+            reason="physical-section retirement transfer is not yet supported";return false;
+        }
+        return true;
+    }
+};
+struct InvocationScope {
+    Region *region=nullptr;
+    SmallVector<scf::ForOp> wrappers;
+};
+class RegionLayout {
+    NativeInventory &inventory;
+    llvm::SmallPtrSet<Operation*,32> containsPayload;
+    DominanceInfo dominance;
+    bool fail(StringRef s){reason=s.str();return false;}
+    bool normalized(scf::ForOp loop) {
+        if(literal(loop.getLowerBound())!=std::optional<int64_t>(0)||
+           literal(loop.getStep())!=std::optional<int64_t>(1)||!isa<IndexType>(loop.getInductionVar().getType()))
+            return fail("invocation wrappers require zero-based unit-step index loops");
+        SyncAddressEvaluator integers(inventory.function);auto value=integers.evaluate(loop.getLowerBound());
+        if(!value||value->getBitWidth()!=64)return fail("unqualified invocation index layout");
+        return true;
+    }
+    SmallVector<Operation*> active(Region &r) {
+        SmallVector<Operation*> result;
+        if(llvm::hasSingleElement(r))for(Operation &op:r.front())if(containsPayload.contains(&op))result.push_back(&op);
+        return result;
+    }
+    bool collect(Region &r,SmallVector<scf::ForOp> wrappers) {
+        if(!llvm::hasSingleElement(r))return fail("multi-block invocation region");
+        auto roots=active(r);
+        if(roots.empty())return true;
+        if(roots.size()==1) {
+            if(auto branch=dyn_cast<scf::IfOp>(roots.front())) {
+                // Whole-region choice: one arm is selected for the entire
+                // enclosing invocation nest. Values varying with an outer IV
+                // or a loop-carried scalar are NOT treated as stable choices.
+                if(!wrappers.empty()&&!dominance.properlyDominates(branch.getCondition(),wrappers.front().getOperation()))
+                    return fail("region choice varies across enclosing invocations");
+                if(!collect(branch.getThenRegion(),wrappers))return false;
+                if(!branch.getElseRegion().empty()&&!collect(branch.getElseRegion(),wrappers))return false;
+                return true;
+            }
+            if(auto outer=dyn_cast<scf::ForOp>(roots.front())) {
+                unsigned loops=0;
+                r.walk([&](scf::ForOp x){if(containsPayload.contains(x.getOperation()))++loops;});
+                auto bodyRoots=active(*outer.getBody()->getParent());
+                bool uniformWholeChoice=bodyRoots.size()==1 && isa<scf::IfOp>(bodyRoots.front()) &&
+                    dominance.properlyDominates(cast<scf::IfOp>(bodyRoots.front()).getCondition(),outer.getOperation());
+                if(loops>1||uniformWholeChoice) {
+                    if(!normalized(outer))return false;
+                    if(!wrappers.empty()&&!dominance.properlyDominates(outer.getUpperBound(),wrappers.front().getOperation()))
+                        return fail("nonrectangular invocation bound is not invariant at the outer entry");
+                    wrappers.push_back(outer);return collect(*outer.getBody()->getParent(),std::move(wrappers));
+                }
+            }
+        }
+        unsigned loops=0;r.walk([&](scf::ForOp x){if(containsPayload.contains(x.getOperation()))++loops;});
+        if(loops>1)return fail("mixed sequential/nested child transfers are outside S3's re-entrant region fragment");
+        scopes.push_back({&r,std::move(wrappers)});return true;
+    }
+public:
+    std::vector<InvocationScope> scopes;
+    std::string reason;
+    explicit RegionLayout(NativeInventory &i):inventory(i),dominance(i.function) {
+        for(auto *phase:i.physical.phases)for(auto *op=phase->elementOp;op&&op!=i.function.getOperation();op=op->getParentOp())
+            containsPayload.insert(op);
+    }
+    bool build(){return collect(inventory.function.getBody(),{});}
+};
+
+struct NativeFacts {
+    func::FuncOp function;
+    InsertSyncGMAliasMode gm;
+    NativeInventory &inventory;
+    Region *scope;
+    SmallVector<scf::ForOp> wrappers;
+    Buffer2MemInfoMap &buffers;
+    SyncPhysicalFacts physical;
     scf::ForOp loop;
     ss::Model model;
+    std::vector<ss::InvocationRequirement> carried;
     std::vector<unsigned> origin;
     std::vector<ss::Segment> segments;
     llvm::DenseMap<Operation*,unsigned> phaseId;
@@ -184,24 +283,18 @@ struct NativeFacts {
     std::vector<std::vector<uint64_t>> residues;
     std::map<const BaseMemInfo*,std::optional<SyncPhysicalSlotMapping>> mappings;
     std::string reason;
-    explicit NativeFacts(func::FuncOp f,InsertSyncGMAliasMode gm):function(f),gm(gm) {}
+    NativeFacts(NativeInventory &i,const InvocationScope &unit,InsertSyncGMAliasMode contract)
+        :function(i.function),gm(contract),inventory(i),scope(unit.region),wrappers(unit.wrappers),buffers(i.buffers) {}
+    ss::InvocationModel invocationModel() const {return {model,carried};}
     bool fail(StringRef message) { reason=message.str(); return false; }
 
     bool build() {
-        if (!supportsLogicalSyncTranslation(function)) return fail("unsupported loop forwarding or while transfer");
-        if (qualifySyncPhysicalAddresses(function).status==SyncAddressAdmission::Rejected)
-            return fail("unqualified physical address");
-        PTOIRTranslator translator(ir,memory,buffers,function,SyncAnalysisMode::NORMALSYNC);
-        if (failed(translator.Build())) return fail("physical translation failed");
-        // This wrapper shares the existing semantic qualification but does not
-        // enforce the reference engine's heuristic visitation/work ceilings.
-        physical=importStructuredSyncPhysicalFacts(function,ir);
-        if (physical.status!=SyncPhysicalFacts::Status::Complete) return fail(physical.reason);
-        if (physical.lifetimeScope!=function.getOperation())
-            return fail("physical-section retirement transfer is not yet supported");
+        physical=inventory.physical;
+        physical.phases.erase(std::remove_if(physical.phases.begin(),physical.phases.end(),
+            [&](const auto *p){return !belongsTo(*scope,p->elementOp);}),physical.phases.end());
         bool multiple=false;
-        function.walk([&](scf::ForOp candidate) { if (loop) multiple=true; else loop=candidate; });
-        if (multiple) return fail("nested or sequential loop transfer requires the next structured fragment");
+        scope->walk([&](scf::ForOp candidate) { if (loop) multiple=true; else loop=candidate; });
+        if (multiple) return fail("local region still contains mixed child-loop transfers");
         if (physical.phases.size()>std::numeric_limits<unsigned>::max())
             return fail("physical phase identity width overflow");
         model.recurring=bool(loop);
@@ -215,12 +308,17 @@ struct NativeFacts {
             if (!lower || lower->getBitWidth()!=64)
                 return fail("structured loop requires the qualified signed-64-bit PTO index layout");
         }
+        if(!wrappers.empty()&&loop) {
+            DominanceInfo dominance(function);
+            if(!dominance.properlyDominates(loop.getUpperBound(),wrappers.front().getOperation()))
+                return fail("inner bound varies across enclosing invocations");
+        }
         PeriodicScalar scalar(loop?loop.getInductionVar():Value());
         guards.resize(physical.phases.size()); residues.resize(physical.phases.size());
         segments.assign(physical.phases.size(),ss::Segment::Body);
         llvm::DenseMap<Operation*,bool> beforeLoop;
         bool passedLoop=false;
-        for (Operation &op:function.getBody().front()) {
+        for (Operation &op:scope->front()) {
             if (&op==loop.getOperation()) passedLoop=true;
             beforeLoop[&op]=!passedLoop;
         }
@@ -234,12 +332,11 @@ struct NativeFacts {
             if (loop && !loop->isAncestor(op)) {
                 // A single invocation with unconditional prefix/suffix effects.
                 // Do not flatten a conditional or nested loop into this model.
-                if (loop->getBlock()!=&function.getBody().front() ||
-                    op->getBlock()!=&function.getBody().front())
+                if (loop->getBlock()!=&scope->front() || op->getBlock()!=&scope->front())
                     return fail("boundary payload requires a direct, unconditional loop invocation");
                 segments[p]=beforeLoop.lookup(op)?ss::Segment::Prelude:ss::Segment::Epilogue;
             }
-            for (Operation *parent=op->getParentOp(); parent && parent!=function.getOperation();
+            for (Operation *parent=op->getParentOp(); parent && parent!=scope->getParentOp();
                  parent=parent->getParentOp()) {
                 if (parent==loop.getOperation()) continue;
                 auto branch=dyn_cast<scf::IfOp>(parent);
@@ -322,7 +419,7 @@ struct NativeFacts {
             return *x<*y+mb->bytes && *y<*x+ma->bytes;
         };
         for (std::size_t p=0;p<origin.size();++p) for (std::size_t q=0;q<origin.size();++q) {
-            auto distance=ss::priorDistance(model,p,q); if (!distance) continue;
+            auto distance=ss::priorDistance(model,p,q); if (!distance && wrappers.empty()) continue;
             auto *a=physical.phases[origin[p]], *b=physical.phases[origin[q]];
             bool conflict=false,acc=false,visibility=false;
             auto pair=[&](const auto &left,bool writeA,const auto &right,bool writeB) {
@@ -342,8 +439,11 @@ struct NativeFacts {
             };
             pair(a->defVec,true,b->useVec,false); pair(a->useVec,false,b->defVec,true);
             pair(a->defVec,true,b->defVec,true); pair(a->useVec,false,b->useVec,false);
-            if (conflict) model.requirements.push_back({p,q,*distance,visibility?ss::Property::Visibility:
-                (acc?ss::Property::AccResource:ss::Property::Completion)});
+            if (conflict) {
+                auto property=visibility?ss::Property::Visibility:acc?ss::Property::AccResource:ss::Property::Completion;
+                if(distance)model.requirements.push_back({p,q,*distance,property});
+                if(!wrappers.empty())carried.push_back({p,q,property});
+            }
         }
         return true;
     }
@@ -352,14 +452,20 @@ struct NativeFacts {
 Value indexConstant(OpBuilder &builder,Location loc,uint64_t value) {
     return builder.create<arith::ConstantIndexOp>(loc,int64_t(value));
 }
-bool legalBoundaryOperands(NativeFacts &facts,const ss::Plan &plan,std::string &why) {
+bool legalBoundaryOperands(NativeFacts &facts,const std::vector<ss::Action> &actions,std::string &why) {
     DominanceInfo dominance(facts.function);
-    for (const auto &a:ss::actionsForPlan(facts.model,plan)) {
+    for (const auto &a:actions) {
         if (a.distanceInIterations>uint64_t(INT64_MAX) || a.guardResidue>uint64_t(INT64_MAX) ||
             facts.model.period>uint64_t(INT64_MAX)) {
             why="unrepresentable synchronization guard constant";return false;
         }
-        if (a.participation!=ss::Action::IfBody) continue;
+        if(a.invocation!=ss::Action::Local&&facts.wrappers.empty()) {
+            why="invocation endpoint has no enclosing frame";return false;
+        }
+        if(a.invocationGuardResidue>uint64_t(INT64_MAX)) {
+            why="unrepresentable invocation existence condition";return false;
+        }
+        if (a.participation!=ss::Action::IfBody && !a.invocationBodyGuard) continue;
         auto *anchor=facts.physical.phases[facts.origin[a.anchor]]->elementOp;
         if (!facts.loop || !dominance.properlyDominates(facts.loop.getUpperBound(),anchor)) {
             why="loop bound is unavailable at the selected early publication";return false;
@@ -367,8 +473,7 @@ bool legalBoundaryOperands(NativeFacts &facts,const ss::Plan &plan,std::string &
     }
     return true;
 }
-void emitNative(NativeFacts &facts,const ss::Plan &plan) {
-    auto actions=ss::actionsForPlan(facts.model,plan);
+void emitNative(NativeFacts &facts,const std::vector<ss::Action> &actions) {
     std::map<std::pair<Operation*,bool>,std::vector<ss::Action>> points;
     for (auto a:actions) points[{facts.physical.phases[facts.origin[a.anchor]]->elementOp,a.after}].push_back(a);
     // Iterate original phases, never pointer ordering, for deterministic IR.
@@ -384,6 +489,28 @@ void emitNative(NativeFacts &facts,const ss::Plan &plan) {
                 auto branch=builder.create<scf::IfOp>(anchor->getLoc(),c,false);
                 builder.setInsertionPointToStart(&branch.getThenRegion().front());
             };
+            if(a.invocation!=ss::Action::Local) {
+                Value predicate;
+                for(auto frame:facts.wrappers) {
+                    Value part;
+                    if(a.invocation==ss::Action::ToNextInvocation) {
+                        auto remaining=builder.create<arith::SubIOp>(anchor->getLoc(),frame.getUpperBound(),frame.getInductionVar());
+                        auto one=indexConstant(builder,anchor->getLoc(),1);
+                        part=builder.create<arith::CmpIOp>(anchor->getLoc(),arith::CmpIPredicate::sgt,remaining,one);
+                    } else {
+                        auto zero=indexConstant(builder,anchor->getLoc(),0);
+                        part=builder.create<arith::CmpIOp>(anchor->getLoc(),arith::CmpIPredicate::ne,frame.getInductionVar(),zero);
+                    }
+                    if(predicate)predicate=builder.create<arith::OrIOp>(anchor->getLoc(),predicate,part);
+                    else predicate=part;
+                }
+                guard(predicate);
+            }
+            if(a.invocationBodyGuard) {
+                auto r=indexConstant(builder,anchor->getLoc(),a.invocationGuardResidue);
+                guard(builder.create<arith::CmpIOp>(anchor->getLoc(),arith::CmpIPredicate::sgt,
+                    facts.loop.getUpperBound(),r));
+            }
             if (facts.residues[p].size()>1) {
                 auto d=indexConstant(builder,anchor->getLoc(),facts.model.period);
                 auto r=builder.create<arith::RemUIOp>(anchor->getLoc(),facts.loop.getInductionVar(),d);
@@ -426,9 +553,7 @@ void emitNative(NativeFacts &facts,const ss::Plan &plan) {
             // outer's iterator was the original successor and remains valid.
         }
     }
-    auto *ret=facts.function.getBody().front().getTerminator();
-    OpBuilder builder(ret);
-    builder.create<BarrierOp>(ret->getLoc(),PipeAttr::get(facts.function.getContext(),PIPE::PIPE_ALL));
+
 }
 
 class Reconstruct {
@@ -439,7 +564,7 @@ class Reconstruct {
     uint64_t ordinal=0;
     unsigned retirement=0;
     std::string why;
-    enum GuardKind { Residue, Previous, Next, First, Last, IfBody };
+    enum GuardKind { Residue, Previous, Next, First, Last, IfBody, InvocationPrevious, InvocationNext };
     struct Condition { GuardKind kind; Value value; uint64_t distance=0; };
 
     bool fail(StringRef s) { why=s.str(); return false; }
@@ -448,7 +573,36 @@ class Reconstruct {
         if (!op || original.contains(op) || !allowed.insert(op).second) return;
         for (Value x:op->getOperands()) allowExpression(x);
     }
+    bool invocationCondition(Value v,bool next) {
+        if(facts.wrappers.empty())return false;
+        SmallVector<Value> pending{v};llvm::SmallPtrSet<Operation*,8> frames;
+        while(!pending.empty()) {
+            Value x=pending.pop_back_val();
+            if(auto either=x.getDefiningOp<arith::OrIOp>()) {
+                pending.push_back(either.getLhs());pending.push_back(either.getRhs());continue;
+            }
+            auto cmp=x.getDefiningOp<arith::CmpIOp>();if(!cmp)return false;
+            bool matched=false;
+            for(auto loop:facts.wrappers) {
+                bool yes=false;
+                if(next) {
+                    auto sub=cmp.getLhs().getDefiningOp<arith::SubIOp>();
+                    yes=cmp.getPredicate()==arith::CmpIPredicate::sgt && literal(cmp.getRhs())==std::optional<int64_t>(1) &&
+                        sub && sub.getLhs()==loop.getUpperBound() && sub.getRhs()==loop.getInductionVar();
+                } else yes=cmp.getPredicate()==arith::CmpIPredicate::ne &&
+                    literal(cmp.getRhs())==std::optional<int64_t>(0) && cmp.getLhs()==loop.getInductionVar();
+                if(yes) {
+                    if(!frames.insert(loop.getOperation()).second)return false;
+                    matched=true;break;
+                }
+            }
+            if(!matched)return false;
+        }
+        return frames.size()==facts.wrappers.size();
+    }
     std::optional<Condition> condition(Value v) {
+        if(invocationCondition(v,true)){allowExpression(v);return Condition{InvocationNext,v,0};}
+        if(invocationCondition(v,false)){allowExpression(v);return Condition{InvocationPrevious,v,0};}
         if (!facts.loop) {
             if (literal(v)) { allowExpression(v); return Condition{Residue,v,0}; }
             return {};
@@ -509,7 +663,7 @@ class Reconstruct {
             }
             return true;
         }
-        if (isa<arith::ConstantOp,arith::CmpIOp,arith::SubIOp,arith::RemUIOp>(op)) return true;
+        if (isa<arith::ConstantOp,arith::CmpIOp,arith::SubIOp,arith::RemUIOp,arith::OrIOp>(op)) return true;
         ss::Action a;
         if (auto set=dyn_cast<SetFlagOp>(op)) {
             a.kind=ss::Action::Set; a.after=true; a.key=unsigned(set.getEventId().getEvent());
@@ -537,15 +691,32 @@ class Reconstruct {
         } else return fail("unexpected operation added by structured emission");
         auto id=facts.phaseId.find(a.after?previous:next);
         if (id==facts.phaseId.end()) return fail("event/barrier lacks its actual original payload cut");
-        std::optional<Condition> participation;
-        for (const auto &g:guards) if (g.kind!=Residue) {
-            if (participation) return fail("repeated endpoint participation guards");
-            participation=g;
+        std::optional<Condition> participation,invocation,existence;
+        for(const auto &g:guards) {
+            if(g.kind==Residue)continue;
+            if(g.kind==InvocationNext||g.kind==InvocationPrevious) {
+                if(invocation)return fail("duplicate invocation guard");
+                invocation=g;
+            } else if(g.kind==IfBody) {
+                if(existence)return fail("duplicate body-existence guard");
+                existence=g;
+            } else {
+                if(participation)return fail("repeated endpoint participation guards");
+                participation=g;
+            }
+        }
+        if(invocation) {
+            a.invocation=invocation->kind==InvocationNext?ss::Action::ToNextInvocation:ss::Action::FromPreviousInvocation;
+            if(existence){a.invocationBodyGuard=true;a.invocationGuardResidue=existence->distance;}
+        } else if(existence) {
+            if(participation)return fail("multiple local participation domains");
+            participation=existence;
         }
         if (participation) {
             const auto &g=*participation;
             if (g.kind==Previous || g.kind==Next) {
-                if (a.kind==ss::Action::Barrier || (a.kind==ss::Action::Set?g.kind!=Next:g.kind!=Previous))
+                if (a.invocation!=ss::Action::Local || a.kind==ss::Action::Barrier ||
+                    (a.kind==ss::Action::Set?g.kind!=Next:g.kind!=Previous))
                     return fail("wrong periodic participation direction");
                 a.distanceInIterations=g.distance;
             } else if (g.kind==First) a.participation=ss::Action::First;
@@ -588,62 +759,45 @@ class Reconstruct {
     }
 public:
     Reconstruct(NativeFacts &f,const llvm::SmallPtrSetImpl<Operation*> &o):facts(f),original(o) {}
-    Outcome run(const SyncPayloadSnapshot &snapshot,const ss::Plan &selected) {
-        Outcome out; out.status=Outcome::InternalError;
-        if (!block(facts.function.getBody().front()) || retirement!=1) {
-            out.reason=why.empty()?"retirement missing or duplicated":why; return out;
+    Outcome run(const std::vector<ss::Action> &selected,llvm::SmallPtrSetImpl<Operation*> &allAllowed) {
+        Outcome out;out.status=Outcome::InternalError;
+        const unsigned expectedRetirement=scopeIsFunction()?1:0;
+        if(!block(facts.scope->front())||retirement!=expectedRetirement) {
+            out.reason=why.empty()?"retirement missing or duplicated":why;return out;
         }
-        if (!snapshot.preserved(facts.function,[&](Operation *op){return allowed.contains(op);})) {
-            out.reason="original payload/control/geometry changed or unconsumed scalar addition"; return out;
+        if(facts.wrappers.empty()) {
+            auto result=ss::verify(facts.model,actions);
+            if(result.status!=ss::Status::Applied){out.reason=result.reason;return out;}
+            out.handoffs=result.plan.handoffs.size();out.barriers=result.plan.barriers.size()+result.plan.firstBarriers.size();
+            out.work=result.completionRelaxations+result.eventRelaxations;
+        } else {
+            auto result=ss::verifyInvocations(facts.invocationModel(),actions);
+            if(result.status!=ss::Status::Applied){out.reason=result.reason;return out;}
+            out.handoffs=result.plan.local.handoffs.size()+result.plan.handoffs.size();
+            out.barriers=result.plan.local.barriers.size()+result.plan.local.firstBarriers.size()+result.plan.barriers.size();
+            out.work=result.graphVisits;
         }
-        // Fresh physical reconstruction does not consume selected hazards or
-        // planner receipts. Shared address/operation semantics are an explicit
-        // remaining trust boundary, challenged by separate effect tests.
-        SyncIRs rebuilt; Buffer2MemInfoMap buffers; MemoryDependentAnalyzer memory;
-        PTOIRTranslator translator(rebuilt,memory,buffers,facts.function,SyncAnalysisMode::NORMALSYNC);
-        if (failed(translator.Build())) { out.reason="emitted physical translation failed"; return out; }
-        std::map<Operation*,const CompoundInstanceElement*> phases;
-        for (const auto &element:rebuilt) if (auto *p=dyn_cast<CompoundInstanceElement>(element.get()))
-            if (!phases.emplace(p->elementOp,p).second) { out.reason="duplicate emitted physical phase"; return out; }
-        if (phases.size()!=facts.physical.phases.size()) { out.reason="emitted physical phase population changed"; return out; }
-        auto same=[](const auto &a,const auto &b) {
-            if (a.size()!=b.size()) return false;
-            for (std::size_t i=0;i<a.size();++i) if (!(*a[i]==*b[i])) return false;
-            return true;
-        };
-        for (auto *old:facts.physical.phases) {
-            auto found=phases.find(old->elementOp);
-            if (found==phases.end() || found->second->kPipeValue!=old->kPipeValue ||
-                !same(old->useVec,found->second->useVec) || !same(old->defVec,found->second->defVec)) {
-                out.reason="reconstructed physical access contract changed"; return out;
-            }
-        }
-        auto result=ss::verify(facts.model,actions);
-        if (result.status!=ss::Status::Applied) { out.reason=result.reason; return out; }
-        // Independent safety above is not a license for lowering to broaden
-        // a selected handoff. Compare RECOVERED per-boundary episode order with
-        // the chosen boundaries, without tags or integer-relation synthesis.
-        using Fingerprint=std::tuple<unsigned,bool,unsigned,unsigned,unsigned,unsigned,uint64_t,unsigned,uint64_t>;
+        // Actual action ordering, predicates and local/outer occurrence roles
+        // must match the selected early boundaries, even if a broader plan
+        // would also be safe. No insertion tags are consumed as proof.
+        using Fingerprint=std::tuple<unsigned,bool,ss::Lane,ss::Lane,unsigned,uint64_t,unsigned,uint64_t,unsigned,bool,uint64_t>;
         auto fingerprints=[](const std::vector<ss::Action> &items) {
             std::map<std::pair<std::size_t,bool>,std::vector<Fingerprint>> at;
-            std::vector<ss::Action> sorted(items);
-            std::stable_sort(sorted.begin(),sorted.end(),[](const auto &a,const auto &b) {
-                return a.order<b.order;
-            });
-            for (const auto &a:sorted) at[{a.anchor,a.after}].emplace_back(
-                unsigned(a.kind),a.after,unsigned(a.source.core),unsigned(a.source.pipe),
-                unsigned(a.target.pipe),a.key,a.distanceInIterations,unsigned(a.participation),a.guardResidue);
+            auto sorted=items;std::stable_sort(sorted.begin(),sorted.end(),[](const auto &a,const auto &b){return a.order<b.order;});
+            for(const auto &a:sorted)at[{a.anchor,a.after}].emplace_back(unsigned(a.kind),a.after,a.source,a.target,a.key,
+                a.distanceInIterations,unsigned(a.participation),a.guardResidue,unsigned(a.invocation),
+                a.invocationBodyGuard,a.invocationGuardResidue);
             return at;
         };
-        if (fingerprints(actions)!=fingerprints(ss::actionsForPlan(facts.model,selected))) {
-            out.reason="emitted actions changed the selected readiness/release boundaries"; return out;
+        if(fingerprints(actions)!=fingerprints(selected)) {
+            out.reason="emission changed selected invocation/readiness/release boundaries";return out;
         }
-        out.status=Outcome::Applied; out.reason="structured occurrence cuts and emitted event protocol verified";
-        out.requirements=unsigned(facts.model.requirements.size());
-        out.handoffs=unsigned(result.plan.handoffs.size()); out.barriers=unsigned(result.plan.barriers.size()+result.plan.firstBarriers.size());
-        out.work=result.completionRelaxations+result.eventRelaxations; // statistic, never a quota
-        return out;
+        for(auto *op:allowed)allAllowed.insert(op);
+        out.status=Outcome::Applied;out.reason="structured region and actual invocation actions verified";
+        out.requirements=facts.model.requirements.size()+facts.carried.size();return out;
     }
+    bool scopeIsFunction() const {return facts.scope==&facts.function.getBody();}
+
 };
 
 Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<void(func::FuncOp)> mutate) {
@@ -662,30 +816,84 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<vo
     }
     IRMapping mapping;
     auto working=cast<func::FuncOp>(function->clone(mapping)); parent.getBody()->push_back(working);
-    NativeFacts facts(working,gm); Outcome out;
-    if (!facts.build()) { out.reason=facts.reason; return out; }
-    auto plan=ss::construct(facts.model);
-    if (plan.status!=ss::Status::Applied) {
-        out.status=plan.status==ss::Status::AllocationFailure?Outcome::AllocationFailure:
-            plan.status==ss::Status::InvalidPlan?Outcome::InternalError:Outcome::Unsupported;
-        out.reason=plan.reason; return out;
+    Outcome out;NativeInventory inventory(working);
+    if(!inventory.build()){out.reason=inventory.reason;return out;}
+    RegionLayout layout(inventory);
+    if(!layout.build()){out.reason=layout.reason;return out;}
+    std::vector<std::unique_ptr<NativeFacts>> units;
+    std::vector<std::vector<ss::Action>> selected;
+    uint64_t atoms=0,views=0;
+    for(const auto &scope:layout.scopes) {
+        auto facts=std::make_unique<NativeFacts>(inventory,scope,gm);
+        if(!facts->build()){out.reason=facts->reason;return out;}
+        std::vector<ss::Action> actions;
+        ss::Status status;std::string reason;
+        if(facts->wrappers.empty()) {
+            auto result=ss::construct(facts->model);status=result.status;reason=result.reason;
+            if(status==ss::Status::Applied)actions=ss::actionsForPlan(facts->model,result.plan);
+        } else {
+            auto result=ss::constructInvocations(facts->invocationModel());status=result.status;reason=result.reason;
+            if(status==ss::Status::Applied)actions=ss::actionsForInvocations(facts->invocationModel(),result.plan);
+            views+=result.proofViews;
+        }
+        if(status!=ss::Status::Applied) {
+            out.status=status==ss::Status::AllocationFailure?Outcome::AllocationFailure:
+                status==ss::Status::InvalidPlan?Outcome::InternalError:Outcome::Unsupported;
+            out.reason=reason;return out;
+        }
+        if(!legalBoundaryOperands(*facts,actions,out.reason))return out;
+        atoms+=facts->model.atoms.size();selected.push_back(std::move(actions));units.push_back(std::move(facts));
     }
-    if (!legalBoundaryOperands(facts,plan.plan,out.reason)) return out;
-    SyncPayloadSnapshot snapshot(working);
-    llvm::SmallPtrSet<Operation*,32> original;
+    SyncPayloadSnapshot snapshot(working);llvm::SmallPtrSet<Operation*,32> original;
     working.walk([&](Operation *op){original.insert(op);});
-    emitNative(facts,plan.plan);
-    if (mutate) mutate(working);
-    if (failed(mlir::verify(working))) {
-        out.status=Outcome::InternalError; out.reason="malformed structured emission"; return out;
+    for(std::size_t i=0;i<units.size();++i)emitNative(*units[i],selected[i]);
+    auto *ret=working.getBody().front().getTerminator();OpBuilder builder(ret);
+    builder.create<BarrierOp>(ret->getLoc(),PipeAttr::get(working.getContext(),PIPE::PIPE_ALL));
+    if(mutate)mutate(working);
+    out.status=Outcome::InternalError;
+    if(failed(mlir::verify(working))){out.reason="malformed structured emission";return out;}
+    auto drain=dyn_cast_or_null<BarrierOp>(ret->getPrevNode());unsigned drains=0;
+    working.walk([&](BarrierOp b){if(b.getPipe().getPipe()==PIPE::PIPE_ALL)++drains;});
+    if(!drain||drain.getPipe().getPipe()!=PIPE::PIPE_ALL||drains!=1||
+       drain->hasAttr("pto.auto_sync_tail_barrier")||drain->hasAttr("pto.auto_sync_tail_hint")) {
+        out.reason="one explicit unconditional function-retirement drain is required";return out;
     }
-    out=Reconstruct(facts,original).run(snapshot,plan.plan);
-    if (out.status==Outcome::Applied) function.getBody().takeBody(working.getBody());
-    if (std::getenv("PTOAS_LOGICAL_TRACE"))
-        llvm::errs()<<"structured OAHS atoms "<<facts.model.atoms.size()<<" requirements "
-            <<facts.model.requirements.size()<<" handoffs "<<out.handoffs<<" barriers "<<out.barriers
-            <<" presburger_queries 0 seconds "<<std::chrono::duration<double>(
-                std::chrono::steady_clock::now()-start).count()<<"\n";
+    llvm::SmallPtrSet<Operation*,32> allowed;allowed.insert(drain.getOperation());
+    for(std::size_t i=0;i<units.size();++i) {
+        auto result=Reconstruct(*units[i],original).run(selected[i],allowed);
+        if(result.status!=Outcome::Applied)return result;
+        out.requirements+=result.requirements;out.handoffs+=result.handoffs;out.barriers+=result.barriers;out.work+=result.work;
+    }
+    if(!snapshot.preserved(working,[&](Operation *op){return allowed.contains(op);})) {
+        out.reason="original payload/control/geometry changed or unconsumed generated scalar operation";return out;
+    }
+    // One fresh whole-function physical import after all mutually exclusive
+    // arms were reconstructed. Original control is preserved by the snapshot.
+    SyncIRs rebuilt;Buffer2MemInfoMap buffers;MemoryDependentAnalyzer memory;
+    PTOIRTranslator translator(rebuilt,memory,buffers,working,SyncAnalysisMode::NORMALSYNC);
+    if(failed(translator.Build())){out.reason="emitted physical translation failed";return out;}
+    std::map<Operation*,const CompoundInstanceElement*> phases;
+    for(const auto &element:rebuilt)if(auto *p=dyn_cast<CompoundInstanceElement>(element.get()))
+        if(!phases.emplace(p->elementOp,p).second){out.reason="duplicate emitted physical phase";return out;}
+    if(phases.size()!=inventory.physical.phases.size()){out.reason="emitted physical phase population changed";return out;}
+    auto same=[](const auto &a,const auto &b) {
+        if(a.size()!=b.size())return false;
+        for(std::size_t i=0;i<a.size();++i)if(!(*a[i]==*b[i]))return false;
+        return true;
+    };
+    for(auto *old:inventory.physical.phases) {
+        auto it=phases.find(old->elementOp);
+        if(it==phases.end()||it->second->kPipeValue!=old->kPipeValue||
+           !same(old->useVec,it->second->useVec)||!same(old->defVec,it->second->defVec)) {
+            out.reason="reconstructed physical access contract changed";return out;
+        }
+    }
+    out.status=Outcome::Applied;out.reason="structured local and nested invocation transfers verified";
+    function.getBody().takeBody(working.getBody());
+    if(std::getenv("PTOAS_LOGICAL_TRACE"))llvm::errs()<<"structured OAHS units "<<units.size()<<" atoms "<<atoms
+        <<" invocation_views "<<views<<" requirements "<<out.requirements<<" handoffs "<<out.handoffs
+        <<" barriers "<<out.barriers<<" presburger_queries 0 seconds "
+        <<std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count()<<"\n";
     return out;
 }
 } // namespace

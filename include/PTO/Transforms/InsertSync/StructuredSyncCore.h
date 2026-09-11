@@ -106,6 +106,12 @@ struct Action {
     uint64_t distanceInIterations = 0; // Every only; boundary forms keep zero
     enum Participation : uint8_t { Every, First, Last, IfBody } participation = Every;
     uint64_t guardResidue = 0; // IfBody only: execute iff tripCount > guardResidue
+    // S3: an invocation is one complete S2 region, not one inner iteration.
+    // These predicates name the lexicographic successor/predecessor of the
+    // enclosing rectangular loop nest. They never reset a live event key.
+    enum Invocation : uint8_t { Local, ToNextInvocation, FromPreviousInvocation } invocation = Local;
+    bool invocationBodyGuard = false;
+    uint64_t invocationGuardResidue = 0; // conjunction N > r, when required
     // First/Last select the first/last occurrence of the anchored body atom.
     // IfBody pairs with one of those and tests N > guardResidue outside the loop.
     // Every Set: execute iff matching target t+distance exists.
@@ -133,6 +139,46 @@ std::vector<Action> actionsForPlan(const Model &, const Plan &);
 // Testing/query client for exact symbolic epoch cuts. A path using only issue
 // order is NEVER completion. True means all represented instances are covered.
 bool supplies(const Model &, const Plan &, const Requirement &);
+
+// S3 composes ONE immutable S1/S2 region through arbitrarily many enclosing
+// rectangular invocations. Region shape, inner bound and selected branch are
+// invariant over those invocations. The native adapter qualifies that contract.
+// 'carried' contains every conservative cross-invocation conflict, independently
+// of the local priorDistance relation. Source/target may be the SAME atom.
+struct InvocationRequirement {
+    std::size_t source = 0, target = 0;
+    Property property = Property::Completion;
+};
+struct InvocationModel {
+    Model region;
+    std::vector<InvocationRequirement> carried;
+};
+struct InvocationHandoff {
+    std::size_t source = 0, target = 0; // last source[j] -> first target[j+1]
+    unsigned key = 0;
+};
+struct InvocationBarrier {
+    std::size_t target = 0; // only at first target, and only after invocation 0
+    bool bodyGuard = false;
+    uint64_t guardResidue = 0;
+};
+struct InvocationPlan {
+    Plan local;
+    std::vector<InvocationHandoff> handoffs;
+    std::vector<InvocationBarrier> barriers;
+};
+struct InvocationResult {
+    Status status = Status::Unsupported;
+    std::string reason;
+    InvocationPlan plan;
+    uint64_t proofViews = 0, graphVisits = 0;
+};
+InvocationResult constructInvocations(const InvocationModel &);
+InvocationResult verifyInvocations(const InvocationModel &, const std::vector<Action> &);
+std::vector<Action> actionsForInvocations(const InvocationModel &, const InvocationPlan &);
+// Test/diagnostic query: independently rebuild the finite symbolic interface;
+// do not reuse a planner receipt or assume an event pair from its numeric key.
+bool suppliesInvocation(const InvocationModel &, const InvocationPlan &, const InvocationRequirement &);
 
 } // namespace mlir::pto::structured_sync
 #endif

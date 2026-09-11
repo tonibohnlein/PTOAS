@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Native S1/S2 acceptance: unchanged input hashes, strict dispatch, real mutations.
+"""Native S1/S2/S3 acceptance: unchanged input hashes, strict dispatch, real mutations.
 No libisl dependency. Device and <=2x compilation acceptance remain separate.
 """
 import argparse, hashlib, json, os, subprocess, sys, time
@@ -23,7 +23,7 @@ def main():
     sys.path.insert(0,str(args.python_root))
     from observations import population,analyze,SERIAL_DRIVER
     from compare_boundaries import run as observe
-    rows=[]
+    rows=[]; qk_case=None
     def run(name,command):
         before=time.perf_counter()
         result=subprocess.run([str(x) for x in command],text=True,capture_output=True)
@@ -35,6 +35,7 @@ def main():
     for case in population():
         if case['case_id'] not in ('one_buffer','two_buffer','three_buffer','qk_matmul'): continue
         name=case['case_id']; source=case['source']
+        if name=='qk_matmul': qk_case=case
         # Actual CLI admission at the ordinary pipeline point, with quota zero:
         # the new implementation is not permitted to invoke the reference.
         output=args.output/(name+'.pto')
@@ -71,7 +72,7 @@ def main():
     assert len(rows)==4,rows
     fixtures=here/'structured_inputs'
     for name,mutation in (('independent_preloads','none'),('independent_preloads','late-set'),
-                          ('nested_loop','expect-unsupported'),('unknown_guard','expect-unsupported')):
+                          ('nested_loop','none'),('unknown_guard','none')):
         run(name+'.'+mutation,[args.driver,fixtures/(name+'.pto'),mutation,args.output/(name+'.'+mutation+'.pto')])
     boundary_rows=[]
     for name in ('boundary_preloads','boundary_periodic','boundary_periodic_equiv','boundary_mixed'):
@@ -101,7 +102,78 @@ def main():
                                  args.output/'boundary_preloads.late.pto'])
     run('boundary_late_bound.refuse',[args.driver,fixtures/'boundary_late_bound.pto','expect-unsupported',
                                      args.output/'boundary_late_bound.refuse.pto'])
-    summary=dict(boundary_rows=boundary_rows,status='passed',rows=rows,driver_sha256=hashlib.sha256(args.driver.read_bytes()).hexdigest(),
+    # Whole-region choices are invariant through the admitted wrapper nest.
+    # These are generated structural fixtures, not unchanged benchmark kernels.
+    invocation_rows=[]
+    shapes=[(0,0),(1,1),(2,1),(1,2),(2,3),(3,2)]
+    for name in ('nested_preloads','nested_three_levels','nested_choice','nested_bypass'):
+        source=fixtures/(name+'.pto');output=args.output/(name+'.pto')
+        result,seconds=run(name,[args.driver,source,'none',output])
+        verdict=json.loads(result.stdout)
+        assert verdict['accepted'] and verdict['atomic'],verdict
+        original=analyze(source);actual=analyze(output)
+        for field in ('payload','allocations','views','abi'):
+            assert actual[field]==original[field],(name,field)
+        assert actual['mechanisms']['PIPE_ALL']==1,(name,'not one function retirement drain')
+        executions=[]
+        for outer,middle in shapes:
+            for trips in (-1,0,1,2,5):
+                for take in (False,True):
+                    scenario={'name':f'{outer}_{middle}_{trips}_{take}',
+                              'arguments':['src','dst',trips,take,outer,middle]}
+                    before,_=observe(source,scenario);after,metrics=observe(output,scenario)
+                    assert before.payload==after.payload,(name,scenario,'payload changed')
+                    assert not after.tokens,(name,scenario,'outstanding invocation notifications')
+                    # Every invocation has two preloads. Check the FIRST
+                    # relevant reader at each reset, not only at function entry.
+                    if trips>0:
+                        length=2+2*trips+2
+                        for start in range(0,len(after.payload),length):
+                            assert after.payload[start][0]=='pto.tload'
+                            assert after.payload[start+2][0]=='pto.tabs'
+                            assert after.before[start+2]['completed'].get('PIPE_MTE2',-1)==start,(
+                                name,scenario,start,'current independent second preload acquired')
+                    executions.append(dict(scenario=scenario['name'],metrics=metrics))
+        for mutation in ('drop-wait','drop-set','wrong-key','duplicate-set','drop-retirement',
+                         'wrong-first','wrong-last','wrong-existence','wrong-invocation','late-nested-set'):
+            response,_=run(name+'.'+mutation,[args.driver,source,mutation,args.output/(name+'.'+mutation+'.pto')])
+            evidence=json.loads(response.stdout)
+            assert evidence['mutation_applied'] and evidence['expected'] and evidence['atomic'],evidence
+        if name=='nested_three_levels':
+            run(name+'.wrong-frame',[args.driver,source,'wrong-invocation-frame',args.output/(name+'.wrong-frame.pto')])
+        invocation_rows.append(dict(case=name,seconds=seconds,verdict=verdict,executed=executions,
+                                    mechanisms=actual['mechanisms'],source_sha256=hashlib.sha256(source.read_bytes()).hexdigest()))
+    for name in ('nested_varying_bound','nested_varying_choice','nested_mixed_sequence'):
+        run(name,[args.driver,fixtures/(name+'.pto'),'expect-unsupported',args.output/(name+'.pto')])
+
+    # Stronger real-input anchor: the original QK above remains unchanged.
+    # This ADDITIONAL derivative repeats that same operation sequence twice.
+    assert qk_case is not None
+    original_text=qk_case['source'].read_text()
+    first=original_text.index('  pto.tload')
+    last=original_text.rfind('  return')
+    assert first<last and '%__oahs_outer' not in original_text
+    repeated_text=(original_text[:first]+'  %__oahs_two = arith.constant 2 : index\n'
+        +'  scf.for %__oahs_outer = %c0_index to %__oahs_two step %c1_index {\n'
+        +original_text[first:last]+'  }\n'+original_text[last:])
+    derived=args.output/'qk_nested.derived.pto';derived.write_text(repeated_text)
+    result,seconds=run('qk_nested',[args.driver,derived,'none',args.output/'qk_nested.pto'])
+    verdict=json.loads(result.stdout)
+    assert verdict['accepted'] and verdict['atomic'],verdict
+    for scenario in qk_case['scenarios']:
+        before,_=observe(derived,scenario);after,metrics=observe(args.output/'qk_nested.pto',scenario)
+        assert before.payload==after.payload and not after.tokens,scenario
+        if scenario['arguments'][4]>0:
+            assert len(after.payload)%2==0
+            length=len(after.payload)//2
+            for start in (0,length):
+                first_reader=next(i for i in range(start,start+length) if after.payload[i][0]=='pto.textract')
+                assert after.before[first_reader]['completed'].get('PIPE_MTE2',-1)==start,(
+                    scenario,start,'nested QK readiness broadened')
+    invocation_rows.append(dict(case='qk_nested_derivative',seconds=seconds,verdict=verdict,
+        original_source_sha256=hashlib.sha256(qk_case['source'].read_bytes()).hexdigest(),
+        derived_source_sha256=hashlib.sha256(derived.read_bytes()).hexdigest()))
+    summary=dict(invocation_rows=invocation_rows,boundary_rows=boundary_rows,status='passed',rows=rows,driver_sha256=hashlib.sha256(args.driver.read_bytes()).hexdigest(),
                  timing='single diagnostics only; repeated matched <=2x campaign NOT_RUN',device='NOT_RUN')
     (args.output/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))

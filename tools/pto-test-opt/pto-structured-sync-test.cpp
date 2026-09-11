@@ -39,11 +39,37 @@ int main(int argc,char **argv) {
         Operation *chosen=nullptr;
         working.walk([&](Operation *op) {
             if (chosen) return;
-            if (mode=="late-boundary-set") {
-                if (auto branch=dyn_cast<scf::IfOp>(op))
-                    if (op->getParentOp()==working.getOperation() &&
-                        llvm::any_of(branch.getThenRegion().front(),[](Operation &x){return isa<SetFlagOp>(x);}))
+            if (mode=="late-boundary-set" || mode=="late-nested-set") {
+                if (auto branch=dyn_cast<scf::IfOp>(op)) {
+                    if (mode=="late-boundary-set") {
+                        if (op->getParentOp()==working.getOperation() &&
+                            llvm::any_of(branch.getThenRegion().front(),[](Operation &x){return isa<SetFlagOp>(x);}))
+                            chosen=op;
+                    } else {
+                        // The original next payload, not another generated
+                        // action, determines an independently later cut.
+                        bool hasSet=false;
+                        branch.walk([&](SetFlagOp){hasSet=true;});
+                        if (hasSet) for (Operation *next=op->getNextNode();next;next=next->getNextNode())
+                            if (isa<TLoadOp>(next)) {chosen=op;break;}
+                    }
+                }
+            }
+            if (mode=="wrong-invocation") {
+                if (auto cmp=dyn_cast<arith::CmpIOp>(op)) {
+                    auto iv=dyn_cast<BlockArgument>(cmp.getLhs());
+                    if (iv && isa<scf::ForOp>(iv.getOwner()->getParentOp()) &&
+                        cmp.getPredicate()==arith::CmpIPredicate::ne) chosen=op;
+                }
+            }
+            if (mode=="wrong-invocation-frame") {
+                if (auto either=dyn_cast<arith::OrIOp>(op)) {
+                    // The multi-frame publication/consumption predicate uses
+                    // OR, not an iteration-product counter. Remove one frame
+                    // while retaining a well-formed scalar expression.
+                    if (llvm::any_of(either.getResult().getUsers(),[](Operation *user){return isa<scf::IfOp>(user);}))
                         chosen=op;
+                }
             }
             if (mode=="wrong-first" || mode=="wrong-last" || mode=="wrong-existence") {
                 if (auto cmp=dyn_cast<arith::CmpIOp>(op)) {
@@ -89,12 +115,16 @@ int main(int argc,char **argv) {
             if (!cmp) return;
             OpBuilder b(cmp); auto zero=b.create<arith::ConstantIndexOp>(cmp.getLoc(),0);
             cmp->setOperand(1,zero); changed=true;
-        } else if (mode=="wrong-first" || mode=="wrong-last" || mode=="wrong-existence") {
+        } else if (mode=="wrong-invocation-frame") {
+            auto either=cast<arith::OrIOp>(chosen);
+            either.getResult().replaceAllUsesWith(either.getLhs());
+            either.erase();changed=true;
+        } else if (mode=="wrong-first" || mode=="wrong-last" || mode=="wrong-existence" || mode=="wrong-invocation") {
             auto cmp=cast<arith::CmpIOp>(chosen);IntegerAttr value;
             if (!matchPattern(cmp.getRhs(),m_Constant(&value)) || !value.getValue().isSignedIntN(63)) return;
             OpBuilder b(cmp);auto wrong=b.create<arith::ConstantIndexOp>(cmp.getLoc(),value.getValue().getSExtValue()+1);
             cmp->setOperand(1,wrong);changed=true;
-        } else if (mode=="late-set" || mode=="late-boundary-set") {
+        } else if (mode=="late-set" || mode=="late-boundary-set" || mode=="late-nested-set") {
             for(Operation *next=chosen->getNextNode();next;next=next->getNextNode())
                 if(isa<TLoadOp>(next)) { chosen->moveAfter(next); changed=true; break; }
         }
