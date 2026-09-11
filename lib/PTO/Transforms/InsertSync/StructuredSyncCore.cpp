@@ -393,6 +393,39 @@ Result mlir::pto::structured_sync::verify(const Model &m,const std::vector<Actio
     out.reason="prefix-periodic requirements and event episodes verified";
     return out;
 }
+Result mlir::pto::structured_sync::refinePeriodicHandoffs(const Model &m,const Plan &input) {
+    Result out;
+    if (!validModel(m,out.reason)) return out;
+    if (!m.recurring || hasBoundaries(m) || !input.firstBarriers.empty()) {
+        out.reason="handoff refinement requires one local periodic body";return out;
+    }
+    // Do not let an invalid endpoint be silently converted to an empty action
+    // population by actionsForPlan, even when there are no memory demands.
+    for (const auto &h:input.handoffs) if (!iterationDistance(m,h)) {
+        out.status=Status::InvalidPlan;out.reason="invalid refinement handoff";return out;
+    }
+    for (auto q:input.barriers) if (q>=m.atoms.size()) {
+        out.status=Status::InvalidPlan;out.reason="invalid refinement barrier";return out;
+    }
+    out=verify(m,actionsForPlan(m,input));
+    if (out.status!=Status::Applied) return out;
+    out.plan=input;
+    // Reverse order gives each originally selected handoff at most one trial.
+    // The trial checker is rebuilt WITHOUT the removed pair. It must not reuse
+    // a completion receipt or token-order path supplied by that pair itself.
+    for (std::size_t i=input.handoffs.size();i>0;--i) {
+        Plan trial=out.plan;
+        trial.handoffs.erase(trial.handoffs.begin()+std::ptrdiff_t(i-1));
+        auto checked=verify(m,actionsForPlan(m,trial));
+        ++out.refinementAttempts;
+        out.completionRelaxations=plus(out.completionRelaxations,checked.completionRelaxations);
+        out.eventRelaxations=plus(out.eventRelaxations,checked.eventRelaxations);
+        if (checked.status==Status::Applied) {
+            out.plan=std::move(trial);++out.removedHandoffs;
+        }
+    }
+    out.reason="verified periodic handoff reverse deletion";return out;
+}
 namespace {
 Result selectPeriodic(const Model &m) {
     Result out;
@@ -600,8 +633,14 @@ bool boundaryRequirement(const Model &m,const Requirement &r) {
 bool allHave(const Tails &tails,const Requirement &r) {
     return std::all_of(tails.begin(),tails.end(),[&](const auto &c){return c->has(r);});
 }
+bool hasExitRequirements(const Model &m) {
+    return std::any_of(m.requirements.begin(),m.requirements.end(),[&](const Requirement &r) {
+        return m.atoms[r.target].segment==Segment::Epilogue;
+    });
+}
 bool boundaryCoverage(const Model &m,const Plan &p,uint64_t &work) {
-    BoundaryCuts first(m,p,true); auto tails=tailCuts(m,p);
+    BoundaryCuts first(m,p,true);
+    auto tails=hasExitRequirements(m)?tailCuts(m,p):Tails{};
     for (const auto &r:m.requirements) if (boundaryRequirement(m,r)) {
         if (m.atoms[r.target].segment==Segment::Epilogue ? !allHave(tails,r) : !first.has(r)) return false;
     }
@@ -753,7 +792,7 @@ Result constructRegion(const Model &m) {
         bool firstOnly=m.atoms[q].segment==Segment::Body;
         (firstOnly?out.plan.firstBarriers:out.plan.barriers).push_back(q);first.barrier(q,firstOnly);
     }
-    auto tails=tailCuts(m,out.plan);
+    auto tails=hasExitRequirements(m)?tailCuts(m,out.plan):Tails{};
     for (auto q:schedule(m)) if (m.atoms[q].segment==Segment::Epilogue) {
         // Last occurrences at DIFFERENT residues are not uniformly comparable
         // for all N. Keep their separate guarded cuts. Same-residue sources on
@@ -1282,10 +1321,18 @@ InvocationResult mlir::pto::structured_sync::verifyInvocations(
     auto graphs=invocationGraphs(m.region,out.plan,&actions);out.proofViews=graphs.size();
     if(graphs.empty()){out.reason="unsupported invocation interface";return out;}
     for(const auto &r:m.carried)if(!invocationCovered(graphs,r)) {
+        out.failure=InvocationFailure::Completion;
         out.reason="cross-invocation reader/write requirement not supplied";return out;
     }
     for(const auto &g:graphs) {
-        if(!g->acyclic()||!g->recycles()) {out.reason="cross-invocation consumption-before-rearm not established";return out;}
+        if(!g->acyclic()) {
+            out.failure=InvocationFailure::Progress;
+            out.reason="cross-invocation causal constraints are cyclic";return out;
+        }
+        if(!g->recycles()) {
+            out.failure=InvocationFailure::EventReuse;
+            out.reason="cross-invocation consumption-before-rearm not established";return out;
+        }
         out.graphVisits+=g->visits;
     }
     out.status=Status::Applied;out.reason="local transfer and inductive invocation interface verified";return out;
@@ -1361,8 +1408,9 @@ InvocationResult mlir::pto::structured_sync::constructInvocations(const Invocati
     out.plan.local=std::move(local.plan);
     auto checked=verifyInvocations(m,actionsForInvocations(m,out.plan));
     if(checked.status!=Status::Applied) {
-        // A missing causal reuse path is not evidence of hardware infeasibility.
-        checked.status=Status::AllocationFailure;return checked;
+        // Recycling failure is not hardware infeasibility. Other verifier
+        // failures are NOT allocation outcomes and must retain their severity.
+        checked.status=checked.constructionStatus();return checked;
     }
     out.status=Status::Applied;out.reason="structured nested invocation composition";
     out.proofViews=checked.proofViews;out.graphVisits=checked.graphVisits;return out;

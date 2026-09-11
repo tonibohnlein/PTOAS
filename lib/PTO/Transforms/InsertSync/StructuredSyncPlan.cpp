@@ -196,6 +196,16 @@ public:
             p=std::max(p,*q);
         }
         if(auto cmp=dyn_cast<arith::CmpIOp>(op)) {
+            // The loop below partitions a residue VALUE against a literal.
+            // Equal effective periods do not make two residue values constant
+            // on those intervals: for i=6*k, (i%4)!=(i%12) is false at k=0
+            // and true at k=1, although both periods are 2. With no cuts, the
+            // old importer could erase the entire executing true arm.
+            // Boolean operands already carry their own truth-change cuts;
+            // period-one operands are constant in this represented phase.
+            // Other value/value comparisons need a separate exact partition.
+            if(p>1 && !cmp.getLhs().getType().isInteger(1) &&
+               !literal(cmp.getLhs()) && !literal(cmp.getRhs())) return {};
             for(unsigned side=0;side<2;++side) {
                 auto c=cycle(op->getOperand(side));auto bound=literal(op->getOperand(1-side));
                 if(!c||!bound||initial)continue;
@@ -1048,7 +1058,7 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<vo
     if(!layout.build()){out.reason=layout.reason;return out;}
     std::vector<std::unique_ptr<NativeFacts>> units;
     std::vector<std::vector<ss::Action>> selected;
-    uint64_t atoms=0,views=0;
+    uint64_t atoms=0,views=0,refinementTrials=0,refinementRemoved=0;
     for(const auto &scope:layout.scopes) {
       std::vector<std::unique_ptr<NativeFacts>> cases;
       auto first=std::make_unique<NativeFacts>(inventory,scope,gm);
@@ -1071,6 +1081,13 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<vo
                 // only by the causal continuation check, also run after emit.
                 facts->model.allowBoundaryKeyReuse=true;
                 result=ss::construct(facts->model);
+            }
+            if(result.status==ss::Status::Applied && facts->model.recurring &&
+               llvm::all_of(facts->model.atoms,[](const ss::Atom &a){return a.segment==ss::Segment::Body;})) {
+                // Refine only this complete local periodic plan. Boundary and
+                // nested-invocation plans keep S4's verified interface/shape.
+                result=ss::refinePeriodicHandoffs(facts->model,result.plan);
+                refinementTrials+=result.refinementAttempts;refinementRemoved+=result.removedHandoffs;
             }
             status=result.status;reason=result.reason;
             if(status==ss::Status::Applied)actions=ss::actionsForPlan(facts->model,result.plan);
@@ -1141,7 +1158,8 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<vo
     function.getBody().takeBody(working.getBody());
     if(std::getenv("PTOAS_LOGICAL_TRACE"))llvm::errs()<<"structured OAHS units "<<units.size()<<" atoms "<<atoms
         <<" invocation_views "<<views<<" requirements "<<out.requirements<<" handoffs "<<out.handoffs
-        <<" barriers "<<out.barriers<<" presburger_queries 0 seconds "
+        <<" barriers "<<out.barriers<<" refinement_trials "<<refinementTrials
+        <<" removed_handoffs "<<refinementRemoved<<" seconds "
         <<std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count()<<"\n";
     return out;
 }
