@@ -25,7 +25,11 @@ def main():
     subprocess.run(command,check=True)
     env=dict(os.environ)
     if args.sanitize: env['ASAN_OPTIONS']='detect_leaks=0'; env['UBSAN_OPTIONS']='halt_on_error=1'
-    result=subprocess.run([str(binary)],text=True,capture_output=True,env=env,check=True)
+    result=subprocess.run([str(binary)],text=True,capture_output=True,env=env,check=False)
+    (args.output/'stdout.txt').write_text(result.stdout)
+    (args.output/'stderr.txt').write_text(result.stderr)
+    if result.returncode:
+        raise RuntimeError(f"core test exited {result.returncode}: {result.stderr}")
     summary=json.loads(result.stdout)
     summary.update(command=command,compiler_version=subprocess.check_output([args.compiler,'--version'],text=True),
                    source_sha256={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in (core,header,source)},
