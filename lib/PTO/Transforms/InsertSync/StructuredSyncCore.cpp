@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <set>
 #include <tuple>
@@ -17,12 +18,18 @@
 
 using namespace mlir::pto::structured_sync;
 namespace {
+bool hasBoundaries(const Model &m) {
+    return std::any_of(m.atoms.begin(),m.atoms.end(),[](const Atom &a){return a.segment!=Segment::Body;});
+}
+Result constructRegion(const Model &);
+Result verifyRegion(const Model &,const std::vector<Action> &);
+bool suppliesRegion(const Model &,const Plan &,const Requirement &);
 constexpr uint64_t Inf = std::numeric_limits<uint64_t>::max();
 uint64_t plus(uint64_t a, uint64_t b) {
     return a == Inf || b == Inf || a > Inf - b ? Inf : a + b;
 }
 bool before(const Atom &a, const Atom &b) {
-    return std::tie(a.residue, a.order) < std::tie(b.residue, b.order);
+    return std::tie(a.segment, a.residue, a.order) < std::tie(b.segment, b.residue, b.order);
 }
 
 // A cell d represents the guarded cut p[k-d] complete at q[k]. Infinity is
@@ -75,10 +82,12 @@ bool validModel(const Model &m, std::string &why) {
     if (m.atoms.size() > std::numeric_limits<std::size_t>::max()/2) {
         why="phase identity overflow"; return false;
     }
-    std::set<std::pair<uint64_t,uint64_t>> ranks;
+    std::set<std::tuple<Segment,uint64_t,uint64_t>> ranks;
     for (const Atom &a:m.atoms) {
         if (a.residue>=m.period || !m.target.supports(a.lane) ||
-            !ranks.insert({a.residue,a.order}).second) {
+            (a.segment!=Segment::Prelude && a.segment!=Segment::Body && a.segment!=Segment::Epilogue) ||
+            (a.segment!=Segment::Body && (!m.recurring || a.residue)) ||
+            !ranks.insert({a.segment,a.residue,a.order}).second) {
             why="invalid physical lane, residue or original schedule rank"; return false;
         }
     }
@@ -165,7 +174,8 @@ bool matchActions(const Model &m,const std::vector<Action> &actions,
                   std::vector<Episode> &episodes,std::string &why) {
     std::map<std::tuple<std::size_t,bool,uint64_t>,bool> unique;
     for (const Action &a:actions) {
-        if ((a.kind!=Action::Set && a.kind!=Action::Wait && a.kind!=Action::Barrier) ||
+        if (a.participation!=Action::Every || a.guardResidue ||
+            (a.kind!=Action::Set && a.kind!=Action::Wait && a.kind!=Action::Barrier) ||
             a.anchor>=m.atoms.size() || !unique.emplace(
                 std::make_tuple(a.anchor,a.after,a.order),true).second) {
             why="duplicate or unavailable concrete action point"; return false;
@@ -290,13 +300,17 @@ std::optional<uint64_t> mlir::pto::structured_sync::priorDistance(
     const Model &m,std::size_t p,std::size_t q) {
     if (p>=m.atoms.size() || q>=m.atoms.size()) return {};
     if (before(m.atoms[p],m.atoms[q])) return 0;
-    if (m.recurring) return 1;
+    if (m.recurring && m.atoms[p].segment==Segment::Body && m.atoms[q].segment==Segment::Body) return 1;
     return {};
 }
 std::optional<uint64_t> mlir::pto::structured_sync::iterationDistance(
     const Model &m,const Handoff &e) {
     if (!m.period || e.source>=m.atoms.size() || e.target>=m.atoms.size() ||
         e.distance>Inf/m.period) return {};
+    if (m.atoms[e.source].segment!=Segment::Body || m.atoms[e.target].segment!=Segment::Body) {
+        if (e.distance || !before(m.atoms[e.source],m.atoms[e.target])) return {};
+        return 0;
+    }
     if ((!m.recurring && e.distance) || (!e.distance && !before(m.atoms[e.source],m.atoms[e.target]))) return {};
     uint64_t target=plus(e.distance*m.period,m.atoms[e.target].residue);
     if (target==Inf || target<m.atoms[e.source].residue) return {};
@@ -311,18 +325,32 @@ std::vector<Action> mlir::pto::structured_sync::actionsForPlan(const Model &m,co
         if (q>=m.atoms.size()) return {};
         out.push_back({Action::Barrier,q,false,ordinal++,m.atoms[q].lane,m.atoms[q].lane,0,0});
     }
+    for (auto q:p.firstBarriers) {
+        if (q>=m.atoms.size()) return {};
+        Action a{Action::Barrier,q,false,ordinal++,m.atoms[q].lane,m.atoms[q].lane,0,0};
+        a.participation=Action::First; out.push_back(a);
+    }
     for (const auto &e:p.handoffs) {
         auto delta=iterationDistance(m,e);
         if (!delta) return {};
         auto source=m.atoms[e.source].lane,target=m.atoms[e.target].lane;
-        out.push_back({Action::Set,e.source,true,ordinal++,source,target,e.key,*delta});
-        out.push_back({Action::Wait,e.target,false,ordinal++,source,target,e.key,*delta});
+        Action set{Action::Set,e.source,true,ordinal++,source,target,e.key,*delta};
+        Action wait{Action::Wait,e.target,false,ordinal++,source,target,e.key,*delta};
+        if (m.atoms[e.source].segment==Segment::Prelude && m.atoms[e.target].segment==Segment::Body) {
+            set.participation=Action::IfBody; set.guardResidue=m.atoms[e.target].residue;
+            wait.participation=Action::First;
+        } else if (m.atoms[e.source].segment==Segment::Body && m.atoms[e.target].segment==Segment::Epilogue) {
+            set.participation=Action::Last;
+            wait.participation=Action::IfBody; wait.guardResidue=m.atoms[e.source].residue;
+        }
+        out.push_back(set); out.push_back(wait);
     }
     return out;
 }
 bool mlir::pto::structured_sync::supplies(const Model &m,const Plan &p,const Requirement &r) {
+    if (hasBoundaries(m)) return suppliesRegion(m,p,r);
     std::string why;
-    if (!validModel(m,why) || r.source>=m.atoms.size() || r.target>=m.atoms.size()) return false;
+    if (!p.firstBarriers.empty() || !validModel(m,why) || r.source>=m.atoms.size() || r.target>=m.atoms.size()) return false;
     for (const auto &e:p.handoffs)
         if (!iterationDistance(m,e)) return false;
     for (auto q:p.barriers) if (q>=m.atoms.size()) return false;
@@ -332,6 +360,7 @@ bool mlir::pto::structured_sync::supplies(const Model &m,const Plan &p,const Req
     return c.has(r);
 }
 Result mlir::pto::structured_sync::verify(const Model &m,const std::vector<Action> &actions) {
+    if (hasBoundaries(m)) return verifyRegion(m,actions);
     Result out;
     if (!validModel(m,out.reason)) return out;
     std::vector<Episode> episodes;
@@ -357,7 +386,8 @@ Result mlir::pto::structured_sync::verify(const Model &m,const std::vector<Actio
     out.reason="prefix-periodic requirements and event episodes verified";
     return out;
 }
-Result mlir::pto::structured_sync::construct(const Model &m) {
+namespace {
+Result selectPeriodic(const Model &m) {
     Result out;
     if (!validModel(m,out.reason)) return out;
     for (const auto &r:m.requirements) if (r.property==Property::Visibility) {
@@ -402,6 +432,10 @@ Result mlir::pto::structured_sync::construct(const Model &m) {
         out.status=Status::InvalidPlan; return out;
     }
     out.completionRelaxations=c.work();
+    out.status=Status::Applied;
+    return out;
+}
+Result allocatePeriodic(const Model &m,Result out) {
     using Domain=std::pair<Lane,Lane>;
     std::map<Domain,std::size_t> population;
     for (const auto &e:out.plan.handoffs) ++population[{m.atoms[e.source].lane,m.atoms[e.target].lane}];
@@ -441,3 +475,321 @@ Result mlir::pto::structured_sync::construct(const Model &m) {
     out.status=Status::Applied; out.reason="deterministic structured staircase";
     return out;
 }
+
+} // namespace
+
+Result mlir::pto::structured_sync::construct(const Model &m) {
+    if (hasBoundaries(m)) return constructRegion(m);
+    auto selected=selectPeriodic(m);
+    if (selected.status!=Status::Applied) return selected;
+    return allocatePeriodic(m,std::move(selected));
+}
+
+namespace {
+bool periodicEdge(const Model &m,const Handoff &h) {
+    return m.atoms[h.source].segment==Segment::Body && m.atoms[h.target].segment==Segment::Body;
+}
+struct BodyProjection {
+    Model model;
+    std::vector<std::size_t> original, local;
+    explicit BodyProjection(const Model &m):local(m.atoms.size(),std::size_t(-1)) {
+        model.period=m.period; model.recurring=m.recurring; model.target=m.target;
+        for (std::size_t i=0;i<m.atoms.size();++i) if (m.atoms[i].segment==Segment::Body) {
+            local[i]=original.size(); original.push_back(i); model.atoms.push_back(m.atoms[i]);
+        }
+        for (auto r:m.requirements) if (m.atoms[r.source].segment==Segment::Body &&
+                                       m.atoms[r.target].segment==Segment::Body) {
+            r.source=local[r.source]; r.target=local[r.target]; model.requirements.push_back(r);
+        }
+    }
+};
+
+// A finite first/last-occurrence view of one loop invocation. First views are
+// prefix-closed: when a target exists, every earlier first node used on its
+// causal path exists. Last views split N=D*K+s only at represented residues.
+// K=0 and K>=1 are checked separately; no trip count or numeric period is
+// enumerated. A node denotes a selected occurrence, NEVER the entire region.
+class BoundaryCuts {
+    const Model &original;
+    std::unique_ptr<Model> projected;
+    std::unique_ptr<Completion> completion;
+    std::vector<std::size_t> local;
+    std::vector<int> epoch;
+    bool first;
+public:
+    BoundaryCuts(const Model &m,const Plan &plan,bool firstView,bool full=false,uint64_t tail=0)
+        :original(m),projected(new Model),local(m.atoms.size(),std::size_t(-1)),
+         epoch(m.atoms.size(),0),first(firstView) {
+        projected->recurring=false; projected->target=m.target;
+        std::vector<std::size_t> ids;
+        for (std::size_t i=0;i<m.atoms.size();++i) {
+            const auto &a=m.atoms[i];
+            if (first && a.segment==Segment::Epilogue) continue;
+            if (!first && a.segment==Segment::Body && !full && a.residue>=tail) continue;
+            if (!first && a.segment==Segment::Body) epoch[i]=a.residue<tail?0:-1;
+            ids.push_back(i);
+        }
+        std::sort(ids.begin(),ids.end(),[&](auto p,auto q) {
+            const auto &a=m.atoms[p],&b=m.atoms[q];
+            return std::tie(a.segment,epoch[p],a.residue,a.order)<
+                   std::tie(b.segment,epoch[q],b.residue,b.order);
+        });
+        for (auto i:ids) {
+            local[i]=projected->atoms.size();
+            projected->atoms.push_back({0,local[i],m.atoms[i].lane});
+        }
+        completion.reset(new Completion(*projected));
+        // Only an actual body handoff whose selected source reaches the last
+        // source occurrence can become a last-view edge. A distance-one event
+        // is absent at the first target occurrence and cannot seed First.
+        for (const auto &h:plan.handoffs) if (periodicEdge(m,h)) {
+            if (!present(h.source) || !present(h.target)) continue;
+            int d=first?0:epoch[h.target]-epoch[h.source];
+            if (d>=0 && h.distance<=uint64_t(d)) add(h);
+        }
+        for (auto q:plan.barriers) if (m.atoms[q].segment==Segment::Body) barrier(q,false);
+        for (const auto &h:plan.handoffs) if (!periodicEdge(m,h)) add(h);
+        for (auto q:plan.barriers) if (m.atoms[q].segment!=Segment::Body) barrier(q,false);
+        for (auto q:plan.firstBarriers) barrier(q,true);
+    }
+    bool present(std::size_t p) const { return local[p]!=std::size_t(-1); }
+    void add(const Handoff &h) {
+        if (present(h.source) && present(h.target))
+            completion->handoff({local[h.source],local[h.target],0,0});
+    }
+    void barrier(std::size_t q,bool firstOnly) {
+        if (!present(q)) return;
+        if (!firstOnly || first) { completion->barrier(local[q]); return; }
+        // A first-only barrier's PRELUDE knowledge persists to the last q.
+        // It does not complete body work issued later than that first barrier.
+        for (std::size_t p=0;p<original.atoms.size();++p)
+            if (original.atoms[p].segment==Segment::Prelude &&
+                original.atoms[p].lane==original.atoms[q].lane)
+                completion->handoff({local[p],local[q],0,0});
+    }
+    bool has(const Requirement &r) const {
+        if (!present(r.target) || !present(r.source)) return true; // absent-body requirement is vacuous
+        return completion->has({local[r.source],local[r.target],0,r.property});
+    }
+    uint64_t work() const { return completion->work(); }
+};
+using Tails=std::vector<std::unique_ptr<BoundaryCuts>>;
+Tails tailCuts(const Model &m,const Plan &plan) {
+    if (std::none_of(m.atoms.begin(),m.atoms.end(),[](const Atom &a){return a.segment==Segment::Epilogue;})) return {};
+    std::set<uint64_t> tails{0};
+    for (const auto &a:m.atoms) if (a.segment==Segment::Body && a.residue+1<m.period)
+        tails.insert(a.residue+1);
+    Tails result;
+    for (uint64_t s:tails) for (bool full:{false,true})
+        result.emplace_back(new BoundaryCuts(m,plan,false,full,s));
+    return result;
+}
+bool boundaryRequirement(const Model &m,const Requirement &r) {
+    return m.atoms[r.source].segment!=Segment::Body || m.atoms[r.target].segment!=Segment::Body;
+}
+bool allHave(const Tails &tails,const Requirement &r) {
+    return std::all_of(tails.begin(),tails.end(),[&](const auto &c){return c->has(r);});
+}
+bool boundaryCoverage(const Model &m,const Plan &p,uint64_t &work) {
+    BoundaryCuts first(m,p,true); auto tails=tailCuts(m,p);
+    for (const auto &r:m.requirements) if (boundaryRequirement(m,r)) {
+        if (m.atoms[r.target].segment==Segment::Epilogue ? !allHave(tails,r) : !first.has(r)) return false;
+    }
+    work=first.work(); for (const auto &tail:tails) work+=tail->work();
+    return true;
+}
+bool suppliesRegion(const Model &m,const Plan &p,const Requirement &r) {
+    std::string why;
+    if (!validModel(m,why) || r.source>=m.atoms.size() || r.target>=m.atoms.size()) return false;
+    auto expected=priorDistance(m,r.source,r.target);
+    if (!expected || *expected!=r.distance) return false;
+    // A supply query is not whole-plan acceptance. Validate the actual
+    // protocol separately, then answer only the requested obligation.
+    Model protocol=m;protocol.requirements.clear();
+    auto checked=verifyRegion(protocol,actionsForPlan(m,p));
+    if (checked.status!=Status::Applied) return false;
+    if (boundaryRequirement(m,r)) {
+        if (m.atoms[r.target].segment==Segment::Epilogue) return allHave(tailCuts(m,p),r);
+        return BoundaryCuts(m,p,true).has(r);
+    }
+    BodyProjection body(m); Plan inner;
+    for (auto e:p.handoffs) if (periodicEdge(m,e)) {
+        e.source=body.local[e.source];e.target=body.local[e.target];inner.handoffs.push_back(e);
+    }
+    for (auto q:p.barriers) if (m.atoms[q].segment==Segment::Body) inner.barriers.push_back(body.local[q]);
+    return supplies(body.model,inner,{body.local[r.source],body.local[r.target],r.distance,r.property});
+}
+
+// Reconstruction accepts only complete one-shot boundary pairs. Until a later
+// explicitly checked lifetime-sharing extension, each owns a distinct key in
+// its directed domain, disjoint from recurring keys. This is an allocation
+// restriction, NOT a serialization fallback or a hardware-capacity claim.
+Result verifyRegion(const Model &m,const std::vector<Action> &actions) {
+    Result out;
+    if (!validModel(m,out.reason)) return out;
+    out.status=Status::InvalidPlan;
+    BodyProjection body(m); std::vector<Action> inner;
+    using Key=std::tuple<Lane,Lane,unsigned>;
+    std::map<Key,std::vector<const Action*>> boundary;
+    std::set<Key> recurringKeys;
+    std::set<std::tuple<std::size_t,bool,uint64_t>> points;
+    for (const auto &a:actions) {
+        if (a.anchor>=m.atoms.size() || !points.emplace(a.anchor,a.after,a.order).second) {
+            out.reason="invalid or duplicate reconstructed action point";return out;
+        }
+        const auto &atom=m.atoms[a.anchor];
+        if (atom.segment==Segment::Body && a.participation==Action::Every) {
+            auto remapped=a;remapped.anchor=body.local[a.anchor];inner.push_back(remapped);
+            if (a.kind!=Action::Barrier) recurringKeys.insert({a.source,a.target,a.key});
+            continue;
+        }
+        if (a.distanceInIterations || (a.participation!=Action::IfBody && a.guardResidue)) {
+            out.reason="boundary action has an unqualified execution domain";return out;
+        }
+        if (a.kind==Action::Barrier) {
+            bool firstOnly=atom.segment==Segment::Body && a.participation==Action::First;
+            bool once=atom.segment!=Segment::Body && a.participation==Action::Every;
+            if ((!firstOnly&&!once) || a.after || a.source!=a.target || a.source!=atom.lane ||
+                !m.target.barrier(a.source)) {out.reason="invalid boundary barrier";return out;}
+            (firstOnly?out.plan.firstBarriers:out.plan.barriers).push_back(a.anchor);
+            continue;
+        }
+        if ((a.kind!=Action::Set&&a.kind!=Action::Wait) || !m.target.event(a.source,a.target) ||
+            !m.target.available(a.source,a.target,a.key) ||
+            (a.kind==Action::Set?(!a.after||a.source!=atom.lane):(a.after||a.target!=atom.lane))) {
+            out.reason="illegal boundary event direction, key or physical cut";return out;
+        }
+        boundary[{a.source,a.target,a.key}].push_back(&a);
+    }
+    for (const auto &family:boundary) {
+        if (family.second.size()!=2 || recurringKeys.count(family.first)) {
+            out.reason="boundary key must own exactly one pair and no recurring episodes";return out;
+        }
+        const Action *s=family.second[0],*w=family.second[1];
+        if (s->kind==Action::Wait) std::swap(s,w);
+        if (s->kind!=Action::Set || w->kind!=Action::Wait) {
+            out.reason="missing boundary publication or acquisition";return out;
+        }
+        const auto &p=m.atoms[s->anchor],&q=m.atoms[w->anchor];
+        bool once=p.segment!=Segment::Body && q.segment!=Segment::Body &&
+                  s->participation==Action::Every && w->participation==Action::Every;
+        bool entry=p.segment==Segment::Prelude && q.segment==Segment::Body &&
+                   s->participation==Action::IfBody && s->guardResidue==q.residue &&
+                   w->participation==Action::First;
+        bool exit=p.segment==Segment::Body && q.segment==Segment::Epilogue &&
+                  s->participation==Action::Last && w->participation==Action::IfBody &&
+                  w->guardResidue==p.residue;
+        if ((!once&&!entry&&!exit) || !before(p,q)) {
+            out.reason="boundary first/last/empty-path participation does not match";return out;
+        }
+        out.plan.handoffs.push_back({s->anchor,w->anchor,0,s->key});
+    }
+    auto inside=verify(body.model,inner);
+    if (inside.status!=Status::Applied) {out.reason="loop body: "+inside.reason;return out;}
+    for (auto h:inside.plan.handoffs) {
+        h.source=body.original[h.source];h.target=body.original[h.target];out.plan.handoffs.push_back(h);
+    }
+    for (auto q:inside.plan.barriers) out.plan.barriers.push_back(body.original[q]);
+    uint64_t work=0;
+    if (!boundaryCoverage(m,out.plan,work)) {
+        out.reason="entry, exit or zero-trip requirement is not supplied";return out;
+    }
+    out.status=Status::Applied;out.reason="periodic body and guarded boundary transfers verified";
+    out.completionRelaxations=inside.completionRelaxations+work;out.eventRelaxations=inside.eventRelaxations;
+    return out;
+}
+
+Result constructRegion(const Model &m) {
+    Result out;
+    if (!validModel(m,out.reason)) return out;
+    for (const auto &r:m.requirements) if (r.property==Property::Visibility) {
+        out.reason="visibility has no qualified structured realization";return out;
+    }
+    BodyProjection body(m);auto selected=selectPeriodic(body.model);
+    if (selected.status!=Status::Applied) return selected;
+    for (auto h:selected.plan.handoffs) {
+        h.source=body.original[h.source];h.target=body.original[h.target];out.plan.handoffs.push_back(h);
+    }
+    for (auto q:selected.plan.barriers) out.plan.barriers.push_back(body.original[q]);
+    BoundaryCuts first(m,out.plan,true);
+    // SAME prefix-advance rule as S1, applied to first acquisitions. A first
+    // acquisition is persistent knowledge, not one consuming wait per reader.
+    for (auto q:schedule(m)) {
+        if (m.atoms[q].segment==Segment::Epilogue) continue;
+        std::map<Lane,Requirement> latest;
+        for (const auto &r:m.requirements) if (r.target==q && boundaryRequirement(m,r) &&
+                m.atoms[r.source].lane!=m.atoms[q].lane && !first.has(r)) {
+            auto lane=m.atoms[r.source].lane;auto it=latest.find(lane);
+            if (it==latest.end() || m.atoms[r.source].order>m.atoms[it->second.source].order) latest[lane]=r;
+        }
+        for (const auto &item:latest) {
+            const auto &r=item.second;if (first.has(r)) continue;
+            if (!m.target.event(m.atoms[r.source].lane,m.atoms[q].lane)) {
+                out.reason="boundary event direction unavailable";return out;
+            }
+            Handoff h{r.source,q,0,0};out.plan.handoffs.push_back(h);first.add(h);
+        }
+    }
+    for (auto q:schedule(m)) {
+        if (m.atoms[q].segment==Segment::Epilogue) continue;
+        bool missing=false;
+        for (const auto &r:m.requirements) if (r.target==q && boundaryRequirement(m,r) &&
+                m.atoms[r.source].lane==m.atoms[q].lane && !first.has(r)) missing=true;
+        if (!missing) continue;
+        if (!m.target.barrier(m.atoms[q].lane)) {out.reason="boundary barrier unavailable";return out;}
+        bool firstOnly=m.atoms[q].segment==Segment::Body;
+        (firstOnly?out.plan.firstBarriers:out.plan.barriers).push_back(q);first.barrier(q,firstOnly);
+    }
+    auto tails=tailCuts(m,out.plan);
+    for (auto q:schedule(m)) if (m.atoms[q].segment==Segment::Epilogue) {
+        // Last occurrences at DIFFERENT residues are not uniformly comparable
+        // for all N. Keep their separate guarded cuts. Same-residue sources on
+        // one lane admit the ordinary latest-prefix compression.
+        using Group=std::tuple<Lane,Segment,uint64_t>;
+        std::map<Group,Requirement> latest;
+        for (const auto &r:m.requirements) if (r.target==q && m.atoms[r.source].lane!=m.atoms[q].lane &&
+                !allHave(tails,r)) {
+            const auto &p=m.atoms[r.source];Group g{p.lane,p.segment,p.residue};auto it=latest.find(g);
+            if (it==latest.end() || p.order>m.atoms[it->second.source].order) latest[g]=r;
+        }
+        for (const auto &item:latest) {
+            const auto &r=item.second;if (allHave(tails,r)) continue;
+            if (!m.target.event(m.atoms[r.source].lane,m.atoms[q].lane)) {
+                out.reason="exit event direction unavailable";return out;
+            }
+            Handoff h{r.source,q,0,0};out.plan.handoffs.push_back(h);for (auto &c:tails)c->add(h);
+        }
+    }
+    for (auto q:schedule(m)) if (m.atoms[q].segment==Segment::Epilogue) {
+        bool missing=false;
+        for (const auto &r:m.requirements) if (r.target==q && m.atoms[r.source].lane==m.atoms[q].lane &&
+                !allHave(tails,r)) missing=true;
+        if (!missing) continue;
+        if (!m.target.barrier(m.atoms[q].lane)) {out.reason="exit barrier unavailable";return out;}
+        out.plan.barriers.push_back(q);for (auto &c:tails)c->barrier(q,false);
+    }
+    using Domain=std::pair<Lane,Lane>;
+    std::map<Domain,std::set<unsigned>> boundaryKeys;
+    // One assignment owns all domains. Boundary episodes are deliberately not
+    // merged with recurring families; reserve their actual keys before invoking
+    // S1's recurrence allocator. A refusal is not a proof of infeasibility.
+    for (auto &h:out.plan.handoffs) if (!periodicEdge(m,h)) {
+        Domain d{m.atoms[h.source].lane,m.atoms[h.target].lane};bool assigned=false;
+        for (unsigned k:m.target.compilerKeys) if (m.target.available(d.first,d.second,k) &&
+                !boundaryKeys[d].count(k)) {
+            h.key=k;boundaryKeys[d].insert(k);body.model.target.reservations.push_back({d.first,d.second,k});
+            assigned=true;break;
+        }
+        if (!assigned) {out.status=Status::AllocationFailure;out.reason="distinct boundary keys do not fit";return out;}
+    }
+    auto allocated=allocatePeriodic(body.model,std::move(selected));
+    if (allocated.status!=Status::Applied) return allocated;
+    std::size_t index=0;
+    for (auto &h:out.plan.handoffs) if (periodicEdge(m,h)) h.key=allocated.plan.handoffs[index++].key;
+    auto checked=verifyRegion(m,actionsForPlan(m,out.plan));
+    if (checked.status!=Status::Applied) return checked;
+    out.status=Status::Applied;out.reason="structured first/last boundary construction";
+    out.completionRelaxations=checked.completionRelaxations;out.eventRelaxations=checked.eventRelaxations;
+    return out;
+}
+} // namespace

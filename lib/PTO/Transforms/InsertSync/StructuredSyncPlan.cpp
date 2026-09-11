@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/ADT/DenseMap.h"
@@ -177,6 +178,7 @@ struct NativeFacts {
     scf::ForOp loop;
     ss::Model model;
     std::vector<unsigned> origin;
+    std::vector<ss::Segment> segments;
     llvm::DenseMap<Operation*,unsigned> phaseId;
     std::vector<std::vector<std::pair<Value,bool>>> guards;
     std::vector<std::vector<uint64_t>> residues;
@@ -215,6 +217,13 @@ struct NativeFacts {
         }
         PeriodicScalar scalar(loop?loop.getInductionVar():Value());
         guards.resize(physical.phases.size()); residues.resize(physical.phases.size());
+        segments.assign(physical.phases.size(),ss::Segment::Body);
+        llvm::DenseMap<Operation*,bool> beforeLoop;
+        bool passedLoop=false;
+        for (Operation &op:function.getBody().front()) {
+            if (&op==loop.getOperation()) passedLoop=true;
+            beforeLoop[&op]=!passedLoop;
+        }
         uint64_t period=1;
         auto mergePeriod=[&](uint64_t p) {
             if (p!=1 && period!=1 && p!=period) return false;
@@ -222,7 +231,14 @@ struct NativeFacts {
         };
         for (unsigned p=0;p<physical.phases.size();++p) {
             auto *op=physical.phases[p]->elementOp; phaseId[op]=p;
-            if (loop && !loop->isAncestor(op)) return fail("preload or exit payload needs a cross-region transfer");
+            if (loop && !loop->isAncestor(op)) {
+                // A single invocation with unconditional prefix/suffix effects.
+                // Do not flatten a conditional or nested loop into this model.
+                if (loop->getBlock()!=&function.getBody().front() ||
+                    op->getBlock()!=&function.getBody().front())
+                    return fail("boundary payload requires a direct, unconditional loop invocation");
+                segments[p]=beforeLoop.lookup(op)?ss::Segment::Prelude:ss::Segment::Epilogue;
+            }
             for (Operation *parent=op->getParentOp(); parent && parent!=function.getOperation();
                  parent=parent->getParentOp()) {
                 if (parent==loop.getOperation()) continue;
@@ -265,7 +281,8 @@ struct NativeFacts {
                 }
             };
             inspect(physical.phases[p]->useVec); inspect(physical.phases[p]->defVec);
-            for (std::size_t i=1;i<breaks.size();++i) {
+            if (segments[p]!=ss::Segment::Body) residues[p].push_back(0);
+            for (std::size_t i=1;segments[p]==ss::Segment::Body && i<breaks.size();++i) {
                 uint64_t lo=breaks[i-1],hi=breaks[i]; bool active=true;
                 for (auto [condition,take]:guards[p]) {
                     auto v=scalar.evaluate(condition,lo);
@@ -285,7 +302,7 @@ struct NativeFacts {
             if (!lane) return fail("unqualified physical pipe");
             for (uint64_t r:residues[p]) {
                 origin.push_back(p);
-                model.atoms.push_back({r,p,{physical.cube?ss::Core::AIC:ss::Core::AIV,*lane}});
+                model.atoms.push_back({r,p,{physical.cube?ss::Core::AIC:ss::Core::AIV,*lane},segments[p]});
             }
         }
         auto alias=[&](const BaseMemInfo *a,uint64_t ra,const BaseMemInfo *b,uint64_t rb) {
@@ -335,6 +352,21 @@ struct NativeFacts {
 Value indexConstant(OpBuilder &builder,Location loc,uint64_t value) {
     return builder.create<arith::ConstantIndexOp>(loc,int64_t(value));
 }
+bool legalBoundaryOperands(NativeFacts &facts,const ss::Plan &plan,std::string &why) {
+    DominanceInfo dominance(facts.function);
+    for (const auto &a:ss::actionsForPlan(facts.model,plan)) {
+        if (a.distanceInIterations>uint64_t(INT64_MAX) || a.guardResidue>uint64_t(INT64_MAX) ||
+            facts.model.period>uint64_t(INT64_MAX)) {
+            why="unrepresentable synchronization guard constant";return false;
+        }
+        if (a.participation!=ss::Action::IfBody) continue;
+        auto *anchor=facts.physical.phases[facts.origin[a.anchor]]->elementOp;
+        if (!facts.loop || !dominance.properlyDominates(facts.loop.getUpperBound(),anchor)) {
+            why="loop bound is unavailable at the selected early publication";return false;
+        }
+    }
+    return true;
+}
 void emitNative(NativeFacts &facts,const ss::Plan &plan) {
     auto actions=ss::actionsForPlan(facts.model,plan);
     std::map<std::pair<Operation*,bool>,std::vector<ss::Action>> points;
@@ -357,6 +389,21 @@ void emitNative(NativeFacts &facts,const ss::Plan &plan) {
                 auto r=builder.create<arith::RemUIOp>(anchor->getLoc(),facts.loop.getInductionVar(),d);
                 auto c=indexConstant(builder,anchor->getLoc(),facts.model.atoms[a.anchor].residue);
                 guard(builder.create<arith::CmpIOp>(anchor->getLoc(),arith::CmpIPredicate::eq,r,c));
+            }
+            if (a.participation==ss::Action::IfBody) {
+                auto r=indexConstant(builder,anchor->getLoc(),a.guardResidue);
+                guard(builder.create<arith::CmpIOp>(anchor->getLoc(),arith::CmpIPredicate::sgt,
+                    facts.loop.getUpperBound(),r));
+            } else if (a.participation==ss::Action::First) {
+                auto r=indexConstant(builder,anchor->getLoc(),facts.model.atoms[a.anchor].residue);
+                guard(builder.create<arith::CmpIOp>(anchor->getLoc(),arith::CmpIPredicate::eq,
+                    facts.loop.getInductionVar(),r));
+            } else if (a.participation==ss::Action::Last) {
+                // In an executing body: 0 <= iv < upper <= INDEX_MAX.
+                // This subtraction is representable even near INDEX_MAX.
+                auto left=builder.create<arith::SubIOp>(anchor->getLoc(),facts.loop.getUpperBound(),facts.loop.getInductionVar());
+                auto period=indexConstant(builder,anchor->getLoc(),facts.model.period);
+                guard(builder.create<arith::CmpIOp>(anchor->getLoc(),arith::CmpIPredicate::sle,left,period));
             }
             if (a.distanceInIterations) {
                 auto c=indexConstant(builder,anchor->getLoc(),a.distanceInIterations);
@@ -392,7 +439,7 @@ class Reconstruct {
     uint64_t ordinal=0;
     unsigned retirement=0;
     std::string why;
-    enum GuardKind { Residue, Previous, Next };
+    enum GuardKind { Residue, Previous, Next, First, Last, IfBody };
     struct Condition { GuardKind kind; Value value; uint64_t distance=0; };
 
     bool fail(StringRef s) { why=s.str(); return false; }
@@ -408,6 +455,21 @@ class Reconstruct {
         }
         if (auto cmp=v.getDefiningOp<arith::CmpIOp>()) {
             auto c=literal(cmp.getRhs());
+            if (c && *c>=0) {
+                if (cmp.getPredicate()==arith::CmpIPredicate::eq && cmp.getLhs()==facts.loop.getInductionVar()) {
+                    allowExpression(v); return Condition{First,v,uint64_t(*c)};
+                }
+                if (cmp.getPredicate()==arith::CmpIPredicate::sgt && cmp.getLhs()==facts.loop.getUpperBound()) {
+                    allowExpression(v); return Condition{IfBody,v,uint64_t(*c)};
+                }
+                if (auto sub=cmp.getLhs().getDefiningOp<arith::SubIOp>()) {
+                    if (cmp.getPredicate()==arith::CmpIPredicate::sle &&
+                        sub.getLhs()==facts.loop.getUpperBound() && sub.getRhs()==facts.loop.getInductionVar() &&
+                        uint64_t(*c)==facts.model.period) {
+                        allowExpression(v); return Condition{Last,v,uint64_t(*c)};
+                    }
+                }
+            }
             if (c && *c>0) {
                 if (cmp.getPredicate()==arith::CmpIPredicate::sge && cmp.getLhs()==facts.loop.getInductionVar()) {
                     allowExpression(v); return Condition{Previous,v,uint64_t(*c)};
@@ -475,23 +537,40 @@ class Reconstruct {
         } else return fail("unexpected operation added by structured emission");
         auto id=facts.phaseId.find(a.after?previous:next);
         if (id==facts.phaseId.end()) return fail("event/barrier lacks its actual original payload cut");
-        std::optional<uint64_t> bound;
+        std::optional<Condition> participation;
         for (const auto &g:guards) if (g.kind!=Residue) {
-            if (bound || (a.kind==ss::Action::Set?g.kind!=Next:
-                          a.kind==ss::Action::Wait?g.kind!=Previous:true))
-                return fail("unexpected or repeated endpoint participation guard");
-            bound=g.distance;
+            if (participation) return fail("repeated endpoint participation guards");
+            participation=g;
         }
-        a.distanceInIterations=bound.value_or(0); a.order=ordinal++;
+        if (participation) {
+            const auto &g=*participation;
+            if (g.kind==Previous || g.kind==Next) {
+                if (a.kind==ss::Action::Barrier || (a.kind==ss::Action::Set?g.kind!=Next:g.kind!=Previous))
+                    return fail("wrong periodic participation direction");
+                a.distanceInIterations=g.distance;
+            } else if (g.kind==First) a.participation=ss::Action::First;
+            else if (g.kind==Last) a.participation=ss::Action::Last;
+            else if (g.kind==IfBody) {a.participation=ss::Action::IfBody;a.guardResidue=g.distance;}
+        }
+        a.order=ordinal++;
         PeriodicScalar scalar(facts.loop?facts.loop.getInductionVar():Value());
         for (std::size_t atom=0;atom<facts.origin.size();++atom) if (facts.origin[atom]==id->second) {
+            const auto &represented=facts.model.atoms[atom];
+            if (participation && (participation->kind==First || participation->kind==Last ||
+                                 participation->kind==Previous || participation->kind==Next) &&
+                represented.segment!=ss::Segment::Body)
+                return fail("loop-local endpoint guard outside the body");
             bool active=true;
             for (const auto &g:guards) if (g.kind==Residue) {
-                auto v=scalar.evaluate(g.value,facts.model.atoms[atom].residue);
+                auto v=scalar.evaluate(g.value,represented.residue);
                 if (!v) return fail("reconstructed residue predicate is unavailable");
                 active &= bool(*v);
             }
-            if (active) { a.anchor=atom; actions.push_back(a); }
+            if (active) {
+                if (participation && participation->kind==First && participation->distance!=represented.residue)
+                    return fail("first-acquisition predicate selects the wrong original occurrence");
+                a.anchor=atom; actions.push_back(a);
+            }
         }
         allowed.insert(op); return true;
     }
@@ -544,7 +623,7 @@ public:
         // Independent safety above is not a license for lowering to broaden
         // a selected handoff. Compare RECOVERED per-boundary episode order with
         // the chosen boundaries, without tags or integer-relation synthesis.
-        using Fingerprint=std::tuple<unsigned,bool,unsigned,unsigned,unsigned,unsigned,uint64_t>;
+        using Fingerprint=std::tuple<unsigned,bool,unsigned,unsigned,unsigned,unsigned,uint64_t,unsigned,uint64_t>;
         auto fingerprints=[](const std::vector<ss::Action> &items) {
             std::map<std::pair<std::size_t,bool>,std::vector<Fingerprint>> at;
             std::vector<ss::Action> sorted(items);
@@ -553,7 +632,7 @@ public:
             });
             for (const auto &a:sorted) at[{a.anchor,a.after}].emplace_back(
                 unsigned(a.kind),a.after,unsigned(a.source.core),unsigned(a.source.pipe),
-                unsigned(a.target.pipe),a.key,a.distanceInIterations);
+                unsigned(a.target.pipe),a.key,a.distanceInIterations,unsigned(a.participation),a.guardResidue);
             return at;
         };
         if (fingerprints(actions)!=fingerprints(ss::actionsForPlan(facts.model,selected))) {
@@ -561,7 +640,7 @@ public:
         }
         out.status=Outcome::Applied; out.reason="structured occurrence cuts and emitted event protocol verified";
         out.requirements=unsigned(facts.model.requirements.size());
-        out.handoffs=unsigned(result.plan.handoffs.size()); out.barriers=unsigned(result.plan.barriers.size());
+        out.handoffs=unsigned(result.plan.handoffs.size()); out.barriers=unsigned(result.plan.barriers.size()+result.plan.firstBarriers.size());
         out.work=result.completionRelaxations+result.eventRelaxations; // statistic, never a quota
         return out;
     }
@@ -591,6 +670,7 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<vo
             plan.status==ss::Status::InvalidPlan?Outcome::InternalError:Outcome::Unsupported;
         out.reason=plan.reason; return out;
     }
+    if (!legalBoundaryOperands(facts,plan.plan,out.reason)) return out;
     SyncPayloadSnapshot snapshot(working);
     llvm::SmallPtrSet<Operation*,32> original;
     working.walk([&](Operation *op){original.insert(op);});

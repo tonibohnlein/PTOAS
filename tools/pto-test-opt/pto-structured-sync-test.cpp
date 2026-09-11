@@ -13,6 +13,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/Parser/Parser.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/FileSystem.h"
@@ -30,7 +31,7 @@ int main(int argc,char **argv) {
     auto module=parseSourceFile<ModuleOp>(argv[1],&context);
     if (!module || !llvm::hasSingleElement(module->getOps<func::FuncOp>())) return 2;
     auto arch=module->getOperation()->getAttrOfType<StringAttr>("pto.target_arch");
-    if (!arch) module->getOperation()->setAttr("pto.target_arch",StringAttr::get(&context,"a3"));
+    if (!arch || arch.getValue()=="a2a3") module->getOperation()->setAttr("pto.target_arch",StringAttr::get(&context,"a3"));
     auto function=*module->getOps<func::FuncOp>().begin();
     const auto before=printed(function); StringRef mode(argv[2]); bool changed=false;
     auto mutate=[&](func::FuncOp working) {
@@ -38,6 +39,25 @@ int main(int argc,char **argv) {
         Operation *chosen=nullptr;
         working.walk([&](Operation *op) {
             if (chosen) return;
+            if (mode=="late-boundary-set") {
+                if (auto branch=dyn_cast<scf::IfOp>(op))
+                    if (op->getParentOp()==working.getOperation() &&
+                        llvm::any_of(branch.getThenRegion().front(),[](Operation &x){return isa<SetFlagOp>(x);}))
+                        chosen=op;
+            }
+            if (mode=="wrong-first" || mode=="wrong-last" || mode=="wrong-existence") {
+                if (auto cmp=dyn_cast<arith::CmpIOp>(op)) {
+                    auto iv=dyn_cast<BlockArgument>(cmp.getLhs());
+                    bool first=cmp.getPredicate()==arith::CmpIPredicate::eq && iv &&
+                        isa<scf::ForOp>(iv.getOwner()->getParentOp());
+                    bool last=cmp.getPredicate()==arith::CmpIPredicate::sle &&
+                        bool(cmp.getLhs().getDefiningOp<arith::SubIOp>());
+                    bool existence=cmp.getPredicate()==arith::CmpIPredicate::sgt &&
+                        !cmp.getLhs().getDefiningOp<arith::SubIOp>();
+                    if ((mode=="wrong-first"&&first)||(mode=="wrong-last"&&last)||
+                        (mode=="wrong-existence"&&existence)) chosen=op;
+                }
+            }
             if ((mode=="drop-wait" || mode=="wrong-key") && isa<WaitFlagOp>(op)) chosen=op;
             if ((mode=="drop-set" || mode=="duplicate-set" || mode=="late-set") && isa<SetFlagOp>(op)) chosen=op;
             if (mode=="drop-retirement")
@@ -69,7 +89,12 @@ int main(int argc,char **argv) {
             if (!cmp) return;
             OpBuilder b(cmp); auto zero=b.create<arith::ConstantIndexOp>(cmp.getLoc(),0);
             cmp->setOperand(1,zero); changed=true;
-        } else if (mode=="late-set") {
+        } else if (mode=="wrong-first" || mode=="wrong-last" || mode=="wrong-existence") {
+            auto cmp=cast<arith::CmpIOp>(chosen);IntegerAttr value;
+            if (!matchPattern(cmp.getRhs(),m_Constant(&value)) || !value.getValue().isSignedIntN(63)) return;
+            OpBuilder b(cmp);auto wrong=b.create<arith::ConstantIndexOp>(cmp.getLoc(),value.getValue().getSExtValue()+1);
+            cmp->setOperand(1,wrong);changed=true;
+        } else if (mode=="late-set" || mode=="late-boundary-set") {
             for(Operation *next=chosen->getNextNode();next;next=next->getNextNode())
                 if(isa<TLoadOp>(next)) { chosen->moveAfter(next); changed=true; break; }
         }

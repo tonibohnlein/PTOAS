@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+// S2 loop-boundary transfers: preload -> periodic body -> epilogue, for a loop
+// that may execute zero times.
+//
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=structured gm-alias=assume-disjoint-arguments' %s | FileCheck %s --check-prefix=BOUNDARY
+
+// BOUNDARY: pto.insert_sync.logical_status = "applied"
+// BOUNDARY-SAME: pto.insert_sync.producer = "structured"
+
+// Panel A's readiness is published immediately after A's own load, under the
+// existence predicate N > 0, and before B is loaded. Publishing behind B would
+// stay memory-safe but would make A's first reader wait for B, so the position
+// of this set -- not the number of commands -- is the property under test.
+// BOUNDARY: pto.tload
+// BOUNDARY-NEXT: arith.constant
+// BOUNDARY-NEXT: arith.cmpi sgt, %arg2
+// BOUNDARY-NEXT: scf.if
+// BOUNDARY-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+
+// A zero-trip execution still carries a real Load A -> store requirement, so
+// that publication is unconditional rather than guarded by the loop.
+// BOUNDARY: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+
+// Panel B receives its own separate publication after its own load.
+// BOUNDARY-NEXT: pto.tload
+// BOUNDARY-NEXT: arith.constant
+// BOUNDARY-NEXT: arith.cmpi sgt, %arg2
+// BOUNDARY-NEXT: scf.if
+// BOUNDARY-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+
+// Entry is acquired once at the first occurrence (iv == 0), not re-acquired
+// every iteration.
+// BOUNDARY: scf.for
+// BOUNDARY: arith.cmpi eq, %arg4
+// BOUNDARY-NEXT: scf.if
+// BOUNDARY-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+
+// The reuse release is published at the last occurrence, expressed as
+// upper - iv <= period so that iv + period is never formed.
+// BOUNDARY: pto.tabs
+// BOUNDARY-NEXT: arith.subi %arg2, %arg4
+// BOUNDARY-NEXT: arith.constant
+// BOUNDARY-NEXT: arith.cmpi sle
+// BOUNDARY-NEXT: scf.if
+// BOUNDARY-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+
+// The post-loop overwrite acquires that release only when the loop executed.
+// BOUNDARY: arith.cmpi sgt, %arg2
+// BOUNDARY-NEXT: scf.if
+// BOUNDARY-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @preload_body_epilogue(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>, %n: index, %take: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 512 : i64
+    %a2 = arith.constant 1024 : i64
+    %a3 = arith.constant 1536 : i64
+    %a = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 16x16xf16>
+    %x = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 16x16xf16>
+    %y = pto.alloc_tile addr = %a3 : !pto.tile_buf<vec, 16x16xf16>
+    %view = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %outview = pto.make_tensor_view %dst, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %outpart = pto.partition_view %outview, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    scf.for %iv = %c0 to %n step %c1 {
+      pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%y : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tstore ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%outpart : !pto.partition_tensor_view<16x16xf16>)
+    return
+  }
+}

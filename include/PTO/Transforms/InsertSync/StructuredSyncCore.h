@@ -46,19 +46,24 @@ struct Target {
     bool available(Lane source, Lane target, unsigned key) const;
 };
 
-// An atom occurs once at t = period*k + residue. 'order' is the order of
+// A Body atom occurs once at t = period*k + residue. Prelude/Epilogue
+// atoms execute exactly once before/after the loop, even for zero trips.
+// Boundary atoms have residue zero. Original payload order is unchanged.
+// 'order' is the order of
 // original payloads within t, not an arbitrary phase ID. All occurrences are
 // clipped by 0 <= t < tripCount. Thus a finite execution is a PREFIX of the
 // admitted periodic schedule. No enumeration depends on tripCount.
+enum class Segment : uint8_t { Prelude, Body, Epilogue };
 struct Atom {
     uint64_t residue = 0;
     uint64_t order = 0;
     Lane lane;
+    Segment segment = Segment::Body; // one-shot boundaries of ONE loop invocation
 };
 enum class Property : uint8_t { Completion, AccResource, Visibility };
 struct Requirement {
     std::size_t source = 0, target = 0;
-    uint64_t distance = 0; // target epoch - source epoch
+    uint64_t distance = 0; // Body/Body: target epoch - source epoch; boundary: zero
     Property property = Property::Completion;
 };
 struct Model {
@@ -78,6 +83,7 @@ struct Handoff {
 struct Plan {
     std::vector<Handoff> handoffs;
     std::vector<std::size_t> barriers; // before these original payloads
+    std::vector<std::size_t> firstBarriers; // once, before the first occurrence of a body atom
 };
 enum class Status : uint8_t { Applied, Unsupported, AllocationFailure, InvalidPlan };
 struct Result {
@@ -97,14 +103,20 @@ struct Action {
     uint64_t order = 0;
     Lane source, target;
     unsigned key = 0;
-    uint64_t distanceInIterations = 0;
-    // Set: execute iff matching target t+distance exists.
-    // Wait: execute iff matching source t-distance exists.
+    uint64_t distanceInIterations = 0; // Every only; boundary forms keep zero
+    enum Participation : uint8_t { Every, First, Last, IfBody } participation = Every;
+    uint64_t guardResidue = 0; // IfBody only: execute iff tripCount > guardResidue
+    // First/Last select the first/last occurrence of the anchored body atom.
+    // IfBody pairs with one of those and tests N > guardResidue outside the loop.
+    // Every Set: execute iff matching target t+distance exists.
+    // Every Wait: execute iff matching source t-distance exists.
     // Barrier: distance must be zero. No event token is consumed.
 };
 
-// The latest ordinary occurrence of source before target. A recurring self
-// access is in the preceding epoch. No must-alias or definite-write claim.
+// The latest ordinary occurrence of source before target. A boundary
+// requirement uses distance zero; its endpoint segments specify Once->First,
+// Last->Once, or Once->Once. It is NOT an invented periodic epoch.
+// A recurring self access is in the preceding epoch. No must-alias or definite-write claim.
 std::optional<uint64_t> priorDistance(const Model &, std::size_t source, std::size_t target);
 std::optional<uint64_t> iterationDistance(const Model &, const Handoff &);
 

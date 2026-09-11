@@ -54,20 +54,32 @@ struct Expanded {
 // from set fire to the next source command is invented. This oracle does not
 // use the production two-layer cut matrices or production event pairing.
 static Expanded expand(const Model &m,const std::vector<Action> &actions,uint64_t trips) {
-    struct Item { uint64_t t,rank; unsigned side; uint64_t actionOrder;
+    struct Item { Segment segment; uint64_t t,rank; unsigned side; uint64_t actionOrder;
         std::size_t atom; const Action *action; };
     std::vector<Item> items;
-    for(uint64_t t=0;t<trips;++t)for(std::size_t p=0;p<m.atoms.size();++p) {
-        if(m.recurring?t%m.period!=m.atoms[p].residue:t!=m.atoms[p].residue)continue;
-        items.push_back({t,m.atoms[p].order,1,0,p,nullptr});
-        for(const auto &a:actions)if(a.anchor==p) {
-            bool active=a.kind==Action::Set?a.distanceInIterations<trips-t:
-                a.kind==Action::Wait?t>=a.distanceInIterations:true;
-            if(active)items.push_back({t,m.atoms[p].order,a.after?2u:0u,a.order,p,&a});
+    for(std::size_t p=0;p<m.atoms.size();++p) {
+        const auto &atom=m.atoms[p];
+        auto append=[&](uint64_t t) {
+            items.push_back({atom.segment,t,atom.order,1,0,p,nullptr});
+            for(const auto &a:actions)if(a.anchor==p) {
+                bool active=true;
+                if (a.participation==Action::IfBody) active=trips>a.guardResidue;
+                else if (a.participation==Action::First) active=t==atom.residue;
+                else if (a.participation==Action::Last) active=trips-t<=m.period;
+                else if (atom.segment==Segment::Body) active=a.kind==Action::Set?a.distanceInIterations<trips-t:
+                    a.kind==Action::Wait?t>=a.distanceInIterations:true;
+                if(active)items.push_back({atom.segment,t,atom.order,a.after?2u:0u,a.order,p,&a});
+            }
+        };
+        if (atom.segment!=Segment::Body) append(0);
+        else for(uint64_t t=0;t<trips;++t) {
+            if(m.recurring?t%m.period!=atom.residue:t!=atom.residue)continue;
+            append(t);
         }
     }
     std::sort(items.begin(),items.end(),[](const auto&a,const auto&b){
-        return std::tie(a.t,a.rank,a.side,a.actionOrder)<std::tie(b.t,b.rank,b.side,b.actionOrder);});
+        return std::tie(a.segment,a.t,a.rank,a.side,a.actionOrder)<
+               std::tie(b.segment,b.t,b.rank,b.side,b.actionOrder);});
     Expanded x;
     std::map<Lane,unsigned> previous;
     std::map<Lane,std::vector<unsigned>> completed;
@@ -111,7 +123,8 @@ static bool finiteCorrect(const Model &m,const std::vector<Action> &actions,uint
         for(const auto &p:x.payload)if(p.first.first==r.source) {
             uint64_t pt=p.first.second*m.period+m.atoms[r.source].residue;
             uint64_t qt=q.first.second*m.period+m.atoms[r.target].residue;
-            if(std::make_pair(pt,m.atoms[r.source].order)>=std::make_pair(qt,m.atoms[r.target].order))continue;
+            if(std::make_tuple(m.atoms[r.source].segment,pt,m.atoms[r.source].order)>=
+               std::make_tuple(m.atoms[r.target].segment,qt,m.atoms[r.target].order))continue;
             if(!x.reaches(p.second.second,q.second.first))return false;
         }
     for(const auto &f:x.episodes)for(std::size_t i=1;i<f.second.size();++i)
@@ -223,7 +236,154 @@ int main(){
         for(uint64_t trips=0;trips<=2*m.period+1;++trips)
             require(finiteCorrect(m,a,trips),"random finite asynchronous reference");
     }
+    uint64_t boundaryAccepted=0,boundaryRefused=0;
+    Model bridges;bridges.period=3;
+    bridges.atoms={{0,0,{Core::AIV,Pipe::MTE2},Segment::Prelude},
+                   {0,1,{Core::AIV,Pipe::MTE2},Segment::Prelude},
+                   {0,2,{Core::AIV,Pipe::V}}, {1,3,{Core::AIV,Pipe::V}},
+                   {2,4,{Core::AIV,Pipe::V}},
+                   {0,5,{Core::AIV,Pipe::MTE3},Segment::Epilogue}};
+    hazard(bridges,0,2);hazard(bridges,0,3);hazard(bridges,1,4);
+    hazard(bridges,2,5);hazard(bridges,3,5);hazard(bridges,4,5);
+    auto bridge=challenge(bridges,"first/last cross-region handoffs");++boundaryAccepted;
+    auto bridgeActions=actionsForPlan(bridges,bridge.plan);
+    for (uint64_t trips=1;trips<11;++trips) {
+        auto x=expand(bridges,bridgeActions,trips);
+        require(!x.reaches(x.payload.at({1,0}).second,x.payload.at({2,0}).first),
+                "independent later preload was acquired by first reader");
+    }
+    Plan partial;
+    for (const auto &h:bridge.plan.handoffs) if(h.source==0&&h.target==2)partial.handoffs.push_back(h);
+    require(supplies(bridges,partial,bridges.requirements[0]),"supply query depends on unrelated unresolved requirements");
+    require(!supplies(bridges,partial,bridges.requirements[2]),"unacquired second preload was inferred");
+    unsigned entryCount=0;
+    for (const auto &a:bridgeActions) if(a.kind==Action::Wait&&a.participation==Action::First)++entryCount;
+    require(entryCount==2,"repeated readers acquired the same preload again");
+    unsigned prematureWitnesses=0;
+    for(std::size_t i=0;i<bridgeActions.size();++i) {
+        auto bad=bridgeActions;bad.erase(bad.begin()+i);
+        require(verify(bridges,bad).status!=Status::Applied,"missing boundary endpoint accepted");
+        bad=bridgeActions;
+        if(bad[i].participation==Action::IfBody) {
+            ++bad[i].guardResidue;
+            require(verify(bridges,bad).status!=Status::Applied,"wrong boundary population accepted");
+        }
+        bad=bridgeActions;
+        if(bad[i].participation==Action::Last) {
+            bad[i].participation=Action::First;
+            require(verify(bridges,bad).status!=Status::Applied,"first reader substituted for last reader");
+            if (!finiteCorrect(bridges,bad,10)) ++prematureWitnesses;
+        }
+        bad=bridgeActions;
+        if(bad[i].participation==Action::First) {
+            bad[i].participation=Action::Every;
+            require(verify(bridges,bad).status!=Status::Applied,"repeated consuming wait accepted");
+        }
+    }
+    require(prematureWitnesses>0,"finite oracle missed every premature release witness");
+    auto zero=bridges;hazard(zero,0,5);
+    auto z=challenge(zero,"direct zero-trip bypass");++boundaryAccepted;
+    bool bypass=false;for(const auto &h:z.plan.handoffs)if(h.source==0&&h.target==5)bypass=true;
+    require(bypass,"loop completion used on zero-trip bypass");
+    // A first same-pipe barrier supplies the preload once, not every iteration.
+    Model same;same.period=2;
+    same.atoms={{0,0,{Core::AIV,Pipe::MTE2},Segment::Prelude},
+                {0,1,{Core::AIV,Pipe::MTE2}}, {1,2,{Core::AIV,Pipe::MTE2}},
+                {0,3,{Core::AIV,Pipe::V},Segment::Epilogue}};
+    hazard(same,0,1);hazard(same,0,2);hazard(same,1,3);hazard(same,2,3);
+    auto sm=challenge(same,"first-only barrier and final release");++boundaryAccepted;
+    require(sm.plan.firstBarriers.size()==1,"entry barrier repeats unnecessarily");
+    Model fanout;fanout.atoms={{0,0,{Core::AIV,Pipe::MTE2},Segment::Prelude},
+        {0,1,{Core::AIV,Pipe::V}}, {0,2,{Core::AIV,Pipe::MTE3}},
+        {0,3,{Core::AIV,Pipe::MTE2},Segment::Epilogue}};
+    for(auto e:{std::pair<unsigned,unsigned>{0,1},{0,2},{1,3},{2,3},{0,3}})hazard(fanout,e.first,e.second);
+    auto fo=challenge(fanout,"all consumer lanes release before overwrite");++boundaryAccepted;
+    auto fa=actionsForPlan(fanout,fo.plan);
+    fa.erase(std::remove_if(fa.begin(),fa.end(),[](const Action &a){
+        return a.kind!=Action::Barrier && a.source.pipe==Pipe::MTE3 && a.target.pipe==Pipe::MTE2;
+    }),fa.end());
+    require(verify(fanout,fa).status!=Status::Applied,"one reader lane was silently forgotten");
+    require(!finiteCorrect(fanout,fa,3),"finite oracle missed outstanding second reader");
+    Model mixed;mixed.atoms={{0,0,{Core::AIV,Pipe::MTE2},Segment::Prelude},
+        {0,1,{Core::AIV,Pipe::V}}, {0,2,{Core::AIV,Pipe::MTE2}}, {0,3,{Core::AIV,Pipe::V}}};
+    hazard(mixed,0,1);hazard(mixed,2,3);hazard(mixed,3,2);hazard(mixed,2,2);
+    auto mix=challenge(mixed,"one allocation sees boundary and recurring streams");++boundaryAccepted;
+    auto ma=actionsForPlan(mixed,mix.plan);
+    std::optional<unsigned> bodyKey;
+    for(const auto &a:ma)if(a.kind==Action::Set&&a.source.pipe==Pipe::MTE2&&a.participation==Action::Every)bodyKey=a.key;
+    require(bool(bodyKey),"mixed fixture lost recurring handoff");
+    for(auto &a:ma)if(a.kind!=Action::Barrier&&a.source.pipe==Pipe::MTE2&&a.participation!=Action::Every)a.key=*bodyKey;
+    require(verify(mixed,ma).status!=Status::Applied,"boundary/recurrence key collision accepted");
+    auto tight=mixed;tight.target.compilerKeys={0};
+    require(construct(tight).status==Status::AllocationFailure,"boundary scarcity silently serialized");
+    auto noBoundary=same;noBoundary.atoms[0].segment=static_cast<Segment>(99);
+    require(construct(noBoundary).status==Status::Unsupported,"invalid segment accepted");
+    auto largeBoundary=bridges;largeBoundary.period=uint64_t(INT64_MAX);
+    auto lb=construct(largeBoundary);
+    require(lb.status==Status::Applied && lb.completionRelaxations<1000000,
+            "large numeric boundary period was expanded");
+    // Hand-transcribed static storage summary of the pinned QK input, NOT a
+    // native import result. The native gate below remains required.
+    {
+    struct QKAccess {unsigned space;uint64_t begin,end;bool write;};
+Model m;std::vector<std::vector<QKAccess>> access;
+auto phase=[&](Pipe p,Segment segment,std::vector<QKAccess> a){m.atoms.push_back({0,m.atoms.size(),{Core::AIC,p},segment});access.push_back(a);};
+phase(Pipe::MTE2,Segment::Prelude,{{1,0,4096,true}});
+phase(Pipe::MTE2,Segment::Prelude,{{1,4096,8192,true}});
+for(unsigned half=0;half<2;++half){
+phase(Pipe::MTE2,Segment::Body,{{1,8192,73728,true}});
+phase(Pipe::MTE1,Segment::Body,{{1,half*4096,(half+1)*4096,false},{2,0,2048,true}});
+phase(Pipe::MTE1,Segment::Body,{{1,8192,73728,false},{3,32768,65536,true}});
+phase(Pipe::MTE1,Segment::Body,{{1,half*4096,(half+1)*4096,false},{2,2048,4096,true}});
+phase(Pipe::MTE1,Segment::Body,{{1,8192,73728,false},{3,0,32768,true}});
+phase(Pipe::M,Segment::Body,{{2,0,2048,false},{3,32768,65536,false},{4,0,16384,true}});
+phase(Pipe::M,Segment::Body,{{2,2048,4096,false},{3,0,32768,false},{4,0,16384,false},{4,0,16384,true}});
+phase(Pipe::FIX,Segment::Body,{{4,0,16384,false},{5,0,1,true}});
+}
+for(std::size_t p=0;p<access.size();++p)for(std::size_t q=0;q<access.size();++q){
+auto d=priorDistance(m,p,q);if(!d)continue;bool conflict=false,acc=false;
+for(auto a:access[p])for(auto b:access[q])if(a.space==b.space&&a.begin<b.end&&b.begin<a.end){
+bool resource=a.space==4&&m.atoms[p].lane!=m.atoms[q].lane;conflict|=a.write||b.write||resource;acc|=resource;}
+if(conflict)m.requirements.push_back({p,q,*d,acc?Property::AccResource:Property::Completion});}
+    auto qk=challenge(m,"QK-shaped cross-region summary");++boundaryAccepted;
+    auto qkGraph=expand(m,actionsForPlan(m,qk.plan),3);
+    require(!qkGraph.reaches(qkGraph.payload.at({1,0}).second,qkGraph.payload.at({3,0}).first),
+            "QK second Q preload blocks first panel extraction");
+    require(!qkGraph.reaches(qkGraph.payload.at({2,0}).second,qkGraph.payload.at({3,0}).first),
+            "QK independent K load blocks first panel extraction");
+    }
+    // Randomized complete conflict populations, not hand-picked channel names.
+    // Finite checking independently tests every older conflicting occurrence.
+    for(unsigned test=0;test<800;++test) {
+        Model m;m.period=1+rng()%4;
+        unsigned n=3+rng()%7;
+        std::vector<unsigned> storage(n),writes(n);
+        for(unsigned i=0;i<n;++i) {
+            Segment segment=i==0?Segment::Prelude:i+1==n?Segment::Epilogue:Segment(rng()%3);
+            m.atoms.push_back({segment==Segment::Body?rng()%m.period:0,i,
+                              {Core::AIV,lanes[rng()%3]},segment});
+            storage[i]=rng()%3;writes[i]=rng()%2;
+        }
+        for(unsigned p=0;p<n;++p)for(unsigned q=0;q<n;++q)
+            if(storage[p]==storage[q]&&(writes[p]||writes[q]))hazard(m,p,q);
+        auto result=construct(m);
+        if(result.status!=Status::Applied) {
+            require(result.status==Status::AllocationFailure,"unexpected boundary construction failure");
+            ++boundaryRefused;continue;
+        }
+        ++boundaryAccepted;++acceptedModels;
+        auto actions=actionsForPlan(m,result.plan);
+        for(uint64_t trips=0;trips<=4*m.period+1;++trips) {
+            if (!finiteCorrect(m,actions,trips)) {
+                std::cerr<<"boundary test "<<test<<" trip "<<trips<<" period "<<m.period<<"\n";
+                for (unsigned j=0;j<n;++j) std::cerr<<j<<":"<<unsigned(m.atoms[j].segment)<<","<<m.atoms[j].residue<<","<<unsigned(m.atoms[j].lane.pipe)<<" storage "<<storage[j]<<" write "<<writes[j]<<"\n";
+                require(false,"random boundary finite asynchronous reference");
+            }
+            require(true,"random boundary finite asynchronous reference");
+        }
+    }
     std::cout<<"{\"status\":\"passed\",\"checks\":"<<checks<<",\"accepted_models\":"<<acceptedModels
         <<",\"finite_executions\":"<<finiteRuns<<",\"random_allocation_refusals\":"<<refused
+        <<",\"boundary_accepted_models\":"<<boundaryAccepted<<",\"boundary_allocation_refusals\":"<<boundaryRefused
         <<",\"seconds\":"<<std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count()<<"}\n";
 }
