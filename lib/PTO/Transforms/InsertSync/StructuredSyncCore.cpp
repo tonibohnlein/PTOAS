@@ -360,6 +360,11 @@ bool mlir::pto::structured_sync::supplies(const Model &m,const Plan &p,const Req
     return c.has(r);
 }
 Result mlir::pto::structured_sync::verify(const Model &m,const std::vector<Action> &actions) {
+    for (const auto &a:actions)
+        if (a.invocation!=Action::Local || a.invocationBodyGuard || a.invocationGuardResidue) {
+            Result rejected; rejected.status=Status::InvalidPlan;
+            rejected.reason="invocation action passed to a one-invocation verifier"; return rejected;
+        }
     if (hasBoundaries(m)) return verifyRegion(m,actions);
     Result out;
     if (!validModel(m,out.reason)) return out;
@@ -793,3 +798,510 @@ Result constructRegion(const Model &m) {
     return out;
 }
 } // namespace
+
+//===----------------------------------------------------------------------===//
+// S3: re-entry of an S2 region. No Presburger sets, trip unrolling, quota,
+// solver, all-path enumeration or iteration drain participates in this code.
+//===----------------------------------------------------------------------===//
+namespace {
+bool loopAtom(const Model &m,std::size_t p) {
+    return m.recurring && m.atoms[p].segment==Segment::Body;
+}
+std::optional<uint64_t> pairExistence(const Model &m,std::size_t p,std::size_t q) {
+    std::optional<uint64_t> r;
+    for (auto a:{p,q}) if (loopAtom(m,a)) r=r?std::max(*r,m.atoms[a].residue):m.atoms[a].residue;
+    return r;
+}
+bool validInvocationModel(const InvocationModel &m,std::string &why) {
+    if (!validModel(m.region,why)) return false;
+    if (!m.region.recurring && (m.region.period!=1 ||
+        std::any_of(m.region.atoms.begin(),m.region.atoms.end(),[](const Atom &a){return a.residue!=0;}))) {
+        why="a repeated straight-line region must have one static occurrence per atom";return false;
+    }
+    for (const auto &r:m.carried) {
+        if (r.source>=m.region.atoms.size() || r.target>=m.region.atoms.size()) {
+            why="cross-invocation requirement has an invalid endpoint";return false;
+        }
+        if (r.property!=Property::Completion && r.property!=Property::AccResource &&
+            r.property!=Property::Visibility) {
+            why="unknown cross-invocation property";return false;
+        }
+    }
+    return true;
+}
+
+// Body occurrence epochs are a*K+b, a in {0,1}, for N=D*K+s. Retained
+// occurrences are first/last payloads and first/last actual event episodes.
+// Comparisons and existence can change only at integer roots of differences
+// of these affine forms. Cuts below partition K by those roots; they do NOT
+// approximate arbitrary N by executing a chosen number of iterations.
+struct Epoch {
+    int a=0;
+    int64_t b=0;
+};
+struct InterfaceCase { uint64_t tail=0;int64_t k=0; };
+struct Point {
+    std::size_t atom=0;
+    int64_t epoch=0;
+    bool operator<(const Point &b) const {return std::tie(atom,epoch)<std::tie(b.atom,b.epoch);}
+    bool operator==(const Point &b) const {return atom==b.atom&&epoch==b.epoch;}
+};
+struct End {
+    Point point;
+    bool after=false;
+    uint64_t order=0;
+};
+struct LocalEpisode { End set,wait; Lane source,target;unsigned key=0; };
+struct BarrierPort { End at;Lane lane; };
+struct Interface {
+    std::vector<Point> payloads;
+    std::vector<LocalEpisode> episodes;
+    std::vector<BarrierPort> barriers;
+    std::vector<std::optional<Point>> first,last;
+};
+
+int64_t lastEpoch(const Model &m,std::size_t p,const InterfaceCase &c) {
+    return loopAtom(m,p)?c.k-(m.atoms[p].residue>=c.tail?1:0):0;
+}
+bool exists(const Model &m,std::size_t p,const InterfaceCase &c) {
+    return !loopAtom(m,p)||lastEpoch(m,p,c)>=0;
+}
+bool residueExists(const Model &m,uint64_t r,const InterfaceCase &c) {
+    return m.recurring && (c.k>0 || r<c.tail);
+}
+using EndRank=std::tuple<Segment,int64_t,uint64_t,uint64_t,unsigned,uint64_t>;
+EndRank endRank(const Model &m,const End &e) {
+    const auto &a=m.atoms[e.point.atom];
+    return {a.segment,e.point.epoch,a.residue,a.order,e.after?2u:0u,e.order};
+}
+
+std::vector<InterfaceCase> interfaceCases(const Model &m,const InvocationPlan &plan) {
+    const auto &p=plan.local;
+    if (!m.recurring) return {{0,0}};
+    std::set<uint64_t> tails{0};
+    for (const auto &a:m.atoms) if (a.segment==Segment::Body && a.residue+1<m.period)
+        tails.insert(a.residue+1);
+    for (const auto &b:plan.barriers) if (b.bodyGuard && b.guardResidue+1<m.period)
+        tails.insert(b.guardResidue+1);
+    std::vector<InterfaceCase> out;
+    for (uint64_t tail:tails) {
+        std::vector<Epoch> forms{{0,0}};
+        for (std::size_t i=0;i<m.atoms.size();++i) if (loopAtom(m,i))
+            forms.push_back({1,m.atoms[i].residue<tail?0:-1});
+        for (const auto &h:p.handoffs) if (periodicEdge(m,h)) {
+            // construct/verify admits latest ordinary sources only (0 or 1).
+            // Avoid narrowing a malformed distance before the model gate.
+            if (h.distance>1) return {};
+            int64_t d=int64_t(h.distance);
+            forms.push_back({0,d});
+            forms.push_back({1,(m.atoms[h.target].residue<tail?0:-1)-d});
+        }
+        std::set<int64_t> cuts{0};
+        for (const auto &x:forms) for (const auto &y:forms) if (x.a!=y.a) {
+            // Both slopes are 0/1, so this division is exact. Offsets are
+            // -2..1 for the admitted one-invocation transfers.
+            const int64_t root=(y.b-x.b)/(x.a-y.a);
+            if (root>=0) cuts.insert(root);
+            if (root>=-1) cuts.insert(root+1);
+        }
+        for (auto k:cuts) out.push_back({tail,k});
+    }
+    return out;
+}
+
+Interface interfaceFor(const Model &m,const Plan &p,const InterfaceCase &c,const std::vector<Action> &actions) {
+    Interface out;out.first.resize(m.atoms.size());out.last.resize(m.atoms.size());
+    std::set<Point> points;
+    for (std::size_t a=0;a<m.atoms.size();++a) if (exists(m,a,c)) {
+        out.first[a]=Point{a,0};out.last[a]=Point{a,lastEpoch(m,a,c)};
+        points.insert(*out.first[a]);points.insert(*out.last[a]);
+    }
+    const std::size_t handoffBase=p.barriers.size()+p.firstBarriers.size();
+    for (std::size_t j=0;j<p.handoffs.size();++j) {
+        const auto &h=p.handoffs[j];
+        if (!out.first[h.source]||!out.first[h.target]) continue;
+        auto append=[&](Point s,Point w) {
+            points.insert(s);points.insert(w);
+            out.episodes.push_back({{s,true,actions[handoffBase+2*j].order},
+                                    {w,false,actions[handoffBase+2*j+1].order},
+                                    m.atoms[h.source].lane,m.atoms[h.target].lane,h.key});
+        };
+        if (periodicEdge(m,h) && m.recurring) {
+            const int64_t d=int64_t(h.distance),end=lastEpoch(m,h.target,c)-d;
+            if (end<0) continue; // no matching publication/acquisition exists
+            append({h.source,0},{h.target,d});
+            if (end>0) append({h.source,end},{h.target,end+d});
+        } else if (loopAtom(m,h.source)) append(*out.last[h.source],*out.first[h.target]);
+        else append(*out.first[h.source],*out.first[h.target]);
+    }
+    for (std::size_t j=0;j<p.barriers.size();++j) {
+        const auto a=p.barriers[j];if (!out.first[a])continue;
+        out.barriers.push_back({{*out.first[a],false,actions[j].order},m.atoms[a].lane});
+        if (!(*out.first[a]==*out.last[a]))
+            out.barriers.push_back({{*out.last[a],false,actions[j].order},m.atoms[a].lane});
+    }
+    for (std::size_t j=0;j<p.firstBarriers.size();++j) {
+        const auto a=p.firstBarriers[j];if(out.first[a])
+            out.barriers.push_back({{*out.first[a],false,actions[p.barriers.size()+j].order},m.atoms[a].lane});
+    }
+    out.payloads.assign(points.begin(),points.end());return out;
+}
+
+// Mathematical episode reconstruction may group by key. Graph construction
+// must nevertheless use the ACTUAL order recovered at each payload boundary.
+// A signature identifies a command; it does not establish its execution order.
+using InvocationSignature=std::tuple<unsigned,std::size_t,bool,Lane,Lane,unsigned,uint64_t,
+    unsigned,uint64_t,unsigned,bool,uint64_t>;
+InvocationSignature invocationSignature(const Action &a) {
+    return {unsigned(a.kind),a.anchor,a.after,a.source,a.target,a.key,a.distanceInIterations,
+            unsigned(a.participation),a.guardResidue,unsigned(a.invocation),a.invocationBodyGuard,a.invocationGuardResidue};
+}
+std::vector<Action> orderedInvocationActions(const Model &m,const InvocationPlan &p,
+                                            const std::vector<Action> *recovered) {
+    auto result=actionsForInvocations({m,{}},p);
+    if(recovered) {
+        std::map<InvocationSignature,uint64_t> order;
+        for(const auto &a:*recovered)order.emplace(invocationSignature(a),a.order);
+        for(auto &a:result)a.order=order.at(invocationSignature(a));
+    }
+    return result;
+}
+
+// Finite proof graph of TWO symbolic adjacent invocations. No incoming
+// cross-invocation wait is assumed in the first copy. This makes the proof
+// valid for invocation zero as well as for every induction step. Outgoing
+// publication fire in copy 1 is retained to check consume-before-next-rearm.
+// Missing intermediate inner occurrences only LOSE paths; every retained
+// edge has an actual target-semantic counterpart for the complete K cell.
+class InvocationGraph {
+    const Model &m;
+    std::vector<Action> orderedActions;
+    Interface ports;
+    std::vector<std::vector<std::size_t>> graph;
+    mutable std::map<std::size_t,std::vector<bool>> cache;
+    std::map<std::tuple<unsigned,std::size_t,int64_t>,std::pair<std::size_t,std::size_t>> payload;
+    using Key=std::tuple<Lane,Lane,unsigned>;
+    struct EpisodeNodes { End source;std::size_t fire=0,take=0; };
+    std::map<Key,std::vector<EpisodeNodes>> local[2];
+    std::vector<std::pair<std::size_t,std::size_t>> reentryReuse;
+    static constexpr std::size_t Absent=std::numeric_limits<std::size_t>::max();
+    std::size_t node() {graph.emplace_back();return graph.size()-1;}
+    void edge(std::size_t a,std::size_t b) {graph[a].push_back(b);}
+public:
+    mutable uint64_t visits=0;
+    explicit InvocationGraph(const Model &model,const InvocationPlan &p,const InterfaceCase &c,
+                             const std::vector<Action> *recovered=nullptr)
+        :m(model),orderedActions(orderedInvocationActions(m,p,recovered)),
+         ports(interfaceFor(m,p.local,c,orderedActions)) {
+        struct Item { unsigned invocation=0;End at;int kind=0;Lane source,target;unsigned key=0;
+                      std::size_t episode=0;bool reentry=false; };
+        std::vector<Item> items;
+        const auto &allActions=orderedActions;
+        const auto localCount=actionsForPlan(m,p.local).size();
+        std::vector<std::pair<std::size_t,std::size_t>> localNodes[2];
+        localNodes[0].resize(ports.episodes.size(),{Absent,Absent});
+        localNodes[1].resize(ports.episodes.size(),{Absent,Absent});
+        std::vector<std::size_t> carrySets[2],carryWaits;
+        carrySets[0].assign(p.handoffs.size(),Absent);carrySets[1].assign(p.handoffs.size(),Absent);
+        carryWaits.assign(p.handoffs.size(),Absent);
+        for (unsigned inv=0;inv<2;++inv) {
+            for (auto pt:ports.payloads) items.push_back({inv,{pt,false,0},0,m.atoms[pt.atom].lane,{},0,0,false});
+            for (std::size_t j=0;j<ports.episodes.size();++j) {
+                const auto &e=ports.episodes[j];
+                items.push_back({inv,e.set,1,e.source,e.target,e.key,j,false});
+                items.push_back({inv,e.wait,2,e.source,e.target,e.key,j,false});
+            }
+            for (const auto &b:ports.barriers)items.push_back({inv,b.at,3,b.lane,b.lane,0,0,false});
+            for (std::size_t j=0;j<p.handoffs.size();++j) {
+                const auto &h=p.handoffs[j];
+                if (!ports.last[h.source]||!ports.first[h.target]) continue;
+                const auto &s=allActions[localCount+2*j],&w=allActions[localCount+2*j+1];
+                items.push_back({inv,{*ports.last[h.source],true,s.order},1,s.source,s.target,h.key,j,true});
+                if (inv)items.push_back({inv,{*ports.first[h.target],false,w.order},2,w.source,w.target,h.key,j,true});
+            }
+            if (inv)for (std::size_t j=0;j<p.barriers.size();++j) {
+                const auto &b=p.barriers[j];
+                if (!ports.first[b.target] || (b.bodyGuard&&!residueExists(m,b.guardResidue,c)))continue;
+                const auto &a=allActions[localCount+2*p.handoffs.size()+j];
+                items.push_back({inv,{*ports.first[b.target],false,a.order},3,a.source,a.target,0,0,true});
+            }
+        }
+        std::sort(items.begin(),items.end(),[&](const auto &a,const auto &b) {
+            const auto rank=[&](const auto &item) {
+                const auto &atom=m.atoms[item.at.point.atom];
+                return std::make_tuple(item.invocation,atom.segment,item.at.point.epoch,atom.residue,
+                    atom.order,item.kind==0?1u:(item.at.after?2u:0u),item.at.order);
+            };return rank(a)<rank(b);
+        });
+        std::map<Lane,std::size_t> previous;
+        std::map<Lane,std::vector<std::size_t>> completions;
+        auto issue=[&](Lane lane) {
+            auto n=node();auto it=previous.find(lane);if(it!=previous.end())edge(it->second,n);
+            previous[lane]=n;return n;
+        };
+        for (const auto &item:items) {
+            if (item.kind==0) {
+                auto start=issue(item.source),done=node();edge(start,done);
+                if(m.target.synchronous(item.source))previous[item.source]=done;
+                completions[item.source].push_back(done);
+                payload[{item.invocation,item.at.point.atom,item.at.point.epoch}]={start,done};
+            } else if (item.kind==1) {
+                auto queued=issue(item.source),fire=node();edge(queued,fire);
+                for(auto done:completions[item.source])edge(done,fire);
+                if(item.reentry)carrySets[item.invocation][item.episode]=fire;
+                else localNodes[item.invocation][item.episode].first=fire;
+                // No fire -> next source issue edge: set is not a drain.
+            } else if (item.kind==2) {
+                auto take=issue(item.target);
+                if(item.reentry)carryWaits[item.episode]=take;
+                else localNodes[item.invocation][item.episode].second=take;
+            } else {
+                auto pass=issue(item.source);for(auto done:completions[item.source])edge(done,pass);
+            }
+        }
+        for(unsigned inv=0;inv<2;++inv)for(std::size_t j=0;j<ports.episodes.size();++j) {
+            const auto &e=ports.episodes[j];const auto nodes=localNodes[inv][j];
+            edge(nodes.first,nodes.second);
+            local[inv][{e.source,e.target,e.key}].push_back({e.set,nodes.first,nodes.second});
+        }
+        for(std::size_t j=0;j<p.handoffs.size();++j)if(carrySets[0][j]!=Absent) {
+            edge(carrySets[0][j],carryWaits[j]);
+            reentryReuse.push_back({carryWaits[j],carrySets[1][j]});
+        }
+    }
+    bool reaches(std::size_t a,std::size_t b) const {
+        auto it=cache.find(a);
+        if(it==cache.end()) {
+            std::vector<bool> seen(graph.size(),false);std::vector<std::size_t> pending{a};seen[a]=true;
+            while(!pending.empty()) {auto p=pending.back();pending.pop_back();
+                for(auto q:graph[p]) {++visits;if(!seen[q]){seen[q]=true;pending.push_back(q);}}
+            }
+            it=cache.emplace(a,std::move(seen)).first;
+        }
+        return it->second[b];
+    }
+    bool has(const InvocationRequirement &r) const {
+        if(!ports.last[r.source]||!ports.first[r.target])return true;
+        if(r.property==Property::Visibility)return false;
+        const auto s=*ports.last[r.source],t=*ports.first[r.target];
+        return reaches(payload.at({0,s.atom,s.epoch}).second,payload.at({1,t.atom,t.epoch}).first);
+    }
+    bool recycles() const {
+        for(const auto &f:local[0]) {
+            const auto order=[&](const auto &a,const auto &b){return endRank(m,a.source)<endRank(m,b.source);};
+            const auto &next=local[1].at(f.first);
+            const auto &last=*std::max_element(f.second.begin(),f.second.end(),order);
+            const auto &first=*std::min_element(next.begin(),next.end(),order);
+            if(!reaches(last.take,first.fire))return false;
+        }
+        for(auto e:reentryReuse)if(!reaches(e.first,e.second))return false;
+        return true;
+    }
+    bool acyclic() const {
+        std::vector<std::size_t> indegree(graph.size(),0),ready;
+        for(const auto &row:graph)for(auto q:row)++indegree[q];
+        for(std::size_t i=0;i<graph.size();++i)if(!indegree[i])ready.push_back(i);
+        std::size_t n=0;while(!ready.empty()){auto p=ready.back();ready.pop_back();++n;
+            for(auto q:graph[p])if(--indegree[q]==0)ready.push_back(q);}
+        return n==graph.size();
+    }
+};
+
+std::vector<std::unique_ptr<InvocationGraph>> invocationGraphs(const Model &m,const InvocationPlan &p,
+                                                                const std::vector<Action> *recovered=nullptr) {
+    std::vector<std::unique_ptr<InvocationGraph>> result;
+    for(const auto &c:interfaceCases(m,p))result.emplace_back(new InvocationGraph(m,p,c,recovered));
+    return result;
+}
+bool invocationCovered(const std::vector<std::unique_ptr<InvocationGraph>> &g,const InvocationRequirement &r) {
+    return !g.empty()&&std::all_of(g.begin(),g.end(),[&](const auto &x){return x->has(r);});
+}
+bool sameLocalShape(const Plan &a,const Plan &b) {
+    if(a.barriers!=b.barriers||a.firstBarriers!=b.firstBarriers||a.handoffs.size()!=b.handoffs.size())return false;
+    for(std::size_t i=0;i<a.handoffs.size();++i) {
+        const auto &x=a.handoffs[i],&y=b.handoffs[i];
+        if(std::tie(x.source,x.target,x.distance)!=std::tie(y.source,y.target,y.distance))return false;
+    }
+    return true;
+}
+} // namespace
+
+std::vector<Action> mlir::pto::structured_sync::actionsForInvocations(
+    const InvocationModel &m,const InvocationPlan &p) {
+    auto actions=actionsForPlan(m.region,p.local);uint64_t order=actions.size();
+    for(const auto &h:p.handoffs) {
+        if(h.source>=m.region.atoms.size()||h.target>=m.region.atoms.size())return {};
+        Lane s=m.region.atoms[h.source].lane,t=m.region.atoms[h.target].lane;
+        Action set{Action::Set,h.source,true,order++,s,t,h.key,0};
+        Action wait{Action::Wait,h.target,false,order++,s,t,h.key,0};
+        set.invocation=Action::ToNextInvocation;wait.invocation=Action::FromPreviousInvocation;
+        if(loopAtom(m.region,h.source))set.participation=Action::Last;
+        if(loopAtom(m.region,h.target))wait.participation=Action::First;
+        if(auto r=pairExistence(m.region,h.source,h.target)) {
+            set.invocationBodyGuard=wait.invocationBodyGuard=true;
+            set.invocationGuardResidue=wait.invocationGuardResidue=*r;
+        }
+        actions.push_back(set);actions.push_back(wait);
+    }
+    for(const auto &b:p.barriers) {
+        if(b.target>=m.region.atoms.size())return {};
+        auto lane=m.region.atoms[b.target].lane;
+        Action a{Action::Barrier,b.target,false,order++,lane,lane,0,0};
+        a.invocation=Action::FromPreviousInvocation;
+        if(loopAtom(m.region,b.target))a.participation=Action::First;
+        a.invocationBodyGuard=b.bodyGuard;a.invocationGuardResidue=b.guardResidue;
+        actions.push_back(a);
+    }
+    return actions;
+}
+
+InvocationResult mlir::pto::structured_sync::verifyInvocations(
+    const InvocationModel &m,const std::vector<Action> &actions) {
+    InvocationResult out;if(!validInvocationModel(m,out.reason))return out;
+    out.status=Status::InvalidPlan;
+    using Key=std::tuple<Lane,Lane,unsigned>;
+    std::vector<Action> local;std::map<Key,std::vector<const Action*>> carried;std::set<Key> localKeys;
+    std::set<std::tuple<std::size_t,bool,uint64_t>> positions;
+    for(const auto &a:actions) {
+        if(a.anchor>=m.region.atoms.size()||!positions.emplace(a.anchor,a.after,a.order).second) {
+            out.reason="invalid or duplicate invocation action point";return out;
+        }
+        if(a.invocation==Action::Local) {
+            if(a.invocationBodyGuard||a.invocationGuardResidue) {
+                out.reason="unexpected invocation predicate on local action";return out;
+            }
+            local.push_back(a);if(a.kind!=Action::Barrier)localKeys.insert({a.source,a.target,a.key});continue;
+        }
+        if((a.invocation!=Action::ToNextInvocation&&a.invocation!=Action::FromPreviousInvocation)||
+            a.distanceInIterations||a.guardResidue||(!a.invocationBodyGuard&&a.invocationGuardResidue)||
+            (a.invocationBodyGuard&&(!m.region.recurring||a.invocationGuardResidue>=m.region.period))) {
+            out.reason="invalid invocation participation domain";return out;
+        }
+        const auto expected=loopAtom(m.region,a.anchor)?(a.kind==Action::Set?Action::Last:Action::First):Action::Every;
+        if(a.participation!=expected) {out.reason="re-entry endpoint lost its first/last occurrence";return out;}
+        if(a.kind==Action::Barrier) {
+            if(a.invocation!=Action::FromPreviousInvocation||a.after||a.source!=a.target||
+                a.source!=m.region.atoms[a.anchor].lane||!m.region.target.barrier(a.source)) {
+                out.reason="invalid re-entry barrier";return out;
+            }
+            out.plan.barriers.push_back({a.anchor,a.invocationBodyGuard,a.invocationGuardResidue});continue;
+        }
+        if((a.kind!=Action::Set&&a.kind!=Action::Wait)||!m.region.target.event(a.source,a.target)||
+            !m.region.target.available(a.source,a.target,a.key)||
+            (a.kind==Action::Set?(!a.after||a.source!=m.region.atoms[a.anchor].lane||a.invocation!=Action::ToNextInvocation):
+                (a.after||a.target!=m.region.atoms[a.anchor].lane||a.invocation!=Action::FromPreviousInvocation))) {
+            out.reason="invalid re-entry event direction or key";return out;
+        }
+        carried[{a.source,a.target,a.key}].push_back(&a);
+    }
+    auto inside=verify(m.region,local);
+    if(inside.status!=Status::Applied){out.reason="local invocation: "+inside.reason;return out;}
+    out.plan.local=std::move(inside.plan);
+    for(const auto &entry:carried) {
+        if(entry.second.size()!=2||localKeys.count(entry.first)) {
+            out.reason="re-entry key must own one pair and remain disjoint from local keys";return out;
+        }
+        auto *s=entry.second[0],*w=entry.second[1];if(s->kind==Action::Wait)std::swap(s,w);
+        if(s->kind!=Action::Set||w->kind!=Action::Wait) {out.reason="incomplete re-entry pair";return out;}
+        auto r=pairExistence(m.region,s->anchor,w->anchor);
+        if(s->invocationBodyGuard!=bool(r)||w->invocationBodyGuard!=bool(r)||
+            (r&&(s->invocationGuardResidue!=*r||w->invocationGuardResidue!=*r))) {
+            out.reason="re-entry endpoints disagree on existence";return out;
+        }
+        out.plan.handoffs.push_back({s->anchor,w->anchor,s->key});
+    }
+    const auto expected=actionsForInvocations(m,out.plan);
+    std::set<InvocationSignature> wanted,actual;
+    for(const auto &a:expected)wanted.insert(invocationSignature(a));
+    for(const auto &a:actions)actual.insert(invocationSignature(a));
+    if(wanted.size()!=expected.size() || actual.size()!=actions.size() || wanted!=actual) {
+        out.reason="reconstructed invocation command population is ambiguous";return out;
+    }
+    auto graphs=invocationGraphs(m.region,out.plan,&actions);out.proofViews=graphs.size();
+    if(graphs.empty()){out.reason="unsupported invocation interface";return out;}
+    for(const auto &r:m.carried)if(!invocationCovered(graphs,r)) {
+        out.reason="cross-invocation reader/write requirement not supplied";return out;
+    }
+    for(const auto &g:graphs) {
+        if(!g->acyclic()||!g->recycles()) {out.reason="cross-invocation consumption-before-rearm not established";return out;}
+        out.graphVisits+=g->visits;
+    }
+    out.status=Status::Applied;out.reason="local transfer and inductive invocation interface verified";return out;
+}
+
+bool mlir::pto::structured_sync::suppliesInvocation(
+    const InvocationModel &m,const InvocationPlan &p,const InvocationRequirement &r) {
+    std::string why;if(!validInvocationModel(m,why)||r.source>=m.region.atoms.size()||r.target>=m.region.atoms.size())return false;
+    // This query requires a well-formed local plan. It is not a safety override.
+    if(verify(m.region,actionsForPlan(m.region,p.local)).status!=Status::Applied)return false;
+    for(const auto &h:p.handoffs)if(h.source>=m.region.atoms.size()||h.target>=m.region.atoms.size())return false;
+    for(const auto &b:p.barriers)if(b.target>=m.region.atoms.size())return false;
+    return invocationCovered(invocationGraphs(m.region,p),r);
+}
+
+InvocationResult mlir::pto::structured_sync::constructInvocations(const InvocationModel &m) {
+    InvocationResult out;if(!validInvocationModel(m,out.reason))return out;
+    for(const auto &r:m.carried)if(r.property==Property::Visibility) {
+        out.reason="visibility has no qualified invocation realization";return out;
+    }
+    auto inner=construct(m.region);
+    if(inner.status!=Status::Applied){out.status=inner.status;out.reason=inner.reason;return out;}
+    out.plan.local=inner.plan;
+    auto graphs=invocationGraphs(m.region,out.plan);
+    for(auto q:schedule(m.region)) {
+        using Group=std::tuple<Lane,Segment,uint64_t>;
+        std::map<Group,InvocationRequirement> latest;
+        for(const auto &r:m.carried)if(r.target==q && m.region.atoms[r.source].lane!=m.region.atoms[q].lane &&
+                                     !invocationCovered(graphs,r)) {
+            const auto &a=m.region.atoms[r.source];Group group{a.lane,a.segment,a.residue};auto it=latest.find(group);
+            if(it==latest.end()||a.order>m.region.atoms[it->second.source].order)latest[group]=r;
+        }
+        for(const auto &entry:latest) {
+            const auto &r=entry.second;if(invocationCovered(graphs,r))continue;
+            if(!m.region.target.event(m.region.atoms[r.source].lane,m.region.atoms[q].lane)) {
+                out.reason="cross-invocation event direction unavailable";return out;
+            }
+            out.plan.handoffs.push_back({r.source,q,0});graphs=invocationGraphs(m.region,out.plan);
+        }
+    }
+    for(auto q:schedule(m.region)) {
+        bool missing=false,unconditional=false;std::optional<uint64_t> residue;
+        for(const auto &r:m.carried)if(r.target==q&&m.region.atoms[r.source].lane==m.region.atoms[q].lane&&
+                                     !invocationCovered(graphs,r)) {
+            missing=true;auto e=pairExistence(m.region,r.source,r.target);
+            if(!e)unconditional=true;else residue=residue?std::min(*residue,*e):*e;
+        }
+        if(!missing)continue;
+        if(!m.region.target.barrier(m.region.atoms[q].lane)) {out.reason="cross-invocation barrier unavailable";return out;}
+        out.plan.barriers.push_back({q,!unconditional&&bool(residue),unconditional?0:residue.value_or(0)});
+        graphs=invocationGraphs(m.region,out.plan);
+    }
+    for(const auto &r:m.carried)if(!invocationCovered(graphs,r)) {
+        out.status=Status::InvalidPlan;out.reason="invocation staircase left an original requirement";return out;
+    }
+    // Both populations are now selected. Keep re-entry streams on distinct
+    // keys and reassign the unchanged local plan from the remaining pool.
+    // This is conservative allocation, not a reset, acknowledgement or drain.
+    auto reserved=m.region;using Domain=std::pair<Lane,Lane>;
+    std::map<Domain,std::set<unsigned>> used;
+    for(auto &h:out.plan.handoffs) {
+        Domain d{m.region.atoms[h.source].lane,m.region.atoms[h.target].lane};bool assigned=false;
+        for(unsigned k:m.region.target.compilerKeys)if(m.region.target.available(d.first,d.second,k)&&!used[d].count(k)) {
+            h.key=k;used[d].insert(k);reserved.target.reservations.push_back({d.first,d.second,k});assigned=true;break;
+        }
+        if(!assigned){out.status=Status::AllocationFailure;out.reason="distinct re-entry keys do not fit";return out;}
+    }
+    auto local=construct(reserved);
+    if(local.status!=Status::Applied){out.status=local.status;out.reason="local reallocation: "+local.reason;return out;}
+    if(!sameLocalShape(inner.plan,local.plan)) {
+        out.status=Status::InvalidPlan;out.reason="allocation changed the local occurrence boundaries";return out;
+    }
+    out.plan.local=std::move(local.plan);
+    auto checked=verifyInvocations(m,actionsForInvocations(m,out.plan));
+    if(checked.status!=Status::Applied) {
+        // A missing causal reuse path is not evidence of hardware infeasibility.
+        checked.status=Status::AllocationFailure;return checked;
+    }
+    out.status=Status::Applied;out.reason="structured nested invocation composition";
+    out.proofViews=checked.proofViews;out.graphVisits=checked.graphVisits;return out;
+}

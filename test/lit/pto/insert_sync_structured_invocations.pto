@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+// S3 re-entrant invocations: an S2 region repeated by an enclosing loop. The
+// region's storage is reused between invocations, so entering invocation j+1
+// must order against invocation j rather than starting from a fresh state.
+//
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=structured gm-alias=assume-disjoint-arguments' %s | FileCheck %s --check-prefix=NESTED
+
+// NESTED: pto.insert_sync.logical_status = "applied"
+// NESTED-SAME: pto.insert_sync.producer = "structured"
+
+// Re-entry orders against the previous invocation, guarded by that frame's own
+// index rather than by a flattened iteration counter.
+// NESTED: scf.for %arg6 = %c0 to %arg4
+// NESTED-NEXT: arith.constant
+// NESTED-NEXT: arith.cmpi ne, %arg6
+// NESTED-NEXT: scf.if
+// NESTED-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+
+// Panel A's readiness still publishes after A's own load, at EVERY invocation
+// and not only at function entry. Because this sits inside the wrapper loop,
+// a broadened publication would be caught here as well as on the first pass.
+// NESTED: pto.tload
+// NESTED-NEXT: arith.constant
+// NESTED-NEXT: arith.cmpi sgt, %arg2
+// NESTED-NEXT: scf.if
+// NESTED-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+
+// The zero-trip requirement keeps its own unconditional publication, and only
+// afterwards is the second panel loaded.
+// NESTED: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+// NESTED: pto.tload
+// NESTED: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
+
+// The inner region keeps its S2 first/last participation.
+// NESTED: scf.for %arg7 = %c0 to %arg2
+// NESTED: arith.cmpi eq, %arg7
+// NESTED-NEXT: scf.if
+// NESTED-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+
+// Handing off to the next invocation tests that frame's remaining trips, so an
+// inner wrapper resetting to zero cannot be mistaken for the end of the nest.
+// NESTED: arith.subi %arg4, %arg6
+// NESTED-NEXT: arith.constant
+// NESTED-NEXT: arith.cmpi sgt
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @reentrant_region(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>, %n: index, %take: i1, %outer: index, %middle: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 512 : i64
+    %a2 = arith.constant 1024 : i64
+    %a3 = arith.constant 1536 : i64
+    %a = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 16x16xf16>
+    %x = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 16x16xf16>
+    %y = pto.alloc_tile addr = %a3 : !pto.tile_buf<vec, 16x16xf16>
+    %view = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %outview = pto.make_tensor_view %dst, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %outpart = pto.partition_view %outview, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    scf.for %outer_iv = %c0 to %outer step %c1 {
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+      scf.for %iv = %c0 to %n step %c1 {
+        pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%y : !pto.tile_buf<vec, 16x16xf16>)
+      }
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%outpart : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}
