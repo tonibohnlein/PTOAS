@@ -25,6 +25,8 @@ static uint64_t invocationRuns=0,invocationAccepted=0,invocationRefused=0;
 static void invocationTests();
 static void ordinalTests();
 static void startupTests();
+static void s5Tests();
+static uint64_t refinementModels=0,refinementTrials=0,refinementRemoved=0;
 static void invocationQKTest(const InvocationModel &);
 static void require(bool p,const char *message) {
     ++checks;
@@ -399,8 +401,12 @@ if(conflict)m.requirements.push_back({p,q,*d,acc?Property::AccResource:Property:
         }
     }
     invocationTests();
+    s5Tests();
     ordinalTests();startupTests();
     std::cout<<"{\"status\":\"passed\",\"checks\":"<<checks<<",\"accepted_models\":"<<acceptedModels
+             <<",\"refinement_models\":"<<refinementModels
+             <<",\"refinement_trials\":"<<refinementTrials
+             <<",\"refinement_removed\":"<<refinementRemoved
         <<",\"finite_executions\":"<<finiteRuns<<",\"random_allocation_refusals\":"<<refused
         <<",\"boundary_accepted_models\":"<<boundaryAccepted<<",\"boundary_allocation_refusals\":"<<boundaryRefused
         <<",\"invocation_accepted_models\":"<<invocationAccepted<<",\"invocation_allocation_refusals\":"<<invocationRefused
@@ -776,4 +782,129 @@ static void startupTests() {
         }
     }
     require(accepted>100&&accepted+refused==150,"startup random population did not exercise native core");
+}
+
+
+// S5 deliberately does not change the constructor's baseline plan. Native
+// integration applies this refinement only to a complete local periodic unit.
+static Result checkRefinement(const Model &m,const Plan &before) {
+    auto r=refinePeriodicHandoffs(m,before);
+    require(r.status==Status::Applied,"periodic refinement failed");
+    ++refinementModels;refinementTrials+=r.refinementAttempts;refinementRemoved+=r.removedHandoffs;
+    require(r.refinementAttempts==before.handoffs.size(),"not exactly one reverse sweep");
+    require(r.plan.barriers==before.barriers&&r.plan.firstBarriers==before.firstBarriers,
+            "refinement changed a barrier");
+    require(r.plan.handoffs.size()+r.removedHandoffs==before.handoffs.size(),"refinement accounting");
+    std::size_t j=0;
+    for(const auto &h:before.handoffs) if(j<r.plan.handoffs.size()) {
+        const auto &q=r.plan.handoffs[j];
+        if(std::tie(h.source,h.target,h.distance,h.key)==std::tie(q.source,q.target,q.distance,q.key))++j;
+    }
+    require(j==r.plan.handoffs.size(),"refinement moved an endpoint, recolored or reordered a survivor");
+    auto actions=actionsForPlan(m,r.plan);
+    require(verify(m,actions).status==Status::Applied,"refined actual commands fail fresh checking");
+    for(uint64_t n:{0,1,2,3,4,5,7,16,31})require(finiteCorrect(m,actions,n),"refinement broke finite async oracle");
+    return r;
+}
+static void s5Tests() {
+    // Equal ordinal periods are NOT a certificate for a guard's interval cuts.
+    // This arithmetic witness backs the RAW native refusal fixtures; it is not
+    // presented as execution of PeriodicScalar or a native PTO compilation.
+    const auto a=OrdinalResidue::get({0,6},4),b=OrdinalResidue::get({0,6},12);
+    require(a&&b&&a->period==2&&b->period==2,"co-periodic counterexample domain");
+    require(a->at(0)==b->at(0)&&a->at(1)!=b->at(1),"co-periodic comparison changes inside unsplit interval");
+    const auto c=OrdinalResidue::get({0,2},6),d=OrdinalResidue::get({0,2},2);
+    require(c&&d&&c->period==3&&d->period==1&&c->at(0)==d->at(0)&&c->at(1)!=d->at(1),
+            "nonliteral constant-period comparison counterexample");
+
+    // Four-use physical-conflict model, including conservative same-root GM
+    // output overlap. Numeric cells stand for distinct physical ranges/spaces.
+    struct Access {std::vector<unsigned> reads,writes;};
+    Model m;m.period=2;std::vector<Access> access;
+    for(unsigned slot=0;slot<2;++slot)for(unsigned i=0;i<9;++i) {
+        Pipe lane=i==0?Pipe::MTE2:(i%2?Pipe::V:Pipe::MTE3);
+        m.atoms.push_back({slot,slot*9+i,{Core::AIV,lane}});
+        if(!i)access.push_back({{10},{slot}});
+        else if(i%2)access.push_back({{slot},{2+slot}});
+        else access.push_back({{2+slot},{11}});
+    }
+    auto overlap=[](const auto &x,const auto &y) {
+        for(auto a:x)for(auto b:y)if(a==b)return true;
+        return false;
+    };
+    for(std::size_t p=0;p<access.size();++p)for(std::size_t q=0;q<access.size();++q)
+        if(overlap(access[p].writes,access[q].reads)||overlap(access[p].reads,access[q].writes)||
+           overlap(access[p].writes,access[q].writes))hazard(m,p,q);
+    auto baseline=construct(m);
+    require(baseline.status==Status::Applied,"four-use baseline refused");
+    require(baseline.plan.handoffs.size()==19&&baseline.plan.barriers.size()==2,"four-use baseline changed; review witness");
+    auto refined=checkRefinement(m,baseline.plan);
+    require(refined.plan.handoffs.size()==18&&refined.plan.barriers.size()==2&&refined.removedHandoffs==1,
+            "four-use post-barrier cleanup did not remove its redundant pair");
+    for(uint64_t n:{0,1,2,3,4,5,7,16,31})
+        require(finiteCorrect(m,actionsForPlan(m,baseline.plan),n),"four-use baseline oracle");
+
+    // This reverse handoff has no memory requirement of its own, but is needed
+    // to acknowledge each publication before the next iteration rearms its key.
+    Model acknowledgment;acknowledgment.atoms={{0,0,{Core::AIV,Pipe::MTE2}},
+                                             {0,1,{Core::AIV,Pipe::V}}};
+    hazard(acknowledgment,0,1);
+    Plan cycle;cycle.handoffs={{0,1,0,0},{1,0,1,0}};
+    auto kept=checkRefinement(acknowledgment,cycle);
+    require(kept.removedHandoffs==0,"removed an event needed only for consumption-before-rearm");
+    Plan noAck=cycle;noAck.handoffs.pop_back();
+    require(supplies(acknowledgment,noAck,acknowledgment.requirements[0]),"memory-only negative control");
+    require(verify(acknowledgment,actionsForPlan(acknowledgment,noAck)).status!=Status::Applied,
+            "memory coverage silently substituted for event protocol proof");
+    require(!finiteCorrect(acknowledgment,actionsForPlan(acknowledgment,noAck),3),"oracle misses unsafe event reuse");
+
+    // Challenge bounded deletion on independent random physical conflicts.
+    std::mt19937 random(0x5005);const Pipe lanes[]={Pipe::MTE2,Pipe::V,Pipe::MTE3};
+    for(unsigned test=0;test<160;++test) {
+        Model x;x.period=1+random()%3;unsigned count=3+random()%5;
+        std::vector<unsigned> cell(count),write(count);
+        for(unsigned i=0;i<count;++i) {
+            x.atoms.push_back({random()%x.period,i,{Core::AIV,lanes[random()%3]}});
+            cell[i]=random()%3;write[i]=random()%2;
+        }
+        for(unsigned p=0;p<count;++p)for(unsigned q=0;q<count;++q)
+            if(cell[p]==cell[q]&&(write[p]||write[q]))hazard(x,p,q);
+        auto before=construct(x);
+        if(before.status==Status::Applied)checkRefinement(x,before.plan);
+        else require(before.status==Status::AllocationFailure,"unexpected random refinement baseline failure");
+    }
+
+    Model emptyLedger=m;emptyLedger.requirements.clear();
+    Plan malformed;malformed.handoffs={{999,0,1,0}};
+    require(refinePeriodicHandoffs(emptyLedger,malformed).status==Status::InvalidPlan,
+            "invalid refinement endpoints accepted on an empty requirement ledger");
+
+    // Tail views are skipped in bulk coverage/construction, NOT in an explicit
+    // supplies query. Such a query need not be recorded in the model's ledger.
+    Model boundary;boundary.atoms={{0,0,{Core::AIV,Pipe::MTE2},Segment::Prelude},
+                                  {0,1,{Core::AIV,Pipe::V},Segment::Epilogue}};
+    require(construct(boundary).status==Status::Applied,"independent boundary model refused");
+    require(!supplies(boundary,{},Requirement{0,1,0,Property::Completion}),
+            "lazy tail view made an unrecorded exit requirement vacuously true");
+    Plan direct;direct.handoffs={{0,1,0,0}};
+    require(supplies(boundary,direct,Requirement{0,1,0,Property::Completion}),"explicit exit query lost handoff");
+    require(refinePeriodicHandoffs(boundary,direct).status==Status::Unsupported,
+            "periodic-only refinement applied to a boundary protocol");
+
+    // Preserve precise failure categories. Only a genuine rearm failure may
+    // be reclassified as allocation; missing completion stays InvalidPlan.
+    Model once=acknowledgment;once.recurring=false;
+    auto local=construct(once);require(local.status==Status::Applied,"one-shot classification fixture");
+    InvocationPlan repeated;repeated.local=local.plan;
+    InvocationModel invocation{once,{}};
+    auto actions=actionsForInvocations(invocation,repeated);
+    auto reuse=verifyInvocations(invocation,actions);
+    require(reuse.status==Status::InvalidPlan&&reuse.failure==InvocationFailure::EventReuse&&
+            reuse.constructionStatus()==Status::AllocationFailure,"rearm failure category lost");
+    invocation.carried.push_back({1,0,Property::Completion});
+    auto missing=verifyInvocations(invocation,actions);
+    require(missing.status==Status::InvalidPlan&&missing.failure==InvocationFailure::Completion&&
+            missing.constructionStatus()==Status::InvalidPlan,"missing completion mislabeled as allocation");
+    InvocationResult progress;progress.status=Status::InvalidPlan;progress.failure=InvocationFailure::Progress;
+    require(progress.constructionStatus()==Status::InvalidPlan,"progress failure mislabeled as allocation");
 }

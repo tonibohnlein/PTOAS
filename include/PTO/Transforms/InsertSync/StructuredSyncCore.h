@@ -96,6 +96,7 @@ struct Result {
     Plan plan;
     uint64_t completionRelaxations = 0;
     uint64_t eventRelaxations = 0;
+    uint64_t refinementAttempts = 0, removedHandoffs = 0;
 };
 
 // Actual commands recovered from emission. Order at a common boundary is
@@ -135,6 +136,14 @@ std::optional<uint64_t> iterationDistance(const Model &, const Handoff &);
 // decline a feasible plan that requires a different sharing policy.
 Result construct(const Model &);
 
+// One bounded reverse-deletion sweep over an already allocated periodic plan.
+// Every accepted deletion rechecks original requirements AND consumption-before-
+// rearm with the remaining numeric keys unchanged. No endpoint motion, barrier
+// deletion, recoloring, or repeated fixed-point optimization is performed.
+// Only a single local periodic body is admitted: callers must NOT refine the
+// local component of a re-entrant invocation independently of its interface.
+Result refinePeriodicHandoffs(const Model &, const Plan &);
+
 // Fresh checking uses the ORIGINAL requirements and RECOVERED actual actions.
 // It does not consume the planner's coverage receipts or an assumed pairing.
 Result verify(const Model &, const std::vector<Action> &);
@@ -171,11 +180,20 @@ struct InvocationPlan {
     std::vector<InvocationHandoff> handoffs;
     std::vector<InvocationBarrier> barriers;
 };
+enum class InvocationFailure : uint8_t { None, Completion, Progress, EventReuse };
 struct InvocationResult {
     Status status = Status::Unsupported;
     std::string reason;
     InvocationPlan plan;
     uint64_t proofViews = 0, graphVisits = 0;
+    InvocationFailure failure = InvocationFailure::None;
+    // Only failure to prove concrete recycling may be classified as allocation.
+    // An invalid construction/coverage/progress result remains an internal error
+    // at the native boundary; never turn it into permission to try another policy.
+    Status constructionStatus() const {
+        return status == Status::InvalidPlan && failure == InvocationFailure::EventReuse
+            ? Status::AllocationFailure : status;
+    }
 };
 InvocationResult constructInvocations(const InvocationModel &);
 InvocationResult verifyInvocations(const InvocationModel &, const std::vector<Action> &);

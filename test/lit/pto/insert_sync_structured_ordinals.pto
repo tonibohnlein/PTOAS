@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+// A shifted lower bound and a constant positive stride are admitted by
+// reasoning about the iteration ordinal i = lower + step*k. The loop, its
+// induction uses and the payload are unchanged, so the emitted predicates
+// must stay in the ORIGINAL coordinates with step-scaled constants rather
+// than referring to an invented ordinal counter.
+//
+// This also guards the opposite failure mode from the co-periodic refusal in
+// insert_sync_structured_guard_refusal.pto: a residue compared against a
+// literal still has period three here, and must remain admitted.
+//
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=structured gm-alias=assume-disjoint-arguments' %s | FileCheck %s --check-prefix=ORDINAL
+
+// ORDINAL: pto.insert_sync.logical_status = "applied"
+// ORDINAL-SAME: pto.insert_sync.producer = "structured"
+
+// The original loop is preserved: lower 1, step 2, and the original modulus.
+// ORDINAL: scf.for %arg3 = %{{.*}} to %arg2 step %{{.*}}
+// ORDINAL-NEXT: arith.remui %arg3
+// ORDINAL-NEXT: arith.cmpi eq
+// ORDINAL-NEXT: scf.if
+
+// "A matching previous occurrence exists" is i >= B + step*distance, which is
+// 1 + 2*3 = 7 in original coordinates -- not a comparison against an ordinal.
+// ORDINAL: arith.constant 7
+// ORDINAL-NEXT: arith.cmpi sge, %arg3
+// ORDINAL-NEXT: scf.if
+// ORDINAL-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+
+// ORDINAL: pto.tload
+// ORDINAL-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+
+// "A matching future occurrence exists" is upper - i > step*distance, which is
+// 2*3 = 6. The subtraction keeps the executing-context form so that i + step*d
+// is never built.
+// ORDINAL: arith.constant 6
+// ORDINAL-NEXT: arith.subi %arg2, %arg3
+// ORDINAL-NEXT: arith.cmpi sgt
+// ORDINAL-NEXT: scf.if
+// ORDINAL-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @ordinal(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>, %upper: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %lower = arith.constant 1 : index
+    %step = arith.constant 2 : index
+    %depth = arith.constant 3 : index
+    %wanted = arith.constant 1 : index
+    %ia = arith.constant 0 : i64
+    %oa = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %ia : !pto.tile_buf<vec, 16x16xf16>
+    %x = pto.alloc_tile addr = %oa : !pto.tile_buf<vec, 16x16xf16>
+    %sv = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %dv = pto.make_tensor_view %dst, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %in = pto.partition_view %sv, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %out = pto.partition_view %dv, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    scf.for %iv = %lower to %upper step %step {
+      %slot = arith.remui %iv, %depth : index
+      %active = arith.cmpi eq, %slot, %wanted : index
+      scf.if %active {
+        pto.tload ins(%in : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tstore ins(%x : !pto.tile_buf<vec, 16x16xf16>) outs(%out : !pto.partition_tensor_view<16x16xf16>)
+      }
+    }
+    return
+  }
+}

@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+// Two residue expressions can share an effective ordinal period while their
+// comparison still changes truth value inside that period. For iv = 6*k:
+//
+//   ordinal k | iv | iv % 4 | iv % 12 | (iv % 4) != (iv % 12)
+//           0 |  0 |      0 |       0 | false
+//           1 |  6 |      2 |       6 | true
+//
+// Both operands have effective period two, and neither is a literal, so a
+// partition built only from the common period may cut nothing. Evaluating the
+// guard at residue zero alone would classify the whole arm as inactive while
+// the payload still executes at iv = 6 -- the accesses would silently leave
+// the synchronization model rather than the input being rejected. Construction
+// must therefore refuse until an exact truth partition is available.
+//
+// RUN: not pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=structured gm-alias=assume-disjoint-arguments' %s 2>&1 | FileCheck %s --check-prefix=REFUSE --implicit-check-not=pto.set_flag --implicit-check-not=pto.wait_flag
+
+// REFUSE: structured synchronization construction failed: unsupported; payload guard is outside the ordinal periodic/initialization fragment
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @coperiodic_guard(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>, %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %step = arith.constant 6 : index
+    %m1 = arith.constant 4 : index
+    %m2 = arith.constant 12 : index
+    %ia = arith.constant 0 : i64
+    %oa = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %ia : !pto.tile_buf<vec, 16x16xf16>
+    %x = pto.alloc_tile addr = %oa : !pto.tile_buf<vec, 16x16xf16>
+    %sv = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %in = pto.partition_view %sv, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    scf.for %iv = %c0 to %n step %step {
+      %left = arith.remui %iv, %m1 : index
+      %right = arith.remui %iv, %m2 : index
+      %active = arith.cmpi ne, %left, %right : index
+      scf.if %active {
+        pto.tload ins(%in : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+      }
+    }
+    return
+  }
+}

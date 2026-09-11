@@ -46,6 +46,12 @@ def main():
                  '--insert-sync-gm-alias=assume-disjoint-arguments','--emit-pto-ir',source,'-o',output]
         _,seconds=run(name,command)
         report=analyze(output)
+        if name=='four_use':
+            # Quality regression, separate from correctness: after all barriers
+            # exist, remove a redundant pair without changing survivor keys.
+            counts=report['mechanisms']
+            assert counts['sets']==counts['waits'] and counts['sets']<=18,(name,counts)
+            assert sum(counts['named'].values())<=2 and counts['PIPE_ALL']==1,(name,counts)
         unsynchronized=args.output/(name+'.unsynchronized.pto')
         run(name+'.unsynchronized',[sys.executable,'-c',SERIAL_DRIVER,args.python_root,
             '--pto-arch=a3','--pto-level=level3','--emit-pto-ir',source,'-o',unsynchronized])
@@ -72,6 +78,13 @@ def main():
             assert verdict['expected'] and verdict['atomic'],verdict
     assert len(rows)==7,rows
     fixtures=here/'structured_inputs'
+    # A common period is not an exact truth partition for comparisons of two
+    # residue-valued expressions. Refuse before dropping any physical phase.
+    for name in ('ordinal_coperiodic_compare','ordinal_periodic_constant_compare'):
+        result,_=run(name,[args.driver,fixtures/(name+'.pto'),'expect-unsupported',args.output/(name+'.pto')])
+        verdict=json.loads(result.stdout)
+        assert not verdict['accepted'] and verdict['expected'] and verdict['atomic'],verdict
+        assert 'payload guard is outside' in verdict['reason'],verdict
     for name,mutation in (('independent_preloads','none'),('independent_preloads','late-set'),
                           ('nested_loop','none'),('unknown_guard','none')):
         run(name+'.'+mutation,[args.driver,fixtures/(name+'.pto'),mutation,args.output/(name+'.'+mutation+'.pto')])
