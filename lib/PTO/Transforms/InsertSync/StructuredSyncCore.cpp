@@ -1415,3 +1415,207 @@ InvocationResult mlir::pto::structured_sync::constructInvocations(const Invocati
     out.status=Status::Applied;out.reason="structured nested invocation composition";
     out.proofViews=checked.proofViews;out.graphVisits=checked.graphVisits;return out;
 }
+
+
+//===----------------------------------------------------------------------===//
+// S6: complete local-region refinement and original-cut startup emission.
+// These utilities add no target premise and do not run on re-entry components.
+//===----------------------------------------------------------------------===//
+namespace {
+bool renderRegionPlan(const Model &m,const Plan &p,std::vector<Action> &actions) {
+    std::string reason;if(!validModel(m,reason))return false;
+    for(auto q:p.barriers)if(q>=m.atoms.size())return false;
+    for(auto q:p.firstBarriers)if(q>=m.atoms.size())return false;
+    for(const auto &h:p.handoffs)if(!iterationDistance(m,h))return false;
+    actions=actionsForPlan(m,p);
+    return true;
+}
+Result badRegionPlan() {
+    Result out;out.status=Status::InvalidPlan;out.reason="invalid complete-region plan endpoints";return out;
+}
+}
+Result mlir::pto::structured_sync::refineRegionHandoffs(const Model &m,const Plan &input) {
+    std::vector<Action> inputActions;
+    if(!renderRegionPlan(m,input,inputActions))return badRegionPlan();
+    auto checked=verify(m,inputActions);
+    if(checked.status!=Status::Applied)return checked;
+    Result out;out.status=Status::Applied;out.plan=input;
+    for(std::size_t i=out.plan.handoffs.size();i>0;--i) {
+        Plan trial=out.plan;
+        trial.handoffs.erase(trial.handoffs.begin()+std::ptrdiff_t(i-1));
+        ++out.refinementAttempts;
+        auto result=verify(m,actionsForPlan(m,trial));
+        out.completionRelaxations=plus(out.completionRelaxations,result.completionRelaxations);
+        out.eventRelaxations=plus(out.eventRelaxations,result.eventRelaxations);
+        if(result.status==Status::Applied) {
+            out.plan=std::move(trial);++out.removedHandoffs;
+        }
+    }
+    out.reason="complete local-region reverse deletion verified";
+    return out;
+}
+
+namespace {
+bool plainSiteAction(const Action &a) {
+    return a.invocation==Action::Local && !a.invocationBodyGuard && !a.invocationGuardResidue &&
+        a.participation==Action::Every && !a.distanceInIterations && !a.guardResidue;
+}
+bool matchingSiteActions(const Action &a,const Action &b) {
+    return plainSiteAction(a)&&plainSiteAction(b) &&
+        std::tie(a.kind,a.after,a.source,a.target,a.key)==
+        std::tie(b.kind,b.after,b.source,b.target,b.key);
+}
+bool validSiteOrigins(const Model &m,const std::vector<SiteOrigin> &origins) {
+    if(origins.size()!=m.atoms.size())return false;
+    std::map<std::pair<std::size_t,SiteOrigin::Phase>,std::size_t> identities;
+    std::map<std::size_t,Lane> lanes;
+    for(std::size_t i=0;i<origins.size();++i) {
+        const auto &o=origins[i];const auto &a=m.atoms[i];
+        if(o.phase==SiteOrigin::Other)continue;
+        if(m.period!=1||!m.recurring||a.residue ||
+           (o.phase!=SiteOrigin::Initial&&o.phase!=SiteOrigin::Steady) ||
+           a.segment!=(o.phase==SiteOrigin::Initial?Segment::Prelude:Segment::Body) ||
+           !identities.emplace(std::make_pair(o.payload,o.phase),i).second)return false;
+        auto lane=lanes.emplace(o.payload,a.lane);
+        if(!lane.second&&lane.first->second!=a.lane)return false;
+    }
+    return true;
+}
+}
+
+std::optional<std::vector<EmissionSite>> mlir::pto::structured_sync::startupEmissionSites(
+    const Model &m,const std::vector<SiteOrigin> &origins,const std::vector<Action> &actions) {
+    if(!validSiteOrigins(m,origins))return {};
+    // Processing order is stable: original integer identities, never pointers.
+    std::map<std::pair<std::size_t,bool>,std::vector<std::size_t>> points;
+    std::set<std::tuple<std::size_t,bool,uint64_t>> positions;
+    for(std::size_t i=0;i<actions.size();++i) {
+        const auto &a=actions[i];
+        if(a.anchor>=origins.size() || !positions.emplace(a.anchor,a.after,a.order).second)return {};
+        points[{origins[a.anchor].payload,a.after}].push_back(i);
+    }
+    std::vector<EmissionSite> result;
+    for(auto &point:points) {
+        auto &indices=point.second;
+        std::stable_sort(indices.begin(),indices.end(),[&](auto a,auto b){return actions[a].order<actions[b].order;});
+        std::vector<std::size_t> initial,steady;
+        bool other=false;
+        for(auto index:indices) {
+            auto phase=origins[actions[index].anchor].phase;
+            if(phase==SiteOrigin::Other){other=true;break;}
+            (phase==SiteOrigin::Initial?initial:steady).push_back(index);
+        }
+        if(other||initial.empty()||steady.empty()) {
+            for(auto i:indices)result.push_back({{i}});
+            continue;
+        }
+        // Longest common subsequence of MATCHABLE commands; merging arbitrary
+        // equal commands without this alignment could reorder a same-key FIFO.
+        const auto n=initial.size(),k=steady.size();
+        std::vector<std::vector<std::size_t>> length(n+1,std::vector<std::size_t>(k+1));
+        for(std::size_t i=n;i>0;--i)for(std::size_t j=k;j>0;--j) {
+            bool equal=matchingSiteActions(actions[initial[i-1]],actions[steady[j-1]]);
+            length[i-1][j-1]=equal?1+length[i][j]:std::max(length[i][j-1],length[i-1][j]);
+        }
+        std::size_t i=0,j=0;
+        while(i<n||j<k) {
+            if(i<n&&j<k&&matchingSiteActions(actions[initial[i]],actions[steady[j]])) {
+                result.push_back({{initial[i++],steady[j++]}});
+            } else if(i<n&&(j==k||length[i+1][j]>=length[i][j+1]))result.push_back({{initial[i++]}});
+            else result.push_back({{steady[j++]}});
+        }
+    }
+    return result;
+}
+
+Result mlir::pto::structured_sync::coalesceStartupHandoffs(
+    const Model &m,const std::vector<SiteOrigin> &origins,const Plan &input) {
+    std::vector<Action> inputActions;
+    if(!renderRegionPlan(m,input,inputActions))return badRegionPlan();
+    auto valid=verify(m,inputActions);if(valid.status!=Status::Applied)return valid;
+    Result out;out.status=Status::Applied;out.plan=input;
+    auto sites=startupEmissionSites(m,origins,actionsForPlan(m,input));
+    if(!sites){out.status=Status::InvalidPlan;out.reason="invalid original-cut startup mapping";return out;}
+    std::size_t siteCount=sites->size();
+    // One pass over boundary pairs. The population never grows; a trial only
+    // adopts an already selected recurring key with a shared ORIGINAL endpoint.
+    if(m.allowBoundaryKeyReuse&&m.recurring&&m.period==1) {
+        for(std::size_t i=0;i<out.plan.handoffs.size();++i) {
+            const auto boundary=out.plan.handoffs[i];
+            if(m.atoms[boundary.source].segment==Segment::Body||
+               m.atoms[boundary.target].segment==Segment::Body)continue;
+            for(std::size_t j=0;j<out.plan.handoffs.size();++j) {
+                const auto periodic=out.plan.handoffs[j];
+                if(m.atoms[periodic.source].segment!=Segment::Body||
+                   m.atoms[periodic.target].segment!=Segment::Body||periodic.distance ||
+                   m.atoms[boundary.source].lane!=m.atoms[periodic.source].lane||
+                   m.atoms[boundary.target].lane!=m.atoms[periodic.target].lane||
+                   out.plan.handoffs[i].key==periodic.key)continue;
+                auto common=[&](std::size_t a,std::size_t b) {
+                    return origins[a].phase==SiteOrigin::Initial&&origins[b].phase==SiteOrigin::Steady&&
+                           origins[a].payload==origins[b].payload;
+                };
+                if(!common(boundary.source,periodic.source)&&!common(boundary.target,periodic.target))continue;
+                Plan trial=out.plan;trial.handoffs[i].key=periodic.key;
+                auto actions=actionsForPlan(m,trial);auto candidate=startupEmissionSites(m,origins,actions);
+                if(!candidate||candidate->size()>=siteCount)continue;
+                ++out.rekeyAttempts;
+                auto result=verify(m,actions);
+                out.completionRelaxations=plus(out.completionRelaxations,result.completionRelaxations);
+                out.eventRelaxations=plus(out.eventRelaxations,result.eventRelaxations);
+                if(result.status!=Status::Applied)continue;
+                out.plan=std::move(trial);siteCount=candidate->size();++out.rekeyedHandoffs;
+                break;
+            }
+        }
+    }
+    out.coalescedSites=actionsForPlan(m,out.plan).size()-siteCount;
+    // Reconstruct the proposed command order independently of its old ordinals.
+    // Paired members execute in disjoint phases, but each phase's FIFO remains.
+    auto actions=actionsForPlan(m,out.plan);
+    sites=startupEmissionSites(m,origins,actions);
+    std::vector<Action> recovered;
+    for(std::size_t order=0;order<sites->size();++order)for(auto member:(*sites)[order].members) {
+        auto a=actions[member];a.order=order;recovered.push_back(a);
+    }
+    auto checked=verify(m,recovered);
+    if(checked.status!=Status::Applied)return checked;
+    out.reason="same-original-cut startup sites and whole-region key continuation verified";
+    return out;
+}
+
+
+std::optional<std::vector<HandoffAudit>> mlir::pto::structured_sync::auditRegionHandoffs(
+    const Model &m,const Plan &input) {
+    std::vector<Action> actions;
+    if(!renderRegionPlan(m,input,actions)||verify(m,actions).status!=Status::Applied)return {};
+    std::vector<HandoffAudit> out;
+    for(std::size_t i=0;i<input.handoffs.size();++i) {
+        Plan trial=input;trial.handoffs.erase(trial.handoffs.begin()+std::ptrdiff_t(i));
+        HandoffAudit a;a.handoff=i;
+        Model protocol=m;protocol.requirements.clear();
+        auto checked=verify(protocol,actionsForPlan(protocol,trial));
+        a.protocolWithout=checked.status==Status::Applied;a.protocolReason=checked.reason;
+        if(!hasBoundaries(m)) {
+            Completion c(m);
+            for(const auto &h:trial.handoffs)c.handoff(h);
+            for(auto q:trial.barriers)c.barrier(q);
+            for(std::size_t r=0;r<m.requirements.size();++r)if(!c.has(m.requirements[r]))a.completionLost.push_back(r);
+        } else {
+            BodyProjection body(m);Completion inside(body.model);
+            for(auto h:trial.handoffs)if(periodicEdge(m,h)) {
+                h.source=body.local[h.source];h.target=body.local[h.target];inside.handoff(h);
+            }
+            for(auto q:trial.barriers)if(m.atoms[q].segment==Segment::Body)inside.barrier(body.local[q]);
+            BoundaryCuts first(m,trial,true);auto tails=hasExitRequirements(m)?tailCuts(m,trial):Tails{};
+            for(std::size_t r=0;r<m.requirements.size();++r) {
+                auto x=m.requirements[r];bool has=false;
+                if(boundaryRequirement(m,x))has=m.atoms[x.target].segment==Segment::Epilogue?allHave(tails,x):first.has(x);
+                else {x.source=body.local[x.source];x.target=body.local[x.target];has=inside.has(x);}
+                if(!has)a.completionLost.push_back(r);
+            }
+        }
+        out.push_back(std::move(a));
+    }
+    return out;
+}

@@ -26,6 +26,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/JSON.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -404,6 +405,20 @@ struct NativeFacts {
         return PeriodicScalar(body?body.getInductionVar():Value(),induction,
                               first?0:ordinalOffset,first,startup,knownUpper);
     }
+    std::vector<ss::SiteOrigin> siteOrigins() const {
+        std::vector<ss::SiteOrigin> result;
+        for(std::size_t a=0;a<origin.size();++a) {
+            // Coalescing currently admits period-one startup only. Other
+            // represented atoms keep one command per existing generated site.
+            auto phase=ss::SiteOrigin::Other;
+            if(startup && wrappers.empty() && model.period==1) {
+                if(roles[a]==AtomRole::Initial)phase=ss::SiteOrigin::Initial;
+                if(roles[a]==AtomRole::Steady)phase=ss::SiteOrigin::Steady;
+            }
+            result.push_back({phase,origin[a]});
+        }
+        return result;
+    }
     ss::InvocationModel invocationModel() const {return {model,carried};}
     bool fail(StringRef message) { reason=message.str(); return false; }
 
@@ -638,16 +653,25 @@ Value emitOrdinal(OpBuilder &builder,Location loc,const NativeFacts &facts) {
     if(facts.induction.step!=1)value=builder.create<arith::DivUIOp>(loc,value,indexConstant(builder,loc,uint64_t(facts.induction.step)));
     return value;
 }
-void emitNative(NativeFacts &facts,const std::vector<ss::Action> &actions) {
-    std::map<std::pair<Operation*,bool>,std::vector<ss::Action>> points;
-    for (auto a:actions) points[{facts.physical.phases[facts.origin[a.anchor]]->elementOp,a.after}].push_back(a);
+void emitNative(NativeFacts &facts,const std::vector<ss::Action> &actions,
+                const std::vector<ss::EmissionSite> &sites) {
+    // All groups have been checked before the clone is changed. Each two-member
+    // group is ONE original-cut command whose initial and steady domains cover
+    // exactly the original operation. It does not wait for a larger prefix.
+    struct Command { ss::Action action; bool phaseFree; };
+    std::map<std::pair<Operation*,bool>,std::vector<Command>> points;
+    for (const auto &site:sites) {
+        const auto &a=actions[site.members.front()];
+        points[{facts.physical.phases[facts.origin[a.anchor]]->elementOp,a.after}].push_back({a,site.members.size()==2});
+    }
     // Iterate original phases, never pointer ordering, for deterministic IR.
     for (unsigned p=0;p<facts.physical.phases.size();++p) for (bool after:{false,true}) {
         auto *anchor=facts.physical.phases[p]->elementOp;
         auto found=points.find({anchor,after}); if (found==points.end()) continue;
         OpBuilder outer(anchor);
         if (after) outer.setInsertionPointAfter(anchor);
-        for (const auto &a:found->second) {
+        for (const auto &command:found->second) {
+            const auto &a=command.action;
             OpBuilder::InsertionGuard restore(outer);
             OpBuilder builder=outer;
             auto guard=[&](Value c) {
@@ -660,7 +684,7 @@ void emitNative(NativeFacts &facts,const std::vector<ss::Action> &actions) {
                 guard(builder.create<arith::CmpIOp>(anchor->getLoc(),pred,facts.loop.getUpperBound(),lower));
             }
             const auto role=facts.roles[a.anchor];
-            if(role==AtomRole::Initial||role==AtomRole::Steady) {
+            if(!command.phaseFree&&(role==AtomRole::Initial||role==AtomRole::Steady)) {
                 auto lower=indexConstant(builder,anchor->getLoc(),uint64_t(facts.induction.lower));
                 auto pred=role==AtomRole::Initial?arith::CmpIPredicate::eq:arith::CmpIPredicate::ne;
                 guard(builder.create<arith::CmpIOp>(anchor->getLoc(),pred,facts.loop.getInductionVar(),lower));
@@ -931,7 +955,21 @@ class Reconstruct {
         }
         if(facts.caseGuard&&!caseDomain)return fail("missing original-loop empty/nonempty case predicate");
         const bool originalBody=facts.segments[id->second]==ss::Segment::Body&&bool(facts.loop);
-        if(facts.startup&&originalBody&&!phase)return fail("missing initial/steady occurrence predicate");
+        if(facts.startup&&originalBody&&!phase) {
+            unsigned initial=0,steady=0;
+            for(std::size_t atom=0;atom<facts.origin.size();++atom)if(facts.origin[atom]==id->second) {
+                initial+=facts.roles[atom]==AtomRole::Initial;
+                steady+=facts.roles[atom]==AtomRole::Steady;
+            }
+            // Missing phase guards are legal ONLY for an exhaustive pair of
+            // simple disjoint domains of this original operation. The expanded
+            // actual actions still undergo full verification and exact cut/FIFO
+            // comparison below. A dropped singleton/first/last guard is refused.
+            if(!facts.wrappers.empty()||facts.model.period!=1||initial!=1||steady!=1||
+               participation||invocation||existence||
+               llvm::any_of(guards,[](const Condition &g){return g.kind==Residue||g.kind==OrdinalResidue;}))
+                return fail("missing initial/steady occurrence predicate outside exact startup union");
+        }
         if(phase&&(!facts.startup||!originalBody))return fail("initial/steady predicate has no body occurrence");
         if(invocation) {
             a.invocation=invocation->kind==InvocationNext?ss::Action::ToNextInvocation:ss::Action::FromPreviousInvocation;
@@ -1036,6 +1074,93 @@ public:
 
 };
 
+// Explicit diagnostic mode only. The JSON contains original physical facts,
+// selected logical episodes and emitted site membership, never coverage receipts
+// consumed by the verifier. uint64 geometry is written as decimal strings.
+void describeStructuredPlan(const std::vector<std::unique_ptr<NativeFacts>> &units,
+    const std::vector<std::vector<ss::Action>> &actions,
+    const std::vector<std::vector<ss::EmissionSite>> &sites) {
+    if(!std::getenv("PTOAS_STRUCTURED_PLAN_JSON"))return;
+    using llvm::json::Array;using llvm::json::Object;
+    auto lane=[](ss::Lane l) {
+        static const char *names[]={"S","V","M","MTE1","MTE2","MTE3","FIX"};
+        return Object{{"core",l.core==ss::Core::AIC?"AIC":"AIV"},{"pipe",names[unsigned(l.pipe)]}};
+    };
+    auto memory=[](const auto &effects) {
+        Array out;
+        for(const auto *e:effects) {
+            Array bases;for(auto b:e->baseAddresses)bases.emplace_back(std::to_string(b));
+            out.emplace_back(Object{{"space",int64_t(e->scope)},{"bases",std::move(bases)},
+                {"bytes",std::to_string(e->allocateSize)},{"known_physical",e->hasKnownPhysicalAddresses},
+                {"unknown_range",e->aliasesUnknownRange},{"footprint_kind","conservative-may-access"}});
+        }
+        return out;
+    };
+    Array all;uint64_t staticSites=1;
+    for(std::size_t unit=0;unit<units.size();++unit) {
+        const auto &f=*units[unit];Array atoms,requirements,commands,groups,carried,audit;
+        static const char *roleNames[]={"outside","ordinary","initial","steady"};
+        static const char *participationNames[]={"every","first","last","if-body"};
+        static const char *propertyNames[]={"completion","acc-resource","visibility"};
+        for(std::size_t i=0;i<f.model.atoms.size();++i) {
+            const auto &a=f.model.atoms[i];const auto *p=f.physical.phases[f.origin[i]];
+            atoms.emplace_back(Object{{"atom",int64_t(i)},{"original_phase",int64_t(f.origin[i])},
+                {"operation",p->elementOp->getName().getStringRef().str()},{"lane",lane(a.lane)},
+                {"segment",int64_t(a.segment)},{"role",roleNames[unsigned(f.roles[i])]},
+                {"residue",std::to_string(a.residue)},{"reads",memory(p->useVec)},{"writes",memory(p->defVec)}});
+        }
+        for(std::size_t i=0;i<f.model.requirements.size();++i) {
+            const auto &r=f.model.requirements[i];
+            requirements.emplace_back(Object{{"requirement",int64_t(i)},{"source",int64_t(r.source)},
+                {"target",int64_t(r.target)},{"epoch_distance",std::to_string(r.distance)},
+                {"property",propertyNames[unsigned(r.property)]}});
+        }
+        for(const auto &r:f.carried)carried.emplace_back(Object{{"source",int64_t(r.source)},
+            {"target",int64_t(r.target)},{"property",propertyNames[unsigned(r.property)]}});
+        for(std::size_t i=0;i<actions[unit].size();++i) {
+            const auto &a=actions[unit][i];static const char *kinds[]={"set","wait","barrier"};
+            commands.emplace_back(Object{{"action",int64_t(i)},{"kind",kinds[unsigned(a.kind)]},
+                {"anchor",int64_t(a.anchor)},{"after",a.after},{"source_lane",lane(a.source)},
+                {"target_lane",lane(a.target)},{"key",int64_t(a.key)},
+                {"planner_order",std::to_string(a.order)},{"participation",participationNames[unsigned(a.participation)]},
+                {"ordinal_distance",std::to_string(a.distanceInIterations)},
+                {"existence_residue",std::to_string(a.guardResidue)},{"invocation",int64_t(a.invocation)},
+                {"invocation_body_guard",a.invocationBodyGuard},{"invocation_residue",std::to_string(a.invocationGuardResidue)}});
+        }
+        for(std::size_t i=0;i<sites[unit].size();++i) {
+            Array members;for(auto a:sites[unit][i].members)members.emplace_back(int64_t(a));
+            groups.emplace_back(Object{{"site",int64_t(i)},{"actions",std::move(members)}});
+        }
+        // Optional and intentionally outside benchmark timing mode. Keep
+        // payload-completion proof loss distinct from event-state proof loss.
+        if(f.wrappers.empty()) {
+            auto checked=ss::verify(f.model,actions[unit]);
+            auto details=ss::auditRegionHandoffs(f.model,checked.plan);
+            if(details)for(const auto &a:*details) {
+                const auto &h=checked.plan.handoffs[a.handoff];Array lost;
+                for(auto r:a.completionLost)lost.emplace_back(int64_t(r));
+                audit.emplace_back(Object{{"source",int64_t(h.source)},{"target",int64_t(h.target)},
+                    {"key",int64_t(h.key)},{"epoch_distance",std::to_string(h.distance)},
+                    {"completion_unproved_without",std::move(lost)},
+                    {"protocol_proved_without",a.protocolWithout},{"protocol_reason",a.protocolReason}});
+            }
+        }
+        staticSites+=sites[unit].size();
+        all.emplace_back(Object{{"unit",int64_t(unit)},{"period",std::to_string(f.model.period)},
+            {"startup",f.startup},{"startup_case",int64_t(f.startupCase)},{"case_guard",f.caseGuard},
+            {"lower",std::to_string(f.induction.lower)},{"step",std::to_string(f.induction.step)},
+            {"ordinal_offset",std::to_string(f.ordinalOffset)},{"wrapper_count",int64_t(f.wrappers.size())},
+            {"gm_contract_enum",int64_t(f.gm)},{"atoms",std::move(atoms)},
+            {"requirements",std::move(requirements)},{"carried_requirements",std::move(carried)},
+            {"actions",std::move(commands)},{"sites",std::move(groups)},{"deletion_audit",std::move(audit)},
+            {"audit_scope",f.wrappers.empty()?"complete-local-region":"reentrant-audit-not-run"}});
+    }
+    Object root{{"schema","oahs.s6.plan.v1"},{"producer","structured"},{"units",std::move(all)},
+        {"generated_static_sites_including_retirement",std::to_string(staticSites)},
+        {"retirement_sites",int64_t(1)},{"new_hardware_elision",false}};
+    llvm::errs()<<"OAHS_PLAN "<<llvm::json::Value(std::move(root))<<"\n";
+}
+
 Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<void(func::FuncOp)> mutate) {
     if (function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         Outcome out; out.reason="structured construction requires one function block"; return out;
@@ -1058,7 +1183,8 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<vo
     if(!layout.build()){out.reason=layout.reason;return out;}
     std::vector<std::unique_ptr<NativeFacts>> units;
     std::vector<std::vector<ss::Action>> selected;
-    uint64_t atoms=0,views=0,refinementTrials=0,refinementRemoved=0;
+    std::vector<std::vector<ss::EmissionSite>> emissionSites;
+    uint64_t atoms=0,views=0,refinementTrials=0,refinementRemoved=0,rekeyTrials=0,rekeyed=0,coalesced=0;
     for(const auto &scope:layout.scopes) {
       std::vector<std::unique_ptr<NativeFacts>> cases;
       auto first=std::make_unique<NativeFacts>(inventory,scope,gm);
@@ -1082,12 +1208,21 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<vo
                 facts->model.allowBoundaryKeyReuse=true;
                 result=ss::construct(facts->model);
             }
-            if(result.status==ss::Status::Applied && facts->model.recurring &&
-               llvm::all_of(facts->model.atoms,[](const ss::Atom &a){return a.segment==ss::Segment::Body;})) {
-                // Refine only this complete local periodic plan. Boundary and
-                // nested-invocation plans keep S4's verified interface/shape.
-                result=ss::refinePeriodicHandoffs(facts->model,result.plan);
+            if(result.status==ss::Status::Applied) {
+                // This is a COMPLETE unwrapped region, including every
+                // startup/exit/empty-body obligation. Never refine a projection
+                // under a still-live S3 interface. No endpoint motion is allowed.
+                result=ss::refineRegionHandoffs(facts->model,result.plan);
                 refinementTrials+=result.refinementAttempts;refinementRemoved+=result.removedHandoffs;
+                if(result.status==ss::Status::Applied && facts->startup && facts->model.period==1 &&
+                   facts->startupCase==StartupCase::Nonempty) {
+                    // Sharing is an explicit, fully checked optimization here,
+                    // not only an allocation fallback after exhausting the pool.
+                    // The verifier must use the same mixed-family contract.
+                    facts->model.allowBoundaryKeyReuse=true;
+                    result=ss::coalesceStartupHandoffs(facts->model,facts->siteOrigins(),result.plan);
+                    rekeyTrials+=result.rekeyAttempts;rekeyed+=result.rekeyedHandoffs;coalesced+=result.coalescedSites;
+                }
             }
             status=result.status;reason=result.reason;
             if(status==ss::Status::Applied)actions=ss::actionsForPlan(facts->model,result.plan);
@@ -1107,12 +1242,27 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<vo
             out.reason=reason;return out;
         }
         if(!legalBoundaryOperands(*facts,actions,out.reason))return out;
+        auto sites=ss::startupEmissionSites(facts->model,facts->siteOrigins(),actions);
+        if(!sites){out.status=Outcome::InternalError;out.reason="invalid startup emission-site population";return out;}
+        // Grouping changes static sites, not the dynamic commands. Rebuild the
+        // proposed per-domain order before emitting and check it independently.
+        std::vector<ss::Action> grouped;
+        for(std::size_t order=0;order<sites->size();++order)for(auto member:(*sites)[order].members) {
+            auto a=actions[member];a.order=order;grouped.push_back(a);
+        }
+        if(llvm::any_of(*sites,[](const ss::EmissionSite &s){return s.members.size()==2;})) {
+            auto groupStatus=ss::verify(facts->model,grouped).status;
+            if(!facts->wrappers.empty()||groupStatus!=ss::Status::Applied) {
+                out.status=Outcome::InternalError;out.reason="grouped emission changes synchronization protocol";return out;
+            }
+        }
+        emissionSites.push_back(std::move(*sites));
         atoms+=facts->model.atoms.size();selected.push_back(std::move(actions));units.push_back(std::move(facts));
       }
     }
     SyncPayloadSnapshot snapshot(working);llvm::SmallPtrSet<Operation*,32> original;
     working.walk([&](Operation *op){original.insert(op);});
-    for(std::size_t i=0;i<units.size();++i)emitNative(*units[i],selected[i]);
+    for(std::size_t i=0;i<units.size();++i)emitNative(*units[i],selected[i],emissionSites[i]);
     auto *ret=working.getBody().front().getTerminator();OpBuilder builder(ret);
     builder.create<BarrierOp>(ret->getLoc(),PipeAttr::get(working.getContext(),PIPE::PIPE_ALL));
     if(mutate)mutate(working);
@@ -1154,12 +1304,14 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,llvm::function_ref<vo
             out.reason="reconstructed physical access contract changed";return out;
         }
     }
+    describeStructuredPlan(units,selected,emissionSites);
     out.status=Outcome::Applied;out.reason="structured local and nested invocation transfers verified";
     function.getBody().takeBody(working.getBody());
     if(std::getenv("PTOAS_LOGICAL_TRACE"))llvm::errs()<<"structured OAHS units "<<units.size()<<" atoms "<<atoms
         <<" invocation_views "<<views<<" requirements "<<out.requirements<<" handoffs "<<out.handoffs
         <<" barriers "<<out.barriers<<" refinement_trials "<<refinementTrials
-        <<" removed_handoffs "<<refinementRemoved<<" seconds "
+        <<" removed_handoffs "<<refinementRemoved<<" rekey_trials "<<rekeyTrials
+        <<" rekeyed_handoffs "<<rekeyed<<" coalesced_sites "<<coalesced<<" seconds "
         <<std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count()<<"\n";
     return out;
 }

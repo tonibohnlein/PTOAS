@@ -97,6 +97,7 @@ struct Result {
     uint64_t completionRelaxations = 0;
     uint64_t eventRelaxations = 0;
     uint64_t refinementAttempts = 0, removedHandoffs = 0;
+    uint64_t rekeyAttempts = 0, rekeyedHandoffs = 0, coalescedSites = 0;
 };
 
 // Actual commands recovered from emission. Order at a common boundary is
@@ -143,6 +144,48 @@ Result construct(const Model &);
 // Only a single local periodic body is admitted: callers must NOT refine the
 // local component of a re-entrant invocation independently of its interface.
 Result refinePeriodicHandoffs(const Model &, const Plan &);
+
+// S6: one reverse sweep over a COMPLETE local region, including its startup,
+// exit and empty-body paths. Every trial preserves the remaining keys, cuts
+// and command order and rechecks the full protocol. Never apply to a component
+// of InvocationPlan without rechecking that enclosing interface.
+Result refineRegionHandoffs(const Model &, const Plan &);
+
+// Original payload identity is supplied by the native import, not guessed from
+// equal footprints or operation names. Initial/Steady name disjoint executions
+// of that SAME original operation. S6 coalesces only period-one startup units.
+struct SiteOrigin {
+    enum Phase : uint8_t { Other, Initial, Steady } phase = Other;
+    std::size_t payload = 0;
+};
+struct EmissionSite {
+    // One original action, or one Initial plus one Steady action, at the same
+    // original cut. A pair is emitted once without a phase predicate; it is NOT
+    // two consecutive publications. Indices refer to the provided actions.
+    std::vector<std::size_t> members;
+};
+// Preserves EACH phase's same-cut command order using a stable common
+// subsequence. Only unconditional local commands with identical direction/key
+// can match. Nullopt means invalid origins/actions; no supplied proof is lost.
+std::optional<std::vector<EmissionSite>> startupEmissionSites(
+    const Model &, const std::vector<SiteOrigin> &, const std::vector<Action> &);
+// Try boundary-key continuation only when it reduces static emission sites at
+// an IDENTICAL original payload cut. Whole-region verification is mandatory for
+// each trial. No new keys, endpoint motion, guard broadening, or hardware elision.
+Result coalesceStartupHandoffs(const Model &, const std::vector<SiteOrigin> &, const Plan &);
+
+struct HandoffAudit {
+    std::size_t handoff = 0;
+    std::vector<std::size_t> completionLost; // indices into ORIGINAL requirements
+    bool protocolWithout = false;
+    std::string protocolReason;
+};
+// Opt-in diagnostic: check each deletion against completion and, separately,
+// against event participation/rearm. "Lost" means unproved by this model, not
+// hardware necessity. Do not run this O(H) checker campaign in normal compile.
+std::optional<std::vector<HandoffAudit>> auditRegionHandoffs(const Model &, const Plan &);
+
+
 
 // Fresh checking uses the ORIGINAL requirements and RECOVERED actual actions.
 // It does not consume the planner's coverage receipts or an assumed pairing.

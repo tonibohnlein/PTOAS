@@ -136,10 +136,15 @@ def main():
     from measure import measure
     args.output.mkdir(parents=True, exist_ok=False)
     env = dict(os.environ, OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1")
+    # S6 diagnostics deliberately perform extra per-handoff verification. They
+    # are not part of normal compilation and cannot contaminate paired timings.
+    disabled_diagnostics = {name: env.pop(name) for name in
+                            ("PTOAS_STRUCTURED_PLAN_JSON", "PTOAS_LOGICAL_TRACE") if name in env}
     cases = {item["case_id"]: item for item in population()}
     if set(cases) != set(POPULATION):
         raise RuntimeError("review the declared population before changing its coverage denominator")
-    output = dict(provenance=provenance(python_root), population=list(POPULATION),
+    output = dict(provenance=provenance(python_root), disabled_diagnostics=disabled_diagnostics,
+                  population=list(POPULATION),
                   requested_cases=args.cases, requested_arms=args.arms,
                   omitted_cases=[c for c in POPULATION if c not in args.cases],
                   repeats=args.repeats, warmups=args.warmups, rows=[],
