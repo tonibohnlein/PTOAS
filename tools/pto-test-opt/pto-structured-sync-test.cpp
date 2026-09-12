@@ -25,7 +25,11 @@ static std::string printed(Operation *op) {
     std::string text; llvm::raw_string_ostream stream(text); op->print(stream); return text;
 }
 int main(int argc,char **argv) {
-    if (argc!=4) { llvm::errs()<<"input.pto mutation output.pto\n"; return 2; }
+    if (argc!=4 && argc!=5) { llvm::errs()<<"input.pto mutation output.pto [conservative|a2a3-mmad-acc-v1]\n"; return 2; }
+    const StringRef contract=argc==5?StringRef(argv[4]):StringRef("conservative");
+    if (contract!="conservative" && contract!="a2a3-mmad-acc-v1") return 2;
+    auto hardware=contract=="conservative"?structured_sync::HardwareContract::Conservative:
+                                         structured_sync::HardwareContract::A2A3MmadAccV1;
     DialectRegistry registry;
     registry.insert<PTODialect,func::FuncDialect,scf::SCFDialect,arith::ArithDialect,DLTIDialect>();
     MLIRContext context(registry,MLIRContext::Threading::DISABLED);
@@ -48,6 +52,11 @@ int main(int argc,char **argv) {
         };
         working.walk([&](Operation *op) {
             if (chosen) return;
+            if (mode=="drop-m-to-mte1" || mode=="drop-m-to-fix")
+                if (auto wait=dyn_cast<WaitFlagOp>(op))
+                    if (wait.getSrcPipe().getPipe()==PIPE::PIPE_M &&
+                        wait.getDstPipe().getPipe()==(mode=="drop-m-to-mte1"?PIPE::PIPE_MTE1:PIPE::PIPE_FIX))
+                        chosen=op;
             if(mode=="narrow-coalesced"||mode=="duplicate-coalesced"||mode=="late-coalesced-set") {
                 // A shared startup publication is directly in its original
                 // loop body, not in an initial/steady generated guard. This
@@ -152,7 +161,8 @@ int main(int argc,char **argv) {
             auto branch=b.create<scf::IfOp>(chosen->getLoc(),first,false);
             chosen->moveBefore(&branch.getThenRegion().front(),branch.getThenRegion().front().begin());changed=true;
         }
-        else if (mode=="drop-wait" || mode=="drop-set" || mode=="drop-retirement") { chosen->erase(); changed=true; }
+        else if (mode=="drop-wait" || mode=="drop-set" || mode=="drop-retirement" ||
+            mode=="drop-m-to-mte1" || mode=="drop-m-to-fix") { chosen->erase(); changed=true; }
         else if (mode=="duplicate-set" || mode=="duplicate-coalesced") { OpBuilder b(chosen); b.setInsertionPointAfter(chosen); b.clone(*chosen); changed=true; }
         else if (mode=="wrong-key") {
             auto w=cast<WaitFlagOp>(chosen); OpBuilder b(w);
@@ -186,7 +196,7 @@ int main(int argc,char **argv) {
         }
     };
     auto result=structured_sync::testing::constructWithEmissionMutation(
-        function,InsertSyncGMAliasMode::DisjointArguments,mutate);
+        function,InsertSyncGMAliasMode::DisjointArguments,mutate,hardware);
     using Result=logical_sync::ConstructionResult;
     bool applied=result.status==Result::Applied;
     bool expected=(mode=="none")?applied:
@@ -198,7 +208,7 @@ int main(int argc,char **argv) {
     if(error) { llvm::errs()<<error.message(); return 2; }
     module->print(output);
     llvm::outs()<<llvm::json::Value(llvm::json::Object{
-        {"accepted",applied},{"mutation_applied",changed},{"expected",expected},{"atomic",preserved},
+        {"hardware_contract",contract.str()},{"accepted",applied},{"mutation_applied",changed},{"expected",expected},{"atomic",preserved},
         {"status",unsigned(result.status)},{"reason",result.reason},
         {"requirements",result.requirements},{"handoffs",result.handoffs},{"barriers",result.barriers},
         {"work_statistic",result.work}})<<"\n";

@@ -95,11 +95,19 @@ bool validModel(const Model &m, std::string &why) {
     }
     for (const Requirement &r:m.requirements) {
         if (r.property!=Property::Completion && r.property!=Property::AccResource &&
-            r.property!=Property::Visibility) {
+            r.property!=Property::Visibility && r.property!=Property::AccumulatorUpdate) {
             why="unknown required property"; return false;
         }
         if (r.source>=m.atoms.size() || r.target>=m.atoms.size()) {
             why="invalid requirement endpoint"; return false;
+        }
+        if (r.property==Property::AccumulatorUpdate) {
+            if (!r.hasStorageWitness || !r.storageBytes ||
+                r.storageBase>uint64_t(INT64_MAX)-r.storageBytes) {
+                why="accumulator update lacks an exact physical storage witness"; return false;
+            }
+        } else if (r.hasStorageWitness) {
+            why="storage witness attached to a non-storage-specific requirement"; return false;
         }
         auto d=priorDistance(m,r.source,r.target);
         if (!d || r.distance!=*d) {
@@ -152,6 +160,7 @@ public:
     }
     bool has(const Requirement &r) const {
         if (r.property==Property::Visibility) return false;
+        if (intrinsicAccumulatorOrder(m,r)) return true;
         if (m.atoms[r.source].lane == m.atoms[r.target].lane &&
             m.target.synchronous(m.atoms[r.source].lane)) return true;
         return cuts.get(r.source,n+r.target)<=r.distance;
@@ -275,6 +284,66 @@ public:
 };
 
 } // namespace
+
+// This function proves only the documented accumulator write/read order. A
+// successful result is intentionally NOT installed in Completion::cuts or
+// EventCausality. In particular it cannot acknowledge an event or free operands.
+bool mlir::pto::structured_sync::intrinsicAccumulatorOrder(
+    const Model &m,const Requirement &r) {
+    if (m.target.hardware!=HardwareContract::A2A3MmadAccV1 ||
+        r.property!=Property::AccumulatorUpdate ||
+        r.source>=m.atoms.size() || r.target>=m.atoms.size()) return false;
+    auto d=priorDistance(m,r.source,r.target);
+    if (!d || *d!=r.distance) return false;
+    const auto &source=m.atoms[r.source], &target=m.atoms[r.target];
+    if (!r.hasStorageWitness || !r.storageBytes ||
+        r.storageBase!=source.matrix.accumulatorBase ||
+        r.storageBytes!=source.matrix.accumulatorBytes ||
+        r.storageBase!=target.matrix.accumulatorBase ||
+        r.storageBytes!=target.matrix.accumulatorBytes) return false;
+    const Lane matrixLane{Core::AIC,Pipe::M};
+    if (source.lane!=matrixLane || target.lane!=matrixLane ||
+        source.segment!=target.segment) return false;
+    auto qualified=[](const MmadInfo &a) {
+        // Strictly above ten avoids the prose/code ambiguity at exactly ten.
+        // Multiples of 16 and <=4095 also keep arithmetic and L0C coverage exact.
+        if ((a.kind!=MmadInfo::Initialize && a.kind!=MmadInfo::Accumulate) ||
+            (a.input!=MmadInfo::F16 && a.input!=MmadInfo::BF16) ||
+            !a.m || !a.n || !a.k || a.m>4095 || a.n>4095 || a.k>4095 ||
+            a.m%16 || a.n%16 || a.k%16 || (a.m/16)*(a.n/16)<=10 ||
+            a.accumulatorBase%1024 || a.accumulatorBytes!=4*a.m*a.n ||
+            a.accumulatorBase>uint64_t(INT64_MAX)-a.accumulatorBytes) return false;
+        return true;
+    };
+    if (!qualified(source.matrix)) return false;
+    auto continues=[&](const MmadInfo &a) {
+        return qualified(a) && a.kind==MmadInfo::Accumulate &&
+            a.accumulatorBase==source.matrix.accumulatorBase &&
+            a.accumulatorBytes==source.matrix.accumulatorBytes &&
+            a.m==source.matrix.m && a.n==source.matrix.n &&
+            a.input==source.matrix.input;
+    };
+    // The complete physical M stream matters: an unknown/interleaved M
+    // instruction breaks the certificate. Independent non-M work is retained.
+    auto ordered=schedule(m);
+    std::vector<std::size_t> matrix;
+    for (auto id:ordered) if (m.atoms[id].lane==matrixLane &&
+                             m.atoms[id].segment==source.segment) matrix.push_back(id);
+    auto at=std::find(matrix.begin(),matrix.end(),r.source);
+    if (at==matrix.end() || matrix.empty()) return false;
+    std::size_t pos=std::size_t(at-matrix.begin()); uint64_t epoch=0;
+    // A latest ordinary source is at most one period away. This visits no
+    // numerical trip count, and follows at most one complete static M stream.
+    for (std::size_t visits=0;visits<matrix.size();++visits) {
+        if (++pos==matrix.size()) {
+            if (!m.recurring || source.segment!=Segment::Body) return false;
+            pos=0; ++epoch;
+        }
+        if (epoch>r.distance || !continues(m.atoms[matrix[pos]].matrix)) return false;
+        if (matrix[pos]==r.target && epoch==r.distance) return true;
+    }
+    return false;
+}
 
 bool Target::supports(Lane l) const {
     if (l.core!=Core::AIC && l.core!=Core::AIV) return false;
@@ -612,6 +681,7 @@ public:
     }
     bool has(const Requirement &r) const {
         if (!present(r.target) || !present(r.source)) return true; // absent-body requirement is vacuous
+        if (intrinsicAccumulatorOrder(original,r)) return true;
         return completion->has({local[r.source],local[r.target],0,r.property});
     }
     uint64_t work() const { return completion->work(); }

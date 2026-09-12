@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Native S1-S6 acceptance: unchanged input hashes, strict dispatch, real mutations.
+"""Native S1-S7 acceptance: unchanged input hashes, strict dispatch, real mutations.
 No libisl dependency. Device and <=2x compilation acceptance remain separate.
 """
 import argparse, hashlib, json, os, subprocess, sys, time
@@ -293,5 +293,11 @@ def main():
     summary=dict(s6_gemm=gemm_row,ordinal_rows=ordinal_rows,invocation_rows=invocation_rows,boundary_rows=boundary_rows,status='passed',rows=rows,driver_sha256=hashlib.sha256(args.driver.read_bytes()).hexdigest(),
                  timing='single diagnostics only; repeated matched <=2x campaign NOT_RUN',device='NOT_RUN')
     (args.output/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+    # S7 is an explicit additional contract experiment. The seven conservative
+    # cases above remain unchanged; this gate must prove real native rule hits.
+    run('s7_utilities',[sys.executable,here/'check_s7_utilities.py'])
+    run('s7_hardware',[sys.executable,here/'check_hardware.py',
+        '--driver',args.driver,'--opt',args.opt,'--python-root',args.python_root,
+        '--output',args.output/'hardware'])
     print(json.dumps(summary,indent=2))
 if __name__=='__main__': main()

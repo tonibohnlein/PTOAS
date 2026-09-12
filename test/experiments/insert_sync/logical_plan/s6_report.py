@@ -16,7 +16,10 @@ import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
-SCHEMA = "oahs.s6.plan.v1"
+SCHEMA = "oahs.s7.plan.v2"
+# v2 only adds sequence_bridges, so a v1 record still validates. Both are
+# accepted: the emitter produces v2 while existing fixtures carry v1.
+ACCEPTED_SCHEMAS = ("oahs.s6.plan.v1", SCHEMA)
 PREFIX = "OAHS_PLAN "
 
 
@@ -25,7 +28,7 @@ def parse_reports(text):
     for line in text.splitlines():
         if line.startswith(PREFIX):
             value = json.loads(line[len(PREFIX):])
-            if not isinstance(value, dict) or value.get("schema") != SCHEMA:
+            if not isinstance(value, dict) or value.get("schema") not in ACCEPTED_SCHEMAS:
                 raise ValueError("unsupported structured diagnostic schema")
             reports.append(value)
     if not reports:
@@ -52,14 +55,15 @@ def signature(action):
 
 
 def validate_report(report):
-    if report.get("schema") != SCHEMA or report.get("producer") != "structured":
+    if report.get("schema") not in ACCEPTED_SCHEMAS or report.get("producer") != "structured":
         raise ValueError("unexpected diagnostic producer/schema")
-    if report.get("new_hardware_elision") is not False or report.get("retirement_sites") != 1:
+    if not isinstance(report.get("new_hardware_elision"), bool) or report.get("retirement_sites") != 1:
         raise ValueError("unexpected hardware premise or retirement policy")
     totals = Counter(retirement=1)
     directions = Counter()
     units = []
     unit_ids = set()
+    intrinsic_count = 0
     for unit in report["units"]:
         if unit["unit"] in unit_ids:
             raise ValueError("duplicate unit")
@@ -101,6 +105,23 @@ def validate_report(report):
                 emitted[a["anchor"], a["after"]].append(a["action"])
         if seen != Counter({i: 1 for i in actions}) or prior != emitted:
             raise ValueError("site partition lost/duplicated an action or reordered a phase FIFO")
+        contract = unit.get("hardware_contract", "conservative")
+        if contract not in ("conservative", "a2a3-mmad-acc-v1"):
+            raise ValueError("unknown hardware contract")
+        for requirement in unit["requirements"]:
+            intrinsic = requirement.get("intrinsic_accumulator_order", False)
+            if not isinstance(intrinsic, bool):
+                raise ValueError("intrinsic verdict must be Boolean")
+            if intrinsic:
+                if (contract != "a2a3-mmad-acc-v1" or
+                        requirement.get("property") != "accumulator-update"):
+                    raise ValueError("intrinsic result has the wrong property/contract")
+                if any(requirement.get(key) not in atoms for key in ("source", "target")):
+                    raise ValueError("intrinsic result refers to a missing atom")
+                for key in ("source", "target"):
+                    if lane(atoms[requirement[key]]["lane"]) != "AIC:M":
+                        raise ValueError("intrinsic result is not same-M accumulator ordering")
+                intrinsic_count += 1
         requirement_ids = {r["requirement"] for r in unit["requirements"]}
         for audit in unit["deletion_audit"]:
             if not set(audit["completion_unproved_without"]) <= requirement_ids:
@@ -109,10 +130,14 @@ def validate_report(report):
                           static_sites=len(unit["sites"]), coalesced_sites=merges,
                           original_requirements=len(requirement_ids),
                           reentrant=bool(unit["wrapper_count"])))
+    if (int(report.get("intrinsic_accumulator_requirements", 0)) != intrinsic_count or
+            report["new_hardware_elision"] != bool(intrinsic_count)):
+        raise ValueError("hardware accounting disagrees with original requirements")
     total = sum(totals.values())
     if total != int(report["generated_static_sites_including_retirement"]):
         raise ValueError("static site accounting disagrees with emitted groups")
     return dict(status="accounting-checked", static_sites=total, counts=dict(totals),
+                intrinsic_accumulator_requirements=intrinsic_count,
                 command_sites_by_direction=dict(sorted(directions.items())), units=units,
                 semantic_verification="performed by native checker; NOT by this accounting utility")
 
