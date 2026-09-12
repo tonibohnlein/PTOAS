@@ -41,7 +41,7 @@ int main(int argc,char **argv) {
     const auto before=printed(function); StringRef mode(argv[2]); bool changed=false;
     auto mutate=[&](func::FuncOp working) {
         if (mode=="none" || mode=="expect-unsupported") return;
-        Operation *chosen=nullptr;
+        Operation *chosen=nullptr,*sequenceSource=nullptr,*retirementTarget=nullptr;
         auto syncOnly=[](scf::IfOp branch) {
             bool event=false,payload=false;
             branch.walk([&](Operation *x) {
@@ -52,6 +52,8 @@ int main(int argc,char **argv) {
         };
         working.walk([&](Operation *op) {
             if (chosen) return;
+            if(mode=="early-retirement"&&!retirementTarget&&isa<OpPipeInterface>(op)&&
+               !isa<SetFlagOp,WaitFlagOp,BarrierOp>(op))retirementTarget=op;
             if (mode=="drop-m-to-mte1" || mode=="drop-m-to-fix")
                 if (auto wait=dyn_cast<WaitFlagOp>(op))
                     if (wait.getSrcPipe().getPipe()==PIPE::PIPE_M &&
@@ -137,8 +139,23 @@ int main(int argc,char **argv) {
             }
             if ((mode=="drop-wait" || mode=="wrong-key") && isa<WaitFlagOp>(op)) chosen=op;
             if ((mode=="drop-set" || mode=="duplicate-set" || mode=="late-set") && isa<SetFlagOp>(op)) chosen=op;
-            if (mode=="drop-retirement")
-                if (auto b=dyn_cast<BarrierOp>(op)) if(b.getPipe().getPipe()==PIPE::PIPE_ALL) chosen=op;
+            if (mode=="drop-retirement" || mode=="early-retirement") {
+                if (auto b=dyn_cast<BarrierOp>(op)) {
+                    if(b.getPipe().getPipe()==PIPE::PIPE_ALL) {
+                        chosen=op;
+                    }
+                }
+            }
+            if (mode=="early-sequence-barrier" || mode=="drop-sequence-bridge") {
+                if (auto barrier=dyn_cast<BarrierOp>(op)) {
+                    if(barrier.getPipe().getPipe()!=PIPE::PIPE_ALL) {
+                        Operation *before=op->getPrevNode(),*after=op->getNextNode();
+                        while(before&&!isa<scf::ForOp>(before))before=before->getPrevNode();
+                        while(after&&!isa<scf::ForOp>(after))after=after->getNextNode();
+                        if(before&&after) {chosen=op;sequenceSource=before;}
+                    }
+                }
+            }
             if (mode=="wrong-participation") {
                 // The ordinary fixtures' ORIGINAL guards are selector equality.
                 // Mutate only a new IV>=distance or remaining>distance guard,
@@ -154,7 +171,15 @@ int main(int argc,char **argv) {
             }
         });
         if (!chosen) return;
-        if(mode=="narrow-coalesced") {
+        if(mode=="early-retirement") {
+            if(!retirementTarget||retirementTarget->getBlock()!=chosen->getBlock())return;
+            chosen->moveBefore(retirementTarget);changed=true;
+        }
+        else if(mode=="early-sequence-barrier") {
+            if(!sequenceSource)return;
+            chosen->moveBefore(sequenceSource);changed=true;
+        }
+        else if(mode=="narrow-coalesced") {
             auto loop=cast<scf::ForOp>(chosen->getParentOp());OpBuilder b(chosen);
             auto first=b.create<arith::CmpIOp>(chosen->getLoc(),arith::CmpIPredicate::eq,
                 loop.getInductionVar(),loop.getLowerBound());
@@ -162,7 +187,8 @@ int main(int argc,char **argv) {
             chosen->moveBefore(&branch.getThenRegion().front(),branch.getThenRegion().front().begin());changed=true;
         }
         else if (mode=="drop-wait" || mode=="drop-set" || mode=="drop-retirement" ||
-            mode=="drop-m-to-mte1" || mode=="drop-m-to-fix") { chosen->erase(); changed=true; }
+            mode=="drop-m-to-mte1" || mode=="drop-m-to-fix" ||
+            mode=="drop-sequence-bridge") { chosen->erase(); changed=true; }
         else if (mode=="duplicate-set" || mode=="duplicate-coalesced") { OpBuilder b(chosen); b.setInsertionPointAfter(chosen); b.clone(*chosen); changed=true; }
         else if (mode=="wrong-key") {
             auto w=cast<WaitFlagOp>(chosen); OpBuilder b(w);

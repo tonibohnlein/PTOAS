@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @section_outside_async_descriptor(%src: !pto.ptr<f16>, %shape: !pto.ptr<i64>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %ia = arith.constant 0 : i64
+    %row_i64 = pto.load_scalar %shape[%c0] : !pto.ptr<i64> -> i64
+    %row = arith.index_cast %row_i64 : i64 to index
+    %source = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %source, offsets = [%c0, %c0], sizes = [%c16, %c16]
+      : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %tile = pto.alloc_tile addr = %ia valid_row = %row valid_col = %c16
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.section.vector {
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>)
+        outs(%tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    }
+    return
+  }
+}

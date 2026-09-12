@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @missing_positive_contract()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 256 : i64
+    %a2 = arith.constant 512 : i64
+    %left = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 8x8xf32>
+    %right = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 8x8xf32>
+    %joined = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 8x16xf32>
+    scf.for %i = %c0 to %c2 step %c1 {
+      pto.tconcat
+          ins(%left, %right : !pto.tile_buf<vec, 8x8xf32>,
+                              !pto.tile_buf<vec, 8x8xf32>)
+          outs(%joined : !pto.tile_buf<vec, 8x16xf32>)
+    }
+    return
+  }
+}

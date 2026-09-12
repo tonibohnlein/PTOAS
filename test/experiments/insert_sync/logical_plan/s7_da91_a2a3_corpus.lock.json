@@ -1,0 +1,5366 @@
+{
+  "schema": "oahs.s7.corpus-lock.v1",
+  "manifest_sha256": "563cc002d7af0f3a0f12bc5ba30f2efd1bf9f9dc69b29d26f4774ccfc0dddc50",
+  "implementation": "da91a0e5024b4569d04177ee3920c48c7364b15b",
+  "preparation": "identical source bytes; bind module target a2a3 to a3 only",
+  "refusal_reasons": [
+    "structured synchronization construction failed: allocation-failure; distinct boundary keys do not fit",
+    "structured synchronization construction failed: allocation-failure; no boundary-preserving key assignment established",
+    "structured synchronization construction failed: unsupported; invocation wrapper requires constant positive coordinates or get_block_idx/get_block_num",
+    "structured synchronization construction failed: unsupported; mixed nested child transfers require a qualified region summary",
+    "structured synchronization construction failed: unsupported; nested child inside a sequential sibling requires a region summary",
+    "structured synchronization construction failed: unsupported; payload guard is outside the ordinal periodic/initialization fragment",
+    "structured synchronization construction failed: unsupported; requires-one-qualified-a2a3-physical-context",
+    "structured synchronization construction failed: unsupported; sequential composition currently requires direct sibling loops",
+    "structured synchronization construction failed: unsupported; structured ordinal loop requires constant nonnegative lower and positive step, signed index",
+    "structured synchronization construction failed: unsupported; unqualified-read-footprint:pto.tgather:unknown-or-zero-range",
+    "structured synchronization construction failed: unsupported; unsupported-implicit-resource:pto.import_reserved_buffer",
+    "structured synchronization construction failed: unsupported; unsupported-implicit-resource:pto.reserve_buffer",
+    "structured synchronization construction failed: unsupported; unsupported-lane:pto.load_scalar",
+    "structured synchronization construction failed: unsupported; unsupported-lane:pto.store_scalar",
+    "structured synchronization construction failed: unsupported; unsupported-lane:pto.tci",
+    "structured synchronization construction failed: unsupported; visibility has no qualified structured realization"
+  ],
+  "cases": [
+    {
+      "id": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_boundary_10.pto",
+      "source_sha256": "c08061619ca3af7d62a8275b3e010003c774433ed0167b4ce99ab492d977b7f5",
+      "pre_sync_ir_sha256": "c08061619ca3af7d62a8275b3e010003c774433ed0167b4ce99ab492d977b7f5",
+      "adaptations": [],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 10,
+            "waits": 10,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "64fae2929b6abed17d559971611415c57f6587b38bc10843bfc60f9bad512131",
+          "output_sha256": "56638e984209334f996f1990a1bc1b9b2c2d2c467dae4c637fc1c7ca3e65bdd5"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "745c670a66c54ca657186e7db85e55a0a2abddab9969c987f01d4c0ac06b9cc5",
+          "output_sha256": "04abc43807505bd854341f88a36df3e939458c0be9e0b2be6e27e4cd522a6c13"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "745c670a66c54ca657186e7db85e55a0a2abddab9969c987f01d4c0ac06b9cc5",
+          "output_sha256": "cc5fd1a7f7e60180a10b9bb313d070d3630ea5680308d15df2041710578f87b3"
+        }
+      }
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_gemm_128.pto",
+      "source_sha256": "5599e5b485491d0ee1e442886f14874f6dd34b0d635b43f5b88c02d60171a2df",
+      "pre_sync_ir_sha256": "5599e5b485491d0ee1e442886f14874f6dd34b0d635b43f5b88c02d60171a2df",
+      "adaptations": [],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 10,
+            "waits": 10,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "64fae2929b6abed17d559971611415c57f6587b38bc10843bfc60f9bad512131",
+          "output_sha256": "7835ec382275b7f03ac14e81167461d3aeb2f54d09e2538c491be48386c50735"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "745c670a66c54ca657186e7db85e55a0a2abddab9969c987f01d4c0ac06b9cc5",
+          "output_sha256": "75268197029186bea162c3ad07257912c51dc33f5b7d0e38a46ae00e0f964f2d"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 12,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "78cb97a5764c274a836aa75c7c07d246ab2570db4317fc06f498b931e45de6f1",
+          "output_sha256": "39a5c378b598887d19e7353f9968bba4ffea3618ecfa6a734ba4b0badd1c8507"
+        }
+      }
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_large_11.pto",
+      "source_sha256": "d45b78a96b0cb1e44a46499d22964652d2b04c186f6df74e79b06e95873b5c16",
+      "pre_sync_ir_sha256": "d45b78a96b0cb1e44a46499d22964652d2b04c186f6df74e79b06e95873b5c16",
+      "adaptations": [],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 10,
+            "waits": 10,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "64fae2929b6abed17d559971611415c57f6587b38bc10843bfc60f9bad512131",
+          "output_sha256": "5a52e358aa6fff8fd44d0c5136045ac72b8fc38b17d05446d2085dcdcea8d489"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "745c670a66c54ca657186e7db85e55a0a2abddab9969c987f01d4c0ac06b9cc5",
+          "output_sha256": "0e146a0597d963a865065a34fdc4b9574a632fffef562f0ec2a4ff36503025fe"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 12,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "78cb97a5764c274a836aa75c7c07d246ab2570db4317fc06f498b931e45de6f1",
+          "output_sha256": "ea0af08189d6f4bd4dfaf132ebdd1d238f60a238b078caf7227a5c0993ff2289"
+        }
+      }
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_qproj_16.pto",
+      "source_sha256": "e211f101d86dd61f252688d6ce4f7f34964fc110f1f7c6b31b1b48856c9230c5",
+      "pre_sync_ir_sha256": "e211f101d86dd61f252688d6ce4f7f34964fc110f1f7c6b31b1b48856c9230c5",
+      "adaptations": [],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 10,
+            "waits": 10,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "64fae2929b6abed17d559971611415c57f6587b38bc10843bfc60f9bad512131",
+          "output_sha256": "3598a55596a5765ef9cf2f5cfd9091eec28ceb5a891781c84cd012f244221fb3"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "745c670a66c54ca657186e7db85e55a0a2abddab9969c987f01d4c0ac06b9cc5",
+          "output_sha256": "81d736b3a6996bdde705d4aa682db14971d5464deb4c4b957dd502bd14eede6d"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 12,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "78cb97a5764c274a836aa75c7c07d246ab2570db4317fc06f498b931e45de6f1",
+          "output_sha256": "1c9e203b0b0408de30a8e540f70e1457ff23155a1f8f686c088582d97a5c357a"
+        }
+      }
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_small_8.pto",
+      "source_sha256": "8ac0c10325ea350851f16d531b737eda9087fd84dc95915c29d4671cbc38e02c",
+      "pre_sync_ir_sha256": "8ac0c10325ea350851f16d531b737eda9087fd84dc95915c29d4671cbc38e02c",
+      "adaptations": [],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 10,
+            "waits": 10,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "64fae2929b6abed17d559971611415c57f6587b38bc10843bfc60f9bad512131",
+          "output_sha256": "0759ff48ee7d0ac830dd17c10a78f9f3d114946eb86b0d2df158361dd323b386"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "745c670a66c54ca657186e7db85e55a0a2abddab9969c987f01d4c0ac06b9cc5",
+          "output_sha256": "d5324bbadac8ef3d4c71f83946c456886f2c918c64dde267a3c39ce4a4a9e462"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "745c670a66c54ca657186e7db85e55a0a2abddab9969c987f01d4c0ac06b9cc5",
+          "output_sha256": "248eeaed8ffc24f1217a9d3e13af9aaa935f1b09fdeccde5e0448cb74e347163"
+        }
+      }
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/inputs/four_use.auto.pto",
+      "source_sha256": "ebb3365784b3f35a51098505ba764f038ea57f670f8ca27c5d77707b19af2128",
+      "pre_sync_ir_sha256": "ebb3365784b3f35a51098505ba764f038ea57f670f8ca27c5d77707b19af2128",
+      "adaptations": [],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 24,
+            "waits": 24,
+            "named_barriers": {
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "d3d5bc318a377d2880b1256c5a529fe4a8972d2e5d10cc983dbbc246b2b74bb6",
+          "output_sha256": "4486a8879385d24cf2c9fcd402dd389cbdbeb64374fd7b1a8714a975edd0765a"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 6
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 6
+        }
+      }
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/inputs/one_buffer.auto.pto",
+      "source_sha256": "600c7fa8959c5cfb97660a9a54fb585905434bc332e73ed709274f4dd7700011",
+      "pre_sync_ir_sha256": "600c7fa8959c5cfb97660a9a54fb585905434bc332e73ed709274f4dd7700011",
+      "adaptations": [],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ba4f919e0a73409fda4e6b9bb390b3acfb2638e470dba50f148aacf960cf9c64",
+          "output_sha256": "f0454b891f06ad6f1ccd5befbbaf0c3febd22b99e9a00d33a0b9901d77cab57c"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 6
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 6
+        }
+      }
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/inputs/three_buffer.auto.pto",
+      "source_sha256": "fd6f6c876a11ed322ebb26ce8687b6ee1ca2fe717a4d53f77b6c4ff37a800eda",
+      "pre_sync_ir_sha256": "fd6f6c876a11ed322ebb26ce8687b6ee1ca2fe717a4d53f77b6c4ff37a800eda",
+      "adaptations": [],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 18,
+            "waits": 18,
+            "named_barriers": {
+              "PIPE_MTE3": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2981143dd226f4e97e5c736ee11ad38c7e6e10b94d32d2d6d320ac4f0771e99c",
+          "output_sha256": "f2acd146d50345b2ff90c6f8e56a39118ba48f33ccd0771a5bed553aebb0ac75"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 6
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 6
+        }
+      }
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/inputs/two_buffer.auto.pto",
+      "source_sha256": "1903800616d0505b007c51eaaa8e2bb76ec5a96ff9ce10829d700f24a4af56fd",
+      "pre_sync_ir_sha256": "1903800616d0505b007c51eaaa8e2bb76ec5a96ff9ce10829d700f24a4af56fd",
+      "adaptations": [],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 12,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "dcbec713580239eafc7c8242f995b6389b673a21a18e56e41667f70bc703f479",
+          "output_sha256": "ae93dd42df6daaae3ec07d716c40e4956db06d220023c74e1a5846511695cf4d"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 6
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 6
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/exp_gate_mm.pto",
+      "source_sha256": "adf833f1c680c01b44b7b74c4abf657b69b2923f5d95b462a9057c1c1d0e64b7",
+      "pre_sync_ir_sha256": "d5f2a349503f5c42728d2af5a95dd6fc282cbe56f2eea4beb0513280f753c985",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 30,
+            "waits": 30,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 7,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "221295ed94975a7816ae66a7e8a8f3ce8e2b2becbd9d4cb08202bb6de416f53e",
+          "output_sha256": "6a1208209508db7e2d25ddba3db9738a32b1c0b4269f557bccc498f06f957159"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 3
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 3
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/exp_up_mm.pto",
+      "source_sha256": "39a4ebcdc8ea57f4edebb40a380a2355bc5e76719d3ddb73fa0fe8d04babdfe7",
+      "pre_sync_ir_sha256": "c91714ca2f30c15b9ca83f59f138c5165868c703279b28c6e194bffec473a8cd",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 30,
+            "waits": 30,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 7,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "221295ed94975a7816ae66a7e8a8f3ce8e2b2becbd9d4cb08202bb6de416f53e",
+          "output_sha256": "0222a102510ed7b6a362ca51f09867e22be2ce45cce255cebdf2a66d6d9acf18"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 3
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 3
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/exp_w2_mm.pto",
+      "source_sha256": "23954d9f3b5794458e8fba1f5deec20bd349ad1da6b5c83c4d5235846267a5e7",
+      "pre_sync_ir_sha256": "a3660f3a43da98ba825d12c14cb9dc4516f090c793c789ce236e5ade081d78a3",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 30,
+            "waits": 30,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 7,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ec70fe325104849c69a6c2dacdfdf95c768a187a99c54985fcd85db9c6c1b794",
+          "output_sha256": "7fd727ecca531484e37283e174005ee5b4e16a2cbffe950caacbbc9f36c4185b"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 3
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 3
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/hc_head_linear.pto",
+      "source_sha256": "35e3b727355a329e8deb11ad0556e1f8969b965265ca6883c8bbe691a7e67b0a",
+      "pre_sync_ir_sha256": "af22442b63246f19da2d68b417386b31eca3b30f2b40a30b1f0dc788a9acdc02",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 17,
+            "waits": 17,
+            "named_barriers": {
+              "PIPE_M": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "9ef122d072f908a12f84669c4793c51742eb5086165ffce4a4667ebc032789d5",
+          "output_sha256": "bbf8f40918ba75ac6179ea67d7274107495b6eb4b25b861486532159a8152bca"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 21,
+            "waits": 23,
+            "named_barriers": {
+              "PIPE_M": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2133f75ae1ab44afc7315208657ad4e7d6f52ed8aef1f65f19423d63f6eaafe5",
+          "output_sha256": "804f1bd0a4bc4f32b0dee03467d0afaff222835f9901f7ef6501ec7c79d91cd6"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 21,
+            "waits": 23,
+            "named_barriers": {
+              "PIPE_M": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2133f75ae1ab44afc7315208657ad4e7d6f52ed8aef1f65f19423d63f6eaafe5",
+          "output_sha256": "ceb5ac1c40f18aa15fe050ff795a7059308bf32a92188e1384151caff6883451"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/hc_pre_linear.pto",
+      "source_sha256": "12d498446a74293f0ed09dd64d111f409646ca0f40f69852f5b401bca7878b2f",
+      "pre_sync_ir_sha256": "034fe3a69a1dbaaec6218134fe3baf4c89dc607f13bc242bfa425d1143fea006",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 17,
+            "waits": 17,
+            "named_barriers": {
+              "PIPE_M": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "98ddf31ce3823ba8b910f63ced122b90203901c96bdc6d5c10ba49c135283d4c",
+          "output_sha256": "13535e650b00012d5fb9706e216a1360cfa2be5d8328eae50e3efe67fa6cfeaf"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 21,
+            "waits": 23,
+            "named_barriers": {
+              "PIPE_M": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "73e5ae8e644ce62a33f45c090fc03378e3487f48f001068314a5d2842355f3a8",
+          "output_sha256": "215b8041bdb6ee874be4459dfed06c4f117622f9e3461742e78890cc871e606d"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 21,
+            "waits": 23,
+            "named_barriers": {
+              "PIPE_M": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "73e5ae8e644ce62a33f45c090fc03378e3487f48f001068314a5d2842355f3a8",
+          "output_sha256": "4ca44d2246ce5b225a95677eb460e489e4cc70d69b2ca34d22d04bd1c869d6fe"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/idx_qr_proj_matmul.pto",
+      "source_sha256": "0299e9f251075937840f9653257e890b411e197cda4d6c2fa0da8bd2eb36a425",
+      "pre_sync_ir_sha256": "f3252b5e0bd92766c8b5c79998062a56ae0f02f3331e304fc85811b1f6cd7ef7",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 30,
+            "waits": 30,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 7,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "12dffabb9e7754697ee987253167fba28fcd04288450cdd5f8b462e50a33fe8d",
+          "output_sha256": "a3e65343fb370dc745efdb06ce96debec0fb5f35642635ea18e4d1f3ef464563"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 3
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 3
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/kv_hadamard.pto",
+      "source_sha256": "0c07a048a8b84f1d2d57b18ad10483178a7a8f0fcaeef69ecc796fe429e9c81a",
+      "pre_sync_ir_sha256": "f301193f5d6f38fa291c6e8dba56610343e327a3df019556f60f36f666461bd4",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 10,
+            "waits": 10,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "92233d1450b5379f48f4c1f17a463377e090386362ad6be5c19c4ea54e4aa3bb",
+          "output_sha256": "53426b9539fe1512e4e5789a2822f5534a6af103efc24d4bf547e8d466cf4c65"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "969111a6029f6ccfccbbcb71df42d3792f511a531a576ff0c72f9b6b2ba2e69a",
+          "output_sha256": "38927d2b12ebd3053c202bc4b64867b75daf00051c03484d1621ec8a03d79066"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "969111a6029f6ccfccbbcb71df42d3792f511a531a576ff0c72f9b6b2ba2e69a",
+          "output_sha256": "88f0cfbd3f087857026131ac8995a21613d58853e856e0ffbcf1d9a7f35d5073"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/kv_proj_matmul.pto",
+      "source_sha256": "2eadcd4c2fab0ccf89e9af0755240221741b768db0fd4ecf61afdb466d01ec04",
+      "pre_sync_ir_sha256": "f89ec50a3fb0803b4d7718fd13daaa1e88f933ee278f932bd06cbc2447ffd554",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 21,
+            "waits": 21,
+            "named_barriers": {
+              "PIPE_M": 6,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "25c4cb31638237a06089e351004abd7341fceb42f5912aa46566a9360dd3324f",
+          "output_sha256": "7a948933ac37ea8e44d39802f780e53c91412dd0c80628dde02fdf8a02696920"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 38,
+            "waits": 38,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "82e82a6d09694b8effc6610899a71f4d2ee09adfb414f2d3ff56cdcac6a13852",
+          "output_sha256": "a76c2dd134c02af74f08e8e8f13f5da94543c67c64267027e89380c26ce261fe"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 38,
+            "waits": 38,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "82e82a6d09694b8effc6610899a71f4d2ee09adfb414f2d3ff56cdcac6a13852",
+          "output_sha256": "ff7cfae8fc8a7afbad166e832b0e4502fb0d014460f2b8a25022183c416bb02a"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/kv_score_proj.pto",
+      "source_sha256": "4dc04469d03a12068c0755917b594b27834ab0878deddeca18f31be2ba737c43",
+      "pre_sync_ir_sha256": "f4d92efdaa23377a1fbd42c80e84765b647073d68b4adf50cd9676d9f19b4284",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 32,
+            "waits": 32,
+            "named_barriers": {
+              "PIPE_M": 6
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "fc5d2d95fcb295e3346ca93ee6ede9ca3db250b8f6082e77c1f94f3350db9581",
+          "output_sha256": "a635bec2b609062392fc22027de5f4084f0476f9ed01d88464af5c1d736bfc64"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 0
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 0
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/lm_head_matmul.pto",
+      "source_sha256": "ed930cbea375f82741204ab216473428ed47356a90f81fdcf7f13301705fbb2b",
+      "pre_sync_ir_sha256": "1a6c578cd25da510d0885be22001cafb983949a4922b43be9be7705dfd9579c0",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 45,
+            "waits": 45,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "8e8d4be85086de68dee3784a1beb7872456fa150b3855d33d7575eb8cc7062b2",
+          "output_sha256": "3a866fcadc2ca4ccfd2ffd2ae498d4169f97bf193d02cbe1c5330f04ca79044e"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 2
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 2
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/proj_a_mm.pto",
+      "source_sha256": "ab999f361b0c99aa60a7246daddb941b99699701233e03c19a5d7272a04ad110",
+      "pre_sync_ir_sha256": "03067fe3885e1e8c0118bb821fa4b19e7d3a1dac067521526bc10fa877461d2d",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 32,
+            "waits": 32,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "85e1d2c70ff057f5a8bcf6bab1a2ffa382378770d0e37b95bf9fdc22a6fd7eee",
+          "output_sha256": "510db4cf6b992e956abd560b61f4ec56fa6fd946bcb26dd6ee93301417f33c0f"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 1
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 1
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/proj_b_mm.pto",
+      "source_sha256": "1fe1a60ab4cddc280837f23645f215b78b316f5624877c4db79c8e8d4030836a",
+      "pre_sync_ir_sha256": "ef07130dff984d014d596ecf62f9b0de6e6952062ef19a09cc42c4802baeb8cb",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 24,
+            "waits": 24,
+            "named_barriers": {
+              "PIPE_M": 6,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "b3b9b850fae246e9366df2c76fb107e5ede03342bcc11d9d305364e34f4247e1",
+          "output_sha256": "1bd50f92a01747cf7f5feb00b65f7f0d2380dd16dd6161edd2bfbb6dd6051e79"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 38,
+            "waits": 38,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2771014660c85424a793804fbb01b96f3219321cf906aa94d6b664b5e369c93a",
+          "output_sha256": "c31388cd2357134c63cf7dd7feafe9a979f71a080750d0f01f74123ebed13af7"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 38,
+            "waits": 38,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2771014660c85424a793804fbb01b96f3219321cf906aa94d6b664b5e369c93a",
+          "output_sha256": "4930b0691f688a518296bfe4766929a6533d3f7cbf54729aa17c16c429e9551f"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/qproj_matmul.pto",
+      "source_sha256": "849e68637f58f79f818c698172229e0115f3ba4e502ad65d061bcef09b3bc1dd",
+      "pre_sync_ir_sha256": "02fc2d6467aa4b156ad3a3cd40d55dc2cb2dfde8881e2d3af459c4e88d385cd4",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 21,
+            "waits": 21,
+            "named_barriers": {
+              "PIPE_M": 6,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "bb845145522c53b510c4d8e0a600859c0b7c6cb61daf718851e612f0f13bbeff",
+          "output_sha256": "b48f9524f8653d7cb10ecc441e93c28e1d2d46cc942f1d4a11a6e143753bf148"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 38,
+            "waits": 38,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "9dfeedefc62305f7e15c9fb43d84958f7d07f13ceab2e11057a9a714a82db34d",
+          "output_sha256": "791416482d392f5d9f686f21981838c179ef218cf0432119a4a283ec07048487"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 38,
+            "waits": 38,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "9dfeedefc62305f7e15c9fb43d84958f7d07f13ceab2e11057a9a714a82db34d",
+          "output_sha256": "979591c93cd38e987cb1b5f05d1826560fadccdca729a17d25f28a616644fbf0"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/qr_hadamard_matmul.pto",
+      "source_sha256": "6f5d0d179ead392e6f64207f2e421a1dca05cc17053ad55d40ee06f5626bae2e",
+      "pre_sync_ir_sha256": "9d7bebbe7ff1ace655f41e5f057db38ca6fab2e064c79db6d8e36c61df4f15dd",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "c573c267ff7ad1e0e300fb02e1b3a6a7ca0490f4e872223b60ab247f47844961",
+          "output_sha256": "e55f2bd8758264348c3c6db3002df250ebf5b70ae0fbb8c27c6f90c36ff3ffc0"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2bd10d09e9d0fc6384b4b7a12f3d6ed8dc5ba9ab32d789dafd89af76c10fb265",
+          "output_sha256": "9ba26aed9efd492a058d0f5fa3acda41b425c244b96d21954f485546b9934eab"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2bd10d09e9d0fc6384b4b7a12f3d6ed8dc5ba9ab32d789dafd89af76c10fb265",
+          "output_sha256": "931243aad4e9e3928eb09934ba8e8896395da50941cff4bdefb889189b3534c5"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/qr_proj_matmul.pto",
+      "source_sha256": "e15db53846048f4431fe54847ed2bcfc4456d7f91ed8e67db8a044ac25d8409e",
+      "pre_sync_ir_sha256": "7b410650b9b5a88ac2cc53c13411a743d517f1143ceabeec72187716bf1ec8b8",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 21,
+            "waits": 21,
+            "named_barriers": {
+              "PIPE_M": 6,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "25c4cb31638237a06089e351004abd7341fceb42f5912aa46566a9360dd3324f",
+          "output_sha256": "a3ce2fc02eb98af9f0f4ab615a61d9b2df6112f4dfc809ac065369a813d2f12d"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 38,
+            "waits": 38,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "82e82a6d09694b8effc6610899a71f4d2ee09adfb414f2d3ff56cdcac6a13852",
+          "output_sha256": "35b02d61407f92a588c0111eebd43570a46a27dd46314d643f1474217f0329da"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 38,
+            "waits": 38,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "82e82a6d09694b8effc6610899a71f4d2ee09adfb414f2d3ff56cdcac6a13852",
+          "output_sha256": "4be40404753f000db2d5ae398fb693c4a359974b91c33fc22f0aef0d11273706"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/sh_gate_mm.pto",
+      "source_sha256": "df40c2c077c814b0c946ef03a75a7ff5118d76506638017a82737ca4e9e55bf6",
+      "pre_sync_ir_sha256": "442046e6f6ea2fcc5ca29aa73f551d9e26673aff8d4d9f77c9f7f490a5728757",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 28,
+            "waits": 28,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "d003659a6ea52f5ac432938a51e2a503d408ab39aabbf3359f7c7ce9e9f5fae1",
+          "output_sha256": "b2dd3fea1c9ad79ecd26cf3752d83125d562642c4a4534048a89963f2f45d90d"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 3
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 3
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/sh_up_mm.pto",
+      "source_sha256": "5c5d17baee5295bddd97aa4abf160ebefb98a64e96431074383a1be65cac2470",
+      "pre_sync_ir_sha256": "84655754d23859b3030632b2a0b8e990ef3740cfe64d3f05c408ca2a77a35e87",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 28,
+            "waits": 28,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "d003659a6ea52f5ac432938a51e2a503d408ab39aabbf3359f7c7ce9e9f5fae1",
+          "output_sha256": "d70f76370d8182d45ab3588228b953b7373ceef202215adcc59b7360b139e507"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 3
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 3
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/sh_w2_mm.pto",
+      "source_sha256": "74b56bce62cc0f973b4884f341ab68d55b07695ee58e6f12a2484e2015ab7333",
+      "pre_sync_ir_sha256": "433e36f25ef66385bcd9e1766c6418f173f4e7642b3d498cbd0e63fb4e226d4a",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 28,
+            "waits": 28,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "bf77e9f27c00c8f37f17fc48e9a45b4a2f1ada66c8014dc0594296a3750f76c6",
+          "output_sha256": "06e42ee1a46862b3bf633c5809ed11d2ecc3844e0d9c7592361c19285ddfe11c"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 3
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 3
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/weights_proj.pto",
+      "source_sha256": "9b10bb26379c44e40db1f8fadda5cf91ddcca7a82e510d7b710f3b6161c39aa6",
+      "pre_sync_ir_sha256": "020d96aadd3b42771b5fba21bb12dabfd339cc0108b1806a463f5a99b8fc4f98",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 10,
+            "waits": 10,
+            "named_barriers": {
+              "PIPE_M": 4
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "d630341e5f3e4f204d4ff98bb0b975c0d739380c0f54d2fe595f0ebff6d6a017",
+          "output_sha256": "ced0ae4975d9d7d245f5ffd797343560e61200760b4e80d5b53e4de5e40ec59e"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 16,
+            "waits": 18,
+            "named_barriers": {
+              "PIPE_M": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "fbaeeef70f6107ce6c74d555716923ec2516b9bcc00410351098f3060f57b2a7",
+          "output_sha256": "866ecfa3d87ea9bfa5fd8fab4cf24124ee3f9e3054537f2d500562bdfd3cbda4"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 16,
+            "waits": 18,
+            "named_barriers": {
+              "PIPE_M": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "fbaeeef70f6107ce6c74d555716923ec2516b9bcc00410351098f3060f57b2a7",
+          "output_sha256": "707f96254c795caee9647b946419d26eb087c2c0ddacb6f543cd8f38f77b0395"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/build_valid.pto",
+      "source_sha256": "23082b3d1d911ef16d2dc02ed1a017ddaa3b44f5b807d3f6919c9e8bc2d328f8",
+      "pre_sync_ir_sha256": "5e96df44dadb7f62f33ca903ddd793aa7b877fa601ee1e2ba6a3d19fcc22a480",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 5,
+            "waits": 5,
+            "named_barriers": {
+              "PIPE_V": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "036194afca746899d6897f1daaf508dac2258300ca16a4e5d524519ff048fe46",
+          "output_sha256": "0ba66b052462611fe0e0bc5352d40ed14dfdacf19c4118488e67e6151fcc83f4"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 5,
+            "waits": 5,
+            "named_barriers": {
+              "PIPE_V": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "4d46b90d5d4d3e3d2f36e519647924dbf1b224dec7202220ff0b41fa70160cd1",
+          "output_sha256": "67221c01a6e4d967a88b1bcb57bcec589365f3adc030eb4856bc5830cfa8c2e7"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 5,
+            "waits": 5,
+            "named_barriers": {
+              "PIPE_V": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "4d46b90d5d4d3e3d2f36e519647924dbf1b224dec7202220ff0b41fa70160cd1",
+          "output_sha256": "e1fe98a05057f08b4e35b585473c59f2963d8bdcdeb976ee63f6d15591600964"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/comb_sinkhorn.pto",
+      "source_sha256": "ed8d08af94ee1a9167107fd0e775b12ce06547d24de771ab042a9b1adfc2df00",
+      "pre_sync_ir_sha256": "fca3a610ab31f5f7e997e5f9496078e477b7f2d17be0d3f981ce3061ea8f1b58",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 9,
+            "waits": 9,
+            "named_barriers": {
+              "PIPE_V": 74,
+              "PIPE_MTE3": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "17364251677efef4b145d9b4d8c725ccf970fb176dc4977dcac9476130f73570",
+          "output_sha256": "54bed293f7b86b56ccd025340c301151e1df27f2b7d58c2bdf60ac24faa9a8d6"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 9,
+            "waits": 9,
+            "named_barriers": {
+              "PIPE_V": 74,
+              "PIPE_MTE3": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ca151a0c6254ea4c8342133eb1791845ddee0c4ee64a4dc990fdfd853d13850a",
+          "output_sha256": "c49122a61980eccc6ad7a186d5ea16b3fb79d6c92eea7abc8f3938ce98d4fc0b"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 9,
+            "waits": 9,
+            "named_barriers": {
+              "PIPE_V": 74,
+              "PIPE_MTE3": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ca151a0c6254ea4c8342133eb1791845ddee0c4ee64a4dc990fdfd853d13850a",
+          "output_sha256": "73662903866d766f6b40032e6fb68f6e27b86993fda7de8c9b187d234307b3fd"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/combine_wait.pto",
+      "source_sha256": "35cac66223ea05a183d04dd34ba3f6077986f93a0bb3e074d876a53a5fd15bfe",
+      "pre_sync_ir_sha256": "e63593c762d43c34411058a8984a742977531d30e8380e97ab7246f06ac728c5",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 0,
+            "waits": 0,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "04e5fba61bdc661988fe6438dc114dc879862b27565f9c3a7162619f5eff5417",
+          "output_sha256": "d5dd3c82a5d8b0f670b0150ace6ba4d8c981b932e7c28d65e0345738911d61e8"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/csa_cache_writeback.pto",
+      "source_sha256": "bb9222c80494972e4f6f40d7b5cca63c171f4ce135e8994fce412ae91df65bd1",
+      "pre_sync_ir_sha256": "20e1511aaa4cc070e03cc18d9f1e848760eb425d863616bfca816f7f57fbdd5d",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "4c73e9cefde8e84844dae0a4e29a7ddcd2b994cbb0b02c867d8dfa6745d4466b",
+          "output_sha256": "60874dfdc62f5dd4955ad88f44eadc9525666f6034d02f10123c51a5ee014163"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/csa_cmp_rope.pto",
+      "source_sha256": "4ae283999bc7899f40410317b48988fa52ed882a17aca0310334c058ce43d020",
+      "pre_sync_ir_sha256": "81ff53cd2f2467bc6e1076145365148f9e1cf7ec1c10e2223271df86c5bfcbd4",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 10,
+            "waits": 10,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "662a0f422cda95d118f106cb147236e5f673fd13923be0fefc23b39b2f1baecb",
+          "output_sha256": "eed28f0ddd54f3b3cb88058aca491d69bbcb2bcd9eed370023f5bbfe37cdb8cf"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/csa_rope_step.pto",
+      "source_sha256": "6d6c8e3c122ea2cec0117c98e63917b5567f2fdf7a1c73b9693bf830cec20f9e",
+      "pre_sync_ir_sha256": "21064cbd568d857a37a4679f133a98de5d0c73b3804fca5112c4e907883fb652",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 21,
+            "waits": 21,
+            "named_barriers": {
+              "PIPE_V": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "7fca28a43f036b74e33b04a6757e6668727002e5bf29d1c3d72e7445cf4acbbd",
+          "output_sha256": "a9f8d4d260ef36a2aae00db263d34fa861297b153d4e86da5045647af5ba9e81"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/decode_build_cache_metadata.pto",
+      "source_sha256": "8635f96782372d8a067ca14a848f743c99fb8d563975e5e37b373d9ef2739d5b",
+      "pre_sync_ir_sha256": "6219c4ba87d6562d4da9120c0bf632c8b07dac4af44f9fe353eadd08dc62d4b1",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 0,
+            "waits": 0,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "9c634b7f8b49e70ffcac428f0626085ba6eedf4c6b6245b91ccaefad4323d9c1",
+          "output_sha256": "74d2526f9fcfe3afb5e8ff66b5e8deedaef721d4cdc4bf0f176f498712363a58"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/decode_build_swa_metadata.pto",
+      "source_sha256": "de66cae2716c0f76b16f2e23201434f498e45244abb3bfb39a01f08990666ebf",
+      "pre_sync_ir_sha256": "0b014729e85ecc1ff07f59ceab2875849ac587f8a43b87855baa81c576fd305c",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {
+              "PIPE_V": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "de14a3b2fece6432ef9eaa480b9d87b68ed894aa56223ca4681392b0b1ad2b00",
+          "output_sha256": "7f63a5922b4a4ac47e71ca96a2071f1c96749e6b19ef07c52742484a7d8840fe"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/decode_build_swa_scalar_metadata.pto",
+      "source_sha256": "5c8a1c197c600b287008dcd72105a55d5e6a376032e35bf083a8e3ffe05ad9ca",
+      "pre_sync_ir_sha256": "600e7e25e83f863c1387caa2f48853d58f581c1b0d08955804316307f0648a4b",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 0,
+            "waits": 0,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "7878f5dc6e92e32d3ce81c7787e5d29cf6d5d4fb322070441b88ad68de75be42",
+          "output_sha256": "a39e4b4098e48ff3d44174d8077b4358790854854c5c97f31b939af70ed76652"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/dispatch_gather.pto",
+      "source_sha256": "c1f2119c20e9b91ce80dce54578ebc56b2760f761a55611828f7ae58f9276b6e",
+      "pre_sync_ir_sha256": "706baeab492c5769b400d2d7909280f5bf32fa5782b6db13d576cc2af9674467",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "244d33eae497c6b6c5f4e9ae150b0f5a1aee24bd386499452e4973770ecff850",
+          "output_sha256": "0b14310553a10083867bae1b5b1be455066ea20d3b4572ab102fd1559890a963"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/dispatch_wait.pto",
+      "source_sha256": "c76824a2218953cb576418b881bceb2441c0e29f305e6a1028f0c25f06846c87",
+      "pre_sync_ir_sha256": "13e078689182730b6a4028be5347b1b2957ecc7edcffde1168a90a394af3a012",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 0,
+            "waits": 0,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "04e5fba61bdc661988fe6438dc114dc879862b27565f9c3a7162619f5eff5417",
+          "output_sha256": "b0c400a1892cbb2b219d30403dbd146de8bd58cb5a3bf4b603195ef3ad5a0dde"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/exp_gate_up_act.pto",
+      "source_sha256": "efeaa0a693d17f2c42b45ce967392ef4f93a08589a141c849704a901051e85fa",
+      "pre_sync_ir_sha256": "fb7e38f73a61a5607d4aa6fa22fb87bef867cfa89a62a3317789d91e5cfd0cd6",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 14,
+            "waits": 14,
+            "named_barriers": {
+              "PIPE_V": 22,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 3
+          },
+          "mechanisms_sha256": "c389eb2d3a640d1aaa64859f824e97f37439cac65f2c922aa2e9b668ccfdcd1a",
+          "output_sha256": "eee03a5fce5548686b6530703968e94cb6f6b6e362d5bda93992f8c185e0a329"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/exp_h_q.pto",
+      "source_sha256": "2d59c72d928107342dcb154f43c78b9c85c2fbe6a8a58158bf1916619b1ec16c",
+      "pre_sync_ir_sha256": "ce3a15717b23f776fbaa222f9fdea1afee621161652f1d5d491075fba5e8587e",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 14,
+            "waits": 14,
+            "named_barriers": {
+              "PIPE_V": 15,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "bc8e19b2f2924b7a6a8ac200c57bc2e02d37c2b7c36879a7e5d2776c37407869",
+          "output_sha256": "fe4ef0cd7e06c8e62f34ae77c67f877bbbb082febf8eb4c560b999506d4c8562"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/exp_w2_act.pto",
+      "source_sha256": "477422c13b13944d2a5c85b4c939dae836550aa3006891a4c92ba5ad7a4481d4",
+      "pre_sync_ir_sha256": "cc13ad3c5d7d38f788a57ec1b42219164ac04ee2b1ae524a9c3e19df99706e0c",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 12,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_V": 6,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "829892c935ff7b5b70e0b6136914f9795677da2b05fcd1b844c8e4df0c67b3c6",
+          "output_sha256": "8a3a803e63646eeedcdd246316480d7c42d9850925f5e7d02ad1071d5afc2e48"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/ffn_norm.pto",
+      "source_sha256": "6607f4a9ff3eab0e152d4e3ed02e6f48ad76ddfae55502d4f9ee9d6e485b99ec",
+      "pre_sync_ir_sha256": "4c3f6ff5f5f2520fd14439142011225ae1b25212ad2dc8083f7dc92df93e77a3",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {
+              "PIPE_V": 19
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ad4a6ce965a0bea09128bb5c3a75eee688aa0634e01cb91af90bf3d739ccacbd",
+          "output_sha256": "22464eee0c40cb869790a98cbf1e1d96eff675acbae8b38bd3228feec170d00f"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {
+              "PIPE_V": 19,
+              "PIPE_MTE3": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "f3646d453f03a6281ab1818d5ceb4cc7beb94520c24c09db23de3180cc610685",
+          "output_sha256": "b9ec1988ac382c82fab1bc2af28351931d82ccd867b15504fc3aa5539781efc3"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {
+              "PIPE_V": 19,
+              "PIPE_MTE3": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "f3646d453f03a6281ab1818d5ceb4cc7beb94520c24c09db23de3180cc610685",
+          "output_sha256": "142148deb0b59b9014e7d248385ef52dcc73fa4436662f78d5f29224018dc9ea"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/gate_pre_route.pto",
+      "source_sha256": "93ca198f005d9f42a72c169eac86018a3f450d7262b9abdc0ebb9578dd50c2a7",
+      "pre_sync_ir_sha256": "28abe509dae675d78861fa259806160090aa49e43a86932bde8378ed2dd07a42",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 1,
+            "waits": 1,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "deb20a72030389d50df6c75c11aff142c29858e144c13c813003b9847ac289c8",
+          "output_sha256": "07967d7121db46e6b9c737c93fe927156f9b681705ef49589285d176ace90f3a"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 13
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 13
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_head_reduce.pto",
+      "source_sha256": "3630ed35ca2df54bba4f67a5bb3926e957a567eda099a2766286202935658c4a",
+      "pre_sync_ir_sha256": "cee4614691b4c3418dc67f97facfbd360308555ba9091798e36fe486d631eaaf",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 9,
+            "waits": 9,
+            "named_barriers": {
+              "PIPE_V": 18
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "5ea35d51e16cdd511ba70d6659654bff2b49337204a1e9f12e5e86a07c1e20da",
+          "output_sha256": "5735f777524eaeb4563616e699f50272ce378fa61eb924577e3894bf2bae08fc"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_head_rms.pto",
+      "source_sha256": "124c3212ec3812467c88e6560dfa3d9327340d80efa95a2ac73d817b712130e0",
+      "pre_sync_ir_sha256": "e1b74515d555dd86a89f8480790351f7bdc82aa65881304c9665be729b946efd",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {
+              "PIPE_V": 4
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "bef424a2acc8eb678930c044e177ff915aa31f55cfa9c834f3d73131dc79da73",
+          "output_sha256": "c0b0680f339ddcc0845265b32ca5cd1d0d0c66b65029be16308d6644a9c75c1b"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {
+              "PIPE_V": 4
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "37b1d32250baf7ea75a811858966afcfd5043ea8dd98613ec1518f589fd3c9f6",
+          "output_sha256": "08e0f5133a6b8dff145d86b4ca67ae282f1857963154d12c0d20e3cc4502e492"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {
+              "PIPE_V": 4
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "37b1d32250baf7ea75a811858966afcfd5043ea8dd98613ec1518f589fd3c9f6",
+          "output_sha256": "5efd39deff8a67ab4a13fe4e8d0b146d08d7b90b2bd9f2b0e629f53ed95e1ca5"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_post.pto",
+      "source_sha256": "4382b31db5b5127ec0e6dee5f904f26c950ec109db7f853691063205be2c8d5d",
+      "pre_sync_ir_sha256": "f7c36abce79cc6c58fbc6ef37835340e5f09c89f853f5e7aa530f3823aedf2ae",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 27,
+            "waits": 27,
+            "named_barriers": {
+              "PIPE_V": 15,
+              "PIPE_MTE3": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "7dab5de4f4229c04a3715747bc641228faa2a7e4751c875f2aadf17306b0519f",
+          "output_sha256": "fefd103eb4a3b79a3de81cbf5a6090d63728f471448acf267146a70fb2e09ee8"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_pre_rms.pto",
+      "source_sha256": "e7ac6dc9d64b81e8ac46527d27a451048a5c8844875333d1f69d119dd72ceaf0",
+      "pre_sync_ir_sha256": "5baa1b6c5dd93eef98478d973db5cbc12d9d354826680efc3481b1d5e71a3d8d",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 11,
+            "named_barriers": {
+              "PIPE_V": 11
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "82f352a14b97b480dc5e4056a7b1998585cbaab50480131b4d4139b3a6891477",
+          "output_sha256": "65339a1000e9d73a1f935f90eced0eb8e19eac8bfc5e4bdc5ada1636fd200c16"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 8,
+            "waits": 8,
+            "named_barriers": {
+              "PIPE_V": 11
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "19cf63be0a1a6ee6addc36a6c7e0c5c88326738a2d44876045583f88dfafb97f",
+          "output_sha256": "4fd0237ddb4e5fc763165f5dfb44b5324592597b0f45d8e5ad8b3c32d4104880"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 8,
+            "waits": 8,
+            "named_barriers": {
+              "PIPE_V": 11
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "19cf63be0a1a6ee6addc36a6c7e0c5c88326738a2d44876045583f88dfafb97f",
+          "output_sha256": "568e5e158f2f3e5f4918b5a0633b7e425aed1360d741da9b461b5aac288eee42"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_pre_seed.pto",
+      "source_sha256": "cadf985bff56a8efdbd0f9f62a85f00904162a1a212108b01678f10949fc77c3",
+      "pre_sync_ir_sha256": "3ccba93b0c61e062bb4a4e6a24293f4e63a8d8273e38a3447a4af3cca4e9148a",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ed53fa31c098e8efc880708cbc7c56bbf707dd6a0cc676edf375a0de6f9c2448",
+          "output_sha256": "4371c82b307ddd93b60016d19613817d718f2cb9c050de5945320700e92da482"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 2,
+            "waits": 2,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "3d518f6f720f7c4c380d0972c299fed33157b6b3e636dc5b81f1055a1f4f9b88",
+          "output_sha256": "11ed0ce9230c9b30a1f6dba2b2dffe0c7e6d1443f02c695837d906b08443c3f1"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 2,
+            "waits": 2,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "3d518f6f720f7c4c380d0972c299fed33157b6b3e636dc5b81f1055a1f4f9b88",
+          "output_sha256": "4167bd01d420905d49b62d76fab1e2741c79d7a8defa380849c5667e739a18b3"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hca_cache_topk.pto",
+      "source_sha256": "fdb1e9ae9fd4fde94609a112207e81ddf326ee7fb13f6fe96f64a70eb9aee574",
+      "pre_sync_ir_sha256": "364cf265bb8540b8182c1db553fabc94e4b81b0d94b21141a008b7fbb3408ac5",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 0,
+            "waits": 0,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "620f363117348f3527258dcf981c8698c4bae899b30f1ee036f4a1fbd108fd9c",
+          "output_sha256": "383130838c8be52f49c29c30cc04f929849fd183a5aaaf072a390d4b9c3bdc2f"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hca_cache_writeback.pto",
+      "source_sha256": "3f06f849f61e57fe64100641a008748838827a405fc45ca2b44029768010bc40",
+      "pre_sync_ir_sha256": "850a7343152ef6ffb968e123b66e2365b3008a0f00733c8b91c1e49d4112d8e9",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "4c73e9cefde8e84844dae0a4e29a7ddcd2b994cbb0b02c867d8dfa6745d4466b",
+          "output_sha256": "1812ebcb406b836b424872e14bfefc9e2d4862cbed67282a9310018b8e23b28e"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hca_gather_kv.pto",
+      "source_sha256": "b9b13c34d36bf5d000d3c9af311ae0c8bdd1886ab3d17cf710971425eae5acd8",
+      "pre_sync_ir_sha256": "7ae478276573d1e5f6f3d3222620c41b7aa5f3c26f905403d68c657f98edcd31",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 20,
+            "waits": 20,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2dba6e326591422c4529569d8194640a97ca9e5fd03db71543db466d6412bb23",
+          "output_sha256": "150e74c9062a5341e57adba60805d2a6aa4ece0dc1459e3855f71866ac9981f3"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hca_rope.pto",
+      "source_sha256": "caa7823e34c8d788499c4b964fa982b5fbeabcb4fe322a31f2a7bd9e90fa0bfb",
+      "pre_sync_ir_sha256": "90e16173aa4584d2371e63d752ed6bd1f5bce668257b2466096ac7a59382245d",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 20,
+            "waits": 20,
+            "named_barriers": {
+              "PIPE_V": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "f22dee83df3f2bf6ab90f37f8f158c15310740c16f5e34d5e7fa6fae0b93167f",
+          "output_sha256": "1cd22c0005d8b0f2987c80cc78f0ae3b76688f920cfca15cf3a87b095511ef24"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/idx_qr_proj_dequant.pto",
+      "source_sha256": "3c82fe2099de9e39a7e5e09e58f332962128d3fec3fbfcaf69866a6f4073c9bb",
+      "pre_sync_ir_sha256": "fdd573fef66f1addbff051d8afed8f20f8fa3f4a3bfc273d1936dc9408d894e7",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {
+              "PIPE_V": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "b403650670062d537ae4a4d741634e6a009349748eca9656a31db01348dce2bb",
+          "output_sha256": "1b3b05500dcf668c4e9661a059506c695d6e5a535bcb1e16dd9cd69d18ab2dd0"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {
+              "PIPE_V": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "c48b1667c12c4a2f1bf852c82fb0a8e5ab8e5c6c0e7afaeae093dbf48f51fc17",
+          "output_sha256": "dfeb64e67817cf5ca24b2c9e54f1dffe82f1362e39de918599d15028b0b7f979"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {
+              "PIPE_V": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "c48b1667c12c4a2f1bf852c82fb0a8e5ab8e5c6c0e7afaeae093dbf48f51fc17",
+          "output_sha256": "e98a33a1222d18f24a4ea161b9ac1d4d982ebfc12dbf917a9bbb904bdda10516"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/kv_and_cache_write.pto",
+      "source_sha256": "1e3e5bd5ab6f75a623db9d0f6c3d3844a1180e57ed3ff004e12756936fc8414a",
+      "pre_sync_ir_sha256": "f50ca71e961497e5f0bfd2de6c469e348e684c498ea493633e9e5591663b1479",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 7,
+            "waits": 7,
+            "named_barriers": {
+              "PIPE_V": 10
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "f44e2a466c2ea555c8eb8986465fba24c8c657ab0b766045619d301a6db4ab17",
+          "output_sha256": "9ec96d0d51cf7ef3661b31925e30d0a108b6cbcfaf1e53caff9807852bf14d3b"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/kv_proj_seed.pto",
+      "source_sha256": "cbbca875bc2786b99859482e92831241e422b8067497cdcdf6d4c0765bce52c8",
+      "pre_sync_ir_sha256": "5c1636f58872cdfb997f5f328185d56a3f01541248d7415c9d9894ad6bcc1b45",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "a98ceab3d6d5344937224edd27fafefdf5e7ef03905cbee35c5f4b8b18f103d9",
+          "output_sha256": "7e1ac79f32171fe724bdf1f859a8515ad3188e08c81e1aacc4975089c6518cb7"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "681f61707dc88e0197ff3214abc74d267ca814ee84699b86d9f2bb8246a4be42",
+          "output_sha256": "b1e48945c577849dd7b03cef61d26d2a4d477cb8f1917f29e796e46fc289f154"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "681f61707dc88e0197ff3214abc74d267ca814ee84699b86d9f2bb8246a4be42",
+          "output_sha256": "db732331a01c26b2d96ce65faac7849db0e6bd27ef9509b1e5937121fe13f05c"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/kv_rms_norm_rope.pto",
+      "source_sha256": "967699052ffe47ee30ac23ff83c760a45c72651e0a862d5d76cc56aa506e7d79",
+      "pre_sync_ir_sha256": "c187cdf9752a76917232d2d08d2f155b9dc25af34e101fa89e83d77c2a0da8a9",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 24,
+            "waits": 24,
+            "named_barriers": {
+              "PIPE_V": 20,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "26ca086887bfaa8c59ff4d04a7714f7e545d34709a51acae37bdf8b1b85e889f",
+          "output_sha256": "4e30af85644e5bfbb27a18ca0c1cee38987763d2da33f8c3130e60c474afa0f5"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 9
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 9
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/kv_touch.pto",
+      "source_sha256": "8ffb2f4f806b6592a387c2f42fdb4a1333e81b2cebe15f668b7db5182c5f60c7",
+      "pre_sync_ir_sha256": "005ca6738fd7629b1ef240c63173c7bb933e39ba9cd2b149710c643acb567ee7",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 1,
+            "waits": 1,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "251495b1f30c2af6d87663f411588f38f48c15523ef5952915d8d248edcd5aa0",
+          "output_sha256": "90f52c3511096cdc62239a0e7769c0a97a3a8dcc1955ad0448bf03d2129ed204"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 1,
+            "waits": 1,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "276bbc4894bea207d890f4b45cf41c8ed78dd6b078325b09afe2e9be81550b54",
+          "output_sha256": "ca9a06f066942f43a674f1e151e5d65dd788f65da65c3b07e841f00923f23898"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 1,
+            "waits": 1,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "276bbc4894bea207d890f4b45cf41c8ed78dd6b078325b09afe2e9be81550b54",
+          "output_sha256": "52761e4745057c8417226e45b6fe06606d1ccb0511e23323d179851be0a4cc24"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_combine_gather.pto",
+      "source_sha256": "c741cd2b477431ff761350c2e25ac5ee409649a10243f04322f3d64a1e91204f",
+      "pre_sync_ir_sha256": "66f0186eb381ceb1337021188174b83f410e3b656f6376229a08d35a0becb55e",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 7,
+            "waits": 7,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "d0fe55bcf2190f6ca84df5c35c0ea1747c4a867d766b8cedb4e5403d5fe90d3d",
+          "output_sha256": "9ffbd759f34c5def6884606c71b783abc6c889c1de8565c9ba046438df218307"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 8
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 8
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_combine_wait.pto",
+      "source_sha256": "161156ed0810d6d5abc6c649cbaa42aca8dbda66c4f2fad3659c2f2b4564082d",
+      "pre_sync_ir_sha256": "c9315bb3939074d26b859e6f1bb8dd1ae8dbad4b50a692c93f8ea4f44771e237",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 0,
+            "waits": 0,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "04e5fba61bdc661988fe6438dc114dc879862b27565f9c3a7162619f5eff5417",
+          "output_sha256": "ccabee8fc98e658d285d918ab7bbcce9b5fe8937d16095a94cf8c1f9962cb907"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_dispatch_gather.pto",
+      "source_sha256": "a8c2a13f5ae44b0f130f779767946dad83f2665c45cef51f240d6bd94d4a3fea",
+      "pre_sync_ir_sha256": "bd2058a5698d35b8de51c5bfd7a240bc16172c771730cbd5e4532932d9751b6f",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 1,
+            "waits": 1,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "19751bcd7ac1d464ac63e456fcc0b1a1a7b65dacf4160a848ca9e3c986b7694d",
+          "output_sha256": "abc2ee0d1f272fd9ef6fbf5e383397cd71332af2d6af42cada251fe54695c721"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 1,
+            "waits": 1,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "57cce91a00db907cbb655dc32e74194c858a6cb6210cf4b000eb80cab2b730c4",
+          "output_sha256": "186613d8c43afb321f9a8ba03dadb0eef5bca11ceea19fc3838a35cb562e60c0"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 1,
+            "waits": 1,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "57cce91a00db907cbb655dc32e74194c858a6cb6210cf4b000eb80cab2b730c4",
+          "output_sha256": "e0a8d597904ec65c55e0d64201723bb48ce677e9490168a9b8406e7872b8a3a7"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_dispatch_wait.pto",
+      "source_sha256": "ad546e2f63bcc82252f3c5fbda1903793040532c80d628f3ae5cff91e5b30120",
+      "pre_sync_ir_sha256": "675a88b3a939e949fec1cbee9b0d9e9fffb215439e18bf705e8155c6d50e8ec0",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 0,
+            "waits": 0,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "02d310771231071e65423754bbbc99de9ff74893c4cb0a9faa194da8b9b89616",
+          "output_sha256": "ee30d0a0f1d2116d1c59b91ec61868d1ca69fc74dcb9859d2f49f661fb10eea0"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_signal_clear.pto",
+      "source_sha256": "4b8d6ad66fbcf961eb52e3eade6ab1d3a73b581e5785d9dbc246f120e5607c86",
+      "pre_sync_ir_sha256": "fa02e2d3acb3e35bd8fc34fa8a8f4af783a4103373d3594e1f1e631840c43cf5",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 0,
+            "waits": 0,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "7878f5dc6e92e32d3ce81c7787e5d29cf6d5d4fb322070441b88ad68de75be42",
+          "output_sha256": "d02a580653e9756253f3e89c31a5a97237a2b10e62f0715ec57a199863acf258"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/merge_norm.pto",
+      "source_sha256": "8b3cc98b4c4434689259f15d7063815a6b35531ab5d7af16614ac882a7f43c63",
+      "pre_sync_ir_sha256": "f222c61c1778eb6ad7c7aee61a534ad7b92dafb0ff83e6f475f2df02e3ddaa1a",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 8,
+            "waits": 8,
+            "named_barriers": {
+              "PIPE_V": 11,
+              "PIPE_MTE3": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "e1e0e44ef8637c0f6ce90bf01a50ca75e282d7b2ab3e7e8e4615a93717573f70",
+          "output_sha256": "1e828d9c749457e2c3f8e9654e122ead7dd748c59e0f468871f6d025f17f63d7"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 9
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 9
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/mix_x.pto",
+      "source_sha256": "cffb944da0c1224a914afe87adec84bac853b21f0a9c55e101748ca1fc0d63c6",
+      "pre_sync_ir_sha256": "486b77dcd5fb8b0a982866ad3723e549e3c55b8d45ea916ef72a6609adec990e",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 16,
+            "waits": 16,
+            "named_barriers": {
+              "PIPE_V": 8,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "3cbe599cf7cd8a4b20e4274a63f0060eb6684e48131e57bf78574937176882fa",
+          "output_sha256": "efe371a861b5d8784435851e8b2381573a15d496dafdd08da5ef2661eba2eba4"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/moe_signal_clear.pto",
+      "source_sha256": "7b7c13b6c00ee8b3a409523b3b34a07536cfc646127cbbd7e01384d784572f92",
+      "pre_sync_ir_sha256": "faa134789d37aec6e53b9f9098f230434bf66e5a8792f487213d91dec99fd991",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 0,
+            "waits": 0,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "620f363117348f3527258dcf981c8698c4bae899b30f1ee036f4a1fbd108fd9c",
+          "output_sha256": "fea5721bbdba99a5e4c804a7e9e5a223007dd30737ddee2af25b6edc68ebd0a9"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/pack_x_hc.pto",
+      "source_sha256": "705735ef98185ab564f4a07ef673e68527d98808ea52c4dfb483cf2dbc09c97b",
+      "pre_sync_ir_sha256": "a7222cd7c12cfcb942af2a25bb10224cfd6f0438d3314d50da40351e5e71717c",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {
+              "PIPE_MTE3": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "617109310cbadee6611f044d117403bddc51b9de387a6085bd884e9add7074af",
+          "output_sha256": "4f6413c908fd27c6aff708c4e619b87ecf41aba60691af5e30fc7076827e3822"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/proj_b_act.pto",
+      "source_sha256": "fe5d8e5eb79debbfa15d98a3689636c9d81b6d7390d1fdb36d77704f16f17c6e",
+      "pre_sync_ir_sha256": "44aecc747215133561f22d7ae0fee239fefbf0f535d57eda5aa501afa07a668d",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 8,
+            "waits": 8,
+            "named_barriers": {
+              "PIPE_V": 6
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "3aa28649730c99e46b8fad84f7c036287a299a8acee59e6f2402ad54356e123a",
+          "output_sha256": "826474e35094c2515fec9c6483dd6a6cb1b18f7282c8e4d07c0bbba9463217ae"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 7,
+            "waits": 7,
+            "named_barriers": {
+              "PIPE_V": 6
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "a070ff0472ac5e160a7b7dbe69cf5440a17b51e6dab15c5b982685e7f74b3164",
+          "output_sha256": "74947320adf7fb3271996370793169836152becd162e5dd823eb62cc268f96fe"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 7,
+            "waits": 7,
+            "named_barriers": {
+              "PIPE_V": 6
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "a070ff0472ac5e160a7b7dbe69cf5440a17b51e6dab15c5b982685e7f74b3164",
+          "output_sha256": "25cac9d933fa09ab348198df59db9cfc41702cc8ab7256996606e0bdbff499bf"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/q_rope_prepare.pto",
+      "source_sha256": "8588e301b9dc0afe687032ca9f1092152de3671261e03b273d60b1f86e475676",
+      "pre_sync_ir_sha256": "1847d0fcb6b742e3a27de1df504a868d00e82d3d5b1ef5abadf3b9a69834037c",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 7,
+            "waits": 7,
+            "named_barriers": {
+              "PIPE_V": 17
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "1f29aa8e9c0aeefc3bfdb4624e4ef5d7f5b355ff7dfa90219b3243607b76495d",
+          "output_sha256": "3b559cab57e789055e48ee21ab6c233d2e6d4ee8e6f55dfa45426b22a6fd19ea"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 14
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 14
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qproj_dequant_rms_nope_rope.pto",
+      "source_sha256": "19559eabec53bab7089263b3a7e586265173a31a3cbe4675c3d5445b957905f3",
+      "pre_sync_ir_sha256": "d6d4476f47db85ddfad42504d79ff4afe896c04e14b479692be0026dffa1b72f",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 24,
+            "waits": 24,
+            "named_barriers": {
+              "PIPE_V": 28,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "cac1697bb1c805df1a1667b4b62ea5b698189720253a583041335c9ba1c17820",
+          "output_sha256": "6af0ea3666463104ebffe79df5847ab03c3e17e197ef56f4408e25b84d79a67a"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 9
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 9
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_hadamard_quant.pto",
+      "source_sha256": "cabb51581a191f37f6f50a31778099f1e9b99a3712b80ff04b2e661af61b391f",
+      "pre_sync_ir_sha256": "547f2d664d48287d1fe59d000779e83b79a66319ac08e74a26706df6ddef8de6",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 9,
+            "waits": 9,
+            "named_barriers": {
+              "PIPE_V": 8
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "fae91408da7918e1ccd92681f221b288fd209893c59eb53b2b31e2aa7ad85ecb",
+          "output_sha256": "419b67a1fbc05e3a7cd577a321d7652c409063dea5c380f1c08ff93ace474349"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_proj_seed.pto",
+      "source_sha256": "ac3f0085c8a294def7cc296405b7c729913f8e30d139dd14b9bd6e6c9b7eeeb7",
+      "pre_sync_ir_sha256": "c1e5ff713a6b232d13f25c415376a1098940c10352e2e63d2c977a0fdf50c6e6",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "a98ceab3d6d5344937224edd27fafefdf5e7ef03905cbee35c5f4b8b18f103d9",
+          "output_sha256": "2bb05b18d5b1479de3f54b74e0881cc95b92421d6d6ba6fe4b3bd30678cad583"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "681f61707dc88e0197ff3214abc74d267ca814ee84699b86d9f2bb8246a4be42",
+          "output_sha256": "be391f38c876fcd39aedccea6a104caed71fefa9e1a8f6cbf6dd57bb670e8cf6"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "681f61707dc88e0197ff3214abc74d267ca814ee84699b86d9f2bb8246a4be42",
+          "output_sha256": "89acce784cbc08f06e9913407e9af595c732489f4e125e5d6ec6e92cbcea8514"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_rms_norm_quant.pto",
+      "source_sha256": "da8a8fb36c6bda053982515f6735e2c76cf9896676c1233f3960c3508336a4ea",
+      "pre_sync_ir_sha256": "949176e01d2da294ef58253bfaa18cf6cab418f730c6d61468840446eda20e0b",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 16,
+            "waits": 16,
+            "named_barriers": {
+              "PIPE_V": 30,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "16cd8abcd3454d6a0bf6dab7302253002262a2b2b74debfc1c80f5126e2c9a0f",
+          "output_sha256": "ed03bb02ef27282d752edaa5116fc4e73a3b8d5fa0f79713f0b75dcecc637fe0"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_rope.pto",
+      "source_sha256": "e2754e0ffb4ec180c938f986e96926793ef630759d5f440340c3e61f9e5fd91b",
+      "pre_sync_ir_sha256": "f9cc2750561374ebb3c00f1dfaae8db42e8ccd54235bdc16492afb8969abc5ae",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 2,
+            "waits": 2,
+            "named_barriers": {
+              "PIPE_V": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "0af1e652d83eb6d35fcb0bbdbaa763d748ce0047a518a5509942a262cc83273f",
+          "output_sha256": "cf6996e6515c25041f17e45f4ff39baa10c884dd012d6e8013bd0d19accbd969"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 9
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 9
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_rope_swap_idx.pto",
+      "source_sha256": "7eeb54a8f73b1afce2134632470220b391d17a1f56e565d31d16ecbae3ceeabf",
+      "pre_sync_ir_sha256": "2f147741f6e9b8760eee8aa6eeb4ec74fe14f93445e859b0519fad3c6fa132c0",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 2,
+            "waits": 2,
+            "named_barriers": {
+              "PIPE_V": 9
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "bad7d34064a1ad51a88d028139b9def58bdaa5e357718de9268b65bf1b92ff96",
+          "output_sha256": "c3e08f6fd9defa4a8b3926c20388f8fe3c5f43aee358117f50c1fd776568b08a"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 14
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 14
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/quant.pto",
+      "source_sha256": "4d2356233068567efe48b4cc93115f7abdd61e49dc087109a4ddd99f85fd3548",
+      "pre_sync_ir_sha256": "ef05d7cce0dc565452bd2c2726803387591731b3927aea2084fb171c6f447901",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 7,
+            "waits": 7,
+            "named_barriers": {
+              "PIPE_V": 9
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ee55bd0ff08e9aac7a4d33681d6599ee4f9c38f3d34e658f6733e57167f53bc0",
+          "output_sha256": "90a0b96f2f712b3ecf399186b88cce76ead7bbb8e99c309a646be62764b6cd3f"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rms_norm.pto",
+      "source_sha256": "0ee74e760128e2d0e0621182a1b65c28a44ce5f9cef233049bb41bae2c5b8608",
+      "pre_sync_ir_sha256": "9dab61d0762d6c4b9696386dbebb3c1bf3723a193efc15c0e744f131498e3e5a",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 21,
+            "waits": 21,
+            "named_barriers": {
+              "PIPE_V": 17,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ed22ba0c2016ef7bd2b0ae2cf1c61cf6457fc2c882be7c6398b7c1db14135adc",
+          "output_sha256": "ba4f11683356285329afbe2e87903b29fcc87295ddc9631992824c000283755f"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rmsnorm_rope.pto",
+      "source_sha256": "c288828f86dbfff85af0632712eb283ceb402b1ab78d20a92ce880f260c867ac",
+      "pre_sync_ir_sha256": "7511e6cef4d4cca782361c30e846392947e43c7170eb5a33d7bce8301900a1b1",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 14,
+            "waits": 14,
+            "named_barriers": {
+              "PIPE_V": 27
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "57bd130b9c3ba6b2ad1936a7876a34adbab69ae8e4309b814cf7bb5a2ae08808",
+          "output_sha256": "1fef89cfb1f5e047b48410334d715bbd03f2ae2780697519d2d9837369d215be"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 14
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 14
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rmsnorm_rope_cache_write.pto",
+      "source_sha256": "741eb49ebcb2b05a513b927ebfb4e89806ec6e080878ea9bdc7fdb967d40fb1c",
+      "pre_sync_ir_sha256": "4a15ebcc3c32dc5c9672b2c9def1f92d34f47ada65df75ad6d9b1a4956f338d1",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 23,
+            "waits": 23,
+            "named_barriers": {
+              "PIPE_V": 24
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "0838d88249647e14310392db8ac56e647c74d5bea1ee9f5fd70b1f4730946474",
+          "output_sha256": "c355780332e379e51961fb3ac06a416e319ee03d8fdbd1d991f200906f8b1078"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 14
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 14
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rope_cs.pto",
+      "source_sha256": "681339262ffe9dbeb852882e081c1a76ea1ad929a26cda5a15e8786062846ae3",
+      "pre_sync_ir_sha256": "69c020a9f2580745b95d0d6e4b199e1951e8250375346a98750ccf78c20d5925",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 19,
+            "waits": 19,
+            "named_barriers": {
+              "PIPE_V": 24
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "178524e062e4e881bfa32ff891ca0e86c971518d38deaba339b2f586a509833c",
+          "output_sha256": "bbd8d08ced582332ff7f42944de106cad9ff881175601df35a35ed9fbc1adade"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 14
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 14
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rope_interleave.pto",
+      "source_sha256": "58e3f45b9d56a3441e0ee4ceb7bd6d772bd529a7fbb866432ca6f3cc5717910f",
+      "pre_sync_ir_sha256": "d4cfa58ce5ab43b766a8341b7c6b37d89f80f0ca9038fff9dd1321d305d17191",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 8,
+            "waits": 8,
+            "named_barriers": {
+              "PIPE_V": 14
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "77da1d772695e8891361cbc492ca9a9eac2ff9371dee9dcf36b91356e9030cca",
+          "output_sha256": "1f2a27d49e60270a6e8083245f4897f2d31a1faf652b9844489b93f345097fdc"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 14
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 14
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rope_swap.pto",
+      "source_sha256": "cbeedd8391a6e0ecb01e127b089840284522cbaec06c4a7ee3cd6a4065f5ede8",
+      "pre_sync_ir_sha256": "353ec92acb6b8c36bee21e80cbf5633c74f06be8d9d92f78bd778d916175a2e2",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 2,
+            "waits": 2,
+            "named_barriers": {
+              "PIPE_V": 9
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "bad7d34064a1ad51a88d028139b9def58bdaa5e357718de9268b65bf1b92ff96",
+          "output_sha256": "6a67b91b2409e1cc69d4afe0b841ffabe77e77db80f08f167ec055a29952b6f9"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 14
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 14
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/route_hash.pto",
+      "source_sha256": "be276af41df752baa0604de19e3505c2157ff9d50abe252081e8a36bb69b70da",
+      "pre_sync_ir_sha256": "7c23f79c9150bf5fef3cb58844bbdbd4a1b53370b0c38e4390902bee32b6dade",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 5,
+            "waits": 5,
+            "named_barriers": {
+              "PIPE_V": 6
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "e9dda540a4e6818074e9f417033b47acb60d022166dd047231584ace719dfc4d",
+          "output_sha256": "f4eeacd95f0aa6a6f1207e0ac37b15c1e6f87a65b6ef793025dcebb67762fc3a"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/scatter_softmax_pool.pto",
+      "source_sha256": "924f551bc3e0485a76c3ce9c924611219d25c3ad06f6dad8f3b6375f8b6f91ea",
+      "pre_sync_ir_sha256": "a24a4b0b2eb85b2d9a5e0fa75848959f964146d99e8eb7fc68575f9884be9da9",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 22,
+            "waits": 22,
+            "named_barriers": {
+              "PIPE_MTE3": 4,
+              "PIPE_V": 18
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "8e4ebab1493bb9e9a267dc74c853121ea4f417f71148d85fb33087a517abd0cb",
+          "output_sha256": "bde1cca5590097ea69275f5d2dfa6d092cd3e3a0825123a0a51e3a87a64b4b17"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/sh_gate_up_act_q.pto",
+      "source_sha256": "baa71e467c97c754aff4d8c6012b34bd020927b4ec9410af7504e693479f8735",
+      "pre_sync_ir_sha256": "11bc2a3839fcbf53e99fd4cdda0cf82aab91a1a24fa39aa19fc286076e02e4c6",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 16,
+            "waits": 16,
+            "named_barriers": {
+              "PIPE_V": 19
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "0fb0252c32764f3ef1cb6ff8598b0ced324fd820ee84bc4225fe0fe6dc348b9c",
+          "output_sha256": "9043a85a6f03b2958be7998878a81bf073f03dacce826f1da6cb8d4c48fb91c4"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/sh_w2_act.pto",
+      "source_sha256": "037f5983173a296e248bda51477d150c46172883c0f41899399775bc7e6a8bc8",
+      "pre_sync_ir_sha256": "84ba4c2baaf68f52b13ad373f8d82a75cbed3762445dcb4bac2be423672cb8fc",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 12,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_V": 6,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "7b61341b95e07e617cfe85e3e39196e7bff22da53d1f31b5fbca527a83f4af51",
+          "output_sha256": "da221b35f0fff9c867fee4ee5c00545148774991ddb04758bdc9f203a2c1a35f"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/shared_routed.pto",
+      "source_sha256": "b49eb382f1f57373254d1f35b30086a021210d7fb9dfabc9e232aad9028bead9",
+      "pre_sync_ir_sha256": "e1256771da472499dca8742edc4e83ca9d9add3390cfaecb837cde7f59892822",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {
+              "PIPE_V": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "b9b6d3600475483679e60231fdf93e9492b7a764bef4d23bc66ccf27f280de6f",
+          "output_sha256": "c45366a24593d3ac91b1aac04e44fa5fdd28706a1592f25032874d38ced0abd6"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 5,
+            "waits": 5,
+            "named_barriers": {
+              "PIPE_V": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "337c041d0a6fd0254d20ba365c67db869e0c649687b3fd1dee378f7216e246fe",
+          "output_sha256": "8213c150bc4abcd9d06b4131eb5df3f114130ccd1cb09d064fc18524a3545f78"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 5,
+            "waits": 5,
+            "named_barriers": {
+              "PIPE_V": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "337c041d0a6fd0254d20ba365c67db869e0c649687b3fd1dee378f7216e246fe",
+          "output_sha256": "c8c1f6ba3ecd526c7b2ac69f626bf53a2f34faefc881d7f6993eb8d8fb43b486"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/split_pre_post.pto",
+      "source_sha256": "bf030bb1a29c03b4689f608336293c70cb79595ac66644c76b0e8c952acd85e8",
+      "pre_sync_ir_sha256": "dd0d3311f3da7c17d8f5e9a686ae6724360561dccc40c16c8e034701adf1c474",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {
+              "PIPE_V": 14
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "9b31efe3bcf97a2e90c2b80fdcaf3a73c04157f695381563706cc30a33d844a1",
+          "output_sha256": "9ff8e28ade0844c2e3d4f2564ce93e41ed5437b339ad22a830cd707e8d618bb1"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/swa_cache_insert_valid_bias.pto",
+      "source_sha256": "b1cd6d82bb7cc35e4bc2a4bd8a1f7206a6b829d604a74830dd4a6ff0f90cabb4",
+      "pre_sync_ir_sha256": "7b08f24be92661096993bc15f0dae68c35973931c8a25276bb5383405851a683",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 8,
+            "waits": 8,
+            "named_barriers": {
+              "PIPE_V": 8
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "a3321344d2bcbaf509d772b07458b8a78eaca0b19c60b2a6fda4ad4496930a67",
+          "output_sha256": "2c95de0031ce882c7be89c440e9cd68ecfc3bbf17aa9151792276f858b3b6d44"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/swa_gather_kv.pto",
+      "source_sha256": "80f583a08e49b8eb2a5fed03d8cdf8bad316745e79341eb466cbfe5599278836",
+      "pre_sync_ir_sha256": "53a00acb5165552d3c8b986411a833402a52df2a251b339ba85e668da48de7e5",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 11,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "826a1a9ff62057bae1851b5f49a49c9f39be2393e88795c348e70bca8988b4bb",
+          "output_sha256": "14920e4b26c5fef4e4c855d832c6b7c79c6eb30fa51b6bfdc76491db307c2960"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/swa_rope_step.pto",
+      "source_sha256": "52c6e547feaed411c1cd5dae301fb9a09455a054d9e945fa07f298b13dacfc02",
+      "pre_sync_ir_sha256": "5758ccee78c4c073fd735a4ee28ccfd71b923905b97e93b1516c34c18d7703f3",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 9,
+            "waits": 9,
+            "named_barriers": {
+              "PIPE_V": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2fd17e12be383affab9cdee023a5d1c18b41712f8f0c7709b0c3872887b07128",
+          "output_sha256": "a09c861fbb114d46be86af898164336585bc830c3e64183da5b37b5d21875296"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/weights_proj_reduce.pto",
+      "source_sha256": "7d8e465494a65774c575e1b87622bc33032c721ab9784b8a8ff1067a5834d43b",
+      "pre_sync_ir_sha256": "49426657bbea8ca0081de06c80d9a9d0e07573814af02bca5d0ad90c547304bc",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {
+              "PIPE_V": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "f3e585a795412edb6ff2e27bc610a07a40f080979e86c5a7980441deed3b3d69",
+          "output_sha256": "91371ebab582e12717e6e34496f72cd5971cf58c0f11ee99074b30e823d25215"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {
+              "PIPE_V": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "e4582a0cf825554cd5f8ac51c9f874cf50b57ba4bbcb0081bc3553978a44aed7",
+          "output_sha256": "49c685cdf7de25470f75e5bc71975d3b392a542d2d19ec400ea78c141a14896b"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {
+              "PIPE_V": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "e4582a0cf825554cd5f8ac51c9f874cf50b57ba4bbcb0081bc3553978a44aed7",
+          "output_sha256": "db7a1f93890fc339e6b57da15dd07ad33ab30a734177072585244016fb771482"
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/x_norm_quant.pto",
+      "source_sha256": "4d2b26befe866858d2da9f43ec8b398ed17673bf67ea8b562e0e3734343e0453",
+      "pre_sync_ir_sha256": "96787014f261224807a487851fd1aaab3fed26d10a8899d28ace0f74c0de89ae",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 8,
+            "waits": 8,
+            "named_barriers": {
+              "PIPE_V": 6,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "5a931bc40e596b72163921a41742fcabf426f1f181b360fc94071d3200e4ead1",
+          "output_sha256": "e84457603fa3284fba0c3e4fc909025ea93c6e37d92d72d2adfc3fc9f97cdc45"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/gate.pto",
+      "source_sha256": "91450f018f0dc426591948d34b8500a2294af37462cefbdb6a8b2a2f7a1cef28",
+      "pre_sync_ir_sha256": "241d6c784af4f825a1918ddc48b203fcd0d5d723e25db632dfbed4c8f28a03c4",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 17,
+            "waits": 17,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 5,
+              "PIPE_V": 30
+            },
+            "pipe_all": 2
+          },
+          "mechanisms_sha256": "2e4bab0a596b6f1db8dc427f8aa2bf3e076fc8e6288bf80e9606d156e318bef5",
+          "output_sha256": "ea41524255f8bf20f56307c440c16f054e9b7f3bf212491474c497ee17c921c0"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 10
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 10
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/qk_pv.pto",
+      "source_sha256": "ede4e57b94aa7768d6ac6aeca756d3fa7b6adac2db6b94b1343492b1e75a5c8b",
+      "pre_sync_ir_sha256": "01c605a778e6f3409726be7f75181fe9aba9d9bacc48571057b337a2bf1fcdcb",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 40,
+            "waits": 40,
+            "named_barriers": {
+              "PIPE_MTE1": 4,
+              "PIPE_M": 12,
+              "PIPE_FIX": 3,
+              "PIPE_V": 14,
+              "PIPE_MTE3": 1
+            },
+            "pipe_all": 2
+          },
+          "mechanisms_sha256": "95033460770c26ffc19e6fd97ce9520f10b649b009a0aff0126610fdcba0d725",
+          "output_sha256": "03e257bc215a6a22b01b9601545786548d1c9e28f1c4247a24e885e2e38bf7ab"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 11
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 11
+        }
+      }
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/score.pto",
+      "source_sha256": "f4ac9dbbb6484f576a3c3d792f84cc5acb09f2de77bd4fb1d5126f846122516e",
+      "pre_sync_ir_sha256": "130cbe1a4aea93b926c90c4e4a65dfaa91f6f1a15fc380bd0b15b74f4ec19665",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 30,
+            "waits": 30,
+            "named_barriers": {
+              "PIPE_M": 3,
+              "PIPE_V": 45
+            },
+            "pipe_all": 2
+          },
+          "mechanisms_sha256": "d87069fffb1a12fad44fa3eac656c851e6b0b9f3cacec6e1786090382cfcf770",
+          "output_sha256": "d910b7a667a72f76b1ca8d250fb593ab5d1554c9fab652e1b2ab394080dbf1c8"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 10
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 10
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aic/gate_proj.pto",
+      "source_sha256": "4bb7f0e4320d81cd75b0a6188e232eb1e2c2265e28bb4b20d768f4c9f23f7a59",
+      "pre_sync_ir_sha256": "2fb5ebc25a230974dadb43ae1a4c57251a85117d8e923f697b1dda997d2dd9e1",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 35,
+            "waits": 35,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "230064aea4d19393eb5a8f4a088b5eb48abd4d8c30b90ed04e73ce615c2f2a37",
+          "output_sha256": "6e12197c129f7bc34e4a3231adbdf2b9ccfb23c3aef08acde004adc19d5658e5"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 32,
+            "waits": 32,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "530161a45d1051360547a823b9128ca07de7c8e050760c8ee4450af264c71432",
+          "output_sha256": "255f1ae640ab5253b0306dd995302e739749b1a3f92322cebff5b94c2180a67d"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 32,
+            "waits": 32,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "a1d9f390eef78ce984bf527cf5c71d24af7f6cb2a10c71ac5fa4d94370ffaa88",
+          "output_sha256": "206ef2feaf23b69ee018de3a39fb3029cdaec9979b382291545a677d89f02771"
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aic/kv_proj.pto",
+      "source_sha256": "7e36069dcdcf4e7daac0885df125d6ba2a2dad74d9241b6f86da1826cb23c15e",
+      "pre_sync_ir_sha256": "4362003dc15aecac533b843c1f7b6636282b889f33938750cd907c9c3367e1b2",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 32,
+            "waits": 32,
+            "named_barriers": {
+              "PIPE_M": 6
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "a6aad0fc1aafd3b5e459e02eb14adec405756118ea08789bf1f74a7a9cd4947d",
+          "output_sha256": "eac0e0245aec7ae9d8adc4630595ffead868f90ffbf9af542ca93106e777e806"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 0
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 0
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aic/q_proj.pto",
+      "source_sha256": "5aa01e4f14bb7db12e44ddf67c66c4887b003d50d6cff85fee7b2d2aa1958f06",
+      "pre_sync_ir_sha256": "155d5ef476b4b3ff7a4cd41783f28622f7e1224e4fc12bf6c9e845298bd3b742",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 19,
+            "waits": 19,
+            "named_barriers": {
+              "PIPE_M": 6
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "08546a858f087c4b8f078193f898cba9b86697d96407d057fc669a315d31508a",
+          "output_sha256": "e994a5d3f6fe2da4ef73b05a1bed4b21e70302352f684d5042f74a993b3094de"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 28,
+            "waits": 29,
+            "named_barriers": {
+              "PIPE_M": 5
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ebc896cfd5c0f2ab23a659e8fbbb7308b39d1def2e91f904e35a458393b0bc2d",
+          "output_sha256": "d5487e5bca663ed67f08cc0a87f1f9d83d75b8745a65dd51d2fb11ae25ab5b26"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 28,
+            "waits": 29,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2ea90d58937eb58c393d40e8b3b4831291d6c7a5582f2837297e137b3b1cb3f5",
+          "output_sha256": "dfaa6a4670e0d1e86c9a15ea8c7acd1a711a191022187cabdc5b4b5615486d63"
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aic/qk_matmul.pto",
+      "source_sha256": "1f6d0e3a0f44ec4e77b4405fd5990ef3f7738b578acfae3c902545a1eed896cb",
+      "pre_sync_ir_sha256": "2588d61ee9e911912b4bf29ece4c0c1345f86c28b19bd717bb089cf3b5af65aa",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 21,
+            "waits": 21,
+            "named_barriers": {
+              "PIPE_M": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "9072c8e79f9851542428092dfd6ce7dffb4f6b23c3cc6a0640c741e4918dd3ba",
+          "output_sha256": "e5879b0d7d8fc0ae4930e9c1f922fc085f8197fd95f7d27653cabdcbe256f63c"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 13,
+            "waits": 13,
+            "named_barriers": {
+              "PIPE_M": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "975b0489f448447502d99e165e005cd87bf05a1bb4694be345208d5d62385a49",
+          "output_sha256": "bc5349f35d62e4bc34e9eeb109fa850e60f9df9b8d6772cdff2a9404a5b4e67d"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 13,
+            "waits": 13,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "6c53fc88319288d09868a4e23bede168c27480aaf49dacc6ba83eda5e0ca711a",
+          "output_sha256": "f70faf61db89ac0dde9d6cdb8d317ae2ee883a3e54efc8e8c2c20a3664fc8158"
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aic/sv_matmul.pto",
+      "source_sha256": "cb6c20fddca2624fe2851bcb0861b7c1883a40474b1dace00c3f80864eec8bcc",
+      "pre_sync_ir_sha256": "6d4ef3b4953a2c9fe770be57a698b23a40717f8f707d60a1878efc41ef27d0e1",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 25,
+            "waits": 25,
+            "named_barriers": {
+              "PIPE_M": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "e3afb062a7dbac197963f7b36a97f9a5404eeb3a4848329fc868696fe39efe5d",
+          "output_sha256": "6fbb34a24e135230dd1032bcc1d6d440c5c13f910f8b0b5c47d9c1b74cc0dc58"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 12,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_M": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "770a41f1510c05e9b6ba5b856336b4cf0e65e6aced03ac9e47c0ed87ade8c446",
+          "output_sha256": "6c6da7fbb60ce413fe0996f04ca0af362d48941331512b3a92aeaf624aeae7ed"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 12,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_M": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "770a41f1510c05e9b6ba5b856336b4cf0e65e6aced03ac9e47c0ed87ade8c446",
+          "output_sha256": "42f5b30b34a7b05818f212d2d42922acbabb13acba7a8d818a78395de51a185a"
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aic/up_proj.pto",
+      "source_sha256": "f92e90c0d1b42d44d3efde867d8fc6ca035ec845da915ed0e612d9a83775c66e",
+      "pre_sync_ir_sha256": "ca3c892826e95361e69db859475d6fc61265cd2ffbdae121b52527784f38a2bc",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 35,
+            "waits": 35,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "230064aea4d19393eb5a8f4a088b5eb48abd4d8c30b90ed04e73ce615c2f2a37",
+          "output_sha256": "edf9eaea2ea3ba629cf08e0532fc33a49f389064ef2d5debbada03457938be6c"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 32,
+            "waits": 32,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "530161a45d1051360547a823b9128ca07de7c8e050760c8ee4450af264c71432",
+          "output_sha256": "602e26db8a01189f6cedb7d30bfc9e68a014d7e8e53206bc6e76714a788fe3f9"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 32,
+            "waits": 32,
+            "named_barriers": {
+              "PIPE_M": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "a1d9f390eef78ce984bf527cf5c71d24af7f6cb2a10c71ac5fa4d94370ffaa88",
+          "output_sha256": "2f8f66ab1d6625fb1d2cf1566a509b442ab14679f0ca09c3f98a19950e6f42a9"
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aiv/online_softmax.pto",
+      "source_sha256": "1d67f50a2b7ae1225093444ca010ca46c9d6b726ce0f8f03c529e51889a7c534",
+      "pre_sync_ir_sha256": "ab86a1425a40cf5808b23347b68fcbfb3c6571ef7d903117be7ae759d384e7c6",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 12,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_V": 20
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "cd1f339977c49c301ac7520ed3b138d5221c8a2e66d262fc0be5bcb359e2d259",
+          "output_sha256": "45d80df67c771bbc1a6b839a721338e94135463ab0c867a4eebb2aa99385902d"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 11,
+            "named_barriers": {
+              "PIPE_V": 20
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "6cbfc9914562035a0300497ec8a8ba074060166a2349a4f2862d122c6bd3391d",
+          "output_sha256": "52d0d0947edafbd49e16bf970b258d6b659f89a46588428c3e58a1429353f2bb"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 11,
+            "named_barriers": {
+              "PIPE_V": 20
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "6cbfc9914562035a0300497ec8a8ba074060166a2349a4f2862d122c6bd3391d",
+          "output_sha256": "f7120f56d87299545def0633ed6e454f5a829789e47eb5b1c6308c2fc5952547"
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aiv/post_rmsnorm.pto",
+      "source_sha256": "0541c04f9cd8b22c4e35b247b69ee03ae9a6a049bf634ddab27129f72a17c3f6",
+      "pre_sync_ir_sha256": "0b67e0fe18f4bd6ce60073a138a51c0c0d79ccf5a03c13e514f0392a091e8af2",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 15,
+            "waits": 15,
+            "named_barriers": {
+              "PIPE_V": 12,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "f4ac6ff3598904b6b511083675f4c6b99de8b7ff70c5675215c28c41e94065a0",
+          "output_sha256": "c4668334cc80948fdf22fd77ce75b736b774b1166cc5a09cdc649ab1591ad176"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aiv/rmsnorm.pto",
+      "source_sha256": "ed39cafb5f4d6ae42aaec7f9535e88011b4e52af3dfd74e40cfb4525562b1bc8",
+      "pre_sync_ir_sha256": "e897699c57d168327f7b28b74a419dc30a7ef4575e6e2d2ae6aa54d8a26ff227",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 40,
+            "waits": 40,
+            "named_barriers": {
+              "PIPE_V": 29,
+              "PIPE_MTE3": 3
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "88631f171bffa40145fe8d5738cb1274957cc5e89fb31fdb80a7efbebb507437",
+          "output_sha256": "5ec94f74b54259accebf45e0ae8abb9460d9a68f9e33d2263d58c5eea4b7e438"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aiv/rope_kv_cache.pto",
+      "source_sha256": "1a650bdd8c9a49da5e78e8c83054bdc3699782872228e6fc49c38f0ff92252cf",
+      "pre_sync_ir_sha256": "8c4c3ecfe327c9e8caecf79c1e1b9b0eb07d5baa49b0e0a2ca4185370f71fd5f",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 15,
+            "waits": 15,
+            "named_barriers": {
+              "PIPE_V": 12,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "6d102a0bda9e634e04a3312254e9dc69bd679ab42e052f6457c22dc88c606c39",
+          "output_sha256": "d3520ce1d0b44c42d948b9e8b31edfd87f172a437790648e6988a16a0a98f10d"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aiv/silu.pto",
+      "source_sha256": "2156fd9bb8d0b85b743175f88f18c3cfe30cb0bad6b8043662ea254458578925",
+      "pre_sync_ir_sha256": "483443655759f9d084ab1a817c173067c47fe049382dd82a7fd1cf23c349a929",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {
+              "PIPE_V": 6
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2bc2588798c159fdeec568017ebc52f57f677e38d97f39ae5e6d496bc458be38",
+          "output_sha256": "62a0007e7c10f4cb736d84c39bc7a037a1a19c28bc1c5b2e99de61592db69d49"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {
+              "PIPE_V": 6
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "55e852d4911f6a6467abc2ba98776a1ac327591a957b891e1f212b23e3c5ff39",
+          "output_sha256": "607ac79c1b395395ff46d8cbd32c4ceced83299636045ef6f8f6ed7a353037dc"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {
+              "PIPE_V": 6
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "55e852d4911f6a6467abc2ba98776a1ac327591a957b891e1f212b23e3c5ff39",
+          "output_sha256": "d7fd99ddf5ab03416765e70acf10537340a0978613785a486eb1201d44f97e6f"
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aiv/softmax.pto",
+      "source_sha256": "6a31a69e1395144674533fea63a44f808aba4e25fb653467476d0ae6ee147dcc",
+      "pre_sync_ir_sha256": "1b1a49118aededeb5b34481e274fef66ae6855444c8ff92db3d551a7e9ce5bdf",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 15,
+            "waits": 15,
+            "named_barriers": {
+              "PIPE_V": 14
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "fe55cb749ed7bfe5be49150a98df9ca6598929bfafc507f2f899ecd9619555ab",
+          "output_sha256": "ba98cf45224c76cb40de24133e50d31d8dbf5d4d98cb86265f1ad8d17f965a1b"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/down_proj_residual.pto",
+      "source_sha256": "d0649b1b696da03379e8f038b043b74b07ce207d7b723f5d5f940f5b99af40b1",
+      "pre_sync_ir_sha256": "767b993abb11a347dd4b123e636b60fe0e55e5f836dd3bd125b3459773fe0d73",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 22,
+            "waits": 22,
+            "named_barriers": {
+              "PIPE_M": 6,
+              "PIPE_V": 1
+            },
+            "pipe_all": 2
+          },
+          "mechanisms_sha256": "e740a36037c26d55557d293f4d893f11c2f6a251a4f94254b974f436746137bf",
+          "output_sha256": "461cdeb0485d5d44bb189291da6bb2638673982245dd729bdee8b8c04d7b96f4"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 10
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 10
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/out_proj_residual.pto",
+      "source_sha256": "4d7f07edfd6ebf19f5b74672a164d85946266704a42e5e40275874612d14cf6c",
+      "pre_sync_ir_sha256": "bb8ea20d5c543afbd7d3c883b14c3dae1062f7e52cc772ebc16c39d8367909e7",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 24,
+            "waits": 24,
+            "named_barriers": {
+              "PIPE_M": 6,
+              "PIPE_V": 1
+            },
+            "pipe_all": 2
+          },
+          "mechanisms_sha256": "aa687487231285e1365d82315a01e2c66e7e69fdd8615161c3fc1bdace39cc4e",
+          "output_sha256": "9358a721adccf96128e71327182cbbea98399fe323c2bc6e6abeb7cea3183166"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 10
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 10
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/down_proj.pto",
+      "source_sha256": "41e4472d4363bdac287d392bd7ccc2a1380196d583215360c3fdd95b88434305",
+      "pre_sync_ir_sha256": "8d18b89de1770d58b5ec5b978966e3431ffb9950b600aa4322cf96fe7d053e82",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 40,
+            "waits": 40,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 9
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "84c0d316093ecf5addabf618fb9ae32c4d5c59d954152408d0c7c6389c947445",
+          "output_sha256": "9a0d8dd7d020c5bd96a00da9380a1515076acba98f3adf81d54382ca67d5673a"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/gate_proj.pto",
+      "source_sha256": "c70730bc06c6572d5f941e305c921f16e9dec13a5fed5108113847eab3399749",
+      "pre_sync_ir_sha256": "fcbe98769776ece953ca113922fcf6066d05d3004be5e6c9a81a16fb4c1fd632",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 40,
+            "waits": 40,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 9
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "c9e2b986c5e8655cbfe06fb2799816f2b851200b0db84919ebe0d9b24c31805d",
+          "output_sha256": "1ec919e18443594eece748f0f1cf669da04db508683cf1bda668e46bba7f089a"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/k_proj.pto",
+      "source_sha256": "7b25afce60313202fc04b8ad4d855f4d14347879d6ce8a80cd7d67e49b7c6391",
+      "pre_sync_ir_sha256": "25f1813f56302a79f0ffa55d76adec8f86e0d45a246c5c9c83de6fa51f554266",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 40,
+            "waits": 40,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 9,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ffc074e640e70ba595735dc80ee96145f73e6fb4263903bd1e19cd0acf554e35",
+          "output_sha256": "a8846017e9c767320efa10864b7a335faed3787e230f06cb7940d2dd271f10cc"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/out_proj.pto",
+      "source_sha256": "557f52131494f8c2699c543f4decaa0116448d42e5ce77ac939f6d8fdf003edb",
+      "pre_sync_ir_sha256": "1597ebe3f01a558fd8e16d02e8159cd80db1d6bd047c6f30ba08a49f28dd5374",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 35,
+            "waits": 35,
+            "named_barriers": {
+              "PIPE_M": 7
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ab267098208f054cf2cde6272b124c782bcb51892ffc45c587f3b37353112344",
+          "output_sha256": "4ab19ed3076ce75a21946d6c45daf28774f237fd5aaa48fab2bcf366595a4348"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 1
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 1
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/q_proj.pto",
+      "source_sha256": "8a88e3453d4b0f0b6284ea94802dce4642c3441e9887ec900e79499871b1c872",
+      "pre_sync_ir_sha256": "03d8ee3ea0d62a412a72e74ea8cfc24624a0ed6bbbab8c965c713bb959302f88",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 40,
+            "waits": 40,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 9,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ffc074e640e70ba595735dc80ee96145f73e6fb4263903bd1e19cd0acf554e35",
+          "output_sha256": "697a5bc9e18c20adf93c0ff20e8a309854da387b99fdd79fe8a52f681fbddeb0"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/up_proj.pto",
+      "source_sha256": "62cc8d371752a80ac58cc71b11e9f6d2a24c5cefdfcefbe1d25d597967170859",
+      "pre_sync_ir_sha256": "5370df2821b90222cbd491402706469945f529816ef0218a6c3f3cafde817675",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 40,
+            "waits": 40,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 9
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "c9e2b986c5e8655cbfe06fb2799816f2b851200b0db84919ebe0d9b24c31805d",
+          "output_sha256": "1afda533ad54cb510c30fdd8dc7a8151af19a1f87aff47e9fbf7e6a6a62fd3c0"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/v_proj.pto",
+      "source_sha256": "69b0dad6155ccae26f4ba4f8d7efab18babef2805bf8e6fa3490015a8e547dc4",
+      "pre_sync_ir_sha256": "33c285d9e6e372c2fbe7a7addd3e12a4b047bfa70998adbf1fc57a21ef5d3883",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 40,
+            "waits": 40,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 9,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ffc074e640e70ba595735dc80ee96145f73e6fb4263903bd1e19cd0acf554e35",
+          "output_sha256": "afb2343167350f0a7e1efc369c6960d186b94a438eebba66f7e55b75ab1d7530"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/attn_out_seed.pto",
+      "source_sha256": "b75c99518fbbca9c94d544f9331094ab992fe16a2ca6b94cc4b4bd5b54525e63",
+      "pre_sync_ir_sha256": "98972a8fe18a96d2638a9746db5a506c10079265d9e36f51e4e9909caaa9685e",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2ac8a9b423ce997bb8174b11036b6347e0b51fbac4b179c5dd8e28c5923eaa68",
+          "output_sha256": "572425f795064a45d7cfcebaaaadd1643a8e3b3d741c85a71f53cdb8897a8dab"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 5
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 5
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/copy_hidden.pto",
+      "source_sha256": "01465326c6647b69bd2fe9f124e382b6719e4e917661b4a07f3ce0cba0e5b431",
+      "pre_sync_ir_sha256": "c10d5c1fbf5974dd8ed67155bad24d0ec14d0e71742774fec8feae1ebcb05e35",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ab9e1567b4d87e60699474d494c079f34990394d4ad59f9245776aa8904c500b",
+          "output_sha256": "188d37b96606728e58ea35ccb274b724bf31fbfb7c74dfb96d440b08b540ce7d"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/copy_out.pto",
+      "source_sha256": "9ad986655dc9272970424fe14671d0c4d10c1a6c4c31d4fe823941bbd52bd4cf",
+      "pre_sync_ir_sha256": "170a1726859788db25fdbb3e3d0a0bb0513cad33be562086b43a512541ea3053",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "1c1d0eba38801f7290a7e862d6512c183367affc67d81b86dcd1d339bafe83bd",
+          "output_sha256": "f13a4076f92ed5bc3d71c1ee93153c5de3b11dcf57ef3279fea1913367d4a1af"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/dcr_xgamma.pto",
+      "source_sha256": "b246fc5e6a7832882dc5badcaf70fd0e2906a9aa5da8dccb14b487cfbda79bbe",
+      "pre_sync_ir_sha256": "891342c4d717c44f62df086c8f84fd50ac21d804dcde8e29d47cab6e8673de4e",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {
+              "PIPE_V": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "9afaea895e6a2978395db113352a9b2f1780c7549ef601c669bba5d2355ffaec",
+          "output_sha256": "cba949c6904ab67da1f6b4be3b1e024cf3d97fa4d3bd9a6eff96b439e6bc93aa"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/kv_seed.pto",
+      "source_sha256": "dea17a3052119f48adca720c2609c27906aa76679f16ffbe036a051d1d0943a4",
+      "pre_sync_ir_sha256": "6a68fd29a4b3a3555c38de326dd86792b07fedc5c0e5769cc424b20dccb1e29f",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "6c2338153c6f916c7c0ccb8f948795e509f52821d7342cd978a2ca1a9321109d",
+          "output_sha256": "07911fe469b07f4fb6e69a96b2d326caabd52a51dedd1be5995edc74ea335169"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "521a7678772be05d396dd90d4e1717acc01c4f9adacda04ea446c9a55948c516",
+          "output_sha256": "18d0c5b538f481776241843a77a0f02e43a6362dfdbf46e4620454c40e4d02cb"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "521a7678772be05d396dd90d4e1717acc01c4f9adacda04ea446c9a55948c516",
+          "output_sha256": "ddef385ec1c603d95c92e6b4e15fe44e986b327073b24df6bd61b1998c752918"
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/mlp_out_seed.pto",
+      "source_sha256": "de3ec166364ccc8ef7539642d5893192e4e4d278981d0541ae20f5aef147d84b",
+      "pre_sync_ir_sha256": "53b2a1e3a699eadacccdeb266fca72ccf376e7c7b7e0f055b3f144f80248c60b",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 33,
+            "waits": 33,
+            "named_barriers": {
+              "PIPE_MTE3": 11
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "48cd6fb6589157dfafd902d7f8aa8902591aee191c6967bec2ddda364b920c91",
+          "output_sha256": "78d6d4587205a170d1dddac1aafcbae8c7e5807adb028d8fd73cb651f046622a"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/post_rms_reduce.pto",
+      "source_sha256": "042159528f83aa8a58ea8bdfa67dfb67d8e6f968a6395b8390fdc56afa676ae8",
+      "pre_sync_ir_sha256": "13371a37844e57a54b10617e7448a4a06eabb7f5129617a46c242f7e0a82788c",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 5,
+            "waits": 5,
+            "named_barriers": {
+              "PIPE_V": 10
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "37a88efb9c43999e56cf716b42a8f19b5dcba0b5d01c0c99da6a8ab6d413e28f",
+          "output_sha256": "db76542bac5566297bd47154e531b899dfc69d1e21d3394db7fd05eb49d6af2d"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {
+              "PIPE_V": 10
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "9d06f6b2aa386e1cd716295287784eda9b55183e884d6d59e8b38701bba1a82f",
+          "output_sha256": "b5d33cd209a77307691d7bef60abd00053e61cec19edb5911906673c9ecc419d"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {
+              "PIPE_V": 10
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "9d06f6b2aa386e1cd716295287784eda9b55183e884d6d59e8b38701bba1a82f",
+          "output_sha256": "b14f824f469f482bfd7f56c2ad226b9cf879906cbf6d7671ff206b438a48f1e4"
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/q_seed.pto",
+      "source_sha256": "11755bbe05346954d9ee2d6f2702ce2ea8cf9d47f78b580a2c71c770bf6ac498",
+      "pre_sync_ir_sha256": "785c497749b10c2885194ed97c0d803ec0fe5f0029225991fc9aece3c85c3d10",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 6,
+            "waits": 6,
+            "named_barriers": {
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "297cd519a7f58ba17585b20387daa625811b65e462627aba1451378e6bd17c95",
+          "output_sha256": "08a97724459cbcc4bb0e4f8e31e4914a7d7048288a775e57a1097d0ae339ce06"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "75e72c05605c460ccc173b7529b260a8f84b8a01b569bd3438f2eefe0aaaf988",
+          "output_sha256": "c6f1895c37e9eeb3794e9947b31c3bb4de14b0faff3ac0107b824c10c28a17f8"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "75e72c05605c460ccc173b7529b260a8f84b8a01b569bd3438f2eefe0aaaf988",
+          "output_sha256": "ed9cfe2480ab9e778cc911a6358ce288a2de60ecfabe06fd768f4037a36de83e"
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/residual_rms_cast.pto",
+      "source_sha256": "56288eeafda7adf46a8b14a721e5760765626ce539684cfa9cbf8d2ffe9164df",
+      "pre_sync_ir_sha256": "d1bdaa336ee7b5f86b85815667a3a03caf1bd0b0b08cb490690e3a9001c17953",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 20,
+            "waits": 20,
+            "named_barriers": {
+              "PIPE_V": 4,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "da69046964f177bf5dfaed661bd99b03212de2e229fec3d4aad3cddf35ceae4b",
+          "output_sha256": "1d81c6017d8a88b491c631676d5bf6733fe618d786315711ba0dab98d66d284d"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/rms_recip.pto",
+      "source_sha256": "b9484af18c68b515d06195d0d947e6607f5f6708a19ac7f0ac601d3a0e542843",
+      "pre_sync_ir_sha256": "7a8509d4a502cef156d3c90a2efaa1ddded36f3a00d14141efca7ed0cdb5fed6",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 11,
+            "waits": 11,
+            "named_barriers": {
+              "PIPE_V": 12
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "49f77e4e7010eb55eb5a57f6a2257759a5b60c7cbda198f701187cb99126b54e",
+          "output_sha256": "41599e3abb1e11b78f50b02a7ed365170921ef90a052e5c83cd5396a3288c9ba"
+        },
+        "structured": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 8,
+            "waits": 8,
+            "named_barriers": {
+              "PIPE_V": 12
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "618fac1ea0e96cc484d2e55b28ebfffa36c104cc354e4f36a28f288058c531d8",
+          "output_sha256": "4c16da05eac3a61631efdae25eac8a2e68c0c083a3e1d080519345c6de48abb9"
+        },
+        "structured-hardware": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 8,
+            "waits": 8,
+            "named_barriers": {
+              "PIPE_V": 12
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "618fac1ea0e96cc484d2e55b28ebfffa36c104cc354e4f36a28f288058c531d8",
+          "output_sha256": "6e25c3cadbce81dfa4b597c9fc0f1fd1857a69f12555648caede64ad2401f868"
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/silu.pto",
+      "source_sha256": "9a6d736bc9e5508b0436ae330a7aa05d6c28648e0bbacf3fffa4819db93a5162",
+      "pre_sync_ir_sha256": "56f12f788dd5f932cc73554b39ce20b85ffaea2d15fb56438d2d37be9336c525",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 10,
+            "waits": 10,
+            "named_barriers": {
+              "PIPE_V": 14,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "0f80afc177fad9743f257eb7cfff88a7d54bfc1e264aaaf8141b9f3d43f535bb",
+          "output_sha256": "93d33c0d3e53cec52e9993649434ada853dd036ad8fae1b1aa24cf93ac1b234d"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/x_gamma0.pto",
+      "source_sha256": "abd4e2ecc23b0144b5e13a6eb79d0b1771a7512fc79110b2d599565e43292342",
+      "pre_sync_ir_sha256": "0457bb9a8a9f07a35964855e005cdd6bbbced4cf90b2a322857afdaaf79253fd",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 8,
+            "waits": 8,
+            "named_barriers": {
+              "PIPE_V": 2,
+              "PIPE_MTE3": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "819f50ec0c1849f1676b22bbc5e7135d531eec4af49c01dddbe4b8c2398e1607",
+          "output_sha256": "7b94989ddb559930b4e2438938c66458c62f86c8272da0c577713ec18d993839"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aic/down_proj.pto",
+      "source_sha256": "7443db9e8509c1c4e67d333195e92253f515098c44d5c5f6cec94b66b04bdef8",
+      "pre_sync_ir_sha256": "db5b54196d3e7a852d119967c89a57303a83d61d4f71e2d503c298d12e002d61",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 46,
+            "waits": 46,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 9,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ef25d91c83efd01ee50fd3282ce4df38ab8b768025d5538884cda93341de8bdb",
+          "output_sha256": "90d47bcb494ca694428911ca5aa1dbfcb2e00996059d686aca179e1c56c93955"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 2
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 2
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aic/gate_up_proj.pto",
+      "source_sha256": "fddc04c69de147d9fea78a8fd2ff4184e01f2b4d73f944b7758e6b2525581a8a",
+      "pre_sync_ir_sha256": "56bbc981c9c9fff89d6985cd20b8a307c75d4f3bb1bc2bf02b2f9f6c8461814e",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 95,
+            "waits": 95,
+            "named_barriers": {
+              "PIPE_MTE1": 4,
+              "PIPE_M": 18,
+              "PIPE_FIX": 2
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "2d006ec8acb262086dd62e825e36388b30f055c75b2fbc3821cb595bffb1e0ec",
+          "output_sha256": "2a4f3381d4bf80d90d1c41a284e938a8dcdedc1749fb30132e2269803a98543d"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 4
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 4
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aic/kv_proj.pto",
+      "source_sha256": "ceece5007a017270eddc9376a68cf4e7dae650708410105a537d112a0a956fae",
+      "pre_sync_ir_sha256": "742898eb5e9159637e6afdd48403598aa19d56e4eb75ba2cdd80e2abb42428e7",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 89,
+            "waits": 89,
+            "named_barriers": {
+              "PIPE_MTE1": 4,
+              "PIPE_M": 18,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "619bb09097e53009edb531cb78dabd99f5576038e1bbecde0ccf01b2f1feb7cf",
+          "output_sha256": "8bf87df6ce431a6ed41c351b6b1d0abc55eee60e0874b44282d258d73bde92b8"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 2
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 2
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aic/lm_head.pto",
+      "source_sha256": "395e33681e5b285b7a7bac9740ab46230833b22cf524febe2e1a73bba857fe8d",
+      "pre_sync_ir_sha256": "30719426d7e2499cd087baa81469c2d6d1849bc76c29244ecafe801ab00b929b",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 46,
+            "waits": 46,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 9,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "ee9aeea301753adb96527f4d2c8c995eee75779fe8d71ef8f39709a9b9ab4791",
+          "output_sha256": "5cb82d7784a79f0d00a87a5be6da3f161e69f279d08184dc4e5f266731f0f1e8"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 2
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 2
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aic/out_proj_aic.pto",
+      "source_sha256": "7d007f3d9b5401519ecac884c3c17f8e054a055ec39752b7ce4b4b76b50cecdc",
+      "pre_sync_ir_sha256": "fc79e23d8a91b3f4e33b36761bf7cd0870f0650c69dcb8a7ef7c4f23eed16f5c",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 46,
+            "waits": 46,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 9,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "4547940fccccec7c03f1a44eb6bf5ff530f50c570e0dc6eb3ea27b9bc819346b",
+          "output_sha256": "c7934f1e554deb6094bcce248f4ae95ee8feaec96fc62b53337e11531977aa2d"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 2
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 2
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aic/q_proj.pto",
+      "source_sha256": "0c90bbe4e51f83430d7e99ce4495d89b3150159e24183ec720dffdc00e18a663",
+      "pre_sync_ir_sha256": "9af0c9a328b9b12b9221ba87b531586bc74e1cef9c8f8cae427440b9ca8ff678",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 46,
+            "waits": 46,
+            "named_barriers": {
+              "PIPE_MTE1": 2,
+              "PIPE_M": 9,
+              "PIPE_FIX": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "64fba39a68b54be3137618aba7c552392964ddb367048910c1b856e164a59a3d",
+          "output_sha256": "12b7aaee99bed959a2f9a817a5fbe26e3ef0603c1ba3f9127cf9f56486a7c2e7"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 2
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 2
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/attention_finalize_phase.pto",
+      "source_sha256": "c6df030cd53d199070b9a251e1c9bbfcdec84fca01d165a8f54da547aab13f36",
+      "pre_sync_ir_sha256": "8c9e0c9db5d13b06209091f7619d5acc4bf399db234326c12a62b7836250eab8",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {
+              "PIPE_V": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "9d295ee0ad474554d2464dd860e35aa5ae515608320499674018cd4ba1d11e2f",
+          "output_sha256": "8c6341579ff1d9979f9a81ad100ce994d0e64ce7df521b94f254c9ee5a05acb1"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 8
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 8
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/final_rmsnorm.pto",
+      "source_sha256": "f41f27f5d17ba60012cf2f8810a33c3cfd3aadf3848a0180032f31fd670af8d9",
+      "pre_sync_ir_sha256": "e2647226f1a2656edb3c96493de32b9f2a9f0ebe1a30ea3123d3874f78b3dc38",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 12,
+            "waits": 12,
+            "named_barriers": {
+              "PIPE_V": 10
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "db797809f018a0075192e9dbbcb70df93b023f35cef1f04b79c8fccc2e603ea5",
+          "output_sha256": "8e1d894169b744629799cd8bdfb7fa2372b747b2ee5981dd0bb3caa28470981a"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 7
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 7
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/mlp_out_cast.pto",
+      "source_sha256": "ffda1a8c89ec2480fc900652d4abe1414e3d8abd5e145da5f9d8ed719600f4b4",
+      "pre_sync_ir_sha256": "89b6757370bab5828586bcb7118fb0f748ae5c5bba029b6a771a991bbb7e7050",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 4,
+            "waits": 4,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "08c10db7ec4e070fd98ea8bed39c1a11bca6fcd85f00113d40a23bb142b8c8b9",
+          "output_sha256": "25fb2f8d72eb76f97352e94d89dc357e537662655935f29fe65d5658a0c8b0e0"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 8
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 8
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/mlp_out_seed.pto",
+      "source_sha256": "1f83e6656bfe2a9db704b244ed28a8b7b5650fe744561540ef94b0b021e79f26",
+      "pre_sync_ir_sha256": "0940b16caba95204370ddd218f6866cfd1cf80499be06387bb6e46227833b684",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "139992065545f5c62ac12351d3be708f9681b494ecd41b269ea449ba80d8c104",
+          "output_sha256": "416c705f790278b75cd952a9aa1b1a7a174bad3fd8549b776fed2575d6734df2"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 8
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 8
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/out_proj_aiv.pto",
+      "source_sha256": "fb8d463a73d583fff86013ac13f51bd2e37fbff30b34c5d49284e43041558978",
+      "pre_sync_ir_sha256": "bfdb944889b86c27efee7e3b560ac07a5bf9d2c9870fa685a02fd90a980ade95",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 8,
+            "waits": 8,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "d1aaf97381e11a7d59c7de54c28f3f59efbfb6f260211fcc0029b7162778beda",
+          "output_sha256": "9127c8021b0d80b45d98b53d60de5ecdfef54e3bac8f779bb7d7759728916d59"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 8
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 8
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/post_rmsnorm.pto",
+      "source_sha256": "005e1cf1d08344dd254046cc3ff76702fe2058c9386b82e33304da7335f41a8a",
+      "pre_sync_ir_sha256": "ec4bd8c75a32190ccd23f287c01f9cc1103d56d19fc07ab605aa8aaaa7372e9a",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 13,
+            "waits": 13,
+            "named_barriers": {
+              "PIPE_V": 9
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "9b8719c9387d530f73dd5a7ba141a99e9a4bf25f380933462c405576adf00f27",
+          "output_sha256": "b6e1d21acd421c846d0d6ee101066a38d47f655729885d82dae6b49a3b1d8567"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 2
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 2
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/rmsnorm.pto",
+      "source_sha256": "c374da21e3f63fa8f9e0fe1ee577e7c8b5971efad8684fa2cb5e3f1f4639bc28",
+      "pre_sync_ir_sha256": "b699753297436461228ff52652a0dcc9d699a8b72eefb0ecc3b34e6492d2f22a",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 16,
+            "waits": 16,
+            "named_barriers": {
+              "PIPE_V": 12
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "fb1cff7c35c03c63294a2c06a1200af8cd9efb4ebaf258335d2d5524c9458676",
+          "output_sha256": "4abe2d474cb1898744f2f8667737ed5082afa4cf36c077ea5aa264ba796b22c1"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 2
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 2
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/rope_kv_cache.pto",
+      "source_sha256": "f0a1d1bf80761b6c3cdc9ee5f509048ce57f8e08bb297bdd0bbdb249232476b0",
+      "pre_sync_ir_sha256": "5a4fbc44029b07f8dd3cf8440232fe1bd6751b08eaf0368ca23a7f56ef63a264",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 23,
+            "waits": 23,
+            "named_barriers": {
+              "PIPE_V": 37,
+              "PIPE_MTE3": 1
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "4cb8af50ee3ffc3c8a82a68d23df9aefe8a78bcf1a5b5f8bd1b5b773e3662bde",
+          "output_sha256": "ba56e14d34e60faedb2b41b852275881cbd823a9c80f458f8c3abe42dbd85766"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/save_prefill_last_token_group.pto",
+      "source_sha256": "06e51c9e437e7972eefe3c1ba9a3f840d60ff561aa19b0bc6106f6fe069c8192",
+      "pre_sync_ir_sha256": "f5c8392f33074e2137b704f57ea7e6e78ef847c039eea6249e050db7428c42c0",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "e9f67c23895fbaa2ab737ecb2db5c281a0497a147c563dc0c437aca8aa3698b1",
+          "output_sha256": "9821df060eff4ca42d673d74287d04e8b3af4baa965d07031a23c77242afc6a8"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/save_prefill_last_token_single.pto",
+      "source_sha256": "412656fc0587d0e6471843d5eb3c42d485b8765cdbeb37294406a63516d62d26",
+      "pre_sync_ir_sha256": "7dc0c12cf47531b3cd3b24f2f028632e3d04790a53452e9a694e3d64ab53a916",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "139992065545f5c62ac12351d3be708f9681b494ecd41b269ea449ba80d8c104",
+          "output_sha256": "4a54df4f74ce3b24d9a8b4de3f99ffb4007a379fda573e24e7ead5f1a34d7eeb"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 15
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 15
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/silu.pto",
+      "source_sha256": "b8e072a4e47c4271485b6536aa656feb007da8871da3ecde7830f4039eb35bb6",
+      "pre_sync_ir_sha256": "4c6da5c534defd8842eddcdd39432e8efb4cacf319678ee393cc125544dc4c29",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 5,
+            "waits": 5,
+            "named_barriers": {
+              "PIPE_V": 6
+            },
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "474ee3e1a8f7fadfc776f8fba003927b8e05009aac4063e0748f2002fb08018d",
+          "output_sha256": "86c0075e156dd2e2791bf42d447604866c606004908426c7e31653b62f7ae1bf"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 8
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 8
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/token_embed_group.pto",
+      "source_sha256": "2cd6849dafdb63ab3e3c1c25df3d6a41dd649a7872f63fd9627680b65aac2b23",
+      "pre_sync_ir_sha256": "0028ac7558090a9ac7f216d6b3d629e6dffe7f9dccaa9427dc50c91088413c20",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "6615fb283d1ad40886ffa8d54c36934c9d68b18ccf5c493377816db6436fed5b",
+          "output_sha256": "6027fc7f402b32101d04331aa09749830786facf9a2122081b6aa899c1f1bd0a"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/token_embed_single.pto",
+      "source_sha256": "d1983621409fd0c44123e12ed45182dbbe3f711354fca2cd3131aa6f57f9f3ac",
+      "pre_sync_ir_sha256": "ec68fce01756d143a07add24c343799234bdc1cd8fca99eeb01dec3954091721",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 3,
+            "waits": 3,
+            "named_barriers": {},
+            "pipe_all": 1
+          },
+          "mechanisms_sha256": "17e7bf7075ccad0633ec21e1c284181e258a0334a47fa02adbbe992a19fef85f",
+          "output_sha256": "3dcd0b76ae83ba9931a856e08b5cbfea2d7bb1ee871ad4b88b3e8ecdc06a5e88"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 12
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 12
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/qk_pv_online_phase.pto",
+      "source_sha256": "0744fc2e32bf8d4cc0316dce553328e5c4b66ac666c4b55049aa0ee5778bf9f6",
+      "pre_sync_ir_sha256": "9982383e37dadddd37a7b8daeecbb2472e4dc782b433e35e146fe4fa0154742a",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 72,
+            "waits": 72,
+            "named_barriers": {
+              "PIPE_M": 2,
+              "PIPE_V": 155,
+              "PIPE_MTE3": 5
+            },
+            "pipe_all": 2
+          },
+          "mechanisms_sha256": "57a0a6273ddd2720189188889919e85665d7a9eea7772261f9b332904548c36d",
+          "output_sha256": "613d729f9208298c17a1840be135935e3af32f5b50ac023c35fc3827105a4e16"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 11
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 11
+        }
+      }
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/qk_pv_skew_probe.pto",
+      "source_sha256": "3e545eb94a6a670fadce78961259f2f7c701b7859473108b849f624bebb92ad8",
+      "pre_sync_ir_sha256": "fcb9bb9800dcaa5c0d5323992f79db7f4b45d8eb41d04afdea079b8340fdae2c",
+      "adaptations": [
+        "explicit target binding a2a3 -> a3; no payload edits"
+      ],
+      "arms": {
+        "existing": {
+          "status": "applied",
+          "mechanism_counts": {
+            "sets": 24,
+            "waits": 24,
+            "named_barriers": {
+              "PIPE_FIX": 3,
+              "PIPE_V": 40,
+              "PIPE_MTE3": 3
+            },
+            "pipe_all": 2
+          },
+          "mechanisms_sha256": "d7c284217494c09b31234bb5fa7818d5bd52096f6ae88da69cd2aaf3a558a4e5",
+          "output_sha256": "6e8d0c04bdb407c2cf2e421ad41eb9f50a9f9b30382d5514fd32799c7f1ef45b"
+        },
+        "structured": {
+          "status": "refused",
+          "reason_id": 11
+        },
+        "structured-hardware": {
+          "status": "refused",
+          "reason_id": 11
+        }
+      }
+    }
+  ],
+  "summary": {
+    "raw-addressed-compatibility": {
+      "pools": {
+        "production": {
+          "inputs": 141,
+          "accepted": {
+            "existing": 141,
+            "structured": 34,
+            "structured-hardware": 34
+          }
+        },
+        "focused": {
+          "inputs": 9,
+          "accepted": {
+            "existing": 9,
+            "structured": 5,
+            "structured-hardware": 5
+          }
+        }
+      },
+      "existing_successful_hardware_refusals": {
+        "structured synchronization construction failed: unsupported; requires-one-qualified-a2a3-physical-context": 4,
+        "structured synchronization construction failed: unsupported; mixed nested child transfers require a qualified region summary": 7,
+        "structured synchronization construction failed: allocation-failure; distinct boundary keys do not fit": 2,
+        "structured synchronization construction failed: unsupported; invocation wrapper requires constant positive coordinates or get_block_idx/get_block_num": 8,
+        "structured synchronization construction failed: allocation-failure; no boundary-preserving key assignment established": 2,
+        "structured synchronization construction failed: unsupported; unsupported-lane:pto.load_scalar": 29,
+        "structured synchronization construction failed: unsupported; visibility has no qualified structured realization": 18,
+        "structured synchronization construction failed: unsupported; sequential composition currently requires direct sibling loops": 14,
+        "structured synchronization construction failed: unsupported; unsupported-lane:pto.store_scalar": 1,
+        "structured synchronization construction failed: unsupported; unqualified-read-footprint:pto.tgather:unknown-or-zero-range": 4,
+        "structured synchronization construction failed: unsupported; structured ordinal loop requires constant nonnegative lower and positive step, signed index": 6,
+        "structured synchronization construction failed: unsupported; unsupported-lane:pto.tci": 7,
+        "structured synchronization construction failed: unsupported; unsupported-implicit-resource:pto.import_reserved_buffer": 4,
+        "structured synchronization construction failed: unsupported; unsupported-implicit-resource:pto.reserve_buffer": 3,
+        "structured synchronization construction failed: unsupported; payload guard is outside the ordinal periodic/initialization fragment": 1,
+        "structured synchronization construction failed: unsupported; nested child inside a sequential sibling requires a region summary": 1
+      }
+    }
+  },
+  "missing_requested": [
+    "historical_gemm: run the pinned recover_historical_gemm.py first"
+  ],
+  "device": "NOT_RUN"
+}

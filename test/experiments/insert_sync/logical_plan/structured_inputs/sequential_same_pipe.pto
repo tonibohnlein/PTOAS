@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @sequential_same_pipe(%src: !pto.ptr<f16>, %trip: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %ia = arith.constant 0 : i64
+    %rows = arith.muli %trip, %c16 : index
+    %source = pto.make_tensor_view %src, shape = [%rows, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<?x?xf16>
+    %tile = pto.alloc_tile addr = %ia : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %first = %c0 to %trip step %c1 {
+      %row = arith.muli %first, %c16 : index
+      %part = pto.partition_view %source, offsets = [%row, %c0], sizes = [%c16, %c16]
+        : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>)
+        outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    scf.for %second = %c0 to %trip step %c1 {
+      %row = arith.muli %second, %c16 : index
+      %part = pto.partition_view %source, offsets = [%row, %c0], sizes = [%c16, %c16]
+        : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>)
+        outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    return
+  }
+}

@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @section_vector(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %ia = arith.constant 0 : i64
+    %oa = arith.constant 512 : i64
+    %source = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<?x?xf16>
+    %target = pto.make_tensor_view %dst, shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<?x?xf16>
+    %input = pto.alloc_tile addr = %ia : !pto.tile_buf<vec, 16x16xf16>
+    %output = pto.alloc_tile addr = %oa : !pto.tile_buf<vec, 16x16xf16>
+    %source_part = pto.partition_view %source, offsets = [%c0, %c0], sizes = [%c16, %c16]
+      : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %target_part = pto.partition_view %target, offsets = [%c0, %c0], sizes = [%c16, %c16]
+      : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    pto.section.vector {
+      pto.tload ins(%source_part : !pto.partition_tensor_view<16x16xf16>)
+        outs(%input : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tabs ins(%input : !pto.tile_buf<vec, 16x16xf16>)
+        outs(%output : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tstore ins(%output : !pto.tile_buf<vec, 16x16xf16>)
+        outs(%target_part : !pto.partition_tensor_view<16x16xf16>)
+    }
+    return
+  }
+}

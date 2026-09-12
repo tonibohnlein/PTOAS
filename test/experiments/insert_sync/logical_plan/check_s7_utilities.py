@@ -8,7 +8,9 @@ import json
 from pathlib import Path
 import tempfile
 from s6_report import validate_report
-from s7_corpus import SCHEMA, ARMS, validate_manifest, summarize, prepare_bytes, discover
+from s7_corpus import (SCHEMA, ARMS, compact_lock, discover, manifest_digest,
+                       prepare_bytes, summarize, validate_lock,
+                       validate_manifest, verify_discovery)
 
 
 def main():
@@ -40,7 +42,8 @@ def main():
     expect_bad(validate_report, bad)
     bad = copy.deepcopy(report); bad["intrinsic_accumulator_requirements"] = "2"
     expect_bad(validate_report, bad)
-    manifest = dict(schema=SCHEMA, root=".", cases=[dict(id="one", path="x.pto", sha256="0"*64,
+    manifest = dict(schema=SCHEMA, root=".", discovery=dict(all_a2a3=False,
+                       preparation="test"), cases=[dict(id="one", path="x.pto", sha256="0"*64,
                        classification="production", stage="raw-addressed-compatibility", gm_contract="may-alias")])
     validate_manifest(manifest); checks += 1
     for key, value in (("stage", "unknown"), ("classification", "kernel-maybe"),
@@ -74,6 +77,18 @@ def main():
         assert len(report["cases"]) == 1 and "weights_proj" in report["missing_requested"]
         assert any(x.startswith("historical_gemm:") for x in report["missing_requested"])
         checks += 2
+        portable = discover(root, portable=True)
+        verified = verify_discovery(portable, root)
+        assert verified["inputs"] == 1 and verified["manifest_sha256"] == manifest_digest(portable)
+        checks += 2
+        row = dict(portable["cases"][0], input_sha256="1"*64, adaptations=[],
+                   arms={arm:dict(status="refused", reason="test") for arm in ARMS})
+        result = dict(cases=[row], summary=summarize([row]),
+                      missing_requested=portable["missing_requested"])
+        lock = compact_lock(result, portable)
+        assert validate_lock(lock, portable)["inputs"] == 1; checks += 1
+        bad_lock = copy.deepcopy(lock); bad_lock["manifest_sha256"] = "f"*64
+        expect_bad(validate_lock, bad_lock, portable)
     print(json.dumps(dict(status="passed", checks=checks, native="NOT_RUN", device="NOT_RUN")))
 
 
