@@ -149,6 +149,10 @@ llvm::cl::opt<uint64_t> insertSyncLogicalWorkBudget(
 llvm::cl::opt<std::string> insertSyncGMAlias(
     "insert-sync-gm-alias", llvm::cl::desc("Logical constructor GM contract: may-alias or assume-disjoint-arguments"),
     llvm::cl::init(""));
+llvm::cl::opt<bool> insertSyncStructuredPrecision(
+    "insert-sync-structured-precision",
+    llvm::cl::desc("Enable periodic precision; false selects conservative structured composition during migration"),
+    llvm::cl::init(true));
 
 
 llvm::cl::opt<bool> planMemoryOrderBySize(

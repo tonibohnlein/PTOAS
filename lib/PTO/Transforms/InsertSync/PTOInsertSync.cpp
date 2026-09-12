@@ -70,12 +70,14 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     logicalWorkBudget = options.logicalWorkBudget;
     gmAlias = options.gmAlias;
     hardwareContract = options.hardwareContract;
+    structuredPrecision = options.structuredPrecision;
   }
   PTOInsertSyncPass(const PTOInsertSyncPass &other) : PTOInsertSyncBase(other) {
     planner = other.planner;
     logicalWorkBudget = other.logicalWorkBudget;
     gmAlias = other.gmAlias;
     hardwareContract = other.hardwareContract;
+    structuredPrecision = other.structuredPrecision;
   }
   Option<std::string> planner{*this, "planner", llvm::cl::init("existing"),
       llvm::cl::desc("Planning engine: existing, logical (reference), logical-or-existing, structured")};
@@ -86,6 +88,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
   Option<std::string> hardwareContract{*this, "hardware-contract", llvm::cl::init("conservative"),
       llvm::cl::desc("Structured hardware premises: conservative or a2a3-mmad-acc-v1 (experimental)")};
+  Option<bool> structuredPrecision{*this, "structured-precision", llvm::cl::init(true),
+      llvm::cl::desc("Enable periodic precision (false exercises general conservative composition during migration)")};
 
   void initializeLogicalMetadata(func::FuncOp func) {
     SmallVector<StringAttr> stale;
@@ -114,7 +118,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       result = structured_sync::constructStructuredSync(func, *contract,
           hardwareContract == "a2a3-mmad-acc-v1"
               ? structured_sync::HardwareContract::A2A3MmadAccV1
-              : structured_sync::HardwareContract::Conservative);
+              : structured_sync::HardwareContract::Conservative, structuredPrecision);
     else result = logical_sync::constructLogicalSync(func, *contract, false, logicalWorkBudget);
     StringRef status;
     switch (result.status) {

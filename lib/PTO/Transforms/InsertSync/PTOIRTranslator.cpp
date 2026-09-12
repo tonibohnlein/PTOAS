@@ -237,6 +237,35 @@ LogicalResult PTOIRTranslator::Build() {
     return func_.emitError("InsertSync physical-address admission failed: ") << admission.reason;
   Region &funcRegion = func_.getBody();
   UpdateKernelArgMemInfo();
+  if (conservativeStructuredForwarding_) {
+    // The historical single traversal does not compute backedge aliases.
+    // Seed every SCF-forwarded handle with a whole-space may alias before
+    // translating payload, including uses in the BEFORE region of while.
+    auto seed = [&](Value value) {
+      Type type = value.getType();
+      if (!isa<pto::TileBufType, pto::MultiTileBufType, pto::TensorViewType,
+               pto::PartitionTensorViewType, pto::PtrType, BaseMemRefType>(type)) return;
+      // getPTOAddressSpaceAttr currently handles pointers only. Never let a
+      // forwarded local tile silently become GM through its fallback.
+      auto space = pto::AddressSpace::Zero;
+      if (auto tile = dyn_cast<pto::TileBufType>(type)) space = getTileAddressSpace(tile);
+      else if (auto multi = dyn_cast<pto::MultiTileBufType>(type))
+        space = getTileAddressSpace(multi.getSlotType());
+      else if (auto memref = dyn_cast<BaseMemRefType>(type)) {
+        if (auto attr = dyn_cast_or_null<pto::AddressSpaceAttr>(memref.getMemorySpace()))
+          space = attr.getAddressSpace();
+      } else space = getPointerLikeAddressSpace(type);
+      buffer2MemInfoMap_[value].emplace_back(std::make_unique<BaseMemInfo>(
+          value, value, space, SmallVector<uint64_t>{}, 0, false, true));
+    };
+    func_.walk([&](Operation *op) {
+      if (!isa<scf::ForOp, scf::WhileOp, scf::IfOp>(op)) return;
+      for (Value result : op->getResults()) seed(result);
+      for (Region &region : op->getRegions())
+        for (Block &block : region)
+          for (Value arg : block.getArguments()) seed(arg);
+    });
+  }
   RecursionIR(&funcRegion);
   return failure(translationFailed_);
 }
@@ -884,6 +913,11 @@ void PTOIRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
   if (!buffer2MemInfoMap_.contains(source)) {
     return;
   }
+
+  if (conservativeStructuredForwarding_ && buffer2MemInfoMap_.contains(result) &&
+      llvm::any_of(buffer2MemInfoMap_[result], [](const auto &info) {
+        return info->aliasesUnknownRange;
+      })) return;
 
   auto &resultMemInfoVec = buffer2MemInfoMap_[result];
   for (auto &parentInfo : buffer2MemInfoMap_[source]) {

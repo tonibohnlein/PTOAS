@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+module attributes {pto.target_arch = "a3"} {
+  func.func @composition(%src: !pto.ptr<f16>, %n: index, %take: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 16x16xf16>
+    %view = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %result:2 = scf.while (%i = %c0, %tile = %a) : (index, !pto.tile_buf<vec, 16x16xf16>) -> (index, !pto.tile_buf<vec, 16x16xf16>) {
+      // BEFORE effects execute even on the condition-false exit.
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+      %again = arith.cmpi slt, %i, %n : index
+      scf.condition(%again) %i, %tile : index, !pto.tile_buf<vec, 16x16xf16>
+    } do {
+    ^bb0(%i: index, %tile: !pto.tile_buf<vec, 16x16xf16>):
+      %next = arith.addi %i, %c1 : index
+      %carried = scf.for %j = %c0 to %n step %c1 iter_args(%t = %tile) -> (!pto.tile_buf<vec, 16x16xf16>) {
+        scf.if %take {
+          pto.tabs ins(%t : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+        }
+        scf.yield %b : !pto.tile_buf<vec, 16x16xf16>
+      }
+      // A sibling loop and an optional final-prefetch-shaped branch.
+      scf.for %j = %c0 to %n step %c1 {
+        %later = arith.addi %j, %c1 : index
+        %prefetch = arith.cmpi slt, %later, %n : index
+        scf.if %prefetch {
+          pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>) outs(%carried : !pto.tile_buf<vec, 16x16xf16>)
+        }
+      }
+      scf.yield %next, %carried : index, !pto.tile_buf<vec, 16x16xf16>
+    }
+    pto.tabs ins(%result#1 : !pto.tile_buf<vec, 16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}

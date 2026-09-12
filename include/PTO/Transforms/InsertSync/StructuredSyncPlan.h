@@ -14,12 +14,20 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 namespace mlir::pto::structured_sync {
-// Complete strict constructor for the admitted prefix-periodic fragment.
+// During migration enablePrecision=false selects the general conservative
+// composition engine. The default retains the previously qualified periodic
+// implementation until overlap recovery passes the frozen quality gates.
 // It NEVER calls the Presburger or legacy planner, including on refusal.
 logical_sync::ConstructionResult constructStructuredSync(
     func::FuncOp function, InsertSyncGMAliasMode gm,
-    HardwareContract hardware = HardwareContract::Conservative);
+    HardwareContract hardware = HardwareContract::Conservative,
+    bool enablePrecision = true);
 namespace testing {
+logical_sync::ConstructionResult constructCompositionalSync(
+    func::FuncOp function, InsertSyncGMAliasMode gm,
+    llvm::function_ref<void(func::FuncOp)> mutate,
+    HardwareContract hardware = HardwareContract::Conservative,
+    bool precision = false);
 logical_sync::ConstructionResult constructWithEmissionMutation(
     func::FuncOp function, InsertSyncGMAliasMode gm,
     llvm::function_ref<void(func::FuncOp)> mutate,

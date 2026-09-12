@@ -126,6 +126,8 @@ add_mlir_dialect_library(PTOTransforms
 
   InsertSync/PTOInsertSync.cpp
   InsertSync/StructuredSyncCore.cpp
+  InsertSync/StructuredSyncComposition.cpp
+  InsertSync/StructuredSyncCompositionNative.cpp
   InsertSync/StructuredSyncPlan.cpp
   Passes/PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
