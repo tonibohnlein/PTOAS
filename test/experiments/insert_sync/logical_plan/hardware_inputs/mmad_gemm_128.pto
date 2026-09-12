@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// S7 synthetic split-K geometry witness, not the historical GEMM.
+// Each body uses the loaded panel twice, so this deliberately computes
+// C = 2 * sum(panel-products). It tests adjacent updates, not benchmark FLOPs.
+module attributes {pto.target_arch = "a3"} {
+  func.func @mmad_gemm_128(%a: !pto.ptr<f16>, %b: !pto.ptr<f16>, %c: !pto.ptr<f32>, %trips: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %m = arith.constant 128 : index
+    %n = arith.constant 256 : index
+    %k = arith.constant 64 : index
+    %total_k = arith.constant 4096 : index
+    %addr0 = arith.constant 0 : i64
+    %addrB = arith.constant 65536 : i64
+    %av = pto.make_tensor_view %a, shape = [%m, %total_k], strides = [%total_k, %one] : !pto.tensor_view<?x?xf16>
+    %bv = pto.make_tensor_view %b, shape = [%total_k, %n], strides = [%n, %one] : !pto.tensor_view<?x?xf16>
+    %cv = pto.make_tensor_view %c, shape = [%m, %n], strides = [%n, %one] : !pto.tensor_view<?x?xf32>
+    %al1 = pto.alloc_tile addr = %addr0 : !pto.tile_buf<loc=mat, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %bl1 = pto.alloc_tile addr = %addrB : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %al0 = pto.alloc_tile addr = %addr0 : !pto.tile_buf<loc=left, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+    %bl0 = pto.alloc_tile addr = %addr0 : !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %acc = pto.alloc_tile addr = %addr0 : !pto.tile_buf<loc=acc, dtype=f32, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    scf.for %iv = %z to %trips step %one {
+      %offset = arith.muli %iv, %k : index
+      %ap = pto.partition_view %av, offsets = [%z, %offset], sizes = [%m, %k] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<128x64xf16>
+      %bp = pto.partition_view %bv, offsets = [%offset, %z], sizes = [%k, %n] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x256xf16>
+      pto.tload ins(%ap : !pto.partition_tensor_view<128x64xf16>) outs(%al1 : !pto.tile_buf<loc=mat, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+      pto.tload ins(%bp : !pto.partition_tensor_view<64x256xf16>) outs(%bl1 : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+      pto.textract ins(%al1, %z, %z : !pto.tile_buf<loc=mat, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>, index, index) outs(%al0 : !pto.tile_buf<loc=left, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
+      pto.textract ins(%bl1, %z, %z : !pto.tile_buf<loc=mat, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=col_major, slayout=row_major, fractal=512, pad=0>, index, index) outs(%bl0 : !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+      %first = arith.cmpi eq, %iv, %z : index
+      scf.if %first {
+        pto.tmatmul ins(%al0, %bl0 : !pto.tile_buf<loc=left, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+      } else {
+        pto.tmatmul.acc ins(%acc, %al0, %bl0 : !pto.tile_buf<loc=acc, dtype=f32, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.tile_buf<loc=left, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+      }
+      pto.tmatmul.acc ins(%acc, %al0, %bl0 : !pto.tile_buf<loc=acc, dtype=f32, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.tile_buf<loc=left, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    }
+    // This focused fixture exercises positive trips for its output value.
+    // Empty-trip probes check only synchronization participation, not a
+    // numerical claim for the untouched accumulator.
+    %cp = pto.partition_view %cv, offsets = [%z, %z], sizes = [%m, %n] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<128x256xf32>
+    pto.tstore ins(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) outs(%cp : !pto.partition_tensor_view<128x256xf32>)
+    return
+  }
+}

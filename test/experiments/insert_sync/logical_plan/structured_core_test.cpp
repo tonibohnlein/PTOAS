@@ -27,6 +27,7 @@ static void ordinalTests();
 static void startupTests();
 static void s5Tests();
 static void s6Tests();
+static void s7HardwareTests();
 static uint64_t regionModels=0,regionTrials=0,regionRemoved=0;
 static uint64_t startupModels=0,startupRekeyTrials=0,startupRekeys=0,startupSiteMerges=0;
 static uint64_t refinementModels=0,refinementTrials=0,refinementRemoved=0;
@@ -143,7 +144,14 @@ static bool finiteCorrect(const Model &m,const std::vector<Action> &actions,uint
     return true;
 }
 static void hazard(Model&m,std::size_t p,std::size_t q,Property property=Property::Completion){
-    auto d=priorDistance(m,p,q);if(d)m.requirements.push_back({p,q,*d,property});
+    auto d=priorDistance(m,p,q);if(!d)return;
+    Requirement r{p,q,*d,property};
+    if(property==Property::AccumulatorUpdate && p<m.atoms.size()) {
+        const auto &matrix=m.atoms[p].matrix;
+        r.hasStorageWitness=matrix.kind!=MmadInfo::Unknown && matrix.accumulatorBytes;
+        r.storageBase=matrix.accumulatorBase;r.storageBytes=matrix.accumulatorBytes;
+    }
+    m.requirements.push_back(r);
 }
 static Model buffering(unsigned d,bool stores=true){
     Model m;m.period=d;
@@ -405,7 +413,7 @@ if(conflict)m.requirements.push_back({p,q,*d,acc?Property::AccResource:Property:
     }
     invocationTests();
     s5Tests();
-    ordinalTests();startupTests();s6Tests();
+    ordinalTests();startupTests();s6Tests();s7HardwareTests();
     std::cout<<"{\"status\":\"passed\",\"checks\":"<<checks<<",\"accepted_models\":"<<acceptedModels
              <<",\"region_refinement_models\":"<<regionModels
              <<",\"region_refinement_trials\":"<<regionTrials
@@ -1125,3 +1133,5 @@ static void s6Tests() {
     }
     require(accepted>=64&&accepted+refused==128,"startup random population silently lost");
 }
+
+#include "structured_hardware_test.inc"

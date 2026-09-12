@@ -69,11 +69,13 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     planner = options.planner;
     logicalWorkBudget = options.logicalWorkBudget;
     gmAlias = options.gmAlias;
+    hardwareContract = options.hardwareContract;
   }
   PTOInsertSyncPass(const PTOInsertSyncPass &other) : PTOInsertSyncBase(other) {
     planner = other.planner;
     logicalWorkBudget = other.logicalWorkBudget;
     gmAlias = other.gmAlias;
+    hardwareContract = other.hardwareContract;
   }
   Option<std::string> planner{*this, "planner", llvm::cl::init("existing"),
       llvm::cl::desc("Planning engine: existing, logical (reference), logical-or-existing, structured")};
@@ -81,6 +83,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       llvm::cl::desc("Reference logical engine work allowance (not used by structured)")};
   Option<std::string> gmAlias{*this, "gm-alias", llvm::cl::init(""),
       llvm::cl::desc("Logical constructor GM caller contract")};
+
+  Option<std::string> hardwareContract{*this, "hardware-contract", llvm::cl::init("conservative"),
+      llvm::cl::desc("Structured hardware premises: conservative or a2a3-mmad-acc-v1 (experimental)")};
 
   void initializeLogicalMetadata(func::FuncOp func) {
     SmallVector<StringAttr> stale;
@@ -106,7 +111,10 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     Result result;
     if (hasBarrier) result.reason = "explicit synchronization summary not established";
     else if (planner == "structured")
-      result = structured_sync::constructStructuredSync(func, *contract);
+      result = structured_sync::constructStructuredSync(func, *contract,
+          hardwareContract == "a2a3-mmad-acc-v1"
+              ? structured_sync::HardwareContract::A2A3MmadAccV1
+              : structured_sync::HardwareContract::Conservative);
     else result = logical_sync::constructLogicalSync(func, *contract, false, logicalWorkBudget);
     StringRef status;
     switch (result.status) {
@@ -118,6 +126,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     case Result::InternalError: status = "internal-error"; break;
     }
     auto i64 = IntegerType::get(&getContext(), 64);
+    func->setAttr("pto.insert_sync.hardware_contract", StringAttr::get(&getContext(), hardwareContract));
     func->setAttr("pto.insert_sync.logical_status", StringAttr::get(&getContext(), status));
     func->setAttr("pto.insert_sync.logical_reason", StringAttr::get(&getContext(), result.reason));
     func->setAttr("pto.insert_sync.logical_work", IntegerAttr::get(i64, result.work));
@@ -151,6 +160,11 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
     if (planner != "existing" && planner != "logical" && planner != "logical-or-existing" && planner != "structured") {
       func.emitError("InsertSync planner must be existing, logical, logical-or-existing, or structured");
+      signalPassFailure(); return;
+    }
+    if ((hardwareContract != "conservative" && hardwareContract != "a2a3-mmad-acc-v1") ||
+        (hardwareContract != "conservative" && planner != "structured")) {
+      func.emitError("hardware-contract requires structured and must be conservative or a2a3-mmad-acc-v1");
       signalPassFailure(); return;
     }
     // Neither constructor imports authored event ownership. Classify once,

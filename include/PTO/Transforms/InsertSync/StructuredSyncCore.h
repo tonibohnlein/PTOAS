@@ -34,11 +34,16 @@ struct Reservation {
     Lane source, target;
     unsigned key = 0;
 };
+// A hardware contract is explicitly selected by the compiler invocation. The
+// development documentation is NOT a release/device qualification. Conservative
+// is the default; A2A3MmadAccV1 is the source-qualified S7 experimental contract.
+enum class HardwareContract : uint8_t { Conservative, A2A3MmadAccV1 };
 struct Target {
     // NPU2201, static-tensor library-safe pool. IDs 6/7 are NOT claimed absent
     // in hardware: they are withheld by this selected lowering contract.
     std::vector<unsigned> compilerKeys{0, 1, 2, 3, 4, 5};
     std::vector<Reservation> reservations;
+    HardwareContract hardware = HardwareContract::Conservative;
     bool supports(Lane lane) const;
     bool event(Lane source, Lane target) const;
     bool barrier(Lane lane) const;
@@ -54,17 +59,39 @@ struct Target {
 // clipped by 0 <= t < tripCount. Thus a finite execution is a PREFIX of the
 // admitted periodic schedule. No enumeration depends on tripCount.
 enum class Segment : uint8_t { Prelude, Body, Epilogue };
+// Immutable lowering facts, not a completion receipt. Unknown means no rule.
+// The native adapter accepts only plain, default-phase, in-place f16/bf16->f32
+// TMATMUL with exact effective dimensions and an exact full L0C footprint.
+struct MmadInfo {
+    enum Kind : uint8_t { Unknown, Initialize, Accumulate } kind = Unknown;
+    uint64_t accumulatorBase = 0, accumulatorBytes = 0;
+    uint64_t m = 0, n = 0, k = 0;
+    enum Input : uint8_t { Unsupported, F16, BF16 } input = Unsupported;
+    bool operator==(const MmadInfo &b) const {
+        return kind == b.kind && accumulatorBase == b.accumulatorBase &&
+            accumulatorBytes == b.accumulatorBytes && m == b.m && n == b.n &&
+            k == b.k && input == b.input;
+    }
+    bool operator!=(const MmadInfo &b) const { return !(*this == b); }
+};
 struct Atom {
     uint64_t residue = 0;
     uint64_t order = 0;
     Lane lane;
     Segment segment = Segment::Body; // one-shot boundaries of ONE loop invocation
+    MmadInfo matrix{};
 };
-enum class Property : uint8_t { Completion, AccResource, Visibility };
+// AccumulatorUpdate orders accesses to this same accumulator. It never means
+// source-operation completion, L0A/L0B reclamation, FIX ownership or visibility.
+enum class Property : uint8_t { Completion, AccResource, Visibility, AccumulatorUpdate };
 struct Requirement {
     std::size_t source = 0, target = 0;
     uint64_t distance = 0; // Body/Body: target epoch - source epoch; boundary: zero
     Property property = Property::Completion;
+    // Exact physical storage witness for a storage-specific target proof.
+    // Ordinary completion/resource/visibility requirements leave this absent.
+    bool hasStorageWitness = false;
+    uint64_t storageBase = 0, storageBytes = 0;
 };
 struct Model {
     uint64_t period = 1;
@@ -191,6 +218,11 @@ std::optional<std::vector<HandoffAudit>> auditRegionHandoffs(const Model &, cons
 // It does not consume the planner's coverage receipts or an assumed pairing.
 Result verify(const Model &, const std::vector<Action> &);
 std::vector<Action> actionsForPlan(const Model &, const Plan &);
+
+// Narrow property query. No completion edge is inserted by an intrinsic proof.
+// Every intervening M occurrence must continue the same qualified accumulator
+// chain. Different segments/invocations retain ordinary synchronization in S7.
+bool intrinsicAccumulatorOrder(const Model &, const Requirement &);
 
 // Testing/query client for exact symbolic epoch cuts. A path using only issue
 // order is NEVER completion. True means all represented instances are covered.

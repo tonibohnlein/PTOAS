@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_INSERTSYNC_STRUCTUREDSYNCPLAN_H
 #define PTO_TRANSFORMS_INSERTSYNC_STRUCTUREDSYNCPLAN_H
 #include "PTO/Transforms/InsertSync/SyncConstructionResult.h"
+#include "PTO/Transforms/InsertSync/StructuredSyncCore.h"
 #include "PTO/Transforms/InsertSync/SyncGMAlias.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -16,11 +17,13 @@ namespace mlir::pto::structured_sync {
 // Complete strict constructor for the admitted prefix-periodic fragment.
 // It NEVER calls the Presburger or legacy planner, including on refusal.
 logical_sync::ConstructionResult constructStructuredSync(
-    func::FuncOp function, InsertSyncGMAliasMode gm);
+    func::FuncOp function, InsertSyncGMAliasMode gm,
+    HardwareContract hardware = HardwareContract::Conservative);
 namespace testing {
 logical_sync::ConstructionResult constructWithEmissionMutation(
     func::FuncOp function, InsertSyncGMAliasMode gm,
-    llvm::function_ref<void(func::FuncOp)> mutate);
+    llvm::function_ref<void(func::FuncOp)> mutate,
+    HardwareContract hardware = HardwareContract::Conservative);
 }
 }
 #endif

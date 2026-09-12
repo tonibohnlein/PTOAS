@@ -1,0 +1,55 @@
+{
+  "schema": "oahs.s7.hardware-fixtures.v1",
+  "cases": [
+    {
+      "name": "mmad_small_8",
+      "file": "mmad_small_8.pto",
+      "sha256": "8ac0c10325ea350851f16d531b737eda9087fd84dc95915c29d4671cbc38e02c",
+      "classification": "synthetic-hardware-contract",
+      "expect_intrinsic": false,
+      "m": 16,
+      "n": 128,
+      "k": 64
+    },
+    {
+      "name": "mmad_boundary_10",
+      "file": "mmad_boundary_10.pto",
+      "sha256": "c08061619ca3af7d62a8275b3e010003c774433ed0167b4ce99ab492d977b7f5",
+      "classification": "synthetic-hardware-contract",
+      "expect_intrinsic": false,
+      "m": 16,
+      "n": 160,
+      "k": 64
+    },
+    {
+      "name": "mmad_large_11",
+      "file": "mmad_large_11.pto",
+      "sha256": "d45b78a96b0cb1e44a46499d22964652d2b04c186f6df74e79b06e95873b5c16",
+      "classification": "synthetic-hardware-contract",
+      "expect_intrinsic": true,
+      "m": 16,
+      "n": 176,
+      "k": 64
+    },
+    {
+      "name": "mmad_qproj_16",
+      "file": "mmad_qproj_16.pto",
+      "sha256": "e211f101d86dd61f252688d6ce4f7f34964fc110f1f7c6b31b1b48856c9230c5",
+      "classification": "synthetic-hardware-contract",
+      "expect_intrinsic": true,
+      "m": 16,
+      "n": 256,
+      "k": 64
+    },
+    {
+      "name": "mmad_gemm_128",
+      "file": "mmad_gemm_128.pto",
+      "sha256": "5599e5b485491d0ee1e442886f14874f6dd34b0d635b43f5b88c02d60171a2df",
+      "classification": "synthetic-hardware-contract",
+      "expect_intrinsic": true,
+      "m": 128,
+      "n": 256,
+      "k": 64
+    }
+  ]
+}
