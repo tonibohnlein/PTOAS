@@ -356,6 +356,15 @@ bool Target::event(Lane a,Lane b) const {
     if (a.core!=b.core || a==b || !supports(a) || !supports(b)) return false;
     if (a.core==Core::AIV) return true;
     if (a.pipe==Pipe::S || b.pipe==Pipe::S) return false;
+    // NPU2201 lists these directions as hardware-existing without a documented
+    // application contract.  The default conservative profile does not turn
+    // existence into permission to construct a compiler event protocol.
+    const bool undocumentedFixDirection =
+        (a.pipe==Pipe::FIX && (b.pipe==Pipe::MTE2 || b.pipe==Pipe::MTE3)) ||
+        (b.pipe==Pipe::FIX && (a.pipe==Pipe::MTE2 || a.pipe==Pipe::MTE3));
+    if (undocumentedFixDirection) {
+        return false;
+    }
     if (a.pipe==Pipe::M) return b.pipe==Pipe::MTE1 || b.pipe==Pipe::MTE2 || b.pipe==Pipe::FIX;
     if (a.pipe==Pipe::MTE3) return b.pipe==Pipe::MTE1 || b.pipe==Pipe::MTE2 || b.pipe==Pipe::FIX;
     return true; // MTE1, MTE2, FIX rows of the selected NPU2201 profile.

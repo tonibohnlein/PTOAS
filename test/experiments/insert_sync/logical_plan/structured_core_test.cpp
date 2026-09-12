@@ -225,6 +225,10 @@ int main(){
     require(!t.event({Core::AIC,Pipe::S},{Core::AIC,Pipe::M}),"invented scalar AIC event");
     require(!t.event({Core::AIC,Pipe::M},{Core::AIC,Pipe::MTE3}),"invented M to MTE3 event");
     require(t.event({Core::AIC,Pipe::M},{Core::AIC,Pipe::FIX}),"qualified M/FIX event lost");
+    require(!t.event({Core::AIC,Pipe::MTE2},{Core::AIC,Pipe::FIX}),"undocumented-use MTE2/FIX event");
+    require(!t.event({Core::AIC,Pipe::FIX},{Core::AIC,Pipe::MTE2}),"undocumented-use FIX/MTE2 event");
+    require(!t.event({Core::AIC,Pipe::MTE3},{Core::AIC,Pipe::FIX}),"undocumented-use MTE3/FIX event");
+    require(!t.event({Core::AIC,Pipe::FIX},{Core::AIC,Pipe::MTE3}),"undocumented-use FIX/MTE3 event");
     auto acc=recurrence;acc.recurring=true;acc.atoms[0].lane={Core::AIC,Pipe::M};acc.atoms[1].lane={Core::AIC,Pipe::FIX};
     acc.requirements.clear();hazard(acc,0,1,Property::AccResource);hazard(acc,1,0,Property::AccResource);
     challenge(acc,"ACC reader resource ordering");

@@ -1,0 +1,1214 @@
+{
+  "schema": "oahs.s7.corpus.v1",
+  "root": "$REPO",
+  "discovery": {
+    "all_a2a3": true,
+    "preparation": "identical source bytes; bind module target a2a3 to a3 only"
+  },
+  "cases": [
+    {
+      "id": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_boundary_10.pto",
+      "path": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_boundary_10.pto",
+      "sha256": "c08061619ca3af7d62a8275b3e010003c774433ed0167b4ce99ab492d977b7f5",
+      "classification": "focused",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_gemm_128.pto",
+      "path": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_gemm_128.pto",
+      "sha256": "5599e5b485491d0ee1e442886f14874f6dd34b0d635b43f5b88c02d60171a2df",
+      "classification": "focused",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_large_11.pto",
+      "path": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_large_11.pto",
+      "sha256": "d45b78a96b0cb1e44a46499d22964652d2b04c186f6df74e79b06e95873b5c16",
+      "classification": "focused",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_qproj_16.pto",
+      "path": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_qproj_16.pto",
+      "sha256": "e211f101d86dd61f252688d6ce4f7f34964fc110f1f7c6b31b1b48856c9230c5",
+      "classification": "focused",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_small_8.pto",
+      "path": "test/experiments/insert_sync/logical_plan/hardware_inputs/mmad_small_8.pto",
+      "sha256": "8ac0c10325ea350851f16d531b737eda9087fd84dc95915c29d4671cbc38e02c",
+      "classification": "focused",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/inputs/four_use.auto.pto",
+      "path": "test/experiments/insert_sync/logical_plan/inputs/four_use.auto.pto",
+      "sha256": "ebb3365784b3f35a51098505ba764f038ea57f670f8ca27c5d77707b19af2128",
+      "classification": "focused",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/inputs/one_buffer.auto.pto",
+      "path": "test/experiments/insert_sync/logical_plan/inputs/one_buffer.auto.pto",
+      "sha256": "600c7fa8959c5cfb97660a9a54fb585905434bc332e73ed709274f4dd7700011",
+      "classification": "focused",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/inputs/three_buffer.auto.pto",
+      "path": "test/experiments/insert_sync/logical_plan/inputs/three_buffer.auto.pto",
+      "sha256": "fd6f6c876a11ed322ebb26ce8687b6ee1ca2fe717a4d53f77b6c4ff37a800eda",
+      "classification": "focused",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/experiments/insert_sync/logical_plan/inputs/two_buffer.auto.pto",
+      "path": "test/experiments/insert_sync/logical_plan/inputs/two_buffer.auto.pto",
+      "sha256": "1903800616d0505b007c51eaaa8e2bb76ec5a96ff9ce10829d700f24a4af56fd",
+      "classification": "focused",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/exp_gate_mm.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/exp_gate_mm.pto",
+      "sha256": "adf833f1c680c01b44b7b74c4abf657b69b2923f5d95b462a9057c1c1d0e64b7",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/exp_up_mm.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/exp_up_mm.pto",
+      "sha256": "39a4ebcdc8ea57f4edebb40a380a2355bc5e76719d3ddb73fa0fe8d04babdfe7",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/exp_w2_mm.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/exp_w2_mm.pto",
+      "sha256": "23954d9f3b5794458e8fba1f5deec20bd349ad1da6b5c83c4d5235846267a5e7",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/hc_head_linear.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/hc_head_linear.pto",
+      "sha256": "35e3b727355a329e8deb11ad0556e1f8969b965265ca6883c8bbe691a7e67b0a",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/hc_pre_linear.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/hc_pre_linear.pto",
+      "sha256": "12d498446a74293f0ed09dd64d111f409646ca0f40f69852f5b401bca7878b2f",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/idx_qr_proj_matmul.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/idx_qr_proj_matmul.pto",
+      "sha256": "0299e9f251075937840f9653257e890b411e197cda4d6c2fa0da8bd2eb36a425",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/kv_hadamard.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/kv_hadamard.pto",
+      "sha256": "0c07a048a8b84f1d2d57b18ad10483178a7a8f0fcaeef69ecc796fe429e9c81a",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/kv_proj_matmul.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/kv_proj_matmul.pto",
+      "sha256": "2eadcd4c2fab0ccf89e9af0755240221741b768db0fd4ecf61afdb466d01ec04",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/kv_score_proj.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/kv_score_proj.pto",
+      "sha256": "4dc04469d03a12068c0755917b594b27834ab0878deddeca18f31be2ba737c43",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/lm_head_matmul.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/lm_head_matmul.pto",
+      "sha256": "ed930cbea375f82741204ab216473428ed47356a90f81fdcf7f13301705fbb2b",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/proj_a_mm.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/proj_a_mm.pto",
+      "sha256": "ab999f361b0c99aa60a7246daddb941b99699701233e03c19a5d7272a04ad110",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/proj_b_mm.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/proj_b_mm.pto",
+      "sha256": "1fe1a60ab4cddc280837f23645f215b78b316f5624877c4db79c8e8d4030836a",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/qproj_matmul.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/qproj_matmul.pto",
+      "sha256": "849e68637f58f79f818c698172229e0115f3ba4e502ad65d061bcef09b3bc1dd",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/qr_hadamard_matmul.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/qr_hadamard_matmul.pto",
+      "sha256": "6f5d0d179ead392e6f64207f2e421a1dca05cc17053ad55d40ee06f5626bae2e",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/qr_proj_matmul.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/qr_proj_matmul.pto",
+      "sha256": "e15db53846048f4431fe54847ed2bcfc4456d7f91ed8e67db8a044ac25d8409e",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/sh_gate_mm.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/sh_gate_mm.pto",
+      "sha256": "df40c2c077c814b0c946ef03a75a7ff5118d76506638017a82737ca4e9e55bf6",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/sh_up_mm.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/sh_up_mm.pto",
+      "sha256": "5c5d17baee5295bddd97aa4abf160ebefb98a64e96431074383a1be65cac2470",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/sh_w2_mm.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/sh_w2_mm.pto",
+      "sha256": "74b56bce62cc0f973b4884f341ab68d55b07695ee58e6f12a2484e2015ab7333",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aic/weights_proj.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aic/weights_proj.pto",
+      "sha256": "9b10bb26379c44e40db1f8fadda5cf91ddcca7a82e510d7b710f3b6161c39aa6",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/build_valid.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/build_valid.pto",
+      "sha256": "23082b3d1d911ef16d2dc02ed1a017ddaa3b44f5b807d3f6919c9e8bc2d328f8",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/comb_sinkhorn.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/comb_sinkhorn.pto",
+      "sha256": "ed8d08af94ee1a9167107fd0e775b12ce06547d24de771ab042a9b1adfc2df00",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/combine_wait.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/combine_wait.pto",
+      "sha256": "35cac66223ea05a183d04dd34ba3f6077986f93a0bb3e074d876a53a5fd15bfe",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/csa_cache_writeback.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/csa_cache_writeback.pto",
+      "sha256": "bb9222c80494972e4f6f40d7b5cca63c171f4ce135e8994fce412ae91df65bd1",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/csa_cmp_rope.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/csa_cmp_rope.pto",
+      "sha256": "4ae283999bc7899f40410317b48988fa52ed882a17aca0310334c058ce43d020",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/csa_rope_step.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/csa_rope_step.pto",
+      "sha256": "6d6c8e3c122ea2cec0117c98e63917b5567f2fdf7a1c73b9693bf830cec20f9e",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/decode_build_cache_metadata.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/decode_build_cache_metadata.pto",
+      "sha256": "8635f96782372d8a067ca14a848f743c99fb8d563975e5e37b373d9ef2739d5b",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/decode_build_swa_metadata.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/decode_build_swa_metadata.pto",
+      "sha256": "de66cae2716c0f76b16f2e23201434f498e45244abb3bfb39a01f08990666ebf",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/decode_build_swa_scalar_metadata.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/decode_build_swa_scalar_metadata.pto",
+      "sha256": "5c8a1c197c600b287008dcd72105a55d5e6a376032e35bf083a8e3ffe05ad9ca",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/dispatch_gather.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/dispatch_gather.pto",
+      "sha256": "c1f2119c20e9b91ce80dce54578ebc56b2760f761a55611828f7ae58f9276b6e",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/dispatch_wait.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/dispatch_wait.pto",
+      "sha256": "c76824a2218953cb576418b881bceb2441c0e29f305e6a1028f0c25f06846c87",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/exp_gate_up_act.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/exp_gate_up_act.pto",
+      "sha256": "efeaa0a693d17f2c42b45ce967392ef4f93a08589a141c849704a901051e85fa",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/exp_h_q.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/exp_h_q.pto",
+      "sha256": "2d59c72d928107342dcb154f43c78b9c85c2fbe6a8a58158bf1916619b1ec16c",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/exp_w2_act.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/exp_w2_act.pto",
+      "sha256": "477422c13b13944d2a5c85b4c939dae836550aa3006891a4c92ba5ad7a4481d4",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/ffn_norm.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/ffn_norm.pto",
+      "sha256": "6607f4a9ff3eab0e152d4e3ed02e6f48ad76ddfae55502d4f9ee9d6e485b99ec",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/gate_pre_route.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/gate_pre_route.pto",
+      "sha256": "93ca198f005d9f42a72c169eac86018a3f450d7262b9abdc0ebb9578dd50c2a7",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_head_reduce.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_head_reduce.pto",
+      "sha256": "3630ed35ca2df54bba4f67a5bb3926e957a567eda099a2766286202935658c4a",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_head_rms.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_head_rms.pto",
+      "sha256": "124c3212ec3812467c88e6560dfa3d9327340d80efa95a2ac73d817b712130e0",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_post.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_post.pto",
+      "sha256": "4382b31db5b5127ec0e6dee5f904f26c950ec109db7f853691063205be2c8d5d",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_pre_rms.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_pre_rms.pto",
+      "sha256": "e7ac6dc9d64b81e8ac46527d27a451048a5c8844875333d1f69d119dd72ceaf0",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_pre_seed.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hc_pre_seed.pto",
+      "sha256": "cadf985bff56a8efdbd0f9f62a85f00904162a1a212108b01678f10949fc77c3",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hca_cache_topk.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hca_cache_topk.pto",
+      "sha256": "fdb1e9ae9fd4fde94609a112207e81ddf326ee7fb13f6fe96f64a70eb9aee574",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hca_cache_writeback.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hca_cache_writeback.pto",
+      "sha256": "3f06f849f61e57fe64100641a008748838827a405fc45ca2b44029768010bc40",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hca_gather_kv.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hca_gather_kv.pto",
+      "sha256": "b9b13c34d36bf5d000d3c9af311ae0c8bdd1886ab3d17cf710971425eae5acd8",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hca_rope.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/hca_rope.pto",
+      "sha256": "caa7823e34c8d788499c4b964fa982b5fbeabcb4fe322a31f2a7bd9e90fa0bfb",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/idx_qr_proj_dequant.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/idx_qr_proj_dequant.pto",
+      "sha256": "3c82fe2099de9e39a7e5e09e58f332962128d3fec3fbfcaf69866a6f4073c9bb",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/kv_and_cache_write.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/kv_and_cache_write.pto",
+      "sha256": "1e3e5bd5ab6f75a623db9d0f6c3d3844a1180e57ed3ff004e12756936fc8414a",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/kv_proj_seed.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/kv_proj_seed.pto",
+      "sha256": "cbbca875bc2786b99859482e92831241e422b8067497cdcdf6d4c0765bce52c8",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/kv_rms_norm_rope.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/kv_rms_norm_rope.pto",
+      "sha256": "967699052ffe47ee30ac23ff83c760a45c72651e0a862d5d76cc56aa506e7d79",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/kv_touch.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/kv_touch.pto",
+      "sha256": "8ffb2f4f806b6592a387c2f42fdb4a1333e81b2cebe15f668b7db5182c5f60c7",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_combine_gather.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_combine_gather.pto",
+      "sha256": "c741cd2b477431ff761350c2e25ac5ee409649a10243f04322f3d64a1e91204f",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_combine_wait.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_combine_wait.pto",
+      "sha256": "161156ed0810d6d5abc6c649cbaa42aca8dbda66c4f2fad3659c2f2b4564082d",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_dispatch_gather.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_dispatch_gather.pto",
+      "sha256": "a8c2a13f5ae44b0f130f779767946dad83f2665c45cef51f240d6bd94d4a3fea",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_dispatch_wait.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_dispatch_wait.pto",
+      "sha256": "ad546e2f63bcc82252f3c5fbda1903793040532c80d628f3ae5cff91e5b30120",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_signal_clear.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/lm_head_signal_clear.pto",
+      "sha256": "4b8d6ad66fbcf961eb52e3eade6ab1d3a73b581e5785d9dbc246f120e5607c86",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/merge_norm.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/merge_norm.pto",
+      "sha256": "8b3cc98b4c4434689259f15d7063815a6b35531ab5d7af16614ac882a7f43c63",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/mix_x.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/mix_x.pto",
+      "sha256": "cffb944da0c1224a914afe87adec84bac853b21f0a9c55e101748ca1fc0d63c6",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/moe_signal_clear.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/moe_signal_clear.pto",
+      "sha256": "7b7c13b6c00ee8b3a409523b3b34a07536cfc646127cbbd7e01384d784572f92",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/pack_x_hc.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/pack_x_hc.pto",
+      "sha256": "705735ef98185ab564f4a07ef673e68527d98808ea52c4dfb483cf2dbc09c97b",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/proj_b_act.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/proj_b_act.pto",
+      "sha256": "fe5d8e5eb79debbfa15d98a3689636c9d81b6d7390d1fdb36d77704f16f17c6e",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/q_rope_prepare.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/q_rope_prepare.pto",
+      "sha256": "8588e301b9dc0afe687032ca9f1092152de3671261e03b273d60b1f86e475676",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qproj_dequant_rms_nope_rope.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qproj_dequant_rms_nope_rope.pto",
+      "sha256": "19559eabec53bab7089263b3a7e586265173a31a3cbe4675c3d5445b957905f3",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_hadamard_quant.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_hadamard_quant.pto",
+      "sha256": "cabb51581a191f37f6f50a31778099f1e9b99a3712b80ff04b2e661af61b391f",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_proj_seed.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_proj_seed.pto",
+      "sha256": "ac3f0085c8a294def7cc296405b7c729913f8e30d139dd14b9bd6e6c9b7eeeb7",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_rms_norm_quant.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_rms_norm_quant.pto",
+      "sha256": "da8a8fb36c6bda053982515f6735e2c76cf9896676c1233f3960c3508336a4ea",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_rope.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_rope.pto",
+      "sha256": "e2754e0ffb4ec180c938f986e96926793ef630759d5f440340c3e61f9e5fd91b",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_rope_swap_idx.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/qr_rope_swap_idx.pto",
+      "sha256": "7eeb54a8f73b1afce2134632470220b391d17a1f56e565d31d16ecbae3ceeabf",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/quant.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/quant.pto",
+      "sha256": "4d2356233068567efe48b4cc93115f7abdd61e49dc087109a4ddd99f85fd3548",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rms_norm.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rms_norm.pto",
+      "sha256": "0ee74e760128e2d0e0621182a1b65c28a44ce5f9cef233049bb41bae2c5b8608",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rmsnorm_rope.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rmsnorm_rope.pto",
+      "sha256": "c288828f86dbfff85af0632712eb283ceb402b1ab78d20a92ce880f260c867ac",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rmsnorm_rope_cache_write.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rmsnorm_rope_cache_write.pto",
+      "sha256": "741eb49ebcb2b05a513b927ebfb4e89806ec6e080878ea9bdc7fdb967d40fb1c",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rope_cs.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rope_cs.pto",
+      "sha256": "681339262ffe9dbeb852882e081c1a76ea1ad929a26cda5a15e8786062846ae3",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rope_interleave.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rope_interleave.pto",
+      "sha256": "58e3f45b9d56a3441e0ee4ceb7bd6d772bd529a7fbb866432ca6f3cc5717910f",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rope_swap.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/rope_swap.pto",
+      "sha256": "cbeedd8391a6e0ecb01e127b089840284522cbaec06c4a7ee3cd6a4065f5ede8",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/route_hash.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/route_hash.pto",
+      "sha256": "be276af41df752baa0604de19e3505c2157ff9d50abe252081e8a36bb69b70da",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/scatter_softmax_pool.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/scatter_softmax_pool.pto",
+      "sha256": "924f551bc3e0485a76c3ce9c924611219d25c3ad06f6dad8f3b6375f8b6f91ea",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/sh_gate_up_act_q.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/sh_gate_up_act_q.pto",
+      "sha256": "baa71e467c97c754aff4d8c6012b34bd020927b4ec9410af7504e693479f8735",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/sh_w2_act.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/sh_w2_act.pto",
+      "sha256": "037f5983173a296e248bda51477d150c46172883c0f41899399775bc7e6a8bc8",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/shared_routed.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/shared_routed.pto",
+      "sha256": "b49eb382f1f57373254d1f35b30086a021210d7fb9dfabc9e232aad9028bead9",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/split_pre_post.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/split_pre_post.pto",
+      "sha256": "bf030bb1a29c03b4689f608336293c70cb79595ac66644c76b0e8c952acd85e8",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/swa_cache_insert_valid_bias.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/swa_cache_insert_valid_bias.pto",
+      "sha256": "b1cd6d82bb7cc35e4bc2a4bd8a1f7206a6b829d604a74830dd4a6ff0f90cabb4",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/swa_gather_kv.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/swa_gather_kv.pto",
+      "sha256": "80f583a08e49b8eb2a5fed03d8cdf8bad316745e79341eb466cbfe5599278836",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/swa_rope_step.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/swa_rope_step.pto",
+      "sha256": "52c6e547feaed411c1cd5dae301fb9a09455a054d9e945fa07f298b13dacfc02",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/weights_proj_reduce.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/weights_proj_reduce.pto",
+      "sha256": "7d8e465494a65774c575e1b87622bc33032c721ab9784b8a8ff1067a5834d43b",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/aiv/x_norm_quant.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/aiv/x_norm_quant.pto",
+      "sha256": "4d2b26befe866858d2da9f43ec8b398ed17673bf67ea8b562e0e3734343e0453",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/gate.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/gate.pto",
+      "sha256": "91450f018f0dc426591948d34b8500a2294af37462cefbdb6a8b2a2f7a1cef28",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/qk_pv.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/qk_pv.pto",
+      "sha256": "ede4e57b94aa7768d6ac6aeca756d3fa7b6adac2db6b94b1343492b1e75a5c8b",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/DeepseekV4DecodeA3/kernels/score.pto",
+      "path": "test/samples/DeepseekV4DecodeA3/kernels/score.pto",
+      "sha256": "f4ac9dbbb6484f576a3c3d792f84cc5acb09f2de77bd4fb1d5126f846122516e",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aic/gate_proj.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/aic/gate_proj.pto",
+      "sha256": "4bb7f0e4320d81cd75b0a6188e232eb1e2c2265e28bb4b20d768f4c9f23f7a59",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aic/kv_proj.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/aic/kv_proj.pto",
+      "sha256": "7e36069dcdcf4e7daac0885df125d6ba2a2dad74d9241b6f86da1826cb23c15e",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aic/q_proj.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/aic/q_proj.pto",
+      "sha256": "5aa01e4f14bb7db12e44ddf67c66c4887b003d50d6cff85fee7b2d2aa1958f06",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aic/qk_matmul.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/aic/qk_matmul.pto",
+      "sha256": "1f6d0e3a0f44ec4e77b4405fd5990ef3f7738b578acfae3c902545a1eed896cb",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aic/sv_matmul.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/aic/sv_matmul.pto",
+      "sha256": "cb6c20fddca2624fe2851bcb0861b7c1883a40474b1dace00c3f80864eec8bcc",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aic/up_proj.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/aic/up_proj.pto",
+      "sha256": "f92e90c0d1b42d44d3efde867d8fc6ca035ec845da915ed0e612d9a83775c66e",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aiv/online_softmax.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/aiv/online_softmax.pto",
+      "sha256": "1d67f50a2b7ae1225093444ca010ca46c9d6b726ce0f8f03c529e51889a7c534",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aiv/post_rmsnorm.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/aiv/post_rmsnorm.pto",
+      "sha256": "0541c04f9cd8b22c4e35b247b69ee03ae9a6a049bf634ddab27129f72a17c3f6",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aiv/rmsnorm.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/aiv/rmsnorm.pto",
+      "sha256": "ed39cafb5f4d6ae42aaec7f9535e88011b4e52af3dfd74e40cfb4525562b1bc8",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aiv/rope_kv_cache.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/aiv/rope_kv_cache.pto",
+      "sha256": "1a650bdd8c9a49da5e78e8c83054bdc3699782872228e6fc49c38f0ff92252cf",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aiv/silu.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/aiv/silu.pto",
+      "sha256": "2156fd9bb8d0b85b743175f88f18c3cfe30cb0bad6b8043662ea254458578925",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/aiv/softmax.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/aiv/softmax.pto",
+      "sha256": "6a31a69e1395144674533fea63a44f808aba4e25fb653467476d0ae6ee147dcc",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/down_proj_residual.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/down_proj_residual.pto",
+      "sha256": "d0649b1b696da03379e8f038b043b74b07ce207d7b723f5d5f940f5b99af40b1",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3DecodeA3/kernels/out_proj_residual.pto",
+      "path": "test/samples/Qwen3DecodeA3/kernels/out_proj_residual.pto",
+      "sha256": "4d7f07edfd6ebf19f5b74672a164d85946266704a42e5e40275874612d14cf6c",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/down_proj.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aic/down_proj.pto",
+      "sha256": "41e4472d4363bdac287d392bd7ccc2a1380196d583215360c3fdd95b88434305",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/gate_proj.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aic/gate_proj.pto",
+      "sha256": "c70730bc06c6572d5f941e305c921f16e9dec13a5fed5108113847eab3399749",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/k_proj.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aic/k_proj.pto",
+      "sha256": "7b25afce60313202fc04b8ad4d855f4d14347879d6ce8a80cd7d67e49b7c6391",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/out_proj.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aic/out_proj.pto",
+      "sha256": "557f52131494f8c2699c543f4decaa0116448d42e5ce77ac939f6d8fdf003edb",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/q_proj.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aic/q_proj.pto",
+      "sha256": "8a88e3453d4b0f0b6284ea94802dce4642c3441e9887ec900e79499871b1c872",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/up_proj.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aic/up_proj.pto",
+      "sha256": "62cc8d371752a80ac58cc71b11e9f6d2a24c5cefdfcefbe1d25d597967170859",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aic/v_proj.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aic/v_proj.pto",
+      "sha256": "69b0dad6155ccae26f4ba4f8d7efab18babef2805bf8e6fa3490015a8e547dc4",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/attn_out_seed.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/attn_out_seed.pto",
+      "sha256": "b75c99518fbbca9c94d544f9331094ab992fe16a2ca6b94cc4b4bd5b54525e63",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/copy_hidden.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/copy_hidden.pto",
+      "sha256": "01465326c6647b69bd2fe9f124e382b6719e4e917661b4a07f3ce0cba0e5b431",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/copy_out.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/copy_out.pto",
+      "sha256": "9ad986655dc9272970424fe14671d0c4d10c1a6c4c31d4fe823941bbd52bd4cf",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/dcr_xgamma.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/dcr_xgamma.pto",
+      "sha256": "b246fc5e6a7832882dc5badcaf70fd0e2906a9aa5da8dccb14b487cfbda79bbe",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/kv_seed.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/kv_seed.pto",
+      "sha256": "dea17a3052119f48adca720c2609c27906aa76679f16ffbe036a051d1d0943a4",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/mlp_out_seed.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/mlp_out_seed.pto",
+      "sha256": "de3ec166364ccc8ef7539642d5893192e4e4d278981d0541ae20f5aef147d84b",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/post_rms_reduce.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/post_rms_reduce.pto",
+      "sha256": "042159528f83aa8a58ea8bdfa67dfb67d8e6f968a6395b8390fdc56afa676ae8",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/q_seed.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/q_seed.pto",
+      "sha256": "11755bbe05346954d9ee2d6f2702ce2ea8cf9d47f78b580a2c71c770bf6ac498",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/residual_rms_cast.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/residual_rms_cast.pto",
+      "sha256": "56288eeafda7adf46a8b14a721e5760765626ce539684cfa9cbf8d2ffe9164df",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/rms_recip.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/rms_recip.pto",
+      "sha256": "b9484af18c68b515d06195d0d947e6607f5f6708a19ac7f0ac601d3a0e542843",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/silu.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/silu.pto",
+      "sha256": "9a6d736bc9e5508b0436ae330a7aa05d6c28648e0bbacf3fffa4819db93a5162",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/x_gamma0.pto",
+      "path": "test/samples/Qwen3_14BDecodeA3/kernels/aiv/x_gamma0.pto",
+      "sha256": "abd4e2ecc23b0144b5e13a6eb79d0b1771a7512fc79110b2d599565e43292342",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aic/down_proj.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aic/down_proj.pto",
+      "sha256": "7443db9e8509c1c4e67d333195e92253f515098c44d5c5f6cec94b66b04bdef8",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aic/gate_up_proj.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aic/gate_up_proj.pto",
+      "sha256": "fddc04c69de147d9fea78a8fd2ff4184e01f2b4d73f944b7758e6b2525581a8a",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aic/kv_proj.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aic/kv_proj.pto",
+      "sha256": "ceece5007a017270eddc9376a68cf4e7dae650708410105a537d112a0a956fae",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aic/lm_head.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aic/lm_head.pto",
+      "sha256": "395e33681e5b285b7a7bac9740ab46230833b22cf524febe2e1a73bba857fe8d",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aic/out_proj_aic.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aic/out_proj_aic.pto",
+      "sha256": "7d007f3d9b5401519ecac884c3c17f8e054a055ec39752b7ce4b4b76b50cecdc",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aic/q_proj.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aic/q_proj.pto",
+      "sha256": "0c90bbe4e51f83430d7e99ce4495d89b3150159e24183ec720dffdc00e18a663",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/attention_finalize_phase.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/attention_finalize_phase.pto",
+      "sha256": "c6df030cd53d199070b9a251e1c9bbfcdec84fca01d165a8f54da547aab13f36",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/final_rmsnorm.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/final_rmsnorm.pto",
+      "sha256": "f41f27f5d17ba60012cf2f8810a33c3cfd3aadf3848a0180032f31fd670af8d9",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/mlp_out_cast.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/mlp_out_cast.pto",
+      "sha256": "ffda1a8c89ec2480fc900652d4abe1414e3d8abd5e145da5f9d8ed719600f4b4",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/mlp_out_seed.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/mlp_out_seed.pto",
+      "sha256": "1f83e6656bfe2a9db704b244ed28a8b7b5650fe744561540ef94b0b021e79f26",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/out_proj_aiv.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/out_proj_aiv.pto",
+      "sha256": "fb8d463a73d583fff86013ac13f51bd2e37fbff30b34c5d49284e43041558978",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/post_rmsnorm.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/post_rmsnorm.pto",
+      "sha256": "005e1cf1d08344dd254046cc3ff76702fe2058c9386b82e33304da7335f41a8a",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/rmsnorm.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/rmsnorm.pto",
+      "sha256": "c374da21e3f63fa8f9e0fe1ee577e7c8b5971efad8684fa2cb5e3f1f4639bc28",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/rope_kv_cache.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/rope_kv_cache.pto",
+      "sha256": "f0a1d1bf80761b6c3cdc9ee5f509048ce57f8e08bb297bdd0bbdb249232476b0",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/save_prefill_last_token_group.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/save_prefill_last_token_group.pto",
+      "sha256": "06e51c9e437e7972eefe3c1ba9a3f840d60ff561aa19b0bc6106f6fe069c8192",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/save_prefill_last_token_single.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/save_prefill_last_token_single.pto",
+      "sha256": "412656fc0587d0e6471843d5eb3c42d485b8765cdbeb37294406a63516d62d26",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/silu.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/silu.pto",
+      "sha256": "b8e072a4e47c4271485b6536aa656feb007da8871da3ecde7830f4039eb35bb6",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/token_embed_group.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/token_embed_group.pto",
+      "sha256": "2cd6849dafdb63ab3e3c1c25df3d6a41dd649a7872f63fd9627680b65aac2b23",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/token_embed_single.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/aiv/token_embed_single.pto",
+      "sha256": "d1983621409fd0c44123e12ed45182dbbe3f711354fca2cd3131aa6f57f9f3ac",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/qk_pv_online_phase.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/qk_pv_online_phase.pto",
+      "sha256": "0744fc2e32bf8d4cc0316dce553328e5c4b66ac666c4b55049aa0ee5778bf9f6",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    },
+    {
+      "id": "test/samples/Qwen3_14BPrefillA3/kernels/qk_pv_skew_probe.pto",
+      "path": "test/samples/Qwen3_14BPrefillA3/kernels/qk_pv_skew_probe.pto",
+      "sha256": "3e545eb94a6a670fadce78961259f2f7c701b7859473108b849f624bebb92ad8",
+      "classification": "production",
+      "stage": "raw-addressed-compatibility",
+      "gm_contract": "may-alias"
+    }
+  ],
+  "missing_requested": [
+    "historical_gemm: run the pinned recover_historical_gemm.py first"
+  ],
+  "note": "Raw compatibility only. Classify real pre-pass snapshots separately. GM defaults to may-alias; change only for a qualified caller contract."
+}

@@ -188,6 +188,34 @@ is computed. The runner's single rotated round is diagnostic, not the <=2x
 whole-compilation campaign. Its external process timeout is not a compiler
 analysis quota. Device correctness/timing are not measured by this runner.
 
+### S7.1 reproducible population correction
+
+The original `da91a0e` commit message's 197/168/71 campaign did not include a
+checked-in manifest and cannot be reproduced from the checkout alone. It is not
+used as acceptance evidence. The repository now freezes the exact population
+in `s7_a2a3_corpus.manifest.json`, including each source SHA-256 and the only
+permitted RAW preparation (binding `a2a3` to `a3`). Two compact locks retain
+the pre-sync IR hash, per-arm outcome/refusal and mechanism fingerprint:
+
+* `s7_da91_a2a3_corpus.lock.json` records a local rerun of `da91a0e` on that
+  exact population: existing 150/150, structured 39/150 (34/141 production and
+  5/9 focused).
+* `s7_a2a3_corpus.lock.json` records the S7.1 source tree: existing 150/150,
+  structured 32/150 (27/141 production and 5/9 focused). The seven deliberate
+  refusals are AIC kernels requiring MTE2/MTE3--FIX directions that NPU2201
+  lists as hardware-existing but does not qualify for compiler application.
+
+The historical GEMM remains an explicit missing request in both locks. These
+figures are a RAW A2/A3 compatibility study, not prepared-pipeline, device, or
+performance qualification. Verify identity and results with:
+
+```sh
+python test/experiments/insert_sync/logical_plan/s7_corpus.py verify \
+  --manifest test/experiments/insert_sync/logical_plan/s7_a2a3_corpus.manifest.json \
+  --lock test/experiments/insert_sync/logical_plan/s7_a2a3_corpus.lock.json \
+  --repo "$PWD"
+```
+
 ## 7. Acceptance and next boundary
 
 Before deploying the selected contract: build native adapters, pass the entire
@@ -232,7 +260,11 @@ checking. Cross-loop physical hazards are summarized at the scalar boundary.
 A same-lane hazard uses a supported barrier before the later loop. A legal
 cross-lane hazard uses Set after the latest conflicting earlier loop and Wait
 before the later loop. Event intervals are colored from the qualified 0--5 pool
-and checked for consume-before-rearm. No internal `PIPE_ALL` is introduced.
+and checked for consume-before-rearm. S7.1 retains every original access hazard
+in an immutable requirement ledger, re-extracts that population from the fresh
+post-emission physical translation, and proves it from the actual barriers and
+set/wait intervals. A same-pipeline barrier must be strictly after its source
+loop and before its target loop. No internal `PIPE_ALL` is introduced.
 GM hazards remain unsupported until a qualified visibility recipe exists.
 Nested children inside a sequential sibling remain outside this first fragment.
 
@@ -245,10 +277,19 @@ successor predicates use the original lower/step SSA values. Arbitrary runtime
 strides remain unsupported.
 
 One qualified top-level `pto.section.cube` or `pto.section.vector` may define the
-physical lifetime scope. Scalar setup outside the section is not imported as
-physical payload, synchronization is emitted inside the selected context, and
-the existing single retirement-drain policy is transferred to the section end.
+physical lifetime scope. A whole-function semantic audit admits only qualified
+descriptor and pure scalar/address setup outside that section; outer physical,
+configuration/resource, asynchronous descriptor, and authored synchronization
+effects are rejected. The selected section alone supplies physical phases.
+Synchronization is emitted inside that context, and the existing single
+retirement-drain policy is transferred to and freshly reconstructed at the
+section end.
 Multiple or nested physical sections remain unsupported.
+
+Generic physical admission also has a positive exact-operation registry for
+the audited one-phase, memory-effects-complete variants. A future operation is
+unsupported until that contract is extended; merely missing the implicit-
+resource denylist is not an admission argument.
 
 ### Explicit remaining gap
 

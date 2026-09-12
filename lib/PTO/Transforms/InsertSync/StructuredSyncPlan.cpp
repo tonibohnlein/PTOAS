@@ -814,6 +814,88 @@ struct NativeFacts {
 // loop exit. A bridge is placed at the scalar boundary: Set after the source
 // loop and Wait (or a same-pipe barrier) before the target loop. No internal
 // PIPE_ALL is introduced.
+enum class SequenceHazard : uint8_t { ReadAfterWrite, WriteAfterRead,
+                                      WriteAfterWrite, SharedResource };
+struct SequenceRequirement {
+    Block *block=nullptr;
+    Operation *sourceRoot=nullptr,*targetRoot=nullptr;
+    Operation *sourcePhase=nullptr,*targetPhase=nullptr;
+    unsigned sourceOrder=0,targetOrder=0;
+    ss::Lane source{},target{};
+    const BaseMemInfo *sourceAccess=nullptr,*targetAccess=nullptr;
+    SequenceHazard kind=SequenceHazard::ReadAfterWrite;
+    bool gm=false;
+};
+struct SequenceRequirementLedger {
+    ss::Status status=ss::Status::Applied;
+    std::string reason;
+    std::vector<SequenceRequirement> requirements;
+};
+
+// Enumerate every immutable cross-loop access requirement.  Bridge selection
+// below may merge several requirements at one boundary, but it cannot remove
+// them from this ledger.  The same population is re-extracted from the fresh
+// post-emission physical translation before the clone can commit.
+SequenceRequirementLedger deriveSequenceRequirements(
+    func::FuncOp function,const SyncPhysicalFacts &physical,
+    const RegionLayout &layout,InsertSyncGMAliasMode gm,
+    ss::HardwareContract hardware) {
+    SequenceRequirementLedger out;
+    struct Group { Block *block=nullptr;std::vector<const InvocationScope*> scopes; };
+    std::vector<Group> groups;
+    for(const auto &scope:layout.scopes) if(scope.sequenced) {
+        auto found=llvm::find_if(groups,[&](const Group &g){return g.block==scope.sequenceBlock;});
+        if(found==groups.end())groups.push_back({scope.sequenceBlock,{&scope}});
+        else found->scopes.push_back(&scope);
+    }
+    ss::Target target;target.hardware=hardware;
+    auto laneOf=[&](const CompoundInstanceElement *phase)->std::optional<ss::Lane> {
+        auto p=pipe(static_cast<PIPE>(phase->kPipeValue));
+        if(!p)return {};
+        ss::Lane lane{physical.cube?ss::Core::AIC:ss::Core::AIV,*p};
+        return target.supports(lane)?std::optional<ss::Lane>(lane):std::nullopt;
+    };
+    auto phasesOf=[&](Operation *root) {
+        SmallVector<const CompoundInstanceElement*> phases;
+        for(auto *phase:physical.phases) {
+            if(root==phase->elementOp||root->isAncestor(phase->elementOp))phases.push_back(phase);
+        }
+        return phases;
+    };
+    for(auto &group:groups) {
+        llvm::sort(group.scopes,[](auto *a,auto *b){return a->sequenceOrder<b->sequenceOrder;});
+        for(std::size_t j=0;j<group.scopes.size();++j) {
+            auto *dstScope=group.scopes[j];auto dstPhases=phasesOf(dstScope->sequenceRoot);
+            for(std::size_t i=0;i<j;++i) {
+                auto *srcScope=group.scopes[i];auto srcPhases=phasesOf(srcScope->sequenceRoot);
+                for(auto *a:srcPhases)for(auto *b:dstPhases) {
+                    auto la=laneOf(a),lb=laneOf(b);
+                    if(!la||!lb){out.status=ss::Status::Unsupported;out.reason="sequential sibling has an unsupported physical lane";return out;}
+                    auto pairs=[&](const auto &left,bool writeA,const auto &right,bool writeB,
+                                   SequenceHazard kind) {
+                        for(auto *x:left)for(auto *y:right) {
+                            bool resource=!writeA&&!writeB&&x&&y&&x->scope==AddressSpace::ACC&&
+                                y->scope==AddressSpace::ACC&&*la!=*lb;
+                            if(!writeA&&!writeB&&!resource)continue;
+                            if(!logicalSyncMayAlias(x,y,function,gm))continue;
+                            out.requirements.push_back({group.block,srcScope->sequenceRoot,
+                                dstScope->sequenceRoot,a->elementOp,b->elementOp,
+                                srcScope->sequenceOrder,dstScope->sequenceOrder,*la,*lb,x,y,
+                                resource?SequenceHazard::SharedResource:kind,
+                                x&&y&&x->scope==AddressSpace::GM&&y->scope==AddressSpace::GM});
+                        }
+                    };
+                    pairs(a->defVec,true,b->useVec,false,SequenceHazard::ReadAfterWrite);
+                    pairs(a->useVec,false,b->defVec,true,SequenceHazard::WriteAfterRead);
+                    pairs(a->defVec,true,b->defVec,true,SequenceHazard::WriteAfterWrite);
+                    pairs(a->useVec,false,b->useVec,false,SequenceHazard::SharedResource);
+                }
+            }
+        }
+    }
+    return out;
+}
+
 struct SequenceBridge {
     Block *block=nullptr;
     Operation *sourceRoot=nullptr,*targetRoot=nullptr;
@@ -828,64 +910,26 @@ struct SequenceBridgePlan {
     std::vector<SequenceBridge> bridges;
 };
 
-SequenceBridgePlan buildSequenceBridges(NativeInventory &inventory,
-    const RegionLayout &layout,InsertSyncGMAliasMode gm,ss::HardwareContract hardware) {
+SequenceBridgePlan buildSequenceBridges(const SequenceRequirementLedger &ledger,
+    ss::HardwareContract hardware) {
     SequenceBridgePlan out;
-    struct Group { Block *block=nullptr;std::vector<const InvocationScope*> scopes; };
-    std::vector<Group> groups;
-    for(const auto &scope:layout.scopes) if(scope.sequenced) {
-        auto found=llvm::find_if(groups,[&](const Group &g){return g.block==scope.sequenceBlock;});
-        if(found==groups.end()) { groups.push_back({scope.sequenceBlock,{&scope}}); }
-        else found->scopes.push_back(&scope);
-    }
+    if(ledger.status!=ss::Status::Applied){out.status=ledger.status;out.reason=ledger.reason;return out;}
     ss::Target target;target.hardware=hardware;
-    auto laneOf=[&](const CompoundInstanceElement *phase)->std::optional<ss::Lane> {
-        auto p=pipe(static_cast<PIPE>(phase->kPipeValue));
-        if(!p)return {};
-        ss::Lane lane{inventory.physical.cube?ss::Core::AIC:ss::Core::AIV,*p};
-        return target.supports(lane)?std::optional<ss::Lane>(lane):std::nullopt;
-    };
-    auto phasesOf=[&](Operation *root) {
-        SmallVector<const CompoundInstanceElement*> phases;
-        for(auto *phase:inventory.physical.phases)
-            if(root==phase->elementOp||root->isAncestor(phase->elementOp))phases.push_back(phase);
-        return phases;
-    };
     using NeedKey=std::tuple<Block*,unsigned,ss::Lane,ss::Lane>;
-    struct Need { const InvocationScope *source=nullptr,*target=nullptr;bool gm=false; };
+    struct Need { Operation *sourceRoot=nullptr,*targetRoot=nullptr;
+                  unsigned sourceOrder=0,targetOrder=0;bool gm=false; };
     std::map<NeedKey,Need> needs;
-    for(auto &group:groups) {
-        llvm::sort(group.scopes,[](auto *a,auto *b){return a->sequenceOrder<b->sequenceOrder;});
-        for(std::size_t j=0;j<group.scopes.size();++j) {
-            auto *dstScope=group.scopes[j];auto dstPhases=phasesOf(dstScope->sequenceRoot);
-            for(std::size_t i=0;i<j;++i) {
-                auto *srcScope=group.scopes[i];auto srcPhases=phasesOf(srcScope->sequenceRoot);
-                for(auto *a:srcPhases)for(auto *b:dstPhases) {
-                    auto la=laneOf(a),lb=laneOf(b);
-                    if(!la||!lb){out.status=ss::Status::Unsupported;out.reason="sequential sibling has an unsupported physical lane";return out;}
-                    bool conflict=false,gmConflict=false;
-                    auto pairs=[&](const auto &left,bool writeA,const auto &right,bool writeB) {
-                        for(auto *x:left)for(auto *y:right) {
-                            bool resource=!writeA&&!writeB&&x&&y&&x->scope==AddressSpace::ACC&&
-                                y->scope==AddressSpace::ACC&&*la!=*lb;
-                            if(!writeA&&!writeB&&!resource)continue;
-                            if(!logicalSyncMayAlias(x,y,inventory.function,gm))continue;
-                            conflict=true;
-                            gmConflict|=x&&y&&x->scope==AddressSpace::GM&&y->scope==AddressSpace::GM;
-                        }
-                    };
-                    pairs(a->defVec,true,b->useVec,false);
-                    pairs(a->useVec,false,b->defVec,true);
-                    pairs(a->defVec,true,b->defVec,true);
-                    pairs(a->useVec,false,b->useVec,false);
-                    if(!conflict)continue;
-                    NeedKey key{group.block,dstScope->sequenceOrder,*la,*lb};
-                    auto &need=needs[key];
-                    if(!need.source||need.source->sequenceOrder<srcScope->sequenceOrder)need.source=srcScope;
-                    need.target=dstScope;need.gm|=gmConflict;
-                }
-            }
+    for(const auto &requirement:ledger.requirements) {
+        NeedKey key{requirement.block,requirement.targetOrder,
+                    requirement.source,requirement.target};
+        auto &need=needs[key];
+        if(!need.sourceRoot||need.sourceOrder<requirement.sourceOrder) {
+            need.sourceRoot=requirement.sourceRoot;
+            need.sourceOrder=requirement.sourceOrder;
         }
+        need.targetRoot=requirement.targetRoot;
+        need.targetOrder=requirement.targetOrder;
+        need.gm|=requirement.gm;
     }
     for(const auto &[key,need]:needs) {
         auto [block,targetOrder,sourceLane,targetLane]=key;(void)targetOrder;
@@ -899,14 +943,14 @@ SequenceBridgePlan buildSequenceBridges(NativeInventory &inventory,
             if(!target.barrier(sourceLane)) {
                 out.status=ss::Status::Unsupported;out.reason="sequential sibling same-pipe hazard has no barrier";return out;
             }
-            out.bridges.push_back({block,need.source->sequenceRoot,need.target->sequenceRoot,
-                need.source->sequenceOrder,need.target->sequenceOrder,sourceLane,targetLane,true,0});
+            out.bridges.push_back({block,need.sourceRoot,need.targetRoot,
+                need.sourceOrder,need.targetOrder,sourceLane,targetLane,true,0});
         } else {
             if(!target.event(sourceLane,targetLane)) {
                 out.status=ss::Status::Unsupported;out.reason="sequential sibling hazard has no legal direct event";return out;
             }
-            out.bridges.push_back({block,need.source->sequenceRoot,need.target->sequenceRoot,
-                need.source->sequenceOrder,need.target->sequenceOrder,sourceLane,targetLane,false,0});
+            out.bridges.push_back({block,need.sourceRoot,need.targetRoot,
+                need.sourceOrder,need.targetOrder,sourceLane,targetLane,false,0});
         }
     }
     // One interval coloring per direction. An interval begins after its source
@@ -990,7 +1034,8 @@ bool verifySequenceBridges(ArrayRef<EmittedSequenceBridge> emitted,std::string &
            !x.sourceRoot->isBeforeInBlock(x.targetRoot)) {why="invalid sequential sibling bridge roots";return false;}
         if(x.barrier) {
             auto op=dyn_cast_or_null<BarrierOp>(e.barrier);
-            if(!op||op->getBlock()!=x.block||!e.barrier->isBeforeInBlock(x.targetRoot)||
+            if(!op||op->getBlock()!=x.block||!x.sourceRoot->isBeforeInBlock(e.barrier)||
+               !e.barrier->isBeforeInBlock(x.targetRoot)||
                op.getPipe().getPipe()!=pipe(x.target.pipe)) {why="emitted sequential barrier changed boundary or lane";return false;}
         } else {
             auto set=dyn_cast_or_null<SetFlagOp>(e.set);auto wait=dyn_cast_or_null<WaitFlagOp>(e.wait);
@@ -1009,6 +1054,107 @@ bool verifySequenceBridges(ArrayRef<EmittedSequenceBridge> emitted,std::string &
         for(std::size_t i=1;i<ranges.size();++i)if(ranges[i].first<ranges[i-1].second) {
             why="sequential event key is rearmed before consumption";return false;
         }
+    }
+    return true;
+}
+
+bool sameSequenceRequirement(const SequenceRequirement &a,
+                             const SequenceRequirement &b) {
+    return a.block==b.block&&a.sourceRoot==b.sourceRoot&&a.targetRoot==b.targetRoot&&
+        a.sourcePhase==b.sourcePhase&&a.targetPhase==b.targetPhase&&
+        a.sourceOrder==b.sourceOrder&&a.targetOrder==b.targetOrder&&
+        a.source==b.source&&a.target==b.target&&a.kind==b.kind&&a.gm==b.gm&&
+        a.sourceAccess&&b.sourceAccess&&a.targetAccess&&b.targetAccess&&
+        *a.sourceAccess==*b.sourceAccess&&*a.targetAccess==*b.targetAccess;
+}
+
+// Verify the immutable requirement population against actual post-emission IR,
+// independently of the selected SequenceBridge objects.  This catches both a
+// missing selected bridge and a generated mechanism moved outside the physical
+// source/target interval.
+bool verifySequenceRequirements(ArrayRef<SequenceRequirement> expected,
+                                ArrayRef<SequenceRequirement> actual,
+                                ss::HardwareContract hardware,std::string &why) {
+    if(expected.size()!=actual.size()) {
+        why="post-emission sequential requirement population changed";return false;
+    }
+    std::vector<bool> matched(actual.size());
+    for(const auto &requirement:expected) {
+        auto found=std::find_if(actual.begin(),actual.end(),[&](const auto &candidate) {
+            auto index=std::size_t(&candidate-actual.data());
+            return !matched[index]&&sameSequenceRequirement(requirement,candidate);
+        });
+        if(found==actual.end()) {
+            why="post-emission sequential physical hazard changed";return false;
+        }
+        matched[std::size_t(found-actual.begin())]=true;
+    }
+
+    ss::Target target;target.hardware=hardware;
+    std::set<Block*> blocks;
+    for(const auto &requirement:actual) {
+        blocks.insert(requirement.block);
+        if(requirement.gm) {
+            why="post-emission sequential GM hazard lacks visibility";return false;
+        }
+        if(requirement.source==requirement.target) {
+            if(target.synchronous(requirement.source))continue;
+            bool covered=false;
+            for(Operation &op:*requirement.block) {
+                if(auto barrier=dyn_cast<BarrierOp>(op)) {
+                    if(barrier.getPipe().getPipe()==pipe(requirement.target.pipe)&&
+                       requirement.sourceRoot->isBeforeInBlock(&op)&&
+                       op.isBeforeInBlock(requirement.targetRoot)) {covered=true;break;}
+                }
+            }
+            if(!covered) {
+                why="sequential same-pipeline hazard lacks an actual interval barrier";return false;
+            }
+            continue;
+        }
+        if(!target.event(requirement.source,requirement.target)) {
+            why="post-emission sequential hazard uses an unqualified event direction";return false;
+        }
+        bool covered=false;
+        for(Operation &candidate:*requirement.block) {
+            auto set=dyn_cast<SetFlagOp>(candidate);
+            if(!set||!requirement.sourceRoot->isBeforeInBlock(&candidate)||
+               !candidate.isBeforeInBlock(requirement.targetRoot)||
+               set.getSrcPipe().getPipe()!=pipe(requirement.source.pipe)||
+               set.getDstPipe().getPipe()!=pipe(requirement.target.pipe))continue;
+            for(Operation *next=candidate.getNextNode();next&&next!=requirement.targetRoot;
+                next=next->getNextNode())if(auto wait=dyn_cast<WaitFlagOp>(next))
+                if(wait.getSrcPipe()==set.getSrcPipe()&&wait.getDstPipe()==set.getDstPipe()&&
+                   wait.getEventId()==set.getEventId()) {covered=true;break;}
+            if(covered)break;
+        }
+        if(!covered) {
+            why="sequential cross-pipeline hazard lacks an actual set/wait interval";return false;
+        }
+    }
+
+    // Reconstruct consume-before-rearm from the actual direct-block protocol,
+    // without consulting constructor-assigned interval metadata.
+    using EventKey=std::tuple<Block*,PIPE,PIPE,EVENT>;
+    std::map<EventKey,Operation*> open;
+    for(Block *block:blocks)for(Operation &operation:*block) {
+        if(auto set=dyn_cast<SetFlagOp>(operation)) {
+            EventKey key{block,set.getSrcPipe().getPipe(),set.getDstPipe().getPipe(),
+                         set.getEventId().getEvent()};
+            if(open[key]) {why="actual sequential event is rearmed before consumption";return false;}
+            open[key]=&operation;
+        } else if(auto wait=dyn_cast<WaitFlagOp>(operation)) {
+            EventKey key{block,wait.getSrcPipe().getPipe(),wait.getDstPipe().getPipe(),
+                         wait.getEventId().getEvent()};
+            auto found=open.find(key);
+            if(found==open.end()||!found->second) {
+                why="actual sequential wait has no preceding publication";return false;
+            }
+            found->second=nullptr;
+        }
+    }
+    if(llvm::any_of(open,[](const auto &item){return item.second!=nullptr;})) {
+        why="actual sequential publication has no consumption";return false;
     }
     return true;
 }
@@ -1313,8 +1459,16 @@ class Reconstruct {
             a.target={a.source.core,*t};
         } else if (auto barrier=dyn_cast<BarrierOp>(op)) {
             if (barrier.getPipe().getPipe()==PIPE::PIPE_ALL) {
-                auto *ret=facts.function.getBody().front().getTerminator();
-                if (!guards.empty() || op->getBlock()!=ret->getBlock() || op->getNextNode()!=ret ||
+                Operation *lifetime=facts.inventory.physical.lifetimeScope;
+                Block *retirementBlock=nullptr;Operation *next=nullptr;
+                if(lifetime==facts.function.getOperation()) {
+                    next=facts.function.getBody().front().getTerminator();
+                    retirementBlock=next->getBlock();
+                } else if(lifetime&&llvm::hasSingleElement(lifetime->getRegion(0))) {
+                    retirementBlock=&lifetime->getRegion(0).front();
+                }
+                if (!retirementBlock||!guards.empty()||op->getBlock()!=retirementBlock||
+                    op->getNextNode()!=next||
                     op->hasAttr("pto.auto_sync_tail_barrier") || op->hasAttr("pto.auto_sync_tail_hint"))
                     return fail("unqualified retirement placement");
                 ++retirement; allowed.insert(op); return true;
@@ -1429,7 +1583,7 @@ public:
     Reconstruct(NativeFacts &f,const llvm::SmallPtrSetImpl<Operation*> &o):facts(f),original(o) {}
     Outcome run(const std::vector<ss::Action> &selected,llvm::SmallPtrSetImpl<Operation*> &allAllowed) {
         Outcome out;out.status=Outcome::InternalError;
-        const unsigned expectedRetirement=scopeIsFunction()?1:0;
+        const unsigned expectedRetirement=scopeIsLifetime()?1:0;
         if(!block(facts.scope->front())||retirement!=expectedRetirement) {
             out.reason=why.empty()?"retirement missing or duplicated":why;return out;
         }
@@ -1464,7 +1618,12 @@ public:
         out.status=Outcome::Applied;out.reason="structured region and actual invocation actions verified";
         out.requirements=facts.model.requirements.size()+facts.carried.size();return out;
     }
-    bool scopeIsFunction() const {return facts.scope==&facts.function.getBody();}
+    bool scopeIsLifetime() const {
+        Operation *lifetime=facts.inventory.physical.lifetimeScope;
+        Region *region=lifetime==facts.function.getOperation()?&facts.function.getBody():
+            (lifetime?&lifetime->getRegion(0):nullptr);
+        return facts.scope==region;
+    }
 
 };
 
@@ -1682,7 +1841,9 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,
         atoms+=facts->model.atoms.size();selected.push_back(std::move(actions));units.push_back(std::move(facts));
       }
     }
-    auto sequencePlan=buildSequenceBridges(inventory,layout,gm,hardware);
+    auto sequenceRequirements=deriveSequenceRequirements(
+        inventory.function,inventory.physical,layout,gm,hardware);
+    auto sequencePlan=buildSequenceBridges(sequenceRequirements,hardware);
     if(sequencePlan.status!=ss::Status::Applied) {
         out.status=sequencePlan.status==ss::Status::AllocationFailure?Outcome::AllocationFailure:Outcome::Unsupported;
         out.reason=sequencePlan.reason;return out;
@@ -1705,9 +1866,18 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,
     if(mutate)mutate(working);
     out.status=Outcome::InternalError;
     if(failed(mlir::verify(working))){out.reason="malformed structured emission";return out;}
-    if(!verifySequenceBridges(emittedSequence,out.reason))return out;
     unsigned drains=0;working.walk([&](BarrierOp b){if(b.getPipe().getPipe()==PIPE::PIPE_ALL)++drains;});
+    Block *retirementBlock=nullptr;Operation *retirementNext=nullptr;
+    if(inventory.physical.lifetimeScope==working.getOperation()) {
+        retirementNext=working.getBody().front().getTerminator();
+        retirementBlock=retirementNext->getBlock();
+    } else if(inventory.physical.lifetimeScope&&
+              llvm::hasSingleElement(inventory.physical.lifetimeScope->getRegion(0))) {
+        retirementBlock=&inventory.physical.lifetimeScope->getRegion(0).front();
+    }
     if(!drain||drain.getPipe().getPipe()!=PIPE::PIPE_ALL||drains!=1||
+       !retirementBlock||drain->getBlock()!=retirementBlock||
+       drain->getNextNode()!=retirementNext||
        drain->hasAttr("pto.auto_sync_tail_barrier")||drain->hasAttr("pto.auto_sync_tail_hint")) {
         out.reason="one explicit unconditional physical-context retirement drain is required";return out;
     }
@@ -1749,6 +1919,20 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,
             out.reason="reconstructed physical access contract changed";return out;
         }
     }
+    SyncPhysicalFacts rebuiltPhysical=inventory.physical;
+    rebuiltPhysical.phases.clear();
+    for(auto *old:inventory.physical.phases) {
+        rebuiltPhysical.phases.push_back(phases.at(old->elementOp));
+    }
+    auto rebuiltRequirements=deriveSequenceRequirements(
+        working,rebuiltPhysical,layout,gm,hardware);
+    if(rebuiltRequirements.status!=ss::Status::Applied) {
+        out.reason=rebuiltRequirements.reason;return out;
+    }
+    if(!verifySequenceRequirements(sequenceRequirements.requirements,
+                                   rebuiltRequirements.requirements,
+                                   hardware,out.reason))return out;
+    if(!verifySequenceBridges(emittedSequence,out.reason))return out;
     describeStructuredPlan(units,selected,emissionSites,sequencePlan.bridges);
     // S7: rederive the lowering premises from the ACTUAL emitted physical ops,
     // not a cached optimizer receipt. The snapshot separately preserves scalar

@@ -105,6 +105,59 @@ def main():
             assert verdict['expected'] and verdict['atomic'],verdict
     assert len(rows)==7,rows
     fixtures=here/'structured_inputs'
+    # S7.1 physical-section lifetime: the single drain belongs to the section,
+    # not the surrounding function, and reconstruction consumes that actual
+    # placement. Outer physical payload remains an admission error.
+    section=fixtures/'section_vector.pto';section_output=args.output/'section_vector.pto'
+    result,_=run('section_vector',[args.driver,section,'none',section_output])
+    verdict=json.loads(result.stdout)
+    assert verdict['accepted'] and verdict['atomic'],verdict
+    text=section_output.read_text()
+    assert text.count('pto.barrier <PIPE_ALL>')==1,('section_vector','retirement count')
+    section_body=text.split('pto.section.vector',1)[1].split('return',1)[0]
+    assert 'pto.barrier <PIPE_ALL>' in section_body,('section_vector','retirement escaped section')
+    for mutation in ('drop-retirement','early-retirement'):
+        response,_=run('section_vector.'+mutation,[args.driver,section,mutation,
+                       args.output/('section_vector.'+mutation+'.pto')])
+        evidence=json.loads(response.stdout)
+        assert evidence['mutation_applied'] and evidence['expected'] and evidence['atomic'],evidence
+    for name in ('section_outside_physical','section_outside_async_descriptor',
+                 'section_outside_config'):
+        response,_=run(name,[args.driver,fixtures/(name+'.pto'),'expect-unsupported',
+                       args.output/(name+'.pto')])
+        evidence=json.loads(response.stdout)
+        assert evidence['expected'] and evidence['atomic'] and not evidence['accepted'],evidence
+        assert 'outside' in evidence['reason'],evidence
+    response,_=run('missing_positive_contract',[
+        args.driver,fixtures/'missing_positive_contract.pto','expect-unsupported',
+        args.output/'missing_positive_contract.pto'])
+    evidence=json.loads(response.stdout)
+    assert evidence['expected'] and evidence['atomic'] and not evidence['accepted'],evidence
+    assert 'missing-positive-single-phase-contract:pto.tconcat' in evidence['reason'],evidence
+
+    # Reconstruct sibling requirements from fresh physical facts. In
+    # particular a same-pipe barrier must remain after its source loop.
+    sequence=fixtures/'sequential_same_pipe.pto'
+    response,_=run('sequential_same_pipe',[args.driver,sequence,'none',
+                   args.output/'sequential_same_pipe.pto'])
+    evidence=json.loads(response.stdout)
+    assert evidence['accepted'] and evidence['atomic'] and evidence['barriers']>0,evidence
+    for mutation in ('early-sequence-barrier','drop-sequence-bridge'):
+        response,_=run('sequential_same_pipe.'+mutation,[args.driver,sequence,mutation,
+                       args.output/('sequential_same_pipe.'+mutation+'.pto')])
+        evidence=json.loads(response.stdout)
+        assert evidence['mutation_applied'] and evidence['expected'] and evidence['atomic'],evidence
+    cross=fixtures/'sequential_cross_pipe.pto'
+    response,_=run('sequential_cross_pipe',[args.driver,cross,'none',
+                   args.output/'sequential_cross_pipe.pto'])
+    evidence=json.loads(response.stdout)
+    assert evidence['accepted'] and evidence['atomic'] and evidence['handoffs']>0,evidence
+    for mutation in ('drop-set','drop-wait'):
+        response,_=run('sequential_cross_pipe.'+mutation,[args.driver,cross,mutation,
+                       args.output/('sequential_cross_pipe.'+mutation+'.pto')])
+        evidence=json.loads(response.stdout)
+        assert evidence['mutation_applied'] and evidence['expected'] and evidence['atomic'],evidence
+
     # A common period is not an exact truth partition for comparisons of two
     # residue-valued expressions. Refuse before dropping any physical phase.
     for name in ('ordinal_coperiodic_compare','ordinal_periodic_constant_compare'):

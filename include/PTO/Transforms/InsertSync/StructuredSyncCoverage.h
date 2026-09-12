@@ -104,6 +104,53 @@ inline bool implicitResourceOperation(Operation *op) {
   return false;
 }
 
+// Positive, lowering-owned admission boundary for operations whose complete
+// synchronization-relevant behavior is represented by one translated phase
+// and their declared memory effects.  New physical operations remain
+// unsupported until their exact variant is audited and added here; absence
+// from the implicit-resource denylist is never evidence of completeness.
+inline bool singlePhaseMemoryOnlyOperation(Operation *op) {
+  return llvm::StringSwitch<bool>(op->getName().getStringRef())
+      .Case("pto.tload", true)
+      .Case("pto.tstore", true)
+      .Case("pto.tabs", true)
+      .Case("pto.tadd", true)
+      .Case("pto.tadds", true)
+      .Case("pto.tcolexpand", true)
+      .Case("pto.tcolexpandmul", true)
+      .Case("pto.tcvt", true)
+      .Case("pto.tdiv", true)
+      .Case("pto.texp", true)
+      .Case("pto.texpands", true)
+      .Case("pto.textract", true)
+      .Case("pto.tfillpad", true)
+      .Case("pto.tgather", true)
+      .Case("pto.tmatmul", true)
+      .Case("pto.tmatmul.acc", true)
+      .Case("pto.tmax", true)
+      .Case("pto.tmaxs", true)
+      .Case("pto.tmins", true)
+      .Case("pto.tmov", true)
+      .Case("pto.tmrgsort", true)
+      .Case("pto.tmul", true)
+      .Case("pto.tmuls", true)
+      .Case("pto.tneg", true)
+      .Case("pto.trecip", true)
+      .Case("pto.trowexpanddiv", true)
+      .Case("pto.trowexpand", true)
+      .Case("pto.trowexpandmul", true)
+      .Case("pto.trowexpandsub", true)
+      .Case("pto.trowmax", true)
+      .Case("pto.trowsum", true)
+      .Case("pto.trsqrt", true)
+      .Case("pto.tsort32", true)
+      .Case("pto.tsqrt", true)
+      .Case("pto.tsub", true)
+      .Case("pto.tsubs", true)
+      .Case("pto.ttrans", true)
+      .Default(false);
+}
+
 inline std::optional<PipelineType> helperPipe(func::FuncOp callee) {
   if (!callee)
     return {};
@@ -228,6 +275,102 @@ class Importer {
     return true;
   }
 
+  bool allocation(AllocTileOp alloc) {
+    auto type = cast<TileBufType>(alloc.getResult().getType());
+    return !type.hasDynamicValid() ||
+           (isInsertSyncScalarPrerequisite(alloc.getValidRow()) &&
+            isInsertSyncScalarPrerequisite(alloc.getValidCol())) ||
+           fail("invalid-descriptor-contract", alloc,
+                "allocation-valid-shape");
+  }
+
+  bool allocation(AllocMultiTileOp alloc) {
+    auto layout = getPTOStaticMultiTileSlotLayout(
+        alloc.getResult().getType().getSlotType());
+    return (succeeded(layout) && layout->footprintBytes) ||
+           fail("invalid-descriptor-contract", alloc, "multi-tile-layout");
+  }
+
+  bool update(SetValidShapeOp update) {
+    return (update.getSource().getDefiningOp<AllocTileOp>() &&
+            isInsertSyncScalarPrerequisite(update.getValidRow()) &&
+            isInsertSyncScalarPrerequisite(update.getValidCol())) ||
+           fail("invalid-descriptor-contract", update,
+                "asynchronous-valid-shape-source");
+  }
+
+  bool read(GetValidShapeOp read) {
+    return bool(read.getSource().getDefiningOp<AllocTileOp>()) ||
+           fail("invalid-descriptor-contract", read,
+                "descriptor-read-handle");
+  }
+
+  // A physical section narrows lifetime, not semantic admission. Audit the
+  // surrounding function so captured descriptors cannot hide asynchronous
+  // producers, configuration resources, physical phases, or authored sync.
+  bool auditOutside(Operation *section) {
+    auto walked = function.walk([&](Operation *op) {
+      const bool isSelectedSection = op == function.getOperation() ||
+                                     op == section ||
+                                     section->isAncestor(op);
+      if (isSelectedSection) {
+        return WalkResult::advance();
+      }
+      ++result.work;
+      if (isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, BarrierOp,
+              RecordEventOp, WaitEventOp>(op)) {
+        fail("explicit-synchronization-outside-physical-section", op);
+        return WalkResult::interrupt();
+      }
+      const bool unsupportedResource =
+          getSyncMacroModel(op) || implicitResourceOperation(op);
+      if (unsupportedResource) {
+        fail("unsupported-resource-outside-physical-section", op);
+        return WalkResult::interrupt();
+      }
+      if (auto alloc = dyn_cast<AllocTileOp>(op)) {
+        return allocation(alloc) ? WalkResult::advance()
+                                 : WalkResult::interrupt();
+      }
+      if (auto alloc = dyn_cast<AllocMultiTileOp>(op)) {
+        return allocation(alloc) ? WalkResult::advance()
+                                 : WalkResult::interrupt();
+      }
+      if (auto descriptor = dyn_cast<SetValidShapeOp>(op)) {
+        return update(descriptor) ? WalkResult::advance()
+                                  : WalkResult::interrupt();
+      }
+      if (auto descriptor = dyn_cast<GetValidShapeOp>(op)) {
+        return read(descriptor) ? WalkResult::advance()
+                                : WalkResult::interrupt();
+      }
+      const bool physicalOperation =
+          compounds.count(op) || isa<OpPipeInterface>(op);
+      if (physicalOperation) {
+        fail("physical-operation-outside-selected-section", op);
+        return WalkResult::interrupt();
+      }
+      if (auto call = dyn_cast<func::CallOp>(op)) {
+        if (!visiblePureHelper(SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+                call, call.getCalleeAttr()))) {
+          fail("unsupported-helper-outside-physical-section", call);
+          return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      }
+      const bool supportedContainer =
+          op->hasTrait<OpTrait::IsTerminator>() ||
+          op->hasTrait<OpTrait::HasRecursiveMemoryEffects>() ||
+          isMemoryEffectFree(op);
+      if (supportedContainer) {
+        return WalkResult::advance();
+      }
+      fail("unsupported-effect-outside-physical-section", op);
+      return WalkResult::interrupt();
+    });
+    return !walked.wasInterrupted();
+  }
+
   bool helper(func::CallOp call) {
     auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
         call, call.getCalleeAttr());
@@ -278,31 +421,29 @@ class Importer {
         return fail("unsupported-control-region", &op);
 
       if (auto alloc = dyn_cast<AllocTileOp>(op)) {
-        auto type = cast<TileBufType>(alloc.getResult().getType());
-        if (type.hasDynamicValid() &&
-            (!isInsertSyncScalarPrerequisite(alloc.getValidRow()) ||
-             !isInsertSyncScalarPrerequisite(alloc.getValidCol())))
-          return fail("invalid-descriptor-contract", &op,
-                      "allocation-valid-shape");
+        if (!allocation(alloc)) {
+          return false;
+        }
         continue;
       }
       if (auto alloc = dyn_cast<AllocMultiTileOp>(op)) {
-        auto layout = getPTOStaticMultiTileSlotLayout(
-            alloc.getResult().getType().getSlotType());
-        if (failed(layout) || !layout->footprintBytes)
-          return fail("invalid-descriptor-contract", &op,
-                      "multi-tile-layout");
+        if (!allocation(alloc)) {
+          return false;
+        }
         continue;
       }
       if (auto update = dyn_cast<SetValidShapeOp>(op)) {
-        if (!isInsertSyncScalarPrerequisite(update.getValidRow()) ||
-            !isInsertSyncScalarPrerequisite(update.getValidCol()))
-          return fail("invalid-descriptor-contract", &op,
-                      "asynchronous-valid-shape-source");
+        if (!this->update(update)) {
+          return false;
+        }
         continue;
       }
-      if (isa<GetValidShapeOp>(op))
+      if (auto read = dyn_cast<GetValidShapeOp>(op)) {
+        if (!this->read(read)) {
+          return false;
+        }
         continue;
+      }
       if (auto call = dyn_cast<func::CallOp>(op)) {
         if (!helper(call))
           return false;
@@ -314,6 +455,15 @@ class Importer {
           return fail("unsupported-lane", &op);
         if (implicitResourceOperation(&op))
           return fail("unsupported-implicit-resource", &op);
+        if (!singlePhaseMemoryOnlyOperation(&op)) {
+          return fail("missing-positive-single-phase-contract", &op);
+        }
+        const bool unsupportedFillPad =
+            isa<TFillPadOp>(op) && p != PIPE::PIPE_V;
+        if (unsupportedFillPad) {
+          return fail("unsupported-single-phase-variant", &op,
+                      "tfillpad-non-vector");
+        }
         auto found = compounds.find(&op);
         if (found == compounds.end())
           return fail("missing-translated-phase", &op);
@@ -371,6 +521,9 @@ public:
     }
     result.lifetimeScope = section ? section : function.getOperation();
     Region &physicalRegion = section ? section->getRegion(0) : function.getBody();
+    if (section && !auditOutside(section)) {
+      return result;
+    }
     if (region(physicalRegion, 0))
       result.status = SyncPhysicalFacts::Status::Complete;
     return result;

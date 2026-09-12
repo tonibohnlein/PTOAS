@@ -26,7 +26,11 @@ def main():
     parser.add_argument("--python-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=False)
+    # The parent structured gate intentionally reuses its diagnostics directory
+    # across local/CTest invocations. Every artifact below is rewritten and the
+    # summary is rebuilt from this invocation, so stale directory existence must
+    # not turn an otherwise reproducible rerun into a harness failure.
+    args.output.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(args.python_root.resolve()))
     from observations import analyze
     from compare_boundaries import run as observe
@@ -171,6 +175,8 @@ def main():
         raise RuntimeError("public pass option did not reach hardware-qualified construction")
     invoke("reject-existing-profile", [args.opt, source,
            "-pto-insert-sync=planner=existing hardware-contract=" + CONTRACT], expected=1)
+    invoke("reject-misspelled-profile", [args.opt, source,
+           "-pto-insert-sync=planner=structured hardware-contract=a2a3-mmad-ac-v1"], expected=1)
     summary = dict(status="passed", cases=rows, original_population=corpus_rows, native_driver_sha256=hashlib.sha256(args.driver.read_bytes()).hexdigest(),
                    device="NOT_RUN", timing="audit invocations; not performance evidence")
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")

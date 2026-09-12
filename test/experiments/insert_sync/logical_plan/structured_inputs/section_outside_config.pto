@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @section_outside_config(%src: !pto.ptr<f16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %ia = arith.constant 0 : i64
+    %source = pto.make_tensor_view %src, shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %source, offsets = [%c0, %c0], sizes = [%c16, %c16]
+      : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %tile = pto.alloc_tile addr = %ia : !pto.tile_buf<mat, 16x16xf16>
+    pto.syncall() mode = #pto.sync_all_mode<hard>, core_type = #pto.sync_core_type<aic_only>
+    pto.section.cube {
+      pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>)
+        outs(%tile : !pto.tile_buf<mat, 16x16xf16>)
+    }
+    return
+  }
+}
