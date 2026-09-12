@@ -1131,7 +1131,7 @@ bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reas
                 }
                 token.prefix = gates[m.first];
                 token.live = true;
-                if (facts) {
+                if (facts && m.forwardKey != NoCut) {
                     if (repetition == 0) {
                         if (facts->uses.count(k)) {
                             reason = "logical key has multiple publications";
@@ -1153,7 +1153,7 @@ bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reas
                 target[m.second] = ++serial[m.second];
                 token.consumed = target[m.second];
                 token.live = false;
-                if (facts && repetition == 0)
+                if (facts && m.forwardKey != NoCut && repetition == 0)
                     facts->uses[k].consumed = token.consumed;
             }
         }
@@ -1167,7 +1167,8 @@ bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reas
 }
 
 std::vector<c::Mechanism> demandWord(
-    const c::Program& p, const Commands& commands, unsigned scope, bool expandPackets = false)
+    const c::Program& p, const Commands& commands, unsigned scope, bool expandPackets = false,
+    bool virtualPackets = false)
 {
     std::vector<c::Mechanism> word;
     for (unsigned child : p.nodes[scope].children)
@@ -1175,10 +1176,15 @@ std::vector<c::Mechanism> demandWord(
             if (m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire)
                 word.push_back(m);
             else if (expandPackets && m.kind == c::Mechanism::Rendezvous) {
-                word.push_back(event(c::Mechanism::Publish, m.first, m.second, m.forwardKey));
-                word.push_back(event(c::Mechanism::Acquire, m.first, m.second, m.forwardKey));
-                word.push_back(event(c::Mechanism::Publish, m.second, m.first, m.reverseKey));
-                word.push_back(event(c::Mechanism::Acquire, m.second, m.first, m.reverseKey));
+                // Canonical packets participate in causality but are not
+                // logical colors. Give them a disjoint virtual namespace when
+                // checking an unnumbered word; actual final checks use real IDs.
+                auto forward = virtualPackets ? NoCut : m.forwardKey;
+                auto reverse = virtualPackets ? NoCut : m.reverseKey;
+                word.push_back(event(c::Mechanism::Publish, m.first, m.second, forward));
+                word.push_back(event(c::Mechanism::Acquire, m.first, m.second, forward));
+                word.push_back(event(c::Mechanism::Publish, m.second, m.first, reverse));
+                word.push_back(event(c::Mechanism::Acquire, m.second, m.first, reverse));
             }
     return word;
 }
@@ -1252,9 +1258,17 @@ bool verifyDemandProtocols(
 
 namespace {
 using DemandInvariants = std::map<unsigned, c::State>;
+using DemandIdentity = std::array<unsigned, 5>;
+using DemandFallbacks = std::set<DemandIdentity>;
+DemandIdentity identity(const c::CompletionDemand& d)
+{
+    return {d.scope, d.publication, d.acquisition, d.source, d.observer};
+}
 c::Result verifyDemandImpl(
     const c::Program& p, const std::vector<std::vector<c::Mechanism>>& actual, DemandInvariants* invariants);
-c::Result constructDemandCandidate(const c::Program& p, const DemandInvariants* invariants)
+c::Result constructDemandCandidate(
+    const c::Program& p, const DemandInvariants* invariants, DemandFallbacks& unassigned,
+    const DemandFallbacks* forced = nullptr)
 {
     using namespace c;
     c::Result result;
@@ -1321,6 +1335,13 @@ c::Result constructDemandCandidate(const c::Program& p, const DemandInvariants* 
                 for (const auto& demand : analysis.requests[id]) {
                     if (demand.source != source)
                         continue;
+                    // A bounded replay propagates the real canonical transfer
+                    // at this original demand cut. No logical publication or
+                    // assumed acquisition receipt is created for this demand.
+                    if (forced && forced->count(identity(demand))) {
+                        ++result.replayedFallbackDemands;
+                        break;
+                    }
                     auto receipt = state.receipts.find({source, source, demand.publication});
                     if (receipt == state.receipts.end())
                         break;
@@ -1434,7 +1455,7 @@ c::Result constructDemandCandidate(const c::Program& p, const DemandInvariants* 
                 }),
             commands.end());
         std::string why;
-        if (!verifyProtocolWord(demandWord(p, result.before, scope), why))
+        if (!verifyProtocolWord(demandWord(p, result.before, scope, true, true), why))
             commands = std::move(saved);
         else {
             --result.sharedAcknowledgments;
@@ -1454,7 +1475,7 @@ c::Result constructDemandCandidate(const c::Program& p, const DemandInvariants* 
     std::set<unsigned> fallbackScopes;
     std::set<PrefixState::EventKey> fallbackKeys;
     for (unsigned scope : analysis.scopeOrder) {
-        auto word = demandWord(p, result.before, scope);
+        auto word = demandWord(p, result.before, scope, true, true);
         if (word.empty())
             continue;
         ProtocolFacts facts;
@@ -1545,7 +1566,8 @@ c::Result constructDemandCandidate(const c::Program& p, const DemandInvariants* 
         if (!fallbackKeys.count(demandKeys[i])) {
             retained.push_back(d);
             retainedFamilies.insert({d.scope, d.source, d.observer});
-        }
+        } else
+            unassigned.insert(identity(d));
     }
     result.demands = std::move(retained);
     result.directHandoffs = result.demands.size();
@@ -1700,9 +1722,11 @@ c::Result verifyDemandImpl(
 } // namespace
 
 namespace {
-c::Result constructDemandsImpl(const c::Program& p, bool corruptRefinement)
+c::Result constructDemandsImpl(
+    const c::Program& p, bool corruptRefinement, bool replayAllocation = true, bool corruptReplay = false)
 {
-    auto initial = constructDemandCandidate(p, nullptr);
+    DemandFallbacks unassigned;
+    auto initial = constructDemandCandidate(p, nullptr, unassigned);
     if (!initial.success)
         return initial;
     DemandInvariants invariants;
@@ -1713,36 +1737,100 @@ c::Result constructDemandsImpl(const c::Program& p, bool corruptRefinement)
         initial.before.clear();
         return initial;
     }
-    if (invariants.empty()) {
-        initial.cellVisits += checked.cellVisits;
-        initial.nodeVisits += checked.nodeVisits;
-        return initial;
-    }
+    initial.cellVisits += checked.cellVisits;
+    initial.nodeVisits += checked.nodeVisits;
+    const DemandInvariants* selectedInvariants = nullptr;
     // Exactly one optional reconstruction using already proved prefix
     // invariants. The candidate must prove its OWN invariant independently.
     // This happens before native emission; a failed emitted-IR checker is never
     // converted into fallback success.
-    auto refined = constructDemandCandidate(p, &invariants);
-    if (corruptRefinement)
-        for (auto& commands : refined.before)
-            commands.clear();
-    auto rechecked = refined.success ? verifyDemandImpl(p, refined.before, nullptr) : c::Result{};
-    if (refined.success && rechecked.success) {
-        refined.cellVisits += initial.cellVisits + checked.cellVisits + rechecked.cellVisits;
-        refined.nodeVisits += initial.nodeVisits + checked.nodeVisits + rechecked.nodeVisits;
-        refined.completionRefinements = 1;
-        return refined;
+    if (!invariants.empty()) {
+        DemandFallbacks refinedUnassigned;
+        auto refined = constructDemandCandidate(p, &invariants, refinedUnassigned);
+        if (corruptRefinement)
+            for (auto& commands : refined.before)
+                commands.clear();
+        auto rechecked = refined.success ? verifyDemandImpl(p, refined.before, nullptr) : c::Result{};
+        if (refined.success && rechecked.success) {
+            refined.cellVisits += initial.cellVisits + rechecked.cellVisits;
+            refined.nodeVisits += initial.nodeVisits + rechecked.nodeVisits;
+            initial = std::move(refined);
+            unassigned = std::move(refinedUnassigned);
+            selectedInvariants = &invariants;
+        } else {
+            initial.cellVisits += refined.cellVisits + rechecked.cellVisits;
+            initial.nodeVisits += refined.nodeVisits + rechecked.nodeVisits;
+            initial.rejectedRefinements = 1;
+        }
+        initial.completionRefinements = 1;
     }
-    initial.cellVisits += checked.cellVisits + refined.cellVisits + rechecked.cellVisits;
-    initial.nodeVisits += checked.nodeVisits + refined.nodeVisits + rechecked.nodeVisits;
-    initial.completionRefinements = 1;
-    initial.rejectedRefinements = 1;
+    if (unassigned.empty() || corruptRefinement || !replayAllocation)
+        return initial;
+
+    // One replay of the same constructor, with the same structural requests
+    // and invariant hints. Never recurse or chase allocation to a fixed point.
+    // Its only new information is which original forward demands must use the
+    // existing canonical acquire() transfer during construction, rather than
+    // after numbering. Later consumers can reuse the resulting completion.
+    DemandFallbacks newlyUnassigned;
+    auto replay = constructDemandCandidate(p, selectedInvariants, newlyUnassigned, &unassigned);
+    if (corruptReplay)
+        for (auto& commands : replay.before)
+            commands.clear();
+    auto verified = replay.success ? verifyDemandImpl(p, replay.before, nullptr) : c::Result{};
+    bool acceptable =
+        replay.success && verified.success &&
+        std::includes(unassigned.begin(), unassigned.end(), newlyUnassigned.begin(), newlyUnassigned.end());
+    uint64_t removed = 0;
+    if (acceptable) {
+        // Every current command participates on every visit to its immediate
+        // Sequence. Non-increasing command cost per scope therefore protects
+        // independently varying loop/branch executions, not just static totals.
+        for (const auto& n : p.nodes) {
+            if (n.kind != c::Node::Sequence)
+                continue;
+            auto cost = [&](const c::Result& r) {
+                uint64_t total = 0;
+                for (unsigned child : n.children)
+                    for (const auto& m : r.before[child])
+                        total += m.kind == c::Mechanism::Rendezvous ? 4 : 1;
+                return total;
+            };
+            auto before = cost(initial), after = cost(replay);
+            if (after > before) {
+                acceptable = false;
+                break;
+            }
+            removed += before - after;
+        }
+    }
+    initial.allocationReplays = 1;
+    if (acceptable) {
+        replay.cellVisits += initial.cellVisits + verified.cellVisits;
+        replay.nodeVisits += initial.nodeVisits + verified.nodeVisits;
+        replay.completionRefinements = initial.completionRefinements;
+        replay.rejectedRefinements = initial.rejectedRefinements;
+        replay.allocationReplays = 1;
+        replay.replayCommandsRemoved = removed;
+        return replay;
+    }
+    initial.cellVisits += replay.cellVisits + verified.cellVisits;
+    initial.nodeVisits += replay.nodeVisits + verified.nodeVisits;
+    initial.rejectedAllocationReplays = 1;
     return initial;
 }
 } // namespace
 
 c::Result c::constructDemands(const Program& p) { return constructDemandsImpl(p, false); }
 c::Result c::testing::constructDemandsRejectingRefinement(const Program& p) { return constructDemandsImpl(p, true); }
+c::Result c::testing::constructDemandsWithoutAllocationReplay(const Program& p)
+{
+    return constructDemandsImpl(p, false, false);
+}
+c::Result c::testing::constructDemandsRejectingAllocationReplay(const Program& p)
+{
+    return constructDemandsImpl(p, false, true, true);
+}
 
 c::Result c::verifyDemands(const Program& p, const std::vector<std::vector<Mechanism>>& actual)
 {

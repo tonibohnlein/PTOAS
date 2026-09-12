@@ -684,12 +684,12 @@ terminal `PIPE_ALL`. These are not device timings or executed command counts.
 | Q projection | 19 / 19 / 5 | 18 / 18 / 6 |
 | Historical GEMM | 63 / 63 / 20 | 70 / 70 / 24 |
 
-**Quality acceptance remains false.** Late scarcity fallback currently adds
-stronger completion after the demand transfer has finished. Later demands do
-not yet exploit that extra completion. Consequently, this experimental change
-can increase synchronization, as softmax and GEMM demonstrate. A bounded replay
-that propagates the actual fallback's completion is a follow-up, not a claimed
-property of this increment.
+**Quality acceptance remains false.** In this historical key-realization
+increment, late scarcity fallback added stronger completion after the demand
+transfer finished. Later demands did not exploit that extra completion.
+Consequently, that experimental change increased synchronization in softmax
+and GEMM. The bounded replay documented below is a subsequent increment,
+not a property attributed retroactively to this measurement.
 
 The targeted native build, composition core/demand gates, composition gate,
 and `oahs_focused` passed. The C++17 ASan/UBSan run passed **2,158,773
@@ -705,3 +705,67 @@ InsertSync. Untimed C++ emission also passes. Reproduce with the commands above;
 this run used output directories `oahs-key-sharing-corpus` and
 `oahs-key-sharing-compiler` below the existing build's `test-results` directory.
 Artifacts are local, and no device or complete system-test campaign is claimed.
+
+## Bounded fallback-completion replay
+
+After the initial plan and optional completion-invariant refinement, perform
+at most one additional call to the same demand constructor. Freeze failed
+forward-demand identities `(scope, publication, acquisition, source, observer)`
+and the same invariant hints. At those cuts, the replay performs the existing
+canonical `acquire()` on the actual forward state rather than inserting a
+packet after construction. It creates no corresponding logical publication or
+acquisition receipt. Later demands can reuse the stronger completion.
+Prospective source-cut snapshots remain proposals, never emitted-event facts.
+
+This is bounded to three constructor calls total, not an allocation fixed point
+or another planner. The replay must pass the complete mixed protocol check and
+fresh physical verification. It is rejected if a formerly assignable forward
+demand becomes unassignable, or if static command cost increases in any
+immediate Sequence (a rendezvous costs four commands). Since those commands
+participate on every visit to that sequence, the latter protects independently
+varying loop and branch executions, not only whole-function static totals.
+Failure retains the exact previously verified plan before native emission.
+
+Canonical packets also participate in the unnumbered protocol's causal clocks.
+They use a reserved virtual sentinel, disjoint from logical IDs, and are excluded
+from color candidates. Final checking still expands their actual physical IDs.
+Ignoring their acknowledgment edges during coloring would unnecessarily reject
+useful replays even when the actual physical plan is safe.
+
+Trace counters separate replay attempts, rejected replays, commands removed,
+and replayed fallback demands. `allocation_fallback_keys` continues to count
+late numbering failures in the selected plan; a fallback already performed
+during replay is counted by `replayed_fallback_demands` instead. Native test-only
+modes disable replay or corrupt it before checking, requiring byte-identical
+rollback. The overlap fixture needs only one packet after replay instead of
+three; another finite test includes fallback in the middle of a scope and a
+later new write that still requires its own handoff.
+
+This does not establish general incoming/continuation placement or qualify
+whole-plan overlap relative to InsertSync. The default remains unchanged.
+
+### Local replay measurements
+
+The final targeted build and native composition/demand gates pass, including
+the exact rollback and mixed-packet corruption checks. `oahs_focused` passes
+(144.79 seconds); the final core/demand rerun takes 19.08 seconds. The final
+C++17 ASan/UBSan run passes **2,166,959 assertions**, with unsupported leak
+inspection disabled. Assertions are not added across repeated runs.
+
+The unchanged eight-input campaign records GEMM at **62 SET / 62 WAIT / 21
+named barriers**, down from 70 / 70 / 24: 19 static commands removed. All other
+static counts equal the preceding key-realization table. Q projection accepts
+an equal-cost replay; the implementation does not claim that every accepted
+replay improves quality. The overlap fixture removes ten commands: two redundant
+packets and one redundant reverse ACK pair.
+
+The final summary still records `quality_qualified=false`. First-consumer and
+previous-visit boundaries remain unresolved; a reduction from the preceding
+experimental plan is not acceptance against InsertSync or a device speedup.
+
+The final frozen corpus rerun again preserves all 363 statuses and raw/prepared
+hashes (45/150 PTOAS, 152/213 PyPTO/pypto-lib). The eight serial paired compiler
+populations pass the median <=2x gate, with three measured rounds and one warm-up;
+per-case median ratios range from 0.986 to 1.039. Untimed C++ emission passes.
+The commands above were used with local output directories `oahs-replay-corpus`
+and `oahs-replay-compiler`; no device or full system-test run is claimed.

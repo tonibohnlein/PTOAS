@@ -75,6 +75,8 @@ struct Result {
     uint64_t ownedRefinements = 0;
     uint64_t protocolKeys = 0, sharedProtocolKeys = 0, allocationFallbackScopes = 0;
     uint64_t allocationFallbackKeys = 0;
+    uint64_t allocationReplays = 0, rejectedAllocationReplays = 0, replayCommandsRemoved = 0;
+    uint64_t replayedFallbackDemands = 0;
     std::vector<CompletionDemand> demands;
 };
 // One summary pass and one structural transfer. No trip-count enumeration,
@@ -95,6 +97,8 @@ namespace testing {
 // Fault injection before refinement checking/emission, never on the initial
 // plan: discard the optional candidate's mechanisms to exercise exact rollback.
 Result constructDemandsRejectingRefinement(const Program& program);
+Result constructDemandsWithoutAllocationReplay(const Program& program);
+Result constructDemandsRejectingAllocationReplay(const Program& program);
 } // namespace testing
 } // namespace mlir::pto::structured_sync::composition
 #endif

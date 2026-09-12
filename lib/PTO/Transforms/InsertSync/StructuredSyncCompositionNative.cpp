@@ -586,7 +586,10 @@ Outcome ss::testing::constructCompositionalSync(
     const bool precision = constructor == CompositionConstructor::Cuts;
     const bool rejectRefinement = constructor == CompositionConstructor::DemandsRejectRefinement;
     const bool fallbackOnly = constructor == CompositionConstructor::DemandsFallbackOnly;
-    const bool demandPlacement = constructor == CompositionConstructor::Demands || rejectRefinement || fallbackOnly;
+    const bool withoutReplay = constructor == CompositionConstructor::DemandsWithoutAllocationReplay;
+    const bool rejectReplay = constructor == CompositionConstructor::DemandsRejectAllocationReplay;
+    const bool demandPlacement = constructor == CompositionConstructor::Demands || rejectRefinement || fallbackOnly ||
+                                 withoutReplay || rejectReplay;
     Outcome out;
     if (function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         out.reason = "composition requires a single function block";
@@ -629,7 +632,9 @@ Outcome ss::testing::constructCompositionalSync(
     }
     if (fallbackOnly)
         tree.program.target.compilerKeys = {0};
-    auto selected = rejectRefinement ? c::testing::constructDemandsRejectingRefinement(tree.program) :
+    auto selected = withoutReplay    ? c::testing::constructDemandsWithoutAllocationReplay(tree.program) :
+                    rejectReplay     ? c::testing::constructDemandsRejectingAllocationReplay(tree.program) :
+                    rejectRefinement ? c::testing::constructDemandsRejectingRefinement(tree.program) :
                     demandPlacement  ? c::constructDemands(tree.program) :
                     precision        ? c::constructCuts(tree.program) :
                                        c::construct(tree.program);
@@ -736,13 +741,16 @@ Outcome ss::testing::constructCompositionalSync(
                      << selected.rejectedRefinements << " owned_refinements " << checked.ownedRefinements
                      << " protocol_keys " << selected.protocolKeys << " shared_protocol_keys "
                      << selected.sharedProtocolKeys << " allocation_fallback_keys " << selected.allocationFallbackKeys
-                     << " allocation_fallback_scopes " << selected.allocationFallbackScopes << " rendezvous_packets "
-                     << rendezvousPackets << " demand_fallbacks " << selected.demandFallbacks << " nodes "
-                     << tree.program.nodes.size() << " cells " << tree.program.cells << " widened_spaces "
-                     << tree.widenedSpaces << " node_visits " << selected.nodeVisits + checked.nodeVisits
-                     << " cell_visits " << out.work << " handoffs " << out.handoffs << " cut_cycles "
-                     << checked.cutCycles << " allocation_retries " << selected.allocationRetries << " barriers "
-                     << out.barriers << " seconds "
+                     << " allocation_replays " << selected.allocationReplays << " rejected_allocation_replays "
+                     << selected.rejectedAllocationReplays << " replay_commands_removed "
+                     << selected.replayCommandsRemoved << " replayed_fallback_demands "
+                     << selected.replayedFallbackDemands << " allocation_fallback_scopes "
+                     << selected.allocationFallbackScopes << " rendezvous_packets " << rendezvousPackets
+                     << " demand_fallbacks " << selected.demandFallbacks << " nodes " << tree.program.nodes.size()
+                     << " cells " << tree.program.cells << " widened_spaces " << tree.widenedSpaces << " node_visits "
+                     << selected.nodeVisits + checked.nodeVisits << " cell_visits " << out.work << " handoffs "
+                     << out.handoffs << " cut_cycles " << checked.cutCycles << " allocation_retries "
+                     << selected.allocationRetries << " barriers " << out.barriers << " seconds "
                      << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() << "\n";
     return out;
 }

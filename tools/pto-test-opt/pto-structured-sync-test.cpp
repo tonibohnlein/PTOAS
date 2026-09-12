@@ -50,7 +50,9 @@ int main(int argc,char **argv) {
     const bool demandPlacement = mode.consume_front("demands:");
     const bool fallbackOnly = demandPlacement && mode.consume_front("fallback:");
     const bool rejectRefinement = demandPlacement && mode=="reject-refinement";
-    if (rejectRefinement) mode="none";
+    const bool withoutReplay = demandPlacement && mode=="without-allocation-replay";
+    const bool rejectReplay = demandPlacement && mode=="reject-allocation-replay";
+    if (rejectRefinement || withoutReplay || rejectReplay) mode="none";
     const bool precision = mode.consume_front("cuts:");
     const bool composition = demandPlacement || precision || mode.consume_front("composition:");
     auto mutate=[&](func::FuncOp working) {
@@ -285,7 +287,8 @@ int main(int argc,char **argv) {
     };
     using Constructor=structured_sync::testing::CompositionConstructor;
     auto result=composition ? structured_sync::testing::constructCompositionalSync(
-        function,gm,mutate,hardware,rejectRefinement?Constructor::DemandsRejectRefinement:
+        function,gm,mutate,hardware,withoutReplay?Constructor::DemandsWithoutAllocationReplay:
+        rejectReplay?Constructor::DemandsRejectAllocationReplay:rejectRefinement?Constructor::DemandsRejectRefinement:
             fallbackOnly?Constructor::DemandsFallbackOnly:
             demandPlacement?Constructor::Demands:
             precision?Constructor::Cuts:Constructor::Conservative) :

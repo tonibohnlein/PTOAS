@@ -273,7 +273,7 @@ int main()
         auto wc = op(p, a, 2, true), rc = op(p, b, 2, false);
         auto second = add(p, c::Node::For, {sequence(p, {wc, rc})});
         sequence(p, {first, second});
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutAllocationReplay(p);
         require(plan.success && c::verifyDemands(p, plan.before).success);
         require(plan.allocationFallbackScopes == 2 && plan.protocolKeys == 2);
         require(plan.demandFallbacks > 0 && plan.directHandoffs == 2);
@@ -284,6 +284,44 @@ int main()
         for (unsigned invocation = 0; invocation < 4; ++invocation) {
             execute(p, plan, p.nodes.size() - 1, policy, oracle);
             oracle.check();
+        }
+    }
+    {
+        // Scarcity in the middle of a scope supplies more than the original
+        // early prefix. Reuse it for later cells without skipping a new write.
+        c::Program p;
+        p.cells = 3;
+        p.target.compilerKeys = {0, 1};
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto wa = op(p, a, 0, true), wb = op(p, a, 1, true), wc = op(p, a, 2, true);
+        auto ra = op(p, b, 0, false), rb = op(p, b, 1, false), rc = op(p, b, 2, false);
+        auto rewrite = op(p, a, 0, true), reread = op(p, b, 0, false);
+        auto body = sequence(p, {wa, wb, wc, ra, rb, rc, rewrite, reread});
+        auto loop = add(p, c::Node::For, {body});
+        sequence(p, {loop});
+        auto old = c::testing::constructDemandsWithoutAllocationReplay(p);
+        auto plan = c::constructDemands(p);
+        require(old.success && plan.success && c::verifyDemands(p, plan.before).success);
+        require(plan.allocationReplays == 1 && plan.rejectedAllocationReplays == 0);
+        require(plan.replayedFallbackDemands > 0 && plan.replayCommandsRemoved > 0);
+        // A nonzero canonical ID must not collide with virtual logical IDs.
+        auto shifted = p;
+        shifted.target.compilerKeys = {3, 5};
+        auto shiftedPlan = c::constructDemands(shifted);
+        require(shiftedPlan.success && c::verifyDemands(shifted, shiftedPlan.before).success);
+        require(shiftedPlan.replayedFallbackDemands > 0 && shiftedPlan.replayCommandsRemoved > 0);
+        auto rejected = c::testing::constructDemandsRejectingAllocationReplay(p);
+        require(rejected.success && rejected.rejectedAllocationReplays == 1 && rejected.before == old.before);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned id, unsigned visit) { return (id + visit) % 4; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        Oracle shiftedOracle;
+        for (unsigned invocation = 0; invocation < 5; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+            execute(shifted, shiftedPlan, shifted.nodes.size() - 1, policy, shiftedOracle);
+            shiftedOracle.check();
         }
     }
     {

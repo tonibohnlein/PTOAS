@@ -19,27 +19,31 @@ namespace mlir::pto::structured_sync {
 // implementation until overlap recovery passes the frozen quality gates.
 // It NEVER calls the Presburger or legacy planner, including on refusal.
 logical_sync::ConstructionResult constructStructuredSync(
-    func::FuncOp function, InsertSyncGMAliasMode gm,
-    HardwareContract hardware = HardwareContract::Conservative,
+    func::FuncOp function, InsertSyncGMAliasMode gm, HardwareContract hardware = HardwareContract::Conservative,
     bool enablePrecision = true);
 // Explicit opt-in general engine. Both precision settings use the same
 // physical importer and structural composition; no legacy/symbolic fallback.
 // Precision enables the demand candidate, not replacement-quality acceptance.
 logical_sync::ConstructionResult constructCompositionalSync(
-    func::FuncOp function, InsertSyncGMAliasMode gm,
-    HardwareContract hardware = HardwareContract::Conservative,
+    func::FuncOp function, InsertSyncGMAliasMode gm, HardwareContract hardware = HardwareContract::Conservative,
     bool enablePrecision = true);
 namespace testing {
-enum class CompositionConstructor { Conservative, Cuts, Demands, DemandsRejectRefinement, DemandsFallbackOnly };
+enum class CompositionConstructor {
+    Conservative,
+    Cuts,
+    Demands,
+    DemandsRejectRefinement,
+    DemandsFallbackOnly,
+    DemandsWithoutAllocationReplay,
+    DemandsRejectAllocationReplay
+};
 logical_sync::ConstructionResult constructCompositionalSync(
-    func::FuncOp function, InsertSyncGMAliasMode gm,
-    llvm::function_ref<void(func::FuncOp)> mutate,
+    func::FuncOp function, InsertSyncGMAliasMode gm, llvm::function_ref<void(func::FuncOp)> mutate,
     HardwareContract hardware = HardwareContract::Conservative,
     CompositionConstructor constructor = CompositionConstructor::Conservative);
 logical_sync::ConstructionResult constructWithEmissionMutation(
-    func::FuncOp function, InsertSyncGMAliasMode gm,
-    llvm::function_ref<void(func::FuncOp)> mutate,
+    func::FuncOp function, InsertSyncGMAliasMode gm, llvm::function_ref<void(func::FuncOp)> mutate,
     HardwareContract hardware = HardwareContract::Conservative);
-}
-}
+} // namespace testing
+} // namespace mlir::pto::structured_sync
 #endif

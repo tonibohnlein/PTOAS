@@ -66,6 +66,8 @@ def main():
         for counter in ('direct_handoffs', 'shared_acknowledgments', 'reused_acknowledgments',
                         'completion_refinements', 'rejected_refinements', 'owned_refinements',
                         'protocol_keys', 'shared_protocol_keys', 'allocation_fallback_scopes', 'allocation_fallback_keys',
+                        'allocation_replays', 'rejected_allocation_replays', 'replay_commands_removed',
+                        'replayed_fallback_demands',
                         'rendezvous_packets', 'demand_fallbacks'):
             matches = re.findall(r'\b' + counter + r' (\d+)\b', trace)
             if len(matches) != 1:
@@ -171,7 +173,7 @@ def main():
         path_checks.append(dict(name='rejected-refinement', verdict=verdict, counters=counters))
         overlap = Path(__file__).parent / 'structured_inputs/demand_key_overlap.pto'
         overlap_output = args.output.resolve() / 'overlap-fallback.pto'
-        verdict = json.loads(invoke('overlap-fallback', [args.driver, overlap, 'demands:none', overlap_output]))
+        verdict = json.loads(invoke('overlap-fallback', [args.driver, overlap, 'demands:without-allocation-replay', overlap_output]))
         counters = native_counters('overlap-fallback')
         if (not verdict['accepted'] or not verdict['atomic'] or counters['allocation_fallback_scopes'] != 1 or
                 counters['direct_handoffs'] != 5 or counters['allocation_fallback_keys'] != 3 or
@@ -179,6 +181,21 @@ def main():
             raise RuntimeError('overlapping logical publications did not exercise qualified allocation fallback')
         path_checks.append(dict(name='overlap-fallback', verdict=verdict, counters=counters,
                                 source_sha256=digest(overlap), output_sha256=digest(overlap_output)))
+        for mode in ('none', 'reject-allocation-replay'):
+            name = 'overlap-replay-' + mode
+            output = args.output.resolve() / (name + '.pto')
+            verdict = json.loads(invoke(name, [args.driver, overlap, 'demands:' + mode, output]))
+            counters = native_counters(name)
+            if not verdict['accepted'] or not verdict['atomic'] or counters['allocation_replays'] != 1:
+                raise RuntimeError('native bounded allocation replay was not exercised')
+            if mode == 'none':
+                if (counters['rejected_allocation_replays'] or counters['replayed_fallback_demands'] != 1 or
+                        counters['replay_commands_removed'] != 10 or counters['rendezvous_packets'] != 1 or
+                        counters['shared_acknowledgments'] != 0):
+                    raise RuntimeError('later demands did not reuse fallback completion')
+            elif counters['rejected_allocation_replays'] != 1 or digest(output) != digest(overlap_output):
+                raise RuntimeError('rejected allocation replay did not preserve exact original plan')
+            path_checks.append(dict(name=name, verdict=verdict, counters=counters))
         for mutation in ('wrong-key', 'duplicate-set', 'drop-wait'):
             verdict = json.loads(invoke('overlap-' + mutation, [args.driver, overlap, 'demands:' + mutation,
                 args.output.resolve() / ('overlap-' + mutation + '.pto')]))
