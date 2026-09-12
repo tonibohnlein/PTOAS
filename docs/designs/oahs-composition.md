@@ -25,12 +25,20 @@ new cut-precision candidate uses that same engine and target contracts, but is
 currently exposed **only in the native test driver** as `cuts:none`.
 It has not replaced the old precision-enabled backend.
 
-The next increment is available as `demands:none` in the native test driver.
+The next increment is available as `demands:none` in the native test driver
+and explicitly as `--insert-sync-planner=composition` in the compiler.
+For this opt-in planner, `--insert-sync-structured-precision=true` enables
+demand placement and `false` uses the same engine's conservative construction.
+Both settings use the same importer and target contracts, without the old
+structured or symbolic constructor as a fallback. The existing planner default
+and the migration behavior of `planner=structured` are unchanged. This exposure
+permits real pass-pipeline corpus and whole-compilation measurements; it is not
+a replacement-quality approval.
 It constructs direct transfers from physical completion demands without calling
 `discoverCuts()` or constructing per-cell cycles. It is still a **migration
 candidate**, not completion of the four-milestone replacement plan. In
 particular, cross-domain incoming placement, rotating-generation precision,
-whole-compiler candidate timing, and replacement qualification remain open.
+and replacement qualification remain open.
 
 The positive operation/effect registry and selected A2/A3 hardware contract are
 retained. Moving that registry to a lowering-owned operation interface remains
@@ -399,7 +407,8 @@ One monotone transfer gives the narrower inductive invariant `E | F(Top)`.
 The checker proves the physical accesses under it and explicitly checks
 backedge closure. The probe does not check hazards or recursively initiate new
 probes; the subsequent verifying visit does. Across the entire tree, probes
-are limited to **two additional tree visits**, including nested loops.
+are limited to **two tree-visit equivalents** in aggregate, including nested
+loops, rather than necessarily two literal traversals of the complete tree.
 
 The same rule applies to a local physical cell whose accesses all occur within
 one sequence inside a loop. Its initial history is empty, and only visits to
@@ -535,3 +544,74 @@ The full 1,880-test lit campaign was also attempted with the corrected serial
 launcher, but stopped incomplete before the 10-minute campaign cap after its
 observed rate made completion within that cap infeasible. It is **not** a
 full-suite pass; only the completed 13-test subset is counted above.
+
+## Opt-in pass-pipeline qualification
+
+The subsequent integration exposes the existing demand constructor through
+`planner=composition`, without changing any default or the demand algorithm.
+Function metadata records `pto.insert_sync.producer = "composition"` and the
+actual `pto.insert_sync.precision` setting. Refusal remains strict, including
+authored events and unknown hardware-contract strings. The Python launcher
+already forwards these options to the native CLI unchanged. The native test
+driver's corruption modes are not exposed through production options.
+
+The frozen corpus run with `--corpus-constructor=demands` now exercises the real
+pass pipeline, not just one selected function in the test driver. On the same
+363 raw/prepared snapshots it admitted exactly the conservative baseline's
+197 input-ID/source-hash/prepared-hash tuples: **45/150 PTOAS** and **152/213
+PyPTO/pypto-lib**, no gains, losses, crashes or timeouts. Both modes keep the
+same semantic refusals; 56 inputs require unsupported visibility and 56 first
+refuse `pto.load_scalar`. This is compatibility, not device qualification.
+The corpus option applies only to the corpus rows: the runner's separately
+categorized native mutation checks continue to exercise the baseline.
+
+Reproduce with the frozen manifests and their original source snapshots:
+
+```sh
+python test/experiments/insert_sync/logical_plan/check_composition.py \
+  --driver "$BUILD/tools/pto-test-opt/pto-structured-sync-test" \
+  --opt "$BUILD/tools/pto-test-opt/pto-test-opt" \
+  --corpus-constructor demands --corpus-manifest "$PTOAS_MANIFEST" \
+  --corpus-manifest "$PYPTO_MANIFEST" --output "$RESULTS/demand-corpus"
+python test/experiments/insert_sync/logical_plan/benchmark_buffers.py \
+  --python-root "$BUILD/python" --output "$RESULTS/demand-compiler" \
+  --arms existing demands --repeats 3 --warmups 1 --timeout 90 \
+  --emit-cpp --require-ratio 2
+```
+
+For historical reproducibility, benchmark arm `composition` still means the
+previous conservative `structured-precision=false` invocation. The new arm
+`demands` selects `planner=composition` with precision enabled. Arm names and
+actual producer metadata are checked separately; no older result is relabeled.
+All eight manifest inputs, contracts and scenarios are unchanged. The payload
+observer accepts only the two recognized GM metadata values; the manifest
+records the selected contract and original pairwise alias attributes remain
+part of the payload comparison.
+
+The local paired campaign used alternating execution order, one warmup and
+three measured rounds per arm, with no concurrent build or test. It includes
+synchronization in full PTO emission, followed by untimed C++ emission:
+
+| Input | Median demand / InsertSync whole-compilation ratio |
+| --- | ---: |
+| One buffer | 1.035 |
+| Two buffers | 1.012 |
+| Three buffers | 1.016 |
+| Four use | 1.017 |
+| Online softmax | 1.062 |
+| QK matmul | 1.011 |
+| Q projection | 1.009 |
+| Historical GEMM | 0.956 |
+
+All eight complete paired populations passed the <=2x compilation gate. These
+small differences are local compiler measurements, not a device speedup claim.
+The unchanged synchronization-quality gate is still false. This qualification
+must be repeated after subsequent algorithm changes; it does not certify future
+placement or key-sharing implementations.
+
+Local detailed artifacts are `test-results/oahs-demand-native-corpus/summary.json`
+and `test-results/oahs-demand-paired-compiler/summary.json` in the existing build.
+They record commands and binary hashes. The external corpus snapshots/manifests
+are prerequisites, not bundled by these scripts; the eight benchmark inputs
+and manifest are checked in. A targeted lit case tests native pass selection,
+both precision settings, invalid contracts, and actual full-compiler emission.

@@ -75,6 +75,19 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(b.before[-1]["completed"], {"PIPE_MTE2": 0})
 
 class BooleanReplayTests(unittest.TestCase):
+    def test_projection_only_removes_recognized_alias_metadata(self):
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            bare = ir.Module.parse('module { func.func @f() { return } }')
+            for contract in ('may-alias', 'assume-disjoint-arguments'):
+                module = ir.Module.parse('module { func.func @f() attributes {pto.gm_alias = "' +
+                                         contract + '"} { return } }')
+                self.assertEqual(project(module)['payload'], project(bare)['payload'])
+            unknown = ir.Module.parse('module { func.func @f() attributes {pto.gm_alias = "typo"} { return } }')
+            with self.assertRaises(ValueError):
+                project(unknown)
+
     def test_nested_sync_arithmetic_is_private(self):
         source = '''module { func.func @f(%n: index) {
           %z = arith.constant 0 : index

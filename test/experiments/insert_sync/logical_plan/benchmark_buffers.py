@@ -23,7 +23,7 @@ import time
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
-ARMS = ("existing", "structured", "logical", "composition")
+ARMS = ("existing", "structured", "logical", "composition", "demands")
 POPULATION = ("one_buffer", "two_buffer", "three_buffer", "four_use",
               "online_softmax", "qk_matmul", "q_proj", "historical_gemm")
 
@@ -178,10 +178,10 @@ def main():
                 pto = Path(str(stem) + ".pto")
                 command = [sys.executable, "-c", SERIAL_DRIVER, str(python_root),
                            "--pto-arch=a3", "--pto-level=level3", "--enable-insert-sync",
-                           f"--insert-sync-planner={'structured' if arm == 'composition' else arm}",
+                           f"--insert-sync-planner={'composition' if arm == 'demands' else 'structured' if arm == 'composition' else arm}",
                            f"--insert-sync-gm-alias={case['gm_contract']}",
                            "--emit-pto-ir", str(case["source"].resolve()), "-o", str(pto.resolve())]
-                if arm in ("structured", "composition"):
+                if arm in ("structured", "composition", "demands"):
                     command.insert(-4, "--insert-sync-logical-work-budget=0")
                 if arm == "composition":
                     command.insert(-4, "--insert-sync-structured-precision=false")
@@ -191,8 +191,8 @@ def main():
                     try:
                         report = analyze(pto)
                         projection = {key: report[key] for key in ("payload", "allocations", "views", "abi")}
-                        producer = 'structured' if arm == 'composition' else arm
-                        if arm in ("logical", "structured", "composition") and not any(
+                        producer = 'composition' if arm == 'demands' else 'structured' if arm == 'composition' else arm
+                        if arm in ("logical", "structured", "composition", "demands") and not any(
                                 attrs.get("pto.insert_sync.producer") == f'"{producer}"'
                                 for attrs in report["status_attributes"]):
                             raise ValueError("the requested strict planner did not produce this output")

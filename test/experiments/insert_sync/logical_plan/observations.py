@@ -91,7 +91,7 @@ are recorded separately. Payload control, constants, views and effects remain.
             if key.startswith("pto.insert_sync."):
                 del properties[key]
             elif key == "pto.gm_alias":
-                if properties[key] != '"assume-disjoint-arguments"':
+                if properties[key] not in ('"may-alias"', '"assume-disjoint-arguments"'):
                     raise ValueError("unexpected GM allocation contract")
                 del properties[key]
         record = {"point": path, "op": op.name, "attrs": properties,

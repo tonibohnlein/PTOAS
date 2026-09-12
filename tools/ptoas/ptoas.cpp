@@ -148,7 +148,7 @@ llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
 llvm::cl::opt<std::string> insertSyncPlanner(
-    "insert-sync-planner", llvm::cl::desc("InsertSync planning engine: existing, logical, logical-or-existing, structured"),
+    "insert-sync-planner", llvm::cl::desc("InsertSync planning engine: existing, logical, logical-or-existing, structured, composition (experimental)"),
     llvm::cl::init("existing"));
 llvm::cl::opt<uint64_t> insertSyncLogicalWorkBudget(
     "insert-sync-logical-work-budget", llvm::cl::desc("Reference logical engine work allowance (not used by structured)"),
@@ -158,7 +158,7 @@ llvm::cl::opt<std::string> insertSyncGMAlias(
     llvm::cl::init(""));
 llvm::cl::opt<bool> insertSyncStructuredPrecision(
     "insert-sync-structured-precision",
-    llvm::cl::desc("Enable periodic precision; false selects conservative structured composition during migration"),
+    llvm::cl::desc("Enable demand precision in composition; structured retains periodic precision during migration"),
     llvm::cl::init(true));
 
 

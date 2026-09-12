@@ -80,7 +80,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     structuredPrecision = other.structuredPrecision;
   }
   Option<std::string> planner{*this, "planner", llvm::cl::init("existing"),
-      llvm::cl::desc("Planning engine: existing, logical (reference), logical-or-existing, structured")};
+      llvm::cl::desc("Planning engine: existing, logical (reference), logical-or-existing, structured, composition (experimental)")};
   Option<uint64_t> logicalWorkBudget{*this, "logical-work-budget", llvm::cl::init(kDefaultLogicalSyncWorkBudget),
       llvm::cl::desc("Reference logical engine work allowance (not used by structured)")};
   Option<std::string> gmAlias{*this, "gm-alias", llvm::cl::init(""),
@@ -89,7 +89,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
   Option<std::string> hardwareContract{*this, "hardware-contract", llvm::cl::init("conservative"),
       llvm::cl::desc("Structured hardware premises: conservative or a2a3-mmad-acc-v1 (experimental)")};
   Option<bool> structuredPrecision{*this, "structured-precision", llvm::cl::init(true),
-      llvm::cl::desc("Enable periodic precision (false exercises general conservative composition during migration)")};
+      llvm::cl::desc("Enable precision within composition; structured retains periodic precision during migration")};
 
   void initializeLogicalMetadata(func::FuncOp func) {
     SmallVector<StringAttr> stale;
@@ -105,7 +105,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
   // invokes upstream construction only after authored-event admission.
   // Name the engine that actually ran. Shared status attributes keep their
   // historical `logical_` spelling; only user-facing diagnostics change.
-  StringRef engineLabel() const { return planner == "structured" ? "structured" : "logical"; }
+  bool isStructuredEngine() const { return planner == "structured" || planner == "composition"; }
+  StringRef engineLabel() const { return isStructuredEngine() ? StringRef(planner) : "logical"; }
   bool tryLogical(func::FuncOp func, bool hasBarrier) {
     if (planner == "existing") return false;
     initializeLogicalMetadata(func);
@@ -114,6 +115,11 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     using Result = logical_sync::ConstructionResult;
     Result result;
     if (hasBarrier) result.reason = "explicit synchronization summary not established";
+    else if (planner == "composition")
+      result = structured_sync::constructCompositionalSync(func, *contract,
+          hardwareContract == "a2a3-mmad-acc-v1"
+              ? structured_sync::HardwareContract::A2A3MmadAccV1
+              : structured_sync::HardwareContract::Conservative, structuredPrecision);
     else if (planner == "structured")
       result = structured_sync::constructStructuredSync(func, *contract,
           hardwareContract == "a2a3-mmad-acc-v1"
@@ -131,6 +137,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     }
     auto i64 = IntegerType::get(&getContext(), 64);
     func->setAttr("pto.insert_sync.hardware_contract", StringAttr::get(&getContext(), hardwareContract));
+    if (isStructuredEngine())
+      func->setAttr("pto.insert_sync.precision", BoolAttr::get(&getContext(), structuredPrecision));
     func->setAttr("pto.insert_sync.logical_status", StringAttr::get(&getContext(), status));
     func->setAttr("pto.insert_sync.logical_reason", StringAttr::get(&getContext(), result.reason));
     func->setAttr("pto.insert_sync.logical_work", IntegerAttr::get(i64, result.work));
@@ -141,10 +149,10 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     if (result.status == Result::Applied) {
       func->setAttr("pto.gm_alias", StringAttr::get(&getContext(),
           *contract == InsertSyncGMAliasMode::MayAlias ? "may-alias" : "assume-disjoint-arguments"));
-      func->setAttr("pto.insert_sync.producer", StringAttr::get(&getContext(), planner == "structured" ? "structured" : "logical"));
+      func->setAttr("pto.insert_sync.producer", StringAttr::get(&getContext(), engineLabel()));
       return true;
     }
-    if (planner == "logical" || planner == "structured" || result.status == Result::InternalError) {
+    if (planner == "logical" || isStructuredEngine() || result.status == Result::InternalError) {
       func.emitError(engineLabel()) << " synchronization construction failed: " << status << "; " << result.reason;
       signalPassFailure(); return true;
     }
@@ -162,13 +170,13 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       return;
     }
 
-    if (planner != "existing" && planner != "logical" && planner != "logical-or-existing" && planner != "structured") {
-      func.emitError("InsertSync planner must be existing, logical, logical-or-existing, or structured");
+    if (planner != "existing" && planner != "logical" && planner != "logical-or-existing" && !isStructuredEngine()) {
+      func.emitError("InsertSync planner must be existing, logical, logical-or-existing, structured, or composition");
       signalPassFailure(); return;
     }
     if ((hardwareContract != "conservative" && hardwareContract != "a2a3-mmad-acc-v1") ||
-        (hardwareContract != "conservative" && planner != "structured")) {
-      func.emitError("hardware-contract requires structured and must be conservative or a2a3-mmad-acc-v1");
+        (hardwareContract != "conservative" && !isStructuredEngine())) {
+      func.emitError("hardware-contract requires structured or composition and must be conservative or a2a3-mmad-acc-v1");
       signalPassFailure(); return;
     }
     // Neither constructor imports authored event ownership. Classify once,
@@ -192,7 +200,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         func->setAttr("pto.insert_sync.logical_status", StringAttr::get(&getContext(), "unsupported"));
         func->setAttr("pto.insert_sync.logical_reason",
                       StringAttr::get(&getContext(), "authored event protocol has no qualified summary"));
-        if (planner == "logical" || planner == "structured") {
+        if (planner == "logical" || isStructuredEngine()) {
           func.emitError(engineLabel())
               << " synchronization construction failed: unsupported; authored event protocol has no qualified summary";
           signalPassFailure();

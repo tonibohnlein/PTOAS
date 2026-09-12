@@ -298,6 +298,11 @@ ptoas test/lit/pto/empty_func.pto
 # 运行 AutoSyncInsert Pass
 ptoas test/lit/pto/empty_func.pto --enable-insert-sync -o outputfile.cpp
 
+# Experimental general composition (opt-in; synchronization quality not yet qualified)
+# Precision true/false selects demand/baseline construction within the same engine.
+ptoas input.pto --pto-arch=a3 --enable-insert-sync --insert-sync-planner=composition \
+  --insert-sync-structured-precision=true -o outputfile.cpp
+
 # 指定目标硬件架构（A3 / A5）
 ptoas test/lit/pto/empty_func.pto --pto-arch=a5 -o outputfile.cpp
 

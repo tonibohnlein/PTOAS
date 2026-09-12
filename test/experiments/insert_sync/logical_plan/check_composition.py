@@ -40,6 +40,8 @@ def main():
     parser.add_argument('--python-root', type=Path,
                         help='also lower the pinned historical GEMM through the complete compiler to PTO and C++')
     parser.add_argument('--corpus-manifest', type=Path, action='append', default=[])
+    parser.add_argument('--corpus-constructor', choices=('conservative', 'demands'), default='conservative',
+                        help='corpus-only arm; native baseline mutation checks remain conservative')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -85,10 +87,15 @@ def main():
         return row
 
     def compile_case(name, source, gm='may-alias', category='native', expected=True):
-        return run(name, [args.opt, '--mlir-disable-threading',
-                   '--pto-insert-sync=planner=structured structured-precision=false '
+        demands = category == 'corpus' and args.corpus_constructor == 'demands'
+        planner = 'composition' if demands else 'structured'
+        precision = 'true' if demands else 'false'
+        row = run(name, [args.opt, '--mlir-disable-threading',
+                   f'--pto-insert-sync=planner={planner} structured-precision={precision} '
                    'logical-work-budget=0 gm-alias=' + gm, source],
                    source, category, expected)
+        row.update(planner=planner, precision=demands)
+        return row
 
     fixtures = HERE / 'structured_inputs'
     positive = ('composition_while_forwarding', 'nested_mixed_sequence',
@@ -178,6 +185,7 @@ def main():
     if args.python_root:
         binaries.extend(p for p in args.python_root.rglob('libPTOASCompiler*.so*') if p.is_file())
     summary = dict(schema='oahs.composition.validation.v1',
+                   corpus_constructor=args.corpus_constructor,
                    scope='native construction/reconstruction and raw/prepared compatibility; not device or whole-compilation performance',
                    revision=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                    dirty=subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True),

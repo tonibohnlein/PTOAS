@@ -22,6 +22,13 @@ logical_sync::ConstructionResult constructStructuredSync(
     func::FuncOp function, InsertSyncGMAliasMode gm,
     HardwareContract hardware = HardwareContract::Conservative,
     bool enablePrecision = true);
+// Explicit opt-in general engine. Both precision settings use the same
+// physical importer and structural composition; no legacy/symbolic fallback.
+// Precision enables the demand candidate, not replacement-quality acceptance.
+logical_sync::ConstructionResult constructCompositionalSync(
+    func::FuncOp function, InsertSyncGMAliasMode gm,
+    HardwareContract hardware = HardwareContract::Conservative,
+    bool enablePrecision = true);
 namespace testing {
 enum class CompositionConstructor { Conservative, Cuts, Demands, DemandsRejectRefinement, DemandsFallbackOnly };
 logical_sync::ConstructionResult constructCompositionalSync(

@@ -571,6 +571,14 @@ bool reconstruct(
 }
 } // namespace
 
+Outcome ss::constructCompositionalSync(
+    func::FuncOp function, InsertSyncGMAliasMode gm, HardwareContract hardware, bool enablePrecision)
+{
+    return testing::constructCompositionalSync(
+        function, gm, {}, hardware,
+        enablePrecision ? testing::CompositionConstructor::Demands : testing::CompositionConstructor::Conservative);
+}
+
 Outcome ss::testing::constructCompositionalSync(
     func::FuncOp function, InsertSyncGMAliasMode gm, llvm::function_ref<void(func::FuncOp)> mutate,
     HardwareContract hardware, CompositionConstructor constructor)
