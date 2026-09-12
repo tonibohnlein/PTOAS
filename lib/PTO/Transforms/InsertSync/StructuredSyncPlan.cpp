@@ -1956,7 +1956,8 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,
 }
 } // namespace
 Outcome mlir::pto::structured_sync::constructStructuredSync(
-    func::FuncOp f,InsertSyncGMAliasMode gm,HardwareContract hardware) {
+    func::FuncOp f,InsertSyncGMAliasMode gm,HardwareContract hardware,bool enablePrecision) {
+    if (!enablePrecision) return testing::constructCompositionalSync(f,gm,{},hardware);
     return run(f,gm,{},hardware);
 }
 Outcome mlir::pto::structured_sync::testing::constructWithEmissionMutation(

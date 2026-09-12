@@ -34,13 +34,15 @@ public:
                   MemoryDependentAnalyzer &memDepAnalyzer,
                   Buffer2MemInfoMap &buffer2MemInfoMap,
                   func::FuncOp func,
-                  SyncAnalysisMode syncAnalysisMode)
+                  SyncAnalysisMode syncAnalysisMode,
+                  bool conservativeStructuredForwarding = false)
     : func_(func), addressEvaluator_(func),
       index(0),
       syncIR_(syncIR), 
       buffer2MemInfoMap_(buffer2MemInfoMap),
       memAnalyzer_(memDepAnalyzer),
-      mode_(syncAnalysisMode) {
+      mode_(syncAnalysisMode),
+      conservativeStructuredForwarding_(conservativeStructuredForwarding) {
     (void)memAnalyzer_;
     (void)mode_;
   };
@@ -68,6 +70,7 @@ private:
   Buffer2MemInfoMap &buffer2MemInfoMap_;
   MemoryDependentAnalyzer &memAnalyzer_;
   SyncAnalysisMode mode_;
+  bool conservativeStructuredForwarding_ = false;
  
   // --- 递归遍历逻辑 ---
   void RecursionIR(Region *region);

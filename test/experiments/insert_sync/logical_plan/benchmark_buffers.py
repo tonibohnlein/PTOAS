@@ -1,9 +1,10 @@
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms of
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and limitations under the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 """Serial, repeated, paired compilation; seven-case coverage is always explicit.
 
 Mechanisms are deliberately not combined into a score. C++ generation starts
@@ -22,7 +23,7 @@ import time
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
-ARMS = ("existing", "structured", "logical")
+ARMS = ("existing", "structured", "logical", "composition")
 POPULATION = ("one_buffer", "two_buffer", "three_buffer", "four_use",
               "online_softmax", "qk_matmul", "q_proj")
 
@@ -165,19 +166,22 @@ def main():
                 pto = Path(str(stem) + ".pto")
                 command = [sys.executable, "-c", SERIAL_DRIVER, str(python_root),
                            "--pto-arch=a3", "--pto-level=level3", "--enable-insert-sync",
-                           f"--insert-sync-planner={arm}",
+                           f"--insert-sync-planner={'structured' if arm == 'composition' else arm}",
                            "--insert-sync-gm-alias=assume-disjoint-arguments",
                            "--emit-pto-ir", str(case["source"].resolve()), "-o", str(pto.resolve())]
-                if arm == "structured":
+                if arm in ("structured", "composition"):
                     command.insert(-4, "--insert-sync-logical-work-budget=0")
+                if arm == "composition":
+                    command.insert(-4, "--insert-sync-structured-precision=false")
                 result = invoke(command, stem, env, args.timeout)
                 result.update(round=repeat, arm=arm)
                 if result["status"] == "applied":
                     try:
                         report = analyze(pto)
                         projection = {key: report[key] for key in ("payload", "allocations", "views", "abi")}
-                        if arm in ("logical", "structured") and not any(
-                                attrs.get("pto.insert_sync.producer") == f'"{arm}"'
+                        producer = 'structured' if arm == 'composition' else arm
+                        if arm in ("logical", "structured", "composition") and not any(
+                                attrs.get("pto.insert_sync.producer") == f'"{producer}"'
                                 for attrs in report["status_attributes"]):
                             raise ValueError("the requested strict planner did not produce this output")
                         if reference is None:

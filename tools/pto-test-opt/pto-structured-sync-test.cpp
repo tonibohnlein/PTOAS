@@ -25,9 +25,12 @@ static std::string printed(Operation *op) {
     std::string text; llvm::raw_string_ostream stream(text); op->print(stream); return text;
 }
 int main(int argc,char **argv) {
-    if (argc!=4 && argc!=5) { llvm::errs()<<"input.pto mutation output.pto [conservative|a2a3-mmad-acc-v1]\n"; return 2; }
-    const StringRef contract=argc==5?StringRef(argv[4]):StringRef("conservative");
+    if (argc<4 || argc>6) { llvm::errs()<<"input.pto mutation output.pto [conservative|a2a3-mmad-acc-v1] [may-alias|assume-disjoint-arguments]\n"; return 2; }
+    const StringRef contract=argc>=5?StringRef(argv[4]):StringRef("conservative");
     if (contract!="conservative" && contract!="a2a3-mmad-acc-v1") return 2;
+    const StringRef alias=argc==6?StringRef(argv[5]):StringRef("assume-disjoint-arguments");
+    if (alias!="may-alias" && alias!="assume-disjoint-arguments") return 2;
+    auto gm=alias=="may-alias"?InsertSyncGMAliasMode::MayAlias:InsertSyncGMAliasMode::DisjointArguments;
     auto hardware=contract=="conservative"?structured_sync::HardwareContract::Conservative:
                                          structured_sync::HardwareContract::A2A3MmadAccV1;
     DialectRegistry registry;
@@ -39,6 +42,8 @@ int main(int argc,char **argv) {
     if (!arch || arch.getValue()=="a2a3") module->getOperation()->setAttr("pto.target_arch",StringAttr::get(&context,"a3"));
     auto function=*module->getOps<func::FuncOp>().begin();
     const auto before=printed(function); StringRef mode(argv[2]); bool changed=false;
+    const bool precision = mode.consume_front("cuts:");
+    const bool composition = precision || mode.consume_front("composition:");
     auto mutate=[&](func::FuncOp working) {
         if (mode=="none" || mode=="expect-unsupported") return;
         Operation *chosen=nullptr,*sequenceSource=nullptr,*retirementTarget=nullptr;
@@ -52,6 +57,29 @@ int main(int argc,char **argv) {
         };
         working.walk([&](Operation *op) {
             if (chosen) return;
+            if (precision && mode=="early-publication" && isa<SetFlagOp>(op) &&
+                op->getParentOfType<scf::ForOp>()) {
+                auto *previous=op->getPrevNode();
+                while(previous&&isa<SetFlagOp,WaitFlagOp,BarrierOp>(previous))previous=previous->getPrevNode();
+                if(previous&&isa<OpPipeInterface>(previous)) {chosen=op;sequenceSource=previous;}
+            }
+            if (precision && mode=="late-acquisition" && isa<WaitFlagOp>(op) &&
+                op->getParentOfType<scf::ForOp>()) {
+                auto *next=op->getNextNode();
+                while(next&&!isa<OpPipeInterface>(next))next=next->getNextNode();
+                while(next&&isa<SetFlagOp,WaitFlagOp,BarrierOp>(next))next=next->getNextNode();
+                if(next&&isa<OpPipeInterface>(next)) {chosen=op;sequenceSource=next;}
+            }
+            if (precision && mode=="drop-exit-ack" && isa<SetFlagOp>(op)) {
+                auto *previous=op->getPrevNode();
+                while(previous&&isa<SetFlagOp,WaitFlagOp,BarrierOp>(previous))previous=previous->getPrevNode();
+                if(previous&&isa<scf::ForOp>(previous))chosen=op;
+            }
+            if (composition && mode=="drop-named-barrier")
+                if (auto barrier=dyn_cast<BarrierOp>(op))
+                    if (barrier.getPipe().getPipe()!=PIPE::PIPE_ALL) chosen=op;
+            if (composition && (mode=="drop-packet" || mode=="late-packet" || mode=="wrong-reply-key") &&
+                isa<SetFlagOp>(op)) chosen=op;
             if(mode=="early-retirement"&&!retirementTarget&&isa<OpPipeInterface>(op)&&
                !isa<SetFlagOp,WaitFlagOp,BarrierOp>(op))retirementTarget=op;
             if (mode=="drop-m-to-mte1" || mode=="drop-m-to-fix")
@@ -171,6 +199,30 @@ int main(int argc,char **argv) {
             }
         });
         if (!chosen) return;
+        if (precision && mode=="early-publication") {
+            chosen->moveBefore(sequenceSource);changed=true;return;
+        }
+        if (precision && mode=="late-acquisition") {
+            chosen->moveAfter(sequenceSource);changed=true;return;
+        }
+        if (precision && mode=="drop-exit-ack") {chosen->erase();changed=true;return;}
+        if (composition && (mode=="drop-packet" || mode=="late-packet" || mode=="wrong-reply-key")) {
+            SmallVector<Operation *> packet;
+            for (Operation *op=chosen;op&&packet.size()<4;op=op->getNextNode())packet.push_back(op);
+            if(packet.size()!=4 || !isa<SetFlagOp>(packet[2]) || !isa<WaitFlagOp>(packet[3]))return;
+            if(mode=="drop-packet")for(auto *op:packet)op->erase();
+            else if(mode=="wrong-reply-key") {
+                auto reply=cast<SetFlagOp>(packet[2]);auto ack=cast<WaitFlagOp>(packet[3]);
+                auto key=EventAttr::get(&context,static_cast<EVENT>((unsigned(reply.getEventId().getEvent())+1)%6));
+                reply.setEventIdAttr(key);ack.setEventIdAttr(key);
+            } else {
+                Operation *consumer=packet.back()->getNextNode();
+                while(consumer&&!isa<OpPipeInterface>(consumer))consumer=consumer->getNextNode();
+                if(!consumer)return;
+                for(auto *op:packet){op->moveAfter(consumer);consumer=op;}
+            }
+            changed=true;return;
+        }
         if(mode=="early-retirement") {
             if(!retirementTarget||retirementTarget->getBlock()!=chosen->getBlock())return;
             chosen->moveBefore(retirementTarget);changed=true;
@@ -187,6 +239,7 @@ int main(int argc,char **argv) {
             chosen->moveBefore(&branch.getThenRegion().front(),branch.getThenRegion().front().begin());changed=true;
         }
         else if (mode=="drop-wait" || mode=="drop-set" || mode=="drop-retirement" ||
+            (composition && mode=="drop-named-barrier") ||
             mode=="drop-m-to-mte1" || mode=="drop-m-to-fix" ||
             mode=="drop-sequence-bridge") { chosen->erase(); changed=true; }
         else if (mode=="duplicate-set" || mode=="duplicate-coalesced") { OpBuilder b(chosen); b.setInsertionPointAfter(chosen); b.clone(*chosen); changed=true; }
@@ -221,8 +274,10 @@ int main(int argc,char **argv) {
                 if(isa<TLoadOp>(next)) { chosen->moveAfter(next); changed=true; break; }
         }
     };
-    auto result=structured_sync::testing::constructWithEmissionMutation(
-        function,InsertSyncGMAliasMode::DisjointArguments,mutate,hardware);
+    auto result=composition ? structured_sync::testing::constructCompositionalSync(
+        function,gm,mutate,hardware,precision) :
+        structured_sync::testing::constructWithEmissionMutation(
+        function,gm,mutate,hardware);
     using Result=logical_sync::ConstructionResult;
     bool applied=result.status==Result::Applied;
     bool expected=(mode=="none")?applied:
@@ -234,7 +289,7 @@ int main(int argc,char **argv) {
     if(error) { llvm::errs()<<error.message(); return 2; }
     module->print(output);
     llvm::outs()<<llvm::json::Value(llvm::json::Object{
-        {"hardware_contract",contract.str()},{"accepted",applied},{"mutation_applied",changed},{"expected",expected},{"atomic",preserved},
+        {"hardware_contract",contract.str()},{"gm_alias",alias.str()},{"accepted",applied},{"mutation_applied",changed},{"expected",expected},{"atomic",preserved},
         {"status",unsigned(result.status)},{"reason",result.reason},
         {"requirements",result.requirements},{"handoffs",result.handoffs},{"barriers",result.barriers},
         {"work_statistic",result.work}})<<"\n";

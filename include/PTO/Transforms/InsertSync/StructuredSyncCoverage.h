@@ -1,5 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// Licensed under CANN Open Software License Agreement Version 2.0.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 #ifndef PTO_TRANSFORMS_INSERTSYNC_STRUCTUREDSYNCCOVERAGE_H
 #define PTO_TRANSFORMS_INSERTSYNC_STRUCTUREDSYNCCOVERAGE_H
 
@@ -221,6 +226,8 @@ class Importer {
       compounds;
   SyncPhysicalFacts result;
   uint64_t fragments = 0;
+  bool compositional = false;
+  bool emitted = false;
 
   bool fail(StringRef kind, Operation *op = nullptr, StringRef detail = {}) {
     result.status = SyncPhysicalFacts::Status::Unsupported;
@@ -229,6 +236,10 @@ class Importer {
   }
 
   bool qualifyAccess(const BaseMemInfo *info, Operation *op, bool write) {
+    // Complete space/effect information suffices for conservative composition.
+    // Unknown intervals become a whole-space cell, never an absent access.
+    if (compositional && info && info->scope != AddressSpace::Zero)
+      return true;
     if (!info || info->scope == AddressSpace::Zero || info->aliasesUnknownRange)
       return fail(write ? "unqualified-write-footprint"
                         : "unqualified-read-footprint",
@@ -399,13 +410,14 @@ class Importer {
   // The parameter must not be named `region`: it would shadow this member and
   // make the recursive call below resolve to the Region itself.
   bool region(Region &body, unsigned depth) {
-    if (depth > 32)
+    if (!compositional && depth > 32)
       return fail("region-depth-limit");
     if (!llvm::hasSingleElement(body))
       return fail("unsupported-multi-block-region");
     for (Operation &op : body.front()) {
       ++result.work;
-      if (isa<scf::ForOp, scf::IfOp, SectionCubeOp, SectionVectorOp>(op)) {
+      if (isa<scf::ForOp, scf::IfOp, SectionCubeOp, SectionVectorOp>(op) ||
+          (compositional && isa<scf::WhileOp>(op))) {
         for (Region &child : op.getRegions())
           if (!child.empty() && !region(child, depth + 1))
             return false;
@@ -413,6 +425,8 @@ class Importer {
       }
       if (isa<scf::WhileOp>(op))
         return fail("unsupported-control-region", &op, "scf.while");
+      if (emitted && isa<SetFlagOp, WaitFlagOp, BarrierOp>(op))
+        continue; // independently parsed and verified from the actual IR
       if (isa<SetFlagOp, WaitFlagOp, BarrierOp, RecordEventOp, WaitEventOp>(op))
         return fail("explicit-synchronization-input", &op);
       if (getSyncMacroModel(&op))
@@ -481,7 +495,9 @@ class Importer {
   }
 
 public:
-  Importer(func::FuncOp f, const SyncIRs &ir) : function(f) {
+  Importer(func::FuncOp f, const SyncIRs &ir, bool composition = false,
+           bool actual = false)
+      : function(f), compositional(composition), emitted(actual) {
     for (const auto &element : ir)
       if (auto *phase = dyn_cast<CompoundInstanceElement>(element.get()))
         if (phase->elementOp)
@@ -533,8 +549,9 @@ public:
 } // namespace structured_sync_coverage_detail
 
 inline SyncPhysicalFacts importCoverageStructuredSyncPhysicalFacts(
-    func::FuncOp function, const SyncIRs &ir) {
-  return structured_sync_coverage_detail::Importer(function, ir).run();
+    func::FuncOp function, const SyncIRs &ir, bool compositional = false,
+    bool emitted = false) {
+  return structured_sync_coverage_detail::Importer(function, ir, compositional, emitted).run();
 }
 
 

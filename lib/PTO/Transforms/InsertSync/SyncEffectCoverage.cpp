@@ -114,9 +114,6 @@ bool scalarDescriptorInput(Value input)
         if (!visited.insert(value).second) {
             continue;
         }
-        if (visited.size() > 256) {
-            return false;
-        }
         if (auto argument = dyn_cast<BlockArgument>(value)) {
             if (isa<func::FuncOp>(argument.getOwner()->getParentOp())) {
                 continue;
@@ -125,9 +122,42 @@ bool scalarDescriptorInput(Value input)
             if (loop && argument == loop.getInductionVar()) {
                 continue;
             }
+            if (loop) {
+                unsigned i = argument.getArgNumber() - 1;
+                pending.push_back(loop.getInitArgs()[i]);
+                pending.push_back(cast<scf::YieldOp>(loop.getBody()->getTerminator()).getOperand(i));
+                continue;
+            }
+            if (auto loop = dyn_cast<scf::WhileOp>(argument.getOwner()->getParentOp())) {
+                unsigned i = argument.getArgNumber();
+                if (argument.getOwner() == loop.getBeforeBody()) {
+                    pending.push_back(loop.getInits()[i]);
+                    pending.push_back(cast<scf::YieldOp>(loop.getAfterBody()->getTerminator()).getOperand(i));
+                } else {
+                    pending.push_back(loop.getConditionOp().getArgs()[i]);
+                }
+                continue;
+            }
             return false;
         }
         Operation* op = value.getDefiningOp();
+        if (auto result = dyn_cast<OpResult>(value)) {
+            unsigned i = result.getResultNumber();
+            if (auto branch = dyn_cast<scf::IfOp>(op)) {
+                for (Region &arm : branch->getRegions())
+                    pending.push_back(cast<scf::YieldOp>(arm.front().getTerminator()).getOperand(i));
+                continue;
+            }
+            if (auto loop = dyn_cast<scf::ForOp>(op)) {
+                pending.push_back(loop.getInitArgs()[i]);
+                pending.push_back(cast<scf::YieldOp>(loop.getBody()->getTerminator()).getOperand(i));
+                continue;
+            }
+            if (auto loop = dyn_cast<scf::WhileOp>(op)) {
+                pending.push_back(loop.getConditionOp().getArgs()[i]);
+                continue;
+            }
+        }
         if (!op || isa<OpPipeInterface>(op) || !isMemoryEffectFree(op) || op->getNumRegions()) {
             return false;
         }
