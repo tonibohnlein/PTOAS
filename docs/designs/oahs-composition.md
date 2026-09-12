@@ -1,4 +1,4 @@
-# Compositional OAHS: baseline and cut-precision candidate
+# Compositional OAHS: baseline, cut prototype, and demand constructor
 
 ## Status and migration boundary
 
@@ -12,7 +12,9 @@ During migration, precision enabled (the existing default) still uses the
 previous implementation. This is deliberately temporary: it is not a claim
 that the old constructor has already become a compositional precision provider.
 Do not switch the default merely because baseline admission or compilation time
-improves. The seven-case readiness/release/overlap gate remains required.
+improves. The current readiness/release/overlap gate includes the original seven
+cases and the frozen historical GEMM. Older seven-case results below retain
+their original population and are not retroactively eight-case measurements.
 
 The amended direction is an evolution of InsertSync's physical translation and
 structural traversal, not a claim that forward traversal or prefix sharing is
@@ -22,6 +24,13 @@ sequences, `scf.if`, `scf.for` and `scf.while` without periodic precision. The
 new cut-precision candidate uses that same engine and target contracts, but is
 currently exposed **only in the native test driver** as `cuts:none`.
 It has not replaced the old precision-enabled backend.
+
+The next increment is available as `demands:none` in the native test driver.
+It constructs direct transfers from physical completion demands without calling
+`discoverCuts()` or constructing per-cell cycles. It is still a **migration
+candidate**, not completion of the four-milestone replacement plan. In
+particular, cross-domain incoming placement, rotating-generation precision,
+whole-compiler candidate timing, and replacement qualification remain open.
 
 The positive operation/effect registry and selected A2/A3 hardware contract are
 retained. Moving that registry to a lowering-owned operation interface remains
@@ -312,13 +321,217 @@ separately; a green CTest alone does not authorize the backend switch.
 
 ## Remaining work before replacement acceptance
 
-1. Add backward incoming/continuation demand cuts, including first-consumer and
-   empty-path participation. Recover softmax and QK boundaries without draining
-   unrelated work or inventing completion across a zero-trip loop.
+1. Complete incoming/continuation demand cuts across execution domains,
+   including first-consumer and empty-path participation. The increment below
+   implements same-domain placement and sharing, not this whole milestone.
+   Recover softmax and QK boundaries without draining unrelated work or
+   inventing completion across a zero-trip loop.
 2. Extend finite slot-generation and first/last precision through the same
    transfer/protocol interfaces. The old dense constructor is not yet a bounded
    provider and must not become a hidden fallback.
-3. Move audited positive effect contracts into the lowering-owned interface.
+3. Integrate qualified precision into the general engine's normal path and
+   move audited positive effect contracts into the lowering-owned interface.
 4. Pass readiness/release quality, final whole-suite checks and device
    qualification separately. Then remove shape-admission/sequence-bridge paths
    and switch the existing structured default.
+
+## Demand-constructor increment
+
+`CompletionDemand` names an original structural scope, publication cut,
+acquisition cut, producer, observer, and physical-cell witnesses. It has no
+event number. A forward physical-history pass chooses the last relevant
+producer access in a sequence; a backward continuation pass computes the last
+use of each prospective prefix. A nested child contributes its MAY effects at
+its common exit. No branch predicate or numerical trip count is solved.
+
+The completion transfer captures prospective source prefixes at these cuts and
+acquires one only when it discharges the complete current source demand. At
+most eight prospective cuts per source are retained. Later payload is added to
+every remaining-prefix receipt, so an earlier publication cannot complete a
+newer access to the same cell. Loss of a prospective snapshot means ordinary
+conservative acquisition, not loss of an actual event. Same-observer demands
+over several cells naturally share one required producer prefix.
+
+Direct SET/WAIT endpoints currently belong to the same sequence execution
+domain. Incoming demand in a child can therefore still publish at that child's
+entry, rather than at the ideal outside producer cut. A publication outside a
+possibly empty loop is **not** paired with an unconditional per-iteration WAIT.
+Supporting that placement requires the remaining incoming/first-consumer
+participation work. This limitation must stay visible in QK and GEMM results.
+
+### Protocol sharing and reconstruction
+
+The allocator reserves the canonical rendezvous keys and assigns other keys
+across the whole function. Cell witnesses do not receive independent pools.
+Several same-direction transfers within one domain share one acknowledgment.
+Required return handoffs can discharge that acknowledgment instead: a bounded
+pass removes an optional reply only when the actual protocol still proves all
+consumption-before-republication obligations. No readiness/release endpoint is
+removed by this pass. Scarcity retains the conservative realization.
+
+The checker independently reads actual mechanisms, requires each direct key's
+SET and WAIT to have one common structural execution domain, and prohibits
+sharing that key with an independently executing domain. A vector-clock check
+on two copies of the static event word proves each consumption-to-next-SET
+edge. Because each key has one publication and acquisition per word and the
+edges repeat under translation, this is a periodic protocol certificate—not
+the assumption that two arbitrary loop executions establish program safety.
+Nested words have disjoint keys; skipped words leave no partial publication.
+SET does not advance the source issue gate.
+
+Actual canonical rendezvous packets are expanded into their four commands and
+checked by the same two-copy vector-clock routine. Their fixed global
+orientation and reserved keys justify sequential reuse across nested/skipped
+regions; this does not claim arbitrary independently concurrent domain reuse.
+The shared optional reply follows the last forward WAIT but can precede its
+consumer payload: it acknowledges event consumption, not consumer completion
+or storage release. Construction takes no payload completion credit for it.
+
+Fresh prefix transfer then checks original physical effects, independently of
+the constructor's demands and family membership. Native emission retains the
+payload snapshot and physical-context retirement checks. A failed emitted-IR
+check remains an atomic error; it never triggers successful fallback.
+
+### Bounded completion invariants
+
+For a fixed actual plan, the conservative loop invariant is `Top = E | S`.
+One monotone transfer gives the narrower inductive invariant `E | F(Top)`.
+The checker proves the physical accesses under it and explicitly checks
+backedge closure. The probe does not check hazards or recursively initiate new
+probes; the subsequent verifying visit does. Across the entire tree, probes
+are limited to **two additional tree visits**, including nested loops.
+
+The same rule applies to a local physical cell whose accesses all occur within
+one sequence inside a loop. Its initial history is empty, and only visits to
+that sequence can create history. `F(Top)` is an invariant over visits, including
+arbitrarily skipped visits. Incoming completion can strengthen this invariant;
+it is not discarded. Ownership here is an analysis property of the original
+physical access population, not a new target ownership mechanism. GM visibility
+and actual event state are never cleared by narrowing.
+
+Construction makes at most one further attempt using these established
+invariants. The resulting plan must independently establish its own invariants
+before emission; otherwise the first plan is retained. Trace counters distinguish
+direct handoffs, retained/reused acknowledgments, fallback acquisitions, and
+accepted/rejected completion refinement. Visitor counts are transfer statistics,
+not wall-clock or byte-allocation budgets.
+
+### Validation and migration status
+
+The finite oracle now accepts per-node, per-invocation trip counts and branch
+choices. Tests include independently varying siblings, zero-trip visits,
+`while` exits, repeated whole-program calls with the same keys, missing return
+paths, moved publications, scarce pools, multi-cell prefix sharing, and bounded
+work at 128 levels of nesting.
+
+`Program` explicitly requires cells-sized zero effect vectors on structural
+nodes; only physical Operation leaves carry effects. All six constructor/checker
+entry points test this contract. Native test-only modes force a one-key fallback
+pool and corrupt an optional pre-emission refinement. The latter must retain the
+initial verified plan; an actual emitted-IR verification failure still fails
+atomically. Native traces assert direct-prefix reuse, fallback packet execution,
+owned-cell narrowing, accepted refinement, and rejected-refinement rollback.
+The fallback fixture runs nested, empty, skipped, and repeated whole-function
+executions with the same observer/key population and has packet-corruption tests.
+
+Transactional staging now preserves the transitive symbol closure and original
+module scopes. Native tests retain real helper calls, test nested symbol
+shadowing, and reject missing/invalid contracts. These test the kernel
+constructor, not a claim that running the whole-function pass independently on
+every private helper body is qualified.
+
+`demand_manifest.json` freezes eight inputs, their alias assumptions, and replay
+scenarios. The historical input retains its payload and original pairwise alias
+attribute; only obsolete canonical-pass RUN/CHECK comments were removed.
+`benchmark_buffers.py` now uses this eight-case manifest. The previous
+`checkpoint/manifest.json` stays unchanged for historical comparisons.
+
+Run the candidate correctness/observation campaign serially:
+
+```sh
+python test/experiments/insert_sync/logical_plan/check_cuts.py \
+  --constructor demands --driver "$BUILD/tools/pto-test-opt/pto-structured-sync-test" \
+  --python-root "$BUILD/python" --output "$RESULTS/demands"
+```
+
+Add `--require-quality` to require both non-worsening observed completion
+boundaries and non-increasing executed synchronization in every frozen scenario.
+Static mechanisms, initialization/retirement traffic, input/output hashes,
+actual binary provenance, and commands are recorded separately. A passing
+`oahs_demands` CTest does **not** mean the quality gate passed. Normalization of
+native output is not a whole-compiler timing result for the candidate.
+
+The previous corpus admission counts do not qualify this new constructor.
+No default is changed; no device or handwritten-GEMM performance conclusion is
+claimed. Full corpus parity, first-consumer placement across control domains,
+bounded generation precision, and the final compiler/device gates are still
+required before the migration is complete.
+
+### Local measurements for this increment
+
+These measurements are from the working-tree increment over `fccb51b40571`,
+not a released or device-qualified revision. The targeted native build
+succeeded. The six composition/demand/cut/structured
+CTests passed; the final standalone C++17 ASan/UBSan run passed **2,139,545
+assertions**. LeakSanitizer was disabled because this runtime does not support
+its process inspection. Independent varying-trip tests are finite evidence,
+not a device or unbounded-execution proof.
+
+All eight frozen candidate inputs passed native construction/reconstruction
+and full-compiler PTO normalization. The historical GEMM also emitted C++.
+All seven native corruption checks rejected atomically. Static mechanism
+counts below exclude the one terminal `PIPE_ALL` present in each output:
+
+| Input | InsertSync SET / WAIT / named barriers | Demand candidate |
+| --- | ---: | ---: |
+| One buffer | 6 / 6 / 0 | 4 / 4 / 1 |
+| Two buffers | 12 / 12 / 2 | 8 / 8 / 2 |
+| Three buffers | 18 / 18 / 3 | 16 / 16 / 2 |
+| Four use | 24 / 24 / 2 | 28 / 28 / 4 |
+| Online softmax | 12 / 12 / 20 | 11 / 11 / 21 |
+| QK matmul | 21 / 21 / 2 | 16 / 16 / 4 |
+| Q projection | 19 / 19 / 6 | 19 / 19 / 5 |
+| Historical GEMM | 44 / 44 / 21 | 63 / 63 / 20 |
+
+**Quality acceptance is false.** Fewer static sites do not establish better
+overlap: seven cases still have later-prefix observations, and five have at
+least one frozen scenario with more executed synchronization. In particular,
+GEMM is compilable but still over-synchronized. These results do not justify a
+default switch or a performance-improvement claim.
+
+The separate conservative-baseline corpus rerun retained exactly the same
+197 passing `(input ID, prepared-source hash)` pairs among 363 inputs as the
+previous campaign: no admissions gained or lost. This is baseline regression
+evidence, **not** a corpus sweep of `constructDemands`.
+
+The local build stores detailed hashes, commands and observations in
+`test-results/oahs-demands-quality/summary.json` and baseline compatibility in
+`test-results/oahs-demand-baseline-corpus/summary.json`. These are local campaign
+artifacts, not checked-in qualification certificates. The checked-in manifest
+and runner above reproduce the eight-case comparison without those artifacts.
+The initial `oahs_focused` run could not locate `libisl`. Review found the GCC
+copy outside the normal loader search path; setting
+`PTOAS_EVENT_MODEL_ISL_LIBRARY=/usr/lib/gcc/x86_64-redhat-linux/15/libisl.so.23`
+enabled all 15 checks preceding allocation. That run then failed the existing
+over-capacity fixture: nine readers of one load correctly share one stream,
+so they never exercised the intended scarce-domain policy. The repaired fixture
+overwrites the shared input between consumers, retaining the original strict
+scarce-domain requirement. Its exact expectation is 17 total streams, with
+eight dedicated reverse streams and one dedicated forward stream; at least
+eight occupied-key trials exercise sharing in the nine-stream forward domain.
+The **complete focused gate passed in 149.17 seconds** with this fixture.
+The repaired composition/core/demand gates also passed, including explicit
+refinement rollback and canonical-packet mutation checks.
+Device and candidate paired whole-compilation timing gates were not run.
+
+All 13 InsertSync lit tests passed before the review-only checker additions;
+the focused rerun includes all 13 observation-runner unit tests, including
+the new constructor-specific report-schema test.
+The lit tests used the existing Python-binding build with multithreading
+disabled and one test worker; the default local launcher selects an
+incompatible Python and cannot import `ptoas._core`. No repository RUN lines
+were changed to bypass compiler checks.
+The full 1,880-test lit campaign was also attempted with the corrected serial
+launcher, but stopped incomplete before the 10-minute campaign cap after its
+observed rate made completion within that cap infeasible. It is **not** a
+full-suite pass; only the completed 13-test subset is counted above.

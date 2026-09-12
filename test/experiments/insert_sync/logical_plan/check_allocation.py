@@ -1,10 +1,11 @@
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms of
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and limitations under the License.
-"""Exercise the native fitting-pool event-key trial policy."""
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+"""Exercise native fitting and scarce directed-domain event-key trial policies."""
 import argparse
 import json
 import os
@@ -17,6 +18,23 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 from observations import SERIAL_DRIVER, population
 from check_scalability import source_for
+
+
+def alternating_streams(count):
+    # N V readers of one load need only ONE incoming MTE2 prefix. Overwrite the
+    # shared input between V consumers to create distinct ready/release streams.
+    lines, load, consumers = [], None, 0
+    for line in source_for(count, False).splitlines():
+        if line.strip().startswith('pto.tload '):
+            load = line
+        if line.strip().startswith('pto.tabs '):
+            if consumers:
+                assert load is not None
+                lines.append(load)
+            consumers += 1
+        lines.append(line)
+    assert consumers == count
+    return '\n'.join(lines) + '\n'
 
 
 def compile_case(case, source, output, python_root, env):
@@ -49,13 +67,17 @@ def main():
     assert 0 < streams <= 8, fit_values
     assert dedicated == streams and sharing_trials == 0, fit_values
     over_source = args.output / "over_capacity.pto"
-    over_source.write_text(source_for(9, False))
+    over_source.write_text(alternating_streams(9))
     over_command, over_values = compile_case("over_capacity", over_source,
                                                args.output / "over_capacity.logical.pto",
                                                args.python_root, env)
     over_dedicated, over_sharing, over_streams = over_values
-    assert over_streams > 8, over_values
-    assert over_dedicated <= 8 and over_sharing > 0, over_values
+    # Nine MTE2->V readiness streams are scarce; eight V->MTE2 release
+    # streams fit their SEPARATE directed pool. Sharing-first dedicates only
+    # the first ready stream; the fitting reverse domain dedicates all eight.
+    # A global <=8 dedicated bound would incorrectly combine those pools.
+    assert over_streams == 17, over_values
+    assert over_dedicated == 9 and over_sharing >= 8, over_values
     (args.output / "summary.json").write_text(json.dumps({
         "fitting_pool": {"case": case["case_id"], "dedicated": dedicated,
                           "sharing_trials": sharing_trials, "streams": streams,

@@ -36,6 +36,8 @@ struct State {
 struct Node {
     enum Kind { Operation, Sequence, Choice, For, While } kind = Sequence;
     unsigned lane = 0;
+    // Only Operation nodes carry physical effects. Structural nodes must have
+    // a cells-sized zero vector; their MAY summaries are derived from children.
     Effects effects;
     // Postorder, strictly smaller child IDs. For has one body, While has before
     // and after, Choice has both arms (an omitted else is an empty Sequence).
@@ -54,12 +56,24 @@ struct Mechanism {
     unsigned forwardKey = 0, reverseKey = 0;
     bool operator==(const Mechanism& other) const;
 };
+// Unnumbered completion obligation at original structural cuts. Cell witnesses
+// explain why the producer prefix is needed; they do not own event resources.
+struct CompletionDemand {
+    unsigned scope = 0, publication = 0, acquisition = 0;
+    unsigned source = 0, observer = 0;
+    std::vector<unsigned> cells;
+};
 struct Result {
     bool success = false;
     std::string reason;
     std::vector<std::vector<Mechanism>> before;
     uint64_t nodeVisits = 0, cellVisits = 0, acquisitions = 0;
     uint64_t cutCycles = 0, allocationRetries = 0;
+    uint64_t directHandoffs = 0, sharedAcknowledgments = 0, demandFallbacks = 0;
+    uint64_t reusedAcknowledgments = 0;
+    uint64_t completionRefinements = 0, rejectedRefinements = 0;
+    uint64_t ownedRefinements = 0;
+    std::vector<CompletionDemand> demands;
 };
 // One summary pass and one structural transfer. No trip-count enumeration,
 // symbolic arithmetic, dense closure, or iterative loop invariant discovery.
@@ -71,5 +85,14 @@ Result verify(const Program& program, const std::vector<std::vector<Mechanism>>&
 // precision leaves the general transfer in place; it is never an admission rule.
 Result constructCuts(const Program& program);
 Result verifyCuts(const Program& program, const std::vector<std::vector<Mechanism>>& actual);
+// Demand-driven migration candidate. Direct placement/sharing are independent
+// of cycle recognition; unmatched structural domains retain conservative transfer.
+Result constructDemands(const Program& program);
+Result verifyDemands(const Program& program, const std::vector<std::vector<Mechanism>>& actual);
+namespace testing {
+// Fault injection before refinement checking/emission, never on the initial
+// plan: discard the optional candidate's mechanisms to exercise exact rollback.
+Result constructDemandsRejectingRefinement(const Program& program);
+} // namespace testing
 } // namespace mlir::pto::structured_sync::composition
 #endif

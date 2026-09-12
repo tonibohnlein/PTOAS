@@ -13,6 +13,13 @@ from observations import project
 from ptoas.mlir import ir
 from ptoas.mlir.dialects import pto
 
+class BenchmarkSchemaTests(unittest.TestCase):
+    def test_constructor_reports_are_distinct(self):
+        from check_cuts import report_schema
+        self.assertEqual(report_schema('demands'), 'oahs.demands.validation.v1')
+        self.assertEqual(report_schema('cuts'), 'oahs.cuts.validation.v1')
+
+
 class BoundaryTests(unittest.TestCase):
     @staticmethod
     def flag(source, target, key="0"):

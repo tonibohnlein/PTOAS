@@ -98,6 +98,31 @@ def main():
     for name in positive:
         source = fixtures / (name + '.pto')
         compile_case(name, source, gm='assume-disjoint-arguments')
+    source = fixtures / 'composition_retained_helper.pto'
+    for mode in ('none', 'drop-wait', 'wrong-key'):
+        row = run('retained-helper-' + mode,
+                  [args.driver, source, 'composition:' + mode,
+                   args.output / ('helper-' + mode + '.pto')], source, 'mutation', True)
+        if not row['verdict']['atomic'] or not row['verdict']['expected']:
+            raise RuntimeError('retained helper reconstruction failed')
+    helper_text = source.read_text()
+    for name, text, mode in (
+        ('missing-helper-contract', helper_text.replace(', pto.tileop.effects = ["read"]', '', 1),
+         'expect-unsupported'),
+        ('invalid-helper-effect', helper_text.replace('pto.tileop.effects = ["read"]',
+                                                      'pto.tileop.effects = ["unknown"]', 1),
+         'expect-unsupported'),
+        ('shadowed-helper', helper_text.replace(
+            '  func.func @test',
+            '  func.func private @read_tile() attributes {pto.tileop.effects = ["unknown"]}\n'
+            '  module @nested attributes {pto.target_arch = "a3"} {\n  func.func @test', 1)
+         .rstrip() + '\n}\n', 'none')):
+        prepared = args.output / (name + '.pto')
+        prepared.write_text(text)
+        row = run(name, [args.driver, prepared, 'composition:' + mode,
+                        args.output / (name + '.output.pto')], prepared, 'mutation', True)
+        if not row['verdict']['atomic'] or not row['verdict']['expected']:
+            raise RuntimeError('staged helper lookup/contract regression: ' + name)
     for name in ('section_outside_config', 'section_outside_async_descriptor',
                  'section_outside_physical', 'missing_positive_contract'):
         compile_case(name, fixtures / (name + '.pto'), expected=False)

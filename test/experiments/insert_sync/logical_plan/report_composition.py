@@ -48,9 +48,9 @@ def main():
                            gained=sorted(after-before), lost=sorted(before-after)))
 
     sys.path.insert(0, str(args.python_root.resolve()))
-    from observations import population
+    from benchmark_buffers import demand_population
     from compare_boundaries import run, compare
-    cases = {case['case_id']: case for case in population()}
+    cases = {case['case_id']: case for case in demand_population()}
     benchmark = json.loads(args.benchmark.read_text())
     quality = []
     for row in benchmark['rows']:

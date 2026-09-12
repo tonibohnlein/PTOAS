@@ -75,7 +75,8 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
             return false;
         }
         for (const auto& e : n.effects)
-            if ((e.readers | e.writers) & ~(1u << n.lane)) {
+            if (((e.readers | e.writers) & ~(1u << n.lane)) ||
+                (n.kind != c::Node::Operation && (e.readers || e.writers))) {
                 reason = "effect lane differs from operation lane";
                 return false;
             }
@@ -608,11 +609,15 @@ struct PrefixState : c::State {
         auto it = receipts.find({m.first, m.second, m.forwardKey});
         if (it == receipts.end())
             return;
-        for (unsigned cell = 0; cell < it->second.size(); ++cell) {
-            pending[m.second][cell].readers &= it->second[cell].readers;
-            pending[m.second][cell].writers &= it->second[cell].writers;
-        }
+        acquireRemaining(m.second, it->second);
         receipts.erase(it);
+    }
+    void acquireRemaining(unsigned observer, const c::Effects& remaining)
+    {
+        for (unsigned cell = 0; cell < remaining.size(); ++cell) {
+            pending[observer][cell].readers &= remaining[cell].readers;
+            pending[observer][cell].writers &= remaining[cell].writers;
+        }
     }
 };
 } // namespace
@@ -964,4 +969,629 @@ c::Result c::verifyCuts(const Program& p, const std::vector<std::vector<Mechanis
     PrefixState state(p.cells);
     result.success = check(p.nodes.size() - 1, state);
     return result;
+}
+
+namespace {
+// Static demand placement, independent of event numbering and periodic words.
+// A previous child contributes its full MAY effects at its common exit. Within
+// one sequence the last relevant read/write on a lane names a sufficient
+// prefix, even when that child is an arbitrary conditional or nested loop.
+struct DemandAnalysis {
+    std::vector<c::Effects> effects;
+    std::vector<uint64_t> subtreeNodes;
+    std::vector<std::vector<unsigned>> owned;
+    std::vector<unsigned> parent;
+    std::vector<std::vector<c::CompletionDemand>> requests;
+    std::vector<std::set<unsigned>> capture;
+    std::vector<std::vector<PrefixState::EventKey>> release;
+    bool build(const c::Program& p, std::string& reason)
+    {
+        if (!summarize(p, effects, reason))
+            return false;
+        parent.assign(p.nodes.size(), NoCut);
+        subtreeNodes.assign(p.nodes.size(), 1);
+        requests.resize(p.nodes.size());
+        capture.resize(p.nodes.size());
+        release.resize(p.nodes.size());
+        owned.resize(p.nodes.size());
+        for (unsigned scope = 0; scope < p.nodes.size(); ++scope) {
+            const auto& children = p.nodes[scope].children;
+            for (auto child : children)
+                parent[child] = scope;
+            for (auto child : children)
+                subtreeNodes[scope] += subtreeNodes[child];
+            if (p.nodes[scope].kind != c::Node::Sequence || children.empty())
+                continue;
+            using Positions = std::array<int, c::LaneCount>;
+            Positions missing;
+            missing.fill(-1);
+            std::vector<Positions> reads(p.cells, missing), writes(p.cells, missing);
+            for (unsigned index = 0; index < children.size(); ++index) {
+                unsigned child = children[index];
+                const auto& n = p.nodes[child];
+                if (n.kind == c::Node::Operation)
+                    for (unsigned source = 0; source < c::LaneCount; ++source) {
+                        if (source == n.lane)
+                            continue;
+                        c::CompletionDemand demand{scope, children.front(), child, source, n.lane, {}};
+                        int last = -1;
+                        for (unsigned cell = 0; cell < p.cells; ++cell) {
+                            const auto& e = n.effects[cell];
+                            if (e.readers || e.writers) {
+                                demand.cells.push_back(cell);
+                                last = std::max(last, writes[cell][source]);
+                            }
+                            if (e.writers)
+                                last = std::max(last, reads[cell][source]);
+                        }
+                        if (demand.cells.empty())
+                            continue;
+                        if (last >= 0)
+                            demand.publication = children[last + 1];
+                        capture[demand.publication].insert(source);
+                        requests[child].push_back(std::move(demand));
+                    }
+                for (unsigned cell = 0; cell < p.cells; ++cell)
+                    for (unsigned source = 0; source < c::LaneCount; ++source) {
+                        if (effects[child][cell].readers & (1u << source))
+                            reads[cell][source] = index;
+                        if (effects[child][cell].writers & (1u << source))
+                            writes[cell][source] = index;
+                    }
+            }
+            // Backward continuation demand: keep a prospective prefix only
+            // until its last possible consumer in this execution domain. This
+            // is independent of which proposals the forward pass will need.
+            std::set<PrefixState::EventKey> needed;
+            for (auto it = children.rbegin(); it != children.rend(); ++it)
+                for (const auto& demand : requests[*it]) {
+                    PrefixState::EventKey cut{demand.source, demand.source, demand.publication};
+                    if (needed.insert(cut).second)
+                        release[*it].push_back(cut);
+                }
+        }
+        // Find the smallest sequence containing every access to a physical
+        // cell. No access outside that domain can create new history for it.
+        // The LCA of its first/last DFS accesses contains all intervening ones.
+        // This costs O(nodes + cells * depth), with the fixed cell bound.
+        std::vector<unsigned> first(p.cells, NoCut), last(p.cells, NoCut), depth(p.nodes.size());
+        std::function<void(unsigned)> walk = [&](unsigned id) {
+            if (p.nodes[id].kind == c::Node::Operation)
+                for (unsigned cell = 0; cell < p.cells; ++cell)
+                    if (p.nodes[id].effects[cell].readers || p.nodes[id].effects[cell].writers) {
+                        if (first[cell] == NoCut)
+                            first[cell] = id;
+                        last[cell] = id;
+                    }
+            for (unsigned child : p.nodes[id].children) {
+                depth[child] = depth[id] + 1;
+                walk(child);
+            }
+        };
+        walk(p.nodes.size() - 1);
+        for (unsigned cell = 0; cell < p.cells; ++cell) {
+            if (first[cell] == NoCut || (!p.globalMemory.empty() && p.globalMemory[cell]))
+                continue;
+            unsigned a = first[cell], b = last[cell];
+            while (a != b) {
+                if (depth[a] >= depth[b])
+                    a = parent[a];
+                else
+                    b = parent[b];
+            }
+            while (a != NoCut && p.nodes[a].kind != c::Node::Sequence)
+                a = parent[a];
+            if (a != NoCut) {
+                unsigned enclosing = parent[a];
+                while (enclosing != NoCut && p.nodes[enclosing].kind != c::Node::For &&
+                       p.nodes[enclosing].kind != c::Node::While)
+                    enclosing = parent[enclosing];
+                if (enclosing != NoCut)
+                    owned[a].push_back(cell);
+            }
+        }
+        return true;
+    }
+};
+
+// Verify one closed protocol word and the rearm edges to its next copy. SET
+// observes the source prefix but does not gate later source issue. Callers
+// validate target directions, keys, and the structural execution domain.
+bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reason)
+{
+    using Clock = std::array<uint64_t, c::LaneCount>;
+    std::array<Clock, c::LaneCount> gates{};
+    Clock serial{};
+    struct Token {
+        Clock prefix{};
+        uint64_t consumed = 0;
+        bool live = false;
+    };
+    std::map<PrefixState::EventKey, Token> tokens;
+    for (unsigned repetition = 0; repetition < 2; ++repetition) {
+        for (const auto& m : word) {
+            auto& token = tokens[{m.first, m.second, m.forwardKey}];
+            if (m.kind == c::Mechanism::Publish) {
+                if (token.live || gates[m.first][m.second] < token.consumed) {
+                    reason = "demand publication can rearm before consumption";
+                    return false;
+                }
+                token.prefix = gates[m.first];
+                token.live = true;
+            } else {
+                if (!token.live) {
+                    reason = "demand acquisition has no participating publication";
+                    return false;
+                }
+                auto& target = gates[m.second];
+                for (unsigned lane = 0; lane < c::LaneCount; ++lane)
+                    target[lane] = std::max(target[lane], token.prefix[lane]);
+                target[m.second] = ++serial[m.second];
+                token.consumed = target[m.second];
+                token.live = false;
+            }
+        }
+        for (const auto& [key, token] : tokens)
+            if (token.live) {
+                reason = "demand protocol exports an unmatched publication";
+                return false;
+            }
+    }
+    return true;
+}
+
+// The checker derives closed protocol words from actual IR, not from demands
+// or constructor families. Each raw key has one SET and WAIT in one structural
+// execution domain and is exclusive to it. Two concatenated copies establish
+// every consumption -> next publication edge in the periodic word; translating
+// those edges proves arbitrary repetitions and skips of the whole domain.
+// Nested domains use disjoint keys and need not finish their payload on return.
+bool verifyDemandProtocols(
+    const c::Program& p, const DemandAnalysis& analysis, const std::vector<std::vector<c::Mechanism>>& actual,
+    std::string& reason)
+{
+    using Key = PrefixState::EventKey;
+    struct Population {
+        unsigned scope = NoCut, sets = 0, waits = 0;
+    };
+    std::map<Key, Population> population;
+    std::map<unsigned, std::vector<c::Mechanism>> words;
+    for (unsigned scope = 0; scope < p.nodes.size(); ++scope)
+        if (p.nodes[scope].kind == c::Node::Sequence)
+            for (unsigned child : p.nodes[scope].children)
+                for (const auto& m : actual[child])
+                    if (m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire)
+                        words[scope].push_back(m);
+    for (unsigned id = 0; id < actual.size(); ++id)
+        for (const auto& m : actual[id]) {
+            if (validMechanism(p, m)) {
+                // Actual canonical packets are complete-or-skipped templates.
+                // Their fixed global orientation/keys permit sequential reuse
+                // across nested domains, unlike independently numbered raw
+                // words. Check the expanded template without flattening those
+                // domains or imposing raw-key single-site constraints on it.
+                if (m.kind == c::Mechanism::Rendezvous &&
+                    !verifyProtocolWord(
+                        {event(c::Mechanism::Publish, m.first, m.second, m.forwardKey),
+                         event(c::Mechanism::Acquire, m.first, m.second, m.forwardKey),
+                         event(c::Mechanism::Publish, m.second, m.first, m.reverseKey),
+                         event(c::Mechanism::Acquire, m.second, m.first, m.reverseKey)},
+                        reason))
+                    return false;
+                continue;
+            }
+            if ((m.kind != c::Mechanism::Publish && m.kind != c::Mechanism::Acquire) || m.first >= c::LaneCount ||
+                m.second >= c::LaneCount || !p.target.event(lane(p, m.first), lane(p, m.second)) ||
+                !p.target.available(lane(p, m.first), lane(p, m.second), m.forwardKey) ||
+                std::find(p.target.compilerKeys.begin(), p.target.compilerKeys.end(), m.forwardKey) ==
+                    p.target.compilerKeys.end() ||
+                key(p, m.first, m.second) == m.forwardKey || analysis.parent[id] == NoCut ||
+                p.nodes[analysis.parent[id]].kind != c::Node::Sequence) {
+                reason = "invalid demand protocol mechanism or execution domain";
+                return false;
+            }
+            auto& pop = population[{m.first, m.second, m.forwardKey}];
+            if (pop.scope != NoCut && pop.scope != analysis.parent[id]) {
+                reason = "event key shared by independently executing domains";
+                return false;
+            }
+            pop.scope = analysis.parent[id];
+            (m.kind == c::Mechanism::Publish ? pop.sets : pop.waits)++;
+        }
+    for (const auto& [key, pop] : population)
+        if (pop.sets != 1 || pop.waits != 1) {
+            reason = "demand key needs one publication and acquisition per domain visit";
+            return false;
+        }
+    for (const auto& [scope, word] : words)
+        if (!verifyProtocolWord(word, reason))
+            return false;
+    return true;
+}
+} // namespace
+
+namespace {
+using DemandInvariants = std::map<unsigned, c::State>;
+c::Result verifyDemandImpl(
+    const c::Program& p, const std::vector<std::vector<c::Mechanism>>& actual, DemandInvariants* invariants);
+c::Result constructDemandCandidate(const c::Program& p, const DemandInvariants* invariants)
+{
+    using namespace c;
+    c::Result result;
+    DemandAnalysis analysis;
+    if (!analysis.build(p, result.reason))
+        return result;
+    result.before.resize(p.nodes.size());
+    std::vector<std::vector<Mechanism>> publications(p.nodes.size());
+    using Direction = std::pair<unsigned, unsigned>;
+    using FamilyKey = std::tuple<unsigned, unsigned, unsigned>;
+    struct Family {
+        unsigned acknowledgment, last;
+    };
+    std::map<FamilyKey, Family> families;
+    std::map<Direction, std::set<unsigned>> occupied;
+    auto allocate = [&](unsigned a, unsigned b, auto& trial) -> std::optional<unsigned> {
+        if (!p.target.event(lane(p, a), lane(p, b)))
+            return {};
+        for (unsigned k : p.target.compilerKeys)
+            if (key(p, a, b) != k && p.target.available(lane(p, a), lane(p, b), k) && !trial[{a, b}].count(k)) {
+                trial[{a, b}].insert(k);
+                return k;
+            }
+        return {};
+    };
+    std::function<bool(unsigned, PrefixState&)> visit = [&](unsigned id, PrefixState& state) {
+        ++result.nodeVisits;
+        result.cellVisits += p.cells * LaneCount;
+        if (invariants && !analysis.owned[id].empty()) {
+            auto found = invariants->find(id);
+            if (found != invariants->end())
+                for (unsigned observer = 0; observer < LaneCount; ++observer)
+                    for (unsigned cell : analysis.owned[id]) {
+                        auto& h = state.pending[observer][cell];
+                        h.readers &= found->second.pending[observer][cell].readers;
+                        h.writers &= found->second.pending[observer][cell].writers;
+                    }
+        }
+        // Prospective publications are pure snapshots, not assumed hardware
+        // actions. Keep at most eight cuts per source, independently of IR size.
+        // Discarding a proposal loses precision, never an outstanding event.
+        for (unsigned source : analysis.capture[id]) {
+            unsigned count = 0;
+            for (const auto& entry : state.receipts)
+                count += std::get<0>(entry.first) == source;
+            if (count >= MaxAlternatives) {
+                auto old = std::find_if(state.receipts.begin(), state.receipts.end(), [&](const auto& entry) {
+                    return std::get<0>(entry.first) == source;
+                });
+                state.receipts.erase(old);
+            }
+            state.publish(event(Mechanism::Publish, source, source, id));
+        }
+        const auto& n = p.nodes[id];
+        if (n.kind == Node::Operation) {
+            if (needsVisibility(p, n, state)) {
+                result.reason = "visibility has no qualified compositional realization";
+                return false;
+            }
+            for (unsigned source = 0; source < LaneCount; ++source) {
+                if (!(state.demands(n.lane, n.effects) & (1u << source)))
+                    continue;
+                ++result.acquisitions;
+                bool direct = false;
+                for (const auto& demand : analysis.requests[id]) {
+                    if (demand.source != source)
+                        continue;
+                    auto receipt = state.receipts.find({source, source, demand.publication});
+                    if (receipt == state.receipts.end())
+                        break;
+                    // The complete current demand, not just its local cell
+                    // witnesses, must be discharged by the proposed prefix.
+                    auto trialState = state;
+                    trialState.acquireRemaining(n.lane, receipt->second);
+                    if (trialState.demands(n.lane, n.effects) & (1u << source))
+                        break;
+                    FamilyKey familyKey{demand.scope, source, n.lane};
+                    auto family = families.find(familyKey);
+                    auto trial = occupied;
+                    auto forward = allocate(source, n.lane, trial);
+                    auto ack = family == families.end() ? allocate(n.lane, source, trial) :
+                                                          std::optional<unsigned>(family->second.acknowledgment);
+                    if (!forward || !ack)
+                        break;
+                    occupied = std::move(trial);
+                    families[familyKey] = {*ack, id};
+                    publications[demand.publication].push_back(event(Mechanism::Publish, source, n.lane, *forward));
+                    result.before[id].push_back(event(Mechanism::Acquire, source, n.lane, *forward));
+                    state.acquireRemaining(n.lane, receipt->second);
+                    result.demands.push_back(demand);
+                    ++result.directHandoffs;
+                    direct = true;
+                    break;
+                }
+                if (!direct) {
+                    ++result.demandFallbacks;
+                    if (!acquire(p, source, n.lane, state, result.before[id])) {
+                        result.reason = "target cannot realize remaining completion demand";
+                        return false;
+                    }
+                }
+            }
+            state.seed(n.effects);
+            for (const auto& cut : analysis.release[id])
+                state.receipts.erase(cut);
+            return true;
+        }
+        if (n.kind == Node::Choice) {
+            auto other = state;
+            if (!visit(n.children[0], state) || !visit(n.children[1], other))
+                return false;
+            state.join(other);
+            return true;
+        }
+        if (n.kind == Node::For || n.kind == Node::While) {
+            auto entry = state;
+            state.seed(analysis.effects[id]);
+            if (invariants) {
+                auto found = invariants->find(id);
+                if (found != invariants->end())
+                    for (unsigned observer = 0; observer < LaneCount; ++observer)
+                        for (unsigned cell = 0; cell < p.cells; ++cell) {
+                            auto& h = state.pending[observer][cell];
+                            const auto& hint = found->second.pending[observer][cell];
+                            const auto& incoming = entry.pending[observer][cell];
+                            h.readers = (h.readers & hint.readers) | incoming.readers;
+                            h.writers = (h.writers & hint.writers) | incoming.writers;
+                        }
+            }
+            if (!visit(n.children[0], state))
+                return false;
+            if (n.kind == Node::While) {
+                auto exit = state;
+                if (!visit(n.children[1], state))
+                    return false;
+                state = std::move(exit);
+            } else
+                state.join(entry);
+            return true;
+        }
+        for (unsigned child : n.children)
+            if (!visit(child, state))
+                return false;
+        return true;
+    };
+    PrefixState state(p.cells);
+    result.success = visit(p.nodes.size() - 1, state);
+    if (!result.success) {
+        result.before.clear();
+        return result;
+    }
+    // One reply can acknowledge several different storage demands. Its SET
+    // follows every family acquisition on the observer lane. The reply WAIT
+    // gates the source before the next visit's publications. Do not give the
+    // forward constructor unearned payload completion credit for this reply.
+    for (const auto& [key, family] : families) {
+        auto [scope, source, observer] = key;
+        result.before[family.last].push_back(event(Mechanism::Publish, observer, source, family.acknowledgment));
+        result.before[family.last].push_back(event(Mechanism::Acquire, observer, source, family.acknowledgment));
+        ++result.sharedAcknowledgments;
+    }
+    for (unsigned id = 0; id < publications.size(); ++id)
+        result.before[id].insert(result.before[id].begin(), publications[id].begin(), publications[id].end());
+    // Prefer the return causality already supplied by required handoffs. Each
+    // trial removes only an optional reply, never a physical demand or a
+    // readiness/release endpoint. The number of trials is bounded by the fixed
+    // key pool. There is no completion-closure replay or coloring search.
+    for (const auto& [familyKey, family] : families) {
+        auto [scope, source, observer] = familyKey;
+        auto& commands = result.before[family.last];
+        auto saved = commands;
+        commands.erase(
+            std::remove_if(
+                commands.begin(), commands.end(),
+                [sourceLane = source, targetLane = observer, ack = family.acknowledgment](const auto& m) {
+                    return (m.kind == Mechanism::Publish || m.kind == Mechanism::Acquire) && m.first == targetLane &&
+                           m.second == sourceLane && m.forwardKey == ack;
+                }),
+            commands.end());
+        std::string why;
+        if (!verifyDemandProtocols(p, analysis, result.before, why))
+            commands = std::move(saved);
+        else {
+            --result.sharedAcknowledgments;
+            ++result.reusedAcknowledgments;
+        }
+    }
+    return result;
+}
+
+c::Result verifyDemandImpl(
+    const c::Program& p, const std::vector<std::vector<c::Mechanism>>& actual, DemandInvariants* invariants)
+{
+    using namespace c;
+    c::Result result;
+    DemandAnalysis analysis;
+    if (actual.size() != p.nodes.size() || !analysis.build(p, result.reason) ||
+        !verifyDemandProtocols(p, analysis, actual, result.reason))
+        return result;
+    // Fresh physical requirements and actual event-prefix transfer. No chosen
+    // demand, source-cut proposal, family membership, or initialization receipt
+    // is consumed by this checker.
+    uint64_t probeBudget = 2 * p.nodes.size();
+    std::function<bool(unsigned, PrefixState&, bool)> check = [&](unsigned id, PrefixState& state, bool validate) {
+        ++result.nodeVisits;
+        result.cellVisits += p.cells * LaneCount;
+        for (const auto& m : actual[id]) {
+            if (m.kind == Mechanism::Publish)
+                state.publish(m);
+            else if (m.kind == Mechanism::Acquire) {
+                if (!state.receipts.count({m.first, m.second, m.forwardKey})) {
+                    result.reason = "missing actual demand publication receipt";
+                    return false;
+                }
+                state.acquirePrefix(m);
+            } else
+                apply(state, m);
+        }
+        const auto& n = p.nodes[id];
+        bool narrowedOwned = false;
+        State ownedSeed;
+        if (validate && !analysis.owned[id].empty() && analysis.subtreeNodes[id] - 1 <= probeBudget) {
+            ++result.ownedRefinements;
+            probeBudget -= analysis.subtreeNodes[id] - 1;
+            auto probe = state;
+            for (unsigned observer = 0; observer < LaneCount; ++observer)
+                for (unsigned cell : analysis.owned[id])
+                    probe.pending[observer][cell] = analysis.effects[id][cell];
+            for (unsigned child : n.children)
+                if (!check(child, probe, false))
+                    return false;
+            // Initial owned-cell history is empty. All later visits inherit
+            // only this domain's effects; outside payload cannot invalidate
+            // completion for these cells. F(Top) is an inductive visit invariant,
+            // even when enclosing conditionals skip arbitrarily many visits.
+            for (unsigned observer = 0; observer < LaneCount; ++observer)
+                for (unsigned cell : analysis.owned[id]) {
+                    auto& h = state.pending[observer][cell];
+                    h.readers &= probe.pending[observer][cell].readers;
+                    h.writers &= probe.pending[observer][cell].writers;
+                }
+            ownedSeed = probe;
+            narrowedOwned = true;
+            if (invariants)
+                (*invariants)[id] = ownedSeed;
+        }
+        if (n.kind == Node::Operation) {
+            if (validate && (needsVisibility(p, n, state) || state.demands(n.lane, n.effects))) {
+                result.reason = "uncovered physical demand or GM visibility requirement";
+                return false;
+            }
+            state.seed(n.effects);
+            return true;
+        }
+        if (n.kind == Node::Choice) {
+            auto other = state;
+            if (!check(n.children[0], state, validate) || !check(n.children[1], other, validate))
+                return false;
+            state.join(other);
+            return true;
+        }
+        if (n.kind == Node::For || n.kind == Node::While) {
+            auto entry = state;
+            state.seed(analysis.effects[id]);
+            // Bounded invariant narrowing for a FIXED actual plan. Top=E|S
+            // is inductive. Monotonicity gives E|F(Top) <= Top, itself an
+            // inductive invariant. The probe checks no hazards and recursively
+            // uses only the conservative rule; the real visit below proves all
+            // accesses and checks closure. At most two extra whole-tree visits
+            // are allowed across ALL nested loops, not two visits per depth.
+            uint64_t cost = analysis.subtreeNodes[id] - 1;
+            if (validate && cost <= probeBudget) {
+                probeBudget -= cost;
+                auto probe = state;
+                for (unsigned child : n.children)
+                    if (!check(child, probe, false))
+                        return false;
+                for (unsigned observer = 0; observer < LaneCount; ++observer)
+                    for (unsigned cell = 0; cell < p.cells; ++cell) {
+                        auto& h = state.pending[observer][cell];
+                        h.readers = entry.pending[observer][cell].readers | probe.pending[observer][cell].readers;
+                        h.writers = entry.pending[observer][cell].writers | probe.pending[observer][cell].writers;
+                    }
+            }
+            State seed = state;
+            if (validate && invariants)
+                (*invariants)[id] = seed;
+            if (!check(n.children[0], state, validate))
+                return false;
+            auto exit = state;
+            if (n.kind == Node::While) {
+                if (!check(n.children[1], state, validate))
+                    return false;
+            }
+            if (validate)
+                for (unsigned observer = 0; observer < LaneCount; ++observer)
+                    for (unsigned cell = 0; cell < p.cells; ++cell) {
+                        const auto& out = state.pending[observer][cell];
+                        const auto& in = seed.pending[observer][cell];
+                        if ((out.readers & ~in.readers) || (out.writers & ~in.writers)) {
+                            result.reason = "demand loop completion invariant did not close";
+                            return false;
+                        }
+                    }
+            if (n.kind == Node::While)
+                state = std::move(exit);
+            else
+                state.join(entry);
+            return true;
+        }
+        for (unsigned child : n.children)
+            if (!check(child, state, validate))
+                return false;
+        if (narrowedOwned)
+            for (unsigned observer = 0; observer < LaneCount; ++observer)
+                for (unsigned cell : analysis.owned[id]) {
+                    const auto& out = state.pending[observer][cell];
+                    const auto& in = ownedSeed.pending[observer][cell];
+                    if ((out.readers & ~in.readers) || (out.writers & ~in.writers)) {
+                        result.reason = "owned-cell completion invariant did not close";
+                        return false;
+                    }
+                }
+        return true;
+    };
+    PrefixState state(p.cells);
+    result.success = check(p.nodes.size() - 1, state, true);
+    return result;
+}
+} // namespace
+
+namespace {
+c::Result constructDemandsImpl(const c::Program& p, bool corruptRefinement)
+{
+    auto initial = constructDemandCandidate(p, nullptr);
+    if (!initial.success)
+        return initial;
+    DemandInvariants invariants;
+    auto checked = verifyDemandImpl(p, initial.before, &invariants);
+    if (!checked.success) {
+        initial.success = false;
+        initial.reason = checked.reason;
+        initial.before.clear();
+        return initial;
+    }
+    if (invariants.empty()) {
+        initial.cellVisits += checked.cellVisits;
+        initial.nodeVisits += checked.nodeVisits;
+        return initial;
+    }
+    // Exactly one optional reconstruction using already proved prefix
+    // invariants. The candidate must prove its OWN invariant independently.
+    // This happens before native emission; a failed emitted-IR checker is never
+    // converted into fallback success.
+    auto refined = constructDemandCandidate(p, &invariants);
+    if (corruptRefinement)
+        for (auto& commands : refined.before)
+            commands.clear();
+    auto rechecked = refined.success ? verifyDemandImpl(p, refined.before, nullptr) : c::Result{};
+    if (refined.success && rechecked.success) {
+        refined.cellVisits += initial.cellVisits + checked.cellVisits + rechecked.cellVisits;
+        refined.nodeVisits += initial.nodeVisits + checked.nodeVisits + rechecked.nodeVisits;
+        refined.completionRefinements = 1;
+        return refined;
+    }
+    initial.cellVisits += checked.cellVisits + refined.cellVisits + rechecked.cellVisits;
+    initial.nodeVisits += checked.nodeVisits + refined.nodeVisits + rechecked.nodeVisits;
+    initial.completionRefinements = 1;
+    initial.rejectedRefinements = 1;
+    return initial;
+}
+} // namespace
+
+c::Result c::constructDemands(const Program& p) { return constructDemandsImpl(p, false); }
+c::Result c::testing::constructDemandsRejectingRefinement(const Program& p) { return constructDemandsImpl(p, true); }
+
+c::Result c::verifyDemands(const Program& p, const std::vector<std::vector<Mechanism>>& actual)
+{
+    return verifyDemandImpl(p, actual, nullptr);
 }

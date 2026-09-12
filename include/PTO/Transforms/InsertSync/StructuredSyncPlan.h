@@ -23,11 +23,12 @@ logical_sync::ConstructionResult constructStructuredSync(
     HardwareContract hardware = HardwareContract::Conservative,
     bool enablePrecision = true);
 namespace testing {
+enum class CompositionConstructor { Conservative, Cuts, Demands, DemandsRejectRefinement, DemandsFallbackOnly };
 logical_sync::ConstructionResult constructCompositionalSync(
     func::FuncOp function, InsertSyncGMAliasMode gm,
     llvm::function_ref<void(func::FuncOp)> mutate,
     HardwareContract hardware = HardwareContract::Conservative,
-    bool precision = false);
+    CompositionConstructor constructor = CompositionConstructor::Conservative);
 logical_sync::ConstructionResult constructWithEmissionMutation(
     func::FuncOp function, InsertSyncGMAliasMode gm,
     llvm::function_ref<void(func::FuncOp)> mutate,

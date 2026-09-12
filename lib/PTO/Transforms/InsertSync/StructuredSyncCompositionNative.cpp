@@ -11,11 +11,13 @@
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncPayloadSnapshot.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <functional>
 #include <map>
 #include <set>
 
@@ -53,6 +55,69 @@ PIPE pipe(unsigned id)
     return pipes[id];
 }
 bool sync(Operation* op) { return isa<SetFlagOp, WaitFlagOp, BarrierOp>(op); }
+
+// Stage the immutable symbol closure as well as the kernel. Physical helper
+// contracts and pure bodies are resolved by the translator/importer through
+// ordinary symbol lookup, including during fresh reconstruction. Only the
+// working kernel body is ever committed back to the original module.
+bool stageDependencies(Operation* root, llvm::DenseMap<Operation*, Operation*>& copies, std::string& reason)
+{
+    std::function<Operation*(Operation*)> scope = [&](Operation* original) -> Operation* {
+        auto found = copies.find(original);
+        if (found != copies.end())
+            return found->second;
+        auto module = dyn_cast_or_null<ModuleOp>(original);
+        if (!module)
+            return nullptr;
+        Operation* parent = scope(module->getParentOp());
+        if (!parent || !isa<ModuleOp>(parent))
+            return nullptr;
+        auto clone = ModuleOp::create(module.getLoc());
+        clone->setAttrs(module->getAttrs());
+        cast<ModuleOp>(parent).getBody()->push_back(clone);
+        copies[original] = clone;
+        return clone;
+    };
+    std::vector<Operation*> pending{root};
+    while (!pending.empty()) {
+        Operation* original = pending.back();
+        pending.pop_back();
+        auto uses = SymbolTable::getSymbolUses(original);
+        if (!uses) {
+            reason = "cannot enumerate staged helper symbol dependencies";
+            return false;
+        }
+        for (const auto& use : *uses) {
+            Operation* symbol = SymbolTable::lookupNearestSymbolFrom(use.getUser(), use.getSymbolRef());
+            if (!symbol) {
+                reason = "unresolved staged helper symbol dependency";
+                return false;
+            }
+            if (copies.count(symbol))
+                continue;
+            // Symbols defined inside an already cloned definition travelled
+            // with it; do not clone those a second time into an outer scope.
+            bool contained = false;
+            for (Operation* ancestor = symbol->getParentOp(); ancestor; ancestor = ancestor->getParentOp())
+                if (copies.count(ancestor) && !isa<ModuleOp>(ancestor)) {
+                    contained = true;
+                    break;
+                }
+            if (contained)
+                continue;
+            Operation* parent = scope(symbol->getParentOp());
+            if (!parent || !isa<ModuleOp>(parent)) {
+                reason = "unsupported staged helper symbol scope";
+                return false;
+            }
+            Operation* clone = symbol->clone();
+            cast<ModuleOp>(parent).getBody()->push_back(clone);
+            copies[symbol] = clone;
+            pending.push_back(symbol);
+        }
+    }
+    return true;
+}
 
 struct Inventory {
     func::FuncOp function;
@@ -508,8 +573,12 @@ bool reconstruct(
 
 Outcome ss::testing::constructCompositionalSync(
     func::FuncOp function, InsertSyncGMAliasMode gm, llvm::function_ref<void(func::FuncOp)> mutate,
-    HardwareContract hardware, bool precision)
+    HardwareContract hardware, CompositionConstructor constructor)
 {
+    const bool precision = constructor == CompositionConstructor::Cuts;
+    const bool rejectRefinement = constructor == CompositionConstructor::DemandsRejectRefinement;
+    const bool fallbackOnly = constructor == CompositionConstructor::DemandsFallbackOnly;
+    const bool demandPlacement = constructor == CompositionConstructor::Demands || rejectRefinement || fallbackOnly;
     Outcome out;
     if (function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         out.reason = "composition requires a single function block";
@@ -526,15 +595,20 @@ Outcome ss::testing::constructCompositionalSync(
         if (auto module = dyn_cast<ModuleOp>(op))
             ancestors.push_back(module);
     ModuleOp parent = *stage;
+    llvm::DenseMap<Operation*, Operation*> stagedSymbols;
     for (auto module : llvm::reverse(ancestors)) {
         auto child = ModuleOp::create(module.getLoc());
         child->setAttrs(module->getAttrs());
         parent.getBody()->push_back(child);
         parent = child;
+        stagedSymbols[module] = child;
     }
     IRMapping mapping;
     auto working = cast<func::FuncOp>(function->clone(mapping));
     parent.getBody()->push_back(working);
+    stagedSymbols[function] = working;
+    if (!stageDependencies(function, stagedSymbols, out.reason))
+        return out;
     Inventory inventory(working);
     if (!inventory.build()) {
         out.reason = inventory.reason;
@@ -545,7 +619,12 @@ Outcome ss::testing::constructCompositionalSync(
         out.reason = tree.reason;
         return out;
     }
-    auto selected = precision ? c::constructCuts(tree.program) : c::construct(tree.program);
+    if (fallbackOnly)
+        tree.program.target.compilerKeys = {0};
+    auto selected = rejectRefinement ? c::testing::constructDemandsRejectingRefinement(tree.program) :
+                    demandPlacement  ? c::constructDemands(tree.program) :
+                    precision        ? c::constructCuts(tree.program) :
+                                       c::construct(tree.program);
     if (!selected.success) {
         out.reason = selected.reason;
         return out;
@@ -613,21 +692,27 @@ Outcome ss::testing::constructCompositionalSync(
             return out;
         }
     }
+    if (fallbackOnly)
+        rebuilt.program.target.compilerKeys = {0};
     std::vector<std::vector<c::Mechanism>> actual;
     if (!reconstruct(rebuilt, drain, actual, out.reason, precision))
         return out;
-    auto checked = precision ? c::verifyCuts(rebuilt.program, actual) : c::verify(rebuilt.program, actual);
+    auto checked = demandPlacement ? c::verifyDemands(rebuilt.program, actual) :
+                   precision       ? c::verifyCuts(rebuilt.program, actual) :
+                                     c::verify(rebuilt.program, actual);
     if (!checked.success) {
         out.reason = checked.reason;
         return out;
     }
+    unsigned rendezvousPackets = 0;
     for (const auto& site : actual)
         for (const auto& m : site) {
             if (m.kind == c::Mechanism::Barrier)
                 ++out.barriers;
-            else if (m.kind == c::Mechanism::Rendezvous)
+            else if (m.kind == c::Mechanism::Rendezvous) {
+                ++rendezvousPackets;
                 out.handoffs += 2;
-            else if (m.kind == c::Mechanism::Publish)
+            } else if (m.kind == c::Mechanism::Publish)
                 ++out.handoffs;
         }
     out.requirements = selected.acquisitions;
@@ -636,11 +721,17 @@ Outcome ss::testing::constructCompositionalSync(
     out.reason = "compositional storage, completion, reusable protocols and retirement verified";
     function.getBody().takeBody(working.getBody());
     if (std::getenv("PTOAS_LOGICAL_TRACE"))
-        llvm::errs() << "structured composition precision " << precision << " nodes " << tree.program.nodes.size()
-                     << " cells " << tree.program.cells << " widened_spaces " << tree.widenedSpaces << " node_visits "
-                     << selected.nodeVisits + checked.nodeVisits << " cell_visits " << out.work << " handoffs "
-                     << out.handoffs << " cut_cycles " << checked.cutCycles << " allocation_retries "
-                     << selected.allocationRetries << " barriers " << out.barriers << " seconds "
+        llvm::errs() << "structured composition precision " << precision << " demands " << demandPlacement
+                     << " direct_handoffs " << selected.directHandoffs << " shared_acknowledgments "
+                     << selected.sharedAcknowledgments << " reused_acknowledgments " << selected.reusedAcknowledgments
+                     << " completion_refinements " << selected.completionRefinements << " rejected_refinements "
+                     << selected.rejectedRefinements << " owned_refinements " << checked.ownedRefinements
+                     << " rendezvous_packets " << rendezvousPackets << " demand_fallbacks " << selected.demandFallbacks
+                     << " nodes " << tree.program.nodes.size() << " cells " << tree.program.cells << " widened_spaces "
+                     << tree.widenedSpaces << " node_visits " << selected.nodeVisits + checked.nodeVisits
+                     << " cell_visits " << out.work << " handoffs " << out.handoffs << " cut_cycles "
+                     << checked.cutCycles << " allocation_retries " << selected.allocationRetries << " barriers "
+                     << out.barriers << " seconds "
                      << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() << "\n";
     return out;
 }

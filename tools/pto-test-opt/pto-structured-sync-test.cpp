@@ -37,13 +37,22 @@ int main(int argc,char **argv) {
     registry.insert<PTODialect,func::FuncDialect,scf::SCFDialect,arith::ArithDialect,DLTIDialect>();
     MLIRContext context(registry,MLIRContext::Threading::DISABLED);
     auto module=parseSourceFile<ModuleOp>(argv[1],&context);
-    if (!module || !llvm::hasSingleElement(module->getOps<func::FuncOp>())) return 2;
+    if (!module) return 2;
+    SmallVector<func::FuncOp> kernels;
+    module->walk([&](func::FuncOp f) {
+        if (!f.isPrivate() && !f.isDeclaration()) kernels.push_back(f);
+    });
+    if (kernels.size()!=1) return 2;
     auto arch=module->getOperation()->getAttrOfType<StringAttr>("pto.target_arch");
     if (!arch || arch.getValue()=="a2a3") module->getOperation()->setAttr("pto.target_arch",StringAttr::get(&context,"a3"));
-    auto function=*module->getOps<func::FuncOp>().begin();
+    auto function=kernels.front();
     const auto before=printed(function); StringRef mode(argv[2]); bool changed=false;
+    const bool demandPlacement = mode.consume_front("demands:");
+    const bool fallbackOnly = demandPlacement && mode.consume_front("fallback:");
+    const bool rejectRefinement = demandPlacement && mode=="reject-refinement";
+    if (rejectRefinement) mode="none";
     const bool precision = mode.consume_front("cuts:");
-    const bool composition = precision || mode.consume_front("composition:");
+    const bool composition = demandPlacement || precision || mode.consume_front("composition:");
     auto mutate=[&](func::FuncOp working) {
         if (mode=="none" || mode=="expect-unsupported") return;
         Operation *chosen=nullptr,*sequenceSource=nullptr,*retirementTarget=nullptr;
@@ -57,13 +66,13 @@ int main(int argc,char **argv) {
         };
         working.walk([&](Operation *op) {
             if (chosen) return;
-            if (precision && mode=="early-publication" && isa<SetFlagOp>(op) &&
+            if ((precision || demandPlacement) && mode=="early-publication" && isa<SetFlagOp>(op) &&
                 op->getParentOfType<scf::ForOp>()) {
                 auto *previous=op->getPrevNode();
                 while(previous&&isa<SetFlagOp,WaitFlagOp,BarrierOp>(previous))previous=previous->getPrevNode();
                 if(previous&&isa<OpPipeInterface>(previous)) {chosen=op;sequenceSource=previous;}
             }
-            if (precision && mode=="late-acquisition" && isa<WaitFlagOp>(op) &&
+            if ((precision || demandPlacement) && mode=="late-acquisition" && isa<WaitFlagOp>(op) &&
                 op->getParentOfType<scf::ForOp>()) {
                 auto *next=op->getNextNode();
                 while(next&&!isa<OpPipeInterface>(next))next=next->getNextNode();
@@ -199,10 +208,10 @@ int main(int argc,char **argv) {
             }
         });
         if (!chosen) return;
-        if (precision && mode=="early-publication") {
+        if ((precision || demandPlacement) && mode=="early-publication") {
             chosen->moveBefore(sequenceSource);changed=true;return;
         }
-        if (precision && mode=="late-acquisition") {
+        if ((precision || demandPlacement) && mode=="late-acquisition") {
             chosen->moveAfter(sequenceSource);changed=true;return;
         }
         if (precision && mode=="drop-exit-ack") {chosen->erase();changed=true;return;}
@@ -274,8 +283,12 @@ int main(int argc,char **argv) {
                 if(isa<TLoadOp>(next)) { chosen->moveAfter(next); changed=true; break; }
         }
     };
+    using Constructor=structured_sync::testing::CompositionConstructor;
     auto result=composition ? structured_sync::testing::constructCompositionalSync(
-        function,gm,mutate,hardware,precision) :
+        function,gm,mutate,hardware,rejectRefinement?Constructor::DemandsRejectRefinement:
+            fallbackOnly?Constructor::DemandsFallbackOnly:
+            demandPlacement?Constructor::Demands:
+            precision?Constructor::Cuts:Constructor::Conservative) :
         structured_sync::testing::constructWithEmissionMutation(
         function,gm,mutate,hardware);
     using Result=logical_sync::ConstructionResult;

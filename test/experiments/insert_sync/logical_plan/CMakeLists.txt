@@ -70,6 +70,13 @@ if(TARGET pto-structured-sync-test AND PTO_ENABLE_PYTHON_BINDING)
       --python-root "${CMAKE_BINARY_DIR}/python"
       --output "${CMAKE_BINARY_DIR}/test-results/oahs-cuts")
   set_tests_properties(oahs_cuts PROPERTIES LABELS "OAHS" RUN_SERIAL TRUE)
+  add_test(NAME oahs_demands
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/check_cuts.py"
+      --constructor demands
+      --driver "$<TARGET_FILE:pto-structured-sync-test>"
+      --python-root "${CMAKE_BINARY_DIR}/python"
+      --output "${CMAKE_BINARY_DIR}/test-results/oahs-demands")
+  set_tests_properties(oahs_demands PROPERTIES LABELS "OAHS" RUN_SERIAL TRUE)
   add_test(NAME oahs_structured_core COMMAND pto-structured-core-test)
   add_test(NAME oahs_structured
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/check_structured.py"

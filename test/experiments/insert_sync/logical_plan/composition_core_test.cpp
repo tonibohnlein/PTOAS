@@ -8,6 +8,7 @@
 #include "PTO/Transforms/InsertSync/StructuredSyncComposition.h"
 #include <algorithm>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <random>
@@ -178,14 +179,19 @@ static unsigned sequence(c::Program& p, std::vector<unsigned> children)
     children.push_back(add(p, c::Node::Sequence));
     return add(p, c::Node::Sequence, std::move(children));
 }
-static void execute(
-    const c::Program& p, const c::Result& r, unsigned id, unsigned trips, unsigned pattern, unsigned& branch,
-    Oracle& oracle)
+// Decisions belong to a particular dynamic visit, not to a lexical loop or a
+// shared global trip count. Keep this object across whole-program invocations.
+struct ExecutionPolicy {
+    std::map<unsigned, unsigned> visits;
+    std::function<unsigned(unsigned, unsigned)> trips;
+    std::function<unsigned(unsigned, unsigned)> choice;
+};
+static void execute(const c::Program& p, const c::Result& r, unsigned id, ExecutionPolicy& policy, Oracle& oracle)
 {
     for (auto& m : r.before[id])
         oracle.mechanism(m);
     const auto& n = p.nodes[id];
-    auto run = [&](unsigned child) { execute(p, r, child, trips, pattern, branch, oracle); };
+    auto run = [&](unsigned child) { execute(p, r, child, policy, oracle); };
     switch (n.kind) {
         case c::Node::Operation:
             oracle.payload(n);
@@ -195,23 +201,159 @@ static void execute(
                 run(x);
             break;
         case c::Node::Choice:
-            run(n.children[(pattern >> (branch++ % 4)) & 1]);
+            run(n.children[policy.choice(id, policy.visits[id]++)]);
             break;
-        case c::Node::For:
+        case c::Node::For: {
+            unsigned trips = policy.trips(id, policy.visits[id]++);
             for (unsigned i = 0; i < trips; ++i)
                 run(n.children[0]);
             break;
-        case c::Node::While:
+        }
+        case c::Node::While: {
+            unsigned trips = policy.trips(id, policy.visits[id]++);
             for (unsigned i = 0; i <= trips; ++i) {
                 run(n.children[0]);
                 if (i < trips)
                     run(n.children[1]);
             }
             break;
+        }
     }
+}
+static void execute(
+    const c::Program& p, const c::Result& r, unsigned id, unsigned trips, unsigned pattern, unsigned& branch,
+    Oracle& oracle)
+{
+    ExecutionPolicy policy;
+    policy.trips = [=](unsigned, unsigned) { return trips; };
+    policy.choice = [&](unsigned, unsigned) { return (pattern >> (branch++ % 4)) & 1; };
+    execute(p, r, id, policy, oracle);
 }
 int main()
 {
+    {
+        // The shared Program contract assigns effects only to physical leaves.
+        // All constructors/checkers reject a malformed structural effect row.
+        c::Program p;
+        p.cells = 1;
+        auto payload = op(p, unsigned(Pipe::V), 0, true);
+        auto root = sequence(p, {payload});
+        auto actual = c::construct(p).before;
+        p.nodes[root].effects[0].writers = 1u << p.nodes[root].lane;
+        require(!c::construct(p).success && !c::verify(p, actual).success);
+        require(!c::constructCuts(p).success && !c::verifyCuts(p, actual).success);
+        require(!c::constructDemands(p).success && !c::verifyDemands(p, actual).success);
+    }
+    {
+        // Matching lexical endpoints alone do not prove rearm. This complete
+        // straight-line word still needs a causal return before a repeated visit.
+        c::Program p;
+        p.cells = 1;
+        auto start = add(p, c::Node::Sequence), finish = add(p, c::Node::Sequence);
+        sequence(p, {start, finish});
+        std::vector<std::vector<c::Mechanism>> actual(p.nodes.size());
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        actual[start].push_back({c::Mechanism::Publish, a, b, 1});
+        actual[finish].push_back({c::Mechanism::Acquire, a, b, 1});
+        require(!c::verifyDemands(p, actual).success);
+        actual[finish].push_back({c::Mechanism::Publish, b, a, 1});
+        actual[finish].push_back({c::Mechanism::Acquire, b, a, 1});
+        require(c::verifyDemands(p, actual).success);
+        actual[start][0].forwardKey = 0; // reserved conservative key
+        require(!c::verifyDemands(p, actual).success);
+    }
+    {
+        c::Program p;
+        p.cells = 1;
+        auto write = op(p, unsigned(Pipe::MTE2), 0, true);
+        auto read = op(p, unsigned(Pipe::V), 0, false);
+        auto loop = add(p, c::Node::For, {sequence(p, {write, read})});
+        sequence(p, {loop});
+        auto plan = c::constructDemands(p);
+        require(plan.success && c::verifyDemands(p, plan.before).success);
+        require(plan.completionRefinements == 1 && plan.rejectedRefinements == 0);
+        require(c::verifyDemands(p, plan.before).ownedRefinements > 0);
+        auto rejected = c::testing::constructDemandsRejectingRefinement(p);
+        require(rejected.success && rejected.completionRefinements == 1 && rejected.rejectedRefinements == 1);
+        require(c::verifyDemands(p, rejected.before).success);
+        require(plan.reusedAcknowledgments == 2 && plan.sharedAcknowledgments == 0);
+        for (unsigned trips = 0; trips < 5; ++trips) {
+            unsigned branch = 0;
+            Oracle oracle;
+            execute(p, plan, p.nodes.size() - 1, trips, 0, branch, oracle);
+            execute(p, plan, p.nodes.size() - 1, 4 - trips, 0, branch, oracle);
+            oracle.check();
+            Oracle rollback;
+            execute(p, rejected, p.nodes.size() - 1, trips, 0, branch, rollback);
+            execute(p, rejected, p.nodes.size() - 1, 4 - trips, 0, branch, rollback);
+            rollback.check();
+        }
+        p.target.compilerKeys = {0};
+        auto scarce = c::constructDemands(p);
+        require(scarce.success && c::verifyDemands(p, scarce.before).success);
+        require(scarce.directHandoffs == 0 && scarce.demandFallbacks != 0);
+        unsigned packets = 0;
+        for (const auto& commands : scarce.before)
+            for (const auto& m : commands)
+                packets += m.kind == c::Mechanism::Rendezvous;
+        require(packets != 0);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned visit) { return visit % 4; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle repeated;
+        for (unsigned invocation = 0; invocation < 5; ++invocation) {
+            execute(p, scarce, p.nodes.size() - 1, policy, repeated);
+            repeated.check();
+        }
+        auto corrupt = scarce.before;
+        bool changed = false;
+        for (auto& commands : corrupt)
+            for (auto& m : commands)
+                if (!changed && m.kind == c::Mechanism::Rendezvous) {
+                    std::swap(m.first, m.second);
+                    changed = true;
+                }
+        require(changed && !c::verifyDemands(p, corrupt).success);
+    }
+    {
+        // One consumer needs two physical cells; completion is a producer
+        // prefix, not two cell-owned protocols. X after that prefix must not
+        // become a prerequisite, and later source work must remain pending.
+        c::Program p;
+        p.cells = 4;
+        unsigned source = unsigned(Pipe::MTE2), target = unsigned(Pipe::V);
+        auto a = op(p, source, 0, true), b = op(p, source, 1, true);
+        auto x = op(p, source, 2, true);
+        auto consumer = op(p, target, 0, false);
+        p.nodes[consumer].effects[1].readers = 1u << target;
+        auto newer = op(p, source, 3, true);
+        auto second = op(p, target, 3, false);
+        auto reused = op(p, target, 0, false);
+        sequence(p, {a, b, x, consumer, newer, second, reused});
+        auto plan = c::constructDemands(p);
+        require(plan.success);
+        require(c::verifyDemands(p, plan.before).success);
+        require(plan.directHandoffs == 2 && plan.sharedAcknowledgments == 1);
+        require(plan.demands[0].publication == x && plan.demands[0].acquisition == consumer);
+        require(plan.demands[0].cells.size() == 2);
+        require(plan.before[reused].empty());
+        unsigned branch = 0;
+        Oracle oracle;
+        execute(p, plan, p.nodes.size() - 1, 1, 0, branch, oracle);
+        oracle.check();
+        // The independent graph also checks the absent, unnecessary ordering.
+        require(!oracle.reaches(oracle.accesses[2].done, oracle.accesses[3].issue));
+        auto broken = plan.before;
+        broken[a].push_back(broken[x].front());
+        broken[x].erase(broken[x].begin());
+        require(!c::verifyDemands(p, broken).success);
+        broken = plan.before;
+        broken[second].resize(broken[second].size() - 2); // drop shared reply
+        require(!c::verifyDemands(p, broken).success);
+        broken = plan.before;
+        broken[consumer].clear();
+        require(!c::verifyDemands(p, broken).success);
+    }
     // A publication for y can complete an earlier x write. It cannot complete
     // the same write moved AFTER that publication. x deliberately has a return
     // access on its first lane, so it gets no independent cyclic precision.
@@ -399,6 +541,52 @@ int main()
         require(!c::verify(p, plan.before).success);
     }
     std::mt19937 random(19371);
+    // Independently varying siblings, nested invocations, skipped paths, and
+    // repeated entry with the same physical key population. The asymmetric
+    // child counts specifically cover the old all-loops-use-trips blind spot.
+    for (unsigned sample = 0; sample < 32; ++sample) {
+        c::Program p;
+        p.cells = 2;
+        auto a = op(p, unsigned(Pipe::MTE2), 0, true);
+        auto b = op(p, unsigned(Pipe::V), 0, false);
+        auto first = add(p, c::Node::For, {sequence(p, {a, b})});
+        auto c0 = op(p, unsigned(Pipe::V), 0, true);
+        auto d = op(p, unsigned(Pipe::MTE3), 0, false);
+        auto choice = add(p, c::Node::Choice, {sequence(p, {c0, d}), add(p, c::Node::Sequence)});
+        auto second = add(p, c::Node::For, {sequence(p, {choice})});
+        auto before = op(p, unsigned(Pipe::MTE2), 1, true);
+        auto after = op(p, unsigned(Pipe::V), 1, false);
+        auto w = add(p, c::Node::While, {sequence(p, {before}), sequence(p, {after})});
+        auto outer = add(p, c::Node::For, {sequence(p, {first, second, w})});
+        sequence(p, {outer});
+        for (unsigned mode : {0u, 1u, 2u}) {
+            auto plan = mode == 2 ? c::constructDemands(p) : mode == 1 ? c::constructCuts(p) : c::construct(p);
+            require(plan.success);
+            require((mode == 2 ? c::verifyDemands(p, plan.before) :
+                     mode == 1 ? c::verifyCuts(p, plan.before) :
+                                 c::verify(p, plan.before))
+                        .success);
+            ExecutionPolicy policy;
+            policy.trips = [=](unsigned node, unsigned invocation) {
+                if (node == outer)
+                    return 2u;
+                if (invocation == 0 && node == first)
+                    return 0u;
+                if (invocation == 0 && node == second)
+                    return 3u;
+                return (sample + 3 * node + invocation * 7) % 4;
+            };
+            policy.choice = [=](unsigned node, unsigned invocation) {
+                return ((sample * 13 + node * 7 + invocation * 5) >> (invocation % 5)) & 1;
+            };
+            Oracle oracle;
+            for (unsigned invocation = 0; invocation < 3; ++invocation) {
+                execute(p, plan, p.nodes.size() - 1, policy, oracle);
+                oracle.check();
+            }
+            require(policy.visits[first] == 6 && policy.visits[second] == 6);
+        }
+    }
     for (unsigned sample = 0; sample < 64; ++sample) {
         c::Program p;
         p.cells = 3;
@@ -449,6 +637,19 @@ int main()
         require(result.success);
         require(result.nodeVisits == p.nodes.size());
         require(c::verify(p, result.before).success);
+        auto demanded = c::constructDemands(p);
+        require(demanded.success);
+        require(c::verifyDemands(p, demanded.before).success);
+        ExecutionPolicy varying;
+        varying.trips = [=](unsigned node, unsigned invocation) { return (sample * 11 + node + 3 * invocation) % 3; };
+        varying.choice = [=](unsigned node, unsigned invocation) {
+            return ((sample + 3 * node + invocation * 7) >> (invocation % 3)) & 1;
+        };
+        Oracle repeated;
+        for (unsigned invocation = 0; invocation < 3; ++invocation) {
+            execute(p, demanded, p.nodes.size() - 1, varying, repeated);
+            repeated.check();
+        }
         for (unsigned trips = 0; trips < 3; ++trips)
             for (unsigned pattern = 0; pattern < 8; ++pattern) {
                 unsigned branch = 0;
@@ -511,5 +712,11 @@ int main()
     require(nested.success);
     require(nested.nodeVisits == deep.nodes.size());
     require(c::verify(deep, nested.before).success);
+    auto bounded = c::constructDemands(deep);
+    require(bounded.success);
+    auto boundedCheck = c::verifyDemands(deep, bounded.before);
+    require(boundedCheck.success);
+    require(bounded.nodeVisits <= 8 * deep.nodes.size());
+    require(boundedCheck.nodeVisits <= 3 * deep.nodes.size());
     std::cout << checks << " compositional native-helper/independent finite graph assertions passed\n";
 }

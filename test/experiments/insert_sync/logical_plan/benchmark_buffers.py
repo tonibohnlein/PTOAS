@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""Serial, repeated, paired compilation; seven-case coverage is always explicit.
+"""Serial, repeated, paired compilation; eight-case coverage is always explicit.
 
 Mechanisms are deliberately not combined into a score. C++ generation starts
 from already synchronized PTO and is never reported as synchronization time.
@@ -25,7 +25,17 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
 ARMS = ("existing", "structured", "logical", "composition")
 POPULATION = ("one_buffer", "two_buffer", "three_buffer", "four_use",
-              "online_softmax", "qk_matmul", "q_proj")
+              "online_softmax", "qk_matmul", "q_proj", "historical_gemm")
+
+
+def demand_population():
+    manifest = json.loads((HERE / "demand_manifest.json").read_text())
+    cases = manifest["cases"]
+    for case in cases:
+        case["source"] = ROOT / case["source"]
+        if digest(case["source"]) != case["sha256"]:
+            raise ValueError("changed frozen demand benchmark: " + case["case_id"])
+    return cases
 
 
 def digest(path):
@@ -133,7 +143,7 @@ def main():
         parser.error("a ratio gate needs existing, a candidate, at least 3 repeats, and a positive threshold")
     python_root = args.python_root.resolve()
     sys.path.insert(0, str(python_root))
-    from observations import SERIAL_DRIVER, analyze, population
+    from observations import SERIAL_DRIVER, analyze
     from measure import measure
     args.output.mkdir(parents=True, exist_ok=False)
     env = dict(os.environ, OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1")
@@ -141,10 +151,11 @@ def main():
     # are not part of normal compilation and cannot contaminate paired timings.
     disabled_diagnostics = {name: env.pop(name) for name in
                             ("PTOAS_STRUCTURED_PLAN_JSON", "PTOAS_LOGICAL_TRACE") if name in env}
-    cases = {item["case_id"]: item for item in population()}
+    cases = {item["case_id"]: item for item in demand_population()}
     if set(cases) != set(POPULATION):
         raise RuntimeError("review the declared population before changing its coverage denominator")
     output = dict(provenance=provenance(python_root), disabled_diagnostics=disabled_diagnostics,
+                  manifest_sha256=digest(HERE / "demand_manifest.json"), hardware_contract="conservative",
                   population=list(POPULATION),
                   requested_cases=args.cases, requested_arms=args.arms,
                   omitted_cases=[c for c in POPULATION if c not in args.cases],
@@ -153,7 +164,8 @@ def main():
     all_ok = True
     for case_id in args.cases:
         case = cases[case_id]
-        row = dict(case=case_id, source_sha256=digest(case["source"]), trials=[], ratios={})
+        row = dict(case=case_id, source_sha256=digest(case["source"]),
+                   gm_contract=case["gm_contract"], trials=[], ratios={})
         reference = None
         last_success = {}
         for repeat in range(-args.warmups, args.repeats):
@@ -167,7 +179,7 @@ def main():
                 command = [sys.executable, "-c", SERIAL_DRIVER, str(python_root),
                            "--pto-arch=a3", "--pto-level=level3", "--enable-insert-sync",
                            f"--insert-sync-planner={'structured' if arm == 'composition' else arm}",
-                           "--insert-sync-gm-alias=assume-disjoint-arguments",
+                           f"--insert-sync-gm-alias={case['gm_contract']}",
                            "--emit-pto-ir", str(case["source"].resolve()), "-o", str(pto.resolve())]
                 if arm in ("structured", "composition"):
                     command.insert(-4, "--insert-sync-logical-work-budget=0")
