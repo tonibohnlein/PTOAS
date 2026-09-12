@@ -16,9 +16,9 @@
 // NESTED-SAME: pto.insert_sync.producer = "structured"
 
 // Re-entry orders against the previous invocation, guarded by that frame's own
-// index rather than by a flattened iteration counter.
+// index rather than by a flattened iteration counter. The zero it compares
+// against may be the loop's own constant, so only the comparison is pinned.
 // NESTED: scf.for %arg6 = %c0 to %arg4
-// NESTED-NEXT: arith.constant
 // NESTED-NEXT: arith.cmpi ne, %arg6
 // NESTED-NEXT: scf.if
 // NESTED-NEXT: pto.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
@@ -47,7 +47,6 @@
 // Handing off to the next invocation tests that frame's remaining trips, so an
 // inner wrapper resetting to zero cannot be mistaken for the end of the nest.
 // NESTED: arith.subi %arg4, %arg6
-// NESTED-NEXT: arith.constant
 // NESTED-NEXT: arith.cmpi sgt
 
 module attributes {pto.target_arch = "a3"} {
