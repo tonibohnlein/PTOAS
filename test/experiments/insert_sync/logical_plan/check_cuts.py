@@ -65,6 +65,7 @@ def main():
         counters = {}
         for counter in ('direct_handoffs', 'shared_acknowledgments', 'reused_acknowledgments',
                         'completion_refinements', 'rejected_refinements', 'owned_refinements',
+                        'protocol_keys', 'shared_protocol_keys', 'allocation_fallback_scopes', 'allocation_fallback_keys',
                         'rendezvous_packets', 'demand_fallbacks'):
             matches = re.findall(r'\b' + counter + r' (\d+)\b', trace)
             if len(matches) != 1:
@@ -151,6 +152,7 @@ def main():
     path_checks = []
     if args.constructor == 'demands':
         for counter in ('direct_handoffs', 'reused_acknowledgments', 'owned_refinements',
+                        'protocol_keys', 'shared_protocol_keys',
                         'rendezvous_packets', 'demand_fallbacks'):
             if not any(c['native_counters'][counter] > 0 for c in cases):
                 raise RuntimeError('native demand path not exercised: ' + counter)
@@ -167,6 +169,22 @@ def main():
         if not verdict['accepted'] or not verdict['atomic'] or counters['rejected_refinements'] != 1:
             raise RuntimeError('native rejected-refinement rollback not exercised')
         path_checks.append(dict(name='rejected-refinement', verdict=verdict, counters=counters))
+        overlap = Path(__file__).parent / 'structured_inputs/demand_key_overlap.pto'
+        overlap_output = args.output.resolve() / 'overlap-fallback.pto'
+        verdict = json.loads(invoke('overlap-fallback', [args.driver, overlap, 'demands:none', overlap_output]))
+        counters = native_counters('overlap-fallback')
+        if (not verdict['accepted'] or not verdict['atomic'] or counters['allocation_fallback_scopes'] != 1 or
+                counters['direct_handoffs'] != 5 or counters['allocation_fallback_keys'] != 3 or
+                counters['rendezvous_packets'] != 3):
+            raise RuntimeError('overlapping logical publications did not exercise qualified allocation fallback')
+        path_checks.append(dict(name='overlap-fallback', verdict=verdict, counters=counters,
+                                source_sha256=digest(overlap), output_sha256=digest(overlap_output)))
+        for mutation in ('wrong-key', 'duplicate-set', 'drop-wait'):
+            verdict = json.loads(invoke('overlap-' + mutation, [args.driver, overlap, 'demands:' + mutation,
+                args.output.resolve() / ('overlap-' + mutation + '.pto')]))
+            if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
+                raise RuntimeError('mixed raw/canonical corruption escaped native reconstruction')
+            path_checks.append(dict(name='overlap-' + mutation, verdict=verdict))
         fallback = Path(__file__).parent / 'structured_inputs/demand_fallback_nested.pto'
         raw = args.output.resolve() / 'fallback-native.pto'
         verdict = json.loads(invoke('fallback-native', [args.driver, fallback, 'demands:fallback:none', raw]))

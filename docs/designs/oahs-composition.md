@@ -378,11 +378,11 @@ consumption-before-republication obligations. No readiness/release endpoint is
 removed by this pass. Scarcity retains the conservative realization.
 
 The checker independently reads actual mechanisms, requires each direct key's
-SET and WAIT to have one common structural execution domain, and prohibits
+SET/WAIT uses to have one common structural execution domain, and prohibits
 sharing that key with an independently executing domain. A vector-clock check
-on two copies of the static event word proves each consumption-to-next-SET
-edge. Because each key has one publication and acquisition per word and the
-edges repeat under translation, this is a periodic protocol certificate—not
+on two copies of the static event word proves every consumption-to-next-SET
+edge, including multiple uses of a physical key within one word. The static
+edges repeat under translation, giving a periodic protocol certificate—not
 the assumption that two arbitrary loop executions establish program safety.
 Nested words have disjoint keys; skipped words leave no partial publication.
 SET does not advance the source issue gate.
@@ -615,3 +615,93 @@ They record commands and binary hashes. The external corpus snapshots/manifests
 are prerequisites, not bundled by these scripts; the eight benchmark inputs
 and manifest are checked in. A targeted lit case tests native pass selection,
 both precision settings, invalid contracts, and actual full-compiler emission.
+
+## Late event-key assignment
+
+Logical demand placement now precedes physical event numbering. Logical keys
+identify publications and acquisitions in one static scope word; they are never
+emitted. Canonical fallback keys remain reserved, and independently executing
+scopes still have disjoint physical keys. Optional acknowledgment removal checks
+only its changed scope word, with at most one trial per directed family there.
+
+A two-copy logical protocol check records each virtual key's first publication
+clock, next-copy publication clock, and first consumption tick. For uses of one
+direction in publication order, append a use to an existing physical color only
+when both conditions hold:
+
+```text
+new publication knows the preceding use's consumption
+the color's first publication in copy 2 knows the new use's consumption
+```
+
+The first condition proves within-word reuse; the second proves the per-color
+last-to-first edge. These are actual acquired WAIT-consumption clocks, not
+lexical intervals or assumed payload completion. Greedy selection tries only
+the fixed physical pool; it does not search colorings or symbolic relations.
+Clock construction and key trials depend on static commands and the fixed lane
+and key populations, not trip counts. Maps add ordinary logarithmic lookup cost.
+
+If a key cannot be assigned greedily, its publication is removed and its
+acquisition receives a canonical packet at the same cut. Other feasible
+handoffs remain intact. The replacement acquires a full source prefix at that
+later cut and can therefore add ordering; it does not move payload or pretend
+that scarcity proves global infeasibility. The complete resulting actual word,
+including expanded packets, must pass rearm verification, and the actual plan
+must separately pass fresh physical completion verification before emission.
+Failed verification is an error, never successful fallback after emission.
+
+Native traces record `protocol_keys`, `shared_protocol_keys`,
+`allocation_fallback_keys`, and `allocation_fallback_scopes`. The latter counts
+scopes containing at least one fallback key, not keys. Retained reverse ACKs
+remain included in `shared_acknowledgments` even if every forward demand in
+their family fell back: they still carry checked causal edges, and removing
+them would require another protocol proof. Tests include many logical generations
+sharing one key per direction, simultaneous early publications that cannot
+share, independent scopes competing for keys, repeated/skipped executions, and
+the native eight-publication overlap fixture. The compiler pool remains IDs 0–5,
+with ID 0 reserved for canonical packets. The fixture must retain five assignable
+direct handoffs while realizing the other three conservatively.
+
+This stage does not solve incoming first-consumer participation or previous-visit
+release placement. Those remain separate quality obligations; key sharing alone
+does not qualify a default switch or a GEMM performance claim.
+
+### Local key-realization measurements
+
+The following compares the preceding `cc86a5928` demand implementation with
+this key-realization increment on the unchanged eight-case manifest. Counts
+are static SET / WAIT / named barriers; each output additionally has one
+terminal `PIPE_ALL`. These are not device timings or executed command counts.
+
+| Input | Before late numbering | After late numbering |
+| --- | ---: | ---: |
+| One buffer | 4 / 4 / 1 | 4 / 4 / 1 |
+| Two buffers | 8 / 8 / 2 | 8 / 8 / 2 |
+| Three buffers | 16 / 16 / 2 | 12 / 12 / 3 |
+| Four use | 28 / 28 / 4 | 20 / 20 / 8 |
+| Online softmax | 11 / 11 / 21 | 12 / 12 / 21 |
+| QK matmul | 16 / 16 / 4 | 16 / 16 / 4 |
+| Q projection | 19 / 19 / 5 | 18 / 18 / 6 |
+| Historical GEMM | 63 / 63 / 20 | 70 / 70 / 24 |
+
+**Quality acceptance remains false.** Late scarcity fallback currently adds
+stronger completion after the demand transfer has finished. Later demands do
+not yet exploit that extra completion. Consequently, this experimental change
+can increase synchronization, as softmax and GEMM demonstrate. A bounded replay
+that propagates the actual fallback's completion is a follow-up, not a claimed
+property of this increment.
+
+The targeted native build, composition core/demand gates, composition gate,
+and `oahs_focused` passed. The C++17 ASan/UBSan run passed **2,158,773
+assertions**, with unsupported leak inspection disabled. Native overlap tests
+retain five direct handoffs and replace three unassignable acquisitions;
+wrong-key, duplicate-SET, and dropped-WAIT mutations reject atomically.
+
+The frozen corpus rerun preserves all 363 statuses and raw/prepared hashes:
+45/150 PTOAS and 152/213 PyPTO/pypto-lib admissions. The serial paired full-PTO
+compilation run (three measured rounds, one warm-up) passes the median <=2x
+gate on all eight inputs; per-case medians range from 0.986 to 1.023 times
+InsertSync. Untimed C++ emission also passes. Reproduce with the commands above;
+this run used output directories `oahs-key-sharing-corpus` and
+`oahs-key-sharing-compiler` below the existing build's `test-results` directory.
+Artifacts are local, and no device or complete system-test campaign is claimed.

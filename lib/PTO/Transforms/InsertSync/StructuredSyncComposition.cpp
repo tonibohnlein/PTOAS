@@ -981,6 +981,7 @@ struct DemandAnalysis {
     std::vector<uint64_t> subtreeNodes;
     std::vector<std::vector<unsigned>> owned;
     std::vector<unsigned> parent;
+    std::vector<unsigned> scopeOrder;
     std::vector<std::vector<c::CompletionDemand>> requests;
     std::vector<std::set<unsigned>> capture;
     std::vector<std::vector<PrefixState::EventKey>> release;
@@ -1056,6 +1057,8 @@ struct DemandAnalysis {
         // This costs O(nodes + cells * depth), with the fixed cell bound.
         std::vector<unsigned> first(p.cells, NoCut), last(p.cells, NoCut), depth(p.nodes.size());
         std::function<void(unsigned)> walk = [&](unsigned id) {
+            if (p.nodes[id].kind == c::Node::Sequence)
+                scopeOrder.push_back(id);
             if (p.nodes[id].kind == c::Node::Operation)
                 for (unsigned cell = 0; cell < p.cells; ++cell)
                     if (p.nodes[id].effects[cell].readers || p.nodes[id].effects[cell].writers) {
@@ -1097,7 +1100,14 @@ struct DemandAnalysis {
 // Verify one closed protocol word and the rearm edges to its next copy. SET
 // observes the source prefix but does not gate later source issue. Callers
 // validate target directions, keys, and the structural execution domain.
-bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reason)
+struct ProtocolFacts {
+    struct Use {
+        uint64_t firstPublish = 0, nextPublish = 0, consumed = 0;
+    };
+    std::map<PrefixState::EventKey, Use> uses;
+    std::vector<PrefixState::EventKey> order;
+};
+bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reason, ProtocolFacts* facts = nullptr)
 {
     using Clock = std::array<uint64_t, c::LaneCount>;
     std::array<Clock, c::LaneCount> gates{};
@@ -1108,9 +1118,12 @@ bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reas
         bool live = false;
     };
     std::map<PrefixState::EventKey, Token> tokens;
+    if (facts)
+        *facts = {};
     for (unsigned repetition = 0; repetition < 2; ++repetition) {
         for (const auto& m : word) {
-            auto& token = tokens[{m.first, m.second, m.forwardKey}];
+            PrefixState::EventKey k{m.first, m.second, m.forwardKey};
+            auto& token = tokens[k];
             if (m.kind == c::Mechanism::Publish) {
                 if (token.live || gates[m.first][m.second] < token.consumed) {
                     reason = "demand publication can rearm before consumption";
@@ -1118,6 +1131,17 @@ bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reas
                 }
                 token.prefix = gates[m.first];
                 token.live = true;
+                if (facts) {
+                    if (repetition == 0) {
+                        if (facts->uses.count(k)) {
+                            reason = "logical key has multiple publications";
+                            return false;
+                        }
+                        facts->order.push_back(k);
+                        facts->uses[k].firstPublish = gates[m.first][m.second];
+                    } else
+                        facts->uses[k].nextPublish = gates[m.first][m.second];
+                }
             } else {
                 if (!token.live) {
                     reason = "demand acquisition has no participating publication";
@@ -1129,6 +1153,8 @@ bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reas
                 target[m.second] = ++serial[m.second];
                 token.consumed = target[m.second];
                 token.live = false;
+                if (facts && repetition == 0)
+                    facts->uses[k].consumed = token.consumed;
             }
         }
         for (const auto& [key, token] : tokens)
@@ -1140,9 +1166,26 @@ bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reas
     return true;
 }
 
+std::vector<c::Mechanism> demandWord(
+    const c::Program& p, const Commands& commands, unsigned scope, bool expandPackets = false)
+{
+    std::vector<c::Mechanism> word;
+    for (unsigned child : p.nodes[scope].children)
+        for (const auto& m : commands[child])
+            if (m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire)
+                word.push_back(m);
+            else if (expandPackets && m.kind == c::Mechanism::Rendezvous) {
+                word.push_back(event(c::Mechanism::Publish, m.first, m.second, m.forwardKey));
+                word.push_back(event(c::Mechanism::Acquire, m.first, m.second, m.forwardKey));
+                word.push_back(event(c::Mechanism::Publish, m.second, m.first, m.reverseKey));
+                word.push_back(event(c::Mechanism::Acquire, m.second, m.first, m.reverseKey));
+            }
+    return word;
+}
+
 // The checker derives closed protocol words from actual IR, not from demands
-// or constructor families. Each raw key has one SET and WAIT in one structural
-// execution domain and is exclusive to it. Two concatenated copies establish
+// or constructor families. Each raw key has matched SET/WAIT uses in one
+// structural execution domain and is exclusive to it. Two copies establish
 // every consumption -> next publication edge in the periodic word; translating
 // those edges proves arbitrary repetitions and skips of the whole domain.
 // Nested domains use disjoint keys and need not finish their payload on return.
@@ -1158,10 +1201,7 @@ bool verifyDemandProtocols(
     std::map<unsigned, std::vector<c::Mechanism>> words;
     for (unsigned scope = 0; scope < p.nodes.size(); ++scope)
         if (p.nodes[scope].kind == c::Node::Sequence)
-            for (unsigned child : p.nodes[scope].children)
-                for (const auto& m : actual[child])
-                    if (m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire)
-                        words[scope].push_back(m);
+            words[scope] = demandWord(p, actual, scope, true);
     for (unsigned id = 0; id < actual.size(); ++id)
         for (const auto& m : actual[id]) {
             if (validMechanism(p, m)) {
@@ -1199,8 +1239,8 @@ bool verifyDemandProtocols(
             (m.kind == c::Mechanism::Publish ? pop.sets : pop.waits)++;
         }
     for (const auto& [key, pop] : population)
-        if (pop.sets != 1 || pop.waits != 1) {
-            reason = "demand key needs one publication and acquisition per domain visit";
+        if (!pop.sets || pop.sets != pop.waits) {
+            reason = "demand key needs balanced publications and acquisitions per domain visit";
             return false;
         }
     for (const auto& [scope, word] : words)
@@ -1229,15 +1269,14 @@ c::Result constructDemandCandidate(const c::Program& p, const DemandInvariants* 
         unsigned acknowledgment, last;
     };
     std::map<FamilyKey, Family> families;
-    std::map<Direction, std::set<unsigned>> occupied;
-    auto allocate = [&](unsigned a, unsigned b, auto& trial) -> std::optional<unsigned> {
+    std::vector<PrefixState::EventKey> demandKeys;
+    unsigned nextLogicalKey = 1;
+    auto allocate = [&](unsigned a, unsigned b) -> std::optional<unsigned> {
         if (!p.target.event(lane(p, a), lane(p, b)))
             return {};
         for (unsigned k : p.target.compilerKeys)
-            if (key(p, a, b) != k && p.target.available(lane(p, a), lane(p, b), k) && !trial[{a, b}].count(k)) {
-                trial[{a, b}].insert(k);
-                return k;
-            }
+            if (key(p, a, b) != k && p.target.available(lane(p, a), lane(p, b), k) && nextLogicalKey != NoCut)
+                return nextLogicalKey++;
         return {};
     };
     std::function<bool(unsigned, PrefixState&)> visit = [&](unsigned id, PrefixState& state) {
@@ -1293,18 +1332,17 @@ c::Result constructDemandCandidate(const c::Program& p, const DemandInvariants* 
                         break;
                     FamilyKey familyKey{demand.scope, source, n.lane};
                     auto family = families.find(familyKey);
-                    auto trial = occupied;
-                    auto forward = allocate(source, n.lane, trial);
-                    auto ack = family == families.end() ? allocate(n.lane, source, trial) :
+                    auto forward = allocate(source, n.lane);
+                    auto ack = family == families.end() ? allocate(n.lane, source) :
                                                           std::optional<unsigned>(family->second.acknowledgment);
                     if (!forward || !ack)
                         break;
-                    occupied = std::move(trial);
                     families[familyKey] = {*ack, id};
                     publications[demand.publication].push_back(event(Mechanism::Publish, source, n.lane, *forward));
                     result.before[id].push_back(event(Mechanism::Acquire, source, n.lane, *forward));
                     state.acquireRemaining(n.lane, receipt->second);
                     result.demands.push_back(demand);
+                    demandKeys.push_back({source, n.lane, *forward});
                     ++result.directHandoffs;
                     direct = true;
                     break;
@@ -1380,8 +1418,9 @@ c::Result constructDemandCandidate(const c::Program& p, const DemandInvariants* 
         result.before[id].insert(result.before[id].begin(), publications[id].begin(), publications[id].end());
     // Prefer the return causality already supplied by required handoffs. Each
     // trial removes only an optional reply, never a physical demand or a
-    // readiness/release endpoint. The number of trials is bounded by the fixed
-    // key pool. There is no completion-closure replay or coloring search.
+    // readiness/release endpoint. Check only the changed word: at most one
+    // trial per directed family (fixed lane population) in each scope.
+    std::set<FamilyKey> removedAcknowledgments;
     for (const auto& [familyKey, family] : families) {
         auto [scope, source, observer] = familyKey;
         auto& commands = result.before[family.last];
@@ -1395,13 +1434,127 @@ c::Result constructDemandCandidate(const c::Program& p, const DemandInvariants* 
                 }),
             commands.end());
         std::string why;
-        if (!verifyDemandProtocols(p, analysis, result.before, why))
+        if (!verifyProtocolWord(demandWord(p, result.before, scope), why))
             commands = std::move(saved);
         else {
             --result.sharedAcknowledgments;
             ++result.reusedAcknowledgments;
+            removedAcknowledgments.insert(familyKey);
         }
     }
+    // Number only the finished logical protocol. A memory cell does not own
+    // a key, nor does each logical handoff need a distinct physical key. The
+    // certificate uses actual WAIT-consumption ticks, not lexical intervals.
+    // For each color prove consecutive rearm AND the last->first copy edge.
+    // Greedy failure is not a proof of infeasibility. Retain successful colors
+    // and replace only unassigned logical acquisitions by stronger canonical
+    // packets at the same cut. Remove their publications, then freshly recheck
+    // the complete actual word (including packets) and physical requirements.
+    std::map<Direction, std::set<unsigned>> occupied;
+    std::set<unsigned> fallbackScopes;
+    std::set<PrefixState::EventKey> fallbackKeys;
+    for (unsigned scope : analysis.scopeOrder) {
+        auto word = demandWord(p, result.before, scope);
+        if (word.empty())
+            continue;
+        ProtocolFacts facts;
+        if (!verifyProtocolWord(word, result.reason, &facts)) {
+            result.success = false;
+            result.before.clear();
+            return result;
+        }
+        struct Color {
+            unsigned number;
+            uint64_t nextFirst, lastConsumed;
+        };
+        std::map<Direction, std::vector<Color>> colors;
+        std::map<PrefixState::EventKey, unsigned> numbering;
+        auto trial = occupied;
+        unsigned count = 0;
+        for (const auto& logical : facts.order) {
+            unsigned a = std::get<0>(logical), b = std::get<1>(logical);
+            const auto& use = facts.uses.at(logical);
+            auto& choices = colors[{a, b}];
+            auto reusable = std::find_if(choices.begin(), choices.end(), [&](const Color& c) {
+                return use.firstPublish >= c.lastConsumed && c.nextFirst >= use.consumed;
+            });
+            if (reusable != choices.end()) {
+                numbering[logical] = reusable->number;
+                reusable->lastConsumed = use.consumed;
+                continue;
+            }
+            auto fresh = std::find_if(p.target.compilerKeys.begin(), p.target.compilerKeys.end(), [&](unsigned k) {
+                return key(p, a, b) != k && p.target.available(lane(p, a), lane(p, b), k) && !trial[{a, b}].count(k);
+            });
+            if (fresh == p.target.compilerKeys.end()) {
+                fallbackKeys.insert(logical);
+                fallbackScopes.insert(scope);
+                continue;
+            }
+            trial[{a, b}].insert(*fresh);
+            choices.push_back({*fresh, use.nextPublish, use.consumed});
+            numbering[logical] = *fresh;
+            ++count;
+        }
+        occupied = std::move(trial);
+        result.protocolKeys += count;
+        result.sharedProtocolKeys += numbering.size() - count;
+        for (unsigned child : p.nodes[scope].children) {
+            auto original = std::move(result.before[child]);
+            auto& commands = result.before[child];
+            commands.clear();
+            for (auto m : original) {
+                if (m.kind != Mechanism::Publish && m.kind != Mechanism::Acquire) {
+                    commands.push_back(m);
+                    continue;
+                }
+                PrefixState::EventKey logical{m.first, m.second, m.forwardKey};
+                if (!fallbackKeys.count(logical)) {
+                    m.forwardKey = numbering.at(logical);
+                    commands.push_back(m);
+                    continue;
+                }
+                if (m.kind == Mechanism::Publish)
+                    continue;
+                State dummy(p.cells);
+                if (!acquire(p, m.first, m.second, dummy, commands)) {
+                    result.success = false;
+                    result.reason = "target cannot realize demand allocation fallback";
+                    result.before.clear();
+                    return result;
+                }
+                ++result.demandFallbacks;
+            }
+        }
+        // Packet replacement preserves (and may strengthen) the original
+        // acquisition's causal edges. Do not accept that argument alone: check
+        // actual renamed raw events together with the actual canonical packets.
+        if (!verifyProtocolWord(demandWord(p, result.before, scope, true), result.reason)) {
+            result.success = false;
+            result.before.clear();
+            return result;
+        }
+    }
+    result.allocationFallbackScopes = fallbackScopes.size();
+    result.allocationFallbackKeys = fallbackKeys.size();
+    // Filter receipts/statistics once, not once per failed allocation.
+    std::vector<CompletionDemand> retained;
+    std::set<FamilyKey> retainedFamilies;
+    for (unsigned i = 0; i < result.demands.size(); ++i) {
+        const auto& d = result.demands[i];
+        if (!fallbackKeys.count(demandKeys[i])) {
+            retained.push_back(d);
+            retainedFamilies.insert({d.scope, d.source, d.observer});
+        }
+    }
+    result.demands = std::move(retained);
+    result.directHandoffs = result.demands.size();
+    for (const auto& [familyKey, family] : families)
+        if (removedAcknowledgments.count(familyKey)) {
+            if (!retainedFamilies.count(familyKey))
+                --result.reusedAcknowledgments;
+        } else if (fallbackKeys.count({std::get<2>(familyKey), std::get<1>(familyKey), family.acknowledgment}))
+            --result.sharedAcknowledgments;
     return result;
 }
 

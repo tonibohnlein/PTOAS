@@ -73,6 +73,8 @@ struct Result {
     uint64_t reusedAcknowledgments = 0;
     uint64_t completionRefinements = 0, rejectedRefinements = 0;
     uint64_t ownedRefinements = 0;
+    uint64_t protocolKeys = 0, sharedProtocolKeys = 0, allocationFallbackScopes = 0;
+    uint64_t allocationFallbackKeys = 0;
     std::vector<CompletionDemand> demands;
 };
 // One summary pass and one structural transfer. No trip-count enumeration,

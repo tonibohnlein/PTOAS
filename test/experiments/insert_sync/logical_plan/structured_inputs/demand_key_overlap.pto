@@ -1,0 +1,51 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Eight simultaneously outstanding early publications exceed five non-reserved
+// keys in the six-key compiler pool. Keep five feasible handoffs, replace the
+// three unassigned acquisitions, and reconstruct the complete actual protocol.
+module attributes {pto.target_arch = "a3"} {
+  func.func @overlap(%gm: !pto.partition_tensor_view<16x16xf16>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr0 = arith.constant 0 : i64
+    %tile0 = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 16x16xf16>
+    %addr1 = arith.constant 512 : i64
+    %tile1 = pto.alloc_tile addr = %addr1 : !pto.tile_buf<vec, 16x16xf16>
+    %addr2 = arith.constant 1024 : i64
+    %tile2 = pto.alloc_tile addr = %addr2 : !pto.tile_buf<vec, 16x16xf16>
+    %addr3 = arith.constant 1536 : i64
+    %tile3 = pto.alloc_tile addr = %addr3 : !pto.tile_buf<vec, 16x16xf16>
+    %addr4 = arith.constant 2048 : i64
+    %tile4 = pto.alloc_tile addr = %addr4 : !pto.tile_buf<vec, 16x16xf16>
+    %addr5 = arith.constant 2560 : i64
+    %tile5 = pto.alloc_tile addr = %addr5 : !pto.tile_buf<vec, 16x16xf16>
+    %addr6 = arith.constant 3072 : i64
+    %tile6 = pto.alloc_tile addr = %addr6 : !pto.tile_buf<vec, 16x16xf16>
+    %addr7 = arith.constant 3584 : i64
+    %tile7 = pto.alloc_tile addr = %addr7 : !pto.tile_buf<vec, 16x16xf16>
+    %addr8 = arith.constant 4096 : i64
+    %tile8 = pto.alloc_tile addr = %addr8 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%tile0 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%tile1 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%tile2 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%tile3 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%tile4 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%tile5 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%tile6 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%tile7 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%tile0 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile8 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%tile1 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile8 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%tile2 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile8 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%tile3 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile8 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%tile4 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile8 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%tile5 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile8 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%tile6 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile8 : !pto.tile_buf<vec, 16x16xf16>)
+    pto.tabs ins(%tile7 : !pto.tile_buf<vec, 16x16xf16>) outs(%tile8 : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+}

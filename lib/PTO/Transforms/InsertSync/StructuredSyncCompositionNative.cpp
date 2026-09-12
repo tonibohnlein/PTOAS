@@ -734,8 +734,11 @@ Outcome ss::testing::constructCompositionalSync(
                      << selected.sharedAcknowledgments << " reused_acknowledgments " << selected.reusedAcknowledgments
                      << " completion_refinements " << selected.completionRefinements << " rejected_refinements "
                      << selected.rejectedRefinements << " owned_refinements " << checked.ownedRefinements
-                     << " rendezvous_packets " << rendezvousPackets << " demand_fallbacks " << selected.demandFallbacks
-                     << " nodes " << tree.program.nodes.size() << " cells " << tree.program.cells << " widened_spaces "
+                     << " protocol_keys " << selected.protocolKeys << " shared_protocol_keys "
+                     << selected.sharedProtocolKeys << " allocation_fallback_keys " << selected.allocationFallbackKeys
+                     << " allocation_fallback_scopes " << selected.allocationFallbackScopes << " rendezvous_packets "
+                     << rendezvousPackets << " demand_fallbacks " << selected.demandFallbacks << " nodes "
+                     << tree.program.nodes.size() << " cells " << tree.program.cells << " widened_spaces "
                      << tree.widenedSpaces << " node_visits " << selected.nodeVisits + checked.nodeVisits
                      << " cell_visits " << out.work << " handoffs " << out.handoffs << " cut_cycles "
                      << checked.cutCycles << " allocation_retries " << selected.allocationRetries << " barriers "

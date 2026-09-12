@@ -232,6 +232,61 @@ static void execute(
 int main()
 {
     {
+        // Many distinct logical generations fit one physical key per direction
+        // because each return demand acknowledges the preceding acquisition.
+        c::Program p;
+        p.cells = 1;
+        p.target.compilerKeys = {0, 1}; // zero remains the canonical reservation
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        std::vector<unsigned> body;
+        for (unsigned i = 0; i < 12; ++i) {
+            body.push_back(op(p, a, 0, true));
+            body.push_back(op(p, b, 0, false));
+        }
+        auto loop = add(p, c::Node::For, {sequence(p, body)});
+        sequence(p, {loop});
+        auto plan = c::constructDemands(p);
+        require(plan.success && c::verifyDemands(p, plan.before).success);
+        require(plan.protocolKeys == 2 && plan.sharedProtocolKeys >= 20);
+        require(plan.allocationFallbackScopes == 0 && plan.directHandoffs == 24);
+        require(plan.demandFallbacks == 0);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned visit) { return visit % 4; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 4; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // Overlapping publications cannot share just because their lexical
+        // waits exist. Keep feasible handoffs, but never share their physical
+        // colors with the following independently executing scope.
+        c::Program p;
+        p.cells = 3;
+        p.target.compilerKeys = {0, 1};
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto wa = op(p, a, 0, true), wb = op(p, a, 1, true);
+        auto ra = op(p, b, 0, false), rb = op(p, b, 1, false);
+        auto first = add(p, c::Node::For, {sequence(p, {wa, wb, ra, rb})});
+        auto wc = op(p, a, 2, true), rc = op(p, b, 2, false);
+        auto second = add(p, c::Node::For, {sequence(p, {wc, rc})});
+        sequence(p, {first, second});
+        auto plan = c::constructDemands(p);
+        require(plan.success && c::verifyDemands(p, plan.before).success);
+        require(plan.allocationFallbackScopes == 2 && plan.protocolKeys == 2);
+        require(plan.demandFallbacks > 0 && plan.directHandoffs == 2);
+        ExecutionPolicy policy;
+        policy.trips = [=](unsigned id, unsigned visit) { return (id + visit) % 3; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 4; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
         // The shared Program contract assigns effects only to physical leaves.
         // All constructors/checkers reject a malformed structural effect row.
         c::Program p;
