@@ -35,6 +35,8 @@ std::optional<unsigned> key(const c::Program& p, unsigned a, unsigned b)
 }
 bool validMechanism(const c::Program& p, const c::Mechanism& m)
 {
+    if (m.participation != c::Mechanism::Every || m.loop != ~0u)
+        return false;
     if (m.first >= c::LaneCount || m.second >= c::LaneCount)
         return false;
     if (m.kind == c::Mechanism::Barrier)
@@ -67,6 +69,7 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
     for (unsigned id = 0; id < p.nodes.size(); ++id) {
         const auto& n = p.nodes[id];
         if (n.effects.size() != p.cells || n.lane >= c::LaneCount ||
+            (n.entryGuardStart != ~0u && (n.kind != c::Node::For || n.entryGuardStart >= p.nodes.size())) ||
             (n.kind == c::Node::Operation && (!n.children.empty() || !p.target.barrier(lane(p, n.lane)))) ||
             (n.kind == c::Node::For && n.children.size() != 1) ||
             ((n.kind == c::Node::Choice || n.kind == c::Node::While) && n.children.size() != 2) ||
@@ -207,7 +210,7 @@ uint8_t c::State::demands(unsigned observer, const Effects& effects) const
 bool c::Mechanism::operator==(const Mechanism& m) const
 {
     return kind == m.kind && first == m.first && second == m.second && forwardKey == m.forwardKey &&
-           reverseKey == m.reverseKey;
+           reverseKey == m.reverseKey && participation == m.participation && loop == m.loop;
 }
 
 c::Result c::construct(const Program& p)
@@ -982,6 +985,8 @@ struct DemandAnalysis {
     std::vector<std::vector<unsigned>> owned;
     std::vector<unsigned> parent;
     std::vector<unsigned> scopeOrder;
+    std::vector<unsigned> position, next;
+    std::vector<std::vector<c::CompletionDemand>> entries;
     std::vector<std::vector<c::CompletionDemand>> requests;
     std::vector<std::set<unsigned>> capture;
     std::vector<std::vector<PrefixState::EventKey>> release;
@@ -990,6 +995,9 @@ struct DemandAnalysis {
         if (!summarize(p, effects, reason))
             return false;
         parent.assign(p.nodes.size(), NoCut);
+        position.assign(p.nodes.size(), NoCut);
+        next.assign(p.nodes.size(), NoCut);
+        entries.resize(p.nodes.size());
         subtreeNodes.assign(p.nodes.size(), 1);
         requests.resize(p.nodes.size());
         capture.resize(p.nodes.size());
@@ -997,8 +1005,12 @@ struct DemandAnalysis {
         owned.resize(p.nodes.size());
         for (unsigned scope = 0; scope < p.nodes.size(); ++scope) {
             const auto& children = p.nodes[scope].children;
-            for (auto child : children)
-                parent[child] = scope;
+            for (unsigned i = 0; i < children.size(); ++i) {
+                parent[children[i]] = scope;
+                position[children[i]] = i;
+                if (i + 1 < children.size())
+                    next[children[i]] = children[i + 1];
+            }
             for (auto child : children)
                 subtreeNodes[scope] += subtreeNodes[child];
             if (p.nodes[scope].kind != c::Node::Sequence || children.empty())
@@ -1010,6 +1022,53 @@ struct DemandAnalysis {
             for (unsigned index = 0; index < children.size(); ++index) {
                 unsigned child = children[index];
                 const auto& n = p.nodes[child];
+                if (n.kind == c::Node::For && n.entryGuardStart != NoCut && next[child] != NoCut &&
+                    parent[n.entryGuardStart] == scope && position[n.entryGuardStart] <= index &&
+                    p.nodes[n.children[0]].kind == c::Node::Sequence) {
+                    std::array<std::vector<bool>, c::LaneCount> seen;
+                    for (auto& cells : seen)
+                        cells.resize(p.cells);
+                    for (unsigned first : p.nodes[n.children[0]].children) {
+                        const auto& consumer = p.nodes[first];
+                        if (consumer.kind == c::Node::Operation)
+                            for (unsigned source = 0; source < c::LaneCount; ++source) {
+                                if (source == consumer.lane)
+                                    continue;
+                                c::CompletionDemand d{scope, child, first, source, consumer.lane, {}};
+                                int last = -1;
+                                bool supported = true;
+                                for (unsigned cell = 0; cell < p.cells; ++cell) {
+                                    const auto& e = consumer.effects[cell];
+                                    if ((e.readers || e.writers) &&
+                                        ((effects[child][cell].readers | effects[child][cell].writers) &
+                                         (1u << source)))
+                                        supported = false;
+                                    int previous = -1;
+                                    if (e.readers || e.writers)
+                                        previous = writes[cell][source];
+                                    if (e.writers)
+                                        previous = std::max(previous, reads[cell][source]);
+                                    if (previous < 0)
+                                        continue;
+                                    supported &= !seen[consumer.lane][cell] &&
+                                                 !((effects[child][cell].readers | effects[child][cell].writers) &
+                                                   (1u << source));
+                                    d.cells.push_back(cell);
+                                    last = std::max(last, previous);
+                                }
+                                if (!supported || last < 0)
+                                    continue;
+                                d.publication = children[std::max(unsigned(last + 1), position[n.entryGuardStart])];
+                                capture[d.publication].insert(source);
+                                entries[child].push_back(std::move(d));
+                            }
+                        for (unsigned observer = 0; observer < c::LaneCount; ++observer)
+                            for (unsigned cell = 0; cell < p.cells; ++cell)
+                                seen[observer][cell] =
+                                    seen[observer][cell] ||
+                                    ((effects[first][cell].readers | effects[first][cell].writers) & (1u << observer));
+                    }
+                }
                 if (n.kind == c::Node::Operation)
                     for (unsigned source = 0; source < c::LaneCount; ++source) {
                         if (source == n.lane)
@@ -1051,6 +1110,17 @@ struct DemandAnalysis {
                         release[*it].push_back(cut);
                 }
         }
+        // Entry snapshots can be needed inside a later loop. Do not release
+        // them at the last ordinary same-scope consumer. The existing bounded
+        // proposal cache can still discard one safely before selection.
+        std::set<PrefixState::EventKey> entrySnapshots;
+        for (const auto& group : entries)
+            for (const auto& d : group)
+                entrySnapshots.insert({d.source, d.source, d.publication});
+        for (auto& group : release)
+            group.erase(
+                std::remove_if(group.begin(), group.end(), [&](const auto& k) { return entrySnapshots.count(k); }),
+                group.end());
         // Find the smallest sequence containing every access to a physical
         // cell. No access outside that domain can create new history for it.
         // The LCA of its first/last DFS accesses contains all intervening ones.
@@ -1173,7 +1243,9 @@ std::vector<c::Mechanism> demandWord(
     std::vector<c::Mechanism> word;
     for (unsigned child : p.nodes[scope].children)
         for (const auto& m : commands[child])
-            if (m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire)
+            if (m.participation != c::Mechanism::Every)
+                continue;
+            else if (m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire)
                 word.push_back(m);
             else if (expandPackets && m.kind == c::Mechanism::Rendezvous) {
                 // Canonical packets participate in causality but are not
@@ -1195,11 +1267,149 @@ std::vector<c::Mechanism> demandWord(
 // every consumption -> next publication edge in the periodic word; translating
 // those edges proves arbitrary repetitions and skips of the whole domain.
 // Nested domains use disjoint keys and need not finish their payload on return.
+bool verifyEntryProtocols(
+    const c::Program& p, const DemandAnalysis& analysis, const Commands& actual,
+    std::set<PrefixState::EventKey>& reserved, std::string& reason)
+{
+    using namespace c;
+    using Key = PrefixState::EventKey;
+    struct Protocol {
+        unsigned loop = NoCut, provider = NoCut, first = NoCut, ackSet = NoCut, ackWait = NoCut;
+    };
+    std::map<Key, Protocol> population;
+    std::map<unsigned, std::set<Key>> firstKeys, replyKeys;
+    auto refuse = [&]() {
+        reason = "invalid first-consumer entry episode or participation";
+        return false;
+    };
+    for (unsigned id = 0; id < actual.size(); ++id)
+        for (unsigned index = 0; index < actual[id].size(); ++index) {
+            const auto& m = actual[id][index];
+            if (m.participation == Mechanism::Every) {
+                if (m.loop != NoCut)
+                    return refuse();
+                continue;
+            }
+            if (m.loop >= p.nodes.size() || p.nodes[m.loop].kind != Node::For ||
+                p.nodes[m.loop].entryGuardStart == NoCut || analysis.next[m.loop] == NoCut || m.first >= LaneCount ||
+                m.second >= LaneCount || !p.target.event(lane(p, m.first), lane(p, m.second)) ||
+                !p.target.available(lane(p, m.first), lane(p, m.second), m.forwardKey) ||
+                key(p, m.first, m.second) == m.forwardKey ||
+                (m.kind != Mechanism::Publish && m.kind != Mechanism::Acquire))
+                return refuse();
+            Key key{m.first, m.second, m.forwardKey};
+            auto& pop = population[key];
+            if (pop.loop != NoCut && pop.loop != m.loop)
+                return refuse();
+            pop.loop = m.loop;
+            auto scope = analysis.parent[m.loop];
+            if (scope == NoCut || p.nodes[scope].kind != Node::Sequence ||
+                analysis.parent[p.nodes[m.loop].entryGuardStart] != scope)
+                return refuse();
+            if (m.participation == Mechanism::First) {
+                if (m.kind != Mechanism::Acquire || p.nodes[id].kind != Node::Operation ||
+                    p.nodes[id].lane != m.second || analysis.parent[id] != p.nodes[m.loop].children[0])
+                    return refuse();
+                if (std::none_of(analysis.entries[m.loop].begin(), analysis.entries[m.loop].end(), [&](const auto& d) {
+                        return d.acquisition == id && d.source == m.first && d.observer == m.second;
+                    }))
+                    return refuse();
+                for (unsigned cell = 0; cell < p.cells; ++cell)
+                    if ((p.nodes[id].effects[cell].readers || p.nodes[id].effects[cell].writers) &&
+                        ((analysis.effects[m.loop][cell].readers | analysis.effects[m.loop][cell].writers) &
+                         (1u << m.first)))
+                        return refuse();
+                if (pop.first != NoCut)
+                    return refuse();
+                pop.first = id;
+                firstKeys[m.loop].insert(key);
+            } else if (m.participation == Mechanism::NonEmpty) {
+                if (analysis.parent[id] != scope)
+                    return refuse();
+                if (analysis.position[id] <= analysis.position[m.loop]) {
+                    if (m.kind != Mechanism::Publish ||
+                        analysis.position[id] < analysis.position[p.nodes[m.loop].entryGuardStart])
+                        return refuse();
+                    if (pop.provider != NoCut)
+                        return refuse();
+                    pop.provider = id;
+                } else {
+                    if (id != analysis.next[m.loop])
+                        return refuse();
+                    if (m.kind == Mechanism::Publish) {
+                        if (index + 1 == actual[id].size())
+                            return refuse();
+                        const auto& wait = actual[id][index + 1];
+                        if (wait.kind != Mechanism::Acquire || wait.participation != m.participation ||
+                            wait.loop != m.loop || wait.first != m.first || wait.second != m.second ||
+                            wait.forwardKey != m.forwardKey)
+                            return refuse();
+                        if (pop.ackSet != NoCut)
+                            return refuse();
+                        pop.ackSet = id;
+                        replyKeys[m.loop].insert(key);
+                    } else {
+                        if (index == 0)
+                            return refuse();
+                        const auto& set = actual[id][index - 1];
+                        if (set.kind != Mechanism::Publish || set.participation != m.participation ||
+                            set.loop != m.loop || set.first != m.first || set.second != m.second ||
+                            set.forwardKey != m.forwardKey)
+                            return refuse();
+                        if (pop.ackWait != NoCut)
+                            return refuse();
+                        pop.ackWait = id;
+                    }
+                }
+            } else
+                return refuse();
+        }
+    for (const auto& [k, pop] : population) {
+        if (pop.loop == NoCut)
+            return refuse();
+        if (pop.provider != NoCut) {
+            if (pop.first == NoCut || pop.ackSet != NoCut || pop.ackWait != NoCut)
+                return refuse();
+        } else if (pop.ackSet == NoCut || pop.ackWait == NoCut || pop.first != NoCut)
+            return refuse();
+        reserved.insert(k);
+    }
+    std::set<unsigned> loops;
+    for (const auto& [key, pop] : population)
+        loops.insert(pop.loop);
+    for (unsigned loop : loops) {
+        if (firstKeys[loop].empty() || replyKeys[loop].empty())
+            return refuse();
+        std::vector<Mechanism> word;
+        auto append = [&](unsigned cut) {
+            for (const auto& m : actual[cut])
+                if (m.participation != Mechanism::Every && m.loop == loop)
+                    word.push_back(m);
+        };
+        const auto& siblings = p.nodes[analysis.parent[loop]].children;
+        for (unsigned i = 0; i <= analysis.position[loop]; ++i)
+            append(siblings[i]);
+        for (unsigned child : p.nodes[p.nodes[loop].children[0]].children)
+            append(child);
+        append(analysis.next[loop]);
+        // Reconstruct the actual combined nonempty visit, preserving command
+        // order rather than assuming independent per-cell acknowledgment pairs.
+        // The empty visit has no episode commands. Other domains use disjoint
+        // keys and provide no assumed causality to this two-copy proof.
+        if (!verifyProtocolWord(word, reason))
+            return false;
+    }
+    return true;
+}
+
 bool verifyDemandProtocols(
     const c::Program& p, const DemandAnalysis& analysis, const std::vector<std::vector<c::Mechanism>>& actual,
     std::string& reason)
 {
     using Key = PrefixState::EventKey;
+    std::set<Key> entryKeys;
+    if (!verifyEntryProtocols(p, analysis, actual, entryKeys, reason))
+        return false;
     struct Population {
         unsigned scope = NoCut, sets = 0, waits = 0;
     };
@@ -1210,7 +1420,14 @@ bool verifyDemandProtocols(
             words[scope] = demandWord(p, actual, scope, true);
     for (unsigned id = 0; id < actual.size(); ++id)
         for (const auto& m : actual[id]) {
+            if (m.participation != c::Mechanism::Every)
+                continue;
             if (validMechanism(p, m)) {
+                if (m.kind == c::Mechanism::Rendezvous && (entryKeys.count({m.first, m.second, m.forwardKey}) ||
+                                                           entryKeys.count({m.second, m.first, m.reverseKey}))) {
+                    reason = "canonical packet collides with an entry episode";
+                    return false;
+                }
                 // Actual canonical packets are complete-or-skipped templates.
                 // Their fixed global orientation/keys permit sequential reuse
                 // across nested domains, unlike independently numbered raw
@@ -1232,6 +1449,7 @@ bool verifyDemandProtocols(
                 std::find(p.target.compilerKeys.begin(), p.target.compilerKeys.end(), m.forwardKey) ==
                     p.target.compilerKeys.end() ||
                 key(p, m.first, m.second) == m.forwardKey || analysis.parent[id] == NoCut ||
+                entryKeys.count({m.first, m.second, m.forwardKey}) ||
                 p.nodes[analysis.parent[id]].kind != c::Node::Sequence) {
                 reason = "invalid demand protocol mechanism or execution domain";
                 return false;
@@ -1264,6 +1482,36 @@ DemandIdentity identity(const c::CompletionDemand& d)
 {
     return {d.scope, d.publication, d.acquisition, d.source, d.observer};
 }
+bool applyEntryCredit(PrefixState& state, const c::Mechanism& m, const DemandAnalysis& analysis, std::string& reason)
+{
+    if (m.participation == c::Mechanism::NonEmpty) {
+        // A conditional ACK does not establish unconditional exit completion.
+        // Zero-trip state must survive the ordinary loop join unchanged.
+        if (m.kind == c::Mechanism::Publish)
+            state.publish(m);
+        else
+            state.receipts.erase({m.first, m.second, m.forwardKey});
+        return true;
+    }
+    auto found = state.receipts.find({m.first, m.second, m.forwardKey});
+    if (found == state.receipts.end()) {
+        reason = "first-consumer receipt has no actual provider";
+        return false;
+    }
+    const auto& remaining = found->second;
+    const auto& effects = analysis.effects[m.loop];
+    for (unsigned cell = 0; cell < remaining.size(); ++cell)
+        if ((effects[cell].readers & ~remaining[cell].readers) || (effects[cell].writers & ~remaining[cell].writers)) {
+            reason = "entry credit does not retain the complete loop MAY effects";
+            return false;
+        }
+    // The guarded first WAIT acquires this old prefix exactly once. Thereafter
+    // P := P & remaining is an idempotent credit: remaining contains the entire
+    // loop MAY summary, so reapplying it abstractly cannot erase new generations.
+    // This is an episode-scoped completion fact, not repeated token consumption.
+    state.acquireRemaining(m.second, remaining);
+    return true;
+}
 c::Result verifyDemandImpl(
     const c::Program& p, const std::vector<std::vector<c::Mechanism>>& actual, DemandInvariants* invariants);
 c::Result constructDemandCandidate(
@@ -1279,6 +1527,7 @@ c::Result constructDemandCandidate(
     std::vector<std::vector<Mechanism>> publications(p.nodes.size());
     using Direction = std::pair<unsigned, unsigned>;
     using FamilyKey = std::tuple<unsigned, unsigned, unsigned>;
+    std::map<Direction, std::set<unsigned>> entryKeys;
     struct Family {
         unsigned acknowledgment, last;
     };
@@ -1312,15 +1561,18 @@ c::Result constructDemandCandidate(
         for (unsigned source : analysis.capture[id]) {
             unsigned count = 0;
             for (const auto& entry : state.receipts)
-                count += std::get<0>(entry.first) == source;
+                count += std::get<0>(entry.first) == source && std::get<1>(entry.first) == source;
             if (count >= MaxAlternatives) {
                 auto old = std::find_if(state.receipts.begin(), state.receipts.end(), [&](const auto& entry) {
-                    return std::get<0>(entry.first) == source;
+                    return std::get<0>(entry.first) == source && std::get<1>(entry.first) == source;
                 });
                 state.receipts.erase(old);
             }
             state.publish(event(Mechanism::Publish, source, source, id));
         }
+        for (const auto& m : result.before[id])
+            if (m.participation != Mechanism::Every && !applyEntryCredit(state, m, analysis, result.reason))
+                return false;
         const auto& n = p.nodes[id];
         if (n.kind == Node::Operation) {
             if (needsVisibility(p, n, state)) {
@@ -1390,6 +1642,85 @@ c::Result constructDemandCandidate(
         }
         if (n.kind == Node::For || n.kind == Node::While) {
             auto entry = state;
+            std::vector<PrefixState::EventKey> episodeReceipts;
+            std::map<Direction, Effects> acquiredEntry;
+            std::map<Direction, unsigned> entryReplies;
+            for (const auto& demand : analysis.entries[id]) {
+                // A previous first consumer may already acquire this whole
+                // incoming prefix. The source has no body effects on these
+                // demanded cells, so that credit survives all later visits.
+                auto acquired = acquiredEntry.find({demand.source, demand.observer});
+                if (acquired != acquiredEntry.end()) {
+                    auto covered = state;
+                    covered.seed(analysis.effects[id]);
+                    covered.acquireRemaining(demand.observer, acquired->second);
+                    if (!(covered.demands(demand.observer, p.nodes[demand.acquisition].effects) &
+                          (1u << demand.source)))
+                        continue;
+                }
+                auto receipt = state.receipts.find({demand.source, demand.source, demand.publication});
+                if (receipt == state.receipts.end())
+                    continue;
+                auto remaining = receipt->second;
+                merge(remaining, analysis.effects[id]);
+                auto trialState = state;
+                trialState.seed(analysis.effects[id]);
+                const auto& first = p.nodes[demand.acquisition];
+                if (!(trialState.demands(demand.observer, first.effects) & (1u << demand.source)))
+                    continue;
+                trialState.acquireRemaining(demand.observer, remaining);
+                if (trialState.demands(demand.observer, first.effects) & (1u << demand.source))
+                    continue;
+                auto trial = entryKeys;
+                auto allocateEntry = [&](unsigned a, unsigned b) -> std::optional<unsigned> {
+                    for (unsigned k : p.target.compilerKeys)
+                        if (key(p, a, b) != k && p.target.event(lane(p, a), lane(p, b)) &&
+                            p.target.available(lane(p, a), lane(p, b), k) && !trial[{a, b}].count(k)) {
+                            trial[{a, b}].insert(k);
+                            return k;
+                        }
+                    return {};
+                };
+                auto forward = allocateEntry(demand.source, demand.observer);
+                auto existingReply = entryReplies.find({demand.source, demand.observer});
+                auto reverse = existingReply == entryReplies.end() ? allocateEntry(demand.observer, demand.source) :
+                                                                     std::optional<unsigned>(existingReply->second);
+                if (!forward || !reverse)
+                    continue;
+                entryKeys = std::move(trial);
+                auto make = [&](Mechanism::Kind kind, unsigned a, unsigned b, unsigned k,
+                                Mechanism::Participation participation) {
+                    auto m = event(kind, a, b, k);
+                    m.participation = participation;
+                    m.loop = id;
+                    return m;
+                };
+                publications[demand.publication].push_back(
+                    make(Mechanism::Publish, demand.source, demand.observer, *forward, Mechanism::NonEmpty));
+                result.before[demand.acquisition].push_back(
+                    make(Mechanism::Acquire, demand.source, demand.observer, *forward, Mechanism::First));
+                if (existingReply == entryReplies.end()) {
+                    result.before[analysis.next[id]].push_back(
+                        make(Mechanism::Publish, demand.observer, demand.source, *reverse, Mechanism::NonEmpty));
+                    result.before[analysis.next[id]].push_back(
+                        make(Mechanism::Acquire, demand.observer, demand.source, *reverse, Mechanism::NonEmpty));
+                    entryReplies[{demand.source, demand.observer}] = *reverse;
+                    ++result.entryReplyFamilies;
+                }
+                // The entry provider is only a temporary abstract receipt for
+                // the nonempty body visit. Keep it out of the zero-trip state:
+                // the guarded SET does not execute when the loop is skipped.
+                state.receipts[{demand.source, demand.observer, *forward}] = receipt->second;
+                episodeReceipts.push_back({demand.source, demand.observer, *forward});
+                if (acquired == acquiredEntry.end())
+                    acquiredEntry[{demand.source, demand.observer}] = std::move(remaining);
+                else
+                    for (unsigned cell = 0; cell < p.cells; ++cell) {
+                        acquired->second[cell].readers &= remaining[cell].readers;
+                        acquired->second[cell].writers &= remaining[cell].writers;
+                    }
+                ++result.entryEpisodes;
+            }
             state.seed(analysis.effects[id]);
             if (invariants) {
                 auto found = invariants->find(id);
@@ -1405,6 +1736,10 @@ c::Result constructDemandCandidate(
             }
             if (!visit(n.children[0], state))
                 return false;
+            // Stable entry credit is scoped to this body. No guarded episode
+            // receipt may leak into the zero-trip join or a later sibling.
+            for (const auto& receipt : episodeReceipts)
+                state.receipts.erase(receipt);
             if (n.kind == Node::While) {
                 auto exit = state;
                 if (!visit(n.children[1], state))
@@ -1450,7 +1785,8 @@ c::Result constructDemandCandidate(
             std::remove_if(
                 commands.begin(), commands.end(),
                 [sourceLane = source, targetLane = observer, ack = family.acknowledgment](const auto& m) {
-                    return (m.kind == Mechanism::Publish || m.kind == Mechanism::Acquire) && m.first == targetLane &&
+                    return m.participation == Mechanism::Every &&
+                           (m.kind == Mechanism::Publish || m.kind == Mechanism::Acquire) && m.first == targetLane &&
                            m.second == sourceLane && m.forwardKey == ack;
                 }),
             commands.end());
@@ -1471,7 +1807,9 @@ c::Result constructDemandCandidate(
     // and replace only unassigned logical acquisitions by stronger canonical
     // packets at the same cut. Remove their publications, then freshly recheck
     // the complete actual word (including packets) and physical requirements.
-    std::map<Direction, std::set<unsigned>> occupied;
+    std::map<Direction, std::set<unsigned>> occupied = entryKeys;
+    for (const auto& [direction, keys] : entryKeys)
+        result.protocolKeys += keys.size();
     std::set<unsigned> fallbackScopes;
     std::set<PrefixState::EventKey> fallbackKeys;
     for (unsigned scope : analysis.scopeOrder) {
@@ -1525,6 +1863,10 @@ c::Result constructDemandCandidate(
             auto& commands = result.before[child];
             commands.clear();
             for (auto m : original) {
+                if (m.participation != Mechanism::Every) {
+                    commands.push_back(m);
+                    continue;
+                }
                 if (m.kind != Mechanism::Publish && m.kind != Mechanism::Acquire) {
                     commands.push_back(m);
                     continue;
@@ -1592,12 +1934,22 @@ c::Result verifyDemandImpl(
     // Fresh physical requirements and actual event-prefix transfer. No chosen
     // demand, source-cut proposal, family membership, or initialization receipt
     // is consumed by this checker.
+    std::map<unsigned, std::set<PrefixState::EventKey>> entryProviders;
+    for (unsigned id = 0; id < actual.size(); ++id)
+        for (const auto& m : actual[id])
+            if (m.participation == c::Mechanism::NonEmpty && m.kind == c::Mechanism::Publish &&
+                m.loop < p.nodes.size() && analysis.parent[m.loop] != NoCut &&
+                analysis.parent[id] == analysis.parent[m.loop] && analysis.position[id] <= analysis.position[m.loop])
+                entryProviders[m.loop].insert({m.first, m.second, m.forwardKey});
     uint64_t probeBudget = 2 * p.nodes.size();
     std::function<bool(unsigned, PrefixState&, bool)> check = [&](unsigned id, PrefixState& state, bool validate) {
         ++result.nodeVisits;
         result.cellVisits += p.cells * LaneCount;
         for (const auto& m : actual[id]) {
-            if (m.kind == Mechanism::Publish)
+            if (m.participation != Mechanism::Every) {
+                if (!applyEntryCredit(state, m, analysis, result.reason))
+                    return false;
+            } else if (m.kind == Mechanism::Publish)
                 state.publish(m);
             else if (m.kind == Mechanism::Acquire) {
                 if (!state.receipts.count({m.first, m.second, m.forwardKey})) {
@@ -1652,7 +2004,12 @@ c::Result verifyDemandImpl(
             return true;
         }
         if (n.kind == Node::For || n.kind == Node::While) {
+            // NonEmpty entry providers are guarded by the loop trip predicate.
+            // They must not survive the zero-trip branch of this abstract join;
+            // ordinary receipts and ordinary commands at the same cut do.
             auto entry = state;
+            for (const auto& receipt : entryProviders[id])
+                entry.receipts.erase(receipt);
             state.seed(analysis.effects[id]);
             // Bounded invariant narrowing for a FIXED actual plan. Top=E|S
             // is inductive. Monotonicity gives E|F(Top) <= Top, itself an
@@ -1723,17 +2080,37 @@ c::Result verifyDemandImpl(
 
 namespace {
 c::Result constructDemandsImpl(
-    const c::Program& p, bool corruptRefinement, bool replayAllocation = true, bool corruptReplay = false)
+    const c::Program& p, bool corruptRefinement, bool replayAllocation = true, bool corruptReplay = false,
+    bool corruptEntry = false, bool allowEntryFallback = true)
 {
     DemandFallbacks unassigned;
     auto initial = constructDemandCandidate(p, nullptr, unassigned);
-    if (!initial.success)
-        return initial;
+    if (corruptEntry)
+        for (auto& commands : initial.before)
+            commands.erase(
+                std::remove_if(
+                    commands.begin(), commands.end(),
+                    [](const auto& m) { return m.participation == c::Mechanism::First; }),
+                commands.end());
     DemandInvariants invariants;
-    auto checked = verifyDemandImpl(p, initial.before, &invariants);
-    if (!checked.success) {
+    auto checked = initial.success ? verifyDemandImpl(p, initial.before, &invariants) : c::Result{};
+    if (!initial.success || !checked.success) {
+        bool hasEntryContract =
+            std::any_of(p.nodes.begin(), p.nodes.end(), [](const auto& n) { return n.entryGuardStart != NoCut; });
+        if (allowEntryFallback && hasEntryContract) {
+            auto conservativeEntry = p;
+            for (auto& n : conservativeEntry.nodes)
+                n.entryGuardStart = NoCut;
+            auto fallback = constructDemandsImpl(
+                conservativeEntry, corruptRefinement, replayAllocation, corruptReplay, false, false);
+            fallback.nodeVisits += initial.nodeVisits + checked.nodeVisits;
+            fallback.cellVisits += initial.cellVisits + checked.cellVisits;
+            fallback.rejectedEntryProposals = 1;
+            return fallback;
+        }
+        if (initial.success)
+            initial.reason = checked.reason;
         initial.success = false;
-        initial.reason = checked.reason;
         initial.before.clear();
         return initial;
     }
@@ -1781,6 +2158,20 @@ c::Result constructDemandsImpl(
     bool acceptable =
         replay.success && verified.success &&
         std::includes(unassigned.begin(), unassigned.end(), newlyUnassigned.begin(), newlyUnassigned.end());
+    if (acceptable)
+        for (unsigned id = 0; id < p.nodes.size(); ++id) {
+            auto guarded = [](const auto& commands) {
+                std::vector<c::Mechanism> out;
+                for (const auto& m : commands)
+                    if (m.participation != c::Mechanism::Every)
+                        out.push_back(m);
+                return out;
+            };
+            if (guarded(initial.before[id]) != guarded(replay.before[id])) {
+                acceptable = false;
+                break;
+            }
+        }
     uint64_t removed = 0;
     if (acceptable) {
         // Every current command participates on every visit to its immediate
@@ -1823,6 +2214,10 @@ c::Result constructDemandsImpl(
 
 c::Result c::constructDemands(const Program& p) { return constructDemandsImpl(p, false); }
 c::Result c::testing::constructDemandsRejectingRefinement(const Program& p) { return constructDemandsImpl(p, true); }
+c::Result c::testing::constructDemandsRejectingEntryProposal(const Program& p)
+{
+    return constructDemandsImpl(p, false, true, false, true);
+}
 c::Result c::testing::constructDemandsWithoutAllocationReplay(const Program& p)
 {
     return constructDemandsImpl(p, false, false);

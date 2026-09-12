@@ -10,9 +10,11 @@
 #include "PTO/Transforms/InsertSync/StructuredSyncCoverage.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncPayloadSnapshot.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include <algorithm>
 #include <chrono>
@@ -152,6 +154,7 @@ struct Tree {
     std::vector<Cell> cells;
     std::vector<Operation*> anchors;
     llvm::DenseMap<Operation*, unsigned> ids;
+    const llvm::SmallPtrSetImpl<Operation*>* ignored = nullptr;
     llvm::DenseMap<Operation*, const CompoundInstanceElement*> phases;
     std::string reason;
     uint64_t widenedSpaces = 0;
@@ -343,7 +346,7 @@ struct Tree {
             return false;
         }
         for (Operation& op : body.front()) {
-            if (sync(&op))
+            if (sync(&op) || (ignored && ignored->contains(&op)))
                 continue;
             c::Node current = node(c::Node::Sequence);
             if (auto loop = dyn_cast<scf::ForOp>(op)) {
@@ -426,8 +429,44 @@ struct Tree {
         partition();
         unsigned root;
         auto* scope = inventory.physical.lifetimeScope;
-        return region(
-            scope == inventory.function.getOperation() ? inventory.function.getBody() : scope->getRegion(0), root);
+        if (!region(
+                scope == inventory.function.getOperation() ? inventory.function.getBody() : scope->getRegion(0), root))
+            return false;
+        // This optional guard contract is deliberately narrower than For
+        // admission. Other steps/bounds still use conservative composition.
+        // Publication remains in the loop's own parent Sequence. Choose its
+        // earliest cut dominated by both original bounds; demand analysis then
+        // moves it after the last required producer, not after unrelated loads.
+        DominanceInfo dominance(inventory.function);
+        for (unsigned parent = 0; parent < program.nodes.size(); ++parent) {
+            const auto& children = program.nodes[parent].children;
+            if (program.nodes[parent].kind != c::Node::Sequence)
+                continue;
+            for (unsigned index = 0; index < children.size(); ++index) {
+                unsigned id = children[index];
+                if (program.nodes[id].kind != c::Node::For || index + 1 == children.size() ||
+                    program.nodes[id].children.size() != 1)
+                    continue;
+                auto loop = cast<scf::ForOp>(anchors[id]);
+                unsigned body = program.nodes[id].children[0];
+                if (program.nodes[body].kind != c::Node::Sequence || program.nodes[body].children.empty() ||
+                    program.nodes[body].children.front() >= anchors.size())
+                    continue;
+                APInt step;
+                if (!loop.getInductionVar().getType().isIndex() ||
+                    !matchPattern(loop.getStep(), m_ConstantInt(&step)) || step != 1)
+                    continue;
+                for (unsigned cut = 0; cut <= index; ++cut) {
+                    Operation* anchor = anchors[children[cut]];
+                    if (anchor && dominance.properlyDominates(loop.getLowerBound(), anchor) &&
+                        dominance.properlyDominates(loop.getUpperBound(), anchor)) {
+                        program.nodes[id].entryGuardStart = children[cut];
+                        break;
+                    }
+                }
+            }
+        }
+        return true;
     }
 };
 
@@ -439,7 +478,38 @@ void emit(Tree& tree, const c::Result& plan)
             continue;
         OpBuilder b(tree.anchors[id]);
         auto loc = tree.anchors[id]->getLoc();
-        for (const auto& m : plan.before[id]) {
+        for (unsigned index = 0; index < plan.before[id].size(); ++index) {
+            const auto& m = plan.before[id][index];
+            if (m.participation != c::Mechanism::Every) {
+                auto loop = cast<scf::ForOp>(tree.anchors[m.loop]);
+                bool first = m.participation == c::Mechanism::First;
+                auto condition = b.create<arith::CmpIOp>(
+                    loc, first ? arith::CmpIPredicate::eq : arith::CmpIPredicate::slt,
+                    first ? loop.getInductionVar() : loop.getLowerBound(),
+                    first ? loop.getLowerBound() : loop.getUpperBound());
+                auto branch = b.create<scf::IfOp>(loc, condition, false);
+                OpBuilder nested = OpBuilder::atBlockBegin(&branch.getThenRegion().front());
+                auto emitEvent = [&](const c::Mechanism& command) {
+                    auto a = PipeAttr::get(context, pipe(command.first)),
+                         d = PipeAttr::get(context, pipe(command.second));
+                    auto key = EventAttr::get(context, static_cast<EVENT>(command.forwardKey));
+                    if (command.kind == c::Mechanism::Publish)
+                        nested.create<SetFlagOp>(loc, a, d, key);
+                    else
+                        nested.create<WaitFlagOp>(loc, a, d, key);
+                };
+                emitEvent(m);
+                if (!first && m.kind == c::Mechanism::Publish && index + 1 < plan.before[id].size()) {
+                    const auto& next = plan.before[id][index + 1];
+                    if (next.kind == c::Mechanism::Acquire && next.participation == m.participation &&
+                        next.loop == m.loop && next.first == m.first && next.second == m.second &&
+                        next.forwardKey == m.forwardKey) {
+                        emitEvent(next);
+                        ++index;
+                    }
+                }
+                continue;
+            }
             if (m.kind == c::Mechanism::Barrier) {
                 b.create<BarrierOp>(loc, PipeAttr::get(context, pipe(m.first)));
                 continue;
@@ -463,6 +533,133 @@ void emit(Tree& tree, const c::Result& plan)
         }
     }
 }
+
+// Recover guarded participation from actual IR and the immutable original
+// loop/bound identities. No selected entry-demand or completion receipt enters
+// this classifier. Only its exactly checked added operations pass the snapshot.
+struct EntryGuards {
+    llvm::SmallPtrSet<Operation*, 32> operations;
+    llvm::DenseMap<Operation*, std::vector<c::Mechanism>> commands;
+    llvm::DenseMap<Operation*, Operation*> targets;
+    bool build(Tree& original, const llvm::SmallPtrSetImpl<Operation*>& generated, std::string& reason)
+    {
+        using Key = std::tuple<unsigned, unsigned, unsigned>;
+        std::map<Key, unsigned> firstLoops;
+        std::vector<scf::IfOp> candidates;
+        std::vector<unsigned> parent(original.program.nodes.size(), ~0u), position(parent.size());
+        for (unsigned id = 0; id < original.program.nodes.size(); ++id)
+            for (unsigned i = 0; i < original.program.nodes[id].children.size(); ++i) {
+                auto child = original.program.nodes[id].children[i];
+                parent[child] = id;
+                position[child] = i;
+            }
+        auto fail = [&]() {
+            reason = "invalid native first-consumer guard or original loop binding";
+            return false;
+        };
+        auto nextOriginal = [&](Operation* from) {
+            while (from && !original.ids.count(from))
+                from = from->getNextNode();
+            return from;
+        };
+        auto raw = [&](Operation* op, c::Mechanism& m) {
+            auto decode = [&](auto event, c::Mechanism::Kind kind) {
+                auto a = lane(event.getSrcPipe().getPipe()), b = lane(event.getDstPipe().getPipe());
+                if (!a || !b)
+                    return false;
+                m = {kind, *a, *b, unsigned(event.getEventId().getEvent()), 0};
+                return true;
+            };
+            if (auto set = dyn_cast<SetFlagOp>(op))
+                return decode(set, c::Mechanism::Publish);
+            if (auto wait = dyn_cast<WaitFlagOp>(op))
+                return decode(wait, c::Mechanism::Acquire);
+            return false;
+        };
+        original.inventory.function.walk([&](scf::IfOp branch) {
+            if (branch.getNumResults() || !branch.getElseRegion().empty() ||
+                !llvm::hasSingleElement(branch.getThenRegion()))
+                return;
+            bool event = false, pure = true;
+            for (Operation& op : branch.getThenRegion().front()) {
+                event |= isa<SetFlagOp, WaitFlagOp>(op);
+                pure &= isa<SetFlagOp, WaitFlagOp, scf::YieldOp>(op);
+            }
+            if (event && pure)
+                candidates.push_back(branch);
+        });
+        for (auto branch : candidates) {
+            if (!generated.contains(branch))
+                return fail();
+            auto cmp = branch.getCondition().getDefiningOp<arith::CmpIOp>();
+            if (!cmp || cmp->getNextNode() != branch.getOperation() || !cmp.getResult().hasOneUse())
+                return fail();
+            auto& list = commands[branch];
+            for (Operation& op : branch.getThenRegion().front().without_terminator()) {
+                c::Mechanism m;
+                if (!raw(&op, m))
+                    return fail();
+                list.push_back(m);
+            }
+            targets[branch] = nextOriginal(branch->getNextNode());
+            if (!targets[branch])
+                return fail();
+            if (cmp.getPredicate() != arith::CmpIPredicate::eq)
+                continue;
+            auto iv = dyn_cast<BlockArgument>(cmp.getLhs());
+            auto loop = iv ? dyn_cast_or_null<scf::ForOp>(iv.getOwner()->getParentOp()) : scf::ForOp{};
+            auto found = loop ? original.ids.find(loop) : original.ids.end();
+            if (!loop || found == original.ids.end() || original.program.nodes[found->second].entryGuardStart == ~0u ||
+                cmp.getLhs() != loop.getInductionVar() || cmp.getRhs() != loop.getLowerBound() ||
+                branch->getBlock() != loop.getBody() || list.size() != 1 || list[0].kind != c::Mechanism::Acquire)
+                return fail();
+            auto& m = list[0];
+            m.participation = c::Mechanism::First;
+            m.loop = found->second;
+            if (!firstLoops.emplace(Key{m.first, m.second, m.forwardKey}, m.loop).second)
+                return fail();
+        }
+        for (auto branch : candidates) {
+            auto cmp = branch.getCondition().getDefiningOp<arith::CmpIOp>();
+            auto& list = commands[branch];
+            if (list[0].participation != c::Mechanism::First) {
+                if (cmp.getPredicate() != arith::CmpIPredicate::slt || list[0].kind != c::Mechanism::Publish)
+                    return fail();
+                unsigned loopId = ~0u;
+                if (list.size() == 1) {
+                    auto found = firstLoops.find({list[0].first, list[0].second, list[0].forwardKey});
+                    if (found == firstLoops.end())
+                        return fail();
+                    loopId = found->second;
+                } else if (
+                    list.size() == 2 && list[1].kind == c::Mechanism::Acquire && list[0].first == list[1].first &&
+                    list[0].second == list[1].second && list[0].forwardKey == list[1].forwardKey) {
+                    unsigned cut = original.ids.lookup(targets[branch]);
+                    if (parent[cut] == ~0u || !position[cut])
+                        return fail();
+                    loopId = original.program.nodes[parent[cut]].children[position[cut] - 1];
+                } else
+                    return fail();
+                if (original.program.nodes[loopId].kind != c::Node::For ||
+                    original.program.nodes[loopId].entryGuardStart == ~0u)
+                    return fail();
+                auto loop = cast<scf::ForOp>(original.anchors[loopId]);
+                if (cmp.getLhs() != loop.getLowerBound() || cmp.getRhs() != loop.getUpperBound() ||
+                    branch->getBlock() != loop->getBlock())
+                    return fail();
+                for (auto& m : list) {
+                    m.participation = c::Mechanism::NonEmpty;
+                    m.loop = loopId;
+                }
+            }
+            operations.insert(branch);
+            operations.insert(cmp);
+            for (Operation& op : branch.getThenRegion().front())
+                operations.insert(&op);
+        }
+        return true;
+    }
+};
 
 // Recognize the actual reusable protocol, with no attributes or selected-plan
 // receipt. All four commands must be adjacent in the same original block.
@@ -527,15 +724,30 @@ bool parsePacket(Operation*& cursor, c::Mechanism& m, const c::Program& program,
 }
 
 bool reconstruct(
-    Tree& tree, Operation* drain, std::vector<std::vector<c::Mechanism>>& actual, std::string& reason, bool precision)
+    Tree& tree, Operation* drain, std::vector<std::vector<c::Mechanism>>& actual, std::string& reason, bool precision,
+    const EntryGuards& guards)
 {
     actual.resize(tree.program.nodes.size());
     bool valid = true;
     tree.inventory.function.walk([&](Operation* parent) {
+        if (guards.commands.count(parent))
+            return;
         for (Region& region : parent->getRegions())
             for (Block& block : region) {
                 Operation* cursor = block.empty() ? nullptr : &block.front();
                 while (cursor) {
+                    auto guard = guards.commands.find(cursor);
+                    if (guard != guards.commands.end()) {
+                        auto found = tree.ids.find(guards.targets.lookup(cursor));
+                        if (found == tree.ids.end()) {
+                            valid = false;
+                            break;
+                        }
+                        auto& out = actual[found->second];
+                        out.insert(out.end(), guard->second.begin(), guard->second.end());
+                        cursor = cursor->getNextNode();
+                        continue;
+                    }
                     if (!sync(cursor) || cursor == drain) {
                         cursor = cursor->getNextNode();
                         continue;
@@ -556,12 +768,16 @@ bool reconstruct(
                     // original terminator boundary.
                     if (cursor == drain)
                         cursor = cursor->getNextNode();
-                    auto found = tree.ids.find(cursor);
-                    if (!cursor || found == tree.ids.end()) {
+                    auto* target = cursor;
+                    while (target && !tree.ids.count(target))
+                        target = target->getNextNode();
+                    auto found = tree.ids.find(target);
+                    if (!target || found == tree.ids.end()) {
                         valid = false;
                         break;
                     }
-                    actual[found->second] = std::move(packets);
+                    auto& out = actual[found->second];
+                    out.insert(out.end(), packets.begin(), packets.end());
                 }
             }
     });
@@ -585,11 +801,12 @@ Outcome ss::testing::constructCompositionalSync(
 {
     const bool precision = constructor == CompositionConstructor::Cuts;
     const bool rejectRefinement = constructor == CompositionConstructor::DemandsRejectRefinement;
+    const bool rejectEntry = constructor == CompositionConstructor::DemandsRejectEntryProposal;
     const bool fallbackOnly = constructor == CompositionConstructor::DemandsFallbackOnly;
     const bool withoutReplay = constructor == CompositionConstructor::DemandsWithoutAllocationReplay;
     const bool rejectReplay = constructor == CompositionConstructor::DemandsRejectAllocationReplay;
     const bool demandPlacement = constructor == CompositionConstructor::Demands || rejectRefinement || fallbackOnly ||
-                                 withoutReplay || rejectReplay;
+                                 withoutReplay || rejectReplay || rejectEntry;
     Outcome out;
     if (function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         out.reason = "composition requires a single function block";
@@ -632,7 +849,8 @@ Outcome ss::testing::constructCompositionalSync(
     }
     if (fallbackOnly)
         tree.program.target.compilerKeys = {0};
-    auto selected = withoutReplay    ? c::testing::constructDemandsWithoutAllocationReplay(tree.program) :
+    auto selected = rejectEntry      ? c::testing::constructDemandsRejectingEntryProposal(tree.program) :
+                    withoutReplay    ? c::testing::constructDemandsWithoutAllocationReplay(tree.program) :
                     rejectReplay     ? c::testing::constructDemandsRejectingAllocationReplay(tree.program) :
                     rejectRefinement ? c::testing::constructDemandsRejectingRefinement(tree.program) :
                     demandPlacement  ? c::constructDemands(tree.program) :
@@ -643,6 +861,8 @@ Outcome ss::testing::constructCompositionalSync(
         return out;
     }
     SyncPayloadSnapshot snapshot(working);
+    llvm::SmallPtrSet<Operation*, 32> originalOperations, generatedOperations;
+    working.walk([&](Operation* op) { originalOperations.insert(op); });
     emit(tree, selected);
     Operation* scope = inventory.physical.lifetimeScope;
     Block& last = scope == working.getOperation() ? working.getBody().front() : scope->getRegion(0).front();
@@ -653,10 +873,18 @@ Outcome ss::testing::constructCompositionalSync(
     else
         b.setInsertionPointToEnd(&last);
     b.create<BarrierOp>(working.getLoc(), PipeAttr::get(working.getContext(), PIPE::PIPE_ALL));
+    working.walk([&](Operation* op) {
+        if (!originalOperations.contains(op))
+            generatedOperations.insert(op);
+    });
     if (mutate)
         mutate(working);
     out.status = Outcome::InternalError;
-    if (failed(mlir::verify(working)) || !snapshot.preserved(working, sync)) {
+    EntryGuards guards;
+    if (failed(mlir::verify(working)) || (demandPlacement && !guards.build(tree, generatedOperations, out.reason)) ||
+        !snapshot.preserved(working, [&](Operation* op) {
+            return generatedOperations.contains(op) && (sync(op) || guards.operations.contains(op));
+        })) {
         out.reason = "compositional emission changed original payload or control";
         return out;
     }
@@ -679,6 +907,7 @@ Outcome ss::testing::constructCompositionalSync(
         return out;
     }
     Tree rebuilt(fresh, hardware, gm);
+    rebuilt.ignored = &guards.operations;
     if (!rebuilt.build()) {
         out.reason = rebuilt.reason;
         return out;
@@ -708,7 +937,7 @@ Outcome ss::testing::constructCompositionalSync(
     if (fallbackOnly)
         rebuilt.program.target.compilerKeys = {0};
     std::vector<std::vector<c::Mechanism>> actual;
-    if (!reconstruct(rebuilt, drain, actual, out.reason, precision))
+    if (!reconstruct(rebuilt, drain, actual, out.reason, precision, guards))
         return out;
     auto checked = demandPlacement ? c::verifyDemands(rebuilt.program, actual) :
                    precision       ? c::verifyCuts(rebuilt.program, actual) :
@@ -745,7 +974,9 @@ Outcome ss::testing::constructCompositionalSync(
                      << selected.rejectedAllocationReplays << " replay_commands_removed "
                      << selected.replayCommandsRemoved << " replayed_fallback_demands "
                      << selected.replayedFallbackDemands << " allocation_fallback_scopes "
-                     << selected.allocationFallbackScopes << " rendezvous_packets " << rendezvousPackets
+                     << selected.allocationFallbackScopes << " entry_episodes " << selected.entryEpisodes
+                     << " entry_reply_families " << selected.entryReplyFamilies << " rejected_entry_proposals "
+                     << selected.rejectedEntryProposals << " rendezvous_packets " << rendezvousPackets
                      << " demand_fallbacks " << selected.demandFallbacks << " nodes " << tree.program.nodes.size()
                      << " cells " << tree.program.cells << " widened_spaces " << tree.widenedSpaces << " node_visits "
                      << selected.nodeVisits + checked.nodeVisits << " cell_visits " << out.work << " handoffs "

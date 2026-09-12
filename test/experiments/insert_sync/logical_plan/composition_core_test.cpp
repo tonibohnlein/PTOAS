@@ -183,13 +183,27 @@ static unsigned sequence(c::Program& p, std::vector<unsigned> children)
 // shared global trip count. Keep this object across whole-program invocations.
 struct ExecutionPolicy {
     std::map<unsigned, unsigned> visits;
+    std::map<unsigned, unsigned> nextTrips, lastTrips, iteration;
     std::function<unsigned(unsigned, unsigned)> trips;
     std::function<unsigned(unsigned, unsigned)> choice;
 };
 static void execute(const c::Program& p, const c::Result& r, unsigned id, ExecutionPolicy& policy, Oracle& oracle)
 {
-    for (auto& m : r.before[id])
-        oracle.mechanism(m);
+    for (auto& m : r.before[id]) {
+        bool participates = true;
+        if (m.participation == c::Mechanism::First)
+            participates = policy.iteration.at(m.loop) == 0;
+        else if (m.participation == c::Mechanism::NonEmpty) {
+            if (id <= m.loop) {
+                if (!policy.nextTrips.count(m.loop))
+                    policy.nextTrips[m.loop] = policy.trips(m.loop, policy.visits[m.loop]);
+                participates = policy.nextTrips.at(m.loop) != 0;
+            } else
+                participates = policy.lastTrips.at(m.loop) != 0;
+        }
+        if (participates)
+            oracle.mechanism(m);
+    }
     const auto& n = p.nodes[id];
     auto run = [&](unsigned child) { execute(p, r, child, policy, oracle); };
     switch (n.kind) {
@@ -204,9 +218,14 @@ static void execute(const c::Program& p, const c::Result& r, unsigned id, Execut
             run(n.children[policy.choice(id, policy.visits[id]++)]);
             break;
         case c::Node::For: {
-            unsigned trips = policy.trips(id, policy.visits[id]++);
-            for (unsigned i = 0; i < trips; ++i)
+            unsigned trips = policy.nextTrips.count(id) ? policy.nextTrips.at(id) : policy.trips(id, policy.visits[id]);
+            ++policy.visits[id];
+            policy.nextTrips.erase(id);
+            for (unsigned i = 0; i < trips; ++i) {
+                policy.iteration[id] = i;
                 run(n.children[0]);
+            }
+            policy.lastTrips[id] = trips;
             break;
         }
         case c::Node::While: {
@@ -231,6 +250,95 @@ static void execute(
 }
 int main()
 {
+    {
+        // A parent-side completion handoff between two possible publication
+        // cuts must not invalidate or invent shared incoming-prefix coverage.
+        c::Program p;
+        p.cells = 4;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto produce = op(p, b, 3, true);
+        auto wa = op(p, a, 0, true), wb = op(p, a, 1, true);
+        p.nodes[wb].effects[3].readers = 1u << a;
+        auto unrelated = op(p, a, 2, true), rb = op(p, b, 1, false), ra = op(p, b, 0, false);
+        auto loop = add(p, c::Node::For, {sequence(p, {unrelated, rb, ra})});
+        p.nodes[loop].entryGuardStart = produce;
+        auto after = op(p, a, 0, true);
+        auto outer = add(p, c::Node::For, {sequence(p, {produce, wa, wb, loop, after})});
+        sequence(p, {outer});
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.entryEpisodes == 1 && c::verifyDemands(p, plan.before).success);
+        require(std::any_of(plan.before[wb].begin(), plan.before[wb].end(), [](const auto& m) {
+            return m.kind == c::Mechanism::Acquire || m.kind == c::Mechanism::Rendezvous;
+        }));
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned id, unsigned visit) { return (id + visit) % 4; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 5; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        c::Program p;
+        p.cells = 3;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto wa = op(p, a, 0, true), wb = op(p, a, 1, true);
+        auto unrelated = op(p, a, 2, true), ra = op(p, b, 0, false), rb = op(p, b, 1, false);
+        auto loop = add(p, c::Node::For, {sequence(p, {unrelated, ra, rb})});
+        p.nodes[loop].entryGuardStart = wa;
+        auto after = op(p, a, 0, true);
+        auto outer = add(p, c::Node::For, {sequence(p, {wa, wb, loop, after})});
+        sequence(p, {outer});
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.entryEpisodes == 2 && c::verifyDemands(p, plan.before).success);
+        require(std::count_if(plan.before[after].begin(), plan.before[after].end(), [](const auto& m) {
+                    return m.participation == c::Mechanism::NonEmpty && m.kind == c::Mechanism::Publish;
+                }) == 1);
+        auto shared = p;
+        auto& sharedChildren = shared.nodes[p.nodes[loop].children[0]].children;
+        std::swap(sharedChildren[1], sharedChildren[2]);
+        auto sharedPlan = c::constructDemands(shared);
+        require(
+            sharedPlan.success && sharedPlan.entryEpisodes == 1 && c::verifyDemands(shared, sharedPlan.before).success);
+        auto without = p;
+        without.nodes[loop].entryGuardStart = ~0u;
+        require(c::constructDemands(without).success && c::constructDemands(without).entryEpisodes == 0);
+        auto rejected = c::testing::constructDemandsRejectingEntryProposal(p);
+        require(rejected.success && rejected.rejectedEntryProposals == 1 && rejected.entryEpisodes == 0);
+        require(rejected.before == c::constructDemands(without).before);
+        require(c::verifyDemands(p, rejected.before).success);
+        require(!c::verifyDemands(without, plan.before).success);
+        auto futureWrite = p;
+        futureWrite.nodes[unrelated].effects[0].writers = 1u << a;
+        require(!c::verifyDemands(futureWrite, plan.before).success);
+        auto broken = plan.before;
+        auto first = std::find_if(
+            broken[ra].begin(), broken[ra].end(), [](const auto& m) { return m.participation == c::Mechanism::First; });
+        require(first != broken[ra].end());
+        for (bool forward : {false, true}) {
+            auto collision = plan.before;
+            c::Mechanism packet{c::Mechanism::Rendezvous, std::min(a, b), std::max(a, b), 0, 0};
+            (forward ? packet.forwardKey : packet.reverseKey) = first->forwardKey;
+            collision[ra].insert(collision[ra].begin(), packet);
+            require(!c::verifyDemands(p, collision).success);
+        }
+        first->participation = c::Mechanism::Every;
+        require(!c::verifyDemands(p, broken).success);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned id, unsigned visit) { return (id + visit) % 4; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 5; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+        Oracle sharedOracle;
+        for (unsigned invocation = 0; invocation < 5; ++invocation) {
+            execute(shared, sharedPlan, shared.nodes.size() - 1, policy, sharedOracle);
+            sharedOracle.check();
+        }
+    }
     {
         // Many distinct logical generations fit one physical key per direction
         // because each return demand acknowledges the preceding acquisition.

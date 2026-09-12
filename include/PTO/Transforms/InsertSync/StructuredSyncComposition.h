@@ -42,6 +42,10 @@ struct Node {
     // Postorder, strictly smaller child IDs. For has one body, While has before
     // and after, Choice has both arms (an omitted else is an empty Sequence).
     std::vector<unsigned> children;
+    // Optional lowering contract for a unit-positive counted For: earliest
+    // parent Sequence cut at which its original trip predicate is available.
+    // No contract means conservative composition, not unsupported control flow.
+    unsigned entryGuardStart = ~0u;
 };
 struct Program {
     Core core = Core::AIV;
@@ -54,6 +58,8 @@ struct Mechanism {
     enum Kind { Barrier, Rendezvous, Publish, Acquire } kind = Barrier;
     unsigned first = 0, second = 0;
     unsigned forwardKey = 0, reverseKey = 0;
+    enum Participation { Every, NonEmpty, First } participation = Every;
+    unsigned loop = ~0u;
     bool operator==(const Mechanism& other) const;
 };
 // Unnumbered completion obligation at original structural cuts. Cell witnesses
@@ -77,6 +83,7 @@ struct Result {
     uint64_t allocationFallbackKeys = 0;
     uint64_t allocationReplays = 0, rejectedAllocationReplays = 0, replayCommandsRemoved = 0;
     uint64_t replayedFallbackDemands = 0;
+    uint64_t entryEpisodes = 0, entryReplyFamilies = 0, rejectedEntryProposals = 0;
     std::vector<CompletionDemand> demands;
 };
 // One summary pass and one structural transfer. No trip-count enumeration,
@@ -97,6 +104,7 @@ namespace testing {
 // Fault injection before refinement checking/emission, never on the initial
 // plan: discard the optional candidate's mechanisms to exercise exact rollback.
 Result constructDemandsRejectingRefinement(const Program& program);
+Result constructDemandsRejectingEntryProposal(const Program& program);
 Result constructDemandsWithoutAllocationReplay(const Program& program);
 Result constructDemandsRejectingAllocationReplay(const Program& program);
 } // namespace testing

@@ -52,11 +52,22 @@ int main(int argc,char **argv) {
     const bool rejectRefinement = demandPlacement && mode=="reject-refinement";
     const bool withoutReplay = demandPlacement && mode=="without-allocation-replay";
     const bool rejectReplay = demandPlacement && mode=="reject-allocation-replay";
-    if (rejectRefinement || withoutReplay || rejectReplay) mode="none";
+    const bool rejectEntry = demandPlacement && mode=="reject-entry-proposal";
+    if (rejectRefinement || withoutReplay || rejectReplay || rejectEntry) mode="none";
     const bool precision = mode.consume_front("cuts:");
     const bool composition = demandPlacement || precision || mode.consume_front("composition:");
     auto mutate=[&](func::FuncOp working) {
         if (mode=="none" || mode=="expect-unsupported") return;
+        if (demandPlacement && mode=="entry-inject-packet") {
+            OpBuilder b(&working.getBody().front(), working.getBody().front().begin());
+            auto v=PipeAttr::get(&context,PIPE::PIPE_V), load=PipeAttr::get(&context,PIPE::PIPE_MTE2);
+            auto key=EventAttr::get(&context,EVENT::EVENT_ID0);
+            b.create<SetFlagOp>(working.getLoc(),v,load,key);
+            b.create<WaitFlagOp>(working.getLoc(),v,load,key);
+            b.create<SetFlagOp>(working.getLoc(),load,v,key);
+            b.create<WaitFlagOp>(working.getLoc(),load,v,key);
+            changed=true;return;
+        }
         Operation *chosen=nullptr,*sequenceSource=nullptr,*retirementTarget=nullptr;
         auto syncOnly=[](scf::IfOp branch) {
             bool event=false,payload=false;
@@ -68,6 +79,30 @@ int main(int argc,char **argv) {
         };
         working.walk([&](Operation *op) {
             if (chosen) return;
+            if (demandPlacement && mode.starts_with("entry-")) {
+                auto branch=dyn_cast<scf::IfOp>(op);
+                if (!branch || !syncOnly(branch)) return;
+                auto cmp=branch.getCondition().getDefiningOp<arith::CmpIOp>();
+                if (!cmp) return;
+                bool first=cmp.getPredicate()==arith::CmpIPredicate::eq;
+                bool nonempty=cmp.getPredicate()==arith::CmpIPredicate::slt;
+                SmallVector<Operation *> events;
+                for (auto &x:branch.getThenRegion().front())
+                    if (isa<SetFlagOp,WaitFlagOp>(x)) events.push_back(&x);
+                if ((mode=="entry-wrong-first" && first) ||
+                    (mode=="entry-wrong-nonempty" && nonempty)) chosen=cmp;
+                if (mode=="entry-drop-first" && first && events.size()==1 && isa<WaitFlagOp>(events[0]))
+                    chosen=events[0];
+                if (mode=="entry-drop-ack" && nonempty && events.size()==2 && isa<WaitFlagOp>(events[1]))
+                    chosen=events[1];
+                if (mode=="entry-late-first" && first) {
+                    for (auto *next=op->getNextNode();next;next=next->getNextNode())
+                        if (isa<OpPipeInterface>(next) && !isa<SetFlagOp,WaitFlagOp,BarrierOp>(next)) {
+                            chosen=op;sequenceSource=next;break;
+                        }
+                }
+                return;
+            }
             if ((precision || demandPlacement) && mode=="early-publication" && isa<SetFlagOp>(op) &&
                 op->getParentOfType<scf::ForOp>()) {
                 auto *previous=op->getPrevNode();
@@ -210,6 +245,18 @@ int main(int argc,char **argv) {
             }
         });
         if (!chosen) return;
+        if (mode=="entry-wrong-first" || mode=="entry-wrong-nonempty") {
+            cast<arith::CmpIOp>(chosen).setPredicate(mode=="entry-wrong-first"?
+                arith::CmpIPredicate::ne:arith::CmpIPredicate::sle);
+            changed=true;return;
+        }
+        if (mode=="entry-drop-first" || mode=="entry-drop-ack") {
+            chosen->erase();changed=true;return;
+        }
+        if (mode=="entry-late-first") {
+            auto cmp=cast<scf::IfOp>(chosen).getCondition().getDefiningOp();
+            cmp->moveAfter(sequenceSource);chosen->moveAfter(cmp);changed=true;return;
+        }
         if ((precision || demandPlacement) && mode=="early-publication") {
             chosen->moveBefore(sequenceSource);changed=true;return;
         }
@@ -255,10 +302,11 @@ int main(int argc,char **argv) {
             mode=="drop-sequence-bridge") { chosen->erase(); changed=true; }
         else if (mode=="duplicate-set" || mode=="duplicate-coalesced") { OpBuilder b(chosen); b.setInsertionPointAfter(chosen); b.clone(*chosen); changed=true; }
         else if (mode=="wrong-key") {
-            auto w=cast<WaitFlagOp>(chosen); OpBuilder b(w);
-            b.create<WaitFlagOp>(w.getLoc(),w.getSrcPipe(),w.getDstPipe(),
-                EventAttr::get(&context,static_cast<EVENT>((unsigned(w.getEventId().getEvent())+1)%6)));
-            w.erase(); changed=true;
+            // Preserve operation identity so this exercises protocol checking,
+            // not merely the immutable generated-operation allowlist.
+            auto w=cast<WaitFlagOp>(chosen);
+            w.setEventIdAttr(EventAttr::get(&context,static_cast<EVENT>((unsigned(w.getEventId().getEvent())+1)%6)));
+            changed=true;
         } else if(mode=="wrong-startup"||mode=="wrong-empty-case"||mode=="wrong-ordinal") {
             IntegerAttr value;
             if(chosen->getNumOperands()!=2||!matchPattern(chosen->getOperand(1),m_Constant(&value))||
@@ -287,7 +335,8 @@ int main(int argc,char **argv) {
     };
     using Constructor=structured_sync::testing::CompositionConstructor;
     auto result=composition ? structured_sync::testing::constructCompositionalSync(
-        function,gm,mutate,hardware,withoutReplay?Constructor::DemandsWithoutAllocationReplay:
+        function,gm,mutate,hardware,rejectEntry?Constructor::DemandsRejectEntryProposal:
+        withoutReplay?Constructor::DemandsWithoutAllocationReplay:
         rejectReplay?Constructor::DemandsRejectAllocationReplay:rejectRefinement?Constructor::DemandsRejectRefinement:
             fallbackOnly?Constructor::DemandsFallbackOnly:
             demandPlacement?Constructor::Demands:

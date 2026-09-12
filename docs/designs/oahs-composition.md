@@ -769,3 +769,126 @@ populations pass the median <=2x gate, with three measured rounds and one warm-u
 per-case median ratios range from 0.986 to 1.039. Untimed C++ emission passes.
 The commands above were used with local output directories `oahs-replay-corpus`
 and `oahs-replay-compiler`; no device or full system-test run is claimed.
+
+## Incoming first-consumer episodes
+
+An optional demand summary connects a producer in a loop's parent Sequence to
+the first relevant direct consumer in its body. It uses physical ranges and
+original structural cuts, not kernel names or a solved predicate. The current
+guard adapter qualifies index `scf.for` with constant positive unit step; all
+other admitted loops retain ordinary demand construction. Both original bounds
+must dominate the publication cut. The source must have no body MAY access on
+the consumer's cells, so incoming completion cannot be confused with a current
+iteration's producer or storage reuse.
+
+For each selected incoming prefix, emit the forward pair below. A single
+exit reply is shared by all these first-consumer waits on the same directed
+pair and loop:
+
+```
+if original_lower < original_upper: SET P -> Q
+for iv = original_lower to original_upper:
+    ... independent work ...
+    if iv == original_lower: WAIT P -> Q
+    first consumer
+    ...
+if original_lower < original_upper:
+    SET Q -> P
+    WAIT Q -> P
+```
+
+Publication is immediately after the latest required producer, subject to
+bound availability; acquisition stays at the first actual consumer. Zero-trip
+and untaken enclosing paths execute no episode commands. The exit reply proves
+event rearm, but receives no unconditional payload-completion credit.
+If earlier first consumers' validated completion receipts already discharge a
+later incoming demand, it needs no separate event. A fixed-size per-direction
+summary intersects their uncovered remainders and tests the actual later
+demand against that summary plus S. This does not infer coverage merely from
+lexical positions or scan an unbounded population of selected entries. The
+no-body-source-effects qualification makes that completion stable for the
+later demand's cells.
+
+The completion receipt stores the **uncovered remainder**, including all later
+source work. Unioning the complete loop MAY summary S into that remainder R
+makes the transfer `pending := pending & R` idempotent and preserves every
+possible body generation. Applying this stable external-prefix credit during
+the finite loop proof is not a claim that a First WAIT executes every iteration.
+The receipt is discarded at the loop exit; incoming physical history survives
+the zero-trip join.
+
+Reconstruction classifies the actual sync-only guards against original SSA
+bound/IV identities and independently rederived first-consumer cuts. The exact
+generated operation identities are captured before any test mutation. Only
+these generated and validated extra operations are excluded from payload
+comparison and fresh tree import; an injected balanced packet is rejected too.
+It reconstructs
+the combined nonempty episode word in original execution order and checks two
+copies for consumption-before-rearm. Episode keys are globally reserved and
+disjoint from ordinary demand/canonical keys. Conditional episodes provide no
+assumed causal edges to ordinary key coloring. Multiple cells can therefore
+have independent early incoming prefixes without flattening their participation
+into an unconditional sequence.
+
+Failure of an optional pre-emission entry proposal retries the same demand
+constructor with entry precision disabled, once and without recursion back to
+entry selection. This permits at most four constructor calls including ordinary
+refinement/replay, rather than the prior three. Work from the discarded attempt
+is retained in the counters. An emitted-IR verification failure still rejects
+atomically; it is never converted to fallback success. A replay is accepted
+only if its conditional episode population is unchanged, in addition to the
+existing per-Sequence command-cost and complete verification checks.
+
+`entry_episodes`, `entry_reply_families` and `rejected_entry_proposals` expose the selected path. The
+native fixture uses runtime/nonzero bounds, an enclosing conditional and
+unrelated source work inside the loop. Tests check the exact first two acquired
+source prefixes, independently varied repeated executions, no empty-path
+events, pre-emission fallback, and atomic rejection of wrong first/nonempty
+predicates, missing first/reply waits, a moved first wait and an injected packet.
+An original event-only conditional remains an explicit-synchronization input
+refusal, never a newly generated precision guard. Two native forward episodes
+must share exactly one reverse acknowledgment; finite tests also include an
+intervening parent-side source acquisition before a shared incoming prefix.
+
+This is incoming-readiness precision, **not** previous-visit release precision
+or replacement-quality acceptance. It does not solve rotating generations or
+make guarded first-consumer placement a new admission requirement.
+
+### Local incoming-episode measurements
+
+The eight unchanged inputs construct and reconstruct. The incoming fixture
+checks original runtime bounds, no empty-path events, exact separate acquired
+prefixes and two forward handoffs sharing one reply. Authored conditional
+events refuse explicitly. Guard, missing-wait, moved-wait and balanced-injection
+mutations reject atomically; pre-emission corruption instead takes the verified
+entry-disabled construction. C++17 Clang ASan/UBSan passes **2,176,071
+assertions** with unsupported leak inspection disabled.
+
+QK has 18 SET / 18 WAIT / 4 named barriers, versus 16 / 16 / 4 before this
+increment. Its measured nonempty executions use 41, 75 and 551 total sync
+commands for 1, 2 and 16 iterations, versus InsertSync's 45, 79 and 555. The
+first-panel publication no longer includes the independent later panel load.
+This does not fix all later-iteration release boundaries.
+
+Softmax has 17 / 17 / 21 static commands versus 12 / 12 / 21 before. Its
+2- and 16-iteration executions use 56 and 518 commands versus InsertSync's
+45 and 451. The empty/one-panel path uses 17 versus 16. These regressions are
+not hidden by the successful incoming-boundary test: entry precision is not
+yet an overall quality improvement. Other static counts are unchanged,
+including historical GEMM at 62 / 62 / 21. Every output additionally has one
+terminal drain. **`quality_qualified` remains false; defaults are unchanged.**
+
+Three serial paired compiler rounds after one warm-up pass the median <=2x
+gate on all eight inputs, with median ratios 0.984–1.057 against InsertSync.
+Untimed C++ emission passes. The local artifact directory is
+`test-results/oahs-entry-compiler` under the existing build. These measurements
+are not device results and do not qualify comparison with handwritten GEMM.
+
+The final exact-build core/composition/demand/focused gates all pass (179.35
+seconds total; focused 154.81 seconds). The final frozen corpus campaign
+`test-results/oahs-entry-final-corpus` preserves all 363 statuses and original /
+pre-sync hashes: 45/150 PTOAS and 152/213 PyPTO/pypto-lib admissions. The
+software-architecture, algorithms/performance and correctness/design reviewers
+accept this opt-in increment subject to those passing checks, not general
+replacement or performance qualification. No full system suite or device run
+is claimed.

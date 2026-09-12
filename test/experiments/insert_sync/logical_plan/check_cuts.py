@@ -67,7 +67,7 @@ def main():
                         'completion_refinements', 'rejected_refinements', 'owned_refinements',
                         'protocol_keys', 'shared_protocol_keys', 'allocation_fallback_scopes', 'allocation_fallback_keys',
                         'allocation_replays', 'rejected_allocation_replays', 'replay_commands_removed',
-                        'replayed_fallback_demands',
+                        'replayed_fallback_demands', 'entry_episodes', 'entry_reply_families', 'rejected_entry_proposals',
                         'rendezvous_packets', 'demand_fallbacks'):
             matches = re.findall(r'\b' + counter + r' (\d+)\b', trace)
             if len(matches) != 1:
@@ -215,6 +215,56 @@ def main():
         from ptoas.mlir.dialects import pto
         from compare_boundaries import Boundaries
         from measure import children, replay
+        authored = Path(__file__).parent / 'structured_inputs/demand_authored_guard.pto'
+        verdict = json.loads(invoke('entry-authored-guard', [args.driver, authored, 'demands:expect-unsupported',
+            args.output.resolve() / 'entry-authored-guard.pto']))
+        if (verdict['accepted'] or not verdict['expected'] or not verdict['atomic'] or
+                'explicit-synchronization-input' not in verdict['reason']):
+            raise RuntimeError('original guarded synchronization was mistaken for generated precision')
+        path_checks.append(dict(name='entry-authored-guard', verdict=verdict, source_sha256=digest(authored)))
+        entry = Path(__file__).parent / 'structured_inputs/demand_entry.pto'
+        entry_raw = args.output.resolve() / 'entry-native.pto'
+        verdict = json.loads(invoke('entry-native', [args.driver, entry, 'demands:none', entry_raw]))
+        counters = native_counters('entry-native')
+        if (not verdict['accepted'] or not verdict['atomic'] or counters['entry_episodes'] != 2 or
+                counters['entry_reply_families'] != 1):
+            raise RuntimeError('native incoming first-consumer episodes not exercised')
+        entry_normalized = args.output.resolve() / 'entry.pto'
+        invoke('entry-normalize', compiler + [entry_raw, '-o', entry_normalized])
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            module = ir.Module.parse(entry_normalized.read_text())
+            function = next(op for op in children(module.operation) if op.name == 'func.func')
+            observer = Boundaries()
+            for lower, upper, take in ((3, 3, True), (3, 6, False), (3, 4, True),
+                                       (5, 8, True), (8, 5, True), (0, 2, True)):
+                start = len(observer.payload)
+                metrics = replay(function, ['src', lower, upper, take], observer=observer.observe)
+                if observer.tokens:
+                    raise RuntimeError('incoming episode exports an unconsumed token')
+                if not take or lower >= upper:
+                    if metrics['counts'].get('pto.set_flag', 0) or metrics['counts'].get('pto.wait_flag', 0):
+                        raise RuntimeError('empty incoming episode executes an event')
+                else:
+                    reads = [i for i in range(start, len(observer.payload)) if observer.payload[i][0] == 'pto.tabs']
+                    if [observer.before[i]['completed'].get('PIPE_MTE2', -1) for i in reads[:2]] != [start, start + 1]:
+                        raise RuntimeError('incoming publication captured a later unrelated load')
+        path_checks.append(dict(name='incoming-episodes', verdict=verdict, counters=counters,
+                                source_sha256=digest(entry), output_sha256=digest(entry_normalized)))
+        verdict = json.loads(invoke('entry-rejected', [args.driver, entry, 'demands:reject-entry-proposal',
+            args.output.resolve() / 'entry-rejected.pto']))
+        counters = native_counters('entry-rejected')
+        if not verdict['accepted'] or not verdict['atomic'] or counters['entry_episodes'] or counters['rejected_entry_proposals'] != 1:
+            raise RuntimeError('rejected optional entry proposal did not preserve native construction')
+        path_checks.append(dict(name='entry-rejected', verdict=verdict, counters=counters))
+        for mutation in ('entry-wrong-first', 'entry-wrong-nonempty', 'entry-drop-first',
+                         'entry-drop-ack', 'entry-late-first', 'entry-inject-packet'):
+            verdict = json.loads(invoke(mutation, [args.driver, entry, 'demands:' + mutation,
+                args.output.resolve() / (mutation + '.pto')]))
+            if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
+                raise RuntimeError('incoming-episode corruption escaped native reconstruction: ' + mutation)
+            path_checks.append(dict(name=mutation, verdict=verdict))
         with ir.Context() as context:
             context.enable_multithreading(False)
             pto.register_dialect(context, load=True)
