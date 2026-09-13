@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @composition_scalar_visibility(%buffer: !pto.ptr<i32>,
+      %scalar_first_waw: !pto.ptr<i32>, %scalar_last_waw: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %zero = arith.constant 0 : i64
+    %value = arith.constant 7 : i32
+    %tile = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 1x16xi32>
+    %view = pto.make_tensor_view %buffer, shape = [%c1, %c16], strides = [%c16, %c1]
+        : !pto.tensor_view<?x?xi32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c1, %c16]
+        : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x16xi32>
+    %waw0_view = pto.make_tensor_view %scalar_first_waw, shape = [%c1, %c16],
+        strides = [%c16, %c1] : !pto.tensor_view<?x?xi32>
+    %waw0 = pto.partition_view %waw0_view, offsets = [%c0, %c0], sizes = [%c1, %c16]
+        : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x16xi32>
+    %waw1_view = pto.make_tensor_view %scalar_last_waw, shape = [%c1, %c16],
+        strides = [%c16, %c1] : !pto.tensor_view<?x?xi32>
+    %waw1 = pto.partition_view %waw1_view, offsets = [%c0, %c0], sizes = [%c1, %c16]
+        : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x16xi32>
+
+    // Scalar cache publication to MTE2 requires clean then GM fence.
+    pto.store_scalar %value, %buffer[%c0] : !pto.ptr<i32>, i32
+    pto.tload ins(%part : !pto.partition_tensor_view<1x16xi32>)
+        outs(%tile : !pto.tile_buf<vec, 1x16xi32>)
+
+    // MTE3 publication to the scalar cache requires GM fence then invalidate.
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 1x16xi32>)
+        outs(%part : !pto.partition_tensor_view<1x16xi32>)
+    %loaded = pto.load_scalar %buffer[%c0] : !pto.ptr<i32> -> i32
+
+    // Scalar-to-MTE3 WAW still needs source clean followed by the fence.
+    pto.store_scalar %value, %scalar_first_waw[%c0] : !pto.ptr<i32>, i32
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 1x16xi32>)
+        outs(%waw0 : !pto.partition_tensor_view<1x16xi32>)
+
+    // MTE3-to-scalar write-only WAW needs the fence, but no invalidation.
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 1x16xi32>)
+        outs(%waw1 : !pto.partition_tensor_view<1x16xi32>)
+    pto.store_scalar %value, %scalar_last_waw[%c0] : !pto.ptr<i32>, i32
+    return
+  }
+}

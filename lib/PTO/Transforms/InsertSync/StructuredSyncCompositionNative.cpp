@@ -57,7 +57,10 @@ PIPE pipe(unsigned id)
                                      PIPE::PIPE_MTE2, PIPE::PIPE_MTE3, PIPE::PIPE_FIX};
     return pipes[id];
 }
-bool sync(Operation* op) { return isa<SetFlagOp, WaitFlagOp, BarrierOp>(op); }
+bool sync(Operation* op)
+{
+    return isa<SetFlagOp, WaitFlagOp, BarrierOp, CmoCacheInvalidOp, FenceBarrierAllOp>(op);
+}
 
 // Stage the immutable symbol closure as well as the kernel. Physical helper
 // contracts and pure bodies are resolved by the translator/importer through
@@ -655,6 +658,24 @@ void emit(Tree& tree, const c::Result& plan)
                 b.create<BarrierOp>(loc, PipeAttr::get(context, pipe(m.first)));
                 continue;
             }
+            if (m.kind == c::Mechanism::Visibility) {
+                auto cmo = [&]() {
+                    b.create<CmoCacheInvalidOp>(
+                        loc, Value(), AddressSpaceAttr::get(context, AddressSpace::GM));
+                };
+                auto fence = [&]() {
+                    b.create<FenceBarrierAllOp>(loc, FenceScopeAttr::get(context, FenceScope::GM));
+                };
+                if (m.visibilityAction == c::VisibilityAction::CleanSource) {
+                    cmo();
+                    fence();
+                } else if (m.visibilityAction == c::VisibilityAction::InvalidateTarget) {
+                    fence();
+                    cmo();
+                } else
+                    fence();
+                continue;
+            }
             auto first = PipeAttr::get(context, pipe(m.first));
             auto second = PipeAttr::get(context, pipe(m.second));
             auto forward = EventAttr::get(context, static_cast<EVENT>(m.forwardKey));
@@ -870,6 +891,30 @@ bool parsePacket(Operation*& cursor, c::Mechanism& m, const c::Program& program,
         if (!p)
             return false;
         m = {c::Mechanism::Barrier, *p, *p};
+        cursor = cursor->getNextNode();
+        return true;
+    }
+    auto wholeGmCmo = [](Operation* op) {
+        auto cmo = dyn_cast_or_null<CmoCacheInvalidOp>(op);
+        return cmo && !cmo.getAddr() && cmo.getSpace().getAddressSpace() == AddressSpace::GM;
+    };
+    auto gmFence = [](Operation* op) {
+        auto fence = dyn_cast_or_null<FenceBarrierAllOp>(op);
+        return fence && fence.getScope().getScope() == FenceScope::GM;
+    };
+    Operation* next = cursor->getNextNode();
+    if ((wholeGmCmo(cursor) && gmFence(next)) || (gmFence(cursor) && wholeGmCmo(next))) {
+        m = {};
+        m.kind = c::Mechanism::Visibility;
+        m.visibilityAction = wholeGmCmo(cursor) ? c::VisibilityAction::CleanSource :
+                                                 c::VisibilityAction::InvalidateTarget;
+        cursor = next->getNextNode();
+        return true;
+    }
+    if (gmFence(cursor)) {
+        m = {};
+        m.kind = c::Mechanism::Visibility;
+        m.visibilityAction = c::VisibilityAction::FenceOnly;
         cursor = cursor->getNextNode();
         return true;
     }
@@ -1180,13 +1225,15 @@ Outcome ss::testing::constructCompositionalSync(
         for (const auto& m : site) {
             if (m.kind == c::Mechanism::Barrier)
                 ++out.barriers;
+            else if (m.kind == c::Mechanism::Visibility)
+                ++out.visibility;
             else if (m.kind == c::Mechanism::Rendezvous) {
                 ++rendezvousPackets;
                 out.handoffs += 2;
             } else if (m.kind == c::Mechanism::Publish)
                 ++out.handoffs;
         }
-    out.requirements = selected.acquisitions;
+    out.requirements = selected.acquisitions + selected.visibilityRequirements;
     out.work = selected.cellVisits + checked.cellVisits;
     out.work += tree.periodicScalarWork + rebuilt.periodicScalarWork;
     out.status = Outcome::Applied;
@@ -1198,7 +1245,8 @@ Outcome ss::testing::constructCompositionalSync(
     if (std::getenv("PTOAS_LOGICAL_TRACE"))
         llvm::errs()
             << "structured composition precision " << precision << " demands " << demandPlacement << " direct_handoffs "
-            << selected.directHandoffs << " shared_acknowledgments " << selected.sharedAcknowledgments
+            << selected.directHandoffs << " visibility_requirements " << selected.visibilityRequirements
+            << " visibility_actions " << out.visibility << " shared_acknowledgments " << selected.sharedAcknowledgments
             << " reused_acknowledgments " << selected.reusedAcknowledgments << " completion_refinements "
             << selected.completionRefinements << " rejected_refinements " << selected.rejectedRefinements
             << " owned_refinements " << checked.ownedRefinements << " protocol_keys " << selected.protocolKeys

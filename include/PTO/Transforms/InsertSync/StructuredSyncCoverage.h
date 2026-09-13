@@ -95,6 +95,18 @@ inline bool mappedPayloadEffects(Operation *op,
     if ((!read && !write) || !value)
       return false;
     if (!memoryType(value.getType())) {
+      // TMrgSort format2's `executed` operand is an in-place vector-register
+      // result on PIPE_V. Admit it only when this operation is its sole use;
+      // observing the mutation needs an explicit register-result dependency.
+      auto merge = dyn_cast<TMrgSortOp>(op);
+      if (write && merge &&
+          (merge.isFormat2() || merge.isFormat2WithoutTmp()) &&
+          merge.getExcuted() == value && value.hasOneUse()) {
+        auto type = dyn_cast<VectorType>(value.getType());
+        if (type && type.getRank() == 1 && type.getNumElements() == 4 &&
+            type.getElementType().isInteger(16))
+          continue;
+      }
       if (write || !isa<IntegerType, IndexType, FloatType>(value.getType()) ||
           !isInsertSyncScalarPrerequisite(value))
         return false;
@@ -449,7 +461,9 @@ class Importer {
       }
       if (isa<scf::WhileOp>(op))
         return fail("unsupported-control-region", &op, "scf.while");
-      if (emitted && isa<SetFlagOp, WaitFlagOp, BarrierOp>(op))
+      if (emitted &&
+          isa<SetFlagOp, WaitFlagOp, BarrierOp, CmoCacheInvalidOp,
+              FenceBarrierAllOp>(op))
         continue; // independently parsed and verified from the actual IR
       if (isa<SetFlagOp, WaitFlagOp, BarrierOp, RecordEventOp, WaitEventOp>(op))
         return fail("explicit-synchronization-input", &op);

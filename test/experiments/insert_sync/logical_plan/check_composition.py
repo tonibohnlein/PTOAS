@@ -81,6 +81,8 @@ def main():
             row['sets'] = stdout.count('pto.set_flag[')
             row['waits'] = stdout.count('pto.wait_flag[')
             row['barriers'] = stdout.count('pto.barrier')
+            row['cmo'] = stdout.count('pto.cmo.cacheinvalid')
+            row['fences'] = stdout.count('pto.fence.barrier_all')
         rows.append(row)
         if expected is not None and ((code == 0) != expected or status in ('timeout', 'crashed')):
             raise RuntimeError(f'{name}: unexpected result ({status})\n{stderr}\n{stdout}')
@@ -102,7 +104,8 @@ def main():
                 'nested_varying_choice', 'nested_varying_bound', 'nested_three_levels',
                 'unknown_guard', 'ordinal_dynamic_step', 'ordinal_negative_lower',
                 'sequential_cross_pipe', 'sequential_same_pipe', 'section_vector',
-                'composition_tci', 'composition_tconcat', 'composition_scalar_memory')
+                'composition_tci', 'composition_tconcat', 'composition_scalar_memory',
+                'composition_scalar_visibility', 'composition_tmrgsort')
     for name in positive:
         source = fixtures / (name + '.pto')
         compile_case(name, source, gm='assume-disjoint-arguments')
@@ -132,7 +135,8 @@ def main():
         if not row['verdict']['atomic'] or not row['verdict']['expected']:
             raise RuntimeError('staged helper lookup/contract regression: ' + name)
     for name in ('section_outside_config', 'section_outside_async_descriptor',
-                 'section_outside_physical', 'missing_positive_contract'):
+                 'section_outside_physical', 'missing_positive_contract',
+                 'composition_tmrgsort_observed'):
         compile_case(name, fixtures / (name + '.pto'), expected=False)
     compile_case('same-address-gm-visibility', fixtures / 'nested_mixed_sequence.pto',
                  gm='may-alias', expected=False)
@@ -144,6 +148,16 @@ def main():
                   args.output / ('mutated-' + mutation + '.pto')], source, 'mutation', True)
         if not row['verdict']['atomic'] or not row['verdict']['expected']:
             raise RuntimeError('non-atomic/incorrect reconstruction verdict')
+    source = fixtures / 'composition_scalar_visibility.pto'
+    for mutation in ('none', 'drop-clean-cmo', 'drop-invalidate-cmo',
+                     'drop-visibility-fence',
+                     'reverse-clean-visibility', 'reverse-invalidate-visibility'):
+        row = run('visibility-' + mutation,
+                  [args.driver, source, 'demands:' + mutation,
+                   args.output / ('visibility-' + mutation + '.pto')],
+                  source, 'mutation', True)
+        if not row['verdict']['atomic'] or not row['verdict']['expected']:
+            raise RuntimeError('GM visibility reconstruction failed')
     if args.historical:
         compile_case('pinned-historical-gemm', args.historical)
         if args.python_root:

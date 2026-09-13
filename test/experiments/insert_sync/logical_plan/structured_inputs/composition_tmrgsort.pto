@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @composition_tmrgsort()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 256 : i64
+    %a2 = arith.constant 512 : i64
+    %a3 = arith.constant 1024 : i64
+    %src0 = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x64xf32>
+    %src1 = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x64xf32>
+    %tmp = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 1x128xf32>
+    %dst = pto.alloc_tile addr = %a3 : !pto.tile_buf<vec, 1x128xf32>
+    %executed = arith.constant dense<0> : vector<4xi16>
+    pto.tmrgsort ins(%src0, %src1, %tmp {exhausted = false} :
+        !pto.tile_buf<vec, 1x64xf32>, !pto.tile_buf<vec, 1x64xf32>,
+        !pto.tile_buf<vec, 1x128xf32>)
+        outs(%dst, %executed : !pto.tile_buf<vec, 1x128xf32>, vector<4xi16>)
+    return
+  }
+}

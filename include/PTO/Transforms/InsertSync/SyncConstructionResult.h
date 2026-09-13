@@ -18,6 +18,9 @@ struct ConstructionResult {
     std::string reason;
     uint64_t work = 0;
     unsigned requirements = 0, handoffs = 0, barriers = 0;
+    // Qualified cache/fence recipes reconstructed from emitted IR. A recipe
+    // is neither a directed handoff nor a same-pipeline barrier.
+    unsigned visibility = 0;
 };
 }
 #endif

@@ -1700,7 +1700,8 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,
     for(std::size_t i=0;i<units.size();++i) {
         auto result=Reconstruct(*units[i],original).run(selected[i],allowed);
         if(result.status!=Outcome::Applied)return result;
-        out.requirements+=result.requirements;out.handoffs+=result.handoffs;out.barriers+=result.barriers;out.work+=result.work;
+        out.requirements+=result.requirements;out.handoffs+=result.handoffs;out.barriers+=result.barriers;
+        out.visibility+=result.visibility;out.work+=result.work;
     }
     for(const auto &bridge:sequencePlan.bridges) {
         if(bridge.barrier)++out.barriers; else ++out.handoffs;

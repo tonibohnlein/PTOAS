@@ -1640,6 +1640,27 @@ int main()
         }
     }
     {
+        // A later whole-GM visibility fence drains every AIV lane. Deferred
+        // loop-exit retirement must not be retained as if that fence issued
+        // only on PIPE_S; use the ordinary closed protocol instead.
+        c::Program p;
+        p.cells = 3;
+        p.globalMemory = {false, false, true};
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto guard = add(p, c::Node::Sequence);
+        auto load = op(p, a, 0, true), compute = op(p, b, 0, false), store = op(p, d, 1, false);
+        p.nodes[compute].effects[1].writers = 1u << b;
+        auto loop = add(p, c::Node::For, {sequence(p, {load, compute, store})});
+        p.nodes[loop].entryGuardStart = guard;
+        auto scalarWrite = op(p, unsigned(Pipe::S), 2, true);
+        auto vectorRead = op(p, b, 2, false);
+        sequence(p, {guard, loop, scalarWrite, vectorRead});
+        auto plan = c::constructDemands(p);
+        require(
+            plan.success && plan.deferredRingCandidates == 0 && plan.deferredRings == 0 &&
+            plan.visibilityRequirements == 1 && c::verifyDemands(p, plan.before).success);
+    }
+    {
         // Endpoint population is a structural multiset, not node-ID order.
         // Create siblings in reverse order, then execute load/compute/store.
         c::Program p;
@@ -2002,7 +2023,8 @@ int main()
         }));
         auto global = p;
         global.globalMemory = {true, false};
-        require(!c::constructDemands(global).success);
+        auto globalPlan = c::constructDemands(global);
+        require(globalPlan.success && c::verifyDemands(global, globalPlan.before).success);
     }
     {
         // The common witness contains only each arm's first observer site.
@@ -2774,6 +2796,126 @@ int main()
         require(!c::constructDemands(p).success);
     }
     {
+        // GM completion and GM visibility are separate target facts. Ordinary
+        // non-scalar transfers use the event protocol. Scalar-cache crossings
+        // use the qualified AIV CMO/fence recipe, while the disputed
+        // MTE3->MTE2 publication direction remains fail-closed.
+        auto check = [](unsigned source, unsigned observer, bool sourceWrites,
+                        bool targetReads, bool targetWrites, bool accepted,
+                        std::optional<c::VisibilityAction> action) {
+            c::Program p;
+            p.cells = 1;
+            p.globalMemory = {true};
+            auto first = op(p, source, 0, sourceWrites);
+            if (!sourceWrites) {
+                p.nodes[first].effects[0].readers = uint8_t(1u << source);
+                p.nodes[first].effects[0].writers = 0;
+            }
+            auto second = op(p, observer, 0, targetWrites);
+            p.nodes[second].effects[0].readers = targetReads ? uint8_t(1u << observer) : 0;
+            p.nodes[second].effects[0].writers = targetWrites ? uint8_t(1u << observer) : 0;
+            auto root = sequence(p, {first, second});
+            auto plan = c::constructDemands(p);
+            require(plan.success == accepted);
+            if (!accepted)
+                return;
+            require(c::verifyDemands(p, plan.before).success);
+            auto found = std::find_if(plan.before[second].begin(), plan.before[second].end(), [](const auto& m) {
+                return m.kind == c::Mechanism::Visibility;
+            });
+            require((found != plan.before[second].end()) == action.has_value());
+            if (!action) {
+                ExecutionPolicy policy;
+                policy.trips = [](unsigned, unsigned) { return 0u; };
+                policy.choice = [](unsigned, unsigned) { return 0u; };
+                Oracle oracle;
+                execute(p, plan, root, policy, oracle);
+                oracle.check();
+                return;
+            }
+            require(found->visibilityAction == *action);
+            require(plan.visibilityRequirements == 1);
+            auto missing = plan.before;
+            missing[second].erase(
+                missing[second].begin() + (found - plan.before[second].begin()));
+            require(!c::verifyDemands(p, missing).success);
+            auto reversed = plan.before;
+            auto wrong = std::find_if(reversed[second].begin(), reversed[second].end(), [](const auto& m) {
+                return m.kind == c::Mechanism::Visibility;
+            });
+            wrong->visibilityAction =
+                *action == c::VisibilityAction::CleanSource ?
+                    c::VisibilityAction::InvalidateTarget :
+                    c::VisibilityAction::CleanSource;
+            require(!c::verifyDemands(p, reversed).success);
+            if (*action == c::VisibilityAction::InvalidateTarget) {
+                wrong->visibilityAction = c::VisibilityAction::FenceOnly;
+                require(!c::verifyDemands(p, reversed).success);
+            }
+        };
+        // Non-scalar RAW and scalar same-lane accesses need no cache recipe.
+        check(unsigned(Pipe::MTE2), unsigned(Pipe::V), true, true, false, true, std::nullopt);
+        check(unsigned(Pipe::MTE2), unsigned(Pipe::MTE3), true, true, false, true, std::nullopt);
+        check(unsigned(Pipe::S), unsigned(Pipe::S), true, true, false, true, std::nullopt);
+        // Scalar-crossing RAW and WAW, including the write-only fence case.
+        check(unsigned(Pipe::S), unsigned(Pipe::V), true, true, false, true,
+              c::VisibilityAction::CleanSource);
+        check(unsigned(Pipe::S), unsigned(Pipe::V), true, false, true, true,
+              c::VisibilityAction::CleanSource);
+        check(unsigned(Pipe::V), unsigned(Pipe::S), true, true, false, true,
+              c::VisibilityAction::InvalidateTarget);
+        check(unsigned(Pipe::V), unsigned(Pipe::S), true, false, true, true,
+              c::VisibilityAction::FenceOnly);
+        // Pure WAR crosses the scalar cache but transfers no value.
+        check(unsigned(Pipe::S), unsigned(Pipe::V), false, false, true, true, std::nullopt);
+        check(unsigned(Pipe::V), unsigned(Pipe::S), false, false, true, true, std::nullopt);
+        // Only MTE3->MTE2 RAW is the disputed publication direction; WAW is
+        // completion-only under the hardware reference.
+        check(unsigned(Pipe::MTE3), unsigned(Pipe::MTE2), true, true, false, false, std::nullopt);
+        check(unsigned(Pipe::MTE3), unsigned(Pipe::MTE2), true, false, true, true, std::nullopt);
+
+        // A scalar write on only one branch remains a MAY-visible source at
+        // the join. The common non-scalar consumer still needs the recipe.
+        c::Program branch;
+        branch.cells = 1;
+        branch.globalMemory = {true};
+        auto scalarWrite = op(branch, unsigned(Pipe::S), 0, true);
+        auto yes = sequence(branch, {scalarWrite});
+        auto no = sequence(branch, {});
+        auto choice = add(branch, c::Node::Choice, {yes, no});
+        auto vectorRead = op(branch, unsigned(Pipe::V), 0, false);
+        sequence(branch, {choice, vectorRead});
+        auto branchPlan = c::constructDemands(branch);
+        require(
+            branchPlan.success && branchPlan.visibilityRequirements == 1 &&
+            c::verifyDemands(branch, branchPlan.before).success);
+
+        // A fence-only WAW on X must not erase the independent target-cache
+        // obligation for Y. The later scalar read still needs invalidation.
+        c::Program independent;
+        independent.cells = 2;
+        independent.globalMemory = {true, true};
+        auto writeY = op(independent, unsigned(Pipe::V), 1, true);
+        auto writeX = op(independent, unsigned(Pipe::V), 0, true);
+        auto overwriteX = op(independent, unsigned(Pipe::S), 0, true);
+        auto readY = op(independent, unsigned(Pipe::S), 1, false);
+        sequence(independent, {writeY, writeX, overwriteX, readY});
+        auto independentPlan = c::constructDemands(independent);
+        require(
+            independentPlan.success && independentPlan.visibilityRequirements == 2 &&
+            c::verifyDemands(independent, independentPlan.before).success);
+        auto hasAction = [&](unsigned site, c::VisibilityAction expected) {
+            return std::any_of(
+                independentPlan.before[site].begin(), independentPlan.before[site].end(),
+                [&](const auto& mechanism) {
+                    return mechanism.kind == c::Mechanism::Visibility &&
+                           mechanism.visibilityAction == expected;
+                });
+        };
+        require(hasAction(overwriteX, c::VisibilityAction::FenceOnly));
+        require(hasAction(readY, c::VisibilityAction::InvalidateTarget));
+    }
+    {
         // A pending B write remains pending at B after its reply SET, even
         // though A's reply WAIT has acquired that write. Challenge the actual
         // consumer next, not merely a standalone rendezvous mask helper.
@@ -2953,14 +3095,19 @@ int main()
     require(c::verify(p, routed.before).success);
     routed.before[b].clear();
     require(!c::verify(p, routed.before).success);
-    // A valid completion rendezvous must NOT discharge same-address GM
-    // publication, including after a barrier or on a widened loop backedge.
-    auto complete = c::construct(p);
+    // A valid MTE3->MTE2 completion rendezvous must NOT discharge the
+    // separately unqualified same-address GM publication requirement.
+    c::Program gm;
+    gm.core = Core::AIC;
+    gm.cells = 1;
+    auto store = op(gm, unsigned(Pipe::MTE3), 0, true);
+    auto load = op(gm, unsigned(Pipe::MTE2), 0, false);
+    add(gm, c::Node::Sequence, {store, load});
+    auto complete = c::construct(gm);
     require(complete.success);
-    p.globalMemory = {true};
-    require(!c::construct(p).success);
-    require(!c::verify(p, complete.before).success);
-    p.globalMemory.clear();
+    gm.globalMemory = {true};
+    require(!c::construct(gm).success);
+    require(!c::verify(gm, complete.before).success);
     p.target.compilerKeys.clear();
     require(!c::construct(p).success);
     p.cells = c::MaxCells + 1;

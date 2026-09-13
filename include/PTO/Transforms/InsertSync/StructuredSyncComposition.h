@@ -21,16 +21,23 @@ struct History {
     uint8_t readers = 0, writers = 0;
 };
 using Effects = std::vector<History>;
+enum class VisibilityAction : uint8_t {
+    FenceOnly,
+    CleanSource,
+    InvalidateTarget,
+};
 struct State {
     std::array<Effects, LaneCount> pending;
-    // Visibility is not completion. No current rendezvous/barrier discharges
-    // same-address GM publication, so this history survives those mechanisms.
-    std::vector<uint8_t> written;
+    // Visibility is observer-specific and independent of completion. A target
+    // cache invalidation must not publish scalar writes to other pipelines,
+    // and an ordinary event must not erase either obligation.
+    std::array<std::vector<uint8_t>, LaneCount> written;
     explicit State(unsigned cells = 0);
     void join(const State& other);
     void seed(const Effects& effects);
     void barrier(unsigned lane);
     void rendezvous(unsigned first, unsigned second);
+    void visibility(VisibilityAction action);
     uint8_t demands(unsigned observer, const Effects& effects) const;
 };
 struct Node {
@@ -75,7 +82,7 @@ struct Program {
     std::vector<Node> nodes;
 };
 struct Mechanism {
-    enum Kind { Barrier, Rendezvous, Publish, Acquire } kind = Barrier;
+    enum Kind { Barrier, Rendezvous, Publish, Acquire, Visibility } kind = Barrier;
     unsigned first = 0, second = 0;
     unsigned forwardKey = 0, reverseKey = 0;
     // Previous executes before every visit except the first. LoopExit executes
@@ -86,6 +93,9 @@ struct Mechanism {
     // A qualified periodic word uses its first active ordinal, not ordinal
     // zero, for Previous/LoopExit. Other mechanisms must leave this unset.
     unsigned word = ~0u;
+    // Visibility carries no event identity. Its typed action distinguishes a
+    // WAW fence from the two scalar-cache publication recipes.
+    VisibilityAction visibilityAction = VisibilityAction::FenceOnly;
     bool operator==(const Mechanism& other) const;
 };
 // Unnumbered completion obligation at original structural cuts. Cell witnesses
@@ -100,6 +110,7 @@ struct Result {
     std::string reason;
     std::vector<std::vector<Mechanism>> before;
     uint64_t nodeVisits = 0, cellVisits = 0, acquisitions = 0;
+    uint64_t visibilityRequirements = 0;
     uint64_t cutCycles = 0, allocationRetries = 0;
     uint64_t directHandoffs = 0, sharedAcknowledgments = 0, demandFallbacks = 0;
     uint64_t reusedAcknowledgments = 0;

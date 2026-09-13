@@ -2080,11 +2080,11 @@ The scalar-memory contract is deliberately narrow. `load_scalar` and
 `store_scalar` remain physical GM accesses on `PIPE_S`; they are not treated as
 pure address arithmetic. Sequential `PIPE_S` work has intrinsic same-pipeline
 completion and therefore never receives an illegal scalar barrier. A hazard
-between `PIPE_S` and another pipeline still requires a target-qualified event,
-and same-address GM publication still requires an independently qualified
-visibility recipe. No event is reclassified as GM visibility by this change.
-The CanonicalSync hardware-model branch was used as read-only semantic evidence
-for these boundaries; its symbolic planner was not imported.
+between `PIPE_S` and another pipeline still requires completion independently
+from any GM cache action. At this milestone that cache action was not yet
+realized. No event was reclassified as GM visibility. The CanonicalSync
+hardware-model branch was used as read-only semantic evidence for these
+boundaries; its symbolic planner was not imported.
 
 The demand allocator now implements the fitting-population part of C1. It may
 give every logical protocol a distinct physical key, including the canonical
@@ -2131,3 +2131,91 @@ Reproducible artifacts are outside the source tree under
 `oahs-clean-c1-build/test-results/oahs-demands`. The final replay identifies the
 candidate `pto-test-opt` binary as
 `76e9af55ed00eeabfd8331e765531b46ca2d17dcc36ab29aa5d0596a46f66da4`.
+
+## Qualified scalar GM visibility and TMrgSort register results
+
+The next coverage increment connects the exact scalar payload contract to the
+qualified AIV cache-maintenance model. Completion and visibility remain
+different facts:
+
+```text
+PIPE_S store -> non-scalar GM read:
+    whole-GM cache clean, then GM fence
+
+non-scalar GM write -> PIPE_S load:
+    GM fence, then whole-GM cache invalidate
+
+PIPE_S store -> non-scalar GM overwrite:
+    whole-GM cache clean, then GM fence
+
+non-scalar GM write -> PIPE_S overwrite:
+    GM fence only
+```
+
+The fence drains the AIV physical pipelines. The cache operation discharges
+only the corresponding scalar-cache publication obligation. A SET/WAIT event
+still establishes completion without being treated as GM visibility. Ordinary
+non-scalar GM crossings and scalar-crossing pure WAR therefore need only their
+completion handoff. Scalar-crossing RAW and WAW retain the stronger contract.
+The disputed MTE3-to-MTE2 same-address GM **RAW** publication remains
+fail-closed and is reported explicitly; this implementation does not infer a
+visibility recipe from the existence of an event route.
+
+The composer records GM writer history separately for every observer pipeline.
+That prevents an invalidate for `PIPE_S` from publishing the same value to
+other observers, and prevents a clean of scalar writes from erasing unrelated
+non-scalar publication obligations. A fence-only WAW clears completion but no
+cache history; it is credited only at its immediate write-only target cut. A
+later scalar read of another GM cell still requires invalidation. Native
+emission generates the exact recipes above. Fresh reconstruction accepts only
+adjacent, whole-GM CMO/fence pairs in the required order or an exact fence-only
+action; deleting either CMO, deleting the WAW fence, or reversing either pair
+rejects the clone atomically. Authored CMO and fence operations are still
+outside the admitted input contract. Supporting them requires composing their
+original synchronization semantics, rather than silently treating them as
+generated recipes.
+
+This increment also admits a dead exact register-only result of TMrgSort format
+2. The `excuted` `vector<4xi16>` operand is written in place on `PIPE_V`, but is
+not translated physical storage. It is excluded only when TMrgSort is its sole
+use. Any later observation remains unsupported until register-result
+dependencies are represented explicitly. All tile source, temporary, and
+destination effects remain required. Both frozen inputs that previously
+stopped at this mismatch now proceed to the independently unsupported
+MTE3-to-MTE2 GM publication case, so the refinement improves the first-refusal
+diagnosis but does not manufacture a corpus admission.
+
+### Local qualification
+
+Validated as an uncommitted diff on `8dd2b608e3703a54bb8a2d0bcca61e5bb3ed5594`
+with the existing LLVM/MLIR 19.1.7 build:
+
+- Incremental builds of `pto-composition-core-test`,
+  `pto-structured-sync-test`, and `pto-test-opt` passed with two workers.
+- `oahs_composition_core`, `oahs_composition`, and `oahs_demands` passed
+  serially. The native composition campaign includes scalar RAW/WAW clean,
+  invalidate, and fence-only cases plus live/dead TMrgSort results. It deletes
+  each CMO independently, deletes the fence-only action, and reverses both
+  two-operation visibility recipes.
+- The hash-frozen replay admits **247/363** inputs: PTOAS **77/150**, PyPTO
+  **7/35**, and pypto-lib **163/178**, with no losses against the preceding
+  local result. The increase from the checked-in **222/363** result comes from
+  correcting the former blanket GM-publication rule for qualified non-scalar
+  pipeline crossings. One admitted input exercises the corrected scalar WAW
+  contract: its four SET/WAIT operations are replaced by one CMO and one GM
+  fence. The frozen schema counts SET/WAIT/barrier operations only; the native
+  campaign separately records CMO and fence counts.
+- The remaining 116 refusals are explicit: **58** unqualified MTE3-to-MTE2 GM
+  publication cases, **18** authored cache-maintenance cases, **15** authored
+  synchronization-summary cases, **11** communication cases, **8** reserved
+  buffer cases, **4** invalid physical-context fixtures, and **2** unresolved
+  helper contracts. The former TMrgSort effect-mismatch category is gone.
+
+The frozen manifest remains
+`95beab25427b1dd3a2ff1b59cd881a3f4181e0f83c8a8b44daf35555bf46c3b6`.
+The replay is under
+`oahs-clean-c1-build/test-results/oahs-coverage-visibility-final` and records
+candidate `pto-test-opt` SHA-256
+`136b4e4b978bc03364ccff866e22aa11237c32f1bb07b232222a1c03d5435ba8`.
+This is prepared-IR compiler compatibility, not source regeneration, device
+correctness, or runtime performance qualification.

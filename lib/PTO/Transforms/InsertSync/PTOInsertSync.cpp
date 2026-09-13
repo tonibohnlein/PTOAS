@@ -144,6 +144,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     func->setAttr("pto.insert_sync.logical_work", IntegerAttr::get(i64, result.work));
     func->setAttr("pto.insert_sync.logical_requirements", IntegerAttr::get(i64, result.requirements));
     func->setAttr("pto.insert_sync.logical_streams", IntegerAttr::get(i64, result.handoffs));
+    func->setAttr("pto.insert_sync.logical_visibility", IntegerAttr::get(i64, result.visibility));
     func.emitRemark("InsertSync ") << engineLabel() << " construction: " << status << "; " << result.reason
                                    << "; work=" << result.work;
     if (result.status == Result::Applied) {

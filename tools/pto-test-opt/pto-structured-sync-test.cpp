@@ -297,6 +297,19 @@ int main(int argc,char **argv) {
             }
             if ((mode=="drop-wait" || mode=="wrong-key") && isa<WaitFlagOp>(op)) chosen=op;
             if ((mode=="drop-set" || mode=="duplicate-set" || mode=="late-set") && isa<SetFlagOp>(op)) chosen=op;
+            if (mode=="drop-clean-cmo" && isa<CmoCacheInvalidOp>(op) &&
+                isa_and_nonnull<FenceBarrierAllOp>(op->getNextNode())) chosen=op;
+            if (mode=="drop-invalidate-cmo" && isa<CmoCacheInvalidOp>(op) &&
+                isa_and_nonnull<FenceBarrierAllOp>(op->getPrevNode())) chosen=op;
+            if (mode=="drop-visibility-fence" && isa<FenceBarrierAllOp>(op)) chosen=op;
+            if (mode=="reverse-clean-visibility" &&
+                isa<CmoCacheInvalidOp>(op) && isa_and_nonnull<FenceBarrierAllOp>(op->getNextNode())) {
+                chosen=op;sequenceSource=op->getNextNode();
+            }
+            if (mode=="reverse-invalidate-visibility" &&
+                isa<FenceBarrierAllOp>(op) && isa_and_nonnull<CmoCacheInvalidOp>(op->getNextNode())) {
+                chosen=op;sequenceSource=op->getNextNode();
+            }
             if (mode=="drop-retirement" || mode=="early-retirement") {
                 if (auto b=dyn_cast<BarrierOp>(op)) {
                     if(b.getPipe().getPipe()==PIPE::PIPE_ALL) {
@@ -434,6 +447,9 @@ int main(int argc,char **argv) {
             if(!sequenceSource)return;
             chosen->moveBefore(sequenceSource);changed=true;
         }
+        else if(mode=="reverse-clean-visibility" || mode=="reverse-invalidate-visibility") {
+            chosen->moveAfter(sequenceSource);changed=true;
+        }
         else if(mode=="narrow-coalesced") {
             auto loop=cast<scf::ForOp>(chosen->getParentOp());OpBuilder b(chosen);
             auto first=b.create<arith::CmpIOp>(chosen->getLoc(),arith::CmpIPredicate::eq,
@@ -444,7 +460,9 @@ int main(int argc,char **argv) {
         else if (mode=="drop-wait" || mode=="drop-set" || mode=="drop-retirement" ||
             (composition && mode=="drop-named-barrier") ||
             mode=="drop-m-to-mte1" || mode=="drop-m-to-fix" ||
-            mode=="drop-sequence-bridge") { chosen->erase(); changed=true; }
+            mode=="drop-sequence-bridge" || mode=="drop-clean-cmo" ||
+            mode=="drop-invalidate-cmo" ||
+            mode=="drop-visibility-fence") { chosen->erase(); changed=true; }
         else if (mode=="duplicate-set" || mode=="duplicate-coalesced") { OpBuilder b(chosen); b.setInsertionPointAfter(chosen); b.clone(*chosen); changed=true; }
         else if (mode=="wrong-key") {
             // Preserve operation identity so this exercises protocol checking,
@@ -507,6 +525,7 @@ int main(int argc,char **argv) {
         {"hardware_contract",contract.str()},{"gm_alias",alias.str()},{"accepted",applied},{"mutation_applied",changed},{"expected",expected},{"atomic",preserved},
         {"status",unsigned(result.status)},{"reason",result.reason},
         {"requirements",result.requirements},{"handoffs",result.handoffs},{"barriers",result.barriers},
+        {"visibility",result.visibility},
         {"work_statistic",result.work}})<<"\n";
     return expected&&preserved?0:1;
 }
