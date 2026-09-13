@@ -2460,3 +2460,66 @@ respectively, and records candidate `pto-test-opt` SHA-256
 `02ad2515d62f0c39000e3730631a5240cfd99851e5b38d1a1dce21dffcc4e996`.
 This is prepared-IR compiler compatibility and mutation evidence, not device,
 collective-protocol, source-regeneration, or runtime-performance qualification.
+
+## Atomic P2P macro composition
+
+The general conservative engine now imports the existing positive
+`SyncMacroModel` for AIV `pto.comm.tput` and `pto.comm.tget`. A macro remains one
+opaque original operation with two ordered physical phases: MTE2 reads GM and
+writes private ping/pong staging, then MTE3 reads that staging and writes GM.
+The compiler does not invent internal insertion cuts or duplicate the library's
+event protocol.
+
+The model now exports a typed phase-0-to-phase-1 completion transfer for only
+the forward MTE2-to-MTE3 edge needed to justify the staging transition. Hidden
+event ownership alone supplies no completion fact. The reverse hidden event
+remains a private staging/key reuse fact and is not credited as completion of
+the macro's final MTE3 phase.
+All of the macro's fixed hidden IDs are reserved in both directions against
+generated protocols. This first implementation reserves them function-wide;
+that can lose keys but cannot create an overlap with an opaque library call.
+
+All generated external prerequisites must execute before the macro. The
+constructor first discovers them in phase order, then re-simulates the macro
+with the complete command population hoisted to that one legal cut. If an
+apparent prerequisite depended on work issued by an earlier internal phase,
+the hoisted simulation rejects it. Fresh reconstruction reimports the original
+two phases and reruns the same atomic transfer against mechanisms recovered
+from the emitted IR.
+
+Demand/cut precision currently falls back to the general conservative
+constructor for a function containing one of these opaque macros. This is a
+bounded loss of precision, not a return to the restricted structured planner.
+The next precision increment should teach demand placement an atomic macro
+transfer rather than exposing private phase anchors.
+
+The strict visibility boundary is unchanged. In particular, a later MTE2 read
+of GM written by the macro's MTE3 phase is still refused because the selected
+target contract has no device-qualified MTE3-to-MTE2 GM publication recipe.
+Likewise, importing a macro does not make a following remote notification safe
+until its local completion and GM publication obligations are explicitly met.
+
+### Local qualification
+
+Incremental two-worker builds of `pto-composition-core-test`,
+`pto-structured-sync-test`, and `pto-test-opt` pass. The serial
+`oahs_composition_core` and `oahs_composition` tests pass; the core reports
+**2,435,505** assertions. Native one-call TPUT and TGET fixtures reconstruct.
+The TPUT fixture requires a pre-call completion packet, reserves ping/pong IDs
+0 and 1 so the packet uses ID 2, and reuses staging after the opaque call.
+Mutation checks delete or move that packet, substitute either hidden ID, delete
+the macro, and exercise the cut-provider fallback. Portable validation also
+rejects malformed phase transfers with a mismatched source or observer. AIC use
+is refused explicitly.
+
+The unchanged hash-frozen corpus remains **253/363**: PTOAS **79/150**, PyPTO
+**7/35**, and pypto-lib **167/178**. All 15 former TPUT/TGET first blockers now
+reach a later, explicit contract boundary: twelve reach the unqualified
+MTE3-to-MTE2 GM publication rule and three reach an unreleased authored remote
+notification. No admission is lost or gained. This is semantic progress and a
+more precise refusal taxonomy, not a coverage increase or device qualification.
+The replay is recorded under
+`oahs-clean-c1-build/test-results/oahs-p2p-macro-corpus-r4` using the same two
+manifest hashes as the preceding section. It records 21 native passes, 43
+mutation passes, ten expected native refusals, and candidate `pto-test-opt`
+SHA-256 `2ca2940fb1ae8702753247328e1c93d9fe786405de3041476bc8d7f589ad42df`.

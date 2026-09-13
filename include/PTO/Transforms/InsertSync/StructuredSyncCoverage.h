@@ -443,6 +443,35 @@ class Importer {
     return addPhase(call, *pipe, found->second.front(), false);
   }
 
+  bool macro(Operation *op, const SyncMacroModel &model) {
+    // The first compositional macro contract is intentionally the exact P2P
+    // library call already modeled by PTOIRTranslator. Other macro models may
+    // have different endpoint/visibility semantics and remain fail-closed.
+    if (!compositional || result.cube || !isa<TPutOp, TGetOp>(op) || model.phases.size() != 2 ||
+        model.hiddenEvents.size() != 2 || model.completionTransfers.size() != 1 ||
+        model.completionTransfers[0].sourcePhaseId != 0 ||
+        model.completionTransfers[0].targetPhaseId != 1)
+      return fail("multi-phase-needs-endpoints", op);
+    const auto &first = model.phases[0], &second = model.phases[1];
+    if (first.phaseId != 0 || second.phaseId != 1 ||
+        first.pipe != PipelineType::PIPE_MTE2 ||
+        second.pipe != PipelineType::PIPE_MTE3)
+      return fail("unsupported-macro-contract", op, "unexpected-p2p-phases");
+    auto found = compounds.find(op);
+    if (found == compounds.end() || found->second.size() != model.phases.size())
+      return fail("missing-translated-phase", op);
+    SmallVector<const CompoundInstanceElement *, 2> translated(
+        found->second.begin(), found->second.end());
+    llvm::sort(translated, [](const auto *a, const auto *b) {
+      return a->macroOpInstanceId < b->macroOpInstanceId;
+    });
+    for (unsigned i = 0; i < model.phases.size(); ++i)
+      if (translated[i]->macroOpInstanceId != int(model.phases[i].phaseId) ||
+          !addPhase(op, model.phases[i].pipe, translated[i], false))
+        return false;
+    return true;
+  }
+
   // The parameter must not be named `region`: it would shadow this member and
   // make the recursive call below resolve to the Region itself.
   bool region(Region &body, unsigned depth) {
@@ -471,8 +500,11 @@ class Importer {
         continue; // independently parsed and verified from the actual IR
       if (isa<SetFlagOp, WaitFlagOp, BarrierOp, RecordEventOp, WaitEventOp>(op))
         return fail("explicit-synchronization-input", &op);
-      if (getSyncMacroModel(&op))
-        return fail("multi-phase-needs-endpoints", &op);
+      if (auto model = getSyncMacroModel(&op)) {
+        if (!macro(&op, *model))
+          return false;
+        continue;
+      }
       if (op.getNumRegions())
         return fail("unsupported-control-region", &op);
 

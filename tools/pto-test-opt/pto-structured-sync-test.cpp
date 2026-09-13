@@ -212,8 +212,17 @@ int main(int argc,char **argv) {
             if (composition && mode=="drop-named-barrier")
                 if (auto barrier=dyn_cast<BarrierOp>(op))
                     if (barrier.getPipe().getPipe()!=PIPE::PIPE_ALL) chosen=op;
+            if (composition && mode=="drop-macro" && isa<TPutOp,TGetOp>(op))
+                chosen=op;
             if (composition && (mode=="drop-packet" || mode=="late-packet" || mode=="wrong-reply-key") &&
                 isa<SetFlagOp>(op)) chosen=op;
+            if (composition && (mode=="drop-macro-prerequisite" || mode=="late-macro-prerequisite" ||
+                                mode=="macro-hidden-key0" || mode=="macro-hidden-key1") &&
+                isa<SetFlagOp>(op)) {
+                Operation *cursor=op;
+                for(unsigned i=0;i<4&&cursor;++i)cursor=cursor->getNextNode();
+                if(isa_and_nonnull<TPutOp,TGetOp>(cursor))chosen=op;
+            }
             if(mode=="early-retirement"&&!retirementTarget&&isa<OpPipeInterface>(op)&&
                !isa<SetFlagOp,WaitFlagOp,BarrierOp>(op))retirementTarget=op;
             if (mode=="drop-m-to-mte1" || mode=="drop-m-to-fix")
@@ -459,11 +468,25 @@ int main(int argc,char **argv) {
             chosen->moveAfter(sequenceSource);changed=true;return;
         }
         if (precision && mode=="drop-exit-ack") {chosen->erase();changed=true;return;}
-        if (composition && (mode=="drop-packet" || mode=="late-packet" || mode=="wrong-reply-key")) {
+        if (composition && (mode=="drop-packet" || mode=="late-packet" || mode=="wrong-reply-key" ||
+                            mode=="drop-macro-prerequisite" || mode=="late-macro-prerequisite" ||
+                            mode=="macro-hidden-key0" || mode=="macro-hidden-key1")) {
             SmallVector<Operation *> packet;
             for (Operation *op=chosen;op&&packet.size()<4;op=op->getNextNode())packet.push_back(op);
             if(packet.size()!=4 || !isa<SetFlagOp>(packet[2]) || !isa<WaitFlagOp>(packet[3]))return;
-            if(mode=="drop-packet")for(auto *op:packet)op->erase();
+            if(mode=="drop-packet" || mode=="drop-macro-prerequisite")for(auto *op:packet)op->erase();
+            else if(mode=="macro-hidden-key0" || mode=="macro-hidden-key1") {
+                auto key=EventAttr::get(
+                    &context,mode=="macro-hidden-key0"?EVENT::EVENT_ID0:EVENT::EVENT_ID1);
+                cast<SetFlagOp>(packet[0]).setEventIdAttr(key);
+                cast<WaitFlagOp>(packet[1]).setEventIdAttr(key);
+            }
+            else if(mode=="late-macro-prerequisite") {
+                Operation *macro=packet.back()->getNextNode();
+                if(!isa_and_nonnull<TPutOp,TGetOp>(macro))return;
+                Operation *insertion=macro;
+                for(auto *op:packet) {op->moveAfter(insertion);insertion=op;}
+            }
             else if(mode=="wrong-reply-key") {
                 auto reply=cast<SetFlagOp>(packet[2]);auto ack=cast<WaitFlagOp>(packet[3]);
                 auto key=EventAttr::get(&context,static_cast<EVENT>((unsigned(reply.getEventId().getEvent())+1)%6));
@@ -506,7 +529,8 @@ int main(int argc,char **argv) {
             mode=="drop-invalidate-cmo" ||
             mode=="drop-visibility-fence" || mode=="drop-authored-barrier" ||
             mode=="drop-authored-cmo" || mode=="drop-authored-fence" ||
-            mode=="drop-authored-notify" || mode=="drop-authored-wait") { chosen->erase(); changed=true; }
+            mode=="drop-authored-notify" || mode=="drop-authored-wait" ||
+            (composition && mode=="drop-macro")) { chosen->erase(); changed=true; }
         else if (mode=="duplicate-set" || mode=="duplicate-coalesced") { OpBuilder b(chosen); b.setInsertionPointAfter(chosen); b.clone(*chosen); changed=true; }
         else if (mode=="wrong-key") {
             // Preserve operation identity so this exercises protocol checking,

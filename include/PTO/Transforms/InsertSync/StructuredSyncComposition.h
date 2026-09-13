@@ -51,6 +51,9 @@ struct State {
     void seed(const Effects& effects);
     void barrier(unsigned lane);
     void barrierAll();
+    // Acquire one source prefix on one observer. This is completion only: it
+    // neither publishes GM visibility nor releases a remote protocol.
+    void acquire(unsigned source, unsigned observer);
     void rendezvous(unsigned first, unsigned second);
     void visibility(VisibilityAction action, uint8_t drainedSources,
                     bool scalarCacheVisibility);
@@ -79,12 +82,24 @@ struct FixedAction {
     // required not to alias imported local payload.
     std::vector<uint8_t> cells;
 };
-struct Node {
-    enum Kind { Operation, Sequence, Choice, For, While } kind = Sequence;
+struct MacroPhase {
     unsigned lane = 0;
-    // Only Operation nodes carry physical effects. Structural nodes must have
-    // a cells-sized zero vector; their MAY summaries are derived from children.
     Effects effects;
+};
+struct MacroTransfer {
+    // Apply after this zero-based phase. The transfer is supplied by the
+    // lowering-owned macro contract, not allocated by this planner.
+    unsigned afterPhase = 0, source = 0, observer = 0;
+};
+struct Node {
+    enum Kind { Operation, Macro, Sequence, Choice, For, While } kind = Sequence;
+    unsigned lane = 0;
+    // Only Operation nodes carry direct physical effects. Macro nodes carry
+    // ordered phase effects below. Structural nodes are summarized from their
+    // children.
+    Effects effects;
+    std::vector<MacroPhase> macroPhases;
+    std::vector<MacroTransfer> macroTransfers;
     // Postorder, strictly smaller child IDs. For has one body, While has before
     // and after, Choice has both arms (an omitted else is an empty Sequence).
     std::vector<unsigned> children;

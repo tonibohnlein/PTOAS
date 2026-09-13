@@ -194,8 +194,11 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
         const auto operationLane = lane(p, n.lane);
         if (n.effects.size() != p.cells || n.lane >= c::LaneCount ||
             (n.entryGuardStart != ~0u && (n.kind != c::Node::For || n.entryGuardStart >= p.nodes.size())) ||
-            (n.kind == c::Node::Operation && (!n.children.empty() || !p.target.supports(operationLane) ||
+            ((n.kind == c::Node::Operation || n.kind == c::Node::Macro) && !n.children.empty()) ||
+            (n.kind == c::Node::Operation && (!p.target.supports(operationLane) ||
                                               (n.lane != unsigned(Pipe::S) && !p.target.barrier(operationLane)))) ||
+            (n.kind != c::Node::Macro && (!n.macroPhases.empty() || !n.macroTransfers.empty())) ||
+            (n.kind == c::Node::Macro && n.macroPhases.empty()) ||
             (n.kind == c::Node::For && n.children.size() != 1) ||
             ((n.kind == c::Node::Choice || n.kind == c::Node::While) && n.children.size() != 2) ||
             n.kind > c::Node::While) {
@@ -209,6 +212,31 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
                 return false;
             }
         summaries.push_back(n.effects);
+        if (n.kind == c::Node::Macro) {
+            for (const auto& phase : n.macroPhases) {
+                if (phase.lane >= c::LaneCount || phase.effects.size() != p.cells ||
+                    !p.target.supports(lane(p, phase.lane)) ||
+                    (phase.lane != unsigned(Pipe::S) && !p.target.barrier(lane(p, phase.lane)))) {
+                    reason = "invalid macro phase";
+                    return false;
+                }
+                for (const auto& e : phase.effects)
+                    if ((e.readers | e.writers) & ~(1u << phase.lane)) {
+                        reason = "macro effect lane differs from phase lane";
+                        return false;
+                    }
+                merge(summaries.back(), phase.effects);
+            }
+            for (const auto& transfer : n.macroTransfers)
+                if (transfer.afterPhase >= n.macroPhases.size() || transfer.source >= c::LaneCount ||
+                    transfer.observer >= c::LaneCount || transfer.source != n.macroPhases[transfer.afterPhase].lane ||
+                    std::none_of(n.macroPhases.begin() + transfer.afterPhase + 1, n.macroPhases.end(),
+                                 [&](const auto& phase) { return phase.lane == transfer.observer; }) ||
+                    !p.target.event(lane(p, transfer.source), lane(p, transfer.observer))) {
+                    reason = "invalid hidden macro completion transfer";
+                    return false;
+                }
+        }
         if (remoteWaits && !p.fixedBefore.empty())
             for (const auto& action : p.fixedBefore[id])
                 (*remoteWaits)[id] |= action.kind == c::FixedAction::RemoteWait;
@@ -384,6 +412,79 @@ bool acquire(const c::Program& p, unsigned source, unsigned target, c::State& st
     }
     return true;
 }
+
+c::Node phaseNode(const c::MacroPhase& phase)
+{
+    c::Node node;
+    node.kind = c::Node::Operation;
+    node.lane = phase.lane;
+    node.effects = phase.effects;
+    return node;
+}
+
+// Execute the lowering-owned phases after all externally generated commands
+// at this atomic IR cut have run. Internal transfers are completion facts only;
+// they do not alter GM visibility or expose the library's private event keys.
+bool executeMacro(const c::Program& p, const c::Node& macro, c::State& state, std::string& reason)
+{
+    for (unsigned index = 0; index < macro.macroPhases.size(); ++index) {
+        const auto& phase = macro.macroPhases[index];
+        auto operation = phaseNode(phase);
+        if (visibilityNeed(p, operation, state) != VisibilityNeed::None) {
+            reason = "atomic macro has an uncovered GM visibility requirement";
+            return false;
+        }
+        if (state.demands(phase.lane, phase.effects)) {
+            reason = "atomic macro has an uncovered physical completion requirement";
+            return false;
+        }
+        state.seed(phase.effects);
+        for (const auto& transfer : macro.macroTransfers)
+            if (transfer.afterPhase == index)
+                state.acquire(transfer.source, transfer.observer);
+    }
+    return true;
+}
+
+// Discover prerequisites in phase order, then prove that the complete command
+// population remains valid when hoisted to the one legal cut before the opaque
+// library call. A prerequisite that accidentally depended on an earlier
+// internal phase will fail that second simulation instead of being mis-emitted.
+bool constructMacro(const c::Program& p, const c::Node& macro, c::State& state,
+                    std::vector<c::Mechanism>& commands, std::string& reason,
+                    uint64_t& acquisitions, uint64_t& visibilityRequirements)
+{
+    c::State trial = state;
+    const size_t begin = commands.size();
+    for (unsigned index = 0; index < macro.macroPhases.size(); ++index) {
+        const auto& phase = macro.macroPhases[index];
+        auto operation = phaseNode(phase);
+        if (!realizeVisibility(p, operation, trial, commands, reason, visibilityRequirements))
+            return false;
+        for (unsigned source = 0; source < c::LaneCount; ++source)
+            if (trial.demands(phase.lane, phase.effects) & (1u << source)) {
+                if (!acquire(p, source, phase.lane, trial, commands)) {
+                    reason = "target cannot realize atomic macro prerequisite";
+                    return false;
+                }
+                ++acquisitions;
+            }
+        trial.seed(phase.effects);
+        for (const auto& transfer : macro.macroTransfers)
+            if (transfer.afterPhase == index)
+                trial.acquire(transfer.source, transfer.observer);
+    }
+
+    c::State actual = state;
+    for (size_t i = begin; i < commands.size(); ++i)
+        apply(p, actual, commands[i]);
+    if (!executeMacro(p, macro, actual, reason)) {
+        reason = "atomic macro prerequisites cannot be safely hoisted: " + reason;
+        return false;
+    }
+    state = std::move(actual);
+    return true;
+}
 } // namespace
 
 c::State::State(unsigned cells)
@@ -441,6 +542,14 @@ void c::State::barrier(unsigned lane)
     }
     for (auto& sources : remotePending)
         sources &= ~(uint8_t(1u) << lane);
+}
+void c::State::acquire(unsigned source, unsigned observer)
+{
+    const uint8_t bit = uint8_t(1u) << source;
+    for (auto& e : pending[observer]) {
+        e.readers &= ~bit;
+        e.writers &= ~bit;
+    }
 }
 void c::State::rendezvous(unsigned a, unsigned b)
 {
@@ -564,6 +673,9 @@ c::Result c::construct(const Program& p)
             state.seed(n.effects);
             return true;
         }
+        if (n.kind == Node::Macro)
+            return constructMacro(p, n, state, result.before[id], result.reason, result.acquisitions,
+                                  result.visibilityRequirements);
         if (n.kind == Node::Choice) {
             State alternative = state;
             if (!visit(n.children[0], state) || !visit(n.children[1], alternative))
@@ -641,6 +753,8 @@ c::Result c::verify(const Program& p, const std::vector<std::vector<Mechanism>>&
                 }
                 state.seed(n.effects);
                 return true;
+            case Node::Macro:
+                return executeMacro(p, n, state, result.reason);
             case Node::Choice: {
                 auto other = state;
                 if (!check(n.children[0], state) || !check(n.children[1], other))
@@ -1565,6 +1679,11 @@ c::Result constructCutCandidate(const c::Program& p, bool reserveFallback)
 
 c::Result c::constructCuts(const Program& p)
 {
+    if (std::any_of(p.nodes.begin(), p.nodes.end(), [](const auto& node) { return node.kind == Node::Macro; })) {
+        Result result;
+        result.reason = "cut precision has no atomic macro transfer";
+        return result;
+    }
     auto result = constructCutCandidate(p, false);
     // A single transactional retry reserves a conservative key if precision
     // used a direction needed by the remaining physical demands. No search over
@@ -1580,6 +1699,10 @@ c::Result c::verifyCuts(const Program& p, const std::vector<std::vector<Mechanis
 {
     Result result;
     result.fixedActions = fixedActionCount(p);
+    if (std::any_of(p.nodes.begin(), p.nodes.end(), [](const auto& node) { return node.kind == Node::Macro; })) {
+        result.reason = "cut precision has no atomic macro transfer";
+        return result;
+    }
     Cuts cuts;
     if (input.size() != p.nodes.size() || !discoverCuts(p, cuts, result.reason))
         return result;
@@ -4668,6 +4791,10 @@ c::Result constructDemandCandidate(
     using namespace c;
     c::Result result;
     result.fixedActions = fixedActionCount(p);
+    if (std::any_of(p.nodes.begin(), p.nodes.end(), [](const auto& node) { return node.kind == Node::Macro; })) {
+        result.reason = "demand precision has no atomic macro transfer";
+        return result;
+    }
     DemandAnalysis analysis;
     if (!analysis.build(p, result.reason, choiceIncoming))
         return result;
@@ -5623,6 +5750,10 @@ c::Result verifyDemandImpl(
     using namespace c;
     c::Result result;
     result.fixedActions = fixedActionCount(p);
+    if (std::any_of(p.nodes.begin(), p.nodes.end(), [](const auto& node) { return node.kind == Node::Macro; })) {
+        result.reason = "demand precision has no atomic macro transfer";
+        return result;
+    }
     if (usedChildReturns)
         *usedChildReturns = false;
     if (usedAlternativeChoices)

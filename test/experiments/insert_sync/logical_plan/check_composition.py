@@ -107,11 +107,40 @@ def main():
                 'composition_tci', 'composition_tconcat', 'composition_scalar_memory',
                 'composition_scalar_visibility', 'composition_tmrgsort',
                 'composition_remote_wait_scalar_visibility',
-                'composition_remote_wait_loop_scalar_visibility')
+                'composition_remote_wait_loop_scalar_visibility',
+                'composition_tput_macro', 'composition_tget_macro')
     positive += ('composition_authored_remote_signal',)
     for name in positive:
         source = fixtures / (name + '.pto')
         compile_case(name, source, gm='assume-disjoint-arguments')
+    source = fixtures / 'composition_tput_macro.pto'
+    row = run('tput-macro-drop-original',
+              [args.driver, source, 'composition:drop-macro',
+               args.output / 'tput-macro-drop-original.pto'],
+              source, 'mutation', True)
+    if not row['verdict']['atomic'] or not row['verdict']['expected']:
+        raise RuntimeError('opaque P2P macro deletion was not rejected atomically')
+    for mutation in ('drop-macro-prerequisite', 'late-macro-prerequisite',
+                     'macro-hidden-key0', 'macro-hidden-key1'):
+        row = run('tput-macro-' + mutation,
+                  [args.driver, source, 'composition:' + mutation,
+                   args.output / ('tput-macro-' + mutation + '.pto')],
+                  source, 'mutation', True)
+        if not row['verdict']['atomic'] or not row['verdict']['expected']:
+            raise RuntimeError('opaque P2P macro prerequisite was not reconstructed')
+    row = run('tput-macro-cuts-fallback',
+              [args.driver, source, 'cuts:none',
+               args.output / 'tput-macro-cuts-fallback.pto'],
+              source, 'mutation', True)
+    if not row['verdict']['atomic'] or not row['verdict']['expected']:
+        raise RuntimeError('cut precision did not use the conservative atomic macro fallback')
+    aic_source = args.output / 'composition_tput_macro_aic.pto'
+    aic_source.write_text(source.read_text().replace(
+        '#pto.kernel_kind<vector>', '#pto.kernel_kind<cube>', 1))
+    row = compile_case('composition-tput-macro-aic', aic_source,
+                       gm='assume-disjoint-arguments', expected=False)
+    if 'multi-phase-needs-endpoints:pto.comm.tput' not in row.get('first_refusal', ''):
+        raise RuntimeError('P2P macro did not remain fail-closed on AIC')
     source = fixtures / 'composition_authored_remote_signal.pto'
     for mutation in ('none', 'drop-authored-notify', 'drop-authored-wait'):
         row = run('authored-remote-' + mutation,

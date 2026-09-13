@@ -127,6 +127,23 @@ struct Oracle {
         issued[n.lane].push_back(done);
         accesses.push_back({issue, done, n.effects});
     }
+    void macro(const c::Node& n)
+    {
+        for (unsigned index = 0; index < n.macroPhases.size(); ++index) {
+            c::Node phase;
+            phase.kind = c::Node::Operation;
+            phase.lane = n.macroPhases[index].lane;
+            phase.effects = n.macroPhases[index].effects;
+            payload(phase);
+            for (const auto& transfer : n.macroTransfers)
+                if (transfer.afterPhase == index) {
+                    auto v = vertex();
+                    command(transfer.observer, v, false);
+                    for (auto done : issued[transfer.source])
+                        edge(done, v);
+                }
+        }
+    }
     bool reaches(unsigned a, unsigned b)
     {
         std::vector<bool> seen(edges.size());
@@ -184,6 +201,20 @@ static unsigned op(c::Program& p, unsigned lane, unsigned cell, bool write)
     (write ? n.effects[cell].writers : n.effects[cell].readers) = 1u << lane;
     return id;
 }
+static unsigned p2pMacro(c::Program& p, unsigned sourceCell, unsigned stagingCell, unsigned targetCell)
+{
+    auto id = add(p, c::Node::Macro);
+    auto& n = p.nodes[id];
+    c::MacroPhase first{unsigned(Pipe::MTE2), c::Effects(p.cells)};
+    first.effects[sourceCell].readers = 1u << first.lane;
+    first.effects[stagingCell].writers = 1u << first.lane;
+    c::MacroPhase second{unsigned(Pipe::MTE3), c::Effects(p.cells)};
+    second.effects[stagingCell].readers = 1u << second.lane;
+    second.effects[targetCell].writers = 1u << second.lane;
+    n.macroPhases = {std::move(first), std::move(second)};
+    n.macroTransfers.push_back({0, unsigned(Pipe::MTE2), unsigned(Pipe::MTE3)});
+    return id;
+}
 static unsigned sequence(c::Program& p, std::vector<unsigned> children)
 {
     children.push_back(add(p, c::Node::Sequence));
@@ -224,6 +255,9 @@ static void execute(const c::Program& p, const c::Result& r, unsigned id, Execut
     switch (n.kind) {
         case c::Node::Operation:
             oracle.payload(n);
+            break;
+        case c::Node::Macro:
+            oracle.macro(n);
             break;
         case c::Node::Sequence:
             for (auto x : n.children)
@@ -3526,6 +3560,69 @@ int main()
                 break;
             }
     }
+    // Atomic P2P macros expose ordered phase effects without exposing internal
+    // event cuts. The forward hidden transfer covers staging; final MTE3 work
+    // remains outstanding to later observers.
+    c::Program macroProgram;
+    macroProgram.cells = 3;
+    auto macro = p2pMacro(macroProgram, 0, 1, 2);
+    auto consume = op(macroProgram, unsigned(Pipe::MTE2), 2, false);
+    add(macroProgram, c::Node::Sequence, {macro, consume});
+    for (unsigned eventKey : {0u, 1u}) {
+        macroProgram.target.reservations.push_back(
+            {{Core::AIV, Pipe::MTE2}, {Core::AIV, Pipe::MTE3}, eventKey});
+        macroProgram.target.reservations.push_back(
+            {{Core::AIV, Pipe::MTE3}, {Core::AIV, Pipe::MTE2}, eventKey});
+    }
+    auto macroPlan = c::construct(macroProgram);
+    require(macroPlan.success);
+    require(c::verify(macroProgram, macroPlan.before).success);
+    require(!c::constructCuts(macroProgram).success);
+    require(!c::verifyCuts(macroProgram, macroPlan.before).success);
+    require(!c::constructDemands(macroProgram).success);
+    require(!c::verifyDemands(macroProgram, macroPlan.before).success);
+    require(macroPlan.before[macro].empty());
+    require(macroPlan.before[consume].size() == 1);
+    require(macroPlan.before[consume][0].kind == c::Mechanism::Rendezvous);
+    require(macroPlan.before[consume][0].forwardKey >= 2);
+    require(macroPlan.before[consume][0].reverseKey >= 2);
+    ExecutionPolicy macroPolicy;
+    macroPolicy.trips = [](unsigned, unsigned) { return 1u; };
+    macroPolicy.choice = [](unsigned, unsigned) { return 0u; };
+    Oracle macroOracle;
+    execute(macroProgram, macroPlan, macroProgram.nodes.size() - 1, macroPolicy, macroOracle);
+    macroOracle.check();
+    auto missingMacroCompletion = macroPlan.before;
+    missingMacroCompletion[consume].clear();
+    require(!c::verify(macroProgram, missingMacroCompletion).success);
+    auto invalidMacro = macroProgram;
+    invalidMacro.nodes[macro].macroTransfers.clear();
+    require(!c::construct(invalidMacro).success);
+    auto reversedMacro = macroProgram;
+    reversedMacro.nodes[macro].macroTransfers = {
+        {1, unsigned(Pipe::MTE3), unsigned(Pipe::MTE2)}};
+    require(!c::construct(reversedMacro).success);
+    auto mismatchedMacro = macroProgram;
+    mismatchedMacro.nodes[macro].macroTransfers[0].source = unsigned(Pipe::V);
+    require(!c::construct(mismatchedMacro).success);
+    auto mismatchedObserver = macroProgram;
+    mismatchedObserver.nodes[macro].macroTransfers[0].observer = unsigned(Pipe::V);
+    require(!c::construct(mismatchedObserver).success);
+    auto gmMacro = macroProgram;
+    gmMacro.globalMemory = {false, false, true};
+    require(!c::construct(gmMacro).success);
+
+    c::Program incomingMacro;
+    incomingMacro.cells = 3;
+    auto producer = op(incomingMacro, unsigned(Pipe::V), 0, true);
+    auto incoming = p2pMacro(incomingMacro, 0, 1, 2);
+    add(incomingMacro, c::Node::Sequence, {producer, incoming});
+    auto incomingPlan = c::construct(incomingMacro);
+    require(incomingPlan.success && !incomingPlan.before[incoming].empty());
+    require(c::verify(incomingMacro, incomingPlan.before).success);
+    incomingPlan.before[incoming].clear();
+    require(!c::verify(incomingMacro, incomingPlan.before).success);
+
     c::Program p;
     p.core = Core::AIC;
     p.cells = 1;

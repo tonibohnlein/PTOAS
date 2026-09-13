@@ -90,6 +90,10 @@ std::optional<SyncMacroModel> getP2PCommSyncMacroModel(Operation *op) {
   addBidirectionalHiddenEvent(model, PipelineType::PIPE_MTE2,
                               PipelineType::PIPE_MTE3,
                               getSequentialEventIds(laneCount));
+  // The library waits for the MTE2 staging producer before its MTE3 staging
+  // consumer. Its reverse private event is not an exported completion edge
+  // for the final MTE3 destination write.
+  model.completionTransfers.push_back({0, 1});
   return model;
 }
 

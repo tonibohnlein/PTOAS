@@ -160,7 +160,7 @@ struct Tree {
     llvm::DenseMap<Operation*, unsigned> ids;
     llvm::SmallPtrSet<Operation*, 32> fixedOperations;
     const llvm::SmallPtrSetImpl<Operation*>* ignored = nullptr;
-    llvm::DenseMap<Operation*, const CompoundInstanceElement*> phases;
+    llvm::DenseMap<Operation*, SmallVector<const CompoundInstanceElement*, 2>> phases;
     std::string reason;
     uint64_t widenedSpaces = 0;
     uint64_t periodicScalarWork = 0;
@@ -296,7 +296,7 @@ struct Tree {
         std::map<AddressSpace, std::set<uint64_t>> cuts;
         std::set<AddressSpace> coarse;
         for (auto* p : inventory.physical.phases) {
-            phases[p->elementOp] = p;
+            phases[p->elementOp].push_back(p);
             auto collect = [&](const auto& accesses) {
                 for (auto* a : accesses) {
                     auto& bounds = cuts[a->scope];
@@ -439,6 +439,115 @@ struct Tree {
         fixedOperations.insert(op);
         return true;
     }
+    bool addEffects(c::Effects& effects, unsigned source, const CompoundInstanceElement* phase)
+    {
+        auto access = [&](const auto& entries, bool write) {
+            for (auto* a : entries)
+                for (unsigned j = 0; j < cells.size(); ++j) {
+                    const auto& cell = cells[j];
+                    if (cell.space != a->scope)
+                        continue;
+                    bool overlaps = cell.whole;
+                    if (cell.space == AddressSpace::GM && !cell.gmRoots.empty()) {
+                        const auto& roots = gmAccesses.find(a)->second;
+                        overlaps = !roots.complete || llvm::any_of(roots.arguments, [&](Value root) {
+                            return llvm::is_contained(cell.gmRoots, root);
+                        });
+                    }
+                    if (!overlaps)
+                        for (uint64_t base : a->baseAddresses)
+                            overlaps |= base < cell.upper && cell.lower < base + a->allocateSize;
+                    if (!overlaps)
+                        continue;
+                    if (write)
+                        effects[j].writers |= 1u << source;
+                    else
+                        effects[j].readers |= 1u << source;
+                    // ACC read/read resource exclusion is stronger than ordinary RAW.
+                    if (a->scope == AddressSpace::ACC)
+                        effects[j].writers |= 1u << source;
+                }
+        };
+        access(phase->useVec, false);
+        access(phase->defVec, true);
+        return true;
+    }
+    bool macro(c::Node& current, Operation* op,
+               SmallVector<const CompoundInstanceElement*, 2> translated)
+    {
+        auto model = getSyncMacroModel(op);
+        if (program.core != ss::Core::AIV || !model || !isa<TPutOp, TGetOp>(op) || model->phases.size() != 2 ||
+            model->hiddenEvents.size() != 2 ||
+            model->completionTransfers.size() != 1) {
+            reason = "unsupported compositional macro contract";
+            return false;
+        }
+        llvm::sort(translated, [](const auto* a, const auto* b) {
+            return a->macroOpInstanceId < b->macroOpInstanceId;
+        });
+        current.kind = c::Node::Macro;
+        for (unsigned i = 0; i < model->phases.size(); ++i) {
+            const auto& contract = model->phases[i];
+            auto source = lane(static_cast<PIPE>(contract.pipe));
+            if (!source || translated[i]->macroOpInstanceId != int(contract.phaseId) ||
+                translated[i]->kPipeValue != contract.pipe) {
+                reason = "translated macro phase differs from its positive contract";
+                return false;
+            }
+            c::MacroPhase phase{*source, c::Effects(program.cells)};
+            addEffects(phase.effects, *source, translated[i]);
+            current.macroPhases.push_back(std::move(phase));
+        }
+        const auto& transfer = model->completionTransfers.front();
+        if (transfer.sourcePhaseId >= current.macroPhases.size() ||
+            transfer.targetPhaseId >= current.macroPhases.size() ||
+            transfer.sourcePhaseId >= transfer.targetPhaseId) {
+            reason = "invalid ordered macro completion contract";
+            return false;
+        }
+        current.macroTransfers.push_back(
+            {transfer.sourcePhaseId, current.macroPhases[transfer.sourcePhaseId].lane,
+             current.macroPhases[transfer.targetPhaseId].lane});
+        // Hidden events reserve private resources. They do not themselves
+        // establish a phase edge; that fact is explicit above.
+        std::set<std::pair<unsigned, unsigned>> directions;
+        for (const auto& hidden : model->hiddenEvents) {
+            auto source = lane(static_cast<PIPE>(hidden.srcPipe));
+            auto observer = lane(static_cast<PIPE>(hidden.dstPipe));
+            if (!source || !observer || hidden.eventIds.empty() ||
+                !program.target.event({program.core, static_cast<ss::Pipe>(*source)},
+                                      {program.core, static_cast<ss::Pipe>(*observer)})) {
+                reason = "unsupported hidden macro event contract";
+                return false;
+            }
+            unsigned after = *source == current.macroPhases[0].lane ? 0 :
+                             *source == current.macroPhases[1].lane ? 1 : ~0u;
+            if (after == ~0u || !directions.insert({*source, *observer}).second) {
+                reason = "ambiguous hidden macro event contract";
+                return false;
+            }
+            for (unsigned eventKey : hidden.eventIds) {
+                if (!llvm::is_contained(program.target.compilerKeys, eventKey)) {
+                    reason = "hidden macro event key is outside the qualified pool";
+                    return false;
+                }
+                ss::Reservation reservation{{program.core, static_cast<ss::Pipe>(*source)},
+                                            {program.core, static_cast<ss::Pipe>(*observer)}, eventKey};
+                if (std::find_if(program.target.reservations.begin(), program.target.reservations.end(),
+                                 [&](const auto& old) {
+                                     return old.source == reservation.source && old.target == reservation.target &&
+                                            old.key == reservation.key;
+                                 }) == program.target.reservations.end())
+                    program.target.reservations.push_back(reservation);
+            }
+        }
+        if (!directions.count({current.macroPhases[0].lane, current.macroPhases[1].lane}) ||
+            !directions.count({current.macroPhases[1].lane, current.macroPhases[0].lane})) {
+            reason = "P2P macro requires a bidirectional hidden event contract";
+            return false;
+        }
+        return true;
+    }
     bool region(Region& body, unsigned& id)
     {
         auto sequence = node(c::Node::Sequence);
@@ -491,44 +600,20 @@ struct Tree {
             }
             auto found = phases.find(&op);
             if (found != phases.end()) {
-                auto source = lane(static_cast<PIPE>(found->second->kPipeValue));
-                if (!source) {
-                    reason = "unsupported physical lane";
-                    return false;
+                if (found->second.size() > 1) {
+                    if (!macro(current, &op, found->second))
+                        return false;
+                } else {
+                    auto* phase = found->second.front();
+                    auto source = lane(static_cast<PIPE>(phase->kPipeValue));
+                    if (!source) {
+                        reason = "unsupported physical lane";
+                        return false;
+                    }
+                    current.kind = c::Node::Operation;
+                    current.lane = *source;
+                    addEffects(current.effects, *source, phase);
                 }
-                current.kind = c::Node::Operation;
-                current.lane = *source;
-                auto access = [&](const auto& entries, bool write) {
-                    for (auto* a : entries)
-                        for (unsigned j = 0; j < cells.size(); ++j) {
-                            const auto& cell = cells[j];
-                            if (cell.space != a->scope)
-                                continue;
-                            bool overlaps = cell.whole;
-                            if (cell.space == AddressSpace::GM && !cell.gmRoots.empty()) {
-                                const auto& roots = gmAccesses.find(a)->second;
-                                overlaps = !roots.complete || llvm::any_of(roots.arguments, [&](Value root) {
-                                    return llvm::is_contained(cell.gmRoots, root);
-                                });
-                            }
-                            if (!overlaps)
-                                for (uint64_t base : a->baseAddresses)
-                                    overlaps |= base < cell.upper && cell.lower < base + a->allocateSize;
-                            if (!overlaps)
-                                continue;
-                            if (write)
-                                current.effects[j].writers |= 1u << *source;
-                            else
-                                current.effects[j].readers |= 1u << *source;
-                            // ACC read/read resource exclusion is stronger than ordinary RAW.
-                            // The baseline uses full completion, never upgrades typed MMAD
-                            // ordering evidence into operand release or visibility.
-                            if (a->scope == AddressSpace::ACC)
-                                current.effects[j].writers |= 1u << *source;
-                        }
-                };
-                access(found->second->useVec, false);
-                access(found->second->defVec, true);
             }
             unsigned child = add(std::move(current), &op);
             program.fixedBefore[child] = std::move(pendingFixed);
@@ -1245,9 +1330,18 @@ Outcome ss::testing::constructCompositionalSync(
         out.reason = tree.reason;
         return out;
     }
+    // Macro internals are opaque original payload. Until demand placement has
+    // an atomic macro transfer, retain the same general conservative engine
+    // for the complete function instead of exposing impossible internal cuts.
+    const bool hasMacro = llvm::any_of(tree.program.nodes, [](const auto& node) {
+        return node.kind == c::Node::Macro;
+    });
+    const bool useDemandPlacement = demandPlacement && !hasMacro;
+    const bool useCutPrecision = precision && !hasMacro;
     if (fallbackOnly)
         tree.program.target.compilerKeys = {0};
-    auto selected = withoutAlternatives ? c::testing::constructDemandsWithoutAlternativeChoices(tree.program) :
+    auto selected = hasMacro            ? c::construct(tree.program) :
+                    withoutAlternatives ? c::testing::constructDemandsWithoutAlternativeChoices(tree.program) :
                     rejectAlternatives  ? c::testing::constructDemandsRejectingAlternativeChoices(tree.program) :
                     withoutChildReturns ? c::testing::constructDemandsWithoutChildReturns(tree.program) :
                     rejectChildReturns  ? c::testing::constructDemandsRejectingChildReturns(tree.program) :
@@ -1265,8 +1359,8 @@ Outcome ss::testing::constructCompositionalSync(
                     withoutReplay       ? c::testing::constructDemandsWithoutAllocationReplay(tree.program) :
                     rejectReplay        ? c::testing::constructDemandsRejectingAllocationReplay(tree.program) :
                     rejectRefinement    ? c::testing::constructDemandsRejectingRefinement(tree.program) :
-                    demandPlacement     ? c::constructDemands(tree.program) :
-                    precision           ? c::constructCuts(tree.program) :
+                    useDemandPlacement  ? c::constructDemands(tree.program) :
+                    useCutPrecision     ? c::constructCuts(tree.program) :
                                           c::construct(tree.program);
     if (!selected.success) {
         out.reason = selected.reason;
@@ -1293,7 +1387,7 @@ Outcome ss::testing::constructCompositionalSync(
         mutate(working);
     out.status = Outcome::InternalError;
     ParticipationGuards guards;
-    if (failed(mlir::verify(working)) || (demandPlacement && !guards.build(tree, generatedOperations, out.reason)) ||
+    if (failed(mlir::verify(working)) || (useDemandPlacement && !guards.build(tree, generatedOperations, out.reason)) ||
         !snapshot.preserved(working, [&](Operation* op) {
             return generatedOperations.contains(op) && (sync(op) || guards.operations.contains(op));
         })) {
@@ -1353,11 +1447,11 @@ Outcome ss::testing::constructCompositionalSync(
     if (fallbackOnly)
         rebuilt.program.target.compilerKeys = {0};
     std::vector<std::vector<c::Mechanism>> actual;
-    if (!reconstruct(rebuilt, drain, actual, out.reason, precision, guards))
+    if (!reconstruct(rebuilt, drain, actual, out.reason, useCutPrecision, guards))
         return out;
-    auto checked = demandPlacement ? c::verifyDemands(rebuilt.program, actual) :
-                   precision       ? c::verifyCuts(rebuilt.program, actual) :
-                                     c::verify(rebuilt.program, actual);
+    auto checked = useDemandPlacement ? c::verifyDemands(rebuilt.program, actual) :
+                   useCutPrecision    ? c::verifyCuts(rebuilt.program, actual) :
+                                        c::verify(rebuilt.program, actual);
     if (!checked.success) {
         out.reason = checked.reason;
         return out;
@@ -1387,7 +1481,8 @@ Outcome ss::testing::constructCompositionalSync(
                      << selected.deferredRejectionReason << "\n";
     if (std::getenv("PTOAS_LOGICAL_TRACE"))
         llvm::errs()
-            << "structured composition precision " << precision << " demands " << demandPlacement << " direct_handoffs "
+            << "structured composition precision " << useCutPrecision << " demands " << useDemandPlacement
+            << " macro_fallback " << ((demandPlacement || precision) && hasMacro) << " direct_handoffs "
             << selected.directHandoffs << " visibility_requirements " << selected.visibilityRequirements
             << " visibility_actions " << out.visibility << " fixed_sync " << out.fixedSync
             << " shared_acknowledgments " << selected.sharedAcknowledgments

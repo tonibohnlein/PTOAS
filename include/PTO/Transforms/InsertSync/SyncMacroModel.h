@@ -31,9 +31,17 @@ struct SyncMacroHiddenEvent {
   SmallVector<unsigned> eventIds;
 };
 
+// A lowering-owned completion edge between ordered opaque phases. Hidden
+// event ownership alone does not imply this edge or expose final completion.
+struct SyncMacroCompletionTransfer {
+  unsigned sourcePhaseId{0};
+  unsigned targetPhaseId{0};
+};
+
 struct SyncMacroModel {
   SmallVector<SyncMacroPhase> phases;
   SmallVector<SyncMacroHiddenEvent> hiddenEvents;
+  SmallVector<SyncMacroCompletionTransfer> completionTransfers;
 
   explicit operator bool() const { return !phases.empty(); }
 };
