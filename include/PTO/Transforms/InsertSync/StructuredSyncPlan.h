@@ -37,6 +37,8 @@ enum class CompositionConstructor {
     DemandsRejectDeferredRings,
     DemandsFallbackOnly,
     DemandsWithoutAllocationReplay,
+    DemandsWithoutLateEntry,
+    DemandsRejectLateEntry,
     DemandsRejectAllocationReplay
 };
 logical_sync::ConstructionResult constructCompositionalSync(

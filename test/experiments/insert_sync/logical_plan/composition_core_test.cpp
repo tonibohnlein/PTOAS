@@ -1231,7 +1231,7 @@ int main()
         auto after = add(p, c::Node::Sequence);
         auto root = add(p, c::Node::For, {sequence(p, {writeA, writeB, loop, after})});
         p.nodes[loop].entryGuardStart = writeA;
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutLateEntry(p);
         require(plan.success && plan.entryEpisodes == 1 && c::verifyDemands(p, plan.before).success);
         auto first = std::find_if(plan.before[common].begin(), plan.before[common].end(), [](const auto& m) {
             return m.participation == c::Mechanism::First;
@@ -1260,6 +1260,228 @@ int main()
             execute(p, plan, root, policy, oracle);
             oracle.check();
         }
+    }
+    {
+        // One incoming prefix, three exclusive first consumers. Independent
+        // lane work precedes the consumer in each arm. Late First placement
+        // must preserve exactly one dynamic consumption, including changing
+        // choices across iterations and repeated whole-program invocations.
+        c::Program p;
+        p.cells = 3;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto initial = op(p, a, 0, true), guard = add(p, c::Node::Sequence);
+        std::array<unsigned, 3> first{}, later{}, independent{};
+        std::array<unsigned, 3> arms{};
+        for (unsigned i = 0; i < arms.size(); ++i) {
+            independent[i] = op(p, d, 2, false);
+            first[i] = op(p, b, 0, false);
+            later[i] = op(p, b, 1, false);
+            arms[i] = sequence(p, {independent[i], first[i], later[i]});
+        }
+        auto nested = add(p, c::Node::Choice, {arms[0], arms[1]});
+        auto common = add(p, c::Node::Choice, {sequence(p, {nested}), arms[2]});
+        auto loop = add(p, c::Node::For, {sequence(p, {common})});
+        auto next = op(p, a, 0, true);
+        auto root = add(p, c::Node::For, {sequence(p, {initial, guard, loop, next})});
+        p.nodes[loop].entryGuardStart = guard;
+        auto baseline = c::testing::constructDemandsWithoutLateEntry(p);
+        auto plan = c::constructDemands(p);
+        require(baseline.success && plan.success && c::verifyDemands(p, plan.before).success);
+        require(plan.lateEntryFamilies == 1 && plan.lateEntrySites == 3);
+        require(std::none_of(plan.before[common].begin(), plan.before[common].end(), [](const auto& m) {
+            return m.participation == c::Mechanism::First;
+        }));
+        c::Mechanism shared;
+        for (unsigned id : first) {
+            auto found = std::find_if(plan.before[id].begin(), plan.before[id].end(), [](const auto& m) {
+                return m.participation == c::Mechanism::First;
+            });
+            require(found != plan.before[id].end());
+            require(
+                found->kind == c::Mechanism::Acquire && found->loop == loop && found->first == a && found->second == b);
+            if (id == first[0])
+                shared = *found;
+            else
+                require(*found == shared);
+        }
+        auto rejected = c::testing::constructDemandsRejectingLateEntry(p);
+        require(rejected.success && rejected.before == baseline.before && rejected.rejectedLateEntryFamilies > 0);
+        for (uint64_t limit : {uint64_t(0), uint64_t(1), uint64_t(p.nodes.size())}) {
+            auto exhausted = c::testing::constructDemandsWithLateEntryWorkLimit(p, limit);
+            require(exhausted.success && exhausted.before == baseline.before && exhausted.lateEntryFamilies == 0);
+        }
+        auto clamped = c::testing::constructDemandsWithLateEntryWorkLimit(p, UINT64_MAX);
+        require(clamped.success && clamped.before == plan.before);
+        auto eraseFirst = [&](auto& commands, unsigned id) {
+            commands[id].erase(
+                std::remove_if(
+                    commands[id].begin(), commands[id].end(),
+                    [](const auto& m) { return m.participation == c::Mechanism::First; }),
+                commands[id].end());
+        };
+        for (unsigned i = 0; i < first.size(); ++i) {
+            auto missing = plan.before;
+            eraseFirst(missing, first[i]);
+            require(!c::verifyDemands(p, missing).success);
+            auto duplicate = plan.before;
+            duplicate[first[i]].push_back(shared);
+            require(!c::verifyDemands(p, duplicate).success);
+            auto tooLate = missing;
+            tooLate[later[i]].insert(tooLate[later[i]].begin(), shared);
+            require(!c::verifyDemands(p, tooLate).success);
+            auto early = missing;
+            early[independent[i]].push_back(shared);
+            require(!c::verifyDemands(p, early).success);
+            auto wrongOwner = plan.before;
+            for (auto& m : wrongOwner[first[i]])
+                if (m.participation == c::Mechanism::First)
+                    m.loop = root;
+            require(!c::verifyDemands(p, wrongOwner).success);
+            auto wrongKey = plan.before;
+            for (auto& m : wrongKey[first[i]])
+                if (m.participation == c::Mechanism::First)
+                    ++m.forwardKey;
+            require(!c::verifyDemands(p, wrongKey).success);
+        }
+        auto mixed = plan.before;
+        mixed[common].push_back(shared);
+        require(!c::verifyDemands(p, mixed).success);
+        // A new earlier observer or a removed arm cannot inherit the old
+        // first-site certificate, even though the other paths still match.
+        auto earlier = p;
+        earlier.nodes[independent[1]].lane = b;
+        earlier.nodes[independent[1]].effects.assign(p.cells, {});
+        earlier.nodes[independent[1]].effects[0].readers = 1u << b;
+        require(!c::verifyDemands(earlier, plan.before).success);
+        auto empty = p;
+        // Keep all nodes in the tree: replace the payload effects by unrelated
+        // lane accesses instead of deleting original nodes from its population.
+        for (unsigned id : {first[2], later[2]}) {
+            empty.nodes[id].lane = d;
+            empty.nodes[id].effects.assign(p.cells, {});
+            empty.nodes[id].effects[2].readers = 1u << d;
+        }
+        auto emptyPlan = c::constructDemands(empty);
+        auto emptyBaseline = c::testing::constructDemandsWithoutLateEntry(empty);
+        require(emptyPlan.success && emptyPlan.lateEntryFamilies == 0 && emptyPlan.before == emptyBaseline.before);
+        require(!c::verifyDemands(empty, plan.before).success);
+        auto sourceInside = p;
+        sourceInside.nodes[independent[0]].lane = a;
+        sourceInside.nodes[independent[0]].effects.assign(p.cells, {});
+        sourceInside.nodes[independent[0]].effects[0].writers = 1u << a;
+        require(!c::verifyDemands(sourceInside, plan.before).success);
+        ExecutionPolicy policy, oldPolicy;
+        policy.trips =
+            oldPolicy.trips = [=](unsigned id, unsigned visit) { return id == root ? 2u : (visit * 3 + 1) % 5; };
+        policy.choice = oldPolicy.choice = [](unsigned id, unsigned visit) { return (id + visit) % 2; };
+        Oracle oracle, oldOracle;
+        for (unsigned invocation = 0; invocation < 6; ++invocation) {
+            execute(p, plan, root, policy, oracle);
+            execute(p, baseline, root, oldPolicy, oldOracle);
+            oracle.check();
+            oldOracle.check();
+            require(oracle.commands == oldOracle.commands);
+        }
+    }
+    {
+        // A nested observer-free Choice may precede the first consumer.
+        // Its outgoing state is uniformly Unconsumed, not an error: only
+        // the complete first-consumer domain must finish uniformly Consumed.
+        c::Program p;
+        p.cells = 2;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto initial = op(p, a, 0, true), guard = add(p, c::Node::Sequence);
+        auto independent = op(p, d, 1, false);
+        auto before = add(p, c::Node::Choice, {sequence(p, {independent}), sequence(p, {})});
+        auto left = op(p, b, 0, false), right = op(p, b, 0, false);
+        auto common = add(p, c::Node::Choice, {sequence(p, {before, left}), sequence(p, {right})});
+        auto loop = add(p, c::Node::For, {sequence(p, {common})});
+        auto after = add(p, c::Node::Sequence);
+        auto root = add(p, c::Node::For, {sequence(p, {initial, guard, loop, after})});
+        p.nodes[loop].entryGuardStart = guard;
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.lateEntryFamilies == 1 && plan.lateEntrySites == 2);
+        require(c::verifyDemands(p, plan.before).success);
+        ExecutionPolicy policy;
+        policy.trips = [=](unsigned id, unsigned visit) { return id == root ? 2u : visit % 3; };
+        policy.choice = [](unsigned id, unsigned visit) { return (id + visit) % 2; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 5; ++invocation) {
+            execute(p, plan, root, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // Cardinality is necessary but does not justify flattening the order
+        // of different entry families. The projected combined word must agree
+        // across both arms, including their reverse acknowledgment protocols.
+        c::Program p;
+        p.cells = 2;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto initialA = op(p, a, 0, true), initialD = op(p, d, 1, true);
+        auto guard = add(p, c::Node::Sequence);
+        auto left = op(p, b, 0, false), right = op(p, b, 0, false);
+        p.nodes[left].effects[1].readers = p.nodes[right].effects[1].readers = 1u << b;
+        auto common = add(p, c::Node::Choice, {sequence(p, {left}), sequence(p, {right})});
+        auto loop = add(p, c::Node::For, {sequence(p, {common})});
+        auto nextA = op(p, a, 0, true), nextD = op(p, d, 1, true);
+        auto root = add(p, c::Node::For, {sequence(p, {initialA, initialD, guard, loop, nextA, nextD})});
+        p.nodes[loop].entryGuardStart = guard;
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.lateEntryFamilies == 2 && plan.lateEntrySites == 4);
+        require(c::verifyDemands(p, plan.before).success);
+        auto reversed = plan.before;
+        std::vector<unsigned> indices;
+        for (unsigned i = 0; i < reversed[right].size(); ++i)
+            if (reversed[right][i].participation == c::Mechanism::First)
+                indices.push_back(i);
+        require(indices.size() == 2);
+        std::swap(reversed[right][indices[0]], reversed[right][indices[1]]);
+        auto rejected = c::verifyDemands(p, reversed);
+        require(!rejected.success && rejected.reason == "entry episode command order differs across Choice paths");
+        auto oversized = plan.before;
+        for (unsigned i = 0; i < 9; ++i)
+            oversized[left].push_back(plan.before[left][indices[0]]);
+        require(!c::verifyDemands(p, oversized).success);
+        ExecutionPolicy policy;
+        policy.trips = [=](unsigned id, unsigned visit) { return id == root ? 2u : (visit + 1) % 4; };
+        policy.choice = [](unsigned, unsigned visit) { return visit % 2; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 5; ++invocation) {
+            execute(p, plan, root, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // A possible-first-site union is not an exclusive partition. On the
+        // true inner path, both possible sites execute; on the false path,
+        // only the second does. mayNoLane=false must not authorize two WAITs.
+        c::Program p;
+        p.cells = 1;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto initial = op(p, a, 0, true), guard = add(p, c::Node::Sequence);
+        auto optional = op(p, b, 0, false), afterOptional = op(p, b, 0, false);
+        auto other = op(p, b, 0, false);
+        auto inner = add(p, c::Node::Choice, {sequence(p, {optional}), sequence(p, {})});
+        auto common = add(p, c::Node::Choice, {sequence(p, {inner, afterOptional}), sequence(p, {other})});
+        auto loop = add(p, c::Node::For, {sequence(p, {common})});
+        auto after = add(p, c::Node::Sequence);
+        sequence(p, {initial, guard, loop, after});
+        p.nodes[loop].entryGuardStart = guard;
+        auto baseline = c::testing::constructDemandsWithoutLateEntry(p);
+        auto plan = c::constructDemands(p);
+        require(plan.success && baseline.entryEpisodes == 1 && plan.before == baseline.before);
+        require(plan.lateEntryFamilies == 0 && c::verifyDemands(p, plan.before).success);
+        auto forged = plan.before;
+        auto found = std::find_if(forged[common].begin(), forged[common].end(), [](const auto& m) {
+            return m.participation == c::Mechanism::First;
+        });
+        require(found != forged[common].end());
+        auto wait = *found;
+        forged[common].erase(found);
+        for (unsigned id : {optional, afterOptional, other})
+            forged[id].insert(forged[id].begin(), wait);
+        require(!c::verifyDemands(p, forged).success);
     }
     {
         // Nine possible first sites exceed the fixed alternative bound.  This

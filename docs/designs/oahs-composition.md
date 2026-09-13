@@ -1430,3 +1430,125 @@ the whole regression quality gate remains open, defaults are unchanged, and
 there is no device-correctness or device-performance qualification. A later
 bounded path-local acquisition provider must prove participation from actual
 control flow before moving waits into mutually exclusive arms.
+
+## Late shared incoming acquisition
+
+The next optional refinement keeps the incoming publication and reverse
+acknowledgment unchanged, but places its First acquisition immediately before
+each mutually exclusive first observer operation. Independent work preceding
+that operation need not inherit the incoming completion. This uses the same
+original physical witnesses and completion engine, not a kernel-specific
+protocol or a new hardware assumption.
+
+A valid bounded first-site summary with no observer-free path is only a
+proposal filter. Such a summary can still name two sites on one execution:
+an optional early consumer followed by an unconditional later consumer is a
+simple counterexample. Fresh reconstruction therefore checks the actual wait
+population against the original sites and propagates unconsumed/consumed state
+through Sequence and Choice. Every path must consume exactly once, before its
+first observer operation. Missing, duplicate, moved, wrong-key and wrong-owner
+waits are rejected.
+
+The state is a set of possibilities encoded by two bits: unconsumed is 1,
+consumed is 2, and a mixed path population is 3. Choice uses set union, and
+the complete domain must finish with exactly 2, not merely a nonzero bit.
+An observer operation also requires exactly that state. An observer-free
+nested Choice may legitimately finish unconsumed before a later common first
+consumer; it is not required to consume prematurely at every nested join.
+
+The event proof also requires every arm to have the same projected **combined
+entry-command word**, preserving the order of different entry families. A
+two-copy rearm proof of that word then covers successive executions taking
+different arms, not only repetitions of one arm. This is a deliberately bounded
+sufficient condition: differing words retain the common placement rather than
+triggering path enumeration. Ordinary and deferred protocols retain their own
+checked, disjoint key populations.
+
+The refinement is one transaction over an already verified common-cut plan.
+Fresh verification applies completion at the actual branch-local waits and
+joins the resulting states conservatively. If removing the earlier common
+credit exposes a missing handoff elsewhere, the candidate is rejected and the
+exact common plan is retained. No successful subset of a failed family is kept.
+Empty observer paths, uncertain recurrence, summary overflow and optional work
+limits likewise retain the existing construction.
+
+Candidate discovery/copying has an aggregate allowance of 4,194,304 represented
+work units. Actual late-entry verification has a separate 1,048,576-unit
+allowance, reserved before its subtree scans and conservative word-copy cost.
+Common-entry and no-entry plans do not enter that new verification path.
+The cardinality population is capped before growing beyond eight actual sites.
+These are implementation work bounds, not wall-clock or exact byte estimates;
+the conservative reservation may decline a useful large candidate.
+
+Native guards use the original counted loop's exact IV/lower-bound comparison.
+Only original Sequence/Choice ancestry is allowed between a late consumer and
+that owner. Repeated same-key First guards are bindings to one owner, not an
+assertion of exclusivity; actual control-flow reconstruction supplies that proof.
+
+One common WAIT can become up to eight static WAIT/guard sites, while exactly
+one of them executes in a nonempty first iteration. Static code size, executed
+event commands, scalar comparisons/branches and completion boundaries must be
+reported separately. The test-driver `demands:without-late-entry` arm preserves
+the common placement; `demands:reject-late-entry` exercises transactional
+refusal. Neither changes the public pass options or planner defaults.
+
+### Late-acquisition qualification
+
+All three reviewers accepted this opt-in milestone. The final targeted native
+build, six selected OAHS gates (310.84 seconds), and the single selected
+`insert_sync_structured_constructor.pto` lit test pass. The final Clang C++17
+ASan/UBSan run passes **2,257,565 assertions**. Tests cover exclusive sites,
+each missing-arm acquisition, duplicate/oversized populations, wrong owners
+and keys, mixed common/branch placement, reversed multi-family arm words,
+observer-free inner choices, overlapping possible-first sites, changing loop
+visits, repeated whole invocations, and exact budget/rejection fallback.
+
+The final two-arm frozen replay matches **726/726** outcomes, counts and
+refusal reasons, with no cohort change: 45/150 PTOAS, 7/35 PyPTO and 145/178
+PyPTO-lib snapshots. Its executable SHA-256 is
+`845992d32a0b063c3e0a1e6896827c87876023ad1d14b3142dfaea0344b3e362`.
+The final native reconstruction-driver SHA-256 is
+`d45cba83a901306f8c81848a441538c2d46f11eca4041cc91f2a1075ea5e1e15`.
+
+The isolated compiler campaign uses the unchanged eight inputs, three paired
+samples and one warmup per arm. All PTO compilations and C++ emissions pass.
+
+| Input | Median demand / existing compilation time |
+| --- | ---: |
+| One buffer | 1.007651 |
+| Two buffers | 1.030172 |
+| Three buffers | 1.008680 |
+| Four-use | 1.023954 |
+| Online softmax | 1.048058 |
+| QK matmul | 1.014139 |
+| Q projection | 1.020299 |
+| Historical GEMM | 0.995506 |
+
+Every individual paired ratio is below 2x; the maximum is 1.052777. The
+compiler-library SHA-256 is
+`4e39f3b715efbd08aae74dcbdd67d0ca9411c7bea03087e030a06a989941bee6`.
+The campaign records base `4b1b8f521a9459a41e7573dd50d0b0dc46b70131`, its
+task-owned dirty listing, tracked-diff hash, commands and unchanged input
+hashes. This is base-plus-diff evidence, not a retroactive clean-revision claim.
+Artifacts are under the existing build's `test-results/oahs-late-entry-compiler`,
+`test-results/oahs-late-entry-final-frozen-replay` and `test-results/oahs-demands`.
+
+GEMM selects one family with four exclusive sites. Relative to the common-cut
+candidate, static SET/WAIT counts change **56/56 to 56/59**, with the same 21
+named barriers and one terminal drain. Executed event and scalar-operation
+counts are identical on all five measured scenarios. Normalized PTO grows from
+27,159 to 27,661 bytes. Only two completion observations change: extraction
+sites 57 and 58 in the distributed-tile scenario no longer inherit FIX prefix
+54. All other observed completion boundaries are unchanged. The later-prefix
+count against existing InsertSync consequently returns from 47 to 45.
+
+The dedicated native fixture similarly changes one static first guard into
+three, with identical executed synchronization and scalar counts on its eight
+scenarios. Forced candidate rejection returns byte-identical normalized PTO
+to the disabled-late arm. The other seven benchmark cases keep their mechanism
+counts and boundary observations.
+
+The replacement quality gate remains **`quality_qualified=false`**. This fixes
+the measured common-wait regression; it does not establish a general runtime
+speedup or eliminate the remaining over-ordering. Defaults are unchanged, the
+full lit/system suites were not run, and there is no device qualification.

@@ -1278,6 +1278,46 @@ struct DemandAnalysis {
         return found == entryWitnesses.end() ? nullptr : &found->second;
     }
 
+    const c::CompletionDemand* entryDemand(
+        unsigned loop, unsigned acquisition, unsigned source, unsigned observer) const
+    {
+        if (loop >= entries.size())
+            return nullptr;
+        auto found = std::find_if(entries[loop].begin(), entries[loop].end(), [&](const auto& demand) {
+            return demand.acquisition == acquisition && demand.source == source && demand.observer == observer;
+        });
+        return found == entries[loop].end() ? nullptr : &*found;
+    }
+
+    const FirstLaneSummary* firstSummary(unsigned root, unsigned observer) const
+    {
+        if (root >= entryFirst.size() || observer >= c::LaneCount)
+            return nullptr;
+        return &entryFirst[root][observer];
+    }
+
+    const c::CompletionDemand* lateEntryDemand(unsigned loop, unsigned site, unsigned source, unsigned observer) const
+    {
+        if (loop >= entries.size())
+            return nullptr;
+        const c::CompletionDemand* found = nullptr;
+        for (const auto& demand : entries[loop]) {
+            if (demand.source != source || demand.observer != observer || demand.acquisition >= effects.size() ||
+                effects.size() <= site)
+                continue;
+            const auto* summary = firstSummary(demand.acquisition, observer);
+            if (!summary || !summary->valid || summary->mayNoLane || !summary->count ||
+                summary->count > MaxAlternatives ||
+                std::find(summary->operations.begin(), summary->operations.begin() + summary->count, site) ==
+                    summary->operations.begin() + summary->count)
+                continue;
+            if (found)
+                return nullptr;
+            found = &demand;
+        }
+        return found;
+    }
+
     void recordEntryStats(c::Result& result) const
     {
         result.entrySummarySlots = entrySummarySlots;
@@ -2493,6 +2533,126 @@ std::vector<c::Mechanism> demandWord(
 // every consumption -> next publication edge in the periodic word; translating
 // those edges proves arbitrary repetitions and skips of the whole domain.
 // Nested domains use disjoint keys and need not finish their payload on return.
+bool verifyFirstCardinality(
+    const c::Program& p, const DemandAnalysis& analysis, const Commands& actual, const PrefixState::EventKey& key,
+    unsigned loop, unsigned origin, const std::vector<unsigned>& actualSites, std::string& reason)
+{
+    using namespace c;
+    if (actualSites.size() == 1 && actualSites.front() == origin)
+        return true;
+    const auto* summary = analysis.firstSummary(origin, std::get<1>(key));
+    if (origin >= p.nodes.size() || p.nodes[origin].kind != Node::Choice || !summary || !summary->valid ||
+        summary->mayNoLane || !summary->count || summary->count > MaxAlternatives) {
+        reason = "late first-consumer wait has no total bounded Choice summary";
+        return false;
+    }
+    std::vector<unsigned> expected(summary->operations.begin(), summary->operations.begin() + summary->count);
+    auto observed = actualSites;
+    std::sort(expected.begin(), expected.end());
+    std::sort(observed.begin(), observed.end());
+    if (expected != observed) {
+        reason = "late first-consumer wait population differs from original first sites";
+        return false;
+    }
+    uint8_t observerBit = uint8_t(1u << std::get<1>(key));
+    for (unsigned site : expected)
+        if (std::none_of(p.nodes[site].effects.begin(), p.nodes[site].effects.end(), [&](const auto& effect) {
+                return (effect.readers | effect.writers) & observerBit;
+            })) {
+            reason = "late first-consumer site has no observer effect witness";
+            return false;
+        }
+    // Bits denote possible path states, not a Boolean "some path consumed".
+    // A mixed Choice result is 1|2 == 3 and cannot satisfy the final exact
+    // singleton Consumed check. It also cannot execute another matching WAIT.
+    constexpr uint8_t Unconsumed = 1, Consumed = 2;
+    auto matching = [&](const Mechanism& mechanism) {
+        return mechanism.kind == Mechanism::Acquire && mechanism.participation == Mechanism::First &&
+               mechanism.loop == loop && mechanism.first == std::get<0>(key) && mechanism.second == std::get<1>(key) &&
+               mechanism.forwardKey == std::get<2>(key);
+    };
+    std::function<bool(unsigned, uint8_t, uint8_t&)> walk = [&](unsigned id, uint8_t state, uint8_t& out) {
+        unsigned waits = std::count_if(actual[id].begin(), actual[id].end(), matching);
+        if (waits) {
+            if (waits != 1 || (state & Consumed) || !std::binary_search(expected.begin(), expected.end(), id))
+                return false;
+            state = Consumed;
+        }
+        const auto& node = p.nodes[id];
+        if (node.kind == Node::Operation && node.lane == std::get<1>(key) && state != Consumed)
+            return false;
+        if (node.kind == Node::Choice) {
+            uint8_t left = 0, right = 0;
+            if (!walk(node.children[0], state, left) || !walk(node.children[1], state, right))
+                return false;
+            out = left | right;
+            return true;
+        }
+        if (node.kind == Node::For || node.kind == Node::While) {
+            // Even a recurrence lexically after a first site is outside this
+            // finite cardinality certificate. Keep the common-cut baseline.
+            return false;
+        }
+        for (unsigned child : node.children) {
+            uint8_t next = 0;
+            if (!walk(child, state, next))
+                return false;
+            state = next;
+        }
+        out = state;
+        return true;
+    };
+    uint8_t outcome = 0;
+    if (!walk(origin, Unconsumed, outcome) || outcome != Consumed) {
+        reason = "late first-consumer waits are not exactly once on every Choice path";
+        return false;
+    }
+    return true;
+}
+
+bool projectEntryWord(
+    const c::Program& p, const Commands& actual, unsigned id, unsigned loop, std::vector<c::Mechanism>& word,
+    std::string& reason)
+{
+    using namespace c;
+    std::vector<Mechanism> direct;
+    for (const auto& mechanism : actual[id])
+        if ((mechanism.participation == Mechanism::First || mechanism.participation == Mechanism::NonEmpty) &&
+            mechanism.loop == loop)
+            direct.push_back(mechanism);
+    const auto& node = p.nodes[id];
+    if (node.kind == Node::Choice) {
+        std::vector<Mechanism> left, right;
+        if (!projectEntryWord(p, actual, node.children[0], loop, left, reason) ||
+            !projectEntryWord(p, actual, node.children[1], loop, right, reason))
+            return false;
+        if (left != right) {
+            reason = "entry episode command order differs across Choice paths";
+            return false;
+        }
+        word.insert(word.end(), direct.begin(), direct.end());
+        word.insert(word.end(), left.begin(), left.end());
+        return true;
+    }
+    if (node.kind == Node::For || node.kind == Node::While) {
+        std::vector<Mechanism> nested;
+        for (unsigned child : node.children)
+            if (!projectEntryWord(p, actual, child, loop, nested, reason))
+                return false;
+        if (!nested.empty()) {
+            reason = "entry episode command is nested in an unknown recurrence";
+            return false;
+        }
+        word.insert(word.end(), direct.begin(), direct.end());
+        return true;
+    }
+    word.insert(word.end(), direct.begin(), direct.end());
+    for (unsigned child : node.children)
+        if (!projectEntryWord(p, actual, child, loop, word, reason))
+            return false;
+    return true;
+}
+
 bool verifyEntryProtocols(
     const c::Program& p, const DemandAnalysis& analysis, const Commands& actual,
     const std::set<PrefixState::EventKey>& deferredKeys, std::set<PrefixState::EventKey>& reserved, std::string& reason)
@@ -2500,7 +2660,8 @@ bool verifyEntryProtocols(
     using namespace c;
     using Key = PrefixState::EventKey;
     struct Protocol {
-        unsigned loop = NoCut, provider = NoCut, first = NoCut, ackSet = NoCut, ackWait = NoCut;
+        unsigned loop = NoCut, provider = NoCut, first = NoCut, firstSite = NoCut, ackSet = NoCut, ackWait = NoCut;
+        std::vector<unsigned> additionalFirstSites;
     };
     std::map<Key, Protocol> population;
     std::map<unsigned, std::set<Key>> firstKeys, replyKeys;
@@ -2541,17 +2702,21 @@ bool verifyEntryProtocols(
                 analysis.parent[p.nodes[m.loop].entryGuardStart] != scope)
                 return refuse();
             if (m.participation == Mechanism::First) {
-                if (m.kind != Mechanism::Acquire || analysis.parent[id] != p.nodes[m.loop].children[0])
+                if (m.kind != Mechanism::Acquire)
                     return refuse();
-                auto demand =
-                    std::find_if(analysis.entries[m.loop].begin(), analysis.entries[m.loop].end(), [&](const auto& d) {
-                        return d.acquisition == id && d.source == m.first && d.observer == m.second;
-                    });
-                if (demand == analysis.entries[m.loop].end())
+                const auto* demand = analysis.entryDemand(m.loop, id, m.first, m.second);
+                bool late = false;
+                if (!demand) {
+                    demand = analysis.lateEntryDemand(m.loop, id, m.first, m.second);
+                    late = true;
+                }
+                if (!demand || (!late && analysis.parent[id] != p.nodes[m.loop].children[0]) ||
+                    (late && (p.nodes[demand->acquisition].kind != Node::Choice ||
+                              p.nodes[id].kind != Node::Operation || p.nodes[id].lane != m.second)))
                     return refuse();
                 const auto* witness = analysis.entryWitness(*demand);
-                if (!witness || (p.nodes[id].kind == Node::Operation && p.nodes[id].lane != m.second) ||
-                    (p.nodes[id].kind != Node::Operation && p.nodes[id].kind != Node::Choice))
+                if (!witness || (!late && p.nodes[id].kind == Node::Operation && p.nodes[id].lane != m.second) ||
+                    (!late && p.nodes[id].kind != Node::Operation && p.nodes[id].kind != Node::Choice))
                     return refuse();
                 for (unsigned cell : demand->cells)
                     if (((*witness)[cell].readers | (*witness)[cell].writers) & (1u << m.second)) {
@@ -2560,9 +2725,19 @@ bool verifyEntryProtocols(
                             return refuse();
                     } else
                         return refuse();
-                if (pop.first != NoCut)
+                if (pop.first != NoCut && pop.first != demand->acquisition)
                     return refuse();
-                pop.first = id;
+                pop.first = demand->acquisition;
+                if (pop.firstSite == NoCut)
+                    pop.firstSite = id;
+                else {
+                    // Reject an oversized actual population before growing
+                    // storage. A valid exclusive family has at most eight
+                    // sites, including the first one retained inline.
+                    if (pop.additionalFirstSites.size() >= MaxAlternatives - 1)
+                        return refuse();
+                    pop.additionalFirstSites.push_back(id);
+                }
                 firstKeys[m.loop].insert(key);
             } else if (m.participation == Mechanism::NonEmpty) {
                 if (analysis.parent[id] != scope)
@@ -2605,12 +2780,56 @@ bool verifyEntryProtocols(
             } else
                 return refuse();
         }
+    std::set<Key> lateKeys;
+    std::set<unsigned> lateLoops;
+    for (const auto& [key, pop] : population)
+        if (pop.provider != NoCut && (pop.firstSite != pop.first || !pop.additionalFirstSites.empty())) {
+            lateKeys.insert(key);
+            lateLoops.insert(pop.loop);
+        }
+    constexpr uint64_t MaxEntryProtocolWork = 1u << 20;
+    uint64_t protocolWork = 0;
+    std::vector<uint64_t> subtreeRecords;
+    auto chargeProtocol = [&](uint64_t count) {
+        if (count > MaxEntryProtocolWork - protocolWork) {
+            reason = "late entry episode verification exceeds optional work bound";
+            return false;
+        }
+        protocolWork += count;
+        return true;
+    };
+    if (!lateKeys.empty()) {
+        if (!chargeProtocol(actual.size()))
+            return false;
+        subtreeRecords.resize(actual.size());
+        for (unsigned id = 0; id < actual.size(); ++id) {
+            if (!chargeProtocol(actual[id].size()))
+                return false;
+            subtreeRecords[id] = 1 + actual[id].size();
+            for (unsigned child : p.nodes[id].children) {
+                if (subtreeRecords[child] > MaxEntryProtocolWork - subtreeRecords[id])
+                    subtreeRecords[id] = MaxEntryProtocolWork;
+                else
+                    subtreeRecords[id] += subtreeRecords[child];
+            }
+        }
+    }
     for (const auto& [k, pop] : population) {
         if (pop.loop == NoCut)
             return refuse();
         if (pop.provider != NoCut) {
             if (pop.first == NoCut || pop.ackSet != NoCut || pop.ackWait != NoCut)
                 return refuse();
+            if (lateKeys.count(k)) {
+                if (!chargeProtocol(subtreeRecords[pop.first]))
+                    return false;
+                std::vector<unsigned> firstSites{pop.firstSite};
+                firstSites.insert(firstSites.end(), pop.additionalFirstSites.begin(), pop.additionalFirstSites.end());
+                uint64_t effectScans = uint64_t(firstSites.size()) * p.cells;
+                if (!chargeProtocol(effectScans) ||
+                    !verifyFirstCardinality(p, analysis, actual, k, pop.loop, pop.first, firstSites, reason))
+                    return false;
+            }
         } else if (pop.ackSet == NoCut || pop.ackWait == NoCut || pop.first != NoCut)
             return refuse();
         reserved.insert(k);
@@ -2627,12 +2846,38 @@ bool verifyEntryProtocols(
                 if (m.participation != Mechanism::Every && m.loop == loop)
                     word.push_back(m);
         };
+        auto appendLate = [&](unsigned cut) {
+            for (const auto& m : actual[cut])
+                if ((m.participation == Mechanism::First || m.participation == Mechanism::NonEmpty) && m.loop == loop)
+                    word.push_back(m);
+        };
+        bool late = lateLoops.count(loop);
         const auto& siblings = p.nodes[analysis.parent[loop]].children;
-        for (unsigned i = 0; i <= analysis.position[loop]; ++i)
-            append(siblings[i]);
-        for (unsigned child : p.nodes[p.nodes[loop].children[0]].children)
-            append(child);
-        append(analysis.next[loop]);
+        for (unsigned i = 0; i <= analysis.position[loop]; ++i) {
+            if (late)
+                appendLate(siblings[i]);
+            else
+                append(siblings[i]);
+        }
+        unsigned body = p.nodes[loop].children[0];
+        if (late) {
+            uint64_t depthProduct = subtreeRecords[body];
+            if (analysis.subtreeNodes[body] && depthProduct > MaxEntryProtocolWork / analysis.subtreeNodes[body])
+                return refuse();
+            depthProduct *= analysis.subtreeNodes[body];
+            if (!chargeProtocol(depthProduct))
+                return false;
+            std::vector<Mechanism> bodyWord;
+            if (!projectEntryWord(p, actual, body, loop, bodyWord, reason))
+                return false;
+            word.insert(word.end(), bodyWord.begin(), bodyWord.end());
+        } else
+            for (unsigned child : p.nodes[body].children)
+                append(child);
+        if (late)
+            appendLate(analysis.next[loop]);
+        else
+            append(analysis.next[loop]);
         // Reconstruct the actual combined nonempty visit, preserving command
         // order rather than assuming independent per-cell acknowledgment pairs.
         // The empty visit has no episode commands. Other domains use disjoint
@@ -3889,8 +4134,150 @@ c::Result constructWithDeferredRings(
     });
     return candidate;
 }
+
+c::Result constructWithLateEntry(const c::Program& p, bool corrupt, uint64_t limit = 1u << 22)
+{
+    using namespace c;
+    auto baseline = constructWithDeferredRings(p, false);
+    if (!baseline.success || !baseline.entryEpisodes || baseline.before.size() != p.nodes.size())
+        return baseline;
+    // Two aggregate allowances cover discovery and the worst-case single copy
+    // plus eight placements for every command. Reserve each stage before its
+    // scans/allocations; no per-family budget can admit an unbounded aggregate.
+    constexpr uint64_t MaxLateEntryWork = 1u << 22;
+    if (limit > MaxLateEntryWork)
+        limit = MaxLateEntryWork;
+    uint64_t work = 0;
+    auto reserve = [&](uint64_t count, uint64_t width) {
+        if (work > limit || (width && count > (limit - work) / width))
+            return false;
+        work += count * width;
+        return true;
+    };
+    uint64_t commands = 0;
+    if (!reserve(p.nodes.size(), 1))
+        return baseline;
+    for (const auto& site : baseline.before) {
+        if (site.size() > MaxLateEntryWork - commands)
+            return baseline;
+        commands += site.size();
+    }
+    if (!reserve(commands, 1) || !reserve(baseline.demands.size(), 1))
+        return baseline;
+    uint64_t demandCells = 0;
+    for (const auto& demand : baseline.demands) {
+        if (demand.cells.size() > MaxLateEntryWork - demandCells)
+            return baseline;
+        demandCells += demand.cells.size();
+    }
+    baseline.cellVisits += work;
+    bool hasCommonChoice = false;
+    for (unsigned id = 0; id < baseline.before.size() && !hasCommonChoice; ++id)
+        hasCommonChoice = p.nodes[id].kind == Node::Choice &&
+                          std::any_of(baseline.before[id].begin(), baseline.before[id].end(), [](const auto& m) {
+                              return m.kind == Mechanism::Acquire && m.participation == Mechanism::First;
+                          });
+    if (!hasCommonChoice)
+        return baseline;
+    uint64_t prior = work;
+    uint64_t cells = p.cells;
+    if (!reserve(p.nodes.size(), 16) || !reserve(p.nodes.size(), cells * LaneCount) ||
+        !reserve(commands, MaxAlternatives + 4) || !reserve(baseline.demands.size(), 8) || !reserve(demandCells, 1))
+        return baseline;
+    baseline.cellVisits += work - prior;
+    DemandAnalysis analysis;
+    std::string reason;
+    if (!analysis.build(p, reason))
+        return baseline;
+    std::vector<uint8_t> hasRecurrence(p.nodes.size());
+    for (unsigned id = 0; id < p.nodes.size(); ++id) {
+        hasRecurrence[id] = p.nodes[id].kind == Node::For || p.nodes[id].kind == Node::While;
+        for (unsigned child : p.nodes[id].children)
+            hasRecurrence[id] |= hasRecurrence[child];
+    }
+    struct Family {
+        unsigned origin;
+        Mechanism wait;
+        std::vector<unsigned> sites;
+    };
+    std::vector<Family> families;
+    for (unsigned id = 0; id < baseline.before.size(); ++id) {
+        if (p.nodes[id].kind != Node::Choice)
+            continue;
+        for (const auto& mechanism : baseline.before[id]) {
+            if (mechanism.kind != Mechanism::Acquire || mechanism.participation != Mechanism::First)
+                continue;
+            const auto* demand = analysis.entryDemand(mechanism.loop, id, mechanism.first, mechanism.second);
+            const auto* summary = analysis.firstSummary(id, mechanism.second);
+            if (!demand || !summary || !summary->valid || summary->mayNoLane || !summary->count ||
+                summary->count > MaxAlternatives || hasRecurrence[id])
+                continue;
+            prior = work;
+            if (!reserve(summary->count, cells + 2))
+                return baseline;
+            baseline.cellVisits += work - prior;
+            Family family{id, mechanism, {}};
+            family.sites.assign(summary->operations.begin(), summary->operations.begin() + summary->count);
+            if (std::any_of(family.sites.begin(), family.sites.end(), [&](unsigned site) {
+                    return site >= p.nodes.size() || p.nodes[site].kind != Node::Operation ||
+                           p.nodes[site].lane != mechanism.second ||
+                           std::none_of(
+                               p.nodes[site].effects.begin(), p.nodes[site].effects.end(), [&](const auto& effect) {
+                                   return (effect.readers | effect.writers) & (1u << mechanism.second);
+                               });
+                }))
+                continue;
+            families.push_back(std::move(family));
+        }
+    }
+    if (families.empty())
+        return baseline;
+    baseline.lateEntryCandidates = 1;
+    auto candidate = baseline;
+    std::vector<std::vector<Mechanism>> moved(p.nodes.size());
+    bool transformed = true;
+    uint64_t sites = 0;
+    for (const auto& family : families) {
+        auto& common = candidate.before[family.origin];
+        auto found = std::find(common.begin(), common.end(), family.wait);
+        if (found == common.end()) {
+            transformed = false;
+            break;
+        }
+        common.erase(found);
+        for (unsigned site : family.sites)
+            moved[site].push_back(family.wait);
+        sites += family.sites.size();
+    }
+    if (transformed)
+        for (unsigned id = 0; id < moved.size(); ++id)
+            candidate.before[id].insert(candidate.before[id].begin(), moved[id].begin(), moved[id].end());
+    if (corrupt && transformed) {
+        for (const auto& family : families) {
+            auto& commandsAtSite = candidate.before[family.sites.front()];
+            auto found = std::find(commandsAtSite.begin(), commandsAtSite.end(), family.wait);
+            if (found != commandsAtSite.end()) {
+                commandsAtSite.erase(found);
+                break;
+            }
+        }
+    }
+    auto checked = transformed ? verifyDemandImpl(p, candidate.before, nullptr) : c::Result{};
+    baseline.nodeVisits += checked.nodeVisits;
+    baseline.cellVisits += checked.cellVisits;
+    if (!transformed || !checked.success) {
+        baseline.rejectedLateEntryFamilies = families.size();
+        return baseline;
+    }
+    candidate.nodeVisits = baseline.nodeVisits;
+    candidate.cellVisits = baseline.cellVisits;
+    candidate.lateEntryCandidates = 1;
+    candidate.lateEntryFamilies = families.size();
+    candidate.lateEntrySites = sites;
+    return candidate;
+}
 } // namespace
-c::Result c::constructDemands(const Program& p) { return constructWithDeferredRings(p, false); }
+c::Result c::constructDemands(const Program& p) { return constructWithLateEntry(p, false); }
 std::optional<uint64_t> c::testing::deferredDiscoveryReservation(
     uint64_t nodes, uint64_t cells, uint64_t keys, uint64_t commands, uint64_t limit)
 {
@@ -3905,6 +4292,15 @@ c::Result c::testing::constructDemandsWithoutDeferredDiscovery(const Program& p)
 {
     return constructWithDeferredRings(p, false, 0);
 }
+c::Result c::testing::constructDemandsWithoutLateEntry(const Program& p)
+{
+    return constructWithDeferredRings(p, false);
+}
+c::Result c::testing::constructDemandsWithLateEntryWorkLimit(const Program& p, uint64_t limit)
+{
+    return constructWithLateEntry(p, false, limit);
+}
+c::Result c::testing::constructDemandsRejectingLateEntry(const Program& p) { return constructWithLateEntry(p, true); }
 c::Result c::testing::constructDemandsWithoutRings(const Program& p) { return constructDemandsImpl(p, false); }
 c::Result c::testing::constructDemandsRejectingRefinement(const Program& p) { return constructDemandsImpl(p, true); }
 c::Result c::testing::constructDemandsRejectingEntryProposal(const Program& p)

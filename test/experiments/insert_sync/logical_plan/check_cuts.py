@@ -75,6 +75,8 @@ def main():
                         'entry_summary_slots', 'entry_summary_scans', 'entry_storage_units', 'entry_candidate_pairs',
                         'entry_witness_cells', 'entry_witnesses', 'entry_source_overlap_rejections',
                         'entry_summary_skipped',
+                        'late_entry_candidates', 'late_entry_families', 'late_entry_sites',
+                        'rejected_late_entry_families',
                         'ring_candidates', 'rejected_rings', 'ring_candidate_commands_removed', 'cut_cycles',
                         'deferred_ring_candidates', 'deferred_rings', 'rejected_deferred_rings', 'deferred_protocol_steps',
                         'periodic_deferred_rings', 'periodic_write_overlap_rejections', 'periodic_scalar_work',
@@ -363,6 +365,7 @@ def main():
         if (not verdict['accepted'] or not verdict['atomic'] or counters['direct_handoffs'] != 0 or
                 counters['rendezvous_packets'] == 0 or counters['demand_fallbacks'] == 0):
             raise RuntimeError('native fallback packet path not exercised')
+        fallback_verdict, fallback_counters = verdict, counters
         normalized = args.output.resolve() / 'fallback.pto'
         invoke('fallback-normalize', compiler + [raw, '-o', normalized])
         authored = Path(__file__).parent / 'structured_inputs/demand_authored_guard.pto'
@@ -482,6 +485,72 @@ def main():
             if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
                 raise RuntimeError('Choice incoming-episode corruption escaped reconstruction: ' + mutation)
             path_checks.append(dict(name=name, verdict=verdict))
+        late_entry = Path(__file__).parent / 'structured_inputs/demand_entry_late_choice.pto'
+        late_outputs, late_profiles = {}, {}
+        for arm, mode in (('selected', 'none'), ('common', 'without-late-entry'),
+                          ('rejected', 'reject-late-entry')):
+            name = 'entry-late-choice-' + arm
+            late_raw = args.output.resolve() / (name + '.native.pto')
+            verdict = json.loads(invoke(name, [args.driver, late_entry, 'demands:' + mode, late_raw]))
+            if not verdict['accepted'] or not verdict['atomic']:
+                raise RuntimeError('late incoming Choice arm failed: ' + arm)
+            late_profiles[arm] = native_counters(name)
+            late_normalized = args.output.resolve() / (name + '.pto')
+            invoke(name + '-normalize', compiler + [late_raw, '-o', late_normalized])
+            late_outputs[arm] = late_normalized
+        if (late_profiles['selected']['late_entry_families'] != 1 or
+                late_profiles['selected']['late_entry_sites'] != 3 or
+                late_profiles['common']['late_entry_families'] or
+                not late_profiles['rejected']['rejected_late_entry_families']):
+            raise RuntimeError('late incoming Choice selection/fallback not exercised')
+        if late_outputs['common'].read_bytes() != late_outputs['rejected'].read_bytes():
+            raise RuntimeError('rejected late placement did not retain the exact common plan')
+        static_guards = {arm: path.read_text().count('arith.cmpi eq') for arm, path in late_outputs.items()}
+        if static_guards != dict(selected=3, common=1, rejected=1):
+            raise RuntimeError('unexpected late First static guard population')
+        late_scenarios = []
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            modules = {arm: ir.Module.parse(path.read_text()) for arm, path in late_outputs.items()}
+            functions = {arm: next(op for op in children(module.operation) if op.name == 'func.func')
+                         for arm, module in modules.items()}
+            observers = {arm: Boundaries() for arm in functions}
+            original_module = ir.Module.parse(late_entry.read_text())
+            original_function = next(op for op in children(original_module.operation) if op.name == 'func.func')
+            for outer, lower, upper, take, other in (
+                    (0, 2, 5, True, True), (2, 2, 2, False, False),
+                    (2, 2, 5, False, True), (1, 3, 4, True, True),
+                    (3, 2, 5, True, False), (2, 5, 2, True, True),
+                    (2, 1, 3, True, True), (1, 2, 4, False, False)):
+                arguments = ['src', outer, lower, upper, take, other]
+                original_metrics = replay(original_function, arguments)
+                metrics = {arm: replay(function, arguments, observer=observers[arm].observe)
+                           for arm, function in functions.items()}
+                for arm, metric in metrics.items():
+                    if metric['payload_sha256'] != original_metrics['payload_sha256'] or observers[arm].tokens:
+                        raise RuntimeError('late First changed payload or exported a token: ' + arm)
+                executed = {arm: {name: metric['counts'].get(name, 0)
+                                  for name in ('pto.set_flag', 'pto.wait_flag', 'pto.barrier')}
+                            for arm, metric in metrics.items()}
+                if executed['selected'] != executed['common']:
+                    raise RuntimeError('exclusive First sites changed executed event counts')
+                scalar = {arm: {name: metric['scalar_counts'].get(name, 0)
+                                for name in ('arith.cmpi', 'scf.if')}
+                          for arm, metric in metrics.items()}
+                late_scenarios.append(dict(arguments=arguments, executed=executed, scalar=scalar))
+        path_checks.append(dict(name='late-incoming-choice', profiles=late_profiles,
+                                source_sha256=digest(late_entry),
+                                outputs={arm: digest(path) for arm, path in late_outputs.items()},
+                                static_first_guards=static_guards, scenarios=late_scenarios))
+        for mutation in ('entry-wrong-first', 'entry-drop-first', 'entry-drop-ack',
+                         'entry-late-first', 'entry-stack-first'):
+            name = 'late-choice-' + mutation
+            verdict = json.loads(invoke(name, [args.driver, late_entry, 'demands:' + mutation,
+                args.output.resolve() / (name + '.pto')]))
+            if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
+                raise RuntimeError('late incoming Choice corruption escaped reconstruction: ' + mutation)
+            path_checks.append(dict(name=name, verdict=verdict))
         with ir.Context() as context:
             context.enable_multithreading(False)
             pto.register_dialect(context, load=True)
@@ -492,7 +561,7 @@ def main():
                 replay(function, ['src', n, take], observer=observer.observe)
                 if observer.tokens:
                     raise RuntimeError('fallback exports an unconsumed token')
-        path_checks.append(dict(name='nested-fallback', verdict=verdict, counters=counters,
+        path_checks.append(dict(name='nested-fallback', verdict=fallback_verdict, counters=fallback_counters,
                                 source_sha256=digest(fallback), output_sha256=digest(normalized)))
         for mutation in ('wrong-key', 'duplicate-set', 'drop-wait'):
             verdict = json.loads(invoke('fallback-' + mutation, [args.driver, fallback,

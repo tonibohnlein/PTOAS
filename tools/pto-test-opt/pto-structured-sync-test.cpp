@@ -54,7 +54,10 @@ int main(int argc,char **argv) {
     const bool rejectReplay = demandPlacement && mode=="reject-allocation-replay";
     const bool rejectEntry = demandPlacement && mode=="reject-entry-proposal";
     const bool rejectDeferred = demandPlacement && mode=="reject-deferred-rings";
-    if (rejectRefinement || withoutReplay || rejectReplay || rejectEntry || rejectDeferred) mode="none";
+    const bool withoutLateEntry = demandPlacement && mode=="without-late-entry";
+    const bool rejectLateEntry = demandPlacement && mode=="reject-late-entry";
+    if (rejectRefinement || withoutReplay || rejectReplay || rejectEntry || rejectDeferred ||
+        withoutLateEntry || rejectLateEntry) mode="none";
     const bool precision = mode.consume_front("cuts:");
     const bool composition = demandPlacement || precision || mode.consume_front("composition:");
     auto mutate=[&](func::FuncOp working) {
@@ -123,6 +126,17 @@ int main(int argc,char **argv) {
                     (mode=="entry-wrong-nonempty" && nonempty)) chosen=cmp;
                 if (mode=="entry-drop-first" && first && events.size()==1 && isa<WaitFlagOp>(events[0]))
                     chosen=events[0];
+                if (mode=="entry-stack-first" && first && events.size()==1 && isa<WaitFlagOp>(events[0])) {
+                    if (!sequenceSource) sequenceSource=op;
+                    else {
+                        auto previous=cast<scf::IfOp>(sequenceSource);
+                        auto oldWait=dyn_cast<WaitFlagOp>(previous.getThenRegion().front().front());
+                        auto wait=cast<WaitFlagOp>(events[0]);
+                        if (oldWait && oldWait.getSrcPipe()==wait.getSrcPipe() &&
+                            oldWait.getDstPipe()==wait.getDstPipe() && oldWait.getEventId()==wait.getEventId())
+                            chosen=op;
+                    }
+                }
                 if (mode=="entry-drop-ack" && nonempty && events.size()==2 && isa<WaitFlagOp>(events[1]))
                     chosen=events[1];
                 if (mode=="entry-late-first" && first) {
@@ -313,8 +327,10 @@ int main(int argc,char **argv) {
         if (mode=="entry-drop-first" || mode=="entry-drop-ack") {
             chosen->erase();changed=true;return;
         }
-        if (mode=="entry-conditional-first") {
+        if (mode=="entry-conditional-first" || mode=="entry-stack-first") {
             auto branch=cast<scf::IfOp>(chosen);
+            if (mode=="entry-stack-first")
+                sequenceSource=cast<scf::IfOp>(sequenceSource).getCondition().getDefiningOp();
             branch.getCondition().getDefiningOp()->moveBefore(sequenceSource);
             chosen->moveBefore(sequenceSource);changed=true;return;
         }
@@ -400,7 +416,8 @@ int main(int argc,char **argv) {
     };
     using Constructor=structured_sync::testing::CompositionConstructor;
     auto result=composition ? structured_sync::testing::constructCompositionalSync(
-        function,gm,mutate,hardware,rejectDeferred?Constructor::DemandsRejectDeferredRings:
+        function,gm,mutate,hardware,withoutLateEntry?Constructor::DemandsWithoutLateEntry:
+        rejectLateEntry?Constructor::DemandsRejectLateEntry:rejectDeferred?Constructor::DemandsRejectDeferredRings:
         rejectEntry?Constructor::DemandsRejectEntryProposal:
         withoutReplay?Constructor::DemandsWithoutAllocationReplay:
         rejectReplay?Constructor::DemandsRejectAllocationReplay:rejectRefinement?Constructor::DemandsRejectRefinement:

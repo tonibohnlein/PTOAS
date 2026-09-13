@@ -769,6 +769,26 @@ struct ParticipationGuards {
             if (branch->getBlock() == loop.getBody()) {
                 if (cmp.getRhs() != loop.getLowerBound())
                     return fail();
+            } else if (!previous) {
+                // A shared incoming episode may acquire at mutually exclusive
+                // first consumers under original choices. Bind only the exact
+                // original owner predicate here; the core independently checks
+                // the complete actual wait population and path cardinality.
+                unsigned cut = original.ids.lookup(targets[branch]);
+                if (cmp.getRhs() != loop.getLowerBound() || original.program.nodes[cut].kind != c::Node::Operation)
+                    return fail();
+                unsigned ancestor = parent[cut];
+                unsigned body = original.program.nodes[found->second].children[0];
+                bool choice = false;
+                while (ancestor != body && ancestor != ~0u) {
+                    auto kind = original.program.nodes[ancestor].kind;
+                    if (kind != c::Node::Sequence && kind != c::Node::Choice)
+                        return fail();
+                    choice |= kind == c::Node::Choice;
+                    ancestor = parent[ancestor];
+                }
+                if (ancestor != body || !choice)
+                    return fail();
             } else {
                 unsigned cut = original.ids.lookup(targets[branch]);
                 unsigned word = parent[cut];
@@ -780,7 +800,8 @@ struct ParticipationGuards {
             m.participation = previous ? c::Mechanism::Previous : c::Mechanism::First;
             m.loop = found->second;
             auto& loops = previous ? previousLoops : firstLoops;
-            if (!loops.emplace(Key{m.first, m.second, m.forwardKey}, m.loop).second)
+            auto binding = loops.emplace(Key{m.first, m.second, m.forwardKey}, m.loop);
+            if (!binding.second && (previous || binding.first->second != m.loop))
                 return fail();
             if (previous)
                 previousWords[{m.first, m.second, m.forwardKey}] = m.word;
@@ -985,8 +1006,11 @@ Outcome ss::testing::constructCompositionalSync(
     const bool fallbackOnly = constructor == CompositionConstructor::DemandsFallbackOnly;
     const bool withoutReplay = constructor == CompositionConstructor::DemandsWithoutAllocationReplay;
     const bool rejectReplay = constructor == CompositionConstructor::DemandsRejectAllocationReplay;
+    const bool withoutLateEntry = constructor == CompositionConstructor::DemandsWithoutLateEntry;
+    const bool rejectLateEntry = constructor == CompositionConstructor::DemandsRejectLateEntry;
     const bool demandPlacement = constructor == CompositionConstructor::Demands || rejectRefinement || fallbackOnly ||
-                                 withoutReplay || rejectReplay || rejectEntry || rejectDeferred;
+                                 withoutReplay || rejectReplay || rejectEntry || rejectDeferred || withoutLateEntry ||
+                                 rejectLateEntry;
     Outcome out;
     if (function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         out.reason = "composition requires a single function block";
@@ -1029,7 +1053,9 @@ Outcome ss::testing::constructCompositionalSync(
     }
     if (fallbackOnly)
         tree.program.target.compilerKeys = {0};
-    auto selected = rejectDeferred   ? c::testing::constructDemandsRejectingDeferredRings(tree.program) :
+    auto selected = withoutLateEntry ? c::testing::constructDemandsWithoutLateEntry(tree.program) :
+                    rejectLateEntry  ? c::testing::constructDemandsRejectingLateEntry(tree.program) :
+                    rejectDeferred   ? c::testing::constructDemandsRejectingDeferredRings(tree.program) :
                     rejectEntry      ? c::testing::constructDemandsRejectingEntryProposal(tree.program) :
                     withoutReplay    ? c::testing::constructDemandsWithoutAllocationReplay(tree.program) :
                     rejectReplay     ? c::testing::constructDemandsRejectingAllocationReplay(tree.program) :
@@ -1167,7 +1193,10 @@ Outcome ss::testing::constructCompositionalSync(
                      << " entry_witness_cells " << selected.entryWitnessCells << " entry_witnesses "
                      << selected.entryWitnesses << " entry_source_overlap_rejections "
                      << selected.entrySourceOverlapRejections << " entry_summary_skipped "
-                     << selected.entrySummarySkipped << " ring_candidates " << selected.ringCandidates
+                     << selected.entrySummarySkipped << " late_entry_candidates " << selected.lateEntryCandidates
+                     << " late_entry_families " << selected.lateEntryFamilies << " late_entry_sites "
+                     << selected.lateEntrySites << " rejected_late_entry_families "
+                     << selected.rejectedLateEntryFamilies << " ring_candidates " << selected.ringCandidates
                      << " rejected_rings " << selected.rejectedRings << " ring_candidate_commands_removed "
                      << selected.ringCandidateCommandsRemoved << " rendezvous_packets " << rendezvousPackets
                      << " deferred_ring_candidates " << selected.deferredRingCandidates << " deferred_rings "

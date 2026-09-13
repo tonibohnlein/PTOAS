@@ -118,6 +118,8 @@ struct Result {
     uint64_t entryCandidatePairs = 0;
     uint64_t entryWitnessCells = 0, entryWitnesses = 0, entrySourceOverlapRejections = 0;
     uint64_t entrySummarySkipped = 0;
+    uint64_t lateEntryCandidates = 0, lateEntryFamilies = 0, lateEntrySites = 0;
+    uint64_t rejectedLateEntryFamilies = 0;
     uint64_t ringCandidates = 0, rejectedRings = 0, ringCandidateCommandsRemoved = 0;
     uint64_t deferredRingCandidates = 0, deferredRings = 0, rejectedDeferredRings = 0;
     uint64_t deferredProtocolSteps = 0;
@@ -156,6 +158,11 @@ Result constructDemandsRejectingRings(const Program& program);
 // verified closed-ring plan must be returned unchanged.
 Result constructDemandsRejectingDeferredRings(const Program& program);
 Result constructDemandsWithoutDeferredDiscovery(const Program& program);
+Result constructDemandsWithoutLateEntry(const Program& program);
+Result constructDemandsWithLateEntryWorkLimit(const Program& program, uint64_t limit);
+// Forms one bounded late-entry candidate, corrupts its actual First-wait
+// population, and must return the exact verified pre-candidate plan.
+Result constructDemandsRejectingLateEntry(const Program& program);
 // Fault injection before refinement checking/emission, never on the initial
 // plan: discard the optional candidate's mechanisms to exercise exact rollback.
 Result constructDemandsRejectingRefinement(const Program& program);
