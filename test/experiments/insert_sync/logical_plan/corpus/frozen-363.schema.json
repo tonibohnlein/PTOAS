@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "oahs.frozen-corpus.record.v1",
+  "title": "OAHS frozen corpus JSONL record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "index",
+    "id",
+    "root",
+    "path",
+    "family",
+    "classification",
+    "compatibility_stage",
+    "gm_contract",
+    "original",
+    "preparation",
+    "prepared",
+    "baseline",
+    "current"
+  ],
+  "properties": {
+    "schema": {"const": "oahs.frozen-corpus.record.v1"},
+    "index": {"type": "integer", "minimum": 0, "maximum": 362},
+    "id": {"type": "string", "minLength": 1},
+    "root": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "family": {"type": "string", "minLength": 1},
+    "classification": {
+      "enum": ["production", "focused", "intentional-refusal", "historical"]
+    },
+    "compatibility_stage": {
+      "enum": ["raw-addressed-compatibility", "prepared-pass-entry", "historical-archive"]
+    },
+    "gm_contract": {"enum": ["may-alias", "assume-disjoint-arguments"]},
+    "original": {"$ref": "#/$defs/original"},
+    "preparation": {"$ref": "#/$defs/preparation"},
+    "prepared": {"$ref": "#/$defs/prepared"},
+    "baseline": {"$ref": "#/$defs/outcome"},
+    "current": {"$ref": "#/$defs/outcome"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "original": {
+      "type": "object",
+      "description": "Original bytes use the canonical CAS address sha256/<first2>/<sha256> derived from this hash.",
+      "additionalProperties": false,
+      "required": ["kind", "sha256"],
+      "properties": {
+        "kind": {"enum": ["ptoas-source", "generated-pto-snapshot"]},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "preparation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recipe", "adaptations"],
+      "properties": {
+        "recipe": {"const": "bind-a2a3-to-a3-v1"},
+        "adaptations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "prepared": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "cas"],
+      "properties": {
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "cas": {"type": "string", "pattern": "^sha256/[0-9a-f]{2}/[0-9a-f]{64}$"}
+      }
+    },
+    "mechanisms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sets", "waits", "barriers"],
+      "properties": {
+        "sets": {"type": "integer", "minimum": 0},
+        "waits": {"type": "integer", "minimum": 0},
+        "barriers": {"type": "integer", "minimum": 0}
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "returncode", "first_refusal", "mechanisms"],
+      "properties": {
+        "status": {"enum": ["pass", "refused"]},
+        "returncode": {"type": "integer"},
+        "first_refusal": {"type": ["string", "null"]},
+        "mechanisms": {"$ref": "#/$defs/mechanisms"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "pass"}}},
+          "then": {
+            "properties": {
+              "returncode": {"const": 0},
+              "first_refusal": {"type": "null"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "refused"}}},
+          "then": {
+            "properties": {
+              "returncode": {"type": "integer", "minimum": 1},
+              "first_refusal": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      ]
+    }
+  }
+}

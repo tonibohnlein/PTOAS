@@ -1,0 +1,4 @@
+{
+  "PTOAS": "/absolute/path/to/PTOAS",
+  "PYPTO_GENERATED": "/absolute/path/to/frozen-generated-pto-snapshots"
+}

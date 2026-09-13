@@ -1,0 +1,80 @@
+{
+  "arms": {
+    "baseline": {
+      "argv": [
+        "--mlir-disable-threading",
+        "--pto-insert-sync=planner=structured structured-precision=false logical-work-budget=0 gm-alias={gm_contract}",
+        "{input}"
+      ],
+      "label": "conservative structured planner"
+    },
+    "current": {
+      "argv": [
+        "--mlir-disable-threading",
+        "--pto-insert-sync=planner=composition structured-precision=true logical-work-budget=0 gm-alias={gm_contract}",
+        "{input}"
+      ],
+      "label": "bc95 deferred-wrap production baseline"
+    }
+  },
+  "cas_layout": {
+    "algorithm": "sha256",
+    "path": "sha256/{first2}/{sha256}",
+    "populations": [
+      "original",
+      "prepared"
+    ]
+  },
+  "evidence": {
+    "baseline": {
+      "campaign_base_revision": "fccb51b40571fbba3660e1cac155eb19b1b8e2e5",
+      "campaign_dirty_listing_sha256": "5d95553c733c712cb96ecb7addedecad7ff4aa8daa86e6471696bcf99f9cd8de",
+      "compiler_sha256": "49df6d9447c49f798e69932947b7cf32f389d574f0587f1a32c65384de6cb204",
+      "reference_revision": null,
+      "role": "conservative structured planner",
+      "summary_sha256": "ffdf26ad71abfa72c155b24c3a7735c5a9e83c0a40759d1fd75c6f128b320a4f"
+    },
+    "current": {
+      "campaign_base_revision": "9b63177cf95b5a54b44dc884bb17e26c166f2caf",
+      "campaign_dirty_listing_sha256": "dde61e20bd231570bd136281e331ce0d1ba603e8217d8e64819b09ebc1c2053e",
+      "compiler_sha256": "9bdf795f4e051309529367254ae9d59cfe1af40ccbf235628cd634f87cab7b98",
+      "reference_revision": "bc95ab98ee965ae8978ee44ade8bcd80193bb9f1",
+      "role": "bc95 deferred-wrap production baseline for subsequent candidates",
+      "summary_sha256": "2e25b00bfc1ff72e8cca3664ba33c019c8f22205f4e10502517fb8b8ebf8719b"
+    }
+  },
+  "manifest_sha256": "95beab25427b1dd3a2ff1b59cd881a3f4181e0f83c8a8b44daf35555bf46c3b6",
+  "preparation_recipes": {
+    "bind-a2a3-to-a3-v1": "exact source bytes; only bind module target a2a3 to a3"
+  },
+  "record_count": 363,
+  "record_schema": "oahs.frozen-corpus.record.v1",
+  "roots": {
+    "PTOAS": "PTOAS source tree containing hash-frozen PTO inputs",
+    "PYPTO_GENERATED": "frozen generated PTO snapshots; not an upstream Python source checkout"
+  },
+  "schema": "oahs.frozen-corpus.lock.v1",
+  "scope": "hash-frozen raw/prepared compiler compatibility only; no upstream-source regeneration, device, or performance claim",
+  "source_manifests": [
+    {
+      "role": "PTOAS raw compatibility population",
+      "root": "PTOAS",
+      "sha256": "f36f92f0a2027f0ea575fc951d8256e5a1643fc649bf8926b731b928bdfa79ef"
+    },
+    {
+      "role": "generated PyPTO/PyPTO-lib PTO snapshot population",
+      "root": "PYPTO_GENERATED",
+      "sha256": "72a6469371b347b62d3068ccd1cc63cdfa0614a819db98a5913bfefc24f41ac6"
+    }
+  ],
+  "summary": {
+    "baseline": {
+      "pass": 197,
+      "refused": 166
+    },
+    "current": {
+      "pass": 197,
+      "refused": 166
+    }
+  }
+}
