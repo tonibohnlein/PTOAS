@@ -34,6 +34,7 @@ enum class CompositionConstructor {
     Demands,
     DemandsRejectRefinement,
     DemandsRejectEntryProposal,
+    DemandsRejectDeferredRings,
     DemandsFallbackOnly,
     DemandsWithoutAllocationReplay,
     DemandsRejectAllocationReplay

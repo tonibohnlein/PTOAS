@@ -483,10 +483,14 @@ void emit(Tree& tree, const c::Result& plan)
             if (m.participation != c::Mechanism::Every) {
                 auto loop = cast<scf::ForOp>(tree.anchors[m.loop]);
                 bool first = m.participation == c::Mechanism::First;
+                bool previous = m.participation == c::Mechanism::Previous;
                 auto condition = b.create<arith::CmpIOp>(
-                    loc, first ? arith::CmpIPredicate::eq : arith::CmpIPredicate::slt,
-                    first ? loop.getInductionVar() : loop.getLowerBound(),
-                    first ? loop.getLowerBound() : loop.getUpperBound());
+                    loc,
+                    first    ? arith::CmpIPredicate::eq :
+                    previous ? arith::CmpIPredicate::ne :
+                               arith::CmpIPredicate::slt,
+                    first || previous ? loop.getInductionVar() : loop.getLowerBound(),
+                    first || previous ? loop.getLowerBound() : loop.getUpperBound());
                 auto branch = b.create<scf::IfOp>(loc, condition, false);
                 OpBuilder nested = OpBuilder::atBlockBegin(&branch.getThenRegion().front());
                 auto emitEvent = [&](const c::Mechanism& command) {
@@ -537,14 +541,14 @@ void emit(Tree& tree, const c::Result& plan)
 // Recover guarded participation from actual IR and the immutable original
 // loop/bound identities. No selected entry-demand or completion receipt enters
 // this classifier. Only its exactly checked added operations pass the snapshot.
-struct EntryGuards {
+struct ParticipationGuards {
     llvm::SmallPtrSet<Operation*, 32> operations;
     llvm::DenseMap<Operation*, std::vector<c::Mechanism>> commands;
     llvm::DenseMap<Operation*, Operation*> targets;
     bool build(Tree& original, const llvm::SmallPtrSetImpl<Operation*>& generated, std::string& reason)
     {
         using Key = std::tuple<unsigned, unsigned, unsigned>;
-        std::map<Key, unsigned> firstLoops;
+        std::map<Key, unsigned> firstLoops, previousLoops;
         std::vector<scf::IfOp> candidates;
         std::vector<unsigned> parent(original.program.nodes.size(), ~0u), position(parent.size());
         for (unsigned id = 0; id < original.program.nodes.size(); ++id)
@@ -554,7 +558,7 @@ struct EntryGuards {
                 position[child] = i;
             }
         auto fail = [&]() {
-            reason = "invalid native first-consumer guard or original loop binding";
+            reason = "invalid native participation guard or original loop binding";
             return false;
         };
         auto nextOriginal = [&](Operation* from) {
@@ -604,7 +608,8 @@ struct EntryGuards {
             targets[branch] = nextOriginal(branch->getNextNode());
             if (!targets[branch])
                 return fail();
-            if (cmp.getPredicate() != arith::CmpIPredicate::eq)
+            bool previous = cmp.getPredicate() == arith::CmpIPredicate::ne;
+            if (cmp.getPredicate() != arith::CmpIPredicate::eq && !previous)
                 continue;
             auto iv = dyn_cast<BlockArgument>(cmp.getLhs());
             auto loop = iv ? dyn_cast_or_null<scf::ForOp>(iv.getOwner()->getParentOp()) : scf::ForOp{};
@@ -614,25 +619,37 @@ struct EntryGuards {
                 branch->getBlock() != loop.getBody() || list.size() != 1 || list[0].kind != c::Mechanism::Acquire)
                 return fail();
             auto& m = list[0];
-            m.participation = c::Mechanism::First;
+            m.participation = previous ? c::Mechanism::Previous : c::Mechanism::First;
             m.loop = found->second;
-            if (!firstLoops.emplace(Key{m.first, m.second, m.forwardKey}, m.loop).second)
+            auto& loops = previous ? previousLoops : firstLoops;
+            if (!loops.emplace(Key{m.first, m.second, m.forwardKey}, m.loop).second)
                 return fail();
         }
         for (auto branch : candidates) {
             auto cmp = branch.getCondition().getDefiningOp<arith::CmpIOp>();
             auto& list = commands[branch];
-            if (list[0].participation != c::Mechanism::First) {
-                if (cmp.getPredicate() != arith::CmpIPredicate::slt || list[0].kind != c::Mechanism::Publish)
+            if (list[0].participation != c::Mechanism::First && list[0].participation != c::Mechanism::Previous) {
+                if (cmp.getPredicate() != arith::CmpIPredicate::slt)
                     return fail();
                 unsigned loopId = ~0u;
-                if (list.size() == 1) {
+                bool loopExit = list.size() == 1 && list[0].kind == c::Mechanism::Acquire;
+                if (loopExit) {
+                    auto found = previousLoops.find({list[0].first, list[0].second, list[0].forwardKey});
+                    if (found == previousLoops.end())
+                        return fail();
+                    loopId = found->second;
+                    unsigned cut = original.ids.lookup(targets[branch]);
+                    if (parent[cut] == ~0u || !position[cut] ||
+                        original.program.nodes[parent[cut]].children[position[cut] - 1] != loopId)
+                        return fail();
+                } else if (list.size() == 1 && list[0].kind == c::Mechanism::Publish) {
                     auto found = firstLoops.find({list[0].first, list[0].second, list[0].forwardKey});
                     if (found == firstLoops.end())
                         return fail();
                     loopId = found->second;
                 } else if (
-                    list.size() == 2 && list[1].kind == c::Mechanism::Acquire && list[0].first == list[1].first &&
+                    list.size() == 2 && list[0].kind == c::Mechanism::Publish &&
+                    list[1].kind == c::Mechanism::Acquire && list[0].first == list[1].first &&
                     list[0].second == list[1].second && list[0].forwardKey == list[1].forwardKey) {
                     unsigned cut = original.ids.lookup(targets[branch]);
                     if (parent[cut] == ~0u || !position[cut])
@@ -648,7 +665,7 @@ struct EntryGuards {
                     branch->getBlock() != loop->getBlock())
                     return fail();
                 for (auto& m : list) {
-                    m.participation = c::Mechanism::NonEmpty;
+                    m.participation = loopExit ? c::Mechanism::LoopExit : c::Mechanism::NonEmpty;
                     m.loop = loopId;
                 }
             }
@@ -725,7 +742,7 @@ bool parsePacket(Operation*& cursor, c::Mechanism& m, const c::Program& program,
 
 bool reconstruct(
     Tree& tree, Operation* drain, std::vector<std::vector<c::Mechanism>>& actual, std::string& reason, bool precision,
-    const EntryGuards& guards)
+    const ParticipationGuards& guards)
 {
     actual.resize(tree.program.nodes.size());
     bool valid = true;
@@ -802,11 +819,12 @@ Outcome ss::testing::constructCompositionalSync(
     const bool precision = constructor == CompositionConstructor::Cuts;
     const bool rejectRefinement = constructor == CompositionConstructor::DemandsRejectRefinement;
     const bool rejectEntry = constructor == CompositionConstructor::DemandsRejectEntryProposal;
+    const bool rejectDeferred = constructor == CompositionConstructor::DemandsRejectDeferredRings;
     const bool fallbackOnly = constructor == CompositionConstructor::DemandsFallbackOnly;
     const bool withoutReplay = constructor == CompositionConstructor::DemandsWithoutAllocationReplay;
     const bool rejectReplay = constructor == CompositionConstructor::DemandsRejectAllocationReplay;
     const bool demandPlacement = constructor == CompositionConstructor::Demands || rejectRefinement || fallbackOnly ||
-                                 withoutReplay || rejectReplay || rejectEntry;
+                                 withoutReplay || rejectReplay || rejectEntry || rejectDeferred;
     Outcome out;
     if (function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         out.reason = "composition requires a single function block";
@@ -849,7 +867,8 @@ Outcome ss::testing::constructCompositionalSync(
     }
     if (fallbackOnly)
         tree.program.target.compilerKeys = {0};
-    auto selected = rejectEntry      ? c::testing::constructDemandsRejectingEntryProposal(tree.program) :
+    auto selected = rejectDeferred   ? c::testing::constructDemandsRejectingDeferredRings(tree.program) :
+                    rejectEntry      ? c::testing::constructDemandsRejectingEntryProposal(tree.program) :
                     withoutReplay    ? c::testing::constructDemandsWithoutAllocationReplay(tree.program) :
                     rejectReplay     ? c::testing::constructDemandsRejectingAllocationReplay(tree.program) :
                     rejectRefinement ? c::testing::constructDemandsRejectingRefinement(tree.program) :
@@ -880,7 +899,7 @@ Outcome ss::testing::constructCompositionalSync(
     if (mutate)
         mutate(working);
     out.status = Outcome::InternalError;
-    EntryGuards guards;
+    ParticipationGuards guards;
     if (failed(mlir::verify(working)) || (demandPlacement && !guards.build(tree, generatedOperations, out.reason)) ||
         !snapshot.preserved(working, [&](Operation* op) {
             return generatedOperations.contains(op) && (sync(op) || guards.operations.contains(op));
@@ -962,6 +981,9 @@ Outcome ss::testing::constructCompositionalSync(
     out.status = Outcome::Applied;
     out.reason = "compositional storage, completion, reusable protocols and retirement verified";
     function.getBody().takeBody(working.getBody());
+    if (std::getenv("PTOAS_LOGICAL_TRACE") && !selected.deferredRejectionStage.empty())
+        llvm::errs() << "structured deferred_rejection stage " << selected.deferredRejectionStage << " reason "
+                     << selected.deferredRejectionReason << "\n";
     if (std::getenv("PTOAS_LOGICAL_TRACE"))
         llvm::errs() << "structured composition precision " << precision << " demands " << demandPlacement
                      << " direct_handoffs " << selected.directHandoffs << " shared_acknowledgments "
@@ -979,6 +1001,9 @@ Outcome ss::testing::constructCompositionalSync(
                      << selected.rejectedEntryProposals << " ring_candidates " << selected.ringCandidates
                      << " rejected_rings " << selected.rejectedRings << " ring_candidate_commands_removed "
                      << selected.ringCandidateCommandsRemoved << " rendezvous_packets " << rendezvousPackets
+                     << " deferred_ring_candidates " << selected.deferredRingCandidates << " deferred_rings "
+                     << selected.deferredRings << " rejected_deferred_rings " << selected.rejectedDeferredRings
+                     << " deferred_protocol_steps " << selected.deferredProtocolSteps + checked.deferredProtocolSteps
                      << " demand_fallbacks " << selected.demandFallbacks << " nodes " << tree.program.nodes.size()
                      << " cells " << tree.program.cells << " widened_spaces " << tree.widenedSpaces << " node_visits "
                      << selected.nodeVisits + checked.nodeVisits << " cell_visits " << out.work << " handoffs "

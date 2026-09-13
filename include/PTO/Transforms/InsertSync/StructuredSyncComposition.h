@@ -58,7 +58,10 @@ struct Mechanism {
     enum Kind { Barrier, Rendezvous, Publish, Acquire } kind = Barrier;
     unsigned first = 0, second = 0;
     unsigned forwardKey = 0, reverseKey = 0;
-    enum Participation { Every, NonEmpty, First } participation = Every;
+    // Previous executes before every visit except the first. LoopExit executes
+    // once after a nonempty counted loop. They are reserved for the bounded
+    // deferred-wrap certificate; neither is a general predicate vocabulary.
+    enum Participation { Every, NonEmpty, First, Previous, LoopExit } participation = Every;
     unsigned loop = ~0u;
     bool operator==(const Mechanism& other) const;
 };
@@ -85,6 +88,11 @@ struct Result {
     uint64_t replayedFallbackDemands = 0;
     uint64_t entryEpisodes = 0, entryReplyFamilies = 0, rejectedEntryProposals = 0;
     uint64_t ringCandidates = 0, rejectedRings = 0, ringCandidateCommandsRemoved = 0;
+    uint64_t deferredRingCandidates = 0, deferredRings = 0, rejectedDeferredRings = 0;
+    uint64_t deferredProtocolSteps = 0;
+    // Optional candidate diagnostics never replace the accepted baseline's
+    // ordinary reason. They identify why deferred-wrap rollback occurred.
+    std::string deferredRejectionStage, deferredRejectionReason;
     std::vector<CompletionDemand> demands;
 };
 // One summary pass and one structural transfer. No trip-count enumeration,
@@ -104,6 +112,9 @@ Result verifyDemands(const Program& program, const std::vector<std::vector<Mecha
 namespace testing {
 Result constructDemandsWithoutRings(const Program& program);
 Result constructDemandsRejectingRings(const Program& program);
+// Fault injection after a deferred-wrap candidate is formed. The independently
+// verified closed-ring plan must be returned unchanged.
+Result constructDemandsRejectingDeferredRings(const Program& program);
 // Fault injection before refinement checking/emission, never on the initial
 // plan: discard the optional candidate's mechanisms to exercise exact rollback.
 Result constructDemandsRejectingRefinement(const Program& program);

@@ -1207,6 +1207,7 @@ namespace {
 struct DemandAnalysis {
     std::vector<c::Effects> effects;
     std::vector<uint64_t> subtreeNodes;
+    std::vector<uint8_t> laneMask, followingLaneMask;
     std::vector<std::vector<unsigned>> owned;
     std::vector<unsigned> parent;
     std::vector<unsigned> scopeOrder;
@@ -1224,10 +1225,18 @@ struct DemandAnalysis {
         next.assign(p.nodes.size(), NoCut);
         entries.resize(p.nodes.size());
         subtreeNodes.assign(p.nodes.size(), 1);
+        laneMask.assign(p.nodes.size(), 0);
+        followingLaneMask.assign(p.nodes.size(), 0);
         requests.resize(p.nodes.size());
         capture.resize(p.nodes.size());
         release.resize(p.nodes.size());
         owned.resize(p.nodes.size());
+        for (unsigned id = 0; id < p.nodes.size(); ++id) {
+            if (p.nodes[id].kind == c::Node::Operation)
+                laneMask[id] |= uint8_t(1u << p.nodes[id].lane);
+            for (unsigned child : p.nodes[id].children)
+                laneMask[id] |= laneMask[child];
+        }
         for (unsigned scope = 0; scope < p.nodes.size(); ++scope) {
             const auto& children = p.nodes[scope].children;
             for (unsigned i = 0; i < children.size(); ++i) {
@@ -1238,6 +1247,13 @@ struct DemandAnalysis {
             }
             for (auto child : children)
                 subtreeNodes[scope] += subtreeNodes[child];
+            if (p.nodes[scope].kind == c::Node::Sequence) {
+                uint8_t later = 0;
+                for (auto child = children.rbegin(); child != children.rend(); ++child) {
+                    followingLaneMask[*child] = later;
+                    later |= laneMask[*child];
+                }
+            }
             if (p.nodes[scope].kind != c::Node::Sequence || children.empty())
                 continue;
             using Positions = std::array<int, c::LaneCount>;
@@ -1461,14 +1477,495 @@ bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reas
     return true;
 }
 
+// A deferred wrap is a different dynamic protocol from the closed per-visit
+// ring above.  Its wrap SET executes immediately after the last group.  A
+// Previous WAIT consumes that token before each later visit, and one LoopExit
+// WAIT consumes the final token iff the counted loop was nonempty.  The shape
+// is deliberately limited to the direct body Sequence of a qualified For.
+// No predicate is solved here: entryGuardStart is the lowering-owned witness
+// that the two fixed guards are available.
+struct DeferredDemandRings {
+    using Key = PrefixState::EventKey;
+    struct Endpoint {
+        unsigned cut = NoCut;
+        c::Mechanism::Kind kind = c::Mechanism::Publish;
+        c::Mechanism::Participation participation = c::Mechanism::Every;
+        unsigned source = 0, target = 0, loop = NoCut;
+    };
+    struct Span {
+        unsigned firstRead = NoCut, lastRead = NoCut;
+        unsigned firstWrite = NoCut, lastWrite = NoCut;
+    };
+    struct SourceReceipt {
+        unsigned owner = NoCut;
+        unsigned publicationCut = NoCut, publicationIndex = NoCut;
+        unsigned previousCut = NoCut, previousIndex = NoCut;
+        c::Effects publishedPrefix, currentPrefix, unacquiredSuffix;
+    };
+    using CellSpans = std::array<Span, c::LaneCount>;
+    Cuts cuts;
+    Commands sites;
+    std::map<Key, unsigned> owners;
+    std::map<Key, SourceReceipt> sourceReceipts;
+    std::set<Key> keys;
+    std::set<unsigned> loopOwners;
+    uint64_t extentWork = 0;
+    uint64_t protocolSteps = 0;
+    explicit DeferredDemandRings(unsigned size) : sites(size) {}
+
+    static bool eligible(const c::Program& p, const DemandAnalysis& analysis, const Cycle& cycle)
+    {
+        if (cycle.owner >= p.nodes.size() || cycle.region >= p.nodes.size())
+            return false;
+        const auto& owner = p.nodes[cycle.owner];
+        if (owner.kind != c::Node::For || owner.children.size() != 1 || owner.children[0] != cycle.region ||
+            p.nodes[cycle.region].kind != c::Node::Sequence || owner.entryGuardStart == NoCut ||
+            analysis.next[cycle.owner] == NoCut)
+            return false;
+        // The source-prefix receipt below is reconstructed from one linear
+        // body word. Empty Sequences represent scalar/terminator cuts; nested
+        // control remains on the already verified closed-ring baseline.
+        for (unsigned child : p.nodes[cycle.region].children)
+            if (p.nodes[child].kind != c::Node::Operation &&
+                !(p.nodes[child].kind == c::Node::Sequence && p.nodes[child].children.empty()))
+                return false;
+        unsigned scope = analysis.parent[cycle.owner];
+        if (scope == NoCut || p.nodes[scope].kind != c::Node::Sequence ||
+            analysis.parent[owner.entryGuardStart] != scope ||
+            analysis.position[owner.entryGuardStart] > analysis.position[cycle.owner])
+            return false;
+        // LoopExit can stall its first/target lane. Reject if that lane may run
+        // later on any continuation to function exit, including after an
+        // enclosing Choice. An enclosing loop is rejected wholesale because
+        // its backedge may reach earlier first-lane work in the next visit.
+        uint8_t target = uint8_t(1u << cycle.groups.front().lane);
+        for (unsigned cursor = cycle.owner; analysis.parent[cursor] != NoCut;) {
+            unsigned parent = analysis.parent[cursor];
+            if (p.nodes[parent].kind == c::Node::For || p.nodes[parent].kind == c::Node::While)
+                return false;
+            if (p.nodes[parent].kind == c::Node::Sequence && (analysis.followingLaneMask[cursor] & target))
+                return false;
+            cursor = parent;
+        }
+        return true;
+    }
+
+    std::vector<Endpoint> pattern(const Cycle& cycle, const DemandAnalysis& analysis) const
+    {
+        std::vector<Endpoint> out;
+        const auto& groups = cycle.groups;
+        for (unsigned g = 0; g < groups.size(); ++g) {
+            const auto& group = groups[g];
+            const auto& previous = groups[(g + groups.size() - 1) % groups.size()];
+            out.push_back(
+                {group.first.front(), c::Mechanism::Acquire, g == 0 ? c::Mechanism::Previous : c::Mechanism::Every,
+                 previous.lane, group.lane, g == 0 ? cycle.owner : NoCut});
+            if (g + 1 < groups.size())
+                out.push_back(
+                    {cuts.next[group.last.front()], c::Mechanism::Publish, c::Mechanism::Every, group.lane,
+                     groups[g + 1].lane, NoCut});
+        }
+        unsigned last = groups.back().lane, first = groups.front().lane;
+        out.push_back(
+            {cuts.next[groups.back().last.front()], c::Mechanism::Publish, c::Mechanism::Every, last, first, NoCut});
+        out.push_back(
+            {analysis.next[cycle.owner], c::Mechanism::Acquire, c::Mechanism::LoopExit, last, first, cycle.owner});
+        return out;
+    }
+
+    bool buildSourceReceipts(
+        const c::Program& p, const DemandAnalysis& analysis, const Commands& actual, std::string& reason)
+    {
+        std::map<unsigned, std::vector<CellSpans>> spans;
+        for (const auto& cycle : cuts.cycles) {
+            if (spans.count(cycle.owner))
+                continue;
+            const auto& children = p.nodes[cycle.region].children;
+            uint64_t remaining = DemandRings::MaxCells - extentWork;
+            if (p.cells && children.size() > remaining / p.cells) {
+                reason = "deferred demand ring source envelope exceeds optional work bound";
+                return false;
+            }
+            extentWork += uint64_t(p.cells) * children.size();
+            auto [where, inserted] = spans.emplace(cycle.owner, std::vector<CellSpans>(p.cells));
+            (void)inserted;
+            auto& ownerSpans = where->second;
+            for (unsigned position = 0; position < children.size(); ++position) {
+                const auto& effects = analysis.effects[children[position]];
+                for (unsigned cell = 0; cell < p.cells; ++cell)
+                    for (unsigned source = 0; source < c::LaneCount; ++source) {
+                        auto& span = ownerSpans[cell][source];
+                        if (effects[cell].readers & (1u << source)) {
+                            if (span.firstRead == NoCut)
+                                span.firstRead = position;
+                            span.lastRead = position;
+                        }
+                        if (effects[cell].writers & (1u << source)) {
+                            if (span.firstWrite == NoCut)
+                                span.firstWrite = position;
+                            span.lastWrite = position;
+                        }
+                    }
+            }
+        }
+        for (const auto& cycle : cuts.cycles) {
+            uint64_t remaining = DemandRings::MaxCells - extentWork;
+            if (p.cells > remaining) {
+                reason = "deferred demand ring receipt population exceeds optional work bound";
+                return false;
+            }
+            extentWork += p.cells;
+            unsigned firstCut = cycle.groups.front().first.front();
+            unsigned tailCut = cuts.next[cycle.groups.back().last.front()];
+            if (analysis.parent[firstCut] != cycle.region || analysis.parent[tailCut] != cycle.region) {
+                reason = "deferred demand ring endpoints are not direct body cuts";
+                return false;
+            }
+            unsigned firstPosition = analysis.position[firstCut];
+            unsigned tailPosition = analysis.position[tailCut];
+            unsigned source = cycle.groups.back().lane, target = cycle.groups.front().lane;
+            SourceReceipt receipt;
+            receipt.owner = cycle.owner;
+            receipt.publicationCut = tailCut;
+            receipt.previousCut = firstCut;
+            receipt.publishedPrefix.resize(p.cells);
+            receipt.currentPrefix.resize(p.cells);
+            receipt.unacquiredSuffix.resize(p.cells);
+            const auto& ownerSpans = spans.at(cycle.owner);
+            for (unsigned cell = 0; cell < p.cells; ++cell) {
+                const auto& span = ownerSpans[cell][source];
+                uint8_t sourceBit = uint8_t(1u << source);
+                if (span.firstRead != NoCut && span.firstRead < tailPosition)
+                    receipt.publishedPrefix[cell].readers |= sourceBit;
+                if (span.firstWrite != NoCut && span.firstWrite < tailPosition)
+                    receipt.publishedPrefix[cell].writers |= sourceBit;
+                if (span.firstRead != NoCut && span.firstRead < firstPosition)
+                    receipt.currentPrefix[cell].readers |= sourceBit;
+                if (span.firstWrite != NoCut && span.firstWrite < firstPosition)
+                    receipt.currentPrefix[cell].writers |= sourceBit;
+                if (span.lastRead != NoCut && span.lastRead >= tailPosition)
+                    receipt.unacquiredSuffix[cell].readers |= sourceBit;
+                if (span.lastWrite != NoCut && span.lastWrite >= tailPosition)
+                    receipt.unacquiredSuffix[cell].writers |= sourceBit;
+            }
+            Key wrap{source, target, cycle.keys.at({source, target})};
+            auto locate = [&](unsigned cut, c::Mechanism::Kind kind, c::Mechanism::Participation participation,
+                              unsigned loop) -> std::optional<unsigned> {
+                std::optional<unsigned> found;
+                for (unsigned index = 0; index < actual[cut].size(); ++index) {
+                    const auto& mechanism = actual[cut][index];
+                    if (mechanism.kind == kind && mechanism.participation == participation &&
+                        mechanism.first == source && mechanism.second == target &&
+                        mechanism.forwardKey == std::get<2>(wrap) && mechanism.loop == loop) {
+                        if (found)
+                            return {};
+                        found = index;
+                    }
+                }
+                return found;
+            };
+            auto publication = locate(tailCut, c::Mechanism::Publish, c::Mechanism::Every, NoCut);
+            auto previous = locate(firstCut, c::Mechanism::Acquire, c::Mechanism::Previous, cycle.owner);
+            if (!publication || !previous) {
+                reason = "deferred demand ring has no exact actual source receipt";
+                return false;
+            }
+            receipt.publicationIndex = *publication;
+            receipt.previousIndex = *previous;
+            if (!sourceReceipts.emplace(wrap, std::move(receipt)).second) {
+                reason = "deferred demand rings share a wrap event key";
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void appendActual(
+        std::vector<c::Mechanism>& word, const std::vector<c::Mechanism>& commands, unsigned owner, unsigned trips,
+        std::optional<unsigned> iteration) const
+    {
+        for (const auto& mechanism : commands) {
+            bool participate = mechanism.participation == c::Mechanism::Every;
+            if (mechanism.loop == owner) {
+                if (mechanism.participation == c::Mechanism::NonEmpty ||
+                    mechanism.participation == c::Mechanism::LoopExit)
+                    participate = trips != 0;
+                else if (mechanism.participation == c::Mechanism::First)
+                    participate = iteration && *iteration == 0;
+                else if (mechanism.participation == c::Mechanism::Previous)
+                    participate = iteration && *iteration != 0;
+            }
+            if (!participate)
+                continue;
+            if (mechanism.kind == c::Mechanism::Publish || mechanism.kind == c::Mechanism::Acquire)
+                word.push_back(mechanism);
+            else if (mechanism.kind == c::Mechanism::Rendezvous) {
+                word.push_back(event(c::Mechanism::Publish, mechanism.first, mechanism.second, mechanism.forwardKey));
+                word.push_back(event(c::Mechanism::Acquire, mechanism.first, mechanism.second, mechanism.forwardKey));
+                word.push_back(event(c::Mechanism::Publish, mechanism.second, mechanism.first, mechanism.reverseKey));
+                word.push_back(event(c::Mechanism::Acquire, mechanism.second, mechanism.first, mechanism.reverseKey));
+            }
+        }
+    }
+
+    std::vector<c::Mechanism> invocation(
+        const c::Program& p, const DemandAnalysis& analysis, const Commands& actual, unsigned owner,
+        unsigned trips) const
+    {
+        std::vector<c::Mechanism> word;
+        unsigned scope = analysis.parent[owner];
+        appendActual(word, actual[scope], owner, trips, std::nullopt);
+        for (unsigned child : p.nodes[scope].children) {
+            appendActual(word, actual[child], owner, trips, std::nullopt);
+            if (child != owner)
+                continue;
+            unsigned body = p.nodes[owner].children[0];
+            for (unsigned iteration = 0; iteration < trips; ++iteration) {
+                appendActual(word, actual[body], owner, trips, iteration);
+                for (unsigned bodyChild : p.nodes[body].children)
+                    appendActual(word, actual[bodyChild], owner, trips, iteration);
+            }
+        }
+        return word;
+    }
+
+    bool verifyCombined(
+        const c::Program& p, const DemandAnalysis& analysis, const Commands& actual, std::string& reason)
+    {
+        // This is a representation-work bound, not a wall-time claim. Cache
+        // direct command costs once so many owners sharing one parent cannot
+        // turn the optional verifier into an unbounded owner-by-parent scan.
+        // Rendezvous expands to four event operations; barriers still cost one
+        // because appendActual must inspect them.
+        constexpr uint64_t MaxProtocolSteps = 1u << 20;
+        std::vector<uint64_t> direct(actual.size()), sequence(actual.size());
+        auto boundedAdd = [](uint64_t& total, uint64_t extra) {
+            constexpr uint64_t limit = (1u << 20) + 1;
+            total = total >= limit || extra >= limit - total ? limit : total + extra;
+        };
+        for (unsigned id = 0; id < actual.size(); ++id) {
+            for (const auto& mechanism : actual[id])
+                boundedAdd(direct[id], mechanism.kind == c::Mechanism::Rendezvous ? 4 : 1);
+            if (p.nodes[id].kind == c::Node::Sequence) {
+                sequence[id] = direct[id];
+                for (unsigned child : p.nodes[id].children)
+                    boundedAdd(sequence[id], direct[child]);
+            }
+        }
+        protocolSteps = 0;
+        for (unsigned owner : loopOwners) {
+            uint64_t parent = sequence[analysis.parent[owner]];
+            uint64_t body = sequence[p.nodes[owner].children[0]];
+            if (body > (MaxProtocolSteps - protocolSteps) / 72 ||
+                parent > (MaxProtocolSteps - protocolSteps - 72 * body) / 36) {
+                reason = "deferred demand ring protocol exceeds optional work bound";
+                return false;
+            }
+            // Nine 0/1/2 trip pairs, two owner invocations per pair, and the
+            // two-copy recurrence check; two body visits are the maximum word.
+            protocolSteps += 36 * (parent + 2 * body);
+        }
+        // Check first/steady/final behavior and retain physical token state
+        // across two complete owner invocations.  Unlike the ordinary
+        // per-Sequence two-copy check, this word contains the actual ordinary
+        // mechanisms in their original order as well as deferred endpoints.
+        // This is not a finite-enumeration argument for unbounded execution:
+        // the first copy establishes initialization/finalization and the
+        // second establishes the same consumption-before-next-publication
+        // recurrence used by verifyProtocolWord for arbitrary repetitions.
+        for (unsigned owner : loopOwners)
+            for (unsigned firstTrips : {0u, 1u, 2u})
+                for (unsigned secondTrips : {0u, 1u, 2u}) {
+                    auto word = invocation(p, analysis, actual, owner, firstTrips);
+                    auto second = invocation(p, analysis, actual, owner, secondTrips);
+                    word.insert(word.end(), second.begin(), second.end());
+                    if (!verifyProtocolWord(word, reason))
+                        return false;
+                }
+        return true;
+    }
+
+    bool infer(const c::Program& p, const DemandAnalysis& analysis, const Commands& actual, std::string& reason)
+    {
+        bool active = false;
+        for (const auto& commands : actual)
+            active |= std::any_of(commands.begin(), commands.end(), [](const auto& mechanism) {
+                return mechanism.participation == c::Mechanism::Previous ||
+                       mechanism.participation == c::Mechanism::LoopExit;
+            });
+        if (!active)
+            return true;
+        DemandRings shapes(p.nodes.size());
+        if (!shapes.discover(p, reason))
+            return false;
+        cuts = std::move(shapes.cuts);
+        using Position = std::tuple<unsigned, unsigned, unsigned, unsigned>;
+        std::map<Key, std::vector<Position>> population;
+        for (unsigned id = 0; id < actual.size(); ++id)
+            for (unsigned index = 0; index < actual[id].size(); ++index) {
+                const auto& mechanism = actual[id][index];
+                if (mechanism.kind == c::Mechanism::Publish || mechanism.kind == c::Mechanism::Acquire)
+                    population[{mechanism.first, mechanism.second, mechanism.forwardKey}].push_back(
+                        {id, unsigned(mechanism.kind), unsigned(mechanism.participation), mechanism.loop});
+            }
+        for (auto& [eventKey, positions] : population) {
+            (void)eventKey;
+            std::sort(positions.begin(), positions.end());
+        }
+        std::set<Key> used;
+        std::vector<Cycle> certified;
+        for (auto cycle : cuts.cycles) {
+            if (!eligible(p, analysis, cycle))
+                continue;
+            std::map<std::pair<unsigned, unsigned>, std::vector<Endpoint>> wanted;
+            for (const auto& endpoint : pattern(cycle, analysis))
+                wanted[{endpoint.source, endpoint.target}].push_back(endpoint);
+            bool found = true;
+            for (const auto& [direction, endpoints] : wanted) {
+                std::vector<Position> expected;
+                for (const auto& endpoint : endpoints)
+                    expected.push_back(
+                        {endpoint.cut, unsigned(endpoint.kind), unsigned(endpoint.participation), endpoint.loop});
+                std::sort(expected.begin(), expected.end());
+                bool matched = false;
+                for (unsigned candidate : p.target.compilerKeys) {
+                    Key eventKey{direction.first, direction.second, candidate};
+                    if (used.count(eventKey) || key(p, direction.first, direction.second) == candidate ||
+                        !p.target.available(lane(p, direction.first), lane(p, direction.second), candidate))
+                        continue;
+                    auto observed = population.find(eventKey);
+                    if (observed == population.end() || observed->second != expected)
+                        continue;
+                    cycle.keys[direction] = candidate;
+                    matched = true;
+                    break;
+                }
+                found &= matched;
+            }
+            if (!found)
+                continue;
+            unsigned index = certified.size();
+            for (const auto& [direction, assigned] : cycle.keys) {
+                Key eventKey{direction.first, direction.second, assigned};
+                used.insert(eventKey);
+                keys.insert(eventKey);
+                owners[eventKey] = index;
+            }
+            loopOwners.insert(cycle.owner);
+            certified.push_back(std::move(cycle));
+        }
+        cuts.cycles = std::move(certified);
+        if (!buildSourceReceipts(p, analysis, actual, reason))
+            return false;
+        for (unsigned index = 0; index < cuts.cycles.size(); ++index)
+            for (const auto& endpoint : pattern(cuts.cycles[index], analysis)) {
+                auto mechanism = event(
+                    endpoint.kind, endpoint.source, endpoint.target,
+                    cuts.cycles[index].keys.at({endpoint.source, endpoint.target}));
+                mechanism.participation = endpoint.participation;
+                mechanism.loop = endpoint.loop;
+                sites[endpoint.cut].push_back(mechanism);
+            }
+        // Population equality above prevents extra sites for an owned key;
+        // this comparison additionally fixes command order at shared cuts.
+        for (unsigned id = 0; id < actual.size(); ++id) {
+            std::vector<c::Mechanism> observed;
+            for (const auto& mechanism : actual[id])
+                if (keys.count({mechanism.first, mechanism.second, mechanism.forwardKey}) &&
+                    (mechanism.kind == c::Mechanism::Publish || mechanism.kind == c::Mechanism::Acquire))
+                    observed.push_back(mechanism);
+            if (observed != sites[id]) {
+                reason = "deferred demand ring command population or order changed";
+                return false;
+            }
+        }
+        for (const auto& commands : actual)
+            for (const auto& mechanism : commands)
+                if (mechanism.kind == c::Mechanism::Rendezvous &&
+                    (keys.count({mechanism.first, mechanism.second, mechanism.forwardKey}) ||
+                     keys.count({mechanism.second, mechanism.first, mechanism.reverseKey}))) {
+                    reason = "canonical packet collides with a deferred demand ring";
+                    return false;
+                }
+        return true;
+    }
+
+    bool credit(
+        const c::Mechanism& mechanism, PrefixState& state, const std::map<unsigned, c::State>& incoming,
+        std::string& reason) const
+    {
+        if (mechanism.kind != c::Mechanism::Acquire || mechanism.participation == c::Mechanism::LoopExit)
+            return true;
+        auto found = owners.find({mechanism.first, mechanism.second, mechanism.forwardKey});
+        if (found == owners.end())
+            return true;
+        const auto& cycle = cuts.cycles[found->second];
+        auto entry = incoming.find(cycle.owner);
+        if (entry == incoming.end()) {
+            reason = "deferred demand ring has no whole-owner entry state";
+            return false;
+        }
+        if (mechanism.participation == c::Mechanism::Previous) {
+            auto receipt = sourceReceipts.find({mechanism.first, mechanism.second, mechanism.forwardKey});
+            if (receipt == sourceReceipts.end() || receipt->second.owner != cycle.owner) {
+                reason = "deferred demand ring has no typed source receipt";
+                return false;
+            }
+            uint8_t sourceBit = uint8_t(1u << mechanism.first);
+            for (unsigned cell = 0; cell < state.pending[mechanism.second].size(); ++cell) {
+                auto& pending = state.pending[mechanism.second][cell];
+                const auto& external = entry->second.pending[mechanism.second][cell];
+                const auto& prefix = receipt->second.publishedPrefix[cell];
+                const auto& current = receipt->second.currentPrefix[cell];
+                const auto& suffix = receipt->second.unacquiredSuffix[cell];
+                if ((pending.readers & sourceBit &
+                     ~(external.readers | prefix.readers | current.readers | suffix.readers)) ||
+                    (pending.writers & sourceBit &
+                     ~(external.writers | prefix.writers | current.writers | suffix.writers))) {
+                    reason = "deferred demand ring source prefix omits physical history";
+                    return false;
+                }
+                // The exact actual SET certifies the complete source prefix I.
+                // The first visit has no old generation; steady visits consume
+                // I through the actual Previous WAIT. In both cases retain E,
+                // source work U after the SET, and current-visit source work C
+                // before the WAIT. Clear only this source bit; other lanes and
+                // the independent GM-visibility state remain unchanged.
+                pending.readers &= uint8_t(~sourceBit | external.readers | current.readers | suffix.readers);
+                pending.writers &= uint8_t(~sourceBit | external.writers | current.writers | suffix.writers);
+            }
+        }
+        // This is generation normalization, not credit from a first-visit
+        // Previous WAIT (which does not execute). At the certified first cut,
+        // no demanded-cell MAY effect precedes the first group, so the initial
+        // synthetic loop seed may be intersected with E. On later visits the
+        // same intersection is justified by the actual Previous WAIT.
+        for (unsigned cell : cycle.cells) {
+            auto& pending = state.pending[mechanism.second][cell];
+            const auto& external = entry->second.pending[mechanism.second][cell];
+            const auto& internal = cuts.effects[cycle.owner][cell];
+            if ((pending.readers & ~(external.readers | internal.readers)) ||
+                (pending.writers & ~(external.writers | internal.writers))) {
+                reason = "deferred demand ring omits external physical history";
+                return false;
+            }
+            pending.readers &= external.readers;
+            pending.writers &= external.writers;
+        }
+        return true;
+    }
+};
+
 std::vector<c::Mechanism> demandWord(
     const c::Program& p, const Commands& commands, unsigned scope, bool expandPackets = false,
-    bool virtualPackets = false)
+    bool virtualPackets = false, const std::set<PrefixState::EventKey>* excluded = nullptr)
 {
     std::vector<c::Mechanism> word;
     for (unsigned child : p.nodes[scope].children)
         for (const auto& m : commands[child])
             if (m.participation != c::Mechanism::Every)
+                continue;
+            else if (excluded && excluded->count({m.first, m.second, m.forwardKey}))
                 continue;
             else if (m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire)
                 word.push_back(m);
@@ -1494,7 +1991,7 @@ std::vector<c::Mechanism> demandWord(
 // Nested domains use disjoint keys and need not finish their payload on return.
 bool verifyEntryProtocols(
     const c::Program& p, const DemandAnalysis& analysis, const Commands& actual,
-    std::set<PrefixState::EventKey>& reserved, std::string& reason)
+    const std::set<PrefixState::EventKey>& deferredKeys, std::set<PrefixState::EventKey>& reserved, std::string& reason)
 {
     using namespace c;
     using Key = PrefixState::EventKey;
@@ -1512,6 +2009,12 @@ bool verifyEntryProtocols(
             const auto& m = actual[id][index];
             if (m.participation == Mechanism::Every) {
                 if (m.loop != NoCut)
+                    return refuse();
+                continue;
+            }
+            Key mechanismKey{m.first, m.second, m.forwardKey};
+            if (m.participation == Mechanism::Previous || m.participation == Mechanism::LoopExit) {
+                if (!deferredKeys.count(mechanismKey))
                     return refuse();
                 continue;
             }
@@ -1629,11 +2132,11 @@ bool verifyEntryProtocols(
 
 bool verifyDemandProtocols(
     const c::Program& p, const DemandAnalysis& analysis, const std::vector<std::vector<c::Mechanism>>& actual,
-    std::string& reason)
+    const DeferredDemandRings& deferred, std::string& reason)
 {
     using Key = PrefixState::EventKey;
-    std::set<Key> entryKeys;
-    if (!verifyEntryProtocols(p, analysis, actual, entryKeys, reason))
+    std::set<Key> entryKeys = deferred.keys;
+    if (!verifyEntryProtocols(p, analysis, actual, deferred.keys, entryKeys, reason))
         return false;
     struct Population {
         unsigned scope = NoCut, sets = 0, waits = 0;
@@ -1642,9 +2145,17 @@ bool verifyDemandProtocols(
     std::map<unsigned, std::vector<c::Mechanism>> words;
     for (unsigned scope = 0; scope < p.nodes.size(); ++scope)
         if (p.nodes[scope].kind == c::Node::Sequence)
-            words[scope] = demandWord(p, actual, scope, true);
+            words[scope] = demandWord(p, actual, scope, true, false, &deferred.keys);
     for (unsigned id = 0; id < actual.size(); ++id)
         for (const auto& m : actual[id]) {
+            Key forward{m.first, m.second, m.forwardKey};
+            if ((m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire) && deferred.keys.count(forward))
+                continue;
+            if (m.kind == c::Mechanism::Rendezvous &&
+                (deferred.keys.count(forward) || deferred.keys.count({m.second, m.first, m.reverseKey}))) {
+                reason = "canonical packet collides with a deferred demand ring";
+                return false;
+            }
             if (m.participation != c::Mechanism::Every)
                 continue;
             if (validMechanism(p, m)) {
@@ -2206,15 +2717,39 @@ c::Result verifyDemandImpl(
     using namespace c;
     c::Result result;
     DemandAnalysis analysis;
-    if (actual.size() != p.nodes.size() || !analysis.build(p, result.reason) ||
-        !verifyDemandProtocols(p, analysis, actual, result.reason))
+    if (actual.size() != p.nodes.size() || !analysis.build(p, result.reason))
         return result;
+    DeferredDemandRings deferred(p.nodes.size());
+    if (!deferred.infer(p, analysis, actual, result.reason)) {
+        result.deferredRejectionStage = "inference";
+        result.deferredRejectionReason = result.reason;
+        return result;
+    }
+    result.cellVisits += deferred.extentWork * LaneCount;
+    if (!deferred.verifyCombined(p, analysis, actual, result.reason)) {
+        result.deferredProtocolSteps = deferred.protocolSteps;
+        result.deferredRejectionStage = "protocol";
+        result.deferredRejectionReason = result.reason;
+        return result;
+    }
+    result.deferredProtocolSteps = deferred.protocolSteps;
+    if (!verifyDemandProtocols(p, analysis, actual, deferred, result.reason)) {
+        result.deferredRejectionStage = "protocol";
+        result.deferredRejectionReason = result.reason;
+        return result;
+    }
     DemandRings rings(p.nodes.size());
-    if (!rings.infer(p, actual, result.reason))
+    if (!rings.infer(p, actual, result.reason)) {
+        if (!deferred.keys.empty()) {
+            result.deferredRejectionStage = "inference";
+            result.deferredRejectionReason = result.reason;
+        }
         return result;
+    }
     if (DemandRings::affordable(p))
         result.cellVisits += uint64_t(p.cells) * p.nodes.size();
     result.cutCycles = rings.cuts.cycles.size();
+    result.cutCycles += deferred.cuts.cycles.size();
     std::map<unsigned, State> ringIncoming;
     // Fresh physical requirements and actual event-prefix transfer. No chosen
     // demand, source-cut proposal, family membership, or initialization receipt
@@ -2231,7 +2766,15 @@ c::Result verifyDemandImpl(
         ++result.nodeVisits;
         result.cellVisits += p.cells * LaneCount;
         for (const auto& m : actual[id]) {
-            if (m.participation != Mechanism::Every) {
+            if (m.participation == Mechanism::Previous) {
+                if (!deferred.credit(m, state, ringIncoming, result.reason))
+                    return false;
+            } else if (m.participation == Mechanism::LoopExit) {
+                // This dynamic WAIT retires the final token only on a nonempty
+                // execution. It supplies no unconditional completion credit
+                // across the zero-trip join.
+                continue;
+            } else if (m.participation != Mechanism::Every) {
                 if (!applyEntryCredit(state, m, analysis, result.reason))
                     return false;
             } else if (m.kind == Mechanism::Publish)
@@ -2243,6 +2786,8 @@ c::Result verifyDemandImpl(
                 }
                 state.acquirePrefix(m);
                 if (!rings.credit(m, state, ringIncoming, result.reason))
+                    return false;
+                if (!deferred.credit(m, state, ringIncoming, result.reason))
                     return false;
             } else
                 apply(state, m);
@@ -2277,7 +2822,9 @@ c::Result verifyDemandImpl(
         }
         if (n.kind == Node::Operation) {
             if (validate && (needsVisibility(p, n, state) || state.demands(n.lane, n.effects))) {
-                result.reason = "uncovered physical demand or GM visibility requirement";
+                result.reason = "uncovered physical demand or GM visibility requirement at node " + std::to_string(id) +
+                                " lane " + std::to_string(n.lane) + " demand " +
+                                std::to_string(state.demands(n.lane, n.effects));
                 return false;
             }
             state.seed(n.effects);
@@ -2295,7 +2842,7 @@ c::Result verifyDemandImpl(
             // They must not survive the zero-trip branch of this abstract join;
             // ordinary receipts and ordinary commands at the same cut do.
             auto entry = state;
-            if (rings.loopOwners.count(id))
+            if (rings.loopOwners.count(id) || deferred.loopOwners.count(id))
                 ringIncoming.insert_or_assign(id, entry);
             for (const auto& receipt : entryProviders[id])
                 entry.receipts.erase(receipt);
@@ -2364,6 +2911,10 @@ c::Result verifyDemandImpl(
     };
     PrefixState state(p.cells);
     result.success = check(p.nodes.size() - 1, state, true);
+    if (!result.success && !deferred.keys.empty()) {
+        result.deferredRejectionStage = "physical";
+        result.deferredRejectionReason = result.reason;
+    }
     return result;
 }
 } // namespace
@@ -2593,8 +3144,8 @@ c::Result constructWithDemandRings(const c::Program& p, bool corrupt)
             }
             removed += old - next;
         }
-    baseline.nodeVisits += candidate.nodeVisits + checked.nodeVisits;
-    baseline.cellVisits += candidate.cellVisits + checked.cellVisits;
+    baseline.nodeVisits += checked.nodeVisits;
+    baseline.cellVisits += checked.cellVisits;
     baseline.ringCandidates = 1;
     if (!accepted || !removed) {
         baseline.rejectedRings = 1;
@@ -2606,9 +3157,121 @@ c::Result constructWithDemandRings(const c::Program& p, bool corrupt)
     candidate.ringCandidateCommandsRemoved = removed;
     return candidate;
 }
+
+c::Result constructWithDeferredRings(const c::Program& p, bool corrupt)
+{
+    using namespace c;
+    // The starting point is already independently verified by the existing
+    // closed-ring selector. Deferred wrap never rescues a rejected ring shape
+    // and never changes ordinary fallback mechanisms.
+    auto baseline = constructWithDemandRings(p, false);
+    if (!baseline.success || baseline.cutCycles == 0 || !DemandRings::affordable(p))
+        return baseline;
+    // This optional pass reruns one bounded composition analysis and one
+    // bounded closed-ring discovery/inference over the selected plan. Charge
+    // those scans themselves; do not duplicate the baseline constructor's
+    // accumulated history merely because its Result was copied below.
+    const uint64_t scanNodes = p.nodes.size();
+    const uint64_t scanCells = uint64_t(p.cells) * scanNodes;
+    baseline.nodeVisits += 2 * scanNodes;
+    baseline.cellVisits += 2 * scanCells;
+    DemandAnalysis analysis;
+    DemandRings closed(p.nodes.size());
+    std::string reason;
+    if (!analysis.build(p, reason) || !closed.infer(p, baseline.before, reason))
+        return baseline;
+    std::vector<Cycle> eligible;
+    for (const auto& cycle : closed.cuts.cycles)
+        if (DeferredDemandRings::eligible(p, analysis, cycle))
+            eligible.push_back(cycle);
+    if (eligible.empty())
+        return baseline;
+
+    baseline.deferredRingCandidates = eligible.size();
+    auto candidate = baseline;
+    Commands moved(p.nodes.size()), exits(p.nodes.size());
+    bool transformed = true;
+    auto matches = [](const Mechanism& mechanism, Mechanism::Kind kind, unsigned source, unsigned target,
+                      unsigned eventKey) {
+        return mechanism.kind == kind && mechanism.participation == Mechanism::Every && mechanism.loop == NoCut &&
+               mechanism.first == source && mechanism.second == target && mechanism.forwardKey == eventKey;
+    };
+    for (const auto& cycle : eligible) {
+        const auto& firstGroup = cycle.groups.front();
+        const auto& lastGroup = cycle.groups.back();
+        unsigned source = lastGroup.lane, target = firstGroup.lane;
+        unsigned eventKey = cycle.keys.at({source, target});
+        unsigned firstCut = firstGroup.first.front();
+        unsigned lastCut = closed.cuts.next[lastGroup.last.front()];
+        unsigned exitCut = analysis.next[cycle.owner];
+        auto& firstCommands = candidate.before[firstCut];
+        auto publication = std::find_if(firstCommands.begin(), firstCommands.end(), [&](const auto& mechanism) {
+            return matches(mechanism, Mechanism::Publish, source, target, eventKey);
+        });
+        auto previous = std::find_if(firstCommands.begin(), firstCommands.end(), [&](const auto& mechanism) {
+            return matches(mechanism, Mechanism::Acquire, source, target, eventKey);
+        });
+        if (publication == firstCommands.end() || previous == firstCommands.end() || lastCut == NoCut ||
+            exitCut == NoCut) {
+            transformed = false;
+            break;
+        }
+        previous->participation = Mechanism::Previous;
+        previous->loop = cycle.owner;
+        firstCommands.erase(publication);
+        moved[lastCut].push_back(event(Mechanism::Publish, source, target, eventKey));
+        auto finalWait = event(Mechanism::Acquire, source, target, eventKey);
+        finalWait.participation = Mechanism::LoopExit;
+        finalWait.loop = cycle.owner;
+        exits[exitCut].push_back(finalWait);
+    }
+    if (transformed)
+        for (unsigned id = 0; id < p.nodes.size(); ++id) {
+            // The moved SET is the first command after the last group. It
+            // snapshots no later unrelated source prefix. The final WAIT is
+            // likewise the first command at the original post-loop anchor.
+            candidate.before[id].insert(candidate.before[id].begin(), moved[id].begin(), moved[id].end());
+            candidate.before[id].insert(candidate.before[id].begin(), exits[id].begin(), exits[id].end());
+        }
+    if (corrupt && transformed)
+        for (auto& commands : candidate.before) {
+            auto wait = std::find_if(commands.begin(), commands.end(), [](const auto& mechanism) {
+                return mechanism.participation == Mechanism::LoopExit;
+            });
+            if (wait != commands.end()) {
+                commands.erase(wait);
+                break;
+            }
+        }
+    auto checked = transformed ? verifyDemandImpl(p, candidate.before, nullptr) : c::Result{};
+    baseline.nodeVisits += checked.nodeVisits;
+    baseline.cellVisits += checked.cellVisits;
+    baseline.deferredProtocolSteps += checked.deferredProtocolSteps;
+    if (!transformed || !checked.success) {
+        baseline.deferredRejectionStage = transformed ? checked.deferredRejectionStage : "placement";
+        baseline.deferredRejectionReason =
+            transformed ? checked.deferredRejectionReason : "closed-ring endpoints could not be moved exactly";
+        if (baseline.deferredRejectionStage.empty())
+            baseline.deferredRejectionStage = "physical";
+        if (baseline.deferredRejectionReason.empty())
+            baseline.deferredRejectionReason = checked.reason;
+        baseline.rejectedDeferredRings = eligible.size();
+        return baseline;
+    }
+    candidate.nodeVisits = baseline.nodeVisits;
+    candidate.cellVisits = baseline.cellVisits;
+    candidate.deferredProtocolSteps = baseline.deferredProtocolSteps;
+    candidate.deferredRingCandidates = eligible.size();
+    candidate.deferredRings = eligible.size();
+    return candidate;
+}
 } // namespace
-c::Result c::constructDemands(const Program& p) { return constructWithDemandRings(p, false); }
+c::Result c::constructDemands(const Program& p) { return constructWithDeferredRings(p, false); }
 c::Result c::testing::constructDemandsRejectingRings(const Program& p) { return constructWithDemandRings(p, true); }
+c::Result c::testing::constructDemandsRejectingDeferredRings(const Program& p)
+{
+    return constructWithDeferredRings(p, true);
+}
 c::Result c::testing::constructDemandsWithoutRings(const Program& p) { return constructDemandsImpl(p, false); }
 c::Result c::testing::constructDemandsRejectingRefinement(const Program& p) { return constructDemandsImpl(p, true); }
 c::Result c::testing::constructDemandsRejectingEntryProposal(const Program& p)

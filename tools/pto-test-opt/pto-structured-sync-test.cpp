@@ -53,7 +53,8 @@ int main(int argc,char **argv) {
     const bool withoutReplay = demandPlacement && mode=="without-allocation-replay";
     const bool rejectReplay = demandPlacement && mode=="reject-allocation-replay";
     const bool rejectEntry = demandPlacement && mode=="reject-entry-proposal";
-    if (rejectRefinement || withoutReplay || rejectReplay || rejectEntry) mode="none";
+    const bool rejectDeferred = demandPlacement && mode=="reject-deferred-rings";
+    if (rejectRefinement || withoutReplay || rejectReplay || rejectEntry || rejectDeferred) mode="none";
     const bool precision = mode.consume_front("cuts:");
     const bool composition = demandPlacement || precision || mode.consume_front("composition:");
     auto mutate=[&](func::FuncOp working) {
@@ -79,6 +80,33 @@ int main(int argc,char **argv) {
         };
         working.walk([&](Operation *op) {
             if (chosen) return;
+            if (demandPlacement && mode.starts_with("deferred-")) {
+                auto branch=dyn_cast<scf::IfOp>(op);
+                if (!branch || !syncOnly(branch)) return;
+                auto cmp=branch.getCondition().getDefiningOp<arith::CmpIOp>();
+                if (!cmp) return;
+                bool previous=cmp.getPredicate()==arith::CmpIPredicate::ne;
+                bool exit=cmp.getPredicate()==arith::CmpIPredicate::slt;
+                SmallVector<Operation *> events;
+                for (auto &x:branch.getThenRegion().front())
+                    if (isa<SetFlagOp,WaitFlagOp>(x)) events.push_back(&x);
+                if (events.size()!=1 || !isa<WaitFlagOp>(events[0])) return;
+                if ((mode=="deferred-wrong-previous" && previous) ||
+                    (mode=="deferred-wrong-exit" && exit)) chosen=cmp;
+                if ((mode=="deferred-drop-previous" && previous) ||
+                    (mode=="deferred-drop-exit" && exit)) chosen=events[0];
+                if (mode=="deferred-late-previous" && previous) {
+                    for (auto *next=op->getNextNode();next;next=next->getNextNode())
+                        if (isa<OpPipeInterface>(next) && !isa<SetFlagOp,WaitFlagOp,BarrierOp>(next)) {
+                            chosen=op;sequenceSource=next;break;
+                        }
+                }
+                if (mode=="deferred-early-exit" && exit) {
+                    for (auto *prev=cmp->getPrevNode();prev;prev=prev->getPrevNode())
+                        if (isa<scf::ForOp>(prev)) {chosen=op;sequenceSource=prev;break;}
+                }
+                return;
+            }
             if (demandPlacement && mode.starts_with("entry-")) {
                 auto branch=dyn_cast<scf::IfOp>(op);
                 if (!branch || !syncOnly(branch)) return;
@@ -245,6 +273,23 @@ int main(int argc,char **argv) {
             }
         });
         if (!chosen) return;
+        if (mode=="deferred-wrong-previous" || mode=="deferred-wrong-exit") {
+            cast<arith::CmpIOp>(chosen).setPredicate(mode=="deferred-wrong-previous"?
+                arith::CmpIPredicate::eq:arith::CmpIPredicate::sle);
+            changed=true;return;
+        }
+        if (mode=="deferred-drop-previous" || mode=="deferred-drop-exit") {
+            chosen->erase();changed=true;return;
+        }
+        if (mode=="deferred-late-previous" || mode=="deferred-early-exit") {
+            auto cmp=cast<scf::IfOp>(chosen).getCondition().getDefiningOp();
+            if (mode=="deferred-early-exit") {
+                cmp->moveBefore(sequenceSource);chosen->moveAfter(cmp);
+            } else {
+                cmp->moveAfter(sequenceSource);chosen->moveAfter(cmp);
+            }
+            changed=true;return;
+        }
         if (mode=="entry-wrong-first" || mode=="entry-wrong-nonempty") {
             cast<arith::CmpIOp>(chosen).setPredicate(mode=="entry-wrong-first"?
                 arith::CmpIPredicate::ne:arith::CmpIPredicate::sle);
@@ -335,7 +380,8 @@ int main(int argc,char **argv) {
     };
     using Constructor=structured_sync::testing::CompositionConstructor;
     auto result=composition ? structured_sync::testing::constructCompositionalSync(
-        function,gm,mutate,hardware,rejectEntry?Constructor::DemandsRejectEntryProposal:
+        function,gm,mutate,hardware,rejectDeferred?Constructor::DemandsRejectDeferredRings:
+        rejectEntry?Constructor::DemandsRejectEntryProposal:
         withoutReplay?Constructor::DemandsWithoutAllocationReplay:
         rejectReplay?Constructor::DemandsRejectAllocationReplay:rejectRefinement?Constructor::DemandsRejectRefinement:
             fallbackOnly?Constructor::DemandsFallbackOnly:

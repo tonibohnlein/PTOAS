@@ -73,6 +73,7 @@ def main():
                         'allocation_replays', 'rejected_allocation_replays', 'replay_commands_removed',
                         'replayed_fallback_demands', 'entry_episodes', 'entry_reply_families', 'rejected_entry_proposals',
                         'ring_candidates', 'rejected_rings', 'ring_candidate_commands_removed', 'cut_cycles',
+                        'deferred_ring_candidates', 'deferred_rings', 'rejected_deferred_rings', 'deferred_protocol_steps',
                         'rendezvous_packets', 'demand_fallbacks'):
             matches = re.findall(r'\b' + counter + r' (\d+)\b', trace)
             if len(matches) != 1:
@@ -127,8 +128,12 @@ def main():
                 return {op: metrics['counts'].get(op, 0)
                         for op in ('pto.set_flag', 'pto.wait_flag', 'pto.barrier')}
             old_counts, new_counts = sync_counts(old_metrics), sync_counts(new_metrics)
+            def guard_counts(metrics):
+                return {op: metrics['scalar_counts'].get(op, 0) for op in ('arith.cmpi', 'scf.if')}
             scenarios.append(dict(name=scenario['name'], reference_executed=old_counts,
                                   candidate_executed=new_counts,
+                                  reference_guard_executed=guard_counts(old_metrics),
+                                  candidate_guard_executed=guard_counts(new_metrics),
                                   executed_not_worse=sum(new_counts.values()) <= sum(old_counts.values()),
                                   later=sum(d['automatic_requires_later_prefix'] for d in differences),
                                   differences=differences[:5]))
@@ -186,6 +191,51 @@ def main():
                     raise RuntimeError('shared recurring handoff exports an unconsumed publication')
         path_checks.append(dict(name='shared-rings', verdict=verdict, counters=counters,
                                 source_sha256=digest(shared), output_sha256=digest(shared_normalized)))
+        deferred = Path(__file__).parent / 'structured_inputs/demand_deferred_ring.pto'
+        deferred_raw = args.output.resolve() / 'deferred-rings.native.pto'
+        verdict = json.loads(invoke('deferred-rings', [args.driver, deferred, 'demands:none', deferred_raw]))
+        counters = native_counters('deferred-rings')
+        if (not verdict['accepted'] or not verdict['atomic'] or not counters['deferred_rings'] or
+                counters['rejected_deferred_rings']):
+            raise RuntimeError('native earliest recurring release path not exercised')
+        deferred_normalized = args.output.resolve() / 'deferred-rings.pto'
+        invoke('deferred-rings-normalize', compiler + [deferred_raw, '-o', deferred_normalized])
+        episodes = []
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            module = ir.Module.parse(deferred_normalized.read_text())
+            function = next(op for op in children(module.operation) if op.name == 'func.func')
+            observer = Boundaries()
+            for lower, upper in ((0, 0), (3, 4), (-2, 1), (9, 4), (5, 7), (0, 1)):
+                metrics = replay(function, ['src', 'dst', lower, upper], observer=observer.observe)
+                if observer.tokens:
+                    raise RuntimeError('deferred release exports an unconsumed final publication')
+                if lower >= upper and (metrics['counts'].get('pto.set_flag', 0) or
+                                       metrics['counts'].get('pto.wait_flag', 0)):
+                    raise RuntimeError('empty deferred release owner executes an event')
+                episodes.append(dict(lower=lower, upper=upper, counts=metrics['counts'],
+                                     scalar_counts=metrics['scalar_counts']))
+        path_checks.append(dict(name='deferred-rings', verdict=verdict, counters=counters, episodes=episodes,
+                                source_sha256=digest(deferred), output_sha256=digest(deferred_normalized)))
+        verdict = json.loads(invoke('deferred-rollback', [args.driver, deferred,
+            'demands:reject-deferred-rings', args.output.resolve() / 'deferred-rollback.pto']))
+        counters = native_counters('deferred-rollback')
+        rejection = re.search(r'structured deferred_rejection stage (\S+) reason (.+)',
+                              (args.output / 'deferred-rollback.stderr').read_text())
+        if (not verdict['accepted'] or not verdict['atomic'] or counters['deferred_rings'] or
+                not counters['rejected_deferred_rings'] or not rejection):
+            raise RuntimeError('native deferred rollback or rejection diagnostic failed')
+        path_checks.append(dict(name='deferred-rollback', verdict=verdict, counters=counters,
+                                rejection_stage=rejection[1], rejection_reason=rejection[2]))
+        for mutation in ('deferred-wrong-previous', 'deferred-wrong-exit', 'deferred-drop-previous',
+                         'deferred-drop-exit', 'deferred-late-previous', 'deferred-early-exit',
+                         'wrong-key', 'early-publication'):
+            verdict = json.loads(invoke(mutation, [args.driver, deferred,
+                'demands:' + mutation, args.output.resolve() / (mutation + '.pto')]))
+            if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
+                raise RuntimeError('deferred release corruption escaped reconstruction: ' + mutation)
+            path_checks.append(dict(name=mutation, verdict=verdict))
         for mutation in ('wrong-key', 'drop-set', 'drop-wait', 'early-publication', 'late-acquisition'):
             verdict = json.loads(invoke('shared-rings-' + mutation, [args.driver, shared,
                 'demands:' + mutation, args.output.resolve() / ('shared-rings-' + mutation + '.pto')]))

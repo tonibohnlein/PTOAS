@@ -46,6 +46,7 @@ struct Oracle {
     };
     std::map<Key, Token> tokens;
     std::vector<std::pair<unsigned, unsigned>> rearms;
+    uint64_t commands = 0;
     Oracle() { control.fill(-1); }
     unsigned vertex()
     {
@@ -91,6 +92,7 @@ struct Oracle {
     }
     void mechanism(const c::Mechanism& m)
     {
+        ++commands;
         if (m.kind == c::Mechanism::Barrier) {
             auto v = vertex();
             command(m.first, v, true);
@@ -193,6 +195,10 @@ static void execute(const c::Program& p, const c::Result& r, unsigned id, Execut
         bool participates = true;
         if (m.participation == c::Mechanism::First)
             participates = policy.iteration.at(m.loop) == 0;
+        else if (m.participation == c::Mechanism::Previous)
+            participates = policy.iteration.at(m.loop) != 0;
+        else if (m.participation == c::Mechanism::LoopExit)
+            participates = policy.lastTrips.at(m.loop) != 0;
         else if (m.participation == c::Mechanism::NonEmpty) {
             if (id <= m.loop) {
                 if (!policy.nextTrips.count(m.loop))
@@ -318,6 +324,338 @@ int main()
         policy.choice = [](unsigned, unsigned) { return 0u; };
         Oracle oracle;
         for (unsigned invocation = 0; invocation < 8; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // Deferred wrap: start from two already selected two-group closed
+        // rings spanning three lanes. Move each wrap SET to the exact
+        // post-last-group cut, consume it on later visits, and drain the final
+        // generation only on nonempty exit.
+        c::Program p;
+        p.cells = 5;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto guard = add(p, c::Node::Sequence);
+        auto load = op(p, a, 0, true), compute = op(p, b, 0, false);
+        p.nodes[compute].effects[1].writers = 1u << b;
+        auto laterB = add(p, c::Node::Operation);
+        p.nodes[laterB].lane = b;
+        // Unrelated read-only work on untouched cells has real physical
+        // effects, but no invented next-iteration write/reuse obligation.
+        p.nodes[laterB].effects[2].readers = 1u << b;
+        auto store = op(p, d, 1, false), laterD = add(p, c::Node::Operation);
+        // The last MTE3 group also writes an independent destination. Its next
+        // generation is ordered only through the deferred MTE3->V receipt and
+        // the ordinary V->MTE3 return, matching a TStore destination hazard.
+        p.nodes[store].effects[3].writers = 1u << d;
+        p.nodes[laterD].lane = d;
+        p.nodes[laterD].effects[4].readers = 1u << d;
+        auto body = sequence(p, {load, compute, laterB, store, laterD});
+        auto loop = add(p, c::Node::For, {body});
+        auto after = add(p, c::Node::Sequence);
+        sequence(p, {guard, loop, after});
+        p.nodes[loop].entryGuardStart = guard;
+
+        auto plan = c::constructDemands(p);
+        require(
+            plan.success && plan.deferredRingCandidates == 2 && plan.deferredRings == 2 &&
+            plan.rejectedDeferredRings == 0 && plan.deferredProtocolSteps > 0 &&
+            plan.deferredProtocolSteps <= (1u << 20));
+        require(c::verifyDemands(p, plan.before).success);
+        require(std::count_if(plan.before[load].begin(), plan.before[load].end(), [](const auto& mechanism) {
+                    return mechanism.participation == c::Mechanism::Previous;
+                }) == 1);
+        require(std::count_if(plan.before[compute].begin(), plan.before[compute].end(), [](const auto& mechanism) {
+                    return mechanism.participation == c::Mechanism::Previous;
+                }) == 1);
+        require(std::count_if(plan.before[after].begin(), plan.before[after].end(), [](const auto& mechanism) {
+                    return mechanism.participation == c::Mechanism::LoopExit;
+                }) == 2);
+        // These are the cuts immediately after the last relevant reader. The
+        // later same-lane payload is deliberately excluded from the snapshot.
+        require(std::any_of(plan.before[laterB].begin(), plan.before[laterB].end(), [&](const auto& mechanism) {
+            return mechanism.kind == c::Mechanism::Publish && mechanism.first == b && mechanism.second == a;
+        }));
+        require(std::any_of(plan.before[laterD].begin(), plan.before[laterD].end(), [&](const auto& mechanism) {
+            return mechanism.kind == c::Mechanism::Publish && mechanism.first == d && mechanism.second == b;
+        }));
+
+        auto rollback = c::testing::constructDemandsRejectingDeferredRings(p);
+        require(
+            rollback.success && rollback.deferredRingCandidates == 2 && rollback.deferredRings == 0 &&
+            rollback.rejectedDeferredRings == 2 && c::verifyDemands(p, rollback.before).success);
+        for (unsigned trips : {0u, 1u, 2u}) {
+            ExecutionPolicy deferredPolicy, closedPolicy;
+            deferredPolicy.trips = [=](unsigned, unsigned) { return trips; };
+            closedPolicy.trips = deferredPolicy.trips;
+            deferredPolicy.choice = closedPolicy.choice = [](unsigned, unsigned) { return 0u; };
+            Oracle deferredOracle, closedOracle;
+            execute(p, plan, p.nodes.size() - 1, deferredPolicy, deferredOracle);
+            execute(p, rollback, p.nodes.size() - 1, closedPolicy, closedOracle);
+            deferredOracle.check();
+            closedOracle.check();
+            // Zero visits execute no ring command. For T>0, T SETs and
+            // (T-1)+1 WAITs preserve the closed ring's dynamic command count.
+            require(deferredOracle.commands == closedOracle.commands);
+        }
+        ExecutionPolicy repeated;
+        const std::array<unsigned, 6> visits{0, 1, 2, 0, 2, 1};
+        repeated.trips = [&](unsigned, unsigned invocation) { return visits[invocation % visits.size()]; };
+        repeated.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle repeatedOracle;
+        for (unsigned invocation = 0; invocation < visits.size(); ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, repeated, repeatedOracle);
+            repeatedOracle.check();
+        }
+        ExecutionPolicy overlap;
+        overlap.trips = [](unsigned, unsigned) { return 2u; };
+        overlap.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle overlapOracle;
+        execute(p, plan, p.nodes.size() - 1, overlap, overlapOracle);
+        overlapOracle.check();
+        // The moved V->MTE2 SET contains the first iteration's compute prefix,
+        // not later unrelated V work. Thus the next load may issue without
+        // waiting for laterB to complete; this checks graph causality rather
+        // than merely checking the lexical SET site.
+        require(overlapOracle.accesses.size() == 10);
+        require(!overlapOracle.reaches(overlapOracle.accesses[2].done, overlapOracle.accesses[5].issue));
+
+        auto mutate = [&](auto change) {
+            auto broken = plan.before;
+            change(broken);
+            require(!c::verifyDemands(p, broken).success);
+        };
+        mutate([&](auto& broken) {
+            auto& commands = broken[load];
+            commands.erase(std::find_if(commands.begin(), commands.end(), [](const auto& mechanism) {
+                return mechanism.participation == c::Mechanism::Previous;
+            }));
+        });
+        mutate([&](auto& broken) {
+            auto& commands = broken[after];
+            commands.erase(std::find_if(commands.begin(), commands.end(), [](const auto& mechanism) {
+                return mechanism.participation == c::Mechanism::LoopExit;
+            }));
+        });
+        mutate([&](auto& broken) {
+            auto previous = std::find_if(broken[load].begin(), broken[load].end(), [](const auto& mechanism) {
+                return mechanism.participation == c::Mechanism::Previous;
+            });
+            ++previous->forwardKey;
+        });
+        mutate([&](auto& broken) {
+            auto previous = std::find_if(broken[load].begin(), broken[load].end(), [](const auto& mechanism) {
+                return mechanism.participation == c::Mechanism::Previous;
+            });
+            previous->participation = c::Mechanism::First;
+        });
+        mutate([&](auto& broken) {
+            auto previous = std::find_if(broken[load].begin(), broken[load].end(), [](const auto& mechanism) {
+                return mechanism.participation == c::Mechanism::Previous;
+            });
+            previous->participation = c::Mechanism::Every;
+            previous->loop = ~0u;
+        });
+        mutate([&](auto& broken) {
+            auto& commands = broken[laterB];
+            commands.erase(std::find_if(commands.begin(), commands.end(), [&](const auto& mechanism) {
+                return mechanism.kind == c::Mechanism::Publish && mechanism.first == b && mechanism.second == a;
+            }));
+        });
+        mutate([&](auto& broken) {
+            auto publication = std::find_if(broken[laterB].begin(), broken[laterB].end(), [&](const auto& mechanism) {
+                return mechanism.kind == c::Mechanism::Publish && mechanism.first == b && mechanism.second == a;
+            });
+            broken[store].push_back(*publication);
+            broken[laterB].erase(publication);
+        });
+        mutate([&](auto& broken) {
+            auto publication = std::find_if(broken[laterB].begin(), broken[laterB].end(), [&](const auto& mechanism) {
+                return mechanism.kind == c::Mechanism::Publish && mechanism.first == b && mechanism.second == a;
+            });
+            broken[compute].push_back(*publication);
+            broken[laterB].erase(publication);
+        });
+        auto oversized = plan.before;
+        for (unsigned i = 0; i < 30000; ++i)
+            oversized[guard].push_back({c::Mechanism::Barrier, a, a});
+        auto bounded = c::verifyDemands(p, oversized);
+        require(
+            !bounded.success && bounded.deferredRejectionStage == "protocol" &&
+            bounded.deferredRejectionReason == "deferred demand ring protocol exceeds optional work bound");
+    }
+    {
+        // Real same-lane writes after each proposed tail SET are not covered by
+        // its source-prefix receipt. Their next-generation WAW obligations make
+        // deferred wrap inapplicable; retain the independently verified closed
+        // rings rather than erasing that suffix history.
+        c::Program p;
+        p.cells = 4;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto guard = add(p, c::Node::Sequence);
+        auto load = op(p, a, 0, true), compute = op(p, b, 0, false);
+        p.nodes[compute].effects[1].writers = 1u << b;
+        auto laterB = op(p, b, 2, true), store = op(p, d, 1, false), laterD = op(p, d, 3, true);
+        auto loop = add(p, c::Node::For, {sequence(p, {load, compute, laterB, store, laterD})});
+        auto after = add(p, c::Node::Sequence);
+        sequence(p, {guard, loop, after});
+        p.nodes[loop].entryGuardStart = guard;
+        auto plan = c::constructDemands(p);
+        require(
+            plan.success && plan.deferredRingCandidates == 2 && plan.deferredRings == 0 &&
+            plan.rejectedDeferredRings == 2 && plan.deferredRejectionStage == "physical" &&
+            !plan.deferredRejectionReason.empty() && c::verifyDemands(p, plan.before).success);
+        ExecutionPolicy policy;
+        const std::array<unsigned, 6> visits{0, 1, 2, 0, 2, 1};
+        policy.trips = [&](unsigned, unsigned invocation) { return visits[invocation % visits.size()]; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < visits.size(); ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // The typed wrap receipt clears only its covered source prefix. Current
+        // source work before Previous, source work after the tail SET, and
+        // another lane's work all remain pending. A global cell also confirms
+        // that generation normalization never supplies GM visibility.
+        c::Program p;
+        p.cells = 3;
+        p.globalMemory = {false, false, true};
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto guard = add(p, c::Node::Sequence);
+        auto load = op(p, a, 0, true);
+        auto earlyD = add(p, c::Node::Operation);
+        p.nodes[earlyD].lane = d;
+        auto compute = op(p, b, 0, false);
+        p.nodes[compute].effects[1].writers = 1u << b;
+        auto store = op(p, d, 1, false);
+        auto lateD = add(p, c::Node::Operation), lateA = add(p, c::Node::Operation);
+        p.nodes[lateD].lane = d;
+        p.nodes[lateA].lane = a;
+        auto loop = add(p, c::Node::For, {sequence(p, {load, earlyD, compute, store, lateD, lateA})});
+        auto after = add(p, c::Node::Sequence);
+        sequence(p, {guard, loop, after});
+        p.nodes[loop].entryGuardStart = guard;
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.deferredRings == 2 && c::verifyDemands(p, plan.before).success);
+        auto mustRetain = [&](unsigned producer) {
+            auto changed = p;
+            changed.nodes[producer].effects[2].writers = 1u << changed.nodes[producer].lane;
+            changed.nodes[compute].effects[2].readers = 1u << b;
+            auto checked = c::verifyDemands(changed, plan.before);
+            require(
+                !checked.success && checked.deferredRejectionStage == "physical" &&
+                !checked.deferredRejectionReason.empty());
+        };
+        mustRetain(earlyD);
+        mustRetain(lateD);
+        mustRetain(lateA);
+    }
+    {
+        // A branch-contained closed ring remains the existing baseline even
+        // when its owner has guard metadata. Deferred wrap requires the ring
+        // region to be exactly the For body, so a skipped branch cannot execute
+        // a partial deferred word.
+        c::Program p;
+        p.cells = 2;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto guard = add(p, c::Node::Sequence);
+        auto load = op(p, a, 0, true), compute = op(p, b, 0, false);
+        p.nodes[compute].effects[1].writers = 1u << b;
+        auto store = op(p, d, 1, false);
+        auto conditionalWord = sequence(p, {load, compute, store});
+        auto empty = add(p, c::Node::Sequence);
+        auto choice = add(p, c::Node::Choice, {conditionalWord, empty});
+        auto body = sequence(p, {choice});
+        auto loop = add(p, c::Node::For, {body});
+        auto after = add(p, c::Node::Sequence);
+        sequence(p, {guard, loop, after});
+        p.nodes[loop].entryGuardStart = guard;
+        auto plan = c::constructDemands(p);
+        require(
+            plan.success && plan.deferredRingCandidates == 0 && plan.deferredRings == 0 &&
+            c::verifyDemands(p, plan.before).success);
+        for (const auto& commands : plan.before)
+            for (const auto& mechanism : commands)
+                require(
+                    mechanism.participation != c::Mechanism::Previous &&
+                    mechanism.participation != c::Mechanism::LoopExit);
+    }
+    for (unsigned scenario = 0; scenario < 4; ++scenario) {
+        // LoopExit may retire at function exit past unrelated-lane work. It
+        // must not stall later first-lane work, cross a Choice continuation,
+        // or escape into an enclosing loop backedge.
+        c::Program p;
+        p.cells = 2;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto guard = add(p, c::Node::Sequence);
+        auto load = op(p, a, 0, true), compute = op(p, b, 0, false), store = op(p, d, 1, false);
+        p.nodes[compute].effects[1].writers = 1u << b;
+        auto loop = add(p, c::Node::For, {sequence(p, {load, compute, store})});
+        auto after = add(p, c::Node::Sequence);
+        p.nodes[loop].entryGuardStart = guard;
+        if (scenario == 2) {
+            auto branch = sequence(p, {guard, loop, after});
+            auto empty = add(p, c::Node::Sequence);
+            auto choice = add(p, c::Node::Choice, {branch, empty});
+            auto laterA = add(p, c::Node::Operation), laterB = add(p, c::Node::Operation);
+            p.nodes[laterA].lane = a;
+            p.nodes[laterB].lane = b;
+            sequence(p, {choice, laterA, laterB});
+        } else if (scenario == 3) {
+            auto innerScope = sequence(p, {guard, loop, after});
+            auto outer = add(p, c::Node::For, {innerScope});
+            sequence(p, {outer});
+        } else {
+            std::vector<unsigned> root{guard, loop, after};
+            auto later = add(p, c::Node::Operation);
+            p.nodes[later].lane = scenario == 0 ? d : a;
+            root.push_back(later);
+            if (scenario == 1) {
+                auto laterB = add(p, c::Node::Operation);
+                p.nodes[laterB].lane = b;
+                root.push_back(laterB);
+            }
+            sequence(p, std::move(root));
+        }
+        auto plan = c::constructDemands(p);
+        require(plan.success && c::verifyDemands(p, plan.before).success);
+        if (scenario == 0)
+            require(plan.deferredRingCandidates == 2 && plan.deferredRings == 2);
+        else {
+            require(plan.deferredRingCandidates == 0 && plan.deferredRings == 0);
+            for (const auto& commands : plan.before)
+                for (const auto& mechanism : commands)
+                    require(
+                        mechanism.participation != c::Mechanism::Previous &&
+                        mechanism.participation != c::Mechanism::LoopExit);
+        }
+    }
+    {
+        // Endpoint population is a structural multiset, not node-ID order.
+        // Create siblings in reverse order, then execute load/compute/store.
+        c::Program p;
+        p.cells = 2;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto guard = add(p, c::Node::Sequence);
+        auto store = op(p, d, 1, false), compute = op(p, b, 0, false), load = op(p, a, 0, true);
+        p.nodes[compute].effects[1].writers = 1u << b;
+        auto loop = add(p, c::Node::For, {sequence(p, {load, compute, store})});
+        auto after = add(p, c::Node::Sequence);
+        sequence(p, {guard, loop, after});
+        p.nodes[loop].entryGuardStart = guard;
+        auto plan = c::constructDemands(p);
+        require(
+            plan.success && plan.deferredRingCandidates == 2 && plan.deferredRings == 2 &&
+            c::verifyDemands(p, plan.before).success);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned visit) { return visit % 3; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 6; ++invocation) {
             execute(p, plan, p.nodes.size() - 1, policy, oracle);
             oracle.check();
         }

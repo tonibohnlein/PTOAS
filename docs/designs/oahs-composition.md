@@ -1016,3 +1016,99 @@ The frozen corpus campaign `test-results/oahs-rings-corpus` preserves all
 and **152/213 PyPTO/pypto-lib** admissions. The shared test fixture is not added
 to those frozen denominators. No device execution, full system suite, default
 switch or comparison with handwritten GEMM performance is claimed.
+
+## Early recurring release: unconditional counted-loop candidate
+
+The closed-ring fallback publishes a storage release at the next visit's
+first cut. That publication may include intervening unrelated work on its
+source pipeline. An optional deferred-wrap candidate instead publishes at
+the immediate cut after the last relevant access, retaining the same physical
+cell witnesses and global event-key assignment:
+
+```text
+for iv = originalLower to originalUpper step 1:
+    if iv != originalLower: WAIT last -> first
+    first group
+    SET/WAIT between the remaining groups at their original handoff cuts
+    last group
+    SET last -> first
+if originalLower < originalUpper: WAIT last -> first
+```
+
+This provider is limited to a complete word that executes unconditionally in
+the counted loop's body, with only physical operations and empty scalar nodes.
+It rejects an enclosing recurrence and any later receiving-pipeline payload
+in the continuation, including continuation outside an enclosing choice: the
+final acquisition must not newly stall independent receiving-pipeline work.
+It does not add private loop-carried state, rewrite
+original loop bounds/yields, or solve arbitrary branch conditions. Words
+under choices and loops without the qualified original-IV contract retain
+the existing construction. The final acquisition must be at the immediate
+original post-loop cut. Empty loops execute no ring events; one-trip loops
+skip the first acquisition and consume their only release at exit.
+
+The first cut has no previous internal generation. Removing the conservative
+seed for that generation is an abstract initialization fact, not a physical
+acquisition: all history E entering the owner is retained. Later visits have
+an actual previous-release acquisition. Exit protocol cleanup does not create
+unconditional parent completion across a potentially empty loop.
+
+The wrap publication is a producer-prefix receipt, not a receipt restricted
+to the buffer that motivated it. Fresh checking reconstructs its source
+accesses from the actual publication cut. For each cell, it preserves E,
+source accesses after that publication and current-visit accesses before the
+receiving wait. Only covered source-lane read/write bits may be removed;
+other-lane bits and the separate GM visibility history remain unchanged.
+Thus a release after a store can carry the store's completion back to a later
+store without asserting a GM-read visibility guarantee. Per-owner access
+extents bound this calculation independently of numeric trip counts.
+
+For G groups and T executed iterations, synchronization remains 2*G*T
+commands. Each transformed wrap adds one static exit WAIT and two guard
+sites. This is a release-placement optimization, not an event-count saving;
+the benchmark report records executed comparisons/branches separately.
+The native checker reconstructs both generated guards from the original IV
+and bound SSA identities, with the existing exact payload snapshot unchanged.
+Tests mutate the guards, remove waits and move the acquisitions across their
+required boundaries. The source-envelope and combined-protocol checks each
+have an aggregate optional-work ceiling of 1,048,576 units, including a
+charge-before-copy bound on repeated parent/body protocol words. These are
+representation/scan limits, not wall-clock or integer-solver budgets.
+Optional rejection retains its stage and reason in the trace while returning
+the untouched baseline plan; it never replaces the baseline's success status.
+
+### Native qualification of the unconditional candidate
+
+The four targeted build targets pass, as do `oahs_composition_core`,
+`oahs_demands`, `oahs_composition` and `oahs_focused` (the focused gate takes
+154.58 seconds). The targeted public-option lit case passes. Clang C++17
+ASan/UBSan passes **2,201,494 assertions**, with unsupported leak inspection
+disabled. No full system suite or device test was run.
+
+The native fixture exercises two actual deferred families. For T iterations
+it executes 4*T SETs and 4*T WAITs, including the guarded final acquisitions;
+zero trips execute no events. It evaluates 2*(T+1) comparisons and branches,
+including two exit checks on the empty path. These scalar-IR counts are not
+machine instruction or device timing measurements. The fixture includes the
+GM destination write at the last source operation, so the cross-cell prefix
+transfer is necessary for acceptance. Removing a final wait from the optional
+candidate retains the verified baseline and reports a protocol-stage rejection.
+Eight native emission mutations reject atomically.
+
+All eight unchanged regression inputs, including historical GEMM, pass three
+paired compiler rounds after one warm-up, with median ratios **0.988–1.047**
+against InsertSync and successful untimed C++ emission. **None exercises this
+unconditional provider:** the buffering words are conditional, while the
+remaining cases fail its optional shape/cost eligibility. Their synchronization
+counts and later-prefix observations are unchanged. The improvement established
+here is the isolated native/core release-placement behavior, not an improvement
+on the eight-case quality gate. **`quality_qualified` remains false.**
+
+The frozen corpus preserves every original/prepared hash and outcome across
+all 363 records: **45/150 PTOAS** and **152/213 PyPTO/pypto-lib**. The new fixture
+is excluded from those denominators. Campaign artifacts are in the existing
+build's `test-results/oahs-deferred-corpus`, `test-results/oahs-deferred-compiler`
+and `test-results/oahs-demands` directories. The default planner is unchanged.
+One remaining cost limitation is that continuation eligibility checks payload
+lanes, not a later synchronization command that could relay the exit stall to
+another lane; that needs qualification before any replacement-quality claim.
