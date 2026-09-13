@@ -1683,3 +1683,141 @@ general first-demand improvement, not a solution to all remaining late
 acquisitions or acknowledgment costs. A later increment can reuse a return
 path that every child already establishes; it must prove that causality from
 actual child protocols rather than simply delete the parent's acknowledgment.
+
+## Composed child-return causality
+
+The next refinement reuses an ordinary parent acquisition's acknowledgment
+when every child path already returns that consumption to the publishing
+lane. It keeps the existing event-key domains and the physical completion
+checker. Disjoint storage is not evidence of safe event reuse.
+
+A seven-by-seven Boolean transfer records a **universal causal guarantee**:
+`T[out][in]` means that the outgoing lane carries every causal history that
+was already present on the incoming lane at this region's entry. It does not
+describe outstanding tokens, payload completion, memory visibility or a
+possibly executed path. Sequence composes these transfers; Choice intersects
+the arm guarantees. For and While export identity for this refinement: no
+parent acknowledgment can rely on a possibly skipped body return.
+
+The actual event-word verifier supplies the transfer. SET snapshots the
+source's current history without gating subsequent issue. WAIT joins that
+immutable snapshot into the observer. Applying a child transfer joins a copy
+of the old lane histories simultaneously, not progressively in lane order.
+Commands before a child execute once before its body transfer; they are not
+counted again as part of that body.
+
+Only the first invocation's symbolic entry-history transfer may be exported.
+The word's second copy still checks consumption-before-rearm. Accumulated
+history from that second copy is not a guarantee of the first: for example,
+`B <-> C; A <-> B` transports incoming A history into C only on a later visit.
+Fresh reconstruction derives these summaries from actual commands, never
+from the constructor's selected demands or claimed family coverage.
+
+The refinement must leave readiness/release placements and guarded event
+protocols unchanged, remove only optional acknowledgment commands, and retain
+the exact previous plan on failed qualification or exhausted optional work.
+There is no new target capability, predicate solver or default selection.
+
+The constructor currently proposes these removals for ordinary incoming Choice
+families with one unambiguous Choice root. Numbering finishes first. An explicit
+logical-to-physical mapping identifies the family's adjacent ACK SET/WAIT;
+ambiguous or allocation-fallback pairs are not eligible. At most eight pairs
+form one combined trial in a numbered candidate. The child summaries must be
+derived after all proposed removals, and the complete actual physical/protocol
+check must pass before any removal survives. The allocator's reserved key
+population (`protocol_keys`) is deliberately unchanged; this increment does
+not feed newly freed IDs back into allocation.
+
+One 4,194,304-unit allowance is shared across all child-return construction
+passes, including initial/refinement/replay/ring and later verification calls.
+It charges summary storage, command expansion, simultaneous matrix application,
+copies and the optional physical recheck before performing them. The trial and
+fresh checker may each derive summaries, but both charge this same allowance.
+The unchanged flat word checker runs first; already valid words do not pay for
+structured rescue. Exhaustion is sticky. If it occurs after earlier removals,
+one final reconstruction with the feature disabled restores the exact disabled
+plan instead of exposing a partially budgeted selection.
+
+`child_return_work` and `child_return_checks` aggregate the entire construction
+attempt; `child_return_budget_check` identifies the first exhausting verifier
+(zero if exhaustion occurred elsewhere), and `child_return_budget_exhausted`
+records whole-attempt rollback. Candidate/rejection counters count attempted
+populations across passes. `child_return_acks_removed` counts only removals in
+the selected plan. Fresh reconstruction of emitted native IR has its own bounded
+checker allowance; it is not part of the constructor's reported allowance.
+These are represented-work bounds, not exact allocator-byte or wall-time bounds.
+
+A proposed removal currently must exercise structured rescue even if the flat
+checker would already accept it. This conservative qualification can miss an
+elision, but does not weaken event reuse. Neither this limitation nor the extra
+summary verification is hidden as an admission failure: the disabled plan
+remains available for the same semantic input.
+
+### Child-return qualification
+
+All three reviewers accepted the opt-in milestone after the shared-verifier
+budget repair. The targeted incremental build passes. The six selected OAHS
+gates pass in **320.86 seconds**, including actual native child-return deletion
+and wrong-key mutations with atomic rejection. The single selected
+`insert_sync_structured_constructor.pto` lit test also passes. Clang C++17
+ASan/UBSan passes **2,277,856 assertions**. Tests include 216 independently
+checked combinations of child words and parent directions, first-copy and
+double-entry counterexamples, empty arms, zero-trip loops, payload after a
+return, and exact/one-unit-short budgets. The latter exhausts a later verifier
+and restores the exact disabled plan.
+
+The frozen replay completes **726 comparisons: 680 exact, 46 count changes**.
+Outcomes, return codes and first refusals are unchanged; admissions remain
+45/150 PTOAS, 7/35 PyPTO and 145/178 PyPTO-lib snapshots. Forty-five changes
+are the prior two-barrier reductions. The additional change is
+`pypto-lib/843b72f276ffb59a5b0b_000`: **12/12/3 becomes 13/13/3**
+(SET/WAIT/barriers). It is a generated `gemm_tile` snapshot, not the archived
+historical handwritten-GEMM benchmark. Its prepared SHA-256 is
+`d64b7d7caeb60fcc0bad14e1a24b2c4f66a27a4122a30f6a404f8452f43d30a5`.
+The frozen reference manifest is unchanged.
+
+For that sole count increase, native disabled/current outputs both reconstruct
+successfully. Independent boundary replay with arguments `[a,b,c,0,0]` and
+`[a,b,c,64,128]` observes **four earlier MTE2-to-MTE1 acquisitions and three
+earlier MTE1-to-MTE2 releases**, no later-prefix differences, and identical
+payload hashes. The ordinary A-then-B branch fixture similarly preserves B's
+later readiness while moving A's acquisition earlier, at **5/5 instead of 4/4
+executed SET/WAIT per iteration**, with unchanged scalar work and no additional
+drain. These are explicit placement/count tradeoffs, not a runtime speedup.
+
+The eight fixed regression inputs retain their previous static counts and
+boundary observations. In particular, Q projection remains 18/18 SET/WAIT
+with six named barriers; historical GEMM remains 56/59 with 21 named barriers.
+Neither selects a child-return removal in this campaign. Every output retains
+one terminal drain. The replacement gate remains **`quality_qualified=false`**.
+
+The isolated whole-compiler campaign uses three paired samples and one warmup.
+All compilations and all 16 C++ emissions pass. Median demand/existing ratios:
+
+| Input | Ratio |
+| --- | ---: |
+| One buffer | 1.033906 |
+| Two buffers | 0.997168 |
+| Three buffers | 1.035686 |
+| Four-use | 1.003166 |
+| Online softmax | 1.072448 |
+| QK matmul | 1.019610 |
+| Q projection | 1.022315 |
+| Historical GEMM | 0.974099 |
+
+The maximum individual paired ratio is **1.075521**, below the unchanged 2x
+gate. Binary SHA-256 values are:
+
+- opt driver: `71f0f5384f996ef12ba7533e194bfc578ee4f09804503ed1a200415b3d9d6cc9`
+- reconstruction driver: `9921e1d75785ef17227949c06848a64bc7f9d58b0226e30cc2e2fd74f69d706d`
+- compiler library: `f946ec147273c860e287c5d4033c5a97a659c623dbd57877292e38d66f4aad4d`
+
+The campaign records base `c24475828ce56229b07bae0f4ab037238e5e1dbc`, the
+task-owned dirty listing, tracked-diff hash, exact commands and input hashes.
+This is base-plus-diff evidence, not a retroactive clean-revision claim.
+Artifacts are under the existing build's `test-results/oahs-child-final-compiler`,
+`test-results/oahs-child-final-frozen-replay`, `test-results/oahs-demands` and
+`test-results/oahs-child-corpus-tradeoff`. The last directory contains both
+native outputs, replay scenarios and boundary reports for frozen record 193.
+The full lit/system suites and device qualification remain separate and were
+not run. Defaults and target contracts are unchanged.

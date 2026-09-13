@@ -81,6 +81,9 @@ def main():
                         'rejected_choice_demands', 'choice_demand_work',
                         'choice_demand_reserved_work', 'choice_demand_analysis_work',
                         'choice_demand_analysis_passes', 'choice_demand_budget_pass',
+                        'child_return_candidates', 'child_return_acks_removed',
+                        'rejected_child_returns', 'child_return_work',
+                        'child_return_checks', 'child_return_budget_check', 'child_return_budget_exhausted',
                         'ring_candidates', 'rejected_rings', 'ring_candidate_commands_removed', 'cut_cycles',
                         'deferred_ring_candidates', 'deferred_rings', 'rejected_deferred_rings', 'deferred_protocol_steps',
                         'periodic_deferred_rings', 'periodic_write_overlap_rejections', 'periodic_scalar_work',
@@ -421,21 +424,54 @@ def main():
                                 source_sha256=digest(choice_prefix),
                                 outputs={arm: digest(path) for arm, path in choice_outputs.items()},
                                 scenarios=choice_scenarios))
-        residual_outputs = {}
-        for arm, mode in (('selected', 'none'), ('disabled', 'without-choice-demands')):
+        residual_outputs, residual_profiles = {}, {}
+        for arm, mode in (('selected', 'none'), ('disabled', 'without-child-returns'),
+                          ('rejected', 'reject-child-returns')):
             name = 'choice-residual-' + arm
+            raw = args.output.resolve() / (name + '.native.pto')
             output = args.output.resolve() / (name + '.pto')
-            verdict = json.loads(invoke(name, [args.driver, choice_residual, 'demands:' + mode, output]))
+            verdict = json.loads(invoke(name, [args.driver, choice_residual, 'demands:' + mode, raw]))
             if not verdict['accepted'] or not verdict['atomic']:
-                raise RuntimeError('residual-B cost fallback failed')
+                raise RuntimeError('residual-B child-return construction failed')
+            invoke(name + '-normalize', compiler + [raw, '-o', output])
             residual_outputs[arm] = output
-        residual_profile = native_counters('choice-residual-selected')
-        if (residual_profile['choice_demand_families'] or not residual_profile['rejected_choice_demands'] or
-                residual_outputs['selected'].read_bytes() != residual_outputs['disabled'].read_bytes()):
-            raise RuntimeError('extra acknowledgment cost did not retain the exact baseline')
-        path_checks.append(dict(name='ordinary-choice-residual-cost', profile=residual_profile,
+            residual_profiles[arm] = native_counters(name)
+        if (not residual_profiles['selected']['choice_demand_families'] or
+                not residual_profiles['selected']['child_return_acks_removed'] or
+                residual_profiles['disabled']['child_return_acks_removed'] or
+                not residual_profiles['rejected']['rejected_child_returns']):
+            raise RuntimeError('child-return selection or fault rollback was not exercised')
+        if residual_outputs['rejected'].read_bytes() != residual_outputs['disabled'].read_bytes():
+            raise RuntimeError('rejected child-return candidate changed the exact baseline')
+        residual_scenarios = []
+        for count, take in ((0, False), (1, False), (1, True), (3, False), (3, True)):
+            scenario = dict(arguments=['src', count, take])
+            old, old_metrics = run(residual_outputs['disabled'], scenario)
+            new, new_metrics = run(residual_outputs['selected'], scenario)
+            for iteration in range(count):
+                first = 4 * iteration + 2
+                if (new.before[first]['completed'].get('PIPE_MTE2', -1) != first - 2 or
+                        new.before[first + 1]['completed'].get('PIPE_MTE2', -1) != first - 1):
+                    raise RuntimeError('child-return candidate broadened A or lost residual B readiness')
+            event_cost = lambda metrics: sum(metrics['counts'].get(op, 0)
+                                             for op in ('pto.set_flag', 'pto.wait_flag'))
+            if event_cost(new_metrics) - event_cost(old_metrics) > 2 * count:
+                raise RuntimeError('child-return candidate exceeded the existing per-owner cost cap')
+            if old_metrics['scalar_counts'] != new_metrics['scalar_counts']:
+                raise RuntimeError('child-return candidate added scalar participation work')
+            residual_scenarios.append(dict(arguments=scenario['arguments'], differences=compare(old, new),
+                                           baseline_counts=old_metrics['counts'],
+                                           selected_counts=new_metrics['counts']))
+        path_checks.append(dict(name='ordinary-choice-residual-child-return', profiles=residual_profiles,
                                 source_sha256=digest(choice_residual),
-                                output_sha256=digest(residual_outputs['selected'])))
+                                output_sha256=digest(residual_outputs['selected']), scenarios=residual_scenarios))
+        for mutation in ('child-drop-return', 'child-wrong-return-key'):
+            name = 'choice-residual-' + mutation
+            verdict = json.loads(invoke(name, [args.driver, choice_residual, 'demands:' + mutation,
+                                               args.output.resolve() / (name + '.pto')]))
+            if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
+                raise RuntimeError('actual child-return corruption escaped reconstruction: ' + mutation)
+            path_checks.append(dict(name=name, verdict=verdict))
         for mutation in ('drop-set', 'drop-wait', 'duplicate-set', 'wrong-key',
                          'early-publication', 'late-acquisition'):
             name = 'choice-prefix-' + mutation

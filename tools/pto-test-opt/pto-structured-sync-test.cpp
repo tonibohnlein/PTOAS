@@ -58,8 +58,10 @@ int main(int argc,char **argv) {
     const bool rejectLateEntry = demandPlacement && mode=="reject-late-entry";
     const bool withoutChoice = demandPlacement && mode=="without-choice-demands";
     const bool rejectChoice = demandPlacement && mode=="reject-choice-demands";
+    const bool withoutChild = demandPlacement && mode=="without-child-returns";
+    const bool rejectChild = demandPlacement && mode=="reject-child-returns";
     if (rejectRefinement || withoutReplay || rejectReplay || rejectEntry || rejectDeferred ||
-        withoutLateEntry || rejectLateEntry || withoutChoice || rejectChoice) mode="none";
+        withoutLateEntry || rejectLateEntry || withoutChoice || rejectChoice || withoutChild || rejectChild) mode="none";
     const bool precision = mode.consume_front("cuts:");
     const bool composition = demandPlacement || precision || mode.consume_front("composition:");
     auto mutate=[&](func::FuncOp working) {
@@ -85,6 +87,18 @@ int main(int argc,char **argv) {
         };
         working.walk([&](Operation *op) {
             if (chosen) return;
+            if (demandPlacement && mode.starts_with("child-")) {
+                auto set=dyn_cast<SetFlagOp>(op);
+                auto branch=op->getParentOfType<scf::IfOp>();
+                if (!set || !branch || syncOnly(branch) ||
+                    set.getSrcPipe().getPipe()!=PIPE::PIPE_V || set.getDstPipe().getPipe()!=PIPE::PIPE_MTE2) return;
+                auto wait=dyn_cast_or_null<WaitFlagOp>(op->getNextNode());
+                if (wait && wait.getSrcPipe()==set.getSrcPipe() && wait.getDstPipe()==set.getDstPipe() &&
+                    wait.getEventId()==set.getEventId()) {
+                    chosen=op;sequenceSource=wait;
+                }
+                return;
+            }
             if (demandPlacement && (mode.starts_with("deferred-") || mode.starts_with("periodic-"))) {
                 auto branch=dyn_cast<scf::IfOp>(op);
                 if (!branch || !syncOnly(branch)) return;
@@ -298,6 +312,14 @@ int main(int argc,char **argv) {
             }
         });
         if (!chosen) return;
+        if (mode=="child-drop-return") {
+            sequenceSource->erase();chosen->erase();changed=true;return;
+        }
+        if (mode=="child-wrong-return-key") {
+            auto set=cast<SetFlagOp>(chosen);
+            set.setEventIdAttr(EventAttr::get(&context,static_cast<EVENT>((unsigned(set.getEventId().getEvent())+1)%8)));
+            changed=true;return;
+        }
         if (mode=="periodic-wrong-first" || mode=="periodic-wrong-exit") {
             auto constant=dyn_cast<arith::ConstantIndexOp>(chosen);
             if (!constant || constant.value()==INT64_MAX) return;
@@ -418,7 +440,8 @@ int main(int argc,char **argv) {
     };
     using Constructor=structured_sync::testing::CompositionConstructor;
     auto result=composition ? structured_sync::testing::constructCompositionalSync(
-        function,gm,mutate,hardware,withoutChoice?Constructor::DemandsWithoutChoiceDemands:
+        function,gm,mutate,hardware,withoutChild?Constructor::DemandsWithoutChildReturns:
+        rejectChild?Constructor::DemandsRejectChildReturns:withoutChoice?Constructor::DemandsWithoutChoiceDemands:
         rejectChoice?Constructor::DemandsRejectChoiceDemands:withoutLateEntry?Constructor::DemandsWithoutLateEntry:
         rejectLateEntry?Constructor::DemandsRejectLateEntry:rejectDeferred?Constructor::DemandsRejectDeferredRings:
         rejectEntry?Constructor::DemandsRejectEntryProposal:

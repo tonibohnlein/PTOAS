@@ -263,6 +263,197 @@ static void execute(
 int main()
 {
     {
+        // A parent's WAIT-consumption may return through either closed child
+        // protocol. The key domains remain disjoint; memory independence does
+        // not provide this evidence. Reconstruct it from the actual commands.
+        c::Program p;
+        p.cells = 1;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto start = add(p, c::Node::Sequence);
+        std::array<unsigned, 2> cuts{}, arms{};
+        for (unsigned i = 0; i < 2; ++i) {
+            cuts[i] = add(p, c::Node::Sequence);
+            arms[i] = sequence(p, {cuts[i]});
+        }
+        auto choice = add(p, c::Node::Choice, {arms[0], arms[1]});
+        auto root = sequence(p, {start, choice});
+        c::Result plan;
+        plan.before.resize(p.nodes.size());
+        plan.before[start] = {{c::Mechanism::Publish, a, b, 1}};
+        plan.before[choice] = {{c::Mechanism::Acquire, a, b, 1}};
+        for (unsigned i = 0; i < 2; ++i) {
+            unsigned key = i + 2;
+            plan.before[cuts[i]] = {
+                {c::Mechanism::Publish, b, a, key},
+                {c::Mechanism::Acquire, b, a, key},
+                {c::Mechanism::Publish, a, b, key},
+                {c::Mechanism::Acquire, a, b, key}};
+        }
+        require(c::verifyDemands(p, plan.before).success);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned id, unsigned visit) { return (id + visit) % 4; };
+        policy.choice = [](unsigned, unsigned visit) { return visit % 2; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 8; ++invocation) {
+            execute(p, plan, root, policy, oracle);
+            oracle.check();
+        }
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            auto empty = plan.before;
+            empty[cuts[arm]].clear();
+            require(!c::verifyDemands(p, empty).success);
+            for (unsigned command = 0; command < 4; ++command) {
+                auto missing = plan.before;
+                missing[cuts[arm]].erase(missing[cuts[arm]].begin() + command);
+                require(!c::verifyDemands(p, missing).success);
+                auto wrong = plan.before;
+                wrong[cuts[arm]][command].forwardKey = 7;
+                require(!c::verifyDemands(p, wrong).success);
+            }
+        }
+        auto sharedKey = plan.before;
+        for (auto& command : sharedKey[cuts[1]])
+            command.forwardKey = 2;
+        require(!c::verifyDemands(p, sharedKey).success);
+        // The common acquisition must execute before the child returns its
+        // incoming history. A later WAIT cannot retroactively join that return.
+        auto tooLate = plan.before;
+        tooLate[p.nodes[root].children.back()] = tooLate[choice];
+        tooLate[choice].clear();
+        require(!c::verifyDemands(p, tooLate).success);
+        // Child work issued after its return is not covered by that causal
+        // summary. The separate physical checker must retain this hazard.
+        auto payloadAfterReturn = p;
+        for (unsigned cut : cuts) {
+            payloadAfterReturn.nodes[cut].kind = c::Node::Operation;
+            payloadAfterReturn.nodes[cut].lane = b;
+            payloadAfterReturn.nodes[cut].effects[0].writers = 1u << b;
+        }
+        auto continuation = p.nodes[root].children.back();
+        payloadAfterReturn.nodes[continuation].kind = c::Node::Operation;
+        payloadAfterReturn.nodes[continuation].lane = a;
+        payloadAfterReturn.nodes[continuation].effects[0].readers = 1u << a;
+        require(!c::verifyDemands(payloadAfterReturn, plan.before).success);
+    }
+    {
+        // One visit of B<->C followed by A<->B does NOT carry A-entry history
+        // into C. Two visits do. Exporting a summary after the rearm check's
+        // second copy would incorrectly accept this parent C->A protocol.
+        c::Program p;
+        p.cells = 1;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto start = add(p, c::Node::Sequence);
+        auto first = add(p, c::Node::Sequence), second = add(p, c::Node::Sequence);
+        auto child = sequence(p, {first, second});
+        sequence(p, {start, child});
+        std::vector<std::vector<c::Mechanism>> actual(p.nodes.size());
+        actual[start] = {{c::Mechanism::Publish, d, a, 1}, {c::Mechanism::Acquire, d, a, 1}};
+        actual[first] = {
+            {c::Mechanism::Publish, b, d, 2},
+            {c::Mechanism::Acquire, b, d, 2},
+            {c::Mechanism::Publish, d, b, 2},
+            {c::Mechanism::Acquire, d, b, 2}};
+        actual[second] = {
+            {c::Mechanism::Publish, a, b, 3},
+            {c::Mechanism::Acquire, a, b, 3},
+            {c::Mechanism::Publish, b, a, 3},
+            {c::Mechanism::Acquire, b, a, 3}};
+        require(!c::verifyDemands(p, actual).success);
+        std::swap(actual[first], actual[second]);
+        require(c::verifyDemands(p, actual).success);
+        // The same non-idempotent transfer in a child's entry commands must
+        // not execute again as part of the child's body summary.
+        actual[first].clear();
+        actual[second].clear();
+        actual[child] = {{c::Mechanism::Rendezvous, b, d, 0, 0}, {c::Mechanism::Rendezvous, b, a, 0, 0}};
+        require(!c::verifyDemands(p, actual).success);
+        std::swap(actual[child][0], actual[child][1]);
+        require(c::verifyDemands(p, actual).success);
+    }
+    for (auto kind : {c::Node::For, c::Node::While}) {
+        // Loop bodies do not promise an unconditional return transfer. For
+        // can skip every visit; While intentionally exports identity here too.
+        c::Program p;
+        p.cells = 1;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto start = add(p, c::Node::Sequence), inside = add(p, c::Node::Sequence);
+        auto body = sequence(p, {inside});
+        unsigned loop;
+        if (kind == c::Node::For)
+            loop = add(p, kind, {body});
+        else {
+            auto other = sequence(p, {});
+            loop = add(p, kind, {other, body});
+        }
+        auto root = sequence(p, {start, loop});
+        std::vector<std::vector<c::Mechanism>> actual(p.nodes.size());
+        actual[start] = {{c::Mechanism::Publish, a, b, 1}, {c::Mechanism::Acquire, a, b, 1}};
+        actual[inside] = {
+            {c::Mechanism::Publish, b, a, 2},
+            {c::Mechanism::Acquire, b, a, 2},
+            {c::Mechanism::Publish, a, b, 2},
+            {c::Mechanism::Acquire, a, b, 2}};
+        require(!c::verifyDemands(p, actual).success);
+        actual[p.nodes[root].children.back()] = {{c::Mechanism::Publish, b, a, 1}, {c::Mechanism::Acquire, b, a, 1}};
+        require(c::verifyDemands(p, actual).success);
+    }
+    {
+        // Differential qualification of universal arm transfers: six ordered
+        // two-packet words per arm, all six directed parent demands. The
+        // independent graph injects fresh consumption on each visit and tests
+        // both arm outcomes without relying on production transfer matrices.
+        std::array<unsigned, 3> lanes{unsigned(Pipe::V), unsigned(Pipe::MTE2), unsigned(Pipe::MTE3)};
+        std::array<std::pair<unsigned, unsigned>, 3> pairs{{{0, 1}, {0, 2}, {1, 2}}};
+        std::vector<std::pair<unsigned, unsigned>> words;
+        for (unsigned first = 0; first < pairs.size(); ++first)
+            for (unsigned second = 0; second < pairs.size(); ++second)
+                if (first != second)
+                    words.push_back({first, second});
+        for (const auto& left : words)
+            for (const auto& right : words)
+                for (unsigned source : lanes)
+                    for (unsigned target : lanes) {
+                        if (source == target)
+                            continue;
+                        c::Program p;
+                        p.cells = 1;
+                        auto start = add(p, c::Node::Sequence);
+                        std::array<unsigned, 2> cuts{}, arms{};
+                        for (unsigned arm = 0; arm < 2; ++arm) {
+                            cuts[arm] = add(p, c::Node::Sequence);
+                            arms[arm] = sequence(p, {cuts[arm]});
+                        }
+                        auto choice = add(p, c::Node::Choice, {arms[0], arms[1]});
+                        auto root = sequence(p, {start, choice});
+                        c::Result plan;
+                        plan.before.resize(p.nodes.size());
+                        plan.before[start] = {
+                            {c::Mechanism::Publish, source, target, 1}, {c::Mechanism::Acquire, source, target, 1}};
+                        for (unsigned arm = 0; arm < 2; ++arm) {
+                            auto word = arm ? right : left;
+                            for (unsigned packet : {word.first, word.second}) {
+                                auto [a, b] = pairs[packet];
+                                auto& commands = plan.before[cuts[arm]];
+                                unsigned key = arm + 2;
+                                commands.push_back({c::Mechanism::Publish, lanes[a], lanes[b], key});
+                                commands.push_back({c::Mechanism::Acquire, lanes[a], lanes[b], key});
+                                commands.push_back({c::Mechanism::Publish, lanes[b], lanes[a], key});
+                                commands.push_back({c::Mechanism::Acquire, lanes[b], lanes[a], key});
+                            }
+                        }
+                        Oracle oracle;
+                        ExecutionPolicy policy;
+                        policy.trips = [](unsigned, unsigned) { return 0u; };
+                        policy.choice = [](unsigned, unsigned visit) { return visit % 2; };
+                        for (unsigned invocation = 0; invocation < 3; ++invocation)
+                            execute(p, plan, root, policy, oracle);
+                        bool expected = true;
+                        for (auto [wait, set] : oracle.rearms)
+                            expected &= oracle.reaches(wait, set);
+                        require(c::verifyDemands(p, plan.before).success == expected);
+                    }
+    }
+    {
         // Ordinary Choice: the first A consumer must acquire the prefix
         // after writeA, not the later B write. B remains an independent demand.
         c::Program p;
@@ -337,14 +528,58 @@ int main()
         auto wrong = std::find(wrongKey[choice].begin(), wrongKey[choice].end(), waiting);
         ++wrong->forwardKey;
         require(!c::verifyDemands(p, wrongKey).success);
-        // The A-only receipt must not cover a later B consumer. A separate
-        // B family costs two additional pairs here, exceeding the fixed cap.
+        // The A-only receipt must not cover a later B consumer. Child B
+        // handoffs can return the parent's consumption, avoiding its separate
+        // ACK while preserving both distinct physical readiness frontiers.
         require(!c::verifyDemands(residualB, plan.before).success);
-        auto residualBaseline = c::testing::constructDemandsWithoutChoiceDemands(residualB);
+        auto residualBaseline = c::testing::constructDemandsWithoutChildReturns(residualB);
         auto residualPlan = c::constructDemands(residualB);
         require(
-            residualPlan.success && residualPlan.before == residualBaseline.before &&
-            residualPlan.choiceDemandFamilies == 0 && residualPlan.rejectedChoiceDemands > 0);
+            residualPlan.success && residualPlan.choiceDemandFamilies > 0 && residualPlan.childReturnAcksRemoved > 0 &&
+            c::verifyDemands(residualB, residualPlan.before).success);
+        auto rejectedChild = c::testing::constructDemandsRejectingChildReturns(residualB);
+        require(
+            rejectedChild.success && rejectedChild.before == residualBaseline.before &&
+            rejectedChild.rejectedChildReturns > 0);
+        for (uint64_t limit : {uint64_t(0), uint64_t(1)}) {
+            auto limited = c::testing::constructDemandsWithChildReturnWorkLimit(residualB, limit);
+            require(limited.success && limited.before == residualBaseline.before && limited.childReturnWork <= limit);
+        }
+        require(
+            c::testing::constructDemandsWithChildReturnWorkLimit(residualB, UINT64_MAX).before == residualPlan.before);
+        require(residualPlan.childReturnChecks > 1 && !residualPlan.childReturnBudgetExhausted);
+        auto exactChildBudget =
+            c::testing::constructDemandsWithChildReturnWorkLimit(residualB, residualPlan.childReturnWork);
+        require(exactChildBudget.before == residualPlan.before && !exactChildBudget.childReturnBudgetExhausted);
+        auto shortChildBudget =
+            c::testing::constructDemandsWithChildReturnWorkLimit(residualB, residualPlan.childReturnWork - 1);
+        require(
+            shortChildBudget.success && shortChildBudget.childReturnBudgetExhausted &&
+            shortChildBudget.before == residualBaseline.before &&
+            shortChildBudget.childReturnWork < residualPlan.childReturnWork);
+        require(shortChildBudget.childReturnBudgetCheck > 1);
+        bool refusedAfterDiscovery = false;
+        for (unsigned fraction = 1; fraction < 16; ++fraction) {
+            uint64_t limit = residualPlan.childReturnWork * fraction / 16;
+            auto limited = c::testing::constructDemandsWithChildReturnWorkLimit(residualB, limit);
+            require(limited.success && limited.childReturnWork <= limit);
+            require(c::verifyDemands(residualB, limited.before).success);
+            if (limited.childReturnBudgetExhausted)
+                require(limited.before == residualBaseline.before);
+            if (limited.rejectedChildReturns && !limited.childReturnAcksRemoved) {
+                require(limited.before == residualBaseline.before);
+                refusedAfterDiscovery = true;
+            }
+        }
+        require(refusedAfterDiscovery);
+        ExecutionPolicy residualPolicy;
+        residualPolicy.trips = [](unsigned, unsigned visit) { return (visit * 3) % 5; };
+        residualPolicy.choice = [](unsigned, unsigned visit) { return visit % 2; };
+        Oracle residualOracle;
+        for (unsigned invocation = 0; invocation < 8; ++invocation) {
+            execute(residualB, residualPlan, root, residualPolicy, residualOracle);
+            residualOracle.check();
+        }
         auto empty = p;
         empty.nodes[otherFirst].effects.assign(p.cells, {});
         empty.nodes[otherLater].effects.assign(p.cells, {});

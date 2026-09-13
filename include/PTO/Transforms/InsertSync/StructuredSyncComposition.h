@@ -127,6 +127,12 @@ struct Result {
     uint64_t rejectedChoiceDemands = 0, choiceDemandWork = 0;
     uint64_t choiceDemandReservedWork = 0, choiceDemandAnalysisWork = 0;
     uint64_t choiceDemandAnalysisPasses = 0, choiceDemandBudgetPass = 0;
+    // Bounded child-return causal summaries only remove ordinary family ACKs;
+    // they never provide physical completion or alter event capabilities.
+    uint64_t childReturnCandidates = 0, childReturnAcksRemoved = 0;
+    uint64_t rejectedChildReturns = 0, childReturnWork = 0;
+    uint64_t childReturnChecks = 0, childReturnBudgetCheck = 0;
+    bool childReturnBudgetExhausted = false;
     uint64_t ringCandidates = 0, rejectedRings = 0, ringCandidateCommandsRemoved = 0;
     uint64_t deferredRingCandidates = 0, deferredRings = 0, rejectedDeferredRings = 0;
     uint64_t deferredProtocolSteps = 0;
@@ -175,6 +181,9 @@ Result constructDemandsRejectingLateEntry(const Program& program);
 Result constructDemandsWithoutChoiceDemands(const Program& program);
 Result constructDemandsWithChoiceWorkLimit(const Program& program, uint64_t limit);
 Result constructDemandsRejectingChoiceDemands(const Program& program);
+Result constructDemandsWithoutChildReturns(const Program& program);
+Result constructDemandsWithChildReturnWorkLimit(const Program& program, uint64_t limit);
+Result constructDemandsRejectingChildReturns(const Program& program);
 // Fault injection before refinement checking/emission, never on the initial
 // plan: discard the optional candidate's mechanisms to exercise exact rollback.
 Result constructDemandsRejectingRefinement(const Program& program);
