@@ -1161,7 +1161,13 @@ Outcome ss::testing::constructCompositionalSync(
                      << selected.replayedFallbackDemands << " allocation_fallback_scopes "
                      << selected.allocationFallbackScopes << " entry_episodes " << selected.entryEpisodes
                      << " entry_reply_families " << selected.entryReplyFamilies << " rejected_entry_proposals "
-                     << selected.rejectedEntryProposals << " ring_candidates " << selected.ringCandidates
+                     << selected.rejectedEntryProposals << " entry_summary_slots " << selected.entrySummarySlots
+                     << " entry_summary_scans " << selected.entrySummaryScans << " entry_storage_units "
+                     << selected.entryStorageUnits << " entry_candidate_pairs " << selected.entryCandidatePairs
+                     << " entry_witness_cells " << selected.entryWitnessCells << " entry_witnesses "
+                     << selected.entryWitnesses << " entry_source_overlap_rejections "
+                     << selected.entrySourceOverlapRejections << " entry_summary_skipped "
+                     << selected.entrySummarySkipped << " ring_candidates " << selected.ringCandidates
                      << " rejected_rings " << selected.rejectedRings << " ring_candidate_commands_removed "
                      << selected.ringCandidateCommandsRemoved << " rendezvous_packets " << rendezvousPackets
                      << " deferred_ring_candidates " << selected.deferredRingCandidates << " deferred_rings "

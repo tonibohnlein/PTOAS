@@ -1236,9 +1236,28 @@ namespace {
 // one sequence the last relevant read/write on a lane names a sufficient
 // prefix, even when that child is an arbitrary conditional or nested loop.
 struct DemandAnalysis {
+    using EntryWitnessKey = std::pair<unsigned, unsigned>;
+    static constexpr uint64_t MaxIncomingEntryWork = 1u << 20;
+    struct FirstLaneSummary {
+        std::array<unsigned, MaxAlternatives> operations{};
+        unsigned count = 0;
+        bool mayNoLane = true, valid = true;
+
+        bool insert(unsigned id)
+        {
+            if (std::find(operations.begin(), operations.begin() + count, id) != operations.begin() + count)
+                return true;
+            if (count == operations.size())
+                return valid = false;
+            operations[count++] = id;
+            return true;
+        }
+    };
+    using FirstSummary = std::array<FirstLaneSummary, c::LaneCount>;
     std::vector<c::Effects> effects;
     std::vector<uint64_t> subtreeNodes;
     std::vector<uint8_t> laneMask, followingLaneMask;
+    std::vector<FirstSummary> entryFirst;
     std::vector<std::vector<unsigned>> owned;
     std::vector<unsigned> parent;
     std::vector<unsigned> scopeOrder;
@@ -1247,6 +1266,30 @@ struct DemandAnalysis {
     std::vector<std::vector<c::CompletionDemand>> requests;
     std::vector<std::set<unsigned>> capture;
     std::vector<std::vector<PrefixState::EventKey>> release;
+    std::map<EntryWitnessKey, c::Effects> entryWitnesses;
+    uint64_t entrySummarySlots = 0, entrySummaryScans = 0, entryStorageUnits = 0;
+    uint64_t entryCandidatePairs = 0;
+    uint64_t entryWitnessCells = 0, entryWitnessCount = 0, entrySourceOverlapRejections = 0;
+    uint64_t entrySummarySkipped = 0;
+
+    const c::Effects* entryWitness(const c::CompletionDemand& demand) const
+    {
+        auto found = entryWitnesses.find({demand.acquisition, demand.observer});
+        return found == entryWitnesses.end() ? nullptr : &found->second;
+    }
+
+    void recordEntryStats(c::Result& result) const
+    {
+        result.entrySummarySlots = entrySummarySlots;
+        result.entrySummaryScans = entrySummaryScans;
+        result.entryStorageUnits = entryStorageUnits;
+        result.entryCandidatePairs = entryCandidatePairs;
+        result.entryWitnessCells = entryWitnessCells;
+        result.entryWitnesses = entryWitnessCount;
+        result.entrySourceOverlapRejections = entrySourceOverlapRejections;
+        result.entrySummarySkipped = entrySummarySkipped;
+    }
+
     bool build(const c::Program& p, std::string& reason)
     {
         if (!summarize(p, effects, reason))
@@ -1262,10 +1305,33 @@ struct DemandAnalysis {
         capture.resize(p.nodes.size());
         release.resize(p.nodes.size());
         owned.resize(p.nodes.size());
+        uint64_t incomingEntryScanWork = 0, incomingEntryStorage = 0;
+        auto chargeEntryScans = [&](uint64_t count) {
+            if (count > MaxIncomingEntryWork - incomingEntryScanWork) {
+                entrySummarySkipped = 1;
+                return false;
+            }
+            incomingEntryScanWork += count;
+            entrySummaryScans += count;
+            return true;
+        };
+        auto chargeEntryStorage = [&](uint64_t count) {
+            if (count > MaxIncomingEntryWork - incomingEntryStorage) {
+                entrySummarySkipped = 1;
+                return false;
+            }
+            incomingEntryStorage += count;
+            entryStorageUnits += count;
+            return true;
+        };
+        // Mandatory structural metadata is independent of the optional first-
+        // consumer population. Build it first so the cheap pre-scan can require
+        // the same qualified owner/body shape as demand placement.
         for (unsigned id = 0; id < p.nodes.size(); ++id) {
-            if (p.nodes[id].kind == c::Node::Operation)
+            const auto& node = p.nodes[id];
+            if (node.kind == c::Node::Operation)
                 laneMask[id] |= uint8_t(1u << p.nodes[id].lane);
-            for (unsigned child : p.nodes[id].children)
+            for (unsigned child : node.children)
                 laneMask[id] |= laneMask[child];
         }
         for (unsigned scope = 0; scope < p.nodes.size(); ++scope) {
@@ -1276,7 +1342,7 @@ struct DemandAnalysis {
                 if (i + 1 < children.size())
                     next[children[i]] = children[i + 1];
             }
-            for (auto child : children)
+            for (unsigned child : children)
                 subtreeNodes[scope] += subtreeNodes[child];
             if (p.nodes[scope].kind == c::Node::Sequence) {
                 uint8_t later = 0;
@@ -1285,6 +1351,121 @@ struct DemandAnalysis {
                     later |= laneMask[*child];
                 }
             }
+        }
+        bool needsEntryFirst = false;
+        if (chargeEntryScans(p.nodes.size())) {
+            for (unsigned owner = 0; owner < p.nodes.size() && !needsEntryFirst; ++owner) {
+                const auto& node = p.nodes[owner];
+                if (node.kind != c::Node::For || node.entryGuardStart == NoCut || node.children.empty() ||
+                    parent[owner] == NoCut || p.nodes[parent[owner]].kind != c::Node::Sequence ||
+                    next[owner] == NoCut || parent[node.entryGuardStart] != parent[owner] ||
+                    position[node.entryGuardStart] > position[owner] ||
+                    p.nodes[node.children[0]].kind != c::Node::Sequence)
+                    continue;
+                needsEntryFirst = std::any_of(
+                    p.nodes[node.children[0]].children.begin(), p.nodes[node.children[0]].children.end(),
+                    [&](unsigned child) { return p.nodes[child].kind == c::Node::Choice; });
+            }
+        }
+        bool hasEntryFirst = false;
+        const uint64_t slotWidth = uint64_t(c::LaneCount) * MaxAlternatives;
+        const uint64_t summaryWidth = uint64_t(c::LaneCount) * (MaxAlternatives + 3);
+        if (needsEntryFirst && p.nodes.size() <= (MaxIncomingEntryWork - 1) / summaryWidth) {
+            uint64_t slots = p.nodes.size() * slotWidth;
+            uint64_t storage = p.nodes.size() * summaryWidth + 1;
+            if (chargeEntryStorage(storage)) {
+                entrySummarySlots = slots;
+                entryFirst.resize(p.nodes.size());
+                hasEntryFirst = true;
+            }
+        } else
+            entrySummarySkipped = 1;
+        // Scan charges are made immediately before the work they cover. If the
+        // finite optional allowance is exhausted, discard the incomplete
+        // population. Structural order intentionally decides which later
+        // proposals are forgone; this is a precision limit, not an admission
+        // rule or a claim of globally optimal selection.
+        for (unsigned id = 0; id < p.nodes.size() && hasEntryFirst; ++id) {
+            const auto& node = p.nodes[id];
+            if (!chargeEntryScans(1)) {
+                hasEntryFirst = false;
+                break;
+            }
+            if (node.kind == c::Node::Operation) {
+                auto& summary = entryFirst[id][node.lane];
+                summary.operations[summary.count++] = id;
+                summary.mayNoLane = false;
+                continue;
+            }
+            if (node.kind == c::Node::For || node.kind == c::Node::While) {
+                if (!chargeEntryScans(c::LaneCount)) {
+                    hasEntryFirst = false;
+                    break;
+                }
+                for (auto& summary : entryFirst[id])
+                    summary.valid = false;
+                continue;
+            }
+            if (node.kind == c::Node::Sequence) {
+                for (unsigned child : node.children) {
+                    for (unsigned observer = 0; observer < c::LaneCount; ++observer) {
+                        auto& summary = entryFirst[id][observer];
+                        const auto& part = entryFirst[child][observer];
+                        if (!summary.mayNoLane)
+                            continue;
+                        if (!chargeEntryScans(1 + (part.valid ? part.count : 0))) {
+                            hasEntryFirst = false;
+                            break;
+                        }
+                        summary.valid &= part.valid;
+                        if (summary.valid)
+                            for (unsigned i = 0; i < part.count; ++i)
+                                summary.insert(part.operations[i]);
+                        summary.mayNoLane &= part.mayNoLane;
+                    }
+                    if (!hasEntryFirst)
+                        break;
+                }
+                if (!hasEntryFirst)
+                    break;
+                continue;
+            }
+            for (unsigned observer = 0; observer < c::LaneCount; ++observer) {
+                auto& summary = entryFirst[id][observer];
+                summary.mayNoLane = false;
+                for (unsigned child : node.children) {
+                    const auto& part = entryFirst[child][observer];
+                    if (!chargeEntryScans(1 + (part.valid ? part.count : 0))) {
+                        hasEntryFirst = false;
+                        break;
+                    }
+                    summary.valid &= part.valid;
+                    if (summary.valid)
+                        for (unsigned i = 0; i < part.count; ++i)
+                            summary.insert(part.operations[i]);
+                    summary.mayNoLane |= part.mayNoLane;
+                }
+                if (!hasEntryFirst)
+                    break;
+            }
+        }
+        if (!hasEntryFirst)
+            entryFirst.clear();
+        auto reserveIncomingEntry = [&](unsigned root) {
+            if (!hasEntryFirst)
+                return false;
+            if (!chargeEntryScans(c::LaneCount))
+                return false;
+            for (const auto& summary : entryFirst[root]) {
+                if (!summary.valid) {
+                    entrySummarySkipped = 1;
+                    return false;
+                }
+            }
+            return true;
+        };
+        for (unsigned scope = 0; scope < p.nodes.size(); ++scope) {
+            const auto& children = p.nodes[scope].children;
             if (p.nodes[scope].kind != c::Node::Sequence || children.empty())
                 continue;
             using Positions = std::array<int, c::LaneCount>;
@@ -1302,37 +1483,111 @@ struct DemandAnalysis {
                         cells.resize(p.cells);
                     for (unsigned first : p.nodes[n.children[0]].children) {
                         const auto& consumer = p.nodes[first];
-                        if (consumer.kind == c::Node::Operation)
-                            for (unsigned source = 0; source < c::LaneCount; ++source) {
-                                if (source == consumer.lane)
-                                    continue;
-                                c::CompletionDemand d{scope, child, first, source, consumer.lane, {}};
-                                int last = -1;
-                                bool supported = true;
-                                for (unsigned cell = 0; cell < p.cells; ++cell) {
-                                    const auto& e = consumer.effects[cell];
-                                    if ((e.readers || e.writers) &&
-                                        ((effects[child][cell].readers | effects[child][cell].writers) &
-                                         (1u << source)))
-                                        supported = false;
-                                    int previous = -1;
-                                    if (e.readers || e.writers)
-                                        previous = writes[cell][source];
-                                    if (e.writers)
-                                        previous = std::max(previous, reads[cell][source]);
-                                    if (previous < 0)
+                        bool summarized = consumer.kind == c::Node::Operation ||
+                                          (consumer.kind == c::Node::Choice && reserveIncomingEntry(first));
+                        if (summarized)
+                            for (unsigned observer = 0; observer < c::LaneCount; ++observer) {
+                                std::array<unsigned, MaxAlternatives> alternatives{};
+                                unsigned count = 0;
+                                if (consumer.kind == c::Node::Operation) {
+                                    if (consumer.lane != observer)
                                         continue;
-                                    supported &= !seen[consumer.lane][cell] &&
-                                                 !((effects[child][cell].readers | effects[child][cell].writers) &
-                                                   (1u << source));
-                                    d.cells.push_back(cell);
-                                    last = std::max(last, previous);
+                                    alternatives[count++] = first;
+                                } else {
+                                    const auto& summary = entryFirst[first][observer];
+                                    count = summary.count;
+                                    std::copy_n(summary.operations.begin(), count, alternatives.begin());
                                 }
-                                if (!supported || last < 0)
+                                if (!count)
                                     continue;
-                                d.publication = children[std::max(unsigned(last + 1), position[n.entryGuardStart])];
-                                capture[d.publication].insert(source);
-                                entries[child].push_back(std::move(d));
+                                uint64_t unionScans = uint64_t(count) * p.cells;
+                                if (!chargeEntryScans(unionScans))
+                                    break;
+                                // Sparse stack storage avoids allocating an
+                                // Effects vector for an empty or rejected
+                                // observer/source pair. This union is computed
+                                // once and shared by every candidate source.
+                                std::array<unsigned, c::MaxCells> firstCells{};
+                                std::array<c::History, c::MaxCells> firstEffects{};
+                                std::array<unsigned, c::MaxCells> witnessCells{};
+                                unsigned firstCount = 0, witnessCount = 0;
+                                uint8_t observerBit = uint8_t(1u << observer);
+                                for (unsigned cell = 0; cell < p.cells; ++cell) {
+                                    c::History combined;
+                                    for (unsigned i = 0; i < count; ++i) {
+                                        const auto& effect = p.nodes[alternatives[i]].effects[cell];
+                                        combined.readers |= effect.readers & observerBit;
+                                        combined.writers |= effect.writers & observerBit;
+                                    }
+                                    if (!combined.readers && !combined.writers)
+                                        continue;
+                                    firstCells[firstCount] = cell;
+                                    firstEffects[firstCount++] = combined;
+                                    if (!seen[observer][cell])
+                                        witnessCells[witnessCount++] = cell;
+                                }
+                                if (!firstCount || !witnessCount)
+                                    continue;
+                                for (unsigned source = 0; source < c::LaneCount; ++source) {
+                                    if (source == observer)
+                                        continue;
+                                    ++entryCandidatePairs;
+                                    if (!chargeEntryScans(firstCount))
+                                        break;
+                                    c::CompletionDemand d{scope, n.entryGuardStart, first, source, observer, {}};
+                                    uint8_t sourceBit = uint8_t(1u << source);
+                                    int last = -1;
+                                    bool incomingOnly = true;
+                                    for (unsigned i = 0; i < firstCount; ++i) {
+                                        unsigned cell = firstCells[i];
+                                        const auto& effect = firstEffects[i];
+                                        // Do not spend an entry key on only a
+                                        // subset of a first consumer's source
+                                        // prerequisites. If it also needs a
+                                        // fresh in-owner generation, leave
+                                        // placement to the ordinary constructor.
+                                        incomingOnly &= !(
+                                            (effects[child][cell].readers | effects[child][cell].writers) & sourceBit);
+                                        if (seen[observer][cell])
+                                            continue;
+                                        int previous = writes[cell][source];
+                                        if (effect.writers)
+                                            previous = std::max(previous, reads[cell][source]);
+                                        last = std::max(last, previous);
+                                    }
+                                    if (!incomingOnly) {
+                                        ++entrySourceOverlapRejections;
+                                        continue;
+                                    }
+                                    bool newWitness = !entryWitnesses.count({first, observer});
+                                    constexpr uint64_t DemandBookkeeping = 8;
+                                    constexpr uint64_t WitnessBookkeeping = 4;
+                                    uint64_t storage = uint64_t(witnessCount) + DemandBookkeeping;
+                                    if (newWitness)
+                                        storage += uint64_t(p.cells) + WitnessBookkeeping;
+                                    if (!chargeEntryStorage(storage))
+                                        break;
+                                    d.cells.assign(witnessCells.begin(), witnessCells.begin() + witnessCount);
+                                    // Keep the source-prefix identity exact.
+                                    // A lexical source uses its latest relevant
+                                    // cut (never before guard availability).
+                                    // Only a genuinely incoming prefix has no
+                                    // lexical source and publishes at the guard.
+                                    if (last >= 0)
+                                        d.publication =
+                                            children[std::max(unsigned(last + 1), position[n.entryGuardStart])];
+                                    if (newWitness) {
+                                        c::Effects witness(p.cells);
+                                        for (unsigned i = 0; i < firstCount; ++i)
+                                            if (!seen[observer][firstCells[i]])
+                                                witness[firstCells[i]] = firstEffects[i];
+                                        entryWitnessCells += p.cells;
+                                        ++entryWitnessCount;
+                                        entryWitnesses.emplace(EntryWitnessKey{first, observer}, std::move(witness));
+                                    }
+                                    capture[d.publication].insert(source);
+                                    entries[child].push_back(std::move(d));
+                                }
                             }
                         for (unsigned observer = 0; observer < c::LaneCount; ++observer)
                             for (unsigned cell = 0; cell < p.cells; ++cell)
@@ -2286,17 +2541,24 @@ bool verifyEntryProtocols(
                 analysis.parent[p.nodes[m.loop].entryGuardStart] != scope)
                 return refuse();
             if (m.participation == Mechanism::First) {
-                if (m.kind != Mechanism::Acquire || p.nodes[id].kind != Node::Operation ||
-                    p.nodes[id].lane != m.second || analysis.parent[id] != p.nodes[m.loop].children[0])
+                if (m.kind != Mechanism::Acquire || analysis.parent[id] != p.nodes[m.loop].children[0])
                     return refuse();
-                if (std::none_of(analysis.entries[m.loop].begin(), analysis.entries[m.loop].end(), [&](const auto& d) {
+                auto demand =
+                    std::find_if(analysis.entries[m.loop].begin(), analysis.entries[m.loop].end(), [&](const auto& d) {
                         return d.acquisition == id && d.source == m.first && d.observer == m.second;
-                    }))
+                    });
+                if (demand == analysis.entries[m.loop].end())
                     return refuse();
-                for (unsigned cell = 0; cell < p.cells; ++cell)
-                    if ((p.nodes[id].effects[cell].readers || p.nodes[id].effects[cell].writers) &&
-                        ((analysis.effects[m.loop][cell].readers | analysis.effects[m.loop][cell].writers) &
-                         (1u << m.first)))
+                const auto* witness = analysis.entryWitness(*demand);
+                if (!witness || (p.nodes[id].kind == Node::Operation && p.nodes[id].lane != m.second) ||
+                    (p.nodes[id].kind != Node::Operation && p.nodes[id].kind != Node::Choice))
+                    return refuse();
+                for (unsigned cell : demand->cells)
+                    if (((*witness)[cell].readers | (*witness)[cell].writers) & (1u << m.second)) {
+                        if ((analysis.effects[m.loop][cell].readers | analysis.effects[m.loop][cell].writers) &
+                            (1u << m.first))
+                            return refuse();
+                    } else
                         return refuse();
                 if (pop.first != NoCut)
                     return refuse();
@@ -2510,6 +2772,7 @@ c::Result constructDemandCandidate(
     DemandAnalysis analysis;
     if (!analysis.build(p, result.reason))
         return result;
+    analysis.recordEntryStats(result);
     result.before.resize(p.nodes.size());
     std::vector<std::vector<Mechanism>> publications(p.nodes.size());
     using Direction = std::pair<unsigned, unsigned>;
@@ -2677,6 +2940,11 @@ c::Result constructDemandCandidate(
             std::map<Direction, Effects> acquiredEntry;
             std::map<Direction, unsigned> entryReplies;
             for (const auto& demand : analysis.entries[id]) {
+                const auto* witness = analysis.entryWitness(demand);
+                if (!witness) {
+                    result.reason = "entry demand has no independently derived first-consumer witness";
+                    return false;
+                }
                 // A previous first consumer may already acquire this whole
                 // incoming prefix. The source has no body effects on these
                 // demanded cells, so that credit survives all later visits.
@@ -2685,8 +2953,7 @@ c::Result constructDemandCandidate(
                     auto covered = state;
                     covered.seed(analysis.effects[id]);
                     covered.acquireRemaining(demand.observer, acquired->second);
-                    if (!(covered.demands(demand.observer, p.nodes[demand.acquisition].effects) &
-                          (1u << demand.source)))
+                    if (!(covered.demands(demand.observer, *witness) & (1u << demand.source)))
                         continue;
                 }
                 auto receipt = state.receipts.find({demand.source, demand.source, demand.publication});
@@ -2696,11 +2963,10 @@ c::Result constructDemandCandidate(
                 merge(remaining, analysis.effects[id]);
                 auto trialState = state;
                 trialState.seed(analysis.effects[id]);
-                const auto& first = p.nodes[demand.acquisition];
-                if (!(trialState.demands(demand.observer, first.effects) & (1u << demand.source)))
+                if (!(trialState.demands(demand.observer, *witness) & (1u << demand.source)))
                     continue;
                 trialState.acquireRemaining(demand.observer, remaining);
-                if (trialState.demands(demand.observer, first.effects) & (1u << demand.source))
+                if (trialState.demands(demand.observer, *witness) & (1u << demand.source))
                     continue;
                 auto trial = entryKeys;
                 auto allocateEntry = [&](unsigned a, unsigned b) -> std::optional<unsigned> {
@@ -2970,6 +3236,7 @@ c::Result verifyDemandImpl(
     DemandAnalysis analysis;
     if (actual.size() != p.nodes.size() || !analysis.build(p, result.reason))
         return result;
+    analysis.recordEntryStats(result);
     for (const auto& commands : actual)
         for (const auto& m : commands)
             if (m.first >= LaneCount || m.second >= LaneCount ||

@@ -72,6 +72,9 @@ def main():
                         'protocol_keys', 'shared_protocol_keys', 'allocation_fallback_scopes', 'allocation_fallback_keys',
                         'allocation_replays', 'rejected_allocation_replays', 'replay_commands_removed',
                         'replayed_fallback_demands', 'entry_episodes', 'entry_reply_families', 'rejected_entry_proposals',
+                        'entry_summary_slots', 'entry_summary_scans', 'entry_storage_units', 'entry_candidate_pairs',
+                        'entry_witness_cells', 'entry_witnesses', 'entry_source_overlap_rejections',
+                        'entry_summary_skipped',
                         'ring_candidates', 'rejected_rings', 'ring_candidate_commands_removed', 'cut_cycles',
                         'deferred_ring_candidates', 'deferred_rings', 'rejected_deferred_rings', 'deferred_protocol_steps',
                         'periodic_deferred_rings', 'periodic_write_overlap_rejections', 'periodic_scalar_work',
@@ -101,6 +104,9 @@ def main():
         if not verdict['accepted'] or not verdict['atomic']:
             raise RuntimeError('native construction/reconstruction failed: ' + name)
         counters = native_counters(name + '-native') if args.constructor == 'demands' else {}
+        if args.constructor == 'demands' and name in ('online_softmax', 'qk_matmul'):
+            if counters['entry_summary_slots'] or counters['entry_summary_skipped'] != 1:
+                raise RuntimeError('branch-free entry analysis allocated optional first-site population: ' + name)
         if args.constructor == 'demands' and name in ('two_buffer', 'three_buffer'):
             if not counters['periodic_deferred_rings'] or not counters['periodic_write_overlap_rejections']:
                 raise RuntimeError('periodic input release / shared-output refusal not exercised: ' + name)
@@ -409,6 +415,73 @@ def main():
             if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
                 raise RuntimeError('incoming-episode corruption escaped native reconstruction: ' + mutation)
             path_checks.append(dict(name=mutation, verdict=verdict))
+        choice_entry = Path(__file__).parent / 'structured_inputs/demand_entry_choice.pto'
+        choice_raw = args.output.resolve() / 'entry-choice-native.pto'
+        choice_verdict = json.loads(invoke('entry-choice-native',
+            [args.driver, choice_entry, 'demands:none', choice_raw]))
+        choice_counters = native_counters('entry-choice-native')
+        if (not choice_verdict['accepted'] or not choice_verdict['atomic'] or
+                choice_counters['entry_episodes'] != 1 or not choice_counters['entry_summary_slots'] or
+                not choice_counters['entry_witnesses']):
+            raise RuntimeError('shared incoming Choice-cut episode not exercised')
+        choice_normalized = args.output.resolve() / 'entry-choice.pto'
+        invoke('entry-choice-normalize', compiler + [choice_raw, '-o', choice_normalized])
+        choice_scenarios = []
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            module = ir.Module.parse(choice_normalized.read_text())
+            original = ir.Module.parse(choice_entry.read_text())
+            function = next(op for op in children(module.operation) if op.name == 'func.func')
+            original_function = next(op for op in children(original.operation) if op.name == 'func.func')
+            observer = Boundaries()
+            for outer, lower, upper, take, other in (
+                    (0, 2, 5, True, True), (2, 2, 2, True, False),
+                    (2, 2, 5, False, True), (1, 3, 4, True, True),
+                    (3, 2, 5, True, False), (2, 5, 2, True, True),
+                    (2, 1, 3, True, True), (1, 2, 4, False, False)):
+                arguments = ['src', outer, lower, upper, take, other]
+                start = len(observer.payload)
+                metrics = replay(function, arguments, observer=observer.observe)
+                original_metrics = replay(original_function, arguments)
+                if metrics['payload_sha256'] != original_metrics['payload_sha256']:
+                    raise RuntimeError('shared incoming Choice episode changed original payload')
+                if observer.tokens:
+                    raise RuntimeError('shared incoming Choice episode exports an unconsumed token')
+                choice_scenarios.append(dict(arguments=arguments,
+                    executed={name: metrics['counts'].get(name, 0)
+                              for name in ('pto.set_flag', 'pto.wait_flag', 'pto.barrier')},
+                    scalar={name: metrics['scalar_counts'].get(name, 0)
+                            for name in ('arith.cmpi', 'scf.if')}))
+                latest_source = start
+                for index in range(start, len(observer.payload)):
+                    if observer.payload[index][0] == 'pto.tload':
+                        latest_source = index
+                    elif observer.payload[index][0] == 'pto.tabs':
+                        if observer.before[index]['completed'].get('PIPE_MTE2', -1) < latest_source:
+                            raise RuntimeError('Choice consumer did not acquire incoming outer-visit history')
+        path_checks.append(dict(name='incoming-choice-episode', verdict=choice_verdict,
+                                counters=choice_counters, source_sha256=digest(choice_entry),
+                                output_sha256=digest(choice_normalized), scenarios=choice_scenarios))
+        source_inside = args.output.resolve() / 'entry-choice-source-inside.pto'
+        source_inside.write_text(choice_entry.read_text().replace('          scf.if %other {',
+            '          pto.tload ins(%src : !pto.partition_tensor_view<16x16xf16>) '
+            'outs(%a : !pto.tile_buf<vec, 16x16xf16>)\n          scf.if %other {'))
+        verdict = json.loads(invoke('entry-choice-source-inside', [args.driver, source_inside,
+            'demands:none', args.output.resolve() / 'entry-choice-source-inside-native.pto']))
+        counters = native_counters('entry-choice-source-inside')
+        if not verdict['accepted'] or not verdict['atomic'] or counters['entry_episodes']:
+            raise RuntimeError('source effect in one arm did not disable optional incoming-only credit')
+        path_checks.append(dict(name='entry-choice-source-inside', verdict=verdict, counters=counters,
+                                source_sha256=digest(source_inside)))
+        for mutation in ('entry-wrong-first', 'entry-wrong-nonempty', 'entry-drop-first',
+                         'entry-drop-ack', 'entry-late-first', 'entry-conditional-first'):
+            name = 'choice-' + mutation
+            verdict = json.loads(invoke(name, [args.driver, choice_entry, 'demands:' + mutation,
+                args.output.resolve() / (name + '.pto')]))
+            if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
+                raise RuntimeError('Choice incoming-episode corruption escaped reconstruction: ' + mutation)
+            path_checks.append(dict(name=name, verdict=verdict))
         with ir.Context() as context:
             context.enable_multithreading(False)
             pto.register_dialect(context, load=True)

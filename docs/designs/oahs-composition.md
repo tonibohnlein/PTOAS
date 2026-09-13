@@ -1267,3 +1267,166 @@ Detailed artifacts remain outside Git under the existing build's
 and `test-results/oahs-demands`. The separate frozen-corpus milestone supplies
 the portable manifest, exact public command templates, and CAS replay runner.
 This remains an opt-in implementation checkpoint, not replacement acceptance.
+
+## Shared incoming first-demand summaries
+
+Incoming completion no longer requires a direct operation as the first loop
+consumer, or a lexical source operation immediately before that loop. The same
+demand constructor can use a bounded first-site summary at an original Choice
+cut in a qualified counted loop. No kernel name, opcode recipe, branch-predicate
+solver, or periodic occurrence formula participates in this decision.
+
+For each observer lane, an operation contributes its own first site. A Sequence
+continues collecting possible first sites only while its preceding children
+may issue no operation on that lane. A Choice unions the first sites of its
+arms, preserving the may-empty distinction. The optional summary has at most
+eight first-site alternatives per node/lane; an unavailable nested-loop summary
+or overflow retains ordinary construction. The complete owner MAY summary is
+still computed independently and is never replaced by this first-site summary.
+
+The constructor forms the first-effect union once per observer. An incoming
+episode must be incoming-only over that complete first-site witness: if the
+source accesses any witness cell anywhere inside the owner, the entry proposal
+is declined. In particular, it does not spend a key on a stable subset of a
+consumer that also needs a fresh in-owner generation from that source. The
+ordinary constructor still handles that mixed demand. This all-or-nothing
+policy prevents entry-key pressure from degrading otherwise useful local
+handoffs.
+
+A lexical producer keeps the earliest qualified publication after its last
+relevant source access and after the original trip predicate becomes available.
+Without a lexical producer, the constructor may use the actual incoming
+source-prefix receipt at that available entry cut. The anchor is not evidence
+that payload was produced: absent pending incoming demand produces no episode.
+The source prefix may include work from a previous enclosing-loop visit.
+
+The existing globally allocated episode realizes the result:
+
+```text
+Nonempty owner: publish the actual incoming source prefix.
+First iteration: acquire it before the original common Choice.
+Nonempty owner exit: publish and consume the reverse acknowledgment.
+```
+
+An empty Choice arm still executes the common first acquisition. It consumes a
+real matching token; it does not invent a payload access. This can add four
+executed event commands to an otherwise unneeded incoming episode, and that
+cost is reported separately from correctness. Zero-trip owners execute no
+episode commands. Other conservative mechanisms around the owner may still
+execute on a zero-trip path.
+
+The receipt retains the whole-owner MAY effects, later source suffixes and
+independent GM visibility history. Reconstruction rederives the first-site
+witnesses and source-absence premise from the immutable original program,
+classifies actual guarded commands using original bounds/IVs, and verifies
+their combined event word. A first acquisition moved inside just one arm or
+past the common Choice is rejected atomically.
+
+The new tests also model the recurrence of their initial preloads explicitly:
+the complete portable test program is enclosed in a For with two iterations,
+and that execution is repeated without resetting the independent oracle or
+granting an implicit drain. Native repeated-function tests separately include
+the real terminal retirement emitted by the adapter. A later access to panel B
+cannot broaden the entry publication selected for the first access to panel A;
+an empty arm followed by a later same-cell consumer retains the acquired
+incoming receipt. Nine possible first sites decline only optional precision.
+
+### Optional-analysis accounting
+
+A cheap structural prescan avoids allocating the first-site population when
+there is no contracted For with a direct-body Choice. Straight-line incoming
+operation demands continue to use the same entry constructor without that
+population. First-effect unions are computed once per observer and reused
+across source candidates.
+
+Scan work and retained storage have separate fixed allowances. Rejected scans
+still consume scan work: source-overlap and empty-witness checks are real work,
+not free speculation. They do not reserve retained witness storage. Storage is
+reserved before materializing viable witnesses and demand/map bookkeeping;
+one `(acquisition, observer)` witness is shared across accepted sources.
+Alternative overflow or either allowance limit leaves ordinary construction
+available. Structural traversal order is deterministic; a finite scan allowance
+can still limit which later optional proposals are attempted. No optimality or
+order-independence guarantee is claimed.
+
+Trace fields distinguish `entry_summary_slots`, `entry_summary_scans`,
+`entry_storage_units`, `entry_candidate_pairs`, `entry_witness_cells`,
+`entry_witnesses`, `entry_source_overlap_rejections`, and
+`entry_summary_skipped`. These describe the selected demand analysis, not an
+aggregate wall-clock or byte-allocation bound across every refinement and fresh
+reconstruction attempt.
+`entry_summary_skipped` is also set when no eligible Choice entry exists; it is
+not exclusively an exhaustion indicator. Both fixed allowances are 1,048,576
+representation units, not a time limit or a claim of exact allocator bytes.
+
+### Incoming-choice qualification results
+
+The final targeted native build and all six selected gates pass:
+`oahs_focused`, `oahs_composition_core`, `oahs_composition`, `oahs_demands`,
+`oahs_structured_core`, and `oahs_structured` (305.89 seconds total). The
+Clang C++17 ASan/UBSan core run passes **2,237,669 assertions**, including the
+storage-cap refusal case. The single selected
+`insert_sync_structured_constructor.pto` lit test passes; the full lit and
+system suites were not run.
+
+The rootless two-arm corpus replay again matches **726/726** frozen outcomes,
+including mechanism counts and refusal reasons. The cohorts remain **45/150
+PTOAS**, **7/35 PyPTO**, and **145/178 PyPTO-lib** snapshots. The new focused
+fixture is not added to those denominators. The replay executable SHA-256 is
+`832ab7447800772773aadcc730028c48ab39deb5962168f7a676428252da7c2f`;
+the separate reconstruction-driver SHA-256 is
+`de67cd4c99cf5e70a81591c3a167537fc3a5b4b9c6b7930f8a15f8e1af31de00`.
+
+The unchanged eight-case compiler campaign ran alone, using three paired
+samples after one warmup per arm. Every PTO compilation and C++ emission
+succeeded, and every individual paired ratio is below 2x (maximum 1.067728).
+
+| Input | Median demand / existing compilation time |
+| --- | ---: |
+| One buffer | 0.999107 |
+| Two buffers | 1.038608 |
+| Three buffers | 1.040996 |
+| Four-use | 1.000765 |
+| Online softmax | 1.045326 |
+| QK matmul | 1.025446 |
+| Q projection | 1.024067 |
+| Historical GEMM | 0.987989 |
+
+The campaign records base `5153e3ca45fb5a1289a9f5dba53e64c1ceb4f42a`, its
+task-owned dirty listing, tracked-diff hash, unchanged input hashes and complete
+commands. The tested compiler-library SHA-256 is
+`46b07f6efa6a7f81f65951c6f77c3f56a7fe9ac8882d63c130853d9f9f70ebfc`.
+Artifacts are under the existing build's `test-results/oahs-choice-compiler`,
+`test-results/oahs-choice-frozen-replay`, and `test-results/oahs-demands`.
+The base-plus-diff provenance is not relabeled as a clean committed run.
+
+For historical GEMM, one shared FIX-to-M incoming episode replaces four
+branch-local families. Static SET/WAIT counts fall **62/62 to 56/56**, while
+the 21 named barriers and one terminal drain are unchanged. Executed SET/WAIT
+counts per kind change from 54 to 52 for two panels, 77 to 73 for three panels,
+and 108 to 104 for the distributed-tile scenario. One-panel counts stay at 27
+per kind. These reductions are relative to the preceding demand candidate,
+not a claim to beat existing InsertSync's 44/44 static sites.
+
+There is a measured placement cost: two extraction operations in the
+distributed-tile scenario acquire a later FIX prefix through transitive
+completion. The total later-prefix observations relative to existing InsertSync
+are 47 rather than the preceding candidate's 45. Other seven-case mechanism
+counts and boundary observations remain unchanged, including softmax's 42 and
+QK's 32. Empty-arm episodes have their executed commands and scalar guards
+recorded separately; the portable controlled case shows four extra event
+commands compared with disabling that optional entry episode.
+
+The first-site population is correctly absent on branch-free softmax and QK
+(`entry_summary_slots=0`, `entry_summary_skipped=1`). Historical GEMM reports
+8,680 first-site slots, 1,385 scan units, 12,133 reserved storage units, three
+shared witnesses containing 36 effect cells, and four source-overlap declines.
+These are bounded analysis measurements, not hardware costs.
+
+All three reviewers accepted this as an opt-in implementation milestone after
+the above conditions were met. **`quality_qualified=false` remains explicit**:
+the common-cut placement is not universally as late as the first consumer,
+the whole regression quality gate remains open, defaults are unchanged, and
+there is no device-correctness or device-performance qualification. A later
+bounded path-local acquisition provider must prove participation from actual
+control flow before moving waits into mutually exclusive arms.

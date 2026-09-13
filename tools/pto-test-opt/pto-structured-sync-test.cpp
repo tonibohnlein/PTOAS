@@ -127,8 +127,15 @@ int main(int argc,char **argv) {
                     chosen=events[1];
                 if (mode=="entry-late-first" && first) {
                     for (auto *next=op->getNextNode();next;next=next->getNextNode())
-                        if (isa<OpPipeInterface>(next) && !isa<SetFlagOp,WaitFlagOp,BarrierOp>(next)) {
+                        if ((isa<OpPipeInterface>(next) && !isa<SetFlagOp,WaitFlagOp,BarrierOp>(next)) ||
+                            (isa<scf::IfOp>(next) && !syncOnly(cast<scf::IfOp>(next)))) {
                             chosen=op;sequenceSource=next;break;
+                        }
+                }
+                if (mode=="entry-conditional-first" && first) {
+                    for (auto *next=op->getNextNode();next;next=next->getNextNode())
+                        if (auto original=dyn_cast<scf::IfOp>(next); original && !syncOnly(original)) {
+                            chosen=op;sequenceSource=&original.getThenRegion().front().front();break;
                         }
                 }
                 return;
@@ -305,6 +312,11 @@ int main(int argc,char **argv) {
         }
         if (mode=="entry-drop-first" || mode=="entry-drop-ack") {
             chosen->erase();changed=true;return;
+        }
+        if (mode=="entry-conditional-first") {
+            auto branch=cast<scf::IfOp>(chosen);
+            branch.getCondition().getDefiningOp()->moveBefore(sequenceSource);
+            chosen->moveBefore(sequenceSource);changed=true;return;
         }
         if (mode=="entry-late-first") {
             auto cmp=cast<scf::IfOp>(chosen).getCondition().getDefiningOp();

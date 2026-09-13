@@ -110,6 +110,14 @@ struct Result {
     uint64_t allocationReplays = 0, rejectedAllocationReplays = 0, replayCommandsRemoved = 0;
     uint64_t replayedFallbackDemands = 0;
     uint64_t entryEpisodes = 0, entryReplyFamilies = 0, rejectedEntryProposals = 0;
+    // Selected-analysis work for bounded first-consumer entry proposals. Scan
+    // units count examined summary/effect cells; storage units are conservative
+    // representation cells, not bytes. Witness cells count Effects storage
+    // allocated only for accepted, shared (acquisition, observer) witnesses.
+    uint64_t entrySummarySlots = 0, entrySummaryScans = 0, entryStorageUnits = 0;
+    uint64_t entryCandidatePairs = 0;
+    uint64_t entryWitnessCells = 0, entryWitnesses = 0, entrySourceOverlapRejections = 0;
+    uint64_t entrySummarySkipped = 0;
     uint64_t ringCandidates = 0, rejectedRings = 0, ringCandidateCommandsRemoved = 0;
     uint64_t deferredRingCandidates = 0, deferredRings = 0, rejectedDeferredRings = 0;
     uint64_t deferredProtocolSteps = 0;

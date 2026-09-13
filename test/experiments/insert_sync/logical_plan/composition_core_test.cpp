@@ -1054,6 +1054,304 @@ int main()
         }
     }
     {
+        // A loop-carried source prefix can be acquired once before a common
+        // direct-body Choice.  The nested branch is unknown, and the outer
+        // empty arm still executes the balanced first-visit episode without
+        // receiving invented payload credit.
+        c::Program p;
+        p.cells = 2;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto preload = op(p, a, 0, true), guard = add(p, c::Node::Sequence);
+        auto prefix = op(p, b, 1, false);
+        auto leftUse = op(p, b, 0, false), rightUse = op(p, b, 0, true);
+        auto sourceMarker = op(p, d, 1, false);
+        auto nested = add(p, c::Node::Choice, {sequence(p, {leftUse}), sequence(p, {rightUse, sourceMarker})});
+        auto common = add(p, c::Node::Choice, {sequence(p, {nested}), sequence(p, {})});
+        auto inner = add(p, c::Node::For, {sequence(p, {prefix, common})});
+        auto nextGeneration = op(p, a, 0, true);
+        auto outer = add(p, c::Node::For, {sequence(p, {guard, inner, nextGeneration})});
+        // Model repeated whole invocations structurally too: the portable core
+        // does not include the native function's terminal ALL retirement.
+        auto root = add(p, c::Node::For, {sequence(p, {preload, outer})});
+        p.nodes[inner].entryGuardStart = guard;
+
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.entryEpisodes == 1 && plan.entryReplyFamilies == 1);
+        require(plan.entrySummarySlots > 0 && plan.entrySummaryScans > 0 && plan.entryWitnesses > 0);
+        require(plan.entryStorageUnits >= plan.entrySummarySlots + plan.entryWitnessCells);
+        require(plan.entryStorageUnits <= (1u << 20) && plan.entrySummaryScans <= (1u << 20));
+        require(c::verifyDemands(p, plan.before).success);
+        auto isEntry = [&](const c::Mechanism& m, c::Mechanism::Kind kind, c::Mechanism::Participation part) {
+            return m.kind == kind && m.participation == part && m.loop == inner && m.first == a && m.second == b;
+        };
+        require(std::count_if(plan.before[guard].begin(), plan.before[guard].end(), [&](const auto& m) {
+                    return isEntry(m, c::Mechanism::Publish, c::Mechanism::NonEmpty);
+                }) == 1);
+        require(std::count_if(plan.before[common].begin(), plan.before[common].end(), [&](const auto& m) {
+                    return isEntry(m, c::Mechanism::Acquire, c::Mechanism::First);
+                }) == 1);
+        require(std::none_of(plan.before[leftUse].begin(), plan.before[leftUse].end(), [](const auto& m) {
+            return m.participation == c::Mechanism::First;
+        }));
+        require(std::none_of(plan.before[rightUse].begin(), plan.before[rightUse].end(), [](const auto& m) {
+            return m.participation == c::Mechanism::First;
+        }));
+        require(
+            std::count_if(plan.before[nextGeneration].begin(), plan.before[nextGeneration].end(), [&](const auto& m) {
+                return m.participation == c::Mechanism::NonEmpty && m.first == b && m.second == a;
+            }) == 2);
+
+        // Exercise zero/nonzero inner and outer visits, both common arms, both
+        // nested arms, and repeated whole-program execution with live keys.
+        const std::array<unsigned, 7> outerTrips{0, 1, 2, 1, 0, 2, 1};
+        const std::array<unsigned, 8> innerTrips{0, 1, 3, 2, 0, 2, 1, 3};
+        ExecutionPolicy policy;
+        policy.trips = [&](unsigned id, unsigned visit) {
+            return id == root  ? 2u :
+                   id == outer ? outerTrips[visit % outerTrips.size()] :
+                                 innerTrips[visit % innerTrips.size()];
+        };
+        policy.choice = [&](unsigned id, unsigned visit) {
+            return id == common ? unsigned((visit + 1) % 3 == 0) : visit % 2;
+        };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < outerTrips.size(); ++invocation) {
+            execute(p, plan, root, policy, oracle);
+            oracle.check();
+        }
+
+        // The empty arm executes no observer payload, but the common guarded
+        // WAIT still consumes its provider and the reply retires the episode.
+        // Record the four-command precision cost rather than hiding it.
+        auto without = p;
+        without.nodes[inner].entryGuardStart = ~0u;
+        auto baseline = c::constructDemands(without);
+        require(baseline.success && baseline.entryEpisodes == 0 && c::verifyDemands(without, baseline.before).success);
+        auto oneVisit = [&](unsigned, unsigned) { return 1u; };
+        auto emptyArm = [&](unsigned id, unsigned) { return id == common ? 1u : 0u; };
+        ExecutionPolicy selectedPolicy, baselinePolicy;
+        selectedPolicy.trips = baselinePolicy.trips = oneVisit;
+        selectedPolicy.choice = baselinePolicy.choice = emptyArm;
+        Oracle selectedOracle, baselineOracle;
+        execute(p, plan, root, selectedPolicy, selectedOracle);
+        execute(without, baseline, root, baselinePolicy, baselineOracle);
+        selectedOracle.check();
+        baselineOracle.check();
+        require(selectedOracle.commands == baselineOracle.commands + 4);
+
+        // No source history means no speculative episode.  Conversely, an
+        // empty initial generation followed only by outer-loop recurrence is
+        // valid: the first SET publishes an empty prefix, later ones publish
+        // the preceding outer visit.
+        auto noIncoming = p;
+        noIncoming.nodes[preload].effects[0] = {};
+        noIncoming.nodes[nextGeneration].effects[0] = {};
+        auto noIncomingPlan = c::constructDemands(noIncoming);
+        require(noIncomingPlan.success && noIncomingPlan.entryEpisodes == 0);
+        auto recurrenceOnly = p;
+        recurrenceOnly.nodes[preload].effects[0] = {};
+        auto recurrencePlan = c::constructDemands(recurrenceOnly);
+        require(
+            recurrencePlan.success && recurrencePlan.entryEpisodes == 1 &&
+            c::verifyDemands(recurrenceOnly, recurrencePlan.before).success);
+
+        // Fresh reconstruction rejects changes to the common cut, owner,
+        // participation, key population, provider, acknowledgment, and source
+        // absence premise.  A branch-local WAIT cannot replace the common one.
+        auto first = std::find_if(plan.before[common].begin(), plan.before[common].end(), [&](const auto& m) {
+            return isEntry(m, c::Mechanism::Acquire, c::Mechanism::First);
+        });
+        require(first != plan.before[common].end());
+        auto droppedFirst = plan.before;
+        droppedFirst[common].erase(droppedFirst[common].begin() + (first - plan.before[common].begin()));
+        require(!c::verifyDemands(p, droppedFirst).success);
+        auto branchLocal = droppedFirst;
+        branchLocal[leftUse].push_back(*first);
+        require(!c::verifyDemands(p, branchLocal).success);
+        auto wrongParticipation = plan.before;
+        for (auto& m : wrongParticipation[common])
+            if (m.participation == c::Mechanism::First)
+                m.participation = c::Mechanism::Every;
+        require(!c::verifyDemands(p, wrongParticipation).success);
+        auto wrongOwner = plan.before;
+        for (auto& m : wrongOwner[common])
+            if (m.participation == c::Mechanism::First)
+                m.loop = outer;
+        require(!c::verifyDemands(p, wrongOwner).success);
+        auto wrongKey = plan.before;
+        for (auto& m : wrongKey[common])
+            if (m.participation == c::Mechanism::First)
+                ++m.forwardKey;
+        require(!c::verifyDemands(p, wrongKey).success);
+        auto noProvider = plan.before;
+        noProvider[guard].erase(
+            std::remove_if(
+                noProvider[guard].begin(), noProvider[guard].end(),
+                [&](const auto& m) { return isEntry(m, c::Mechanism::Publish, c::Mechanism::NonEmpty); }),
+            noProvider[guard].end());
+        require(!c::verifyDemands(p, noProvider).success);
+        auto noReply = plan.before;
+        noReply[nextGeneration].erase(
+            std::remove_if(
+                noReply[nextGeneration].begin(), noReply[nextGeneration].end(),
+                [](const auto& m) { return m.participation == c::Mechanism::NonEmpty; }),
+            noReply[nextGeneration].end());
+        require(!c::verifyDemands(p, noReply).success);
+        auto sourceInside = p;
+        sourceInside.nodes[sourceMarker].lane = a;
+        sourceInside.nodes[sourceMarker].effects.assign(p.cells, {});
+        sourceInside.nodes[sourceMarker].effects[0].writers = 1u << a;
+        require(!c::verifyDemands(sourceInside, plan.before).success);
+        auto sourceInsidePlan = c::constructDemands(sourceInside);
+        require(sourceInsidePlan.success && sourceInsidePlan.entryEpisodes == 0);
+        auto earlierObserver = p;
+        earlierObserver.nodes[prefix].effects[0].readers = 1u << b;
+        require(!c::verifyDemands(earlierObserver, plan.before).success);
+        auto earlierPlan = c::constructDemands(earlierObserver);
+        require(earlierPlan.success && c::verifyDemands(earlierObserver, earlierPlan.before).success);
+        require(std::none_of(earlierPlan.before[common].begin(), earlierPlan.before[common].end(), [](const auto& m) {
+            return m.participation == c::Mechanism::First;
+        }));
+        auto global = p;
+        global.globalMemory = {true, false};
+        require(!c::constructDemands(global).success);
+    }
+    {
+        // The common witness contains only each arm's first observer site.
+        // A later access to B must not move the entry publication past the
+        // intervening B write or receive early completion credit from A.
+        c::Program p;
+        p.cells = 2;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto writeA = op(p, a, 0, true), writeB = op(p, a, 1, true);
+        auto firstA = op(p, b, 0, false), laterB = op(p, b, 1, false);
+        auto otherFirstA = op(p, b, 0, false), otherLaterB = op(p, b, 1, false);
+        auto common = add(p, c::Node::Choice, {sequence(p, {firstA, laterB}), sequence(p, {otherFirstA, otherLaterB})});
+        auto loop = add(p, c::Node::For, {sequence(p, {common})});
+        auto after = add(p, c::Node::Sequence);
+        auto root = add(p, c::Node::For, {sequence(p, {writeA, writeB, loop, after})});
+        p.nodes[loop].entryGuardStart = writeA;
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.entryEpisodes == 1 && c::verifyDemands(p, plan.before).success);
+        auto first = std::find_if(plan.before[common].begin(), plan.before[common].end(), [](const auto& m) {
+            return m.participation == c::Mechanism::First;
+        });
+        require(first != plan.before[common].end() && first->first == a && first->second == b);
+        // Commands at writeB execute after writeA and before writeB itself.
+        // The resulting receipt covers A while retaining B as a later suffix.
+        require(std::any_of(plan.before[writeB].begin(), plan.before[writeB].end(), [&](const auto& m) {
+            return m.kind == c::Mechanism::Publish && m.participation == c::Mechanism::NonEmpty && m.loop == loop &&
+                   m.first == a && m.second == b && m.forwardKey == first->forwardKey;
+        }));
+        require(std::none_of(plan.before[loop].begin(), plan.before[loop].end(), [&](const auto& m) {
+            return m.kind == c::Mechanism::Publish && m.participation == c::Mechanism::NonEmpty && m.loop == loop &&
+                   m.first == a && m.second == b && m.forwardKey == first->forwardKey;
+        }));
+        for (unsigned late : {laterB, otherLaterB}) {
+            auto missingLate = plan.before;
+            missingLate[late].clear();
+            require(!c::verifyDemands(p, missingLate).success);
+        }
+        ExecutionPolicy policy;
+        policy.trips = [=](unsigned id, unsigned visit) { return id == root ? 2u : (visit + 1) % 4; };
+        policy.choice = [](unsigned, unsigned visit) { return visit % 2; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 6; ++invocation) {
+            execute(p, plan, root, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // Nine possible first sites exceed the fixed alternative bound.  This
+        // disables only the optional common-cut summary; ordinary construction
+        // and independent verification remain available.
+        c::Program p;
+        p.cells = 1;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto produce = op(p, a, 0, true), guard = add(p, c::Node::Sequence);
+        unsigned alternatives = sequence(p, {op(p, b, 0, false)});
+        for (unsigned i = 1; i < 9; ++i)
+            alternatives = add(p, c::Node::Choice, {alternatives, sequence(p, {op(p, b, 0, false)})});
+        auto loop = add(p, c::Node::For, {sequence(p, {alternatives})});
+        auto after = add(p, c::Node::Sequence);
+        auto root = add(p, c::Node::For, {sequence(p, {produce, guard, loop, after})});
+        p.nodes[loop].entryGuardStart = guard;
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.entryEpisodes == 0 && c::verifyDemands(p, plan.before).success);
+        require(plan.entrySummarySlots > 0 && plan.entryWitnessCells == 0);
+        ExecutionPolicy policy;
+        policy.trips = [=](unsigned id, unsigned visit) { return id == root ? 2u : visit % 3; };
+        policy.choice = [](unsigned id, unsigned visit) { return (id + visit) % 2; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 5; ++invocation) {
+            execute(p, plan, root, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // An entry key is not useful for only part of a first consumer that
+        // also needs a fresh in-owner source generation. Removing that fresh
+        // effect enables a common episode, including the empty-arm path to a
+        // later same-cell use. This is a structural, not opcode-specific rule.
+        c::Program p;
+        p.cells = 2;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto initial = op(p, a, 0, true), fresh = op(p, a, 1, true);
+        auto first = op(p, b, 0, false);
+        p.nodes[first].effects[1].readers = 1u << b;
+        auto choice = add(p, c::Node::Choice, {sequence(p, {first}), sequence(p, {})});
+        auto later = op(p, b, 0, false);
+        auto loop = add(p, c::Node::For, {sequence(p, {fresh, choice, later})});
+        auto after = add(p, c::Node::Sequence);
+        auto root = add(p, c::Node::For, {sequence(p, {initial, loop, after})});
+        p.nodes[loop].entryGuardStart = initial;
+        auto mixed = c::constructDemands(p);
+        require(mixed.success && mixed.entryEpisodes == 0 && c::verifyDemands(p, mixed.before).success);
+        require(mixed.entrySourceOverlapRejections > 0);
+        auto stable = p;
+        stable.nodes[fresh].effects[1] = {};
+        auto plan = c::constructDemands(stable);
+        require(plan.success && plan.entryEpisodes == 1 && c::verifyDemands(stable, plan.before).success);
+        require(std::any_of(plan.before[choice].begin(), plan.before[choice].end(), [](const auto& m) {
+            return m.participation == c::Mechanism::First;
+        }));
+        require(std::none_of(plan.before[later].begin(), plan.before[later].end(), [=](const auto& m) {
+            return m.kind == c::Mechanism::Acquire && m.first == a && m.second == b;
+        }));
+        ExecutionPolicy policy, mixedPolicy;
+        policy.trips = mixedPolicy.trips = [=](unsigned id, unsigned visit) { return id == root ? 2u : visit % 4; };
+        policy.choice = mixedPolicy.choice = [](unsigned, unsigned visit) { return visit % 2; };
+        Oracle oracle, mixedOracle;
+        for (unsigned invocation = 0; invocation < 4; ++invocation) {
+            execute(stable, plan, root, policy, oracle);
+            execute(p, mixed, root, mixedPolicy, mixedOracle);
+            oracle.check();
+            mixedOracle.check();
+        }
+    }
+    {
+        // Exceed the fixed first-site storage allowance before allocation,
+        // while keeping the physical program tiny. No partial first-summary
+        // witness may escape; the ordinary constructor must still succeed.
+        c::Program p;
+        p.cells = 1;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto produce = op(p, a, 0, true);
+        std::vector<unsigned> children{produce};
+        for (unsigned i = 0; i < (1u << 20) / (c::LaneCount * 8) + 1; ++i)
+            children.push_back(add(p, c::Node::Sequence));
+        auto use = op(p, b, 0, false);
+        auto choice = add(p, c::Node::Choice, {sequence(p, {use}), sequence(p, {})});
+        auto loop = add(p, c::Node::For, {sequence(p, {choice})});
+        p.nodes[loop].entryGuardStart = children.back();
+        children.push_back(loop);
+        children.push_back(add(p, c::Node::Sequence));
+        sequence(p, children);
+        auto plan = c::constructDemands(p);
+        require(plan.success && c::verifyDemands(p, plan.before).success);
+        require(plan.entrySummarySkipped == 1 && plan.entrySummarySlots == 0 && plan.entryEpisodes == 0);
+    }
+    {
         // Many distinct logical generations fit one physical key per direction
         // because each return demand acknowledges the preceding acquisition.
         c::Program p;
