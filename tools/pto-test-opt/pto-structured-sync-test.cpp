@@ -60,8 +60,11 @@ int main(int argc,char **argv) {
     const bool rejectChoice = demandPlacement && mode=="reject-choice-demands";
     const bool withoutChild = demandPlacement && mode=="without-child-returns";
     const bool rejectChild = demandPlacement && mode=="reject-child-returns";
+    const bool withoutAlternatives = demandPlacement && mode=="without-alternative-choices";
+    const bool rejectAlternatives = demandPlacement && mode=="reject-alternative-choices";
     if (rejectRefinement || withoutReplay || rejectReplay || rejectEntry || rejectDeferred ||
-        withoutLateEntry || rejectLateEntry || withoutChoice || rejectChoice || withoutChild || rejectChild) mode="none";
+        withoutLateEntry || rejectLateEntry || withoutChoice || rejectChoice || withoutChild || rejectChild ||
+        withoutAlternatives || rejectAlternatives) mode="none";
     const bool precision = mode.consume_front("cuts:");
     const bool composition = demandPlacement || precision || mode.consume_front("composition:");
     auto mutate=[&](func::FuncOp working) {
@@ -87,6 +90,20 @@ int main(int argc,char **argv) {
         };
         working.walk([&](Operation *op) {
             if (chosen) return;
+            if (demandPlacement && mode.starts_with("alternative-")) {
+                auto wait=dyn_cast<WaitFlagOp>(op);
+                auto branch=op->getParentOfType<scf::IfOp>();
+                if (!wait || !branch || syncOnly(branch)) return;
+                bool parentPublication=false;
+                for (Operation &candidate : *branch->getBlock()) {
+                    if (&candidate==branch.getOperation()) break;
+                    auto set=dyn_cast<SetFlagOp>(&candidate);
+                    if (set && set.getSrcPipe()==wait.getSrcPipe() && set.getDstPipe()==wait.getDstPipe() &&
+                        set.getEventId()==wait.getEventId()) parentPublication=true;
+                }
+                if (parentPublication) chosen=op;
+                return;
+            }
             if (demandPlacement && mode.starts_with("child-")) {
                 auto set=dyn_cast<SetFlagOp>(op);
                 auto branch=op->getParentOfType<scf::IfOp>();
@@ -312,6 +329,29 @@ int main(int argc,char **argv) {
             }
         });
         if (!chosen) return;
+        if (mode=="alternative-drop-wait") {
+            chosen->erase();changed=true;return;
+        }
+        if (mode=="alternative-duplicate-wait") {
+            chosen->getBlock()->getOperations().insert(std::next(chosen->getIterator()), chosen->clone());
+            changed=true;return;
+        }
+        if (mode=="alternative-wrong-wait-key") {
+            auto wait=cast<WaitFlagOp>(chosen);
+            wait.setEventIdAttr(EventAttr::get(&context,static_cast<EVENT>((unsigned(wait.getEventId().getEvent())+1)%8)));
+            changed=true;return;
+        }
+        if (mode=="alternative-drop-return") {
+            auto wait=cast<WaitFlagOp>(chosen);
+            auto set=dyn_cast_or_null<SetFlagOp>(chosen->getNextNode());
+            auto ack=set?dyn_cast_or_null<WaitFlagOp>(set->getNextNode()):WaitFlagOp{};
+            if (set && ack && set.getSrcPipe()==wait.getDstPipe() && set.getDstPipe()==wait.getSrcPipe() &&
+                ack.getSrcPipe()==set.getSrcPipe() && ack.getDstPipe()==set.getDstPipe() &&
+                ack.getEventId()==set.getEventId()) {
+                ack->erase();set->erase();changed=true;
+            }
+            return;
+        }
         if (mode=="child-drop-return") {
             sequenceSource->erase();chosen->erase();changed=true;return;
         }
@@ -440,7 +480,8 @@ int main(int argc,char **argv) {
     };
     using Constructor=structured_sync::testing::CompositionConstructor;
     auto result=composition ? structured_sync::testing::constructCompositionalSync(
-        function,gm,mutate,hardware,withoutChild?Constructor::DemandsWithoutChildReturns:
+        function,gm,mutate,hardware,withoutAlternatives?Constructor::DemandsWithoutAlternativeChoices:
+        rejectAlternatives?Constructor::DemandsRejectAlternativeChoices:withoutChild?Constructor::DemandsWithoutChildReturns:
         rejectChild?Constructor::DemandsRejectChildReturns:withoutChoice?Constructor::DemandsWithoutChoiceDemands:
         rejectChoice?Constructor::DemandsRejectChoiceDemands:withoutLateEntry?Constructor::DemandsWithoutLateEntry:
         rejectLateEntry?Constructor::DemandsRejectLateEntry:rejectDeferred?Constructor::DemandsRejectDeferredRings:

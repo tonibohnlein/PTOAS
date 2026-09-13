@@ -263,6 +263,248 @@ static void execute(
 int main()
 {
     {
+        // General source cuts, not a kernel recipe: residual B follows A in
+        // both arms, while independent C is issued after B on the source.
+        c::Program p;
+        p.cells = 3;
+        unsigned source = unsigned(Pipe::MTE2), observer = unsigned(Pipe::V);
+        auto a = op(p, source, 0, true), b = op(p, source, 1, true), later = op(p, source, 2, true);
+        std::array<unsigned, 2> first{}, second{}, arms{};
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            first[arm] = op(p, observer, 0, false);
+            second[arm] = op(p, observer, 1, false);
+            arms[arm] = sequence(p, {first[arm], second[arm]});
+        }
+        auto choice = add(p, c::Node::Choice, {arms[0], arms[1]});
+        auto root = sequence(p, {a, b, later, choice});
+        auto baseline = c::testing::constructDemandsWithoutAlternativeChoices(p);
+        auto selected = c::constructDemands(p);
+        require(baseline.success && selected.success && selected.alternativeChoiceFamilies == 1);
+        require(selected.alternativeChoiceSetsRemoved == 1 && selected.alternativeChoiceSites == 2);
+        require(selected.alternativeChoicePrefixSteps == 1 && !selected.alternativeChoiceBudgetExhausted);
+        require(c::verifyDemands(p, selected.before).success);
+        auto set = std::find_if(selected.before[later].begin(), selected.before[later].end(), [&](const auto& m) {
+            return m.kind == c::Mechanism::Publish && m.first == source && m.second == observer;
+        });
+        require(set != selected.before[later].end());
+        auto wait = *set;
+        wait.kind = c::Mechanism::Acquire;
+        for (unsigned consumer : second)
+            require(
+                std::find(selected.before[consumer].begin(), selected.before[consumer].end(), wait) !=
+                selected.before[consumer].end());
+        auto rejected = c::testing::constructDemandsRejectingAlternativeChoices(p);
+        require(rejected.success && rejected.before == baseline.before && rejected.rejectedAlternativeChoices == 1);
+        for (uint64_t limit : {uint64_t(0), uint64_t(1), uint64_t(p.nodes.size())}) {
+            auto limited = c::testing::constructDemandsWithAlternativeChoiceWorkLimit(p, limit);
+            require(limited.success && limited.before == baseline.before && limited.alternativeChoiceWork <= limit);
+        }
+        require(c::testing::constructDemandsWithAlternativeChoiceWorkLimit(p, UINT64_MAX).before == selected.before);
+        auto exact = c::testing::constructDemandsWithAlternativeChoiceWorkLimit(p, selected.alternativeChoiceWork);
+        auto shortBudget =
+            c::testing::constructDemandsWithAlternativeChoiceWorkLimit(p, selected.alternativeChoiceWork - 1);
+        require(exact.before == selected.before && !exact.alternativeChoiceBudgetExhausted);
+        require(
+            shortBudget.success && shortBudget.before == baseline.before &&
+            shortBudget.alternativeChoiceBudgetExhausted);
+        require(shortBudget.alternativeChoiceWork < selected.alternativeChoiceWork);
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            Oracle oracle;
+            ExecutionPolicy policy;
+            policy.trips = [](unsigned, unsigned) { return 0u; };
+            policy.choice = [arm](unsigned, unsigned) { return arm; };
+            execute(p, selected, root, policy, oracle);
+            oracle.check();
+        }
+        // The old broad B receipt also served a later C consumer. Hoisting it
+        // without constructing another handoff must be refused, not accepted
+        // because the alternative event participation is otherwise correct.
+        auto continuation = p;
+        auto last = p.nodes[root].children.back();
+        continuation.nodes[last].kind = c::Node::Operation;
+        continuation.nodes[last].lane = observer;
+        continuation.nodes[last].effects[2].readers = 1u << observer;
+        auto oldContinuation = c::testing::constructDemandsWithoutAlternativeChoices(continuation);
+        auto newContinuation = c::constructDemands(continuation);
+        require(oldContinuation.success && newContinuation.success && newContinuation.rejectedAlternativeChoices > 0);
+        require(newContinuation.before == oldContinuation.before);
+        require(!c::verifyDemands(continuation, selected.before).success);
+    }
+    {
+        // One actual parent publication, alternative late acquisitions. The
+        // dedicated arm returns close the same forward key on every path;
+        // repeated invocations may choose different arms without resetting it.
+        c::Program p;
+        p.cells = 1;
+        unsigned source = unsigned(Pipe::MTE2), observer = unsigned(Pipe::V);
+        auto start = add(p, c::Node::Sequence);
+        std::array<unsigned, 2> waits{}, returns{}, arms{};
+        for (unsigned i = 0; i < 2; ++i) {
+            waits[i] = add(p, c::Node::Sequence);
+            returns[i] = add(p, c::Node::Sequence);
+            arms[i] = sequence(p, {waits[i], returns[i]});
+        }
+        auto choice = add(p, c::Node::Choice, {arms[0], arms[1]});
+        auto root = sequence(p, {start, choice});
+        c::Result plan;
+        plan.before.resize(p.nodes.size());
+        plan.before[start] = {{c::Mechanism::Publish, source, observer, 1}};
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            plan.before[waits[arm]] = {
+                {c::Mechanism::Acquire, source, observer, 1},
+                {c::Mechanism::Publish, observer, source, arm + 2},
+                {c::Mechanism::Acquire, observer, source, arm + 2}};
+        }
+        require(c::verifyDemands(p, plan.before).success);
+        // Disjoint keys still share pipeline queues. Keep a second complete
+        // family on the observer, both before and after the alternative WAIT,
+        // and compare repeated arm switching with the independent graph.
+        for (bool beforeWait : {false, true}) {
+            auto interleaved = plan;
+            unsigned third = unsigned(Pipe::MTE3);
+            for (unsigned arm = 0; arm < 2; ++arm) {
+                std::vector<c::Mechanism> packet{
+                    {c::Mechanism::Publish, third, observer, arm + 4},
+                    {c::Mechanism::Acquire, third, observer, arm + 4},
+                    {c::Mechanism::Publish, observer, third, arm + 4},
+                    {c::Mechanism::Acquire, observer, third, arm + 4}};
+                auto& at = interleaved.before[waits[arm]];
+                at.insert(beforeWait ? at.begin() : at.end(), packet.begin(), packet.end());
+            }
+            require(c::verifyDemands(p, interleaved.before).success);
+            Oracle oracle;
+            ExecutionPolicy policy;
+            policy.trips = [](unsigned, unsigned) { return 0u; };
+            policy.choice = [](unsigned, unsigned visit) { return visit % 2; };
+            for (unsigned invocation = 0; invocation < 7; ++invocation) {
+                execute(p, interleaved, root, policy, oracle);
+                oracle.check();
+            }
+            // The certificate is not a blanket repair for another family's
+            // rearm. Removing its return must still be rejected.
+            interleaved.before[waits[0]].erase(
+                interleaved.before[waits[0]].begin() + (beforeWait ? 2 : 5),
+                interleaved.before[waits[0]].begin() + (beforeWait ? 4 : 7));
+            require(!c::verifyDemands(p, interleaved.before).success);
+        }
+        for (unsigned pattern = 0; pattern < 16; ++pattern) {
+            ExecutionPolicy policy;
+            policy.trips = [](unsigned, unsigned) { return 0u; };
+            policy.choice = [pattern](unsigned, unsigned visit) { return (pattern >> (visit % 4)) & 1; };
+            Oracle oracle;
+            for (unsigned visit = 0; visit < 8; ++visit) {
+                execute(p, plan, root, policy, oracle);
+                oracle.check();
+            }
+        }
+        // All mutations are judged from actual commands, without a selected
+        // family/cut certificate supplied by the constructor.
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            auto missing = plan.before;
+            missing[waits[arm]].clear();
+            require(!c::verifyDemands(p, missing).success);
+            auto duplicate = plan.before;
+            duplicate[waits[arm]].push_back(duplicate[waits[arm]].front());
+            require(!c::verifyDemands(p, duplicate).success);
+            auto wrong = plan.before;
+            wrong[waits[arm]][0].forwardKey = 5;
+            require(!c::verifyDemands(p, wrong).success);
+            auto missingReturn = plan.before;
+            missingReturn[waits[arm]].resize(1);
+            require(!c::verifyDemands(p, missingReturn).success);
+            auto earlyReturn = plan.before;
+            std::rotate(
+                earlyReturn[waits[arm]].begin(), earlyReturn[waits[arm]].begin() + 1, earlyReturn[waits[arm]].end());
+            require(!c::verifyDemands(p, earlyReturn).success);
+        }
+        auto duplicateSet = plan.before;
+        duplicateSet[start].push_back(duplicateSet[start].front());
+        require(!c::verifyDemands(p, duplicateSet).success);
+        auto lateSet = plan.before;
+        lateSet[p.nodes[root].children.back()] = lateSet[start];
+        lateSet[start].clear();
+        require(!c::verifyDemands(p, lateSet).success);
+        auto foreignUse = plan.before;
+        foreignUse[p.nodes[root].children.back()] = {
+            {c::Mechanism::Publish, observer, source, 2}, {c::Mechanism::Acquire, observer, source, 2}};
+        require(!c::verifyDemands(p, foreignUse).success);
+        // A body-only consumer cannot discharge the publication on a zero-trip
+        // path. Keep the original parent/Choice otherwise unchanged.
+        c::Program skipped;
+        skipped.cells = 1;
+        auto publication = add(skipped, c::Node::Sequence);
+        auto loopWait = add(skipped, c::Node::Sequence), loopReturn = add(skipped, c::Node::Sequence);
+        auto body = sequence(skipped, {loopWait, loopReturn});
+        auto loop = add(skipped, c::Node::For, {body});
+        auto armLoop = sequence(skipped, {loop});
+        auto otherWait = add(skipped, c::Node::Sequence), otherReturn = add(skipped, c::Node::Sequence);
+        auto otherArm = sequence(skipped, {otherWait, otherReturn});
+        auto skipChoice = add(skipped, c::Node::Choice, {armLoop, otherArm});
+        sequence(skipped, {publication, skipChoice});
+        std::vector<std::vector<c::Mechanism>> unbalanced(skipped.nodes.size());
+        unbalanced[publication] = plan.before[start];
+        unbalanced[loopWait] = plan.before[waits[0]];
+        unbalanced[otherWait] = plan.before[waits[1]];
+        require(!c::verifyDemands(skipped, unbalanced).success);
+    }
+    {
+        // Physical-prefix checking remains independent of alternative-key
+        // participation. An A receipt must not cover later source work on B,
+        // nor a newer A generation issued after the common publication.
+        c::Program p;
+        p.cells = 2;
+        unsigned source = unsigned(Pipe::MTE2), observer = unsigned(Pipe::V);
+        auto writeA = op(p, source, 0, true), writeB = op(p, source, 1, true);
+        std::array<unsigned, 2> readers{}, returns{}, arms{};
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            readers[arm] = op(p, observer, 0, false);
+            returns[arm] = add(p, c::Node::Sequence);
+            arms[arm] = sequence(p, {readers[arm], returns[arm]});
+        }
+        auto choice = add(p, c::Node::Choice, {arms[0], arms[1]});
+        auto root = sequence(p, {writeA, writeB, choice});
+        c::Result plan;
+        plan.before.resize(p.nodes.size());
+        // Explicit entry reconciliation supplies storage release on repeated
+        // whole invocations; the acquisition ACK precedes the current reader.
+        plan.before[writeA] = {
+            {c::Mechanism::Rendezvous, std::min(source, observer), std::max(source, observer), 0, 0},
+            {c::Mechanism::Barrier, source}};
+        plan.before[writeB] = {{c::Mechanism::Publish, source, observer, 1}};
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            plan.before[readers[arm]] = {
+                {c::Mechanism::Acquire, source, observer, 1},
+                {c::Mechanism::Publish, observer, source, arm + 2},
+                {c::Mechanism::Acquire, observer, source, arm + 2}};
+        }
+        require(c::verifyDemands(p, plan.before).success);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned) { return 0u; };
+        policy.choice = [](unsigned, unsigned visit) { return visit % 2; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 5; ++invocation) {
+            execute(p, plan, root, policy, oracle);
+            oracle.check();
+        }
+        auto newerA = p;
+        newerA.nodes[writeB].effects[1].writers = 0;
+        newerA.nodes[writeB].effects[0].writers = 1u << source;
+        require(!c::verifyDemands(newerA, plan.before).success);
+        auto missingB = p;
+        auto continuation = p.nodes[root].children.back();
+        missingB.nodes[continuation].kind = c::Node::Operation;
+        missingB.nodes[continuation].lane = observer;
+        missingB.nodes[continuation].effects[1].readers = 1u << observer;
+        require(!c::verifyDemands(missingB, plan.before).success);
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            auto late = plan.before;
+            auto commands = late[readers[arm]];
+            late[readers[arm]].clear();
+            late[returns[arm]] = commands;
+            require(!c::verifyDemands(p, late).success);
+        }
+    }
+    {
         // A parent's WAIT-consumption may return through either closed child
         // protocol. The key domains remain disjoint; memory independence does
         // not provide this evidence. Reconstruct it from the actual commands.

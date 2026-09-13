@@ -84,6 +84,10 @@ def main():
                         'child_return_candidates', 'child_return_acks_removed',
                         'rejected_child_returns', 'child_return_work',
                         'child_return_checks', 'child_return_budget_check', 'child_return_budget_exhausted',
+                        'alternative_choice_candidates', 'alternative_choice_families', 'alternative_choice_sites',
+                        'alternative_choice_sets_removed',
+                        'alternative_choice_source_scopes', 'alternative_choice_prefix_steps',
+                        'rejected_alternative_choices', 'alternative_choice_work', 'alternative_choice_budget_exhausted',
                         'ring_candidates', 'rejected_rings', 'ring_candidate_commands_removed', 'cut_cycles',
                         'deferred_ring_candidates', 'deferred_rings', 'rejected_deferred_rings', 'deferred_protocol_steps',
                         'periodic_deferred_rings', 'periodic_write_overlap_rejections', 'periodic_scalar_work',
@@ -471,6 +475,72 @@ def main():
                                                args.output.resolve() / (name + '.pto')]))
             if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
                 raise RuntimeError('actual child-return corruption escaped reconstruction: ' + mutation)
+            path_checks.append(dict(name=name, verdict=verdict))
+        alternative_source = Path(__file__).parent / 'structured_inputs/demand_choice_residual.pto'
+        alternative_outputs, alternative_profiles = {}, {}
+        for arm, mode in (('selected', 'none'), ('disabled', 'without-alternative-choices'),
+                          ('rejected', 'reject-alternative-choices')):
+            name = 'alternative-choice-' + arm
+            raw = args.output.resolve() / (name + '.native.pto')
+            output = args.output.resolve() / (name + '.pto')
+            verdict = json.loads(invoke(name, [args.driver, alternative_source, 'demands:' + mode, raw]))
+            if not verdict['accepted'] or not verdict['atomic']:
+                raise RuntimeError('alternative Choice construction failed: ' + arm)
+            invoke(name + '-normalize', compiler + [raw, '-o', output])
+            alternative_outputs[arm] = output
+            alternative_profiles[arm] = native_counters(name)
+        selected_profile = alternative_profiles['selected']
+        if (not selected_profile['alternative_choice_families'] or
+                not selected_profile['alternative_choice_sets_removed'] or
+                not selected_profile['alternative_choice_prefix_steps'] or
+                not alternative_profiles['rejected']['rejected_alternative_choices']):
+            raise RuntimeError('alternative Choice selection/rollback not exercised')
+        if alternative_outputs['rejected'].read_bytes() != alternative_outputs['disabled'].read_bytes():
+            raise RuntimeError('alternative Choice fault did not restore the exact disabled output')
+        alternative_scenarios = []
+        for take in (False, True):
+            scenario = dict(arguments=['src', take])
+            old, old_metrics = run(alternative_outputs['disabled'], scenario)
+            new, new_metrics = run(alternative_outputs['selected'], scenario)
+            if new.before[4]['completed'].get('PIPE_MTE2', -1) != 1:
+                raise RuntimeError('alternative B acquisition waited for unrelated C')
+            if old_metrics['counts'] != new_metrics['counts'] or old_metrics['scalar_counts'] != new_metrics['scalar_counts']:
+                raise RuntimeError('alternative Choice changed executed mechanism/scalar counts')
+            alternative_scenarios.append(dict(arguments=scenario['arguments'], differences=compare(old, new),
+                                               baseline_counts=old_metrics['counts'],
+                                               selected_counts=new_metrics['counts']))
+        path_checks.append(dict(name='alternative-choice-prefix', profiles=alternative_profiles,
+                                source_sha256=digest(alternative_source),
+                                output_sha256=digest(alternative_outputs['selected']), scenarios=alternative_scenarios))
+        continuation_source = args.output.resolve() / 'alternative-continuation.input.pto'
+        continuation_text = alternative_source.read_text()
+        if continuation_text.count('    return\n') != 1:
+            raise RuntimeError('unexpected alternative fixture return population')
+        continuation_source.write_text(continuation_text.replace('    return\n',
+            '    pto.tabs ins(%c : !pto.tile_buf<vec, 16x16xf16>) '
+            'outs(%out_b : !pto.tile_buf<vec, 16x16xf16>)\n    return\n'))
+        continuation_outputs, continuation_profiles = {}, {}
+        for arm, mode in (('selected', 'none'), ('disabled', 'without-alternative-choices')):
+            name = 'alternative-continuation-' + arm
+            output = args.output.resolve() / (name + '.pto')
+            verdict = json.loads(invoke(name, [args.driver, continuation_source, 'demands:' + mode, output]))
+            if not verdict['accepted'] or not verdict['atomic']:
+                raise RuntimeError('alternative continuation fallback failed')
+            continuation_outputs[arm] = output
+            continuation_profiles[arm] = native_counters(name)
+        if (not continuation_profiles['selected']['rejected_alternative_choices'] or
+                continuation_outputs['selected'].read_bytes() != continuation_outputs['disabled'].read_bytes()):
+            raise RuntimeError('earlier B publication escaped without later C readiness')
+        path_checks.append(dict(name='alternative-continuation-fallback', profiles=continuation_profiles,
+                                source_sha256=digest(continuation_source),
+                                output_sha256=digest(continuation_outputs['selected'])))
+        for mutation in ('alternative-drop-wait', 'alternative-duplicate-wait',
+                         'alternative-wrong-wait-key', 'alternative-drop-return'):
+            name = 'alternative-choice-' + mutation
+            verdict = json.loads(invoke(name, [args.driver, alternative_source, 'demands:' + mutation,
+                                               args.output.resolve() / (name + '.pto')]))
+            if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
+                raise RuntimeError('actual alternative Choice corruption escaped reconstruction: ' + mutation)
             path_checks.append(dict(name=name, verdict=verdict))
         for mutation in ('drop-set', 'drop-wait', 'duplicate-set', 'wrong-key',
                          'early-publication', 'late-acquisition'):

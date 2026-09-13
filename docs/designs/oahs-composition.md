@@ -1821,3 +1821,122 @@ Artifacts are under the existing build's `test-results/oahs-child-final-compiler
 native outputs, replay scenarios and boundary reports for frozen record 193.
 The full lit/system suites and device qualification remain separate and were
 not run. Defaults and target contracts are unchanged.
+
+## Shared alternative acquisitions
+
+The next bounded refinement separates a common producer publication from its
+alternative branch-local acquisitions. It targets the general situation
+`produce A; produce B; unrelated producer work; Choice(consume A; consume B)`.
+An incoming A receipt need not force the residual B handoff to publish inside
+each branch after the unrelated work has already been issued.
+
+The selected protocol has one parent SET on a globally exclusive forward key.
+Every supported branch path has one WAIT on that **same physical key**, then
+an adjacent dedicated reverse SET/WAIT acknowledgment. Only the branch SETs
+are coalesced; the acquisitions and return commands keep their original sites.
+The constructor must preserve all payload and guarded mechanisms and must not
+increase executed synchronization or scalar participation work.
+
+Fresh reconstruction qualifies the actual endpoint population independently
+of the constructor's demand/family records. It proves exactly one acquisition
+on every path, rejects participating recurrence or bypasses, and checks global
+key exclusivity including expanded canonical packets. Each bounded ordered
+pair of alternative four-command words is checked for consumption-before-rearm.
+The direct return gives both causal chains:
+
+```text
+WAIT(F, arm i) -> SET(Ri) -> WAIT(Ri) -> next SET(F)
+WAIT(Ri) -> later SET(F) -> WAIT(F, arm i) -> later SET(Ri)
+```
+
+Skipping other arms does not reset a key. These chains, not lexical encounters
+with WAIT, justify the next publication. The virtual copies used by the proof
+must not become duplicate physical SETs in emitted IR.
+
+Certified keys are excluded from the ordinary closed-word proof, which still
+checks every remaining key. A separately established all-arm causal transfer
+may export observer **entry** history to the source at Choice exit, as in the
+child-return milestone. It does not export end-of-arm history or payload
+completion. The fresh physical-prefix checker retains every actual command;
+an A publication cannot cover a newer A generation or later unrelated B work.
+
+This is an optional protocol refinement within the general composition engine,
+not a new control-flow admission rule or a GEMM recognizer. Unsupported
+participation, shared colors, or exhausted bounded work must retain the exact
+pre-refinement plan. Default selection and target contracts are unchanged.
+
+The optional final transaction has a 4,194,304-unit represented-work allowance,
+including discovery, command/cell copies, alternative certificates and any
+child-return rescue needed by its fresh checker. Earlier construction checks
+explicitly disable alternative certification. The already verified baseline's
+child-return construction retains its own separate allowance: this is not one
+global budget over the entire top-level invocation. Family and alternative
+populations stop before a ninth entry is inserted. The actual certificate uses
+structural intervals for membership tests; constructor ancestor walks remain
+precharged and bounded by the optional allowance.
+
+The post-numbering constructor requires an existing dedicated branch ACK and
+does not synthesize new continuation handoffs. This distinction matters on Q
+projection: its branch B publication also supplied later C/D readiness. Moving
+that SET before the C/D loads would invalidate those later consumers. The fresh
+physical check therefore retains the exact baseline on that input. A follow-up
+must select the earlier B demand **before** forward construction, leaving C/D
+pending so the same constructor discovers their necessary later handoff. It
+must not repair that omission with a separate post-numbering insertion planner.
+
+### Alternative-acquisition qualification
+
+All three reviewers accepted this opt-in milestone. The final incremental
+targets compile, all six selected OAHS gates pass in **325.60 seconds**, and
+the selected `insert_sync_structured_constructor.pto` lit test passes. Native
+core checks pass **2,270,051 assertions**; strict C++17 Clang ASan/UBSan passes
+**2,284,195**. Counts from the two builds are not added together.
+
+The native three-load fixture publishes B before unrelated C and keeps both
+branch acquisitions at their B consumers. Static SET/WAIT sites change from
+**5/5 to 4/5**; either arm still executes **3/3**, with unchanged scalar work
+and one terminal drain. Independent replay observes B's producer prefix move
+from payload 2 to payload 1, with identical payload. The fixture SHA-256 is
+`7c5c68aec62cf063e45979e5d05f6181bee3d3bdbd2d6e7a55293ecf7601d29e`.
+Adding a later C consumer exercises exact fallback: the transaction is rejected
+and the output matches the disabled plan byte-for-byte. Native missing,
+duplicate and wrong-key arm waits and deleted returns reject atomically.
+Core tests also cover alternating whole invocations, interleaved foreign
+families, stale generations, zero-trip bypasses and exact/one-unit-short budgets.
+
+The final frozen replay has **726 comparisons: 680 exact, 46 prior count
+differences**. There are no new status, return-code, refusal or mechanism-count
+changes relative to the child-return milestone. Admissions remain 45/150
+PTOAS, 7/35 PyPTO and 145/178 PyPTO-lib snapshots. The frozen reference and
+denominators are unchanged; this remains raw/prepared compiler compatibility.
+
+The eight regression inputs keep their previous command counts and completion
+boundaries. Q projection and historical GEMM are not improved by this removal-
+only refinement; the whole replacement gate remains `quality_qualified=false`.
+The isolated compiler campaign uses one warmup and three paired samples per
+case. All samples and all 16 C++ emissions pass. Median demand/existing ratios:
+
+| Input | Ratio |
+| --- | ---: |
+| One buffer | 1.013140 |
+| Two buffers | 0.998218 |
+| Three buffers | 1.029744 |
+| Four-use | 1.022679 |
+| Online softmax | 1.070064 |
+| QK matmul | 1.022399 |
+| Q projection | 1.038154 |
+| Historical GEMM | 1.000242 |
+
+The maximum individual paired ratio is **1.070130**, below 2x. Final SHA-256:
+
+- opt driver: `efd72968b8cefd84118ff8196f3cc6962af5cdd1333e6e0754caab87b072279c`
+- reconstruction driver: `15617df7b8122eb040d06a6b682b2a5bad36d8c19d48195bc5b1cdc3a45c1d11`
+- compiler library: `cf2b39748d1a563c8a0e7d6b9e8b27143a549267cd7d285a8cbc9fb7154b1b5b`
+
+Provenance records base `ebc201672c5392566470078b5d9c814a5b1a2684`, the
+task-owned dirty listing, tracked-diff hash, exact commands and input hashes.
+Artifacts reside in the existing build under `test-results/oahs-demands`,
+`test-results/oahs-alternative-final-compiler` and
+`test-results/oahs-alternative-final-frozen-replay`. This is base-plus-diff
+evidence, not a clean-revision or device qualification claim. Full lit/system
+suites were not run. No planner default or hardware contract changed.

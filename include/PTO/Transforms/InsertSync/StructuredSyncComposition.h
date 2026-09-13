@@ -133,6 +133,15 @@ struct Result {
     uint64_t rejectedChildReturns = 0, childReturnWork = 0;
     uint64_t childReturnChecks = 0, childReturnBudgetCheck = 0;
     bool childReturnBudgetExhausted = false;
+    // Parent-owned ordinary Choice families: one source publication and one
+    // exclusive acquisition/return path. Prefix steps count bypassed source
+    // operations, not time or a hardware-latency estimate.
+    uint64_t alternativeChoiceCandidates = 0, alternativeChoiceFamilies = 0;
+    uint64_t alternativeChoiceSites = 0, alternativeChoiceSetsRemoved = 0;
+    uint64_t alternativeChoiceSourceScopes = 0;
+    uint64_t alternativeChoicePrefixSteps = 0, rejectedAlternativeChoices = 0;
+    uint64_t alternativeChoiceWork = 0;
+    bool alternativeChoiceBudgetExhausted = false;
     uint64_t ringCandidates = 0, rejectedRings = 0, ringCandidateCommandsRemoved = 0;
     uint64_t deferredRingCandidates = 0, deferredRings = 0, rejectedDeferredRings = 0;
     uint64_t deferredProtocolSteps = 0;
@@ -184,6 +193,9 @@ Result constructDemandsRejectingChoiceDemands(const Program& program);
 Result constructDemandsWithoutChildReturns(const Program& program);
 Result constructDemandsWithChildReturnWorkLimit(const Program& program, uint64_t limit);
 Result constructDemandsRejectingChildReturns(const Program& program);
+Result constructDemandsWithoutAlternativeChoices(const Program& program);
+Result constructDemandsWithAlternativeChoiceWorkLimit(const Program& program, uint64_t limit);
+Result constructDemandsRejectingAlternativeChoices(const Program& program);
 // Fault injection before refinement checking/emission, never on the initial
 // plan: discard the optional candidate's mechanisms to exercise exact rollback.
 Result constructDemandsRejectingRefinement(const Program& program);

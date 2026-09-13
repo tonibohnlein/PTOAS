@@ -1012,10 +1012,12 @@ Outcome ss::testing::constructCompositionalSync(
     const bool rejectChoice = constructor == CompositionConstructor::DemandsRejectChoiceDemands;
     const bool withoutChildReturns = constructor == CompositionConstructor::DemandsWithoutChildReturns;
     const bool rejectChildReturns = constructor == CompositionConstructor::DemandsRejectChildReturns;
+    const bool withoutAlternatives = constructor == CompositionConstructor::DemandsWithoutAlternativeChoices;
+    const bool rejectAlternatives = constructor == CompositionConstructor::DemandsRejectAlternativeChoices;
     const bool demandPlacement = constructor == CompositionConstructor::Demands || rejectRefinement || fallbackOnly ||
                                  withoutReplay || rejectReplay || rejectEntry || rejectDeferred || withoutLateEntry ||
                                  rejectLateEntry || withoutChoice || rejectChoice || withoutChildReturns ||
-                                 rejectChildReturns;
+                                 rejectChildReturns || withoutAlternatives || rejectAlternatives;
     Outcome out;
     if (function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         out.reason = "composition requires a single function block";
@@ -1058,7 +1060,9 @@ Outcome ss::testing::constructCompositionalSync(
     }
     if (fallbackOnly)
         tree.program.target.compilerKeys = {0};
-    auto selected = withoutChildReturns ? c::testing::constructDemandsWithoutChildReturns(tree.program) :
+    auto selected = withoutAlternatives ? c::testing::constructDemandsWithoutAlternativeChoices(tree.program) :
+                    rejectAlternatives  ? c::testing::constructDemandsRejectingAlternativeChoices(tree.program) :
+                    withoutChildReturns ? c::testing::constructDemandsWithoutChildReturns(tree.program) :
                     rejectChildReturns  ? c::testing::constructDemandsRejectingChildReturns(tree.program) :
                     withoutChoice       ? c::testing::constructDemandsWithoutChoiceDemands(tree.program) :
                     rejectChoice        ? c::testing::constructDemandsRejectingChoiceDemands(tree.program) :
@@ -1213,8 +1217,16 @@ Outcome ss::testing::constructCompositionalSync(
             << selected.childReturnAcksRemoved << " rejected_child_returns " << selected.rejectedChildReturns
             << " child_return_work " << selected.childReturnWork << " child_return_checks "
             << selected.childReturnChecks << " child_return_budget_check " << selected.childReturnBudgetCheck
-            << " child_return_budget_exhausted " << selected.childReturnBudgetExhausted << " ring_candidates "
-            << selected.ringCandidates << " rejected_rings " << selected.rejectedRings
+            << " child_return_budget_exhausted " << selected.childReturnBudgetExhausted
+            << " alternative_choice_candidates " << selected.alternativeChoiceCandidates
+            << " alternative_choice_families " << selected.alternativeChoiceFamilies << " alternative_choice_sites "
+            << selected.alternativeChoiceSites << " alternative_choice_sets_removed "
+            << selected.alternativeChoiceSetsRemoved << " alternative_choice_source_scopes "
+            << selected.alternativeChoiceSourceScopes << " alternative_choice_prefix_steps "
+            << selected.alternativeChoicePrefixSteps << " rejected_alternative_choices "
+            << selected.rejectedAlternativeChoices << " alternative_choice_work " << selected.alternativeChoiceWork
+            << " alternative_choice_budget_exhausted " << selected.alternativeChoiceBudgetExhausted
+            << " ring_candidates " << selected.ringCandidates << " rejected_rings " << selected.rejectedRings
             << " ring_candidate_commands_removed " << selected.ringCandidateCommandsRemoved << " rendezvous_packets "
             << rendezvousPackets << " deferred_ring_candidates " << selected.deferredRingCandidates
             << " deferred_rings " << selected.deferredRings << " rejected_deferred_rings "

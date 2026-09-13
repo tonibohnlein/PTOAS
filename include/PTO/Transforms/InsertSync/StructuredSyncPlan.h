@@ -43,6 +43,8 @@ enum class CompositionConstructor {
     DemandsRejectChoiceDemands,
     DemandsWithoutChildReturns,
     DemandsRejectChildReturns,
+    DemandsWithoutAlternativeChoices,
+    DemandsRejectAlternativeChoices,
     DemandsRejectAllocationReplay
 };
 logical_sync::ConstructionResult constructCompositionalSync(
