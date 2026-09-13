@@ -2219,3 +2219,73 @@ candidate `pto-test-opt` SHA-256
 `136b4e4b978bc03364ccff866e22aa11237c32f1bb07b232222a1c03d5435ba8`.
 This is prepared-IR compiler compatibility, not source regeneration, device
 correctness, or runtime performance qualification.
+
+## Authored fixed synchronization composition
+
+The general composition engine now treats original `pto.barrier`,
+`pto.cmo.cacheinvalid`, and `pto.fence.barrier_all` operations as immutable
+program transitions. They are no longer mistaken for generated mechanisms or
+silently skipped. Authored event protocols remain fail-closed because the
+composer does not yet have an ownership summary for their tokens.
+
+The transition semantics follow the separately maintained canonical hardware
+model:
+
+- A qualified per-pipeline barrier completes the preceding prefix of that
+  pipeline for subsequent work on the same pipeline.
+- `PIPE_ALL` completes all pending resources on the current physical core.
+- An AIV GM fence drains `PIPE_S`, `PIPE_V`, `PIPE_MTE2`, and `PIPE_MTE3`; an
+  AIC GM fence drains `PIPE_MTE2`, `PIPE_MTE3`, and `PIPE_FIX`.
+- A whole-GM cache operation before an AIV fence can publish preceding scalar
+  writes. A whole-GM cache operation after the fence can invalidate scalar
+  cache state for non-scalar writes published by that fence.
+- An addressed cache operation is preserved but receives no abstract-cell
+  coverage credit. The composition cell model does not prove cache-line
+  geometry, so treating it as whole-cell maintenance would be unsound.
+- Neither a hardware event nor a cache operation alone establishes GM
+  visibility. The unqualified MTE3-to-MTE2 GM RAW direction remains refused.
+
+These transitions participate in Sequence, Choice, For, and While composition
+and in all three constructors. At a Choice join, MAY hazards are unioned while
+cache-clean and fence-publication proofs are intersected. A new write
+invalidates the corresponding generation-specific proof. Fresh reconstruction
+reimports the authored operations from the emitted clone and verifies their
+effect on the original physical requirements. Generated visibility packets are
+forbidden from borrowing either half of an authored CMO/fence pair. Retirement
+counts only the generated terminal drain, so an original `PIPE_ALL` is
+preserved without being confused with that drain.
+
+### Local qualification
+
+The incremental two-worker native build of `pto-composition-core-test`,
+`pto-structured-sync-test`, and `pto-test-opt` passes. The serial
+`oahs_composition_core`, `oahs_composition`, and `oahs_demands` gates pass in
+37.3 seconds. The native campaign exercises an authored per-pipeline barrier,
+whole-GM clean/fence publication, and the immutability check for every authored
+mechanism. A placement mutation moves a generated clean next to an authored
+fence, and another moves a generated barrier beside an authored barrier. Both
+are rejected by fresh packet reconstruction without changing the original
+payload. Portable tests additionally cover reversed clean/fence
+order, addressed-CMO refusal of coverage, PIPE_ALL completion, fence-then-
+invalidate acquisition, one-arm Choice proofs, AIC fence completion, and AIC
+refusal of scalar-cache publication.
+
+The hash-frozen replay admits **249/363** inputs, with no loss from the preceding
+247/363 result: PTOAS **79/150**, PyPTO **7/35**, and pypto-lib **163/178**.
+The two new admissions are the AIV `lm_head_signal_clear.pto` and
+`moe_signal_clear.pto` production kernels, whose original whole-GM cache
+operation and fence now supply their scalar-write publication contract. The
+remaining 114 refusals are explicit: 61 unqualified MTE3-to-MTE2 GM publication
+cases, 39 communication cases, eight reserved-buffer cases, four invalid
+physical-context fixtures, and two unresolved helper contracts. Some newly
+exposed refusal counts differ from the preceding first-blocker taxonomy because
+authored cache maintenance is no longer the first blocker.
+
+The replay is under
+`oahs-clean-c1-build/test-results/oahs-coverage-authored-fixed-final`, uses the unchanged
+frozen manifest
+`95beab25427b1dd3a2ff1b59cd881a3f4181e0f83c8a8b44daf35555bf46c3b6`, and
+records candidate `pto-test-opt` SHA-256
+`5389439f002274b6151580c4ff79e2e3ee103733ac68b6492b5548dd8e0ee280`.
+This is prepared-IR compiler compatibility and mutation evidence, not device or
+runtime-performance qualification.

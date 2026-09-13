@@ -158,6 +158,7 @@ struct Tree {
     std::vector<Cell> cells;
     std::vector<Operation*> anchors;
     llvm::DenseMap<Operation*, unsigned> ids;
+    llvm::SmallPtrSet<Operation*, 32> fixedOperations;
     const llvm::SmallPtrSetImpl<Operation*>* ignored = nullptr;
     llvm::DenseMap<Operation*, const CompoundInstanceElement*> phases;
     std::string reason;
@@ -328,6 +329,7 @@ struct Tree {
     {
         unsigned id = program.nodes.size();
         program.nodes.push_back(std::move(n));
+        program.fixedBefore.emplace_back();
         anchors.push_back(anchor);
         if (anchor)
             ids[anchor] = id;
@@ -340,6 +342,49 @@ struct Tree {
         n.effects.resize(program.cells);
         return n;
     }
+    bool fixed(Operation* op, c::FixedAction& action)
+    {
+        if (auto barrier = dyn_cast<BarrierOp>(op)) {
+            PIPE p = barrier.getPipe().getPipe();
+            if (p == PIPE::PIPE_ALL) {
+                action.kind = c::FixedAction::BarrierAll;
+            } else {
+                auto fixedLane = lane(p);
+                if (!fixedLane || !program.target.barrier({program.core, static_cast<ss::Pipe>(*fixedLane)})) {
+                    reason = "unsupported authored pipe barrier";
+                    return false;
+                }
+                action.kind = c::FixedAction::Barrier;
+                action.lane = *fixedLane;
+            }
+        } else if (auto cmo = dyn_cast<CmoCacheInvalidOp>(op)) {
+            auto space = cmo.getSpace().getAddressSpace();
+            if (space != AddressSpace::GM && space != AddressSpace::Zero) {
+                reason = "unsupported authored cache-maintenance scope";
+                return false;
+            }
+            action.kind = c::FixedAction::CacheMaintenance;
+            action.cells.resize(program.cells);
+            // Without cache-line geometry an addressed CMO is preserved but
+            // cannot safely be credited to a whole abstract GM cell. This is
+            // the same fail-closed boundary as the hardware reference model.
+            if (!cmo.getAddr())
+                for (unsigned cell = 0; cell < cells.size(); ++cell)
+                    action.cells[cell] = cells[cell].space == AddressSpace::GM;
+        } else if (auto fence = dyn_cast<FenceBarrierAllOp>(op)) {
+            auto scope = fence.getScope().getScope();
+            if (scope != FenceScope::GM && scope != FenceScope::All) {
+                reason = "unsupported authored physical fence scope";
+                return false;
+            }
+            action.kind = c::FixedAction::Fence;
+        } else {
+            reason = "authored event protocol has no qualified compositional summary";
+            return false;
+        }
+        fixedOperations.insert(op);
+        return true;
+    }
     bool region(Region& body, unsigned& id)
     {
         auto sequence = node(c::Node::Sequence);
@@ -351,9 +396,17 @@ struct Tree {
             reason = "unsupported multi-block region";
             return false;
         }
+        std::vector<c::FixedAction> pendingFixed;
         for (Operation& op : body.front()) {
-            if (sync(&op) || (ignored && ignored->contains(&op)))
+            if (ignored && ignored->contains(&op))
                 continue;
+            if (sync(&op)) {
+                c::FixedAction action;
+                if (!fixed(&op, action))
+                    return false;
+                pendingFixed.push_back(std::move(action));
+                continue;
+            }
             c::Node current = node(c::Node::Sequence);
             if (auto loop = dyn_cast<scf::ForOp>(op)) {
                 if (!isInsertSyncScalarPrerequisite(loop.getLowerBound()) ||
@@ -423,7 +476,15 @@ struct Tree {
                 access(found->second->useVec, false);
                 access(found->second->defVec, true);
             }
-            sequence.children.push_back(add(std::move(current), &op));
+            unsigned child = add(std::move(current), &op);
+            program.fixedBefore[child] = std::move(pendingFixed);
+            pendingFixed.clear();
+            sequence.children.push_back(child);
+        }
+        if (!pendingFixed.empty()) {
+            unsigned child = add(node(c::Node::Sequence));
+            program.fixedBefore[child] = std::move(pendingFixed);
+            sequence.children.push_back(child);
         }
         id = add(std::move(sequence));
         return true;
@@ -884,8 +945,15 @@ struct ParticipationGuards {
 
 // Recognize the actual reusable protocol, with no attributes or selected-plan
 // receipt. All four commands must be adjacent in the same original block.
-bool parsePacket(Operation*& cursor, c::Mechanism& m, const c::Program& program, bool precision)
+bool parsePacket(Operation*& cursor, c::Mechanism& m, const c::Program& program,
+                 const llvm::SmallPtrSetImpl<Operation*>& fixedOperations,
+                 bool precision)
 {
+    // The outer reconstruction loop skips authored operations when they begin
+    // a run. Enforce the same boundary after parsing a preceding generated
+    // command so a contiguous run cannot consume an authored barrier/fence.
+    if (fixedOperations.contains(cursor))
+        return false;
     if (auto barrier = dyn_cast<BarrierOp>(cursor)) {
         auto p = lane(barrier.getPipe().getPipe());
         if (!p)
@@ -903,7 +971,8 @@ bool parsePacket(Operation*& cursor, c::Mechanism& m, const c::Program& program,
         return fence && fence.getScope().getScope() == FenceScope::GM;
     };
     Operation* next = cursor->getNextNode();
-    if ((wholeGmCmo(cursor) && gmFence(next)) || (gmFence(cursor) && wholeGmCmo(next))) {
+    if (!fixedOperations.contains(cursor) && !fixedOperations.contains(next) &&
+        ((wholeGmCmo(cursor) && gmFence(next)) || (gmFence(cursor) && wholeGmCmo(next)))) {
         m = {};
         m.kind = c::Mechanism::Visibility;
         m.visibilityAction = wholeGmCmo(cursor) ? c::VisibilityAction::CleanSource :
@@ -1002,6 +1071,10 @@ bool reconstruct(
                         cursor = cursor->getNextNode();
                         continue;
                     }
+                    if (tree.fixedOperations.contains(cursor)) {
+                        cursor = cursor->getNextNode();
+                        continue;
+                    }
                     if (!sync(cursor) || cursor == drain) {
                         cursor = cursor->getNextNode();
                         continue;
@@ -1009,7 +1082,7 @@ bool reconstruct(
                     std::vector<c::Mechanism> packets;
                     while (cursor && sync(cursor) && cursor != drain) {
                         c::Mechanism m;
-                        if (!parsePacket(cursor, m, tree.program, precision)) {
+                        if (!parsePacket(cursor, m, tree.program, tree.fixedOperations, precision)) {
                             valid = false;
                             break;
                         }
@@ -1165,7 +1238,8 @@ Outcome ss::testing::constructCompositionalSync(
     Operation* drain = nullptr;
     unsigned drains = 0;
     working.walk([&](BarrierOp barrier) {
-        if (barrier.getPipe().getPipe() == PIPE::PIPE_ALL) {
+        if (generatedOperations.contains(barrier.getOperation()) &&
+            barrier.getPipe().getPipe() == PIPE::PIPE_ALL) {
             drain = barrier;
             ++drains;
         }
@@ -1181,7 +1255,10 @@ Outcome ss::testing::constructCompositionalSync(
         return out;
     }
     Tree rebuilt(fresh, hardware, gm);
-    rebuilt.ignored = &guards.operations;
+    llvm::SmallPtrSet<Operation*, 32> rebuiltIgnored;
+    rebuiltIgnored.insert(generatedOperations.begin(), generatedOperations.end());
+    rebuiltIgnored.insert(guards.operations.begin(), guards.operations.end());
+    rebuilt.ignored = &rebuiltIgnored;
     if (!rebuilt.build(demandPlacement)) {
         out.reason = rebuilt.reason;
         return out;
@@ -1234,6 +1311,7 @@ Outcome ss::testing::constructCompositionalSync(
                 ++out.handoffs;
         }
     out.requirements = selected.acquisitions + selected.visibilityRequirements;
+    out.fixedSync = selected.fixedActions;
     out.work = selected.cellVisits + checked.cellVisits;
     out.work += tree.periodicScalarWork + rebuilt.periodicScalarWork;
     out.status = Outcome::Applied;
@@ -1246,7 +1324,8 @@ Outcome ss::testing::constructCompositionalSync(
         llvm::errs()
             << "structured composition precision " << precision << " demands " << demandPlacement << " direct_handoffs "
             << selected.directHandoffs << " visibility_requirements " << selected.visibilityRequirements
-            << " visibility_actions " << out.visibility << " shared_acknowledgments " << selected.sharedAcknowledgments
+            << " visibility_actions " << out.visibility << " fixed_sync " << out.fixedSync
+            << " shared_acknowledgments " << selected.sharedAcknowledgments
             << " reused_acknowledgments " << selected.reusedAcknowledgments << " completion_refinements "
             << selected.completionRefinements << " rejected_refinements " << selected.rejectedRefinements
             << " owned_refinements " << checked.ownedRefinements << " protocol_keys " << selected.protocolKeys

@@ -59,14 +59,56 @@ bool validMechanism(const c::Program& p, const c::Mechanism& m)
     // before the preceding reply was consumed.
     return key(p, m.first, m.second) == m.forwardKey && key(p, m.second, m.first) == m.reverseKey;
 }
-void apply(c::State& state, const c::Mechanism& m)
+uint8_t fenceSources(const c::Program& p)
+{
+    auto bit = [](Pipe pipe) { return uint8_t(1u) << unsigned(pipe); };
+    if (p.core == Core::AIV)
+        return bit(Pipe::S) | bit(Pipe::V) | bit(Pipe::MTE2) | bit(Pipe::MTE3);
+    return bit(Pipe::MTE2) | bit(Pipe::MTE3) | bit(Pipe::FIX);
+}
+void apply(const c::Program& p, c::State& state, const c::Mechanism& m)
 {
     if (m.kind == c::Mechanism::Barrier)
         state.barrier(m.first);
     else if (m.kind == c::Mechanism::Visibility)
-        state.visibility(m.visibilityAction);
+        state.visibility(m.visibilityAction, fenceSources(p), p.core == Core::AIV);
     else
         state.rendezvous(m.first, m.second);
+}
+const std::vector<c::FixedAction>& fixedAt(const c::Program& p, unsigned id)
+{
+    static const std::vector<c::FixedAction> empty;
+    return p.fixedBefore.empty() ? empty : p.fixedBefore[id];
+}
+uint64_t fixedActionCount(const c::Program& p)
+{
+    uint64_t count = 0;
+    for (const auto& actions : p.fixedBefore)
+        count += actions.size();
+    return count;
+}
+bool applyFixed(const c::Program& p, unsigned id, c::State& state, std::string& reason)
+{
+    for (const auto& action : fixedAt(p, id)) {
+        switch (action.kind) {
+            case c::FixedAction::Barrier:
+                state.barrier(action.lane);
+                break;
+            case c::FixedAction::BarrierAll:
+                state.barrierAll();
+                break;
+            case c::FixedAction::CacheMaintenance:
+                state.cacheMaintenance(action.cells);
+                break;
+            case c::FixedAction::Fence:
+                state.fence(fenceSources(p), p.core == Core::AIV);
+                break;
+            default:
+                reason = "invalid authored synchronization action";
+                return false;
+        }
+    }
+    return true;
 }
 bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::string& reason)
 {
@@ -78,6 +120,26 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
         reason = "invalid visibility cell population";
         return false;
     }
+    if (!p.fixedBefore.empty() && p.fixedBefore.size() != p.nodes.size()) {
+        reason = "invalid authored synchronization population";
+        return false;
+    }
+    for (const auto& actions : p.fixedBefore)
+        for (const auto& action : actions) {
+            bool valid = action.kind <= c::FixedAction::Fence;
+            if (action.kind == c::FixedAction::Barrier)
+                valid &= action.lane < c::LaneCount && p.target.barrier(lane(p, action.lane)) && action.cells.empty();
+            else if (action.kind == c::FixedAction::CacheMaintenance) {
+                valid &= action.lane == 0 && action.cells.size() == p.cells && !p.globalMemory.empty();
+                for (unsigned cell = 0; valid && cell < p.cells; ++cell)
+                    valid &= action.cells[cell] <= 1 && (!action.cells[cell] || p.globalMemory[cell]);
+            } else
+                valid &= action.lane == 0 && action.cells.empty();
+            if (!valid) {
+                reason = "invalid authored synchronization action";
+                return false;
+            }
+        }
     std::vector<unsigned> parents(p.nodes.size());
     for (unsigned id = 0; id < p.nodes.size(); ++id) {
         const auto& n = p.nodes[id];
@@ -171,7 +233,8 @@ VisibilityNeed visibilityNeed(const c::Program& p, const c::Node& n, const c::St
                 targetReads && source == unsigned(Pipe::MTE3) && observer == unsigned(Pipe::MTE2);
             cleanSource |= scalarCrossing && observer != unsigned(Pipe::S);
             invalidateTarget |= scalarCrossing && observer == unsigned(Pipe::S) && targetReads;
-            fenceOnly |= scalarCrossing && observer == unsigned(Pipe::S) && targetWrites && !targetReads;
+            fenceOnly |= scalarCrossing && observer == unsigned(Pipe::S) && targetWrites && !targetReads &&
+                         !(state.fencedNonScalar[i] & (uint8_t(1u) << source));
         }
     }
     // A cache recipe must never hide the separately unqualified direct GM
@@ -225,7 +288,11 @@ bool realizeVisibility(
         need == VisibilityNeed::CleanSource        ? c::VisibilityAction::CleanSource :
         need == VisibilityNeed::InvalidateTarget ? c::VisibilityAction::InvalidateTarget :
                                                    c::VisibilityAction::FenceOnly;
-    apply(state, mechanism);
+    if (p.core != Core::AIV) {
+        reason = "scalar GM visibility has no qualified AIC compositional realization";
+        return false;
+    }
+    apply(p, state, mechanism);
     commands.push_back(mechanism);
     ++requirements;
     return true;
@@ -239,7 +306,7 @@ bool acquire(const c::Program& p, unsigned source, unsigned target, c::State& st
         if (!p.target.barrier(lane(p, source)))
             return false;
         c::Mechanism m{c::Mechanism::Barrier, source, source};
-        apply(state, m);
+        apply(p, state, m);
         out.push_back(m);
         return true;
     }
@@ -267,7 +334,7 @@ bool acquire(const c::Program& p, unsigned source, unsigned target, c::State& st
         auto a = std::min(path[i - 1], path[i]);
         auto b = std::max(path[i - 1], path[i]);
         c::Mechanism m{c::Mechanism::Rendezvous, a, b, *key(p, a, b), *key(p, b, a)};
-        apply(state, m);
+        apply(p, state, m);
         out.push_back(m);
     }
     return true;
@@ -280,6 +347,8 @@ c::State::State(unsigned cells)
         history.resize(cells);
     for (auto& history : written)
         history.resize(cells);
+    cleanedScalar.resize(cells);
+    fencedNonScalar.resize(cells);
 }
 void c::State::join(const State& other)
 {
@@ -288,14 +357,30 @@ void c::State::join(const State& other)
     for (unsigned observer = 0; observer < LaneCount; ++observer)
         for (unsigned i = 0; i < written[observer].size(); ++i)
             written[observer][i] |= other.written[observer][i];
+    for (unsigned i = 0; i < cleanedScalar.size(); ++i) {
+        cleanedScalar[i] &= other.cleanedScalar[i];
+        fencedNonScalar[i] &= other.fencedNonScalar[i];
+    }
 }
 void c::State::seed(const Effects& effects)
 {
     for (auto& history : pending)
         merge(history, effects);
+    const uint8_t scalar = uint8_t(1u) << unsigned(Pipe::S);
+    for (unsigned i = 0; i < effects.size(); ++i) {
+        if (effects[i].writers & scalar)
+            cleanedScalar[i] = 0;
+        fencedNonScalar[i] &= ~(effects[i].writers & ~scalar);
+    }
     for (auto& history : written)
         for (unsigned i = 0; i < effects.size(); ++i)
             history[i] |= effects[i].writers;
+}
+void c::State::barrierAll()
+{
+    for (auto& observer : pending)
+        for (auto& effect : observer)
+            effect = {};
 }
 void c::State::barrier(unsigned lane)
 {
@@ -322,28 +407,51 @@ void c::State::rendezvous(unsigned a, unsigned b)
         pending[a][i] = h;
     }
 }
-void c::State::visibility(VisibilityAction action)
+void c::State::visibility(
+    VisibilityAction action, uint8_t drainedSources,
+    bool scalarCacheVisibility)
 {
-    // The qualified GM fence drains all AIV physical pipelines. Completion
-    // becomes universal, while cache maintenance discharges only the matching
-    // scalar-cache direction. The disputed MTE3->MTE2 publication bit remains.
-    for (auto& observer : pending)
-        for (auto& effect : observer)
-            effect = {};
+    std::vector<uint8_t> all(cleanedScalar.size(), 1);
+    if (action == VisibilityAction::CleanSource)
+        cacheMaintenance(all);
+    fence(drainedSources, scalarCacheVisibility);
+    if (action == VisibilityAction::InvalidateTarget)
+        cacheMaintenance(all);
+    // FenceOnly intentionally performs neither cache action. Its exact-site
+    // WAW credit comes from the fenced generation recorded above.
+}
+void c::State::cacheMaintenance(const std::vector<uint8_t>& cells)
+{
     const uint8_t scalar = uint8_t(1u) << unsigned(Pipe::S);
-    if (action == VisibilityAction::CleanSource) {
+    for (unsigned cell = 0; cell < cells.size(); ++cell) {
+        if (!cells[cell])
+            continue;
+        bool dirtyScalar = false;
         for (unsigned observer = 0; observer < LaneCount; ++observer)
-            if (observer != unsigned(Pipe::S))
-                for (auto& sources : written[observer])
-                    sources &= ~scalar;
-    } else if (action == VisibilityAction::InvalidateTarget) {
-        // A non-scalar source is globally published by the fence. A scalar
-        // read additionally invalidates DCache.
-        for (auto& sources : written[unsigned(Pipe::S)])
-            sources &= scalar;
+            dirtyScalar |= written[observer][cell] & scalar;
+        cleanedScalar[cell] |= dirtyScalar;
+        // An invalidate acquires only non-scalar generations already made
+        // globally visible by an earlier fence. A CMO before that fence cannot
+        // anticipate its publication.
+        written[unsigned(Pipe::S)][cell] &= ~fencedNonScalar[cell];
     }
-    // FenceOnly discharges one write-only WAW at its exact target cut. It does
-    // not invalidate DCache and therefore cannot erase visibility history.
+}
+void c::State::fence(uint8_t drainedSources, bool scalarCacheVisibility)
+{
+    const uint8_t scalar = uint8_t(1u) << unsigned(Pipe::S);
+    for (unsigned observer = 0; observer < LaneCount; ++observer)
+        for (unsigned cell = 0; cell < pending[observer].size(); ++cell) {
+            pending[observer][cell].readers &= ~drainedSources;
+            pending[observer][cell].writers &= ~drainedSources;
+        }
+    for (unsigned cell = 0; cell < fencedNonScalar.size(); ++cell) {
+        fencedNonScalar[cell] |= written[unsigned(Pipe::S)][cell] & drainedSources & ~scalar;
+        if (scalarCacheVisibility && (drainedSources & scalar) && cleanedScalar[cell])
+            for (unsigned observer = 0; observer < LaneCount; ++observer)
+                if (observer != unsigned(Pipe::S))
+                    written[observer][cell] &= ~scalar;
+        cleanedScalar[cell] = 0;
+    }
 }
 uint8_t c::State::demands(unsigned observer, const Effects& effects) const
 {
@@ -371,6 +479,7 @@ bool c::Mechanism::operator==(const Mechanism& m) const
 c::Result c::construct(const Program& p)
 {
     Result result;
+    result.fixedActions = fixedActionCount(p);
     result.before.resize(p.nodes.size());
     std::vector<Effects> summaries;
     if (!summarize(p, summaries, result.reason))
@@ -378,6 +487,8 @@ c::Result c::construct(const Program& p)
     std::function<bool(unsigned, State&)> visit = [&](unsigned id, State& state) {
         ++result.nodeVisits;
         result.cellVisits += p.cells * LaneCount;
+        if (!applyFixed(p, id, state, result.reason))
+            return false;
         const auto& n = p.nodes[id];
         if (n.kind == Node::Operation) {
             if (!realizeVisibility(
@@ -434,6 +545,7 @@ c::Result c::construct(const Program& p)
 c::Result c::verify(const Program& p, const std::vector<std::vector<Mechanism>>& actual)
 {
     Result result;
+    result.fixedActions = fixedActionCount(p);
     std::vector<Effects> summaries;
     if (actual.size() != p.nodes.size() || !summarize(p, summaries, result.reason))
         return result;
@@ -442,17 +554,20 @@ c::Result c::verify(const Program& p, const std::vector<std::vector<Mechanism>>&
     std::function<bool(unsigned, State&)> check = [&](unsigned id, State& state) {
         ++result.nodeVisits;
         result.cellVisits += p.cells * LaneCount;
+        if (!applyFixed(p, id, state, result.reason))
+            return false;
+        State visibilityState = state;
         const auto& n = p.nodes[id];
         for (const auto& m : actual[id]) {
             if (!validMechanism(p, m)) {
                 result.reason = "invalid reusable event protocol";
                 return false;
             }
-            apply(state, m);
+            apply(p, state, m);
         }
         switch (n.kind) {
             case Node::Operation:
-                if (!visibilityCovered(p, n, state, actual[id])) {
+                if (!visibilityCovered(p, n, visibilityState, actual[id])) {
                     result.reason = "same-address GM visibility is not completion";
                     return false;
                 }
@@ -1010,6 +1125,7 @@ c::Result constructCutCandidate(const c::Program& p, bool reserveFallback)
 {
     using namespace c;
     c::Result result;
+    result.fixedActions = fixedActionCount(p);
     Cuts cuts;
     if (!discoverCuts(p, cuts, result.reason))
         return result;
@@ -1061,6 +1177,8 @@ c::Result constructCutCandidate(const c::Program& p, bool reserveFallback)
     std::function<bool(unsigned, PrefixState&)> visit = [&](unsigned id, PrefixState& state) {
         ++result.nodeVisits;
         result.cellVisits += p.cells * LaneCount;
+        if (!applyFixed(p, id, state, result.reason))
+            return false;
         const auto& n = p.nodes[id];
         auto& commands = result.before[id];
         commands = sites.published[id];
@@ -1161,6 +1279,7 @@ c::Result c::constructCuts(const Program& p)
 c::Result c::verifyCuts(const Program& p, const std::vector<std::vector<Mechanism>>& input)
 {
     Result result;
+    result.fixedActions = fixedActionCount(p);
     Cuts cuts;
     if (input.size() != p.nodes.size() || !discoverCuts(p, cuts, result.reason))
         return result;
@@ -1289,6 +1408,9 @@ c::Result c::verifyCuts(const Program& p, const std::vector<std::vector<Mechanis
     std::function<bool(unsigned, PrefixState&)> check = [&](unsigned id, PrefixState& state) {
         ++result.nodeVisits;
         result.cellVisits += p.cells * LaneCount;
+        if (!applyFixed(p, id, state, result.reason))
+            return false;
+        PrefixState visibilityState = state;
         unsigned publications = 0, acquisitions = 0;
         for (const auto& m : actual[id]) {
             if (m.kind == Mechanism::Publish) {
@@ -1311,12 +1433,12 @@ c::Result c::verifyCuts(const Program& p, const std::vector<std::vector<Mechanis
                     result.reason = "invalid conservative mechanism in cut plan";
                     return false;
                 }
-                apply(state, m);
+                apply(p, state, m);
             }
         }
         const auto& n = p.nodes[id];
         if (n.kind == Node::Operation) {
-            if (!visibilityCovered(p, n, state, actual[id]) || state.demands(n.lane, n.effects)) {
+            if (!visibilityCovered(p, n, visibilityState, actual[id]) || state.demands(n.lane, n.effects)) {
                 result.reason = "uncovered original physical obligation in cut plan";
                 return false;
             }
@@ -4225,6 +4347,7 @@ c::Result constructDemandCandidate(
 {
     using namespace c;
     c::Result result;
+    result.fixedActions = fixedActionCount(p);
     DemandAnalysis analysis;
     if (!analysis.build(p, result.reason, choiceIncoming))
         return result;
@@ -4346,6 +4469,8 @@ c::Result constructDemandCandidate(
     std::function<bool(unsigned, PrefixState&)> visit = [&](unsigned id, PrefixState& state) {
         ++result.nodeVisits;
         result.cellVisits += p.cells * LaneCount;
+        if (!applyFixed(p, id, state, result.reason))
+            return false;
         if (invariants && !analysis.owned[id].empty()) {
             auto found = invariants->find(id);
             if (found != invariants->end())
@@ -5125,6 +5250,7 @@ c::Result verifyDemandImpl(
 {
     using namespace c;
     c::Result result;
+    result.fixedActions = fixedActionCount(p);
     if (usedChildReturns)
         *usedChildReturns = false;
     if (usedAlternativeChoices)
@@ -5201,6 +5327,9 @@ c::Result verifyDemandImpl(
     std::function<bool(unsigned, PrefixState&, bool)> check = [&](unsigned id, PrefixState& state, bool validate) {
         ++result.nodeVisits;
         result.cellVisits += p.cells * LaneCount;
+        if (!applyFixed(p, id, state, result.reason))
+            return false;
+        PrefixState visibilityState = state;
         for (const auto& m : actual[id]) {
             if (m.participation == Mechanism::Previous) {
                 if (!deferred.credit(m, state, ringIncoming, result.reason))
@@ -5226,7 +5355,7 @@ c::Result verifyDemandImpl(
                 if (!deferred.credit(m, state, ringIncoming, result.reason))
                     return false;
             } else
-                apply(state, m);
+                apply(p, state, m);
         }
         const auto& n = p.nodes[id];
         bool narrowedOwned = false;
@@ -5258,7 +5387,7 @@ c::Result verifyDemandImpl(
         }
         if (n.kind == Node::Operation) {
             if (validate &&
-                (!visibilityCovered(p, n, state, actual[id]) || state.demands(n.lane, n.effects))) {
+                (!visibilityCovered(p, n, visibilityState, actual[id]) || state.demands(n.lane, n.effects))) {
                 result.reason = "uncovered physical demand or GM visibility requirement at node " + std::to_string(id) +
                                 " lane " + std::to_string(n.lane) + " demand " +
                                 std::to_string(state.demands(n.lane, n.effects));

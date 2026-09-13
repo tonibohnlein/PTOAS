@@ -158,6 +158,17 @@ def main():
                   source, 'mutation', True)
         if not row['verdict']['atomic'] or not row['verdict']['expected']:
             raise RuntimeError('GM visibility reconstruction failed')
+    source = fixtures / 'composition_authored_fixed.pto'
+    for mutation in ('none', 'drop-authored-barrier', 'drop-authored-cmo',
+                     'drop-authored-fence',
+                     'mix-generated-authored-visibility',
+                     'mix-generated-authored-barrier'):
+        row = run('authored-fixed-' + mutation,
+                  [args.driver, source, 'demands:' + mutation,
+                   args.output / ('authored-fixed-' + mutation + '.pto')],
+                  source, 'mutation', True)
+        if not row['verdict']['atomic'] or not row['verdict']['expected']:
+            raise RuntimeError('authored fixed synchronization was not preserved')
     if args.historical:
         compile_case('pinned-historical-gemm', args.historical)
         if args.python_root:

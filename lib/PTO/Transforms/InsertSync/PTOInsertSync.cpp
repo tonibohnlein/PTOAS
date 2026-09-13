@@ -114,7 +114,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     if (failed(contract)) { signalPassFailure(); return true; }
     using Result = logical_sync::ConstructionResult;
     Result result;
-    if (hasBarrier) result.reason = "explicit synchronization summary not established";
+    if (hasBarrier && planner != "composition")
+      result.reason = "explicit synchronization summary not established";
     else if (planner == "composition")
       result = structured_sync::constructCompositionalSync(func, *contract,
           hardwareContract == "a2a3-mmad-acc-v1"
@@ -145,6 +146,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     func->setAttr("pto.insert_sync.logical_requirements", IntegerAttr::get(i64, result.requirements));
     func->setAttr("pto.insert_sync.logical_streams", IntegerAttr::get(i64, result.handoffs));
     func->setAttr("pto.insert_sync.logical_visibility", IntegerAttr::get(i64, result.visibility));
+    func->setAttr("pto.insert_sync.logical_fixed_sync", IntegerAttr::get(i64, result.fixedSync));
     func.emitRemark("InsertSync ") << engineLabel() << " construction: " << status << "; " << result.reason
                                    << "; work=" << result.work;
     if (result.status == Result::Applied) {

@@ -32,13 +32,31 @@ struct State {
     // cache invalidation must not publish scalar writes to other pipelines,
     // and an ordinary event must not erase either obligation.
     std::array<std::vector<uint8_t>, LaneCount> written;
+    // Authored CMO/fence operations are composed as separate state
+    // transitions.  A clean is useful only for the scalar generation that
+    // preceded it; a fence records which non-scalar generations are globally
+    // published but does not itself invalidate the scalar cache.
+    std::vector<uint8_t> cleanedScalar;
+    std::vector<uint8_t> fencedNonScalar;
     explicit State(unsigned cells = 0);
     void join(const State& other);
     void seed(const Effects& effects);
     void barrier(unsigned lane);
+    void barrierAll();
     void rendezvous(unsigned first, unsigned second);
-    void visibility(VisibilityAction action);
+    void visibility(VisibilityAction action, uint8_t drainedSources,
+                    bool scalarCacheVisibility);
+    void cacheMaintenance(const std::vector<uint8_t>& cells);
+    void fence(uint8_t drainedSources, bool scalarCacheVisibility);
     uint8_t demands(unsigned observer, const Effects& effects) const;
+};
+struct FixedAction {
+    enum Kind : uint8_t { Barrier, BarrierAll, CacheMaintenance, Fence } kind = Barrier;
+    unsigned lane = 0;
+    // CacheMaintenance uses a cells-sized bit vector. An addressed CMO whose
+    // exact cache-line coverage is unknown has an all-zero vector and is
+    // deliberately preserved without receiving visibility credit.
+    std::vector<uint8_t> cells;
 };
 struct Node {
     enum Kind { Operation, Sequence, Choice, For, While } kind = Sequence;
@@ -80,6 +98,9 @@ struct Program {
     unsigned cells = 0;
     std::vector<bool> globalMemory;
     std::vector<Node> nodes;
+    // Original synchronization is immutable input, not a generated
+    // Mechanism. Each list executes immediately before its node.
+    std::vector<std::vector<FixedAction>> fixedBefore;
 };
 struct Mechanism {
     enum Kind { Barrier, Rendezvous, Publish, Acquire, Visibility } kind = Barrier;
@@ -111,6 +132,7 @@ struct Result {
     std::vector<std::vector<Mechanism>> before;
     uint64_t nodeVisits = 0, cellVisits = 0, acquisitions = 0;
     uint64_t visibilityRequirements = 0;
+    uint64_t fixedActions = 0;
     uint64_t cutCycles = 0, allocationRetries = 0;
     uint64_t directHandoffs = 0, sharedAcknowledgments = 0, demandFallbacks = 0;
     uint64_t reusedAcknowledgments = 0;

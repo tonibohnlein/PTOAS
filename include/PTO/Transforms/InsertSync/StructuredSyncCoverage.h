@@ -461,6 +461,9 @@ class Importer {
       }
       if (isa<scf::WhileOp>(op))
         return fail("unsupported-control-region", &op, "scf.while");
+      if (compositional && !emitted &&
+          isa<BarrierOp, CmoCacheInvalidOp, FenceBarrierAllOp>(op))
+        continue; // imported as immutable state transitions by the composer
       if (emitted &&
           isa<SetFlagOp, WaitFlagOp, BarrierOp, CmoCacheInvalidOp,
               FenceBarrierAllOp>(op))

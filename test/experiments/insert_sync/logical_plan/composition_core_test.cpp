@@ -2916,6 +2916,105 @@ int main()
         require(hasAction(readY, c::VisibilityAction::InvalidateTarget));
     }
     {
+        // Authored synchronization is part of the immutable program transfer,
+        // not a generated-plan receipt. PIPE_ALL discharges completion, while
+        // CMO/fence ordering controls scalar-cache visibility independently.
+        c::Program p;
+        p.cells = 2;
+        p.globalMemory = {false, true};
+        unsigned mte2 = unsigned(Pipe::MTE2), vector = unsigned(Pipe::V), scalar = unsigned(Pipe::S);
+        auto localWrite = op(p, mte2, 0, true);
+        auto localRead = op(p, vector, 0, false);
+        auto scalarWrite = op(p, scalar, 1, true);
+        auto vectorRead = op(p, vector, 1, false);
+        sequence(p, {localWrite, localRead, scalarWrite, vectorRead});
+        p.fixedBefore.resize(p.nodes.size());
+        p.fixedBefore[localRead].push_back({c::FixedAction::BarrierAll});
+        c::FixedAction clean{c::FixedAction::CacheMaintenance};
+        clean.cells = {0, 1};
+        p.fixedBefore[vectorRead] = {clean, {c::FixedAction::Fence}};
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.fixedActions == 3 && plan.visibilityRequirements == 0 &&
+                plan.acquisitions == 0 && c::verifyDemands(p, plan.before).success);
+
+        // Reversing clean/fence cannot publish the preceding scalar write.
+        auto reversed = p;
+        std::reverse(reversed.fixedBefore[vectorRead].begin(), reversed.fixedBefore[vectorRead].end());
+        auto repaired = c::constructDemands(reversed);
+        require(repaired.success && repaired.visibilityRequirements == 1 &&
+                c::verifyDemands(reversed, repaired.before).success);
+        std::vector<std::vector<c::Mechanism>> empty(reversed.nodes.size());
+        require(!c::verifyDemands(reversed, empty).success);
+
+        // An addressed CMO with unproved range coverage is represented by an
+        // all-zero cell mask and receives no visibility credit.
+        auto unproved = p;
+        unproved.fixedBefore[vectorRead][0].cells = {0, 0};
+        auto conservative = c::constructDemands(unproved);
+        require(conservative.success && conservative.visibilityRequirements == 1 &&
+                c::verifyDemands(unproved, conservative.before).success);
+
+        // Fence then invalidate is the opposite qualified direction.
+        c::Program targetCache;
+        targetCache.cells = 1;
+        targetCache.globalMemory = {true};
+        auto vectorWrite = op(targetCache, vector, 0, true);
+        auto scalarRead = op(targetCache, scalar, 0, false);
+        sequence(targetCache, {vectorWrite, scalarRead});
+        targetCache.fixedBefore.resize(targetCache.nodes.size());
+        c::FixedAction invalidate{c::FixedAction::CacheMaintenance};
+        invalidate.cells = {1};
+        targetCache.fixedBefore[scalarRead] = {{c::FixedAction::Fence}, invalidate};
+        auto targetPlan = c::constructDemands(targetCache);
+        require(targetPlan.success && targetPlan.fixedActions == 2 && targetPlan.visibilityRequirements == 0 &&
+                targetPlan.acquisitions == 0 && c::verifyDemands(targetCache, targetPlan.before).success);
+
+        // AIC fences drain only MTE2/MTE3/FIX. They can supply completion for
+        // those resources, but cannot publish a synthetic PIPE_S generation.
+        c::Program aic;
+        aic.core = Core::AIC;
+        aic.cells = 1;
+        auto aicWrite = op(aic, mte2, 0, true);
+        auto aicRead = op(aic, unsigned(Pipe::FIX), 0, false);
+        sequence(aic, {aicWrite, aicRead});
+        aic.fixedBefore.resize(aic.nodes.size());
+        aic.fixedBefore[aicRead] = {{c::FixedAction::Fence}};
+        auto aicPlan = c::constructDemands(aic);
+        require(aicPlan.success && aicPlan.acquisitions == 0 &&
+                c::verifyDemands(aic, aicPlan.before).success);
+        c::Program unsupportedAic;
+        unsupportedAic.core = Core::AIC;
+        unsupportedAic.cells = 1;
+        unsupportedAic.globalMemory = {true};
+        auto aicScalarWrite = op(unsupportedAic, scalar, 0, true);
+        auto aicMte2Read = op(unsupportedAic, mte2, 0, false);
+        sequence(unsupportedAic, {aicScalarWrite, aicMte2Read});
+        unsupportedAic.fixedBefore.resize(unsupportedAic.nodes.size());
+        c::FixedAction aicClean{c::FixedAction::CacheMaintenance};
+        aicClean.cells = {1};
+        unsupportedAic.fixedBefore[aicMte2Read] = {aicClean, {c::FixedAction::Fence}};
+        require(!c::constructDemands(unsupportedAic).success);
+
+        // A fixed visibility recipe in only one Choice arm is not an
+        // unconditional post-join proof.
+        c::Program choiceProgram;
+        choiceProgram.cells = 1;
+        choiceProgram.globalMemory = {true};
+        auto beforeChoice = op(choiceProgram, scalar, 0, true);
+        auto cleanedArm = sequence(choiceProgram, {});
+        auto emptyArm = sequence(choiceProgram, {});
+        auto choice = add(choiceProgram, c::Node::Choice, {cleanedArm, emptyArm});
+        auto afterChoice = op(choiceProgram, vector, 0, false);
+        sequence(choiceProgram, {beforeChoice, choice, afterChoice});
+        choiceProgram.fixedBefore.resize(choiceProgram.nodes.size());
+        c::FixedAction armClean{c::FixedAction::CacheMaintenance};
+        armClean.cells = {1};
+        choiceProgram.fixedBefore[cleanedArm] = {armClean, {c::FixedAction::Fence}};
+        auto choicePlan = c::constructDemands(choiceProgram);
+        require(choicePlan.success && choicePlan.visibilityRequirements == 1 &&
+                c::verifyDemands(choiceProgram, choicePlan.before).success);
+    }
+    {
         // A pending B write remains pending at B after its reply SET, even
         // though A's reply WAIT has acquired that write. Challenge the actual
         // consumer next, not merely a standalone rendezvous mask helper.

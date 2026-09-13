@@ -302,6 +302,28 @@ int main(int argc,char **argv) {
             if (mode=="drop-invalidate-cmo" && isa<CmoCacheInvalidOp>(op) &&
                 isa_and_nonnull<FenceBarrierAllOp>(op->getPrevNode())) chosen=op;
             if (mode=="drop-visibility-fence" && isa<FenceBarrierAllOp>(op)) chosen=op;
+            if (mode=="drop-authored-barrier")
+                if (auto barrier=dyn_cast<BarrierOp>(op); barrier &&
+                    barrier->hasAttr("pto.test_authored_fixed")) chosen=op;
+            if (mode=="drop-authored-cmo" && isa<CmoCacheInvalidOp>(op)) chosen=op;
+            if (mode=="drop-authored-fence" && isa<FenceBarrierAllOp>(op)) chosen=op;
+            if (mode=="mix-generated-authored-visibility" && isa<CmoCacheInvalidOp>(op) &&
+                isa_and_nonnull<FenceBarrierAllOp>(op->getPrevNode()) &&
+                isa_and_nonnull<FenceBarrierAllOp>(op->getNextNode())) {
+                chosen=op;sequenceSource=op->getPrevNode();
+            }
+            if (mode=="mix-generated-authored-barrier")
+                if (auto barrier=dyn_cast<BarrierOp>(op); barrier &&
+                    barrier.getPipe().getPipe()!=PIPE::PIPE_ALL) {
+                    Operation *payload=op->getNextNode();
+                    Operation *authored=payload?payload->getNextNode():nullptr;
+                    auto nextBarrier=dyn_cast_or_null<BarrierOp>(authored);
+                    if (isa_and_nonnull<OpPipeInterface>(payload) && nextBarrier &&
+                        nextBarrier->hasAttr("pto.test_authored_fixed") &&
+                        nextBarrier.getPipe()==barrier.getPipe()) {
+                        chosen=op;sequenceSource=authored;
+                    }
+                }
             if (mode=="reverse-clean-visibility" &&
                 isa<CmoCacheInvalidOp>(op) && isa_and_nonnull<FenceBarrierAllOp>(op->getNextNode())) {
                 chosen=op;sequenceSource=op->getNextNode();
@@ -447,6 +469,11 @@ int main(int argc,char **argv) {
             if(!sequenceSource)return;
             chosen->moveBefore(sequenceSource);changed=true;
         }
+        else if(mode=="mix-generated-authored-visibility" ||
+                mode=="mix-generated-authored-barrier") {
+            if(!sequenceSource)return;
+            chosen->moveBefore(sequenceSource);changed=true;
+        }
         else if(mode=="reverse-clean-visibility" || mode=="reverse-invalidate-visibility") {
             chosen->moveAfter(sequenceSource);changed=true;
         }
@@ -462,7 +489,8 @@ int main(int argc,char **argv) {
             mode=="drop-m-to-mte1" || mode=="drop-m-to-fix" ||
             mode=="drop-sequence-bridge" || mode=="drop-clean-cmo" ||
             mode=="drop-invalidate-cmo" ||
-            mode=="drop-visibility-fence") { chosen->erase(); changed=true; }
+            mode=="drop-visibility-fence" || mode=="drop-authored-barrier" ||
+            mode=="drop-authored-cmo" || mode=="drop-authored-fence") { chosen->erase(); changed=true; }
         else if (mode=="duplicate-set" || mode=="duplicate-coalesced") { OpBuilder b(chosen); b.setInsertionPointAfter(chosen); b.clone(*chosen); changed=true; }
         else if (mode=="wrong-key") {
             // Preserve operation identity so this exercises protocol checking,
@@ -525,7 +553,7 @@ int main(int argc,char **argv) {
         {"hardware_contract",contract.str()},{"gm_alias",alias.str()},{"accepted",applied},{"mutation_applied",changed},{"expected",expected},{"atomic",preserved},
         {"status",unsigned(result.status)},{"reason",result.reason},
         {"requirements",result.requirements},{"handoffs",result.handoffs},{"barriers",result.barriers},
-        {"visibility",result.visibility},
+        {"visibility",result.visibility},{"fixed_sync",result.fixedSync},
         {"work_statistic",result.work}})<<"\n";
     return expected&&preserved?0:1;
 }

@@ -21,6 +21,8 @@ struct ConstructionResult {
     // Qualified cache/fence recipes reconstructed from emitted IR. A recipe
     // is neither a directed handoff nor a same-pipeline barrier.
     unsigned visibility = 0;
+    // Authored barriers/CMO/fences composed as immutable input transitions.
+    unsigned fixedSync = 0;
 };
 }
 #endif
