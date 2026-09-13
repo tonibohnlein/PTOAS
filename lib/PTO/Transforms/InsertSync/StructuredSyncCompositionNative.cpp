@@ -1008,9 +1008,11 @@ Outcome ss::testing::constructCompositionalSync(
     const bool rejectReplay = constructor == CompositionConstructor::DemandsRejectAllocationReplay;
     const bool withoutLateEntry = constructor == CompositionConstructor::DemandsWithoutLateEntry;
     const bool rejectLateEntry = constructor == CompositionConstructor::DemandsRejectLateEntry;
+    const bool withoutChoice = constructor == CompositionConstructor::DemandsWithoutChoiceDemands;
+    const bool rejectChoice = constructor == CompositionConstructor::DemandsRejectChoiceDemands;
     const bool demandPlacement = constructor == CompositionConstructor::Demands || rejectRefinement || fallbackOnly ||
                                  withoutReplay || rejectReplay || rejectEntry || rejectDeferred || withoutLateEntry ||
-                                 rejectLateEntry;
+                                 rejectLateEntry || withoutChoice || rejectChoice;
     Outcome out;
     if (function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         out.reason = "composition requires a single function block";
@@ -1053,7 +1055,9 @@ Outcome ss::testing::constructCompositionalSync(
     }
     if (fallbackOnly)
         tree.program.target.compilerKeys = {0};
-    auto selected = withoutLateEntry ? c::testing::constructDemandsWithoutLateEntry(tree.program) :
+    auto selected = withoutChoice    ? c::testing::constructDemandsWithoutChoiceDemands(tree.program) :
+                    rejectChoice     ? c::testing::constructDemandsRejectingChoiceDemands(tree.program) :
+                    withoutLateEntry ? c::testing::constructDemandsWithoutLateEntry(tree.program) :
                     rejectLateEntry  ? c::testing::constructDemandsRejectingLateEntry(tree.program) :
                     rejectDeferred   ? c::testing::constructDemandsRejectingDeferredRings(tree.program) :
                     rejectEntry      ? c::testing::constructDemandsRejectingEntryProposal(tree.program) :
@@ -1174,51 +1178,52 @@ Outcome ss::testing::constructCompositionalSync(
         llvm::errs() << "structured deferred_rejection stage " << selected.deferredRejectionStage << " reason "
                      << selected.deferredRejectionReason << "\n";
     if (std::getenv("PTOAS_LOGICAL_TRACE"))
-        llvm::errs() << "structured composition precision " << precision << " demands " << demandPlacement
-                     << " direct_handoffs " << selected.directHandoffs << " shared_acknowledgments "
-                     << selected.sharedAcknowledgments << " reused_acknowledgments " << selected.reusedAcknowledgments
-                     << " completion_refinements " << selected.completionRefinements << " rejected_refinements "
-                     << selected.rejectedRefinements << " owned_refinements " << checked.ownedRefinements
-                     << " protocol_keys " << selected.protocolKeys << " shared_protocol_keys "
-                     << selected.sharedProtocolKeys << " allocation_fallback_keys " << selected.allocationFallbackKeys
-                     << " allocation_replays " << selected.allocationReplays << " rejected_allocation_replays "
-                     << selected.rejectedAllocationReplays << " replay_commands_removed "
-                     << selected.replayCommandsRemoved << " replayed_fallback_demands "
-                     << selected.replayedFallbackDemands << " allocation_fallback_scopes "
-                     << selected.allocationFallbackScopes << " entry_episodes " << selected.entryEpisodes
-                     << " entry_reply_families " << selected.entryReplyFamilies << " rejected_entry_proposals "
-                     << selected.rejectedEntryProposals << " entry_summary_slots " << selected.entrySummarySlots
-                     << " entry_summary_scans " << selected.entrySummaryScans << " entry_storage_units "
-                     << selected.entryStorageUnits << " entry_candidate_pairs " << selected.entryCandidatePairs
-                     << " entry_witness_cells " << selected.entryWitnessCells << " entry_witnesses "
-                     << selected.entryWitnesses << " entry_source_overlap_rejections "
-                     << selected.entrySourceOverlapRejections << " entry_summary_skipped "
-                     << selected.entrySummarySkipped << " late_entry_candidates " << selected.lateEntryCandidates
-                     << " late_entry_families " << selected.lateEntryFamilies << " late_entry_sites "
-                     << selected.lateEntrySites << " rejected_late_entry_families "
-                     << selected.rejectedLateEntryFamilies << " ring_candidates " << selected.ringCandidates
-                     << " rejected_rings " << selected.rejectedRings << " ring_candidate_commands_removed "
-                     << selected.ringCandidateCommandsRemoved << " rendezvous_packets " << rendezvousPackets
-                     << " deferred_ring_candidates " << selected.deferredRingCandidates << " deferred_rings "
-                     << selected.deferredRings << " rejected_deferred_rings " << selected.rejectedDeferredRings
-                     << " periodic_deferred_rings " << selected.periodicDeferredRings
-                     << " periodic_write_overlap_rejections " << selected.periodicWriteOverlapRejections
-                     << " periodic_scalar_work " << tree.periodicScalarWork + rebuilt.periodicScalarWork
-                     << " periodic_dag_visits " << tree.periodicDagVisits + rebuilt.periodicDagVisits
-                     << " periodic_residue_evaluations " << tree.periodicEvaluations + rebuilt.periodicEvaluations
-                     << " deferred_discovery_work " << selected.deferredDiscoveryWork << " deferred_discovery_refusals "
-                     << selected.deferredDiscoveryRefusals << " deferred_discovery_limit " << c::DeferredDiscoveryLimit
-                     << " deferred_eligibility_work "
-                     << selected.deferredEligibilityWork + checked.deferredEligibilityWork << " deferred_receipt_cells "
-                     << selected.deferredReceiptCells + checked.deferredReceiptCells << " deferred_skipped_families "
-                     << selected.deferredSkippedFamilies << " deferred_protocol_steps "
-                     << selected.deferredProtocolSteps + checked.deferredProtocolSteps << " demand_fallbacks "
-                     << selected.demandFallbacks << " nodes " << tree.program.nodes.size() << " cells "
-                     << tree.program.cells << " widened_spaces " << tree.widenedSpaces << " node_visits "
-                     << selected.nodeVisits + checked.nodeVisits << " cell_visits "
-                     << selected.cellVisits + checked.cellVisits << " handoffs " << out.handoffs << " cut_cycles "
-                     << checked.cutCycles << " allocation_retries " << selected.allocationRetries << " barriers "
-                     << out.barriers << " seconds "
-                     << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() << "\n";
+        llvm::errs()
+            << "structured composition precision " << precision << " demands " << demandPlacement << " direct_handoffs "
+            << selected.directHandoffs << " shared_acknowledgments " << selected.sharedAcknowledgments
+            << " reused_acknowledgments " << selected.reusedAcknowledgments << " completion_refinements "
+            << selected.completionRefinements << " rejected_refinements " << selected.rejectedRefinements
+            << " owned_refinements " << checked.ownedRefinements << " protocol_keys " << selected.protocolKeys
+            << " shared_protocol_keys " << selected.sharedProtocolKeys << " allocation_fallback_keys "
+            << selected.allocationFallbackKeys << " allocation_replays " << selected.allocationReplays
+            << " rejected_allocation_replays " << selected.rejectedAllocationReplays << " replay_commands_removed "
+            << selected.replayCommandsRemoved << " replayed_fallback_demands " << selected.replayedFallbackDemands
+            << " allocation_fallback_scopes " << selected.allocationFallbackScopes << " entry_episodes "
+            << selected.entryEpisodes << " entry_reply_families " << selected.entryReplyFamilies
+            << " rejected_entry_proposals " << selected.rejectedEntryProposals << " entry_summary_slots "
+            << selected.entrySummarySlots << " entry_summary_scans " << selected.entrySummaryScans
+            << " entry_storage_units " << selected.entryStorageUnits << " entry_candidate_pairs "
+            << selected.entryCandidatePairs << " entry_witness_cells " << selected.entryWitnessCells
+            << " entry_witnesses " << selected.entryWitnesses << " entry_source_overlap_rejections "
+            << selected.entrySourceOverlapRejections << " entry_summary_skipped " << selected.entrySummarySkipped
+            << " late_entry_candidates " << selected.lateEntryCandidates << " late_entry_families "
+            << selected.lateEntryFamilies << " late_entry_sites " << selected.lateEntrySites
+            << " rejected_late_entry_families " << selected.rejectedLateEntryFamilies << " choice_demand_candidates "
+            << selected.choiceDemandCandidates << " choice_demand_families " << selected.choiceDemandFamilies
+            << " rejected_choice_demands " << selected.rejectedChoiceDemands << " choice_demand_work "
+            << selected.choiceDemandWork << " choice_demand_reserved_work " << selected.choiceDemandReservedWork
+            << " choice_demand_analysis_work " << selected.choiceDemandAnalysisWork << " choice_demand_analysis_passes "
+            << selected.choiceDemandAnalysisPasses << " choice_demand_budget_pass " << selected.choiceDemandBudgetPass
+            << " ring_candidates " << selected.ringCandidates << " rejected_rings " << selected.rejectedRings
+            << " ring_candidate_commands_removed " << selected.ringCandidateCommandsRemoved << " rendezvous_packets "
+            << rendezvousPackets << " deferred_ring_candidates " << selected.deferredRingCandidates
+            << " deferred_rings " << selected.deferredRings << " rejected_deferred_rings "
+            << selected.rejectedDeferredRings << " periodic_deferred_rings " << selected.periodicDeferredRings
+            << " periodic_write_overlap_rejections " << selected.periodicWriteOverlapRejections
+            << " periodic_scalar_work " << tree.periodicScalarWork + rebuilt.periodicScalarWork
+            << " periodic_dag_visits " << tree.periodicDagVisits + rebuilt.periodicDagVisits
+            << " periodic_residue_evaluations " << tree.periodicEvaluations + rebuilt.periodicEvaluations
+            << " deferred_discovery_work " << selected.deferredDiscoveryWork << " deferred_discovery_refusals "
+            << selected.deferredDiscoveryRefusals << " deferred_discovery_limit " << c::DeferredDiscoveryLimit
+            << " deferred_eligibility_work " << selected.deferredEligibilityWork + checked.deferredEligibilityWork
+            << " deferred_receipt_cells " << selected.deferredReceiptCells + checked.deferredReceiptCells
+            << " deferred_skipped_families " << selected.deferredSkippedFamilies << " deferred_protocol_steps "
+            << selected.deferredProtocolSteps + checked.deferredProtocolSteps << " demand_fallbacks "
+            << selected.demandFallbacks << " nodes " << tree.program.nodes.size() << " cells " << tree.program.cells
+            << " widened_spaces " << tree.widenedSpaces << " node_visits " << selected.nodeVisits + checked.nodeVisits
+            << " cell_visits " << selected.cellVisits + checked.cellVisits << " handoffs " << out.handoffs
+            << " cut_cycles " << checked.cutCycles << " allocation_retries " << selected.allocationRetries
+            << " barriers " << out.barriers << " seconds "
+            << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() << "\n";
     return out;
 }

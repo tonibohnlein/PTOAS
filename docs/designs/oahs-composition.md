@@ -1552,3 +1552,134 @@ The replacement quality gate remains **`quality_qualified=false`**. This fixes
 the measured common-wait regression; it does not establish a general runtime
 speedup or eliminate the remaining over-ordering. Defaults are unchanged, the
 full lit/system suites were not run, and there is no device qualification.
+
+## Ordinary Choice incoming demands
+
+The next demand-placement refinement addresses incoming physical history at
+an ordinary conditional, without requiring a periodic or counted-entry
+contract. Its motivating structure is a producer of A, a later independent
+producer of B on the same lane, and an unknown Choice whose arms first use A
+and subsequently use B. Publishing only inside either arm captures B before
+the first A consumer needs it.
+
+The proposed common request uses the existing `CompletionDemand`: a source
+publication in the parent Sequence and an acquisition before its Choice.
+The witness comes only from bounded first observer sites, not from the whole
+conditional's MAY footprint. All arms must justify the same incoming frontier;
+unsupported or empty paths retain ordinary construction. Publication and
+acquisition remain in one execution domain, so no publication outside a loop
+is reused as though it ran on each body visit.
+
+The physical receipt is captured at the actual publication cut. Acquiring it
+does not remove B's later pending history. Existing child requests continue
+to satisfy those residual demands. Concrete numbering, acknowledgments and
+fresh verification operate on the complete composed event population; a
+conditional does not get an independently allocated private protocol.
+
+This is an optional transaction over the existing verified candidate. Budget
+or qualification failure, allocation failure and rejected fresh verification
+must preserve the exact pre-refinement command population. The testing arms
+`demands:without-choice-demands` and `demands:reject-choice-demands` expose
+that baseline and fault-injected rollback without adding public pass options.
+
+Earlier publication can be worth an additional directed acquisition, but
+that is a placement/cost tradeoff, not an unconditional performance gain.
+Qualification must report static sites, executed commands, scalar guards and
+completion-prefix observations separately against both the previous demand
+candidate and existing InsertSync. A first-A improvement does not establish
+that later B demands or all Q-projection observations have been improved.
+Defaults, target contracts and device-qualification requirements are unchanged.
+
+The implementation additionally requires an actual baseline handoff at every
+first observer site, published inside the Choice. Together with an intervening
+source operation after the new parent cut, this supplies a structural earlier-
+prefix certificate; a merely plausible request is not sufficient. Unrelated
+regions must retain their mechanisms and placement (physical recoloring is
+allowed). Guarded entry/deferred mechanisms must remain exactly unchanged.
+
+The cost comparison folds **signed command deltas**: Sequence adds deltas and
+Choice takes the maximum arm delta. It does not subtract two maximum costs,
+which could hide a regression on a formerly cheaper arm. Changed nested-loop
+interiors are refused instead of treating every loop as one iteration. The
+aggregate increase is at most two event-command units per affected owner,
+independent of how many requests are promoted there. Existing target and fresh
+physical/protocol verification remain mandatory. In particular, the standalone
+A-then-B case can retain its old plan when separate acknowledgments exceed this
+limit; broadening the first witness to B is not the remedy.
+
+One optional allowance of 1,048,576 represented-work units covers the complete
+attempt. The wrapper reserves node/cell/receipt and command-copy work before
+rerunning construction. All discovery passes share one `charged/exhausted`
+counter through initial construction, refinement, allocation replay, ring and
+deferred candidates. No new `DemandAnalysis` resets it. The extra final checker,
+baseline-benefit, ancestry and cost scans receive a separate charge within that
+same allowance. Exhaustion anywhere returns the exact disabled plan. This is a
+conservative accounting model, not a bound on allocator bytes or wall time.
+
+Trace fields distinguish total work, the initial reservation, aggregate
+analysis work, the number of analysis passes, and the first pass exhausting
+the allowance. Tests check an exactly sufficient budget, one unit less, and
+exhaustion after preflight during a later constructor/refinement pass.
+
+### Ordinary-Choice qualification
+
+All three reviewers accepted the opt-in milestone and its final validation
+conditions. The targeted incremental native build, six selected OAHS gates
+(311.78 seconds), and the single selected
+`insert_sync_structured_constructor.pto` lit test pass. The final Clang C++17
+ASan/UBSan run passes **2,265,550 assertions**. The native core tests explicitly
+reach budget exhaustion in a third-or-later analysis pass and retain the exact
+baseline, alongside exact-budget and one-unit-short checks.
+
+The frozen corpus replay completes all **726** baseline/current comparisons.
+**681 match exactly; 45 differ only by having two fewer barriers**, with
+unchanged SET/WAIT counts, outcomes and first refusals. Those 45 are two PTOAS
+snapshots (`hc_head_linear` and `hc_pre_linear`) and 43 PyPTO-lib snapshots.
+There are no count increases. Coverage remains 45/150 PTOAS, 7/35 PyPTO and
+145/178 PyPTO-lib snapshots. The original frozen manifest is not rewritten.
+This is compatibility evidence for the recorded raw/prepared inputs, not
+upstream Python regeneration or device qualification.
+
+The final opt-driver SHA-256 is
+`da106b30466cc3a1aa20f90cc3fe05a97d87c78b56a9dcca6b91fbf9e20c3c6e`;
+the native reconstruction-driver SHA-256 is
+`811f98e85ada8279853f92b83d4d47b5be79561667171e43215f1caadd0c7f74`.
+The isolated eight-input compiler campaign uses three paired samples and one
+warmup per arm. All PTO compilations and all 16 C++ emissions pass.
+
+| Input | Median demand / existing compilation time |
+| --- | ---: |
+| One buffer | 1.022905 |
+| Two buffers | 1.041320 |
+| Three buffers | 1.018276 |
+| Four-use | 1.013016 |
+| Online softmax | 1.035142 |
+| QK matmul | 1.018769 |
+| Q projection | 1.019808 |
+| Historical GEMM | 0.964240 |
+
+Every individual paired ratio is below 2x; the maximum is 1.053255. The
+compiler-library SHA-256 is
+`e73bcb8671bb5ba682ebdb23c72cba1252ff1b381c056b4609dfc4c165a8919e`.
+The campaign records base `dd9a63dc9f4d07c66aa99ed79dfd4fa638bf3e05`, its
+task-owned dirty listing and tracked-diff hash, commands and unchanged input
+hashes. It is base-plus-diff evidence, not a clean-revision claim. Artifacts
+remain in the existing build's `test-results/oahs-choice-final-compiler`,
+`test-results/oahs-choice-final-frozen-replay` and `test-results/oahs-demands`.
+
+Q projection selects one common first-demand family. Relative to the previous
+demand candidate, exactly 32 measured boundaries change: each first MTE1
+extraction acquires an MTE2 prefix three physical positions earlier. No other
+boundary changes, and executed payload/event/scalar counts are identical. Its
+later-prefix total against existing InsertSync falls **410 to 378**, while
+static SET/WAIT counts remain **18/18**, with six named barriers and one drain.
+Executed SET/WAIT counts remain **353/353**, versus existing InsertSync's
+389/389 in the recorded scenario. The other seven benchmarks retain their
+reported mechanism counts and later-prefix totals; GEMM's normalized PTO is
+byte-identical to the previous candidate.
+
+The replacement gate remains **`quality_qualified=false`**. This is a bounded
+general first-demand improvement, not a solution to all remaining late
+acquisitions or acknowledgment costs. A later increment can reuse a return
+path that every child already establishes; it must prove that causality from
+actual child protocols rather than simply delete the parent's acknowledgment.

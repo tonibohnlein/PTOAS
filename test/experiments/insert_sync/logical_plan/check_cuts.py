@@ -77,6 +77,10 @@ def main():
                         'entry_summary_skipped',
                         'late_entry_candidates', 'late_entry_families', 'late_entry_sites',
                         'rejected_late_entry_families',
+                        'choice_demand_candidates', 'choice_demand_families',
+                        'rejected_choice_demands', 'choice_demand_work',
+                        'choice_demand_reserved_work', 'choice_demand_analysis_work',
+                        'choice_demand_analysis_passes', 'choice_demand_budget_pass',
                         'ring_candidates', 'rejected_rings', 'ring_candidate_commands_removed', 'cut_cycles',
                         'deferred_ring_candidates', 'deferred_rings', 'rejected_deferred_rings', 'deferred_protocol_steps',
                         'periodic_deferred_rings', 'periodic_write_overlap_rejections', 'periodic_scalar_work',
@@ -368,6 +372,78 @@ def main():
         fallback_verdict, fallback_counters = verdict, counters
         normalized = args.output.resolve() / 'fallback.pto'
         invoke('fallback-normalize', compiler + [raw, '-o', normalized])
+        choice_residual = Path(__file__).parent / 'structured_inputs/demand_choice_prefix.pto'
+        choice_prefix = args.output.resolve() / 'choice-first-only.input.pto'
+        residual_text = choice_residual.read_text()
+        if residual_text.count('pto.tabs ins(%b') != 2:
+            raise RuntimeError('unexpected residual-B fixture population')
+        choice_prefix.write_text(residual_text.replace('pto.tabs ins(%b', 'pto.tabs ins(%a'))
+        choice_outputs, choice_profiles = {}, {}
+        for arm, mode in (('selected', 'none'), ('disabled', 'without-choice-demands'),
+                          ('rejected', 'reject-choice-demands')):
+            name = 'choice-prefix-' + arm
+            choice_raw = args.output.resolve() / (name + '.native.pto')
+            verdict = json.loads(invoke(name, [args.driver, choice_prefix, 'demands:' + mode, choice_raw]))
+            if not verdict['accepted'] or not verdict['atomic']:
+                raise RuntimeError('ordinary Choice demand failed: ' + arm)
+            choice_profiles[arm] = native_counters(name)
+            choice_output = args.output.resolve() / (name + '.pto')
+            invoke(name + '-normalize', compiler + [choice_raw, '-o', choice_output])
+            choice_outputs[arm] = choice_output
+        if (not choice_profiles['selected']['choice_demand_families'] or
+                choice_profiles['disabled']['choice_demand_families'] or
+                not choice_profiles['rejected']['rejected_choice_demands']):
+            raise RuntimeError('ordinary Choice selection and rollback not exercised')
+        if choice_outputs['disabled'].read_bytes() != choice_outputs['rejected'].read_bytes():
+            raise RuntimeError('rejected Choice candidate changed the baseline output')
+        choice_scenarios = []
+        for count, take in ((0, False), (1, False), (1, True), (3, False), (3, True)):
+            scenario = dict(arguments=['src', count, take])
+            old, old_metrics = run(choice_outputs['disabled'], scenario)
+            new, new_metrics = run(choice_outputs['selected'], scenario)
+            differences = compare(old, new)
+            # Both tabs use A in this derived positive input. The independent
+            # second load must not gate either consumer's acquired prefix.
+            for iteration in range(count):
+                first = 4 * iteration + 2
+                second = first + 1
+                if (new.before[first]['completed'].get('PIPE_MTE2', -1) != first - 2 or
+                        new.before[second]['completed'].get('PIPE_MTE2', -1) != first - 2):
+                    raise RuntimeError('Choice first-prefix placement or residual B credit is wrong')
+            if count and not any(not d['automatic_requires_later_prefix'] for d in differences):
+                raise RuntimeError('Choice candidate has no observed earlier acquisition prefix')
+            choice_scenarios.append(dict(arguments=scenario['arguments'], differences=differences,
+                                         baseline_counts=old_metrics['counts'],
+                                         selected_counts=new_metrics['counts'],
+                                         baseline_scalar=old_metrics['scalar_counts'],
+                                         selected_scalar=new_metrics['scalar_counts']))
+        path_checks.append(dict(name='ordinary-choice-prefix', profiles=choice_profiles,
+                                source_sha256=digest(choice_prefix),
+                                outputs={arm: digest(path) for arm, path in choice_outputs.items()},
+                                scenarios=choice_scenarios))
+        residual_outputs = {}
+        for arm, mode in (('selected', 'none'), ('disabled', 'without-choice-demands')):
+            name = 'choice-residual-' + arm
+            output = args.output.resolve() / (name + '.pto')
+            verdict = json.loads(invoke(name, [args.driver, choice_residual, 'demands:' + mode, output]))
+            if not verdict['accepted'] or not verdict['atomic']:
+                raise RuntimeError('residual-B cost fallback failed')
+            residual_outputs[arm] = output
+        residual_profile = native_counters('choice-residual-selected')
+        if (residual_profile['choice_demand_families'] or not residual_profile['rejected_choice_demands'] or
+                residual_outputs['selected'].read_bytes() != residual_outputs['disabled'].read_bytes()):
+            raise RuntimeError('extra acknowledgment cost did not retain the exact baseline')
+        path_checks.append(dict(name='ordinary-choice-residual-cost', profile=residual_profile,
+                                source_sha256=digest(choice_residual),
+                                output_sha256=digest(residual_outputs['selected'])))
+        for mutation in ('drop-set', 'drop-wait', 'duplicate-set', 'wrong-key',
+                         'early-publication', 'late-acquisition'):
+            name = 'choice-prefix-' + mutation
+            verdict = json.loads(invoke(name, [args.driver, choice_prefix, 'demands:' + mutation,
+                                               args.output.resolve() / (name + '.pto')]))
+            if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
+                raise RuntimeError('ordinary Choice corruption escaped reconstruction: ' + mutation)
+            path_checks.append(dict(name=name, verdict=verdict))
         authored = Path(__file__).parent / 'structured_inputs/demand_authored_guard.pto'
         verdict = json.loads(invoke('entry-authored-guard', [args.driver, authored, 'demands:expect-unsupported',
             args.output.resolve() / 'entry-authored-guard.pto']))

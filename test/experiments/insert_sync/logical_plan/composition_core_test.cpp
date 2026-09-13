@@ -263,6 +263,147 @@ static void execute(
 int main()
 {
     {
+        // Ordinary Choice: the first A consumer must acquire the prefix
+        // after writeA, not the later B write. B remains an independent demand.
+        c::Program p;
+        p.cells = 2;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto writeA = op(p, a, 0, true), writeB = op(p, a, 1, true);
+        auto first = op(p, b, 0, false), later = op(p, b, 1, false);
+        auto otherFirst = op(p, b, 0, false), otherLater = op(p, b, 1, false);
+        auto choice = add(p, c::Node::Choice, {sequence(p, {first, later}), sequence(p, {otherFirst, otherLater})});
+        auto root = add(p, c::Node::For, {sequence(p, {writeA, writeB, choice})});
+        auto residualB = p;
+        for (unsigned id : {later, otherLater}) {
+            p.nodes[id].effects[1].readers = 0;
+            p.nodes[id].effects[0].readers = 1u << b;
+        }
+        auto baseline = c::testing::constructDemandsWithoutChoiceDemands(p);
+        auto plan = c::constructDemands(p);
+        require(baseline.success && plan.success && c::verifyDemands(p, plan.before).success);
+        require(plan.choiceDemandFamilies > 0);
+        auto early = std::find_if(plan.before[writeB].begin(), plan.before[writeB].end(), [&](const auto& m) {
+            return m.kind == c::Mechanism::Publish && m.participation == c::Mechanism::Every && m.first == a &&
+                   m.second == b;
+        });
+        require(early != plan.before[writeB].end());
+        auto waiting = *early;
+        waiting.kind = c::Mechanism::Acquire;
+        require(
+            std::find(plan.before[choice].begin(), plan.before[choice].end(), waiting) != plan.before[choice].end());
+        auto rejected = c::testing::constructDemandsRejectingChoiceDemands(p);
+        require(rejected.success && rejected.before == baseline.before && rejected.rejectedChoiceDemands > 0);
+        for (uint64_t limit : {uint64_t(0), uint64_t(1), uint64_t(p.nodes.size())}) {
+            auto exhausted = c::testing::constructDemandsWithChoiceWorkLimit(p, limit);
+            require(exhausted.success && exhausted.before == baseline.before && exhausted.choiceDemandFamilies == 0);
+        }
+        require(c::testing::constructDemandsWithChoiceWorkLimit(p, UINT64_MAX).before == plan.before);
+        require(plan.choiceDemandWork > 1 && plan.choiceDemandWork <= (1u << 20));
+        auto exactBudget = c::testing::constructDemandsWithChoiceWorkLimit(p, plan.choiceDemandWork);
+        auto shortBudget = c::testing::constructDemandsWithChoiceWorkLimit(p, plan.choiceDemandWork - 1);
+        require(exactBudget.before == plan.before && exactBudget.choiceDemandWork <= plan.choiceDemandWork);
+        require(
+            shortBudget.success && shortBudget.before == baseline.before &&
+            shortBudget.choiceDemandWork < plan.choiceDemandWork);
+        require(
+            plan.choiceDemandAnalysisPasses >= 3 && plan.choiceDemandAnalysisWork > 0 &&
+            plan.choiceDemandReservedWork + plan.choiceDemandAnalysisWork < plan.choiceDemandWork);
+        bool laterPassExhausted = false;
+        for (unsigned fraction = 1; fraction < 32 && !laterPassExhausted; ++fraction) {
+            uint64_t allowance = plan.choiceDemandReservedWork + plan.choiceDemandAnalysisWork * fraction / 32;
+            auto limited = c::testing::constructDemandsWithChoiceWorkLimit(p, allowance);
+            require(limited.success && limited.choiceDemandWork <= allowance);
+            if (limited.choiceDemandBudgetPass) {
+                require(limited.before == baseline.before);
+                laterPassExhausted = limited.choiceDemandBudgetPass >= 3;
+            }
+        }
+        require(laterPassExhausted);
+        auto missing = plan.before;
+        missing[choice].erase(std::find(missing[choice].begin(), missing[choice].end(), waiting));
+        require(!c::verifyDemands(p, missing).success);
+        auto duplicate = plan.before;
+        duplicate[choice].push_back(waiting);
+        require(!c::verifyDemands(p, duplicate).success);
+        auto earlyPublish = plan.before;
+        earlyPublish[writeB].erase(std::find(earlyPublish[writeB].begin(), earlyPublish[writeB].end(), *early));
+        earlyPublish[writeA].push_back(*early);
+        require(!c::verifyDemands(p, earlyPublish).success);
+        auto outsideLoop = plan.before;
+        outsideLoop[writeB].erase(std::find(outsideLoop[writeB].begin(), outsideLoop[writeB].end(), *early));
+        outsideLoop[root].push_back(*early);
+        require(!c::verifyDemands(p, outsideLoop).success);
+        auto wrongKey = plan.before;
+        auto wrong = std::find(wrongKey[choice].begin(), wrongKey[choice].end(), waiting);
+        ++wrong->forwardKey;
+        require(!c::verifyDemands(p, wrongKey).success);
+        // The A-only receipt must not cover a later B consumer. A separate
+        // B family costs two additional pairs here, exceeding the fixed cap.
+        require(!c::verifyDemands(residualB, plan.before).success);
+        auto residualBaseline = c::testing::constructDemandsWithoutChoiceDemands(residualB);
+        auto residualPlan = c::constructDemands(residualB);
+        require(
+            residualPlan.success && residualPlan.before == residualBaseline.before &&
+            residualPlan.choiceDemandFamilies == 0 && residualPlan.rejectedChoiceDemands > 0);
+        auto empty = p;
+        empty.nodes[otherFirst].effects.assign(p.cells, {});
+        empty.nodes[otherLater].effects.assign(p.cells, {});
+        auto emptyBaseline = c::testing::constructDemandsWithoutChoiceDemands(empty);
+        auto emptyPlan = c::constructDemands(empty);
+        require(emptyPlan.success && emptyPlan.choiceDemandFamilies == 0 && emptyPlan.before == emptyBaseline.before);
+        auto sourceInside = p;
+        sourceInside.nodes[otherFirst].lane = a;
+        sourceInside.nodes[otherFirst].effects.assign(p.cells, {});
+        sourceInside.nodes[otherFirst].effects[0].writers = 1u << a;
+        auto insideBaseline = c::testing::constructDemandsWithoutChoiceDemands(sourceInside);
+        auto insidePlan = c::constructDemands(sourceInside);
+        require(
+            insidePlan.success && insidePlan.choiceDemandFamilies == 0 && insidePlan.before == insideBaseline.before);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned visit) { return (visit * 3) % 5; };
+        policy.choice = [](unsigned, unsigned visit) { return visit % 2; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 8; ++invocation) {
+            execute(p, plan, root, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // Three unknown paths share the same physical first demand. Branch
+        // identity is not a generation, and varying it needs no new predicate.
+        c::Program p;
+        p.cells = 2;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto writeA = op(p, a, 0, true), writeB = op(p, a, 1, true);
+        std::array<unsigned, 3> reads{}, arms{};
+        for (unsigned i = 0; i < reads.size(); ++i) {
+            reads[i] = op(p, b, 0, false);
+            arms[i] = sequence(p, {reads[i]});
+        }
+        auto inner = add(p, c::Node::Choice, {arms[0], arms[1]});
+        auto choice = add(p, c::Node::Choice, {sequence(p, {inner}), arms[2]});
+        auto root = add(p, c::Node::For, {sequence(p, {writeA, writeB, choice})});
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.choiceDemandFamilies == 1 && c::verifyDemands(p, plan.before).success);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned visit) { return (visit + 1) % 4; };
+        policy.choice = [](unsigned id, unsigned visit) { return (id + visit) % 2; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 8; ++invocation) {
+            execute(p, plan, root, policy, oracle);
+            oracle.check();
+        }
+        auto different = p;
+        different.nodes[reads[2]].effects[0].readers = 0;
+        different.nodes[reads[2]].effects[1].readers = 1u << b;
+        auto differentPlan = c::constructDemands(different);
+        auto differentBaseline = c::testing::constructDemandsWithoutChoiceDemands(different);
+        require(
+            differentPlan.success && differentPlan.choiceDemandFamilies == 0 &&
+            differentPlan.before == differentBaseline.before);
+        require(!c::verifyDemands(different, plan.before).success);
+    }
+    {
         auto cost = c::testing::deferredDiscoveryReservation(64, 4, 6, 20);
         require(bool(cost));
         require(c::testing::deferredDiscoveryReservation(64, 4, 6, 20, *cost) == cost);

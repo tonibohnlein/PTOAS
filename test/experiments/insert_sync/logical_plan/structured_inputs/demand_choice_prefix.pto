@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Incoming A has an earlier producer prefix than B. Unknown branches use A
+// first and B later; their complete MAY footprint must not delay A's release.
+module attributes {pto.target_arch = "a3"} {
+  func.func @choice_prefix(%src: !pto.partition_tensor_view<16x16xf16>,
+                           %count: index, %take: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 512 : i64
+    %a2 = arith.constant 1024 : i64
+    %a3 = arith.constant 1536 : i64
+    %a = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 16x16xf16>
+    %out_a = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 16x16xf16>
+    %out_b = pto.alloc_tile addr = %a3 : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %iv = %c0 to %count step %c1 {
+      pto.tload ins(%src : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+      pto.tload ins(%src : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+      scf.if %take {
+        pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%out_a : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%out_b : !pto.tile_buf<vec, 16x16xf16>)
+      } else {
+        pto.tabs ins(%a : !pto.tile_buf<vec, 16x16xf16>) outs(%out_a : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tabs ins(%b : !pto.tile_buf<vec, 16x16xf16>) outs(%out_b : !pto.tile_buf<vec, 16x16xf16>)
+      }
+    }
+    return
+  }
+}

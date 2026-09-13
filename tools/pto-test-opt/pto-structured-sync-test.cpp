@@ -56,8 +56,10 @@ int main(int argc,char **argv) {
     const bool rejectDeferred = demandPlacement && mode=="reject-deferred-rings";
     const bool withoutLateEntry = demandPlacement && mode=="without-late-entry";
     const bool rejectLateEntry = demandPlacement && mode=="reject-late-entry";
+    const bool withoutChoice = demandPlacement && mode=="without-choice-demands";
+    const bool rejectChoice = demandPlacement && mode=="reject-choice-demands";
     if (rejectRefinement || withoutReplay || rejectReplay || rejectEntry || rejectDeferred ||
-        withoutLateEntry || rejectLateEntry) mode="none";
+        withoutLateEntry || rejectLateEntry || withoutChoice || rejectChoice) mode="none";
     const bool precision = mode.consume_front("cuts:");
     const bool composition = demandPlacement || precision || mode.consume_front("composition:");
     auto mutate=[&](func::FuncOp working) {
@@ -416,7 +418,8 @@ int main(int argc,char **argv) {
     };
     using Constructor=structured_sync::testing::CompositionConstructor;
     auto result=composition ? structured_sync::testing::constructCompositionalSync(
-        function,gm,mutate,hardware,withoutLateEntry?Constructor::DemandsWithoutLateEntry:
+        function,gm,mutate,hardware,withoutChoice?Constructor::DemandsWithoutChoiceDemands:
+        rejectChoice?Constructor::DemandsRejectChoiceDemands:withoutLateEntry?Constructor::DemandsWithoutLateEntry:
         rejectLateEntry?Constructor::DemandsRejectLateEntry:rejectDeferred?Constructor::DemandsRejectDeferredRings:
         rejectEntry?Constructor::DemandsRejectEntryProposal:
         withoutReplay?Constructor::DemandsWithoutAllocationReplay:

@@ -120,6 +120,13 @@ struct Result {
     uint64_t entrySummarySkipped = 0;
     uint64_t lateEntryCandidates = 0, lateEntryFamilies = 0, lateEntrySites = 0;
     uint64_t rejectedLateEntryFamilies = 0;
+    // Optional ordinary-Choice incoming-prefix placement. Work bounds proposal
+    // construction; accepted families remain ordinary Every protocols and are
+    // checked/allocated with the complete demand word.
+    uint64_t choiceDemandCandidates = 0, choiceDemandFamilies = 0;
+    uint64_t rejectedChoiceDemands = 0, choiceDemandWork = 0;
+    uint64_t choiceDemandReservedWork = 0, choiceDemandAnalysisWork = 0;
+    uint64_t choiceDemandAnalysisPasses = 0, choiceDemandBudgetPass = 0;
     uint64_t ringCandidates = 0, rejectedRings = 0, ringCandidateCommandsRemoved = 0;
     uint64_t deferredRingCandidates = 0, deferredRings = 0, rejectedDeferredRings = 0;
     uint64_t deferredProtocolSteps = 0;
@@ -163,6 +170,11 @@ Result constructDemandsWithLateEntryWorkLimit(const Program& program, uint64_t l
 // Forms one bounded late-entry candidate, corrupts its actual First-wait
 // population, and must return the exact verified pre-candidate plan.
 Result constructDemandsRejectingLateEntry(const Program& program);
+// Exact pre-refinement baseline and bounded/fault-injected ordinary-Choice
+// incoming-prefix candidates. Failed optional candidates return that baseline.
+Result constructDemandsWithoutChoiceDemands(const Program& program);
+Result constructDemandsWithChoiceWorkLimit(const Program& program, uint64_t limit);
+Result constructDemandsRejectingChoiceDemands(const Program& program);
 // Fault injection before refinement checking/emission, never on the initial
 // plan: discard the optional candidate's mechanisms to exercise exact rollback.
 Result constructDemandsRejectingRefinement(const Program& program);
