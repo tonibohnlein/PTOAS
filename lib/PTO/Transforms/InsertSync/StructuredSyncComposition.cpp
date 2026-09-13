@@ -153,9 +153,8 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
         const auto operationLane = lane(p, n.lane);
         if (n.effects.size() != p.cells || n.lane >= c::LaneCount ||
             (n.entryGuardStart != ~0u && (n.kind != c::Node::For || n.entryGuardStart >= p.nodes.size())) ||
-            (n.kind == c::Node::Operation &&
-             (!n.children.empty() || !p.target.supports(operationLane) ||
-              (n.lane != unsigned(Pipe::S) && !p.target.barrier(operationLane)))) ||
+            (n.kind == c::Node::Operation && (!n.children.empty() || !p.target.supports(operationLane) ||
+                                              (n.lane != unsigned(Pipe::S) && !p.target.barrier(operationLane)))) ||
             (n.kind == c::Node::For && n.children.size() != 1) ||
             ((n.kind == c::Node::Choice || n.kind == c::Node::While) && n.children.size() != 2) ||
             n.kind > c::Node::While) {
@@ -229,8 +228,7 @@ VisibilityNeed visibilityNeed(const c::Program& p, const c::Node& n, const c::St
             // Other non-scalar pairs still need completion, which is tracked
             // independently by State::pending and a directed handoff.
             bool scalarCrossing = (source == unsigned(Pipe::S)) != (observer == unsigned(Pipe::S));
-            unsupportedMte3ToMte2 |=
-                targetReads && source == unsigned(Pipe::MTE3) && observer == unsigned(Pipe::MTE2);
+            unsupportedMte3ToMte2 |= targetReads && source == unsigned(Pipe::MTE3) && observer == unsigned(Pipe::MTE2);
             cleanSource |= scalarCrossing && observer != unsigned(Pipe::S);
             invalidateTarget |= scalarCrossing && observer == unsigned(Pipe::S) && targetReads;
             fenceOnly |= scalarCrossing && observer == unsigned(Pipe::S) && targetWrites && !targetReads &&
@@ -252,28 +250,25 @@ VisibilityNeed visibilityNeed(const c::Program& p, const c::Node& n, const c::St
 }
 
 bool visibilityCovered(
-    const c::Program& p, const c::Node& n, const c::State& state,
-    const std::vector<c::Mechanism>& mechanisms)
+    const c::Program& p, const c::Node& n, const c::State& state, const std::vector<c::Mechanism>& mechanisms)
 {
     auto need = visibilityNeed(p, n, state);
     if (need == VisibilityNeed::None)
         return true;
     if (need == VisibilityNeed::UnsupportedMte3ToMte2)
         return false;
-    auto expected =
-        need == VisibilityNeed::CleanSource        ? c::VisibilityAction::CleanSource :
-        need == VisibilityNeed::InvalidateTarget ? c::VisibilityAction::InvalidateTarget :
-                                                   c::VisibilityAction::FenceOnly;
+    auto expected = need == VisibilityNeed::CleanSource      ? c::VisibilityAction::CleanSource :
+                    need == VisibilityNeed::InvalidateTarget ? c::VisibilityAction::InvalidateTarget :
+                                                               c::VisibilityAction::FenceOnly;
     return std::any_of(mechanisms.begin(), mechanisms.end(), [&](const auto& mechanism) {
-        return mechanism.kind == c::Mechanism::Visibility &&
-               mechanism.participation == c::Mechanism::Every &&
+        return mechanism.kind == c::Mechanism::Visibility && mechanism.participation == c::Mechanism::Every &&
                mechanism.visibilityAction == expected;
     });
 }
 
 bool realizeVisibility(
-    const c::Program& p, const c::Node& n, c::State& state, std::vector<c::Mechanism>& commands,
-    std::string& reason, uint64_t& requirements)
+    const c::Program& p, const c::Node& n, c::State& state, std::vector<c::Mechanism>& commands, std::string& reason,
+    uint64_t& requirements)
 {
     auto need = visibilityNeed(p, n, state);
     if (need == VisibilityNeed::None)
@@ -284,10 +279,9 @@ bool realizeVisibility(
     }
     c::Mechanism mechanism;
     mechanism.kind = c::Mechanism::Visibility;
-    mechanism.visibilityAction =
-        need == VisibilityNeed::CleanSource        ? c::VisibilityAction::CleanSource :
-        need == VisibilityNeed::InvalidateTarget ? c::VisibilityAction::InvalidateTarget :
-                                                   c::VisibilityAction::FenceOnly;
+    mechanism.visibilityAction = need == VisibilityNeed::CleanSource      ? c::VisibilityAction::CleanSource :
+                                 need == VisibilityNeed::InvalidateTarget ? c::VisibilityAction::InvalidateTarget :
+                                                                            c::VisibilityAction::FenceOnly;
     if (p.core != Core::AIV) {
         reason = "scalar GM visibility has no qualified AIC compositional realization";
         return false;
@@ -407,9 +401,7 @@ void c::State::rendezvous(unsigned a, unsigned b)
         pending[a][i] = h;
     }
 }
-void c::State::visibility(
-    VisibilityAction action, uint8_t drainedSources,
-    bool scalarCacheVisibility)
+void c::State::visibility(VisibilityAction action, uint8_t drainedSources, bool scalarCacheVisibility)
 {
     std::vector<uint8_t> all(cleanedScalar.size(), 1);
     if (action == VisibilityAction::CleanSource)
@@ -491,9 +483,7 @@ c::Result c::construct(const Program& p)
             return false;
         const auto& n = p.nodes[id];
         if (n.kind == Node::Operation) {
-            if (!realizeVisibility(
-                    p, n, state, result.before[id], result.reason,
-                    result.visibilityRequirements))
+            if (!realizeVisibility(p, n, state, result.before[id], result.reason, result.visibilityRequirements))
                 return false;
             for (unsigned source = 0; source < LaneCount; ++source)
                 if (state.demands(n.lane, n.effects) & (1u << source)) {
@@ -626,12 +616,15 @@ struct Group {
 };
 struct Word {
     bool valid = true;
+    bool repeatFree = true;
+    bool conditional = false;
     std::vector<Group> groups;
 };
 struct Cycle {
     unsigned owner, region;
     std::vector<unsigned> cells;
     std::vector<Group> groups;
+    bool conditional = false;
     std::map<std::pair<unsigned, unsigned>, unsigned> keys;
 };
 struct Cuts {
@@ -648,6 +641,8 @@ bool alternatives(std::vector<unsigned>& a, const std::vector<unsigned>& b)
 }
 bool append(Word& a, const Word& b)
 {
+    a.repeatFree &= b.repeatFree;
+    a.conditional |= b.conditional;
     if (!a.valid || !b.valid)
         return a.valid = false;
     for (const auto& g : b.groups) {
@@ -670,7 +665,7 @@ bool sameWord(const Word& a, const Word& b)
 // Derive words from immutable effects. Unknown/mixed child recurrences lose
 // precision locally; the baseline still composes them. No Boolean products,
 // periodic occurrence models, dependence-pair enumeration or closure matrices.
-bool discoverCuts(const c::Program& p, Cuts& cuts, std::string& reason)
+bool discoverCuts(const c::Program& p, Cuts& cuts, std::string& reason, bool structuredEpisodes = false)
 {
     if (!summarize(p, cuts.effects, reason))
         return false;
@@ -717,16 +712,24 @@ bool discoverCuts(const c::Program& p, Cuts& cuts, std::string& reason)
                 const auto &a = words[n.children[0]], &b = words[n.children[1]];
                 if (sameWord(a, b)) {
                     word = a;
+                    word.repeatFree &= b.repeatFree;
+                    word.conditional |= b.conditional;
                     for (unsigned i = 0; i < word.groups.size(); ++i) {
                         word.valid &= alternatives(word.groups[i].first, b.groups[i].first);
                         word.valid &= alternatives(word.groups[i].last, b.groups[i].last);
                     }
+                } else if (structuredEpisodes && a.valid && b.valid && (a.groups.empty() != b.groups.empty())) {
+                    word = a.groups.empty() ? b : a;
+                    word.repeatFree = a.repeatFree && b.repeatFree;
+                    word.conditional = true;
                 } else if (mask && !(mask & (mask - 1))) {
                     // A possibly empty single-lane child has a common entry/exit cut.
                     unsigned pipe = 0;
                     while (!(mask & (1u << pipe)))
                         ++pipe;
                     word.groups.push_back({pipe, {id}, {id}});
+                    word.repeatFree = a.repeatFree && b.repeatFree;
+                    word.conditional = true;
                 } else
                     word.valid = false;
             } else if (mask && !(mask & (mask - 1))) {
@@ -734,6 +737,7 @@ bool discoverCuts(const c::Program& p, Cuts& cuts, std::string& reason)
                 while (!(mask & (1u << pipe)))
                     ++pipe;
                 word.groups.push_back({pipe, {id}, {id}});
+                word.repeatFree = n.kind != c::Node::For && n.kind != c::Node::While;
             } else if (mask)
                 word.valid = false;
         }
@@ -742,21 +746,30 @@ bool discoverCuts(const c::Program& p, Cuts& cuts, std::string& reason)
         // advances on visits, not on a guessed value of the surrounding IV.
         for (unsigned id = 0; id < size; ++id) {
             const auto& word = words[id];
-            if (p.nodes[id].kind != c::Node::Sequence || !word.valid || word.groups.size() < 2 ||
-                word.groups.front().lane == word.groups.back().lane || !cuts.effects[id][cell].writers)
+            if (p.nodes[id].kind != c::Node::Sequence || !word.valid || (structuredEpisodes && !word.repeatFree) ||
+                word.groups.size() < 2 || word.groups.front().lane == word.groups.back().lane ||
+                !cuts.effects[id][cell].writers)
                 continue;
             unsigned owner = cuts.owner[id];
             if (owner == NoCut || cuts.next[owner] == NoCut || accesses[id] != accesses[owner])
+                continue;
+            bool completeDomain = true;
+            for (unsigned cursor = id; cuts.parent[cursor] != NoCut && cuts.parent[cursor] != owner;
+                 cursor = cuts.parent[cursor])
+                completeDomain &= p.nodes[cuts.parent[cursor]].kind != c::Node::Choice;
+            bool qualifiedPeriodicDomain = p.nodes[id].periodicOwner == owner && bool(p.nodes[id].firstActive());
+            if (structuredEpisodes && !completeDomain && !qualifiedPeriodicDomain)
                 continue;
             bool qualified = true;
             for (unsigned i = 0; i < word.groups.size(); ++i) {
                 const auto &g = word.groups[i], &following = word.groups[(i + 1) % word.groups.size()];
                 qualified &= bool(key(p, g.lane, following.lane));
-                for (unsigned last : g.last)
-                    qualified &= cuts.next[last] != NoCut;
+                if (!structuredEpisodes || i + 1 < word.groups.size())
+                    for (unsigned last : g.last)
+                        qualified &= cuts.next[last] != NoCut;
             }
             if (qualified)
-                cuts.cycles.push_back({owner, id, {cell}, word.groups, {}});
+                cuts.cycles.push_back({owner, id, {cell}, word.groups, structuredEpisodes && word.conditional, {}});
             if (qualified)
                 break;
         }
@@ -894,6 +907,9 @@ struct PrefixState : c::State {
     }
 };
 
+struct ProtocolFacts;
+bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reason, ProtocolFacts* facts = nullptr);
+
 // A closed, single-Sequence ring has no seed or cleanup outside its visit.
 // The last lane publishes at the NEXT visit's first cut, after its previous
 // work in that lane's queue. The normal two-copy event-word proof establishes
@@ -904,17 +920,52 @@ struct DemandRings {
     // Optional precision has a representation-work ceiling, independent of
     // numeric trip counts. Exceeding it leaves ordinary demands unchanged.
     static constexpr uint64_t MaxCells = 1u << 20;
+    static constexpr uint64_t MaxEpisodeWork = 1u << 22;
+    struct EpisodeBudget {
+        uint64_t used = 0, limit = MaxEpisodeWork;
+        bool exhausted = false;
+        bool reserve(uint64_t count, uint64_t width = 1)
+        {
+            if (exhausted || limit > MaxEpisodeWork || used > limit || (width && count > (limit - used) / width)) {
+                exhausted = true;
+                return false;
+            }
+            used += count * width;
+            return true;
+        }
+    } budget;
     static bool affordable(const c::Program& p) { return !p.nodes.empty() && p.cells <= MaxCells / p.nodes.size(); }
     Cuts cuts;
     Commands sites;
     std::map<PrefixState::EventKey, unsigned> owners;
+    std::set<PrefixState::EventKey> structuredKeys;
     std::set<unsigned> loopOwners;
-    explicit DemandRings(unsigned size) : sites(size) {}
+    uint64_t episodeWords = 0, episodePairs = 0;
+    uint64_t choiceEndpoints = 0, repeatedDirections = 0;
+    bool structuredDiscovery = true;
+    explicit DemandRings(unsigned size, uint64_t episodeLimit = MaxEpisodeWork, bool enableStructuredDiscovery = true)
+        : sites(size), structuredDiscovery(enableStructuredDiscovery)
+    {
+        budget.limit = episodeLimit;
+    }
+    static bool requiresStructuredProof(const Cycle& cycle)
+    {
+        std::set<std::pair<unsigned, unsigned>> directions;
+        if (cycle.conditional)
+            return true;
+        for (unsigned i = 0; i < cycle.groups.size(); ++i) {
+            const auto& group = cycle.groups[i];
+            if (group.first.size() != 1 || group.last.size() != 1 ||
+                !directions.insert({group.lane, cycle.groups[(i + 1) % cycle.groups.size()].lane}).second)
+                return true;
+        }
+        return false;
+    }
     bool discover(const c::Program& p, std::string& reason)
     {
         if (!affordable(p))
             return true;
-        if (!discoverCuts(p, cuts, reason))
+        if (!discoverCuts(p, cuts, reason, structuredDiscovery))
             return false;
         std::vector<Cycle> shapes;
         std::map<std::vector<unsigned>, unsigned> shared;
@@ -925,23 +976,43 @@ struct DemandRings {
             // Sequence/Choice nodes: one iteration executes the entire word
             // once or skips it. No nested trip count is assigned a generation.
             for (unsigned child : p.nodes[cycle.region].children)
-                if (p.nodes[child].kind != c::Node::Operation)
+                if ((!structuredDiscovery && p.nodes[child].kind != c::Node::Operation) ||
+                    (structuredDiscovery &&
+                     (p.nodes[child].kind == c::Node::For || p.nodes[child].kind == c::Node::While)))
                     for (unsigned cell : cycle.cells) {
                         const auto& e = cuts.effects[child][cell];
                         straight &= !(e.readers | e.writers);
                     }
-            std::set<std::pair<unsigned, unsigned>> directions;
-            for (unsigned g = 0; g < cycle.groups.size(); ++g)
-                straight &=
-                    directions.insert({cycle.groups[g].lane, cycle.groups[(g + 1) % cycle.groups.size()].lane}).second;
             std::vector<unsigned> signature{cycle.owner, cycle.region};
-            for (const auto& g : cycle.groups) {
-                straight &= g.first.size() == 1 && g.last.size() == 1;
-                for (unsigned id : g.first)
-                    straight &= cuts.parent[id] == cycle.region && p.nodes[id].kind == c::Node::Operation;
-                for (unsigned id : g.last)
-                    straight &= cuts.parent[id] == cycle.region && p.nodes[id].kind == c::Node::Operation;
-                signature.insert(signature.end(), {g.lane, g.first.front(), g.last.front()});
+            if (!structuredDiscovery) {
+                std::set<std::pair<unsigned, unsigned>> directions;
+                for (unsigned i = 0; i < cycle.groups.size(); ++i) {
+                    const auto& group = cycle.groups[i];
+                    straight &=
+                        directions.insert({group.lane, cycle.groups[(i + 1) % cycle.groups.size()].lane}).second;
+                    straight &= group.first.size() == 1 && group.last.size() == 1;
+                    if (!straight)
+                        continue;
+                    straight &= cuts.parent[group.first.front()] == cycle.region &&
+                                p.nodes[group.first.front()].kind == c::Node::Operation;
+                    straight &= cuts.parent[group.last.front()] == cycle.region &&
+                                p.nodes[group.last.front()].kind == c::Node::Operation;
+                    signature.insert(signature.end(), {group.lane, group.first.front(), group.last.front()});
+                }
+            } else {
+                signature.push_back(unsigned(cycle.conditional));
+                for (const auto& group : cycle.groups) {
+                    for (unsigned id : group.first)
+                        straight &= cuts.owner[id] == cycle.owner && p.nodes[id].kind != c::Node::For &&
+                                    p.nodes[id].kind != c::Node::While;
+                    for (unsigned id : group.last)
+                        straight &= cuts.owner[id] == cycle.owner && p.nodes[id].kind != c::Node::For &&
+                                    p.nodes[id].kind != c::Node::While;
+                    signature.insert(signature.end(), {group.lane, unsigned(group.first.size())});
+                    signature.insert(signature.end(), group.first.begin(), group.first.end());
+                    signature.push_back(group.last.size());
+                    signature.insert(signature.end(), group.last.begin(), group.last.end());
+                }
             }
             if (!straight)
                 continue;
@@ -973,6 +1044,11 @@ struct DemandRings {
                     continue;
                 }
                 const auto& fixed = cycle.groups[anchor];
+                if (fixed.first.size() != 1 || fixed.last.size() != 1 || cycle.groups[1 - anchor].first.size() != 1 ||
+                    cycle.groups[1 - anchor].last.size() != 1) {
+                    merged.push_back(std::move(cycle));
+                    continue;
+                }
                 std::vector<unsigned> signature{cycle.owner,          cycle.region,        cycle.groups[0].lane,
                                                 cycle.groups[1].lane, fixed.first.front(), fixed.last.front()};
                 auto found = families.find(signature);
@@ -1008,16 +1084,16 @@ struct DemandRings {
     std::vector<Endpoint> pattern(const Cycle& cycle) const
     {
         std::vector<Endpoint> out;
-        out.push_back(
-            {cycle.groups.front().first.front(), c::Mechanism::Publish, cycle.groups.back().lane,
-             cycle.groups.front().lane});
+        for (unsigned first : cycle.groups.front().first)
+            out.push_back({first, c::Mechanism::Publish, cycle.groups.back().lane, cycle.groups.front().lane});
         for (unsigned g = 0; g < cycle.groups.size(); ++g) {
             const auto& group = cycle.groups[g];
             const auto& previous = cycle.groups[(g + cycle.groups.size() - 1) % cycle.groups.size()];
-            out.push_back({group.first.front(), c::Mechanism::Acquire, previous.lane, group.lane});
+            for (unsigned first : group.first)
+                out.push_back({first, c::Mechanism::Acquire, previous.lane, group.lane});
             if (g + 1 < cycle.groups.size())
-                out.push_back(
-                    {cuts.next[group.last.front()], c::Mechanism::Publish, group.lane, cycle.groups[g + 1].lane});
+                for (unsigned last : group.last)
+                    out.push_back({cuts.next[last], c::Mechanism::Publish, group.lane, cycle.groups[g + 1].lane});
         }
         return out;
     }
@@ -1029,8 +1105,144 @@ struct DemandRings {
             for (const auto& e : pattern(cycle))
                 sites[e.cut].push_back(event(e.kind, e.source, e.target, cycle.keys.at({e.source, e.target})));
             for (auto [direction, key] : cycle.keys)
-                owners.emplace(PrefixState::EventKey{direction.first, direction.second, key}, i);
+                if (auto logical = PrefixState::EventKey{direction.first, direction.second, key};
+                    owners.emplace(logical, i).second && requiresStructuredProof(cycle))
+                    structuredKeys.insert(logical);
         }
+    }
+    bool verifyEpisodeWords(
+        const c::Program& p, const Commands& actual, const std::vector<Cycle>& cycles, std::string& reason)
+    {
+        bool requiresStructuredProof = std::any_of(cycles.begin(), cycles.end(), [](const auto& cycle) {
+            return DemandRings::requiresStructuredProof(cycle);
+        });
+        // Preserve the established singleton/unique-direction certificate.
+        // The finite structural proof is required only for the newly admitted
+        // alternative endpoints or repeated directions.
+        if (!requiresStructuredProof)
+            return true;
+        constexpr unsigned MaxEpisodeWords = MaxAlternatives;
+        using WordSet = std::vector<std::vector<c::Mechanism>>;
+        std::map<std::pair<unsigned, unsigned>, std::vector<const Cycle*>> families;
+        for (const auto& cycle : cycles)
+            families[{cycle.owner, cycle.region}].push_back(&cycle);
+        for (const auto& [domain, family] : families) {
+            (void)domain;
+            std::set<PrefixState::EventKey> cycleKeys;
+            for (const auto* cycle : family)
+                for (const auto& [direction, key] : cycle->keys)
+                    cycleKeys.insert({direction.first, direction.second, key});
+            auto own = [&](unsigned id) {
+                std::vector<c::Mechanism> result;
+                for (const auto& mechanism : actual[id])
+                    if (mechanism.participation == c::Mechanism::Every &&
+                        (mechanism.kind == c::Mechanism::Publish || mechanism.kind == c::Mechanism::Acquire) &&
+                        cycleKeys.count({mechanism.first, mechanism.second, mechanism.forwardKey}))
+                        result.push_back(mechanism);
+                return result;
+            };
+            auto combine = [&](WordSet& left, const WordSet& right) {
+                WordSet product;
+                if (right.empty())
+                    return false;
+                for (const auto& a : left)
+                    for (const auto& b : right) {
+                        if (!budget.reserve(1 + a.size() + b.size(), 2) || product.size() == MaxEpisodeWords)
+                            return false;
+                        auto joined = a;
+                        joined.insert(joined.end(), b.begin(), b.end());
+                        if (!budget.reserve(product.size(), joined.size() + 1))
+                            return false;
+                        if (std::find(product.begin(), product.end(), joined) == product.end())
+                            product.push_back(std::move(joined));
+                    }
+                left = std::move(product);
+                return true;
+            };
+            std::function<std::optional<WordSet>(unsigned)> project = [&](unsigned id) -> std::optional<WordSet> {
+                const auto& node = p.nodes[id];
+                if (!budget.reserve(1 + actual[id].size(), 8)) {
+                    reason = "recurring episode projection exhausted its work budget";
+                    return {};
+                }
+                WordSet words{own(id)};
+                if (node.kind == c::Node::Operation)
+                    return words;
+                if (node.kind == c::Node::For || node.kind == c::Node::While) {
+                    if (!words.front().empty()) {
+                        reason = "recurring episode command is attached to a nested loop";
+                        return {};
+                    }
+                    return WordSet{{}};
+                }
+                if (node.kind == c::Node::Choice) {
+                    WordSet alternatives;
+                    for (unsigned child : node.children) {
+                        auto arm = project(child);
+                        if (!arm)
+                            return {};
+                        for (auto word : *arm) {
+                            if (!budget.reserve(1 + words.front().size() + word.size(), 2)) {
+                                reason = "recurring episode projection exhausted its work budget";
+                                return {};
+                            }
+                            auto prefix = words.front();
+                            prefix.insert(prefix.end(), word.begin(), word.end());
+                            if (!budget.reserve(alternatives.size(), prefix.size() + 1)) {
+                                reason = "recurring episode projection exhausted its work budget";
+                                return {};
+                            }
+                            if (std::find(alternatives.begin(), alternatives.end(), prefix) == alternatives.end()) {
+                                if (alternatives.size() == MaxEpisodeWords) {
+                                    reason = "recurring episode has too many structural words";
+                                    return {};
+                                }
+                                alternatives.push_back(std::move(prefix));
+                            }
+                        }
+                    }
+                    return alternatives;
+                }
+                for (unsigned child : node.children) {
+                    auto part = project(child);
+                    if (!part || !combine(words, *part)) {
+                        if (reason.empty())
+                            reason = "recurring episode has too many structural words";
+                        return {};
+                    }
+                }
+                return words;
+            };
+            auto words = project(family.front()->region);
+            if (!words || words->empty())
+                return false;
+            for (const auto& previous : *words)
+                for (const auto& next : *words) {
+                    if (!budget.reserve(1 + previous.size() + next.size(), 4 * c::LaneCount + 16)) {
+                        reason = "recurring episode lifecycle exhausted its work budget";
+                        return false;
+                    }
+                    std::vector<c::Mechanism> pair = previous;
+                    pair.insert(pair.end(), next.begin(), next.end());
+                    std::string projectedReason;
+                    if (!verifyProtocolWord(pair, projectedReason)) {
+                        reason = "recurring episode lifecycle failed: " + projectedReason;
+                        return false;
+                    }
+                    ++episodePairs;
+                }
+            episodeWords += words->size();
+            for (const auto* cycle : family) {
+                for (const auto& group : cycle->groups)
+                    choiceEndpoints += group.first.size() - 1 + group.last.size() - 1;
+                std::set<std::pair<unsigned, unsigned>> directions;
+                for (unsigned i = 0; i < cycle->groups.size(); ++i)
+                    repeatedDirections +=
+                        !directions.insert({cycle->groups[i].lane, cycle->groups[(i + 1) % cycle->groups.size()].lane})
+                             .second;
+            }
+        }
+        return true;
     }
     bool infer(const c::Program& p, const Commands& actual, std::string& reason)
     {
@@ -1071,6 +1283,11 @@ struct DemandRings {
                     used.insert({direction.first, direction.second, k});
                 certified.push_back(std::move(cycle));
             }
+        }
+        std::string episodeReason;
+        if (!verifyEpisodeWords(p, actual, certified, episodeReason)) {
+            reason = std::move(episodeReason);
+            return false;
         }
         cuts.cycles = std::move(certified);
         index();
@@ -1213,9 +1430,7 @@ c::Result constructCutCandidate(const c::Program& p, bool reserveFallback)
                 receive(m);
         }
         if (n.kind == Node::Operation) {
-            if (!realizeVisibility(
-                    p, n, state, commands, result.reason,
-                    result.visibilityRequirements))
+            if (!realizeVisibility(p, n, state, commands, result.reason, result.visibilityRequirements))
                 return false;
             for (unsigned source = 0; source < LaneCount; ++source)
                 if (state.demands(n.lane, n.effects) & (1u << source)) {
@@ -2518,7 +2733,7 @@ bool verifyProtocolWordImpl(
     return true;
 }
 
-bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reason, ProtocolFacts* facts = nullptr)
+bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reason, ProtocolFacts* facts)
 {
     return verifyProtocolWordImpl(word, nullptr, reason, facts);
 }
@@ -2637,6 +2852,13 @@ struct DeferredDemandRings {
             p.nodes[cycle.region].kind != c::Node::Sequence || owner.entryGuardStart == NoCut ||
             analysis.next[cycle.owner] == NoCut)
             return false;
+        std::set<std::pair<unsigned, unsigned>> directions;
+        for (unsigned index = 0; index < cycle.groups.size(); ++index) {
+            const auto& group = cycle.groups[index];
+            if (group.first.size() != 1 || group.last.size() != 1 ||
+                !directions.insert({group.lane, cycle.groups[(index + 1) % cycle.groups.size()].lane}).second)
+                return false;
+        }
         if (periodic && (word.periodicOwner != cycle.owner || !word.firstActive()))
             return false;
         if (periodic) {
@@ -4109,17 +4331,25 @@ struct AlternativeChoiceCertificates {
 
 bool verifyDemandProtocols(
     const c::Program& p, const DemandAnalysis& analysis, const std::vector<std::vector<c::Mechanism>>& actual,
-    const DeferredDemandRings& deferred, std::string& reason, uint64_t childReturnLimit, uint64_t& childReturnWork,
-    bool& usedChildReturns, bool& budgetExhausted, uint64_t alternativeChoiceLimit, uint64_t& alternativeChoiceWork,
-    uint64_t& alternativeChoiceFamilies, uint64_t& alternativeChoiceSites, uint64_t& alternativeChoiceSourceScopes,
-    uint64_t& alternativeChoicePrefixSteps, bool& alternativeChoiceBudgetExhausted, bool& usedAlternativeChoices)
+    const DeferredDemandRings& deferred, const DemandRings& rings, std::string& reason, uint64_t childReturnLimit,
+    uint64_t& childReturnWork, bool& usedChildReturns, bool& budgetExhausted, uint64_t alternativeChoiceLimit,
+    uint64_t& alternativeChoiceWork, uint64_t& alternativeChoiceFamilies, uint64_t& alternativeChoiceSites,
+    uint64_t& alternativeChoiceSourceScopes, uint64_t& alternativeChoicePrefixSteps,
+    bool& alternativeChoiceBudgetExhausted, bool& usedAlternativeChoices)
 {
     using Key = PrefixState::EventKey;
     usedChildReturns = false;
     usedAlternativeChoices = false;
     std::set<Key> entryKeys = deferred.keys;
+    std::set<Key> ringKeys;
+    ringKeys = rings.structuredKeys;
     if (!verifyEntryProtocols(p, analysis, actual, deferred.keys, entryKeys, reason))
         return false;
+    for (const auto& eventKey : ringKeys)
+        if (entryKeys.count(eventKey)) {
+            reason = "structured recurring key collides with a guarded entry or deferred protocol";
+            return false;
+        }
     std::set<Key> packetKeys;
     for (const auto& commands : actual)
         for (const auto& mechanism : commands)
@@ -4135,11 +4365,13 @@ bool verifyDemandProtocols(
     for (unsigned id = 0; id < actual.size(); ++id)
         for (const auto& m : actual[id]) {
             Key forward{m.first, m.second, m.forwardKey};
-            if ((m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire) && deferred.keys.count(forward))
+            if ((m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire) &&
+                (deferred.keys.count(forward) || ringKeys.count(forward)))
                 continue;
             if (m.kind == c::Mechanism::Rendezvous &&
-                (deferred.keys.count(forward) || deferred.keys.count({m.second, m.first, m.reverseKey}))) {
-                reason = "canonical packet collides with a deferred demand ring";
+                (deferred.keys.count(forward) || deferred.keys.count({m.second, m.first, m.reverseKey}) ||
+                 ringKeys.count(forward) || ringKeys.count({m.second, m.first, m.reverseKey}))) {
+                reason = "canonical packet collides with a recurring demand ring";
                 return false;
             }
             if (m.participation != c::Mechanism::Every)
@@ -4211,6 +4443,7 @@ bool verifyDemandProtocols(
         }
     }
     std::set<Key> ordinaryExcluded = deferred.keys;
+    ordinaryExcluded.insert(ringKeys.begin(), ringKeys.end());
     ordinaryExcluded.insert(alternatives.familyKeys.begin(), alternatives.familyKeys.end());
     std::map<unsigned, std::vector<c::Mechanism>> words;
     for (unsigned scope = 0; scope < p.nodes.size(); ++scope)
@@ -4241,6 +4474,7 @@ bool verifyDemandProtocols(
     // scope transactionally. If any summary is unavailable or exceeds its
     // optional allowance, report the mandatory flat check's failure.
     std::set<Key> protectedKeys = entryKeys;
+    protectedKeys.insert(ringKeys.begin(), ringKeys.end());
     protectedKeys.insert(alternatives.familyKeys.begin(), alternatives.familyKeys.end());
     for (const auto& commands : actual)
         for (const auto& m : commands)
@@ -4343,7 +4577,7 @@ c::Result constructDemandCandidate(
     const c::Program& p, const DemandInvariants* invariants, DemandFallbacks& unassigned,
     const DemandFallbacks* forced = nullptr, const Cuts* recurring = nullptr,
     const DemandAnalysis::ChoiceIncomingOptions* choiceIncoming = nullptr,
-    const ChildReturnOptions* childReturns = nullptr)
+    const ChildReturnOptions* childReturns = nullptr, uint64_t episodeLimit = DemandRings::MaxEpisodeWork)
 {
     using namespace c;
     c::Result result;
@@ -4379,7 +4613,7 @@ c::Result constructDemandCandidate(
             }
             nextLogicalKey = std::max(nextLogicalKey, physical + 1);
         }
-    DemandRings rings(p.nodes.size());
+    DemandRings rings(p.nodes.size(), episodeLimit);
     std::map<unsigned, State> ringIncoming;
     if (recurring) {
         result.cellVisits += uint64_t(p.cells) * p.nodes.size();
@@ -4405,7 +4639,19 @@ c::Result constructDemandCandidate(
                 }
             }
         rings.index();
+        if (!rings.verifyEpisodeWords(p, rings.sites, rings.cuts.cycles, result.reason)) {
+            result.recurringEpisodeWork = rings.budget.used;
+            result.recurringEpisodeBudgetExhausted = rings.budget.exhausted;
+            result.rejectedRecurringEpisodes = rings.cuts.cycles.size();
+            return result;
+        }
         result.cutCycles = rings.cuts.cycles.size();
+        result.recurringEpisodeWords = rings.episodeWords;
+        result.recurringEpisodePairs = rings.episodePairs;
+        result.recurringChoiceEndpoints = rings.choiceEndpoints;
+        result.recurringRepeatedDirections = rings.repeatedDirections;
+        result.recurringEpisodeWork = rings.budget.used;
+        result.recurringEpisodeBudgetExhausted = rings.budget.exhausted;
     }
     auto allocate = [&](unsigned a, unsigned b) -> std::optional<unsigned> {
         if (!p.target.event(lane(p, a), lane(p, b)))
@@ -4515,9 +4761,7 @@ c::Result constructDemandCandidate(
         }
         const auto& n = p.nodes[id];
         if (n.kind == Node::Operation) {
-            if (!realizeVisibility(
-                    p, n, state, result.before[id], result.reason,
-                    result.visibilityRequirements))
+            if (!realizeVisibility(p, n, state, result.before[id], result.reason, result.visibilityRequirements))
                 return false;
             for (unsigned source = 0; source < LaneCount; ++source) {
                 if (!(state.demands(n.lane, n.effects) & (1u << source)))
@@ -4849,6 +5093,35 @@ c::Result constructDemandCandidate(
     std::map<FamilyKey, unsigned> numberedAcknowledgments;
     bool retainAckIdentity = childReturns && childReturns->enabled && childReturns->reserve(families.size(), 8);
 
+    // A recurring episode may contain several occurrences of one direction
+    // and several mutually exclusive structural endpoints.  Its finite
+    // episode proof owns one raw key for that complete population; ordinary
+    // scope-local coloring must neither flatten nor share it.
+    std::map<PrefixState::EventKey, unsigned> ringNumbering;
+    std::set<PrefixState::EventKey> ringPhysicalKeys;
+    if (!rings.structuredKeys.empty()) {
+        auto trial = occupied;
+        for (const auto& logical : rings.structuredKeys) {
+            auto [source, observer, ignored] = logical;
+            (void)ignored;
+            auto physical = std::find_if(p.target.compilerKeys.begin(), p.target.compilerKeys.end(), [&](unsigned k) {
+                return key(p, source, observer) != k && p.target.available(lane(p, source), lane(p, observer), k) &&
+                       !trial[{source, observer}].count(k);
+            });
+            if (physical == p.target.compilerKeys.end()) {
+                result.success = false;
+                result.reason = "optional recurring episode exhausted dedicated event keys";
+                result.before.clear();
+                return result;
+            }
+            trial[{source, observer}].insert(*physical);
+            ringNumbering.emplace(logical, *physical);
+            ringPhysicalKeys.insert({source, observer, *physical});
+            ++result.protocolKeys;
+        }
+        occupied = std::move(trial);
+    }
+
     // If an entire directed-domain population fits, every logical protocol can
     // own a distinct physical key. In that case the canonical packet key is not
     // needed for fallback and may be used by one direct protocol. This is a
@@ -4874,7 +5147,8 @@ c::Result constructDemandCandidate(
             // Alternative Choice numbering has already assigned both the
             // forward family and every arm-local return acknowledgment.  None
             // of those logical keys belong to the ordinary population below.
-            if (scope != NoCut && !logicalAlternatives.familyKeys.count(logical))
+            if (scope != NoCut && !logicalAlternatives.familyKeys.count(logical) &&
+                !rings.structuredKeys.count(logical))
                 domainPopulation[{mechanism.first, mechanism.second}].insert(
                     {scope, mechanism.first, mechanism.second, mechanism.forwardKey});
         }
@@ -4928,8 +5202,13 @@ c::Result constructDemandCandidate(
             result.protocolKeys += population->second.size();
         }
     }
+    std::set<PrefixState::EventKey> allocationExcluded = logicalAlternatives.familyKeys;
+    for (const auto& logical : rings.structuredKeys)
+        allocationExcluded.insert(logical);
+    std::set<PrefixState::EventKey> physicalExcluded = universalPhysicalKeys;
+    physicalExcluded.insert(ringPhysicalKeys.begin(), ringPhysicalKeys.end());
     for (unsigned scope : analysis.scopeOrder) {
-        const auto* excluded = logicalAlternatives.familyKeys.empty() ? nullptr : &logicalAlternatives.familyKeys;
+        const auto* excluded = allocationExcluded.empty() ? nullptr : &allocationExcluded;
         auto word = demandWord(p, result.before, scope, true, true, excluded);
         // An all-alternative scope still contains endpoints that must receive
         // their reserved physical numbers even though its ordinary word is empty.
@@ -5012,6 +5291,12 @@ c::Result constructDemandCandidate(
                     commands.push_back(m);
                     continue;
                 }
+                auto ringNumber = ringNumbering.find(logical);
+                if (ringNumber != ringNumbering.end()) {
+                    m.forwardKey = ringNumber->second;
+                    commands.push_back(m);
+                    continue;
+                }
                 if (fallbackKeys.count(logical) && rings.owners.count(logical)) {
                     result.success = false;
                     result.reason = "optional recurring demand ring exhausted event keys";
@@ -5040,8 +5325,7 @@ c::Result constructDemandCandidate(
         // actual renamed raw events together with the actual canonical packets.
         if (!verifyProtocolWord(
                 demandWord(
-                    p, result.before, scope, true, false,
-                    universalPhysicalKeys.empty() ? nullptr : &universalPhysicalKeys),
+                    p, result.before, scope, true, false, physicalExcluded.empty() ? nullptr : &physicalExcluded),
                 result.reason)) {
             result.success = false;
             result.before.clear();
@@ -5286,20 +5570,6 @@ c::Result verifyDemandImpl(
         return result;
     }
     result.deferredProtocolSteps = deferred.protocolSteps;
-    bool usedStructured = false, usedAlternatives = false;
-    if (!verifyDemandProtocols(
-            p, analysis, actual, deferred, result.reason, childReturnLimit, result.childReturnWork, usedStructured,
-            result.childReturnBudgetExhausted, alternativeChoiceLimit, result.alternativeChoiceWork,
-            result.alternativeChoiceFamilies, result.alternativeChoiceSites, result.alternativeChoiceSourceScopes,
-            result.alternativeChoicePrefixSteps, result.alternativeChoiceBudgetExhausted, usedAlternatives)) {
-        result.deferredRejectionStage = "protocol";
-        result.deferredRejectionReason = result.reason;
-        return result;
-    }
-    if (usedChildReturns)
-        *usedChildReturns = usedStructured;
-    if (usedAlternativeChoices)
-        *usedAlternativeChoices = usedAlternatives;
     DemandRings rings(p.nodes.size());
     if (!rings.infer(p, actual, result.reason)) {
         if (!deferred.keys.empty()) {
@@ -5310,8 +5580,27 @@ c::Result verifyDemandImpl(
     }
     if (DemandRings::affordable(p))
         result.cellVisits += uint64_t(p.cells) * p.nodes.size();
-    result.cutCycles = rings.cuts.cycles.size();
-    result.cutCycles += deferred.cuts.cycles.size();
+    result.cutCycles = rings.cuts.cycles.size() + deferred.cuts.cycles.size();
+    result.recurringEpisodeWords = rings.episodeWords;
+    result.recurringEpisodePairs = rings.episodePairs;
+    result.recurringChoiceEndpoints = rings.choiceEndpoints;
+    result.recurringRepeatedDirections = rings.repeatedDirections;
+    result.recurringEpisodeWork = rings.budget.used;
+    result.recurringEpisodeBudgetExhausted = rings.budget.exhausted;
+    bool usedStructured = false, usedAlternatives = false;
+    if (!verifyDemandProtocols(
+            p, analysis, actual, deferred, rings, result.reason, childReturnLimit, result.childReturnWork,
+            usedStructured, result.childReturnBudgetExhausted, alternativeChoiceLimit, result.alternativeChoiceWork,
+            result.alternativeChoiceFamilies, result.alternativeChoiceSites, result.alternativeChoiceSourceScopes,
+            result.alternativeChoicePrefixSteps, result.alternativeChoiceBudgetExhausted, usedAlternatives)) {
+        result.deferredRejectionStage = "protocol";
+        result.deferredRejectionReason = result.reason;
+        return result;
+    }
+    if (usedChildReturns)
+        *usedChildReturns = usedStructured;
+    if (usedAlternativeChoices)
+        *usedAlternativeChoices = usedAlternatives;
     std::map<unsigned, State> ringIncoming;
     // Fresh physical requirements and actual event-prefix transfer. No chosen
     // demand, source-cut proposal, family membership, or initialization receipt
@@ -5670,21 +5959,69 @@ c::Result constructDemandsImpl(
 } // namespace
 
 namespace {
+enum class RingMode { Disabled, LegacyOnly, Structured };
+struct RingOptions {
+    RingMode mode = RingMode::Structured;
+    uint64_t episodeLimit = DemandRings::MaxEpisodeWork;
+};
+
 c::Result constructWithDemandRings(
     const c::Program& p, bool corrupt, const DemandAnalysis::ChoiceIncomingOptions* choiceIncoming = nullptr,
-    const ChildReturnOptions* childReturns = nullptr)
+    const ChildReturnOptions* childReturns = nullptr, RingOptions ringOptions = {})
 {
     using namespace c;
-    auto baseline = constructDemandsImpl(p, false, true, false, false, true, choiceIncoming, childReturns);
+    const bool structuredEpisodes = ringOptions.mode == RingMode::Structured;
+    // Preserve the established closed-ring result as the transaction baseline.
+    // A newly admitted structural episode may replace it, but cannot make an
+    // older accepted ring population disappear when the larger batch loses a
+    // quality, resource, or lifecycle check.
+    auto baseline = structuredEpisodes ?
+                        constructWithDemandRings(
+                            p, false, choiceIncoming, childReturns,
+                            {RingMode::LegacyOnly, ringOptions.episodeLimit}) :
+                        constructDemandsImpl(p, false, true, false, false, true, choiceIncoming, childReturns);
     if (!baseline.success)
         return baseline;
-    DemandRings shapes(p.nodes.size());
+    if (ringOptions.mode == RingMode::Disabled)
+        return baseline;
+    DemandRings shapes(p.nodes.size(), ringOptions.episodeLimit, structuredEpisodes);
     std::string why;
     if (DemandRings::affordable(p))
         baseline.cellVisits += uint64_t(p.cells) * p.nodes.size();
     if (!shapes.discover(p, why) || shapes.cuts.cycles.empty())
         return baseline;
     baseline.ringCandidates = 1;
+    bool structuredEpisode = std::any_of(shapes.cuts.cycles.begin(), shapes.cuts.cycles.end(), [](const auto& cycle) {
+        return DemandRings::requiresStructuredProof(cycle);
+    });
+    uint64_t structuredCycleCount = std::count_if(
+        shapes.cuts.cycles.begin(), shapes.cuts.cycles.end(),
+        [](const auto& cycle) { return DemandRings::requiresStructuredProof(cycle); });
+    if (structuredEpisodes && !structuredCycleCount)
+        return baseline;
+    auto reject = [&]() {
+        if (structuredEpisodes)
+            baseline.rejectedRecurringEpisodes += structuredCycleCount;
+        else
+            baseline.rejectedRings = 1;
+        return baseline;
+    };
+    // The Choice-demand transaction compares its own candidate against the
+    // already verified recurring baseline.  Do not rebuild that candidate
+    // with a second structured-episode provider: the two alternatives must be
+    // selected by the outer transaction until a joint summary owns both.
+    if (structuredEpisode && choiceIncoming && choiceIncoming->enabled)
+        return reject();
+    bool guardedProtocol = std::any_of(baseline.before.begin(), baseline.before.end(), [](const auto& commands) {
+        return std::any_of(commands.begin(), commands.end(), [](const auto& mechanism) {
+            return mechanism.participation != Mechanism::Every;
+        });
+    });
+    // Guarded entry/deferred protocols have their own generation model.  Do
+    // not combine them with a newly structured closed episode until one joint
+    // finite automaton owns both key populations.
+    if (structuredEpisode && guardedProtocol)
+        return reject();
     // Cheap necessary resource and local savings checks precede construction.
     // They may forgo a useful candidate, but never affect baseline admission.
     std::map<unsigned, uint64_t> minimum;
@@ -5696,18 +6033,48 @@ c::Result constructWithDemandRings(
                 entryKeys.insert({m.first, m.second, m.forwardKey});
     for (const auto& cycle : shapes.cuts.cycles) {
         minimum[cycle.region] += 2 * cycle.groups.size();
+        std::set<std::pair<unsigned, unsigned>> directions;
         for (unsigned g = 0; g < cycle.groups.size(); ++g)
-            ++required[{cycle.groups[g].lane, cycle.groups[(g + 1) % cycle.groups.size()].lane}];
+            directions.insert({cycle.groups[g].lane, cycle.groups[(g + 1) % cycle.groups.size()].lane});
+        for (const auto& direction : directions)
+            ++required[direction];
     }
     bool useful = false, feasible = true;
+    std::function<std::optional<uint64_t>(unsigned)> pathCost = [&](unsigned id) -> std::optional<uint64_t> {
+        uint64_t own = 0;
+        for (const auto& mechanism : baseline.before[id])
+            if (mechanism.participation == Mechanism::Every)
+                own += commandCost(mechanism);
+        const auto& node = p.nodes[id];
+        if (node.kind == Node::Operation)
+            return own;
+        if (node.kind == Node::For || node.kind == Node::While)
+            return {};
+        if (node.kind == Node::Choice) {
+            uint64_t arm = 0;
+            for (unsigned child : node.children) {
+                auto cost = pathCost(child);
+                if (!cost)
+                    return {};
+                arm = std::max(arm, *cost);
+            }
+            return own + arm;
+        }
+        for (unsigned child : node.children) {
+            auto cost = pathCost(child);
+            if (!cost)
+                return {};
+            own += *cost;
+        }
+        return own;
+    };
     for (const auto& [scope, lower] : minimum) {
-        uint64_t old = 0;
-        for (unsigned child : p.nodes[scope].children)
-            for (const auto& m : baseline.before[child])
-                if (m.participation == Mechanism::Every)
-                    old += commandCost(m);
-        feasible &= lower <= old;
-        useful |= lower < old;
+        auto old = pathCost(scope);
+        feasible &= old && lower <= *old;
+        // Equal command cost can still replace a canonical rendezvous packet
+        // with direct handoffs at the physical first/last-use cuts.  The final
+        // whole-plan gate requires either lower cost or fewer packets.
+        useful |= old && lower <= *old;
     }
     for (const auto& [direction, count] : required) {
         unsigned available = 0;
@@ -5717,20 +6084,31 @@ c::Result constructWithDemandRings(
                          !entryKeys.count({direction.first, direction.second, k});
         feasible &= count <= available;
     }
-    if (!useful || !feasible) {
-        baseline.rejectedRings = 1;
-        return baseline;
+    if (!useful || !feasible)
+        return reject();
+    ChildReturnOptions childTrial;
+    const ChildReturnOptions* candidateChildReturns = childReturns;
+    if (structuredEpisode && childReturns && childReturns->enabled) {
+        const uint64_t allowance = std::min(childReturns->limit, ChildReturnSummaries::MaxWork);
+        if (childReturns->exhausted || childReturns->charged >= allowance)
+            return reject();
+        childTrial.enabled = true;
+        childTrial.corrupt = childReturns->corrupt;
+        childTrial.limit = allowance - childReturns->charged;
+        candidateChildReturns = &childTrial;
     }
     DemandFallbacks unassigned;
-    auto candidate =
-        constructDemandCandidate(p, nullptr, unassigned, nullptr, &shapes.cuts, choiceIncoming, childReturns);
+    auto candidate = constructDemandCandidate(
+        p, nullptr, unassigned, nullptr, &shapes.cuts, choiceIncoming, candidateChildReturns,
+        ringOptions.episodeLimit);
     if (corrupt)
         for (auto& commands : candidate.before)
             commands.clear();
     auto checked = candidate.success ?
-                       verifyConstructionDemands(p, candidate.before, nullptr, childReturns, nullptr, choiceIncoming) :
+                       verifyConstructionDemands(
+                           p, candidate.before, nullptr, candidateChildReturns, nullptr, choiceIncoming) :
                        c::Result{};
-    bool accepted = candidate.success && checked.success;
+    bool accepted = candidate.success && checked.success && !childTrial.exhausted;
     uint64_t removed = 0;
     if (accepted)
         for (unsigned id = 0; id < p.nodes.size(); ++id) {
@@ -5768,14 +6146,35 @@ c::Result constructWithDemandRings(
     baseline.nodeVisits += checked.nodeVisits;
     baseline.cellVisits += checked.cellVisits;
     baseline.ringCandidates = 1;
-    if (!accepted || !removed) {
-        baseline.rejectedRings = 1;
-        return baseline;
+    auto packets = [](const c::Result& plan) {
+        uint64_t total = 0;
+        for (const auto& commands : plan.before)
+            total += std::count_if(commands.begin(), commands.end(), [](const auto& mechanism) {
+                return mechanism.kind == Mechanism::Rendezvous;
+            });
+        return total;
+    };
+    uint64_t beforePackets = packets(baseline), afterPackets = packets(candidate);
+    uint64_t packetsRemoved = beforePackets > afterPackets ? beforePackets - afterPackets : 0;
+    if (!accepted || (!removed && !packetsRemoved)) {
+        baseline.recurringEpisodeWork += candidate.recurringEpisodeWork;
+        baseline.rejectedRecurringEpisodes +=
+            candidate.rejectedRecurringEpisodes + candidate.recurringEpisodeBudgetExhausted;
+        baseline.recurringEpisodeBudgetExhausted |= candidate.recurringEpisodeBudgetExhausted;
+        return reject();
+    }
+    if (candidateChildReturns == &childTrial) {
+        childReturns->charged += childTrial.charged;
+        childReturns->candidates += childTrial.candidates;
+        childReturns->rejected += childTrial.rejected;
+        childReturns->checks += childTrial.checks;
+        childReturns->budgetCheck += childTrial.budgetCheck;
     }
     candidate.nodeVisits = baseline.nodeVisits;
     candidate.cellVisits = baseline.cellVisits;
     candidate.ringCandidates = 1;
     candidate.ringCandidateCommandsRemoved = removed;
+    candidate.ringCandidatePacketsRemoved = packetsRemoved;
     return candidate;
 }
 
@@ -5814,13 +6213,15 @@ std::optional<uint64_t> discoveryReservation(
 c::Result constructWithDeferredRings(
     const c::Program& p, bool corrupt, uint64_t discoveryLimit = c::DeferredDiscoveryLimit,
     const DemandAnalysis::ChoiceIncomingOptions* choiceIncoming = nullptr,
-    const ChildReturnOptions* childReturns = nullptr)
+    const ChildReturnOptions* childReturns = nullptr, RingOptions ringOptions = {})
 {
     using namespace c;
     // The starting point is already independently verified by the existing
     // closed-ring selector. Deferred wrap never rescues a rejected ring shape
     // and never changes ordinary fallback mechanisms.
-    auto baseline = constructWithDemandRings(p, false, choiceIncoming, childReturns);
+    auto baseline = ringOptions.mode != RingMode::Disabled ?
+                        constructWithDemandRings(p, false, choiceIncoming, childReturns, ringOptions) :
+                        constructDemandsImpl(p, false, true, false, false, true, choiceIncoming, childReturns);
     if (!baseline.success || baseline.cutCycles == 0 || !DemandRings::affordable(p))
         return baseline;
     // Reserve representation work BEFORE rerunning discovery/inference. The
@@ -5987,10 +6388,11 @@ c::Result constructWithDeferredRings(
 c::Result constructWithLateEntry(
     const c::Program& p, bool corrupt, uint64_t limit = 1u << 22,
     const DemandAnalysis::ChoiceIncomingOptions* choiceIncoming = nullptr,
-    const ChildReturnOptions* childReturns = nullptr)
+    const ChildReturnOptions* childReturns = nullptr, RingOptions ringOptions = {})
 {
     using namespace c;
-    auto baseline = constructWithDeferredRings(p, false, c::DeferredDiscoveryLimit, choiceIncoming, childReturns);
+    auto baseline =
+        constructWithDeferredRings(p, false, c::DeferredDiscoveryLimit, choiceIncoming, childReturns, ringOptions);
     if (!baseline.success || !baseline.entryEpisodes || baseline.before.size() != p.nodes.size())
         return baseline;
     // Two aggregate allowances cover discovery and the worst-case single copy
@@ -6133,7 +6535,7 @@ c::Result constructWithLateEntry(
 
 c::Result constructChoiceTransaction(
     const c::Program& p, c::Result baseline, DemandAnalysis::ChoiceIncomingOptions& options,
-    const ChildReturnOptions* childReturns)
+    const ChildReturnOptions* childReturns, RingOptions ringOptions = {})
 {
     using namespace c;
     if (!baseline.success || !options.enabled || !options.limit)
@@ -6195,7 +6597,7 @@ c::Result constructChoiceTransaction(
     if (options.exhausted || !proposedOK ||
         (universalPhase ? proposed.universalChoices.empty() : !proposed.choiceDemandCandidates))
         return baseline;
-    auto candidate = constructWithLateEntry(p, false, 1u << 22, &options, childReturns);
+    auto candidate = constructWithLateEntry(p, false, 1u << 22, &options, childReturns, ringOptions);
     recordChoiceWork(baseline);
     if (options.exhausted || (universalPhase && childReturns && childReturns->exhausted)) {
         if (universalPhase) {
@@ -6460,17 +6862,17 @@ c::Result constructChoiceTransaction(
 c::Result constructWithChoiceDemands(
     const c::Program& p, bool corrupt, uint64_t limit = 1u << 20, const ChildReturnOptions* childReturns = nullptr,
     bool enableAlternatives = false, bool corruptAlternative = false,
-    uint64_t alternativeLimit = AlternativeChoiceCertificates::MaxWork)
+    uint64_t alternativeLimit = AlternativeChoiceCertificates::MaxWork, RingOptions ringOptions = {})
 {
     // A/B/C are fixed phases, not recursive candidate attempts. Common retains
     // its existing allowance. The alternative allowance applies only to C;
     // every C refusal returns the already verified B exactly.
-    auto result = constructWithLateEntry(p, false, 1u << 22, nullptr, childReturns);
+    auto result = constructWithLateEntry(p, false, 1u << 22, nullptr, childReturns, ringOptions);
     DemandAnalysis::ChoiceIncomingOptions common;
     common.enabled = true;
     common.corrupt = corrupt;
     common.limit = limit;
-    result = constructChoiceTransaction(p, std::move(result), common, childReturns);
+    result = constructChoiceTransaction(p, std::move(result), common, childReturns, ringOptions);
     if (!enableAlternatives || !alternativeLimit || !result.success || (childReturns && childReturns->exhausted))
         return result;
 
@@ -6495,7 +6897,7 @@ c::Result constructWithChoiceDemands(
         trialChild.limit = std::min(childReturns->limit, ChildReturnSummaries::MaxWork) - childReturns->charged;
         trial = &trialChild;
     }
-    result = constructChoiceTransaction(p, std::move(result), alternatives, trial);
+    result = constructChoiceTransaction(p, std::move(result), alternatives, trial, ringOptions);
     if (trial) {
         // Charge work, but do not let exhaustion in an optional C trial
         // invalidate a proof already accepted in B.
@@ -6509,7 +6911,8 @@ c::Result constructWithChoiceDemands(
 
 c::Result constructWithChildReturns(
     const c::Program& p, bool corrupt, uint64_t limit = ChildReturnSummaries::MaxWork, bool enableAlternatives = false,
-    bool corruptAlternative = false, uint64_t alternativeLimit = AlternativeChoiceCertificates::MaxWork)
+    bool corruptAlternative = false, uint64_t alternativeLimit = AlternativeChoiceCertificates::MaxWork,
+    RingOptions ringOptions = {})
 {
     ChildReturnOptions options;
     options.enabled = limit != 0;
@@ -6517,12 +6920,12 @@ c::Result constructWithChildReturns(
     options.limit = limit;
     auto result = constructWithChoiceDemands(
         p, false, 1u << 20, options.enabled ? &options : nullptr, enableAlternatives, corruptAlternative,
-        alternativeLimit);
+        alternativeLimit, ringOptions);
     if (options.exhausted) {
         // No earlier accepted removal may escape an exhausted whole attempt.
         // Reconstruct the exact disabled plan once, never once per candidate.
         auto fallback = constructWithChoiceDemands(
-            p, false, 1u << 20, nullptr, enableAlternatives, corruptAlternative, alternativeLimit);
+            p, false, 1u << 20, nullptr, enableAlternatives, corruptAlternative, alternativeLimit, ringOptions);
         fallback.nodeVisits += result.nodeVisits;
         fallback.cellVisits += result.cellVisits;
         result = std::move(fallback);
@@ -6537,11 +6940,12 @@ c::Result constructWithChildReturns(
 }
 
 c::Result constructWithAlternativeChoices(
-    const c::Program& p, bool corrupt, uint64_t limit = AlternativeChoiceCertificates::MaxWork)
+    const c::Program& p, bool corrupt, uint64_t limit = AlternativeChoiceCertificates::MaxWork,
+    RingOptions ringOptions = {})
 {
     // This is configuration for the single upstream Choice-demand
     // transaction, not a second command-editing pass.
-    return constructWithChildReturns(p, false, ChildReturnSummaries::MaxWork, true, corrupt, limit);
+    return constructWithChildReturns(p, false, ChildReturnSummaries::MaxWork, true, corrupt, limit, ringOptions);
 }
 } // namespace
 c::Result c::constructDemands(const Program& p) { return constructWithAlternativeChoices(p, false); }
@@ -6550,7 +6954,46 @@ std::optional<uint64_t> c::testing::deferredDiscoveryReservation(
 {
     return discoveryReservation(nodes, cells, keys, commands, limit);
 }
-c::Result c::testing::constructDemandsRejectingRings(const Program& p) { return constructWithDemandRings(p, true); }
+c::Result c::testing::constructDemandsRejectingRings(const Program& p)
+{
+    return constructWithDemandRings(p, true, nullptr, nullptr, {RingMode::LegacyOnly});
+}
+c::Result c::testing::constructDemandsForcingRings(const Program& p)
+{
+    DemandRings shapes(p.nodes.size());
+    c::Result result;
+    if (!shapes.discover(p, result.reason) || shapes.cuts.cycles.empty())
+        return result;
+    DemandFallbacks unassigned;
+    result = constructDemandCandidate(p, nullptr, unassigned, nullptr, &shapes.cuts);
+    if (!result.success)
+        return result;
+    auto checked = verifyConstructionDemands(p, result.before, nullptr, nullptr);
+    if (!checked.success) {
+        result.success = false;
+        result.reason = checked.reason;
+        result.before.clear();
+    }
+    return result;
+}
+c::Result c::testing::constructDemandsWithEpisodeWorkLimit(const Program& p, uint64_t limit)
+{
+    return constructWithAlternativeChoices(
+        p, false, AlternativeChoiceCertificates::MaxWork, {RingMode::Structured, limit});
+}
+c::Result c::testing::constructDemandsWithoutStructuredRings(const Program& p)
+{
+    return constructWithAlternativeChoices(p, false, AlternativeChoiceCertificates::MaxWork, {RingMode::LegacyOnly});
+}
+c::Result c::testing::constructDemandsWithoutChoiceOrStructuredRings(const Program& p)
+{
+    return constructWithLateEntry(p, false, 1u << 22, nullptr, nullptr, {RingMode::LegacyOnly});
+}
+c::Result c::testing::constructDemandsRejectingChoiceWithoutStructuredRings(const Program& p)
+{
+    return constructWithChoiceDemands(
+        p, true, 1u << 20, nullptr, false, false, AlternativeChoiceCertificates::MaxWork, {RingMode::LegacyOnly});
+}
 c::Result c::testing::constructDemandsRejectingDeferredRings(const Program& p)
 {
     return constructWithDeferredRings(p, true);

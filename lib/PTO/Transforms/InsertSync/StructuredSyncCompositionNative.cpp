@@ -1137,14 +1137,20 @@ Outcome ss::testing::constructCompositionalSync(
     const bool rejectLateEntry = constructor == CompositionConstructor::DemandsRejectLateEntry;
     const bool withoutChoice = constructor == CompositionConstructor::DemandsWithoutChoiceDemands;
     const bool rejectChoice = constructor == CompositionConstructor::DemandsRejectChoiceDemands;
+    const bool withoutStructuredRings = constructor == CompositionConstructor::DemandsWithoutStructuredRings;
+    const bool withoutChoiceOrStructuredRings =
+        constructor == CompositionConstructor::DemandsWithoutChoiceOrStructuredRings;
+    const bool rejectChoiceWithoutStructuredRings =
+        constructor == CompositionConstructor::DemandsRejectChoiceWithoutStructuredRings;
     const bool withoutChildReturns = constructor == CompositionConstructor::DemandsWithoutChildReturns;
     const bool rejectChildReturns = constructor == CompositionConstructor::DemandsRejectChildReturns;
     const bool withoutAlternatives = constructor == CompositionConstructor::DemandsWithoutAlternativeChoices;
     const bool rejectAlternatives = constructor == CompositionConstructor::DemandsRejectAlternativeChoices;
     const bool demandPlacement = constructor == CompositionConstructor::Demands || rejectRefinement || fallbackOnly ||
                                  withoutReplay || rejectReplay || rejectEntry || rejectDeferred || withoutLateEntry ||
-                                 rejectLateEntry || withoutChoice || rejectChoice || withoutChildReturns ||
-                                 rejectChildReturns || withoutAlternatives || rejectAlternatives;
+                                 rejectLateEntry || withoutChoice || rejectChoice || withoutStructuredRings ||
+                                 withoutChoiceOrStructuredRings || rejectChoiceWithoutStructuredRings ||
+                                 withoutChildReturns || rejectChildReturns || withoutAlternatives || rejectAlternatives;
     Outcome out;
     if (function.isDeclaration() || !llvm::hasSingleElement(function.getBody())) {
         out.reason = "composition requires a single function block";
@@ -1193,6 +1199,11 @@ Outcome ss::testing::constructCompositionalSync(
                     rejectChildReturns  ? c::testing::constructDemandsRejectingChildReturns(tree.program) :
                     withoutChoice       ? c::testing::constructDemandsWithoutChoiceDemands(tree.program) :
                     rejectChoice        ? c::testing::constructDemandsRejectingChoiceDemands(tree.program) :
+                    withoutStructuredRings ? c::testing::constructDemandsWithoutStructuredRings(tree.program) :
+                    withoutChoiceOrStructuredRings ?
+                        c::testing::constructDemandsWithoutChoiceOrStructuredRings(tree.program) :
+                    rejectChoiceWithoutStructuredRings ?
+                        c::testing::constructDemandsRejectingChoiceWithoutStructuredRings(tree.program) :
                     withoutLateEntry    ? c::testing::constructDemandsWithoutLateEntry(tree.program) :
                     rejectLateEntry     ? c::testing::constructDemandsRejectingLateEntry(tree.program) :
                     rejectDeferred      ? c::testing::constructDemandsRejectingDeferredRings(tree.program) :
@@ -1367,8 +1378,15 @@ Outcome ss::testing::constructCompositionalSync(
             << " alternative_choice_continuation_demands " << selected.alternativeChoiceContinuationDemands
             << " alternative_choice_cost_rejections " << selected.alternativeChoiceCostRejections
             << " ring_candidates " << selected.ringCandidates << " rejected_rings " << selected.rejectedRings
-            << " ring_candidate_commands_removed " << selected.ringCandidateCommandsRemoved << " rendezvous_packets "
-            << rendezvousPackets << " deferred_ring_candidates " << selected.deferredRingCandidates
+            << " ring_candidate_commands_removed " << selected.ringCandidateCommandsRemoved
+            << " ring_candidate_packets_removed " << selected.ringCandidatePacketsRemoved
+            << " recurring_episode_words " << selected.recurringEpisodeWords << " recurring_episode_pairs "
+            << selected.recurringEpisodePairs << " recurring_choice_endpoints " << selected.recurringChoiceEndpoints
+            << " recurring_repeated_directions " << selected.recurringRepeatedDirections
+            << " recurring_episode_work " << selected.recurringEpisodeWork << " rejected_recurring_episodes "
+            << selected.rejectedRecurringEpisodes << " recurring_episode_budget_exhausted "
+            << selected.recurringEpisodeBudgetExhausted << " rendezvous_packets " << rendezvousPackets
+            << " deferred_ring_candidates " << selected.deferredRingCandidates
             << " deferred_rings " << selected.deferredRings << " rejected_deferred_rings "
             << selected.rejectedDeferredRings << " periodic_deferred_rings " << selected.periodicDeferredRings
             << " periodic_write_overlap_rejections " << selected.periodicWriteOverlapRejections

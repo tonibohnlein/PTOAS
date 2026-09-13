@@ -90,7 +90,11 @@ def main():
                         'alternative_choice_source_scopes', 'alternative_choice_prefix_steps',
                         'rejected_alternative_choices', 'alternative_choice_work', 'alternative_choice_budget_exhausted',
                         'alternative_choice_continuation_demands', 'alternative_choice_cost_rejections',
-                        'ring_candidates', 'rejected_rings', 'ring_candidate_commands_removed', 'cut_cycles',
+                        'ring_candidates', 'rejected_rings', 'ring_candidate_commands_removed',
+                        'ring_candidate_packets_removed',
+                        'recurring_episode_words', 'recurring_episode_pairs', 'recurring_choice_endpoints',
+                        'recurring_repeated_directions', 'recurring_episode_work', 'rejected_recurring_episodes',
+                        'recurring_episode_budget_exhausted', 'cut_cycles',
                         'deferred_ring_candidates', 'deferred_rings', 'rejected_deferred_rings', 'deferred_protocol_steps',
                         'periodic_deferred_rings', 'periodic_write_overlap_rejections', 'periodic_scalar_work',
                         'periodic_dag_visits', 'periodic_residue_evaluations', 'deferred_eligibility_work',
@@ -222,6 +226,75 @@ def main():
                     raise RuntimeError('shared recurring handoff exports an unconsumed publication')
         path_checks.append(dict(name='shared-rings', verdict=verdict, counters=counters,
                                 source_sha256=digest(shared), output_sha256=digest(shared_normalized)))
+        repeated = Path(__file__).parent / 'structured_inputs/demand_repeated_direction_ring.pto'
+        repeated_raw = args.output.resolve() / 'repeated-direction-ring.native.pto'
+        verdict = json.loads(invoke('repeated-direction-ring',
+            [args.driver, repeated, 'demands:none', repeated_raw]))
+        counters = native_counters('repeated-direction-ring')
+        if (not verdict['accepted'] or not verdict['atomic'] or counters['cut_cycles'] != 1 or
+                counters['recurring_repeated_directions'] != 2 or counters['recurring_episode_words'] != 1 or
+                counters['recurring_episode_pairs'] != 1 or counters['recurring_episode_work'] == 0 or
+                counters['recurring_episode_budget_exhausted']):
+            raise RuntimeError('native repeated-direction episode proof not exercised')
+        repeated_normalized = args.output.resolve() / 'repeated-direction-ring.pto'
+        invoke('repeated-direction-ring-normalize', compiler + [repeated_raw, '-o', repeated_normalized])
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            module = ir.Module.parse(repeated_normalized.read_text())
+            function = next(op for op in children(module.operation) if op.name == 'func.func')
+            observer = Boundaries()
+            episodes = []
+            for count in (0, 3, 1, 4, 0, 2):
+                metrics = replay(function, ['src', count], observer=observer.observe)
+                if observer.tokens:
+                    raise RuntimeError('repeated-direction episode exports an unconsumed publication')
+                for op in ('pto.set_flag', 'pto.wait_flag'):
+                    if metrics['counts'].get(op, 0) != 4 * count:
+                        raise RuntimeError('repeated-direction episode executes the wrong command population')
+                episodes.append(dict(count=count, counts=metrics['counts'], scalar_counts=metrics['scalar_counts']))
+        path_checks.append(dict(name='repeated-direction-ring', verdict=verdict, counters=counters,
+                                episodes=episodes, source_sha256=digest(repeated),
+                                output_sha256=digest(repeated_normalized)))
+        for mutation in ('wrong-key', 'drop-wait', 'duplicate-set', 'reorder-event-pair'):
+            verdict = json.loads(invoke('repeated-direction-' + mutation, [args.driver, repeated,
+                'demands:' + mutation, args.output.resolve() / ('repeated-direction-' + mutation + '.pto')]))
+            if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
+                raise RuntimeError('repeated-direction corruption escaped reconstruction: ' + mutation)
+            path_checks.append(dict(name='repeated-direction-' + mutation, verdict=verdict))
+        choice_ring_source = Path(__file__).parent / 'structured_inputs/demand_choice_prefix.pto'
+        choice_ring = args.output.resolve() / 'choice-ring.input.pto'
+        choice_ring_text = choice_ring_source.read_text()
+        if choice_ring_text.count('pto.tabs ins(%b') != 2:
+            raise RuntimeError('unexpected Choice-ring fixture population')
+        choice_ring.write_text(choice_ring_text.replace('pto.tabs ins(%b', 'pto.tabs ins(%a'))
+        choice_ring_raw = args.output.resolve() / 'choice-ring.native.pto'
+        verdict = json.loads(invoke('choice-ring', [args.driver, choice_ring, 'demands:none', choice_ring_raw]))
+        counters = native_counters('choice-ring')
+        if (not verdict['accepted'] or not verdict['atomic'] or counters['cut_cycles'] == 0 or
+                counters['recurring_choice_endpoints'] == 0 or counters['recurring_episode_words'] == 0 or
+                counters['recurring_episode_pairs'] == 0 or counters['recurring_episode_budget_exhausted']):
+            raise RuntimeError('native Choice-normalized episode proof not exercised')
+        choice_ring_normalized = args.output.resolve() / 'choice-ring.pto'
+        invoke('choice-ring-normalize', compiler + [choice_ring_raw, '-o', choice_ring_normalized])
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            module = ir.Module.parse(choice_ring_normalized.read_text())
+            function = next(op for op in children(module.operation) if op.name == 'func.func')
+            observer = Boundaries()
+            for count, take in ((0, False), (3, False), (1, True), (4, False), (2, True)):
+                replay(function, ['src', count, take], observer=observer.observe)
+                if observer.tokens:
+                    raise RuntimeError('Choice-normalized episode exports an unconsumed publication')
+        path_checks.append(dict(name='choice-ring', verdict=verdict, counters=counters,
+                                source_sha256=digest(choice_ring), output_sha256=digest(choice_ring_normalized)))
+        for mutation in ('wrong-key', 'drop-wait'):
+            verdict = json.loads(invoke('choice-ring-' + mutation, [args.driver, choice_ring,
+                'demands:' + mutation, args.output.resolve() / ('choice-ring-' + mutation + '.pto')]))
+            if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
+                raise RuntimeError('Choice-normalized corruption escaped reconstruction: ' + mutation)
+            path_checks.append(dict(name='choice-ring-' + mutation, verdict=verdict))
         deferred = Path(__file__).parent / 'structured_inputs/demand_deferred_ring.pto'
         deferred_raw = args.output.resolve() / 'deferred-rings.native.pto'
         verdict = json.loads(invoke('deferred-rings', [args.driver, deferred, 'demands:none', deferred_raw]))
@@ -391,8 +464,12 @@ def main():
             raise RuntimeError('unexpected residual-B fixture population')
         choice_prefix.write_text(residual_text.replace('pto.tabs ins(%b', 'pto.tabs ins(%a'))
         choice_outputs, choice_profiles = {}, {}
-        for arm, mode in (('selected', 'none'), ('disabled', 'without-choice-demands'),
-                          ('rejected', 'reject-choice-demands')):
+        # Isolate this provider from structured recurring rings. A ring can
+        # subsume the same loop-local handoff, but must not make the established
+        # Choice transaction and rollback path untestable.
+        for arm, mode in (('selected', 'without-structured-rings'),
+                          ('disabled', 'without-choice-or-structured-rings'),
+                          ('rejected', 'reject-choice-without-structured-rings')):
             name = 'choice-prefix-' + arm
             choice_raw = args.output.resolve() / (name + '.native.pto')
             verdict = json.loads(invoke(name, [args.driver, choice_prefix, 'demands:' + mode, choice_raw]))

@@ -58,12 +58,16 @@ int main(int argc,char **argv) {
     const bool rejectLateEntry = demandPlacement && mode=="reject-late-entry";
     const bool withoutChoice = demandPlacement && mode=="without-choice-demands";
     const bool rejectChoice = demandPlacement && mode=="reject-choice-demands";
+    const bool withoutStructuredRings = demandPlacement && mode=="without-structured-rings";
+    const bool withoutChoiceOrStructuredRings = demandPlacement && mode=="without-choice-or-structured-rings";
+    const bool rejectChoiceWithoutStructuredRings = demandPlacement && mode=="reject-choice-without-structured-rings";
     const bool withoutChild = demandPlacement && mode=="without-child-returns";
     const bool rejectChild = demandPlacement && mode=="reject-child-returns";
     const bool withoutAlternatives = demandPlacement && mode=="without-alternative-choices";
     const bool rejectAlternatives = demandPlacement && mode=="reject-alternative-choices";
     if (rejectRefinement || withoutReplay || rejectReplay || rejectEntry || rejectDeferred ||
-        withoutLateEntry || rejectLateEntry || withoutChoice || rejectChoice || withoutChild || rejectChild ||
+        withoutLateEntry || rejectLateEntry || withoutChoice || rejectChoice || withoutStructuredRings ||
+        withoutChoiceOrStructuredRings || rejectChoiceWithoutStructuredRings || withoutChild || rejectChild ||
         withoutAlternatives || rejectAlternatives) mode="none";
     const bool precision = mode.consume_front("cuts:");
     const bool composition = demandPlacement || precision || mode.consume_front("composition:");
@@ -297,6 +301,11 @@ int main(int argc,char **argv) {
             }
             if ((mode=="drop-wait" || mode=="wrong-key") && isa<WaitFlagOp>(op)) chosen=op;
             if ((mode=="drop-set" || mode=="duplicate-set" || mode=="late-set") && isa<SetFlagOp>(op)) chosen=op;
+            if (mode=="reorder-event-pair")
+                if (auto wait=dyn_cast<WaitFlagOp>(op))
+                    if (auto set=dyn_cast_or_null<SetFlagOp>(op->getPrevNode());
+                        set && set.getSrcPipe()==wait.getSrcPipe() && set.getDstPipe()==wait.getDstPipe() &&
+                        set.getEventId()==wait.getEventId()) {chosen=op;sequenceSource=set;}
             if (mode=="drop-clean-cmo" && isa<CmoCacheInvalidOp>(op) &&
                 isa_and_nonnull<FenceBarrierAllOp>(op->getNextNode())) chosen=op;
             if (mode=="drop-invalidate-cmo" && isa<CmoCacheInvalidOp>(op) &&
@@ -364,6 +373,10 @@ int main(int argc,char **argv) {
             }
         });
         if (!chosen) return;
+        if (mode=="reorder-event-pair") {
+            if (!sequenceSource) return;
+            chosen->moveBefore(sequenceSource);changed=true;return;
+        }
         if (mode=="alternative-drop-wait") {
             chosen->erase();changed=true;return;
         }
@@ -529,7 +542,11 @@ int main(int argc,char **argv) {
         function,gm,mutate,hardware,withoutAlternatives?Constructor::DemandsWithoutAlternativeChoices:
         rejectAlternatives?Constructor::DemandsRejectAlternativeChoices:withoutChild?Constructor::DemandsWithoutChildReturns:
         rejectChild?Constructor::DemandsRejectChildReturns:withoutChoice?Constructor::DemandsWithoutChoiceDemands:
-        rejectChoice?Constructor::DemandsRejectChoiceDemands:withoutLateEntry?Constructor::DemandsWithoutLateEntry:
+        rejectChoice?Constructor::DemandsRejectChoiceDemands:
+        withoutStructuredRings?Constructor::DemandsWithoutStructuredRings:
+        withoutChoiceOrStructuredRings?Constructor::DemandsWithoutChoiceOrStructuredRings:
+        rejectChoiceWithoutStructuredRings?Constructor::DemandsRejectChoiceWithoutStructuredRings:
+        withoutLateEntry?Constructor::DemandsWithoutLateEntry:
         rejectLateEntry?Constructor::DemandsRejectLateEntry:rejectDeferred?Constructor::DemandsRejectDeferredRings:
         rejectEntry?Constructor::DemandsRejectEntryProposal:
         withoutReplay?Constructor::DemandsWithoutAllocationReplay:

@@ -178,6 +178,11 @@ struct Result {
     uint64_t alternativeChoiceWork = 0;
     bool alternativeChoiceBudgetExhausted = false;
     uint64_t ringCandidates = 0, rejectedRings = 0, ringCandidateCommandsRemoved = 0;
+    uint64_t ringCandidatePacketsRemoved = 0;
+    uint64_t recurringEpisodeWords = 0, recurringEpisodePairs = 0;
+    uint64_t recurringChoiceEndpoints = 0, recurringRepeatedDirections = 0;
+    uint64_t recurringEpisodeWork = 0, rejectedRecurringEpisodes = 0;
+    bool recurringEpisodeBudgetExhausted = false;
     uint64_t deferredRingCandidates = 0, deferredRings = 0, rejectedDeferredRings = 0;
     uint64_t deferredProtocolSteps = 0;
     uint64_t periodicDeferredRings = 0, periodicWriteOverlapRejections = 0;
@@ -211,6 +216,16 @@ std::optional<uint64_t> deferredDiscoveryReservation(
     uint64_t nodes, uint64_t cells, uint64_t keys, uint64_t commands, uint64_t limit = DeferredDiscoveryLimit);
 Result constructDemandsWithoutRings(const Program& program);
 Result constructDemandsRejectingRings(const Program& program);
+// Build the optional recurring candidate without the normal quality selector;
+// used only to exercise lifecycle/reconstruction of otherwise cost-neutral
+// finite episode words.
+Result constructDemandsForcingRings(const Program& program);
+Result constructDemandsWithEpisodeWorkLimit(const Program& program, uint64_t limit);
+// Isolate the established Choice-demand provider from recurring-ring
+// selection in native regression tests.
+Result constructDemandsWithoutStructuredRings(const Program& program);
+Result constructDemandsWithoutChoiceOrStructuredRings(const Program& program);
+Result constructDemandsRejectingChoiceWithoutStructuredRings(const Program& program);
 // Fault injection after a deferred-wrap candidate is formed. The independently
 // verified closed-ring plan must be returned unchanged.
 Result constructDemandsRejectingDeferredRings(const Program& program);

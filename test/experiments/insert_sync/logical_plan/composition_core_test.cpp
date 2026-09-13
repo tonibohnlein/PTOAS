@@ -318,9 +318,9 @@ int main()
             shortBudget.success && shortBudget.before == baseline.before &&
             shortBudget.alternativeChoiceBudgetExhausted);
         require(shortBudget.alternativeChoiceWork < selected.alternativeChoiceWork);
-        for (const auto& keys : {std::vector<unsigned>{0}, std::vector<unsigned>{0, 1},
-                                 std::vector<unsigned>{0, 1, 2}, std::vector<unsigned>{0, 1, 2, 3},
-                                 std::vector<unsigned>{3, 5}}) {
+        for (const auto& keys :
+             {std::vector<unsigned>{0}, std::vector<unsigned>{0, 1}, std::vector<unsigned>{0, 1, 2},
+              std::vector<unsigned>{0, 1, 2, 3}, std::vector<unsigned>{3, 5}}) {
             auto scarce = p;
             scarce.target.compilerKeys = keys;
             auto oldScarce = c::testing::constructDemandsWithoutAlternativeChoices(scarce);
@@ -984,6 +984,34 @@ int main()
             }
         }
         require(refusedAfterDiscovery);
+
+        // A rejected structured-ring trial is detached from the already
+        // accepted child-return transaction. Exhausting only the episode
+        // allowance must return that post-baseline plan byte for byte.
+        c::Program transactional;
+        transactional.cells = 3;
+        auto parentA = op(transactional, a, 0, true), parentB = op(transactional, a, 1, true);
+        auto childA = op(transactional, b, 0, false), childB = op(transactional, b, 1, false);
+        auto otherA = op(transactional, b, 0, false), otherB = op(transactional, b, 1, false);
+        auto childChoice = add(
+            transactional, c::Node::Choice,
+            {sequence(transactional, {childA, childB}), sequence(transactional, {otherA, otherB})});
+        unsigned c = unsigned(Pipe::MTE3);
+        auto w0 = op(transactional, c, 2, true), r0 = op(transactional, b, 2, false);
+        auto w1 = op(transactional, c, 2, true), r1 = op(transactional, b, 2, false);
+        auto transactionalLoop = add(
+            transactional, c::Node::For,
+            {sequence(transactional, {parentA, parentB, childChoice, w0, r0, w1, r1})});
+        sequence(transactional, {transactionalLoop});
+        auto childBaseline = c::testing::constructDemandsWithoutStructuredRings(transactional);
+        require(childBaseline.success && childBaseline.childReturnAcksRemoved > 0);
+        auto rejectedEpisode = c::testing::constructDemandsWithEpisodeWorkLimit(transactional, 0);
+        require(
+            rejectedEpisode.success && rejectedEpisode.before == childBaseline.before &&
+            rejectedEpisode.childReturnAcksRemoved == childBaseline.childReturnAcksRemoved &&
+            rejectedEpisode.rejectedRecurringEpisodes > 0);
+        require(c::verifyDemands(transactional, rejectedEpisode.before).success);
+
         ExecutionPolicy residualPolicy;
         residualPolicy.trips = [](unsigned, unsigned visit) { return (visit * 3) % 5; };
         residualPolicy.choice = [](unsigned, unsigned visit) { return visit % 2; };
@@ -1725,6 +1753,144 @@ int main()
         require(!c::verifyDemands(p, corrupted).success);
     }
     {
+        // Equivalent lane words in mutually exclusive arms are one recurring
+        // episode family.  The exact cuts differ, but every prior/next arm pair
+        // must consume each event before rearming it.
+        c::Program p;
+        p.cells = 1;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto wa = op(p, a, 0, true), ra = op(p, b, 0, false);
+        auto wb = op(p, a, 0, true), rb = op(p, b, 0, false);
+        auto left = sequence(p, {wa, ra}), right = sequence(p, {wb, rb});
+        auto choice = add(p, c::Node::Choice, {left, right});
+        auto loop = add(p, c::Node::For, {sequence(p, {choice})});
+        sequence(p, {loop});
+        auto selected = c::constructDemands(p);
+        require(selected.success && selected.ringCandidates == 1);
+        auto plan = c::testing::constructDemandsForcingRings(p);
+        require(plan.success && plan.cutCycles == 1);
+        require(plan.recurringEpisodeWords == 1 && plan.recurringEpisodePairs == 1);
+        require(plan.recurringChoiceEndpoints == 4);
+        require(c::verifyDemands(p, plan.before).success);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned visit) { return visit % 4; };
+        policy.choice = [](unsigned, unsigned visit) { return visit % 2; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 8; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+        auto missing = plan.before;
+        auto& commands = missing[wb];
+        auto wait = std::find_if(commands.begin(), commands.end(), [&](const auto& m) {
+            return m.kind == c::Mechanism::Acquire && m.first == b && m.second == a;
+        });
+        require(wait != commands.end());
+        commands.erase(wait);
+        require(!c::verifyDemands(p, missing).success);
+
+        auto ordinary = c::testing::constructDemandsWithoutStructuredRings(p);
+        auto bounded = c::testing::constructDemandsWithEpisodeWorkLimit(p, 0);
+        require(ordinary.success && bounded.success && bounded.before == ordinary.before);
+        require(bounded.recurringEpisodeBudgetExhausted && bounded.rejectedRecurringEpisodes > 0);
+        require(c::verifyDemands(p, bounded.before).success);
+    }
+    {
+        // A completely skipped arm executes no partial protocol.  Empty and
+        // active visits are both finite episode words, so arbitrary runs of
+        // skipped iterations cannot strand or prematurely rearm a key.
+        c::Program p;
+        p.cells = 1;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto write = op(p, a, 0, true), read = op(p, b, 0, false);
+        auto active = sequence(p, {write, read});
+        auto empty = sequence(p, {});
+        auto choice = add(p, c::Node::Choice, {active, empty});
+        auto body = sequence(p, {choice});
+        auto loop = add(p, c::Node::For, {body});
+        sequence(p, {loop});
+        auto plan = c::testing::constructDemandsForcingRings(p);
+        require(plan.success && plan.cutCycles == 1);
+        require(plan.recurringEpisodeWords == 2 && plan.recurringEpisodePairs == 4);
+        require(c::verifyDemands(p, plan.before).success);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned visit) { return 1 + visit % 4; };
+        policy.choice = [](unsigned, unsigned visit) { return (visit % 3) != 0; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 8; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // The final lane group needs no same-visit successor cut: its next
+        // publication is intentionally at the next active visit's first cut.
+        c::Program p;
+        p.cells = 1;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto write = op(p, a, 0, true), read = op(p, b, 0, false);
+        auto body = add(p, c::Node::Sequence, {write, read});
+        auto loop = add(p, c::Node::For, {body});
+        sequence(p, {loop});
+        auto plan = c::testing::constructDemandsForcingRings(p);
+        require(plan.success && plan.cutCycles == 1 && c::verifyDemands(p, plan.before).success);
+        auto legacy = c::testing::constructDemandsWithoutStructuredRings(p);
+        require(
+            legacy.success && legacy.cutCycles == 1 && legacy.before == c::constructDemands(p).before &&
+            c::verifyDemands(p, legacy.before).success);
+    }
+    {
+        // Repeated lane directions in one finite word reuse the same key only
+        // through the intervening reverse transfer.  This is certified from
+        // actual event generations, not from lexical WAIT placement.
+        c::Program p;
+        p.cells = 1;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto w0 = op(p, a, 0, true), r0 = op(p, b, 0, false);
+        auto w1 = op(p, a, 0, true), r1 = op(p, b, 0, false);
+        auto loop = add(p, c::Node::For, {sequence(p, {w0, r0, w1, r1})});
+        sequence(p, {loop});
+        auto plan = c::testing::constructDemandsForcingRings(p);
+        require(plan.success && plan.cutCycles == 1);
+        require(plan.recurringEpisodeWords == 1 && plan.recurringEpisodePairs == 1);
+        require(plan.recurringRepeatedDirections == 2);
+        require(c::verifyDemands(p, plan.before).success);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned visit) { return (visit * 3) % 5; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 6; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+        auto missing = plan.before;
+        auto& commands = missing[w1];
+        auto wait = std::find_if(commands.begin(), commands.end(), [&](const auto& m) {
+            return m.kind == c::Mechanism::Acquire && m.first == b && m.second == a;
+        });
+        require(wait != commands.end());
+        commands.erase(wait);
+        require(!c::verifyDemands(p, missing).success);
+
+        // Preserve the exact endpoint population and cardinality, but execute
+        // WAIT before SET at one repeated cut. Only the structured lifecycle
+        // proof can reject this balanced mutation.
+        auto reordered = plan.before;
+        auto& pair = reordered[w1];
+        auto publication = std::find_if(pair.begin(), pair.end(), [&](const auto& m) {
+            return m.kind == c::Mechanism::Publish && m.first == b && m.second == a;
+        });
+        auto acquisition = std::find_if(pair.begin(), pair.end(), [&](const auto& m) {
+            return m.kind == c::Mechanism::Acquire && m.first == b && m.second == a;
+        });
+        require(publication != pair.end() && acquisition != pair.end() && publication < acquisition);
+        std::iter_swap(publication, acquisition);
+        auto reorderedCheck = c::verifyDemands(p, reordered);
+        require(
+            !reorderedCheck.success &&
+            reorderedCheck.reason.find("recurring episode lifecycle failed") == 0);
+    }
+    {
         // A collapsed single-lane nested loop is not one cell generation.
         // Refuse only the optional ring, not general structural composition.
         c::Program p;
@@ -1744,6 +1910,45 @@ int main()
             execute(p, plan, p.nodes.size() - 1, policy, oracle);
             oracle.check();
         }
+    }
+    {
+        // A guarded incoming episode and a raw recurring episode may use the
+        // same lane direction, but never the same physical key. Each protocol
+        // remains valid in isolation; ownership overlap must still reject.
+        c::Program p;
+        p.cells = 2;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto incoming = op(p, a, 1, true);
+        auto w0 = op(p, a, 0, true), r0 = op(p, b, 0, false);
+        auto incomingUse = op(p, b, 1, false);
+        auto w1 = op(p, a, 0, true), r1 = op(p, b, 0, false);
+        auto loop = add(p, c::Node::For, {sequence(p, {w0, r0, incomingUse, w1, r1})});
+        p.nodes[loop].entryGuardStart = incoming;
+        auto after = add(p, c::Node::Sequence);
+        sequence(p, {incoming, loop, after});
+        auto plan = c::testing::constructDemandsForcingRings(p);
+        require(plan.success && plan.entryEpisodes > 0 && plan.cutCycles == 1);
+        require(c::verifyDemands(p, plan.before).success);
+        auto entry = std::find_if(plan.before[incomingUse].begin(), plan.before[incomingUse].end(), [&](const auto& m) {
+            return m.kind == c::Mechanism::Acquire && m.participation != c::Mechanism::Every && m.first == a &&
+                   m.second == b;
+        });
+        require(entry != plan.before[incomingUse].end());
+        auto collided = plan.before;
+        bool changed = false;
+        for (auto& commands : collided)
+            for (auto& m : commands)
+                if (m.participation == c::Mechanism::Every &&
+                    (m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire) && m.first == a &&
+                    m.second == b) {
+                    m.forwardKey = entry->forwardKey;
+                    changed = true;
+                }
+        require(changed);
+        auto collision = c::verifyDemands(p, collided);
+        require(
+            !collision.success &&
+            collision.reason == "structured recurring key collides with a guarded entry or deferred protocol");
     }
     {
         // Interleaved cell words cannot borrow a single later readiness wait.
@@ -2781,9 +2986,7 @@ int main()
             require(plan.success);
             require(plan.before[second].empty());
             require(!plan.before[vectorRead].empty());
-            require((demandDriven ? c::verifyDemands(p, plan.before) :
-                                    c::verify(p, plan.before))
-                        .success);
+            require((demandDriven ? c::verifyDemands(p, plan.before) : c::verify(p, plan.before)).success);
             unsigned branch = 0;
             Oracle oracle;
             execute(p, plan, p.nodes.size() - 1, 1, 0, branch, oracle);
@@ -2800,9 +3003,8 @@ int main()
         // non-scalar transfers use the event protocol. Scalar-cache crossings
         // use the qualified AIV CMO/fence recipe, while the disputed
         // MTE3->MTE2 publication direction remains fail-closed.
-        auto check = [](unsigned source, unsigned observer, bool sourceWrites,
-                        bool targetReads, bool targetWrites, bool accepted,
-                        std::optional<c::VisibilityAction> action) {
+        auto check = [](unsigned source, unsigned observer, bool sourceWrites, bool targetReads, bool targetWrites,
+                        bool accepted, std::optional<c::VisibilityAction> action) {
             c::Program p;
             p.cells = 1;
             p.globalMemory = {true};
@@ -2836,17 +3038,15 @@ int main()
             require(found->visibilityAction == *action);
             require(plan.visibilityRequirements == 1);
             auto missing = plan.before;
-            missing[second].erase(
-                missing[second].begin() + (found - plan.before[second].begin()));
+            missing[second].erase(missing[second].begin() + (found - plan.before[second].begin()));
             require(!c::verifyDemands(p, missing).success);
             auto reversed = plan.before;
             auto wrong = std::find_if(reversed[second].begin(), reversed[second].end(), [](const auto& m) {
                 return m.kind == c::Mechanism::Visibility;
             });
-            wrong->visibilityAction =
-                *action == c::VisibilityAction::CleanSource ?
-                    c::VisibilityAction::InvalidateTarget :
-                    c::VisibilityAction::CleanSource;
+            wrong->visibilityAction = *action == c::VisibilityAction::CleanSource ?
+                                          c::VisibilityAction::InvalidateTarget :
+                                          c::VisibilityAction::CleanSource;
             require(!c::verifyDemands(p, reversed).success);
             if (*action == c::VisibilityAction::InvalidateTarget) {
                 wrong->visibilityAction = c::VisibilityAction::FenceOnly;
@@ -2858,14 +3058,10 @@ int main()
         check(unsigned(Pipe::MTE2), unsigned(Pipe::MTE3), true, true, false, true, std::nullopt);
         check(unsigned(Pipe::S), unsigned(Pipe::S), true, true, false, true, std::nullopt);
         // Scalar-crossing RAW and WAW, including the write-only fence case.
-        check(unsigned(Pipe::S), unsigned(Pipe::V), true, true, false, true,
-              c::VisibilityAction::CleanSource);
-        check(unsigned(Pipe::S), unsigned(Pipe::V), true, false, true, true,
-              c::VisibilityAction::CleanSource);
-        check(unsigned(Pipe::V), unsigned(Pipe::S), true, true, false, true,
-              c::VisibilityAction::InvalidateTarget);
-        check(unsigned(Pipe::V), unsigned(Pipe::S), true, false, true, true,
-              c::VisibilityAction::FenceOnly);
+        check(unsigned(Pipe::S), unsigned(Pipe::V), true, true, false, true, c::VisibilityAction::CleanSource);
+        check(unsigned(Pipe::S), unsigned(Pipe::V), true, false, true, true, c::VisibilityAction::CleanSource);
+        check(unsigned(Pipe::V), unsigned(Pipe::S), true, true, false, true, c::VisibilityAction::InvalidateTarget);
+        check(unsigned(Pipe::V), unsigned(Pipe::S), true, false, true, true, c::VisibilityAction::FenceOnly);
         // Pure WAR crosses the scalar cache but transfers no value.
         check(unsigned(Pipe::S), unsigned(Pipe::V), false, false, true, true, std::nullopt);
         check(unsigned(Pipe::V), unsigned(Pipe::S), false, false, true, true, std::nullopt);
@@ -2906,10 +3102,8 @@ int main()
             c::verifyDemands(independent, independentPlan.before).success);
         auto hasAction = [&](unsigned site, c::VisibilityAction expected) {
             return std::any_of(
-                independentPlan.before[site].begin(), independentPlan.before[site].end(),
-                [&](const auto& mechanism) {
-                    return mechanism.kind == c::Mechanism::Visibility &&
-                           mechanism.visibilityAction == expected;
+                independentPlan.before[site].begin(), independentPlan.before[site].end(), [&](const auto& mechanism) {
+                    return mechanism.kind == c::Mechanism::Visibility && mechanism.visibilityAction == expected;
                 });
         };
         require(hasAction(overwriteX, c::VisibilityAction::FenceOnly));
@@ -2934,15 +3128,17 @@ int main()
         clean.cells = {0, 1};
         p.fixedBefore[vectorRead] = {clean, {c::FixedAction::Fence}};
         auto plan = c::constructDemands(p);
-        require(plan.success && plan.fixedActions == 3 && plan.visibilityRequirements == 0 &&
-                plan.acquisitions == 0 && c::verifyDemands(p, plan.before).success);
+        require(
+            plan.success && plan.fixedActions == 3 && plan.visibilityRequirements == 0 && plan.acquisitions == 0 &&
+            c::verifyDemands(p, plan.before).success);
 
         // Reversing clean/fence cannot publish the preceding scalar write.
         auto reversed = p;
         std::reverse(reversed.fixedBefore[vectorRead].begin(), reversed.fixedBefore[vectorRead].end());
         auto repaired = c::constructDemands(reversed);
-        require(repaired.success && repaired.visibilityRequirements == 1 &&
-                c::verifyDemands(reversed, repaired.before).success);
+        require(
+            repaired.success && repaired.visibilityRequirements == 1 &&
+            c::verifyDemands(reversed, repaired.before).success);
         std::vector<std::vector<c::Mechanism>> empty(reversed.nodes.size());
         require(!c::verifyDemands(reversed, empty).success);
 
@@ -2951,8 +3147,9 @@ int main()
         auto unproved = p;
         unproved.fixedBefore[vectorRead][0].cells = {0, 0};
         auto conservative = c::constructDemands(unproved);
-        require(conservative.success && conservative.visibilityRequirements == 1 &&
-                c::verifyDemands(unproved, conservative.before).success);
+        require(
+            conservative.success && conservative.visibilityRequirements == 1 &&
+            c::verifyDemands(unproved, conservative.before).success);
 
         // Fence then invalidate is the opposite qualified direction.
         c::Program targetCache;
@@ -2966,8 +3163,9 @@ int main()
         invalidate.cells = {1};
         targetCache.fixedBefore[scalarRead] = {{c::FixedAction::Fence}, invalidate};
         auto targetPlan = c::constructDemands(targetCache);
-        require(targetPlan.success && targetPlan.fixedActions == 2 && targetPlan.visibilityRequirements == 0 &&
-                targetPlan.acquisitions == 0 && c::verifyDemands(targetCache, targetPlan.before).success);
+        require(
+            targetPlan.success && targetPlan.fixedActions == 2 && targetPlan.visibilityRequirements == 0 &&
+            targetPlan.acquisitions == 0 && c::verifyDemands(targetCache, targetPlan.before).success);
 
         // AIC fences drain only MTE2/MTE3/FIX. They can supply completion for
         // those resources, but cannot publish a synthetic PIPE_S generation.
@@ -2980,8 +3178,7 @@ int main()
         aic.fixedBefore.resize(aic.nodes.size());
         aic.fixedBefore[aicRead] = {{c::FixedAction::Fence}};
         auto aicPlan = c::constructDemands(aic);
-        require(aicPlan.success && aicPlan.acquisitions == 0 &&
-                c::verifyDemands(aic, aicPlan.before).success);
+        require(aicPlan.success && aicPlan.acquisitions == 0 && c::verifyDemands(aic, aicPlan.before).success);
         c::Program unsupportedAic;
         unsupportedAic.core = Core::AIC;
         unsupportedAic.cells = 1;
@@ -3011,8 +3208,9 @@ int main()
         armClean.cells = {1};
         choiceProgram.fixedBefore[cleanedArm] = {armClean, {c::FixedAction::Fence}};
         auto choicePlan = c::constructDemands(choiceProgram);
-        require(choicePlan.success && choicePlan.visibilityRequirements == 1 &&
-                c::verifyDemands(choiceProgram, choicePlan.before).success);
+        require(
+            choicePlan.success && choicePlan.visibilityRequirements == 1 &&
+            c::verifyDemands(choiceProgram, choicePlan.before).success);
     }
     {
         // A pending B write remains pending at B after its reply SET, even

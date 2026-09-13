@@ -2289,3 +2289,81 @@ records candidate `pto-test-opt` SHA-256
 `5389439f002274b6151580c4ff79e2e3ee103733ac68b6492b5548dd8e0ee280`.
 This is prepared-IR compiler compatibility and mutation evidence, not device or
 runtime-performance qualification.
+
+## Bounded structured recurring episodes
+
+The recurring demand-ring provider now admits a bounded structural episode
+rather than requiring every endpoint to be a singleton operation and every
+directed event edge to occur only once. A recurring word can contain Choice
+endpoints, including an empty/active Choice, and can reuse one logical directed
+key at several ordered points such as `A -> B -> A -> B`. This is a precision
+provider for the existing demand/completion constructor; it is not a symbolic
+occurrence analysis and it does not widen the operation or hardware contract.
+
+The certificate is finite and structural. The provider projects the actual
+generated SET/WAIT commands through Operation, Sequence, and Choice nodes,
+deduplicates at most eight concrete words, and checks every ordered pair of
+possible consecutive words. Each pair must start and finish with every owned
+event key idle, and every WAIT must consume the unique live publication in its
+direction. Several cycles in the same recurring structural domain are checked
+as one event population. Nested loops are not assigned an implicit trip count;
+an episode command attached to one is rejected.
+
+This follows the hardware-model contract used as a read-only reference:
+publication requires an idle key and captures a source prefix, acquisition
+consumes that publication, branches must expose complete executable words, and
+repetition must prove consumption before rearm. The implementation does not
+copy the hardware branch's planner.
+
+The optional proof has one aggregate work allowance covering projection,
+Choice products, deduplication, and pair verification. Exhaustion rejects the
+whole optional attempt transactionally. The independently selected legacy
+closed-ring result remains the baseline, so a larger episode cannot remove a
+previously accepted ring when its proof, allocation, or quality gate fails.
+New structured episode keys receive dedicated noncanonical physical keys and
+are excluded from ordinary scope coloring and flat protocol verification;
+legacy singleton/unique-direction rings retain their established allocator and
+certificate unchanged. Guarded entry/deferred protocols remain quarantined
+until a joint finite automaton owns both populations.
+
+### Local qualification
+
+Validated against the LLVM/MLIR 19.1.7 build with the aggregate two-worker
+limit:
+
+- Incremental builds of `pto-composition-core-test`,
+  `pto-structured-sync-test`, and `pto-test-opt` passed. The serial
+  `oahs_composition_core`, `oahs_composition`, and `oahs_demands` gates passed
+  in 38.4 seconds; the core reports 2,435,452 finite
+  native-helper/independent-graph assertions.
+- Portable tests cover equivalent Choice lane words with arm-specific cuts,
+  an empty/active Choice, a final group without a lexical successor, repeated
+  directed edges, exact rollback on zero proof allowance, and deletion of a
+  middle acquisition.
+- Native reconstruction uses an actual PTO fixture with four SETs and four
+  WAITs per loop visit. It replays independently varying visit counts across
+  repeated whole-program invocations and rejects a wrong key, a removed WAIT,
+  a duplicated SET, and a balanced WAIT-before-SET reorder atomically. A
+  derived Choice fixture exercises both structural words and repeated
+  invocations.
+- On the unchanged demand benchmark, the selected episode removes six named
+  `PIPE_V` barriers from `four_use`; its event counts remain 20 SET / 22 WAIT.
+  The other recorded cases retain their prior counts. Historical GEMM remains
+  56 SET / 59 WAIT / 21 named barriers versus InsertSync's 44 / 44 / 21, so
+  synchronization quality and device performance remain unqualified.
+- The hash-frozen corpus remains **249/363**: PTOAS **79/150**, PyPTO **7/35**,
+  and pypto-lib **163/178**. This milestone intentionally improves a recurring
+  protocol shape rather than semantic admission. Two already admitted
+  pypto-lib records differ in static command counts from the preceding saved
+  report; rerunning the exact current binary with structured rings disabled
+  produces the same new counts, so those differences are not caused by this
+  provider. There are no admission-status changes.
+
+The frozen replay is under
+`oahs-clean-c1-build/test-results/oahs-structured-episodes-corpus-reviewed`, uses
+the unchanged manifest hash
+`95beab25427b1dd3a2ff1b59cd881a3f4181e0f83c8a8b44daf35555bf46c3b6`, and
+records candidate `pto-test-opt` SHA-256
+`39813d58bdc870f5f0c97f784b7aa617dd5bf81b23c345601814ad706a43ce54`.
+No full lit suite, device execution, or runtime-performance qualification is
+claimed.
