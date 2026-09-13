@@ -2231,8 +2231,10 @@ composer does not yet have an ownership summary for their tokens.
 The transition semantics follow the separately maintained canonical hardware
 model:
 
-- A qualified per-pipeline barrier completes the preceding prefix of that
-  pipeline for subsequent work on the same pipeline.
+- A qualified per-pipeline barrier completes the named pipeline resource for
+  same-pipeline issue and storage-release accounting. It does not transfer
+  that prefix to another observing pipeline; a cross-pipeline acquisition is
+  still required there.
 - `PIPE_ALL` completes all pending resources on the current physical core.
 - An AIV GM fence drains `PIPE_S`, `PIPE_V`, `PIPE_MTE2`, and `PIPE_MTE3`; an
   AIC GM fence drains `PIPE_MTE2`, `PIPE_MTE3`, and `PIPE_FIX`.
@@ -2367,3 +2369,94 @@ records candidate `pto-test-opt` SHA-256
 `39813d58bdc870f5f0c97f784b7aa617dd5bf81b23c345601814ad706a43ce54`.
 No full lit suite, device execution, or runtime-performance qualification is
 claimed.
+
+## Authored blocking remote-signal cuts
+
+The compositional importer now preserves original AIV `pto.comm.tnotify` and
+`pto.comm.twait` operations as immutable remote-protocol cuts. This is a narrow
+semantic-coverage increment, not a collective planner:
+
+- `TWAIT` is an external blocking acquisition. It receives no credit for
+  completion of unrelated local pipeline work. It conservatively marks GM
+  scalar-cache state stale; a later scalar GM read needs an authored or
+  generated target invalidate before it may consume peer-updated payload.
+- `TNOTIFY` is accepted only when the current composed state proves that every
+  preceding local GM access has been released. Non-scalar GM writes must also
+  have crossed an authored GM fence; scalar GM writes require the qualified
+  clean-then-fence publication sequence.
+- An authored per-pipeline barrier completes only its named local resource. It
+  can release that pipeline's preceding GM access for a later remote
+  publication, but it does not transfer completion to a different local
+  observer and does not establish GM visibility. `PIPE_ALL`, cache maintenance,
+  and fences retain their distinct existing transfers.
+- The signal word is an authored communication resource rather than ordinary
+  intrafunction payload storage. The importer must prove that this resource is
+  disjoint from every local GM payload access; otherwise it refuses the input.
+  Remote endpoint pairing, payload association, and cross-core protocol
+  correctness remain outside this planner. The pass preserves the operations
+  but does not invent facts about the peer.
+- The qualified contract is AIV-only. `TTEST`, `TPUT`, `TGET`, reserved-buffer
+  ownership, queues, and other communication operations remain fail-closed.
+
+Fresh reconstruction reimports both remote operations from the emitted clone.
+Payload preservation first rejects deletion of either authored signal
+operation atomically; the fresh checker then verifies the unchanged operations'
+state transfers independently of plan selection, while intentionally sharing
+the same fixed-action hardware semantics. Portable tests separately
+challenge unfinished MTE3 publication, completion without GM
+visibility, MTE2 read release, the fact that a named MTE2 barrier does not
+transfer completion to a V observer, dirty scalar publication, the clean/fence
+sequence, and the rule that a remote wait does not satisfy a local physical
+hazard. Native negative cases require exact fail-closed diagnostics for an
+unreleased publication, signal/payload aliasing, use on AIC, and deletion of
+the invalidate required by a scalar GM read after `TWAIT`.
+
+Remote-wait effects are included in the bounded structural loop summary. If
+any loop-body path may execute `TWAIT`, loop entry is conservatively seeded
+with stale scalar-cache state for every GM cell. This covers a scalar read at
+the beginning of iteration `i+1` after a wait at the end of iteration `i`;
+the zero-trip join remains a MAY join. The core regression removes the
+resulting backedge invalidate and requires fresh verification to reject it.
+
+The source-level composer deliberately requires the local release and GM
+publication prefix to be explicit before `TNOTIFY`. The current target manual
+also describes a lowering-time drain, while the hardware-reference branch
+retains only an attribute-driven legacy lowering hook after removal of its
+automatic MemoryConsistency pass. This milestone therefore takes the
+fail-closed, explicit-contract interpretation; teaching the constructor to
+materialize a qualified release at the notify cut is a separate coverage
+improvement.
+
+This milestone also corrects one assertion introduced with structured recurring
+episodes. That case is accepted by the forced structured provider, while the
+legacy-only selector deliberately keeps the independently verified non-ring
+baseline. The asserted legacy cycle count is therefore zero; the generated
+plan and fresh verification are unchanged.
+
+### Local qualification
+
+The incremental two-worker build of `pto-composition-core-test`,
+`pto-structured-sync-test`, and `pto-test-opt` passes. The serial
+`oahs_composition_core`, `oahs_composition`, and `oahs_demands` gates pass; the
+portable core reports **2,435,467** assertions. No full build was performed.
+
+The hash-frozen replay admits **253/363** inputs, up from 249/363: PTOAS
+**79/150**, PyPTO **7/35**, and pypto-lib **167/178**. Four pypto-lib inputs now
+compile. Seven other blocking-signal inputs remain fail-closed because the
+signal may alias local payload: four PTOAS inputs use the conservative
+`gm-alias=may-alias` policy alongside a different GM access, and three PyPTO
+inputs later read the signal storage as scalar payload. The remaining 110 first
+refusals are 74 unqualified MTE3-to-MTE2 GM publication cases, nine `TPUT`, six
+`TGET`, seven signal/payload alias cases, eight reserved-buffer cases, four
+intentionally invalid physical-context fixtures, and two unresolved helper
+contracts.
+
+The replay is under
+`oahs-clean-c1-build/test-results/oahs-authored-remote-signal-corpus-r4`. It
+uses the unchanged PTOAS and PyPTO/pypto-lib manifests with SHA-256
+`f36f92f0a2027f0ea575fc951d8256e5a1643fc649bf8926b731b928bdfa79ef`
+and `72a6469371b347b62d3068ccd1cc63cdfa0614a819db98a5913bfefc24f41ac6`,
+respectively, and records candidate `pto-test-opt` SHA-256
+`02ad2515d62f0c39000e3730631a5240cfd99851e5b38d1a1dce21dffcc4e996`.
+This is prepared-IR compiler compatibility and mutation evidence, not device,
+collective-protocol, source-regeneration, or runtime-performance qualification.

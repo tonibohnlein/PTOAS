@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @composition_remote_wait_scalar_visibility(
+      %payload: !pto.ptr<i32>, %signal_ptr: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %one = arith.constant 1 : i32
+    %signal_view = pto.make_tensor_view %signal_ptr, shape = [%c1],
+        strides = [%c1] : !pto.tensor_view<1xi32>
+    %signal = pto.partition_view %signal_view, offsets = [%c0], sizes = [%c1]
+        : !pto.tensor_view<1xi32> -> !pto.partition_tensor_view<1xi32>
+    pto.comm.twait(%signal, %one : !pto.partition_tensor_view<1xi32>, i32)
+        {cmp = #pto<wait_cmp ge>}
+    // The remote payload association is unknown, so PIPE_S must invalidate
+    // its cache before it can observe any potentially updated GM cell.
+    %value = pto.load_scalar %payload[%c0] : !pto.ptr<i32> -> i32
+    return
+  }
+}

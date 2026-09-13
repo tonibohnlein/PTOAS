@@ -105,10 +105,35 @@ def main():
                 'unknown_guard', 'ordinal_dynamic_step', 'ordinal_negative_lower',
                 'sequential_cross_pipe', 'sequential_same_pipe', 'section_vector',
                 'composition_tci', 'composition_tconcat', 'composition_scalar_memory',
-                'composition_scalar_visibility', 'composition_tmrgsort')
+                'composition_scalar_visibility', 'composition_tmrgsort',
+                'composition_remote_wait_scalar_visibility',
+                'composition_remote_wait_loop_scalar_visibility')
+    positive += ('composition_authored_remote_signal',)
     for name in positive:
         source = fixtures / (name + '.pto')
         compile_case(name, source, gm='assume-disjoint-arguments')
+    source = fixtures / 'composition_authored_remote_signal.pto'
+    for mutation in ('none', 'drop-authored-notify', 'drop-authored-wait'):
+        row = run('authored-remote-' + mutation,
+                  [args.driver, source, 'demands:' + mutation,
+                   args.output / ('authored-remote-' + mutation + '.pto')],
+                  source, 'mutation', True)
+        if not row['verdict']['atomic'] or not row['verdict']['expected']:
+            raise RuntimeError('authored remote signal was not preserved')
+    row = compile_case('authored-remote-signal-alias', source, gm='may-alias', expected=False)
+    if 'authored remote signal may alias local payload' not in row.get('first_refusal', ''):
+        raise RuntimeError('remote signal aliasing did not remain fail-closed')
+    source = fixtures / 'composition_remote_wait_scalar_visibility.pto'
+    for fixture in ('composition_remote_wait_scalar_visibility',
+                    'composition_remote_wait_loop_scalar_visibility'):
+        source = fixtures / (fixture + '.pto')
+        for mutation in ('none', 'drop-invalidate-cmo', 'drop-visibility-fence'):
+            row = run(fixture + '-' + mutation,
+                      [args.driver, source, 'demands:' + mutation,
+                       args.output / (fixture + '-' + mutation + '.pto')],
+                      source, 'mutation', True)
+            if not row['verdict']['atomic'] or not row['verdict']['expected']:
+                raise RuntimeError('post-wait scalar-cache visibility was not reconstructed')
     source = fixtures / 'composition_retained_helper.pto'
     for mode in ('none', 'drop-wait', 'wrong-key'):
         row = run('retained-helper-' + mode,
@@ -138,6 +163,15 @@ def main():
                  'section_outside_physical', 'missing_positive_contract',
                  'composition_tmrgsort_observed'):
         compile_case(name, fixtures / (name + '.pto'), expected=False)
+    row = compile_case('composition_authored_remote_notify_unreleased',
+                       fixtures / 'composition_authored_remote_notify_unreleased.pto',
+                       gm='assume-disjoint-arguments', expected=False)
+    if 'authored remote notify has an unfinished local producer prefix' not in row.get('first_refusal', ''):
+        raise RuntimeError('unreleased remote notification did not fail closed at its local release contract')
+    row = compile_case('composition_authored_remote_signal_aic',
+                       fixtures / 'composition_authored_remote_signal_aic.pto', expected=False)
+    if 'authored remote notify requires the qualified AIV contract' not in row.get('first_refusal', ''):
+        raise RuntimeError('remote notification did not remain fail-closed on AIC')
     compile_case('same-address-gm-visibility', fixtures / 'nested_mixed_sequence.pto',
                  gm='may-alias', expected=False)
     source = fixtures / 'composition_while_forwarding.pto'

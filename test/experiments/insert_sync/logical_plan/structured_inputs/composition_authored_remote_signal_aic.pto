@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @composition_authored_remote_signal_aic(
+      %dst_ptr: !pto.ptr<f32>, %signal_ptr: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %one = arith.constant 1 : i32
+    %zero = arith.constant 0 : i64
+    %acc = pto.alloc_tile addr = %zero : !pto.tile_buf<acc, 16x16xf32>
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c16, %c16],
+        strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %dst = pto.partition_view %dst_view, offsets = [%c0, %c0],
+        sizes = [%c16, %c16]
+        : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %signal_view = pto.make_tensor_view %signal_ptr, shape = [%c1],
+        strides = [%c1] : !pto.tensor_view<1xi32>
+    %signal = pto.partition_view %signal_view, offsets = [%c0], sizes = [%c1]
+        : !pto.tensor_view<1xi32> -> !pto.partition_tensor_view<1xi32>
+    pto.tstore ins(%acc : !pto.tile_buf<acc, 16x16xf32>)
+        outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+    pto.fence.barrier_all #pto.fence_scope<gm>
+    pto.comm.tnotify(%signal, %one : !pto.partition_tensor_view<1xi32>, i32)
+        {notifyOp = #pto<notify_op set>}
+    return
+  }
+}

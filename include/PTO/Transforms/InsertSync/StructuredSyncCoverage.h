@@ -462,11 +462,12 @@ class Importer {
       if (isa<scf::WhileOp>(op))
         return fail("unsupported-control-region", &op, "scf.while");
       if (compositional && !emitted &&
-          isa<BarrierOp, CmoCacheInvalidOp, FenceBarrierAllOp>(op))
+          isa<BarrierOp, CmoCacheInvalidOp, FenceBarrierAllOp, TNotifyOp,
+              TWaitOp>(op))
         continue; // imported as immutable state transitions by the composer
       if (emitted &&
           isa<SetFlagOp, WaitFlagOp, BarrierOp, CmoCacheInvalidOp,
-              FenceBarrierAllOp>(op))
+              FenceBarrierAllOp, TNotifyOp, TWaitOp>(op))
         continue; // independently parsed and verified from the actual IR
       if (isa<SetFlagOp, WaitFlagOp, BarrierOp, RecordEventOp, WaitEventOp>(op))
         return fail("explicit-synchronization-input", &op);

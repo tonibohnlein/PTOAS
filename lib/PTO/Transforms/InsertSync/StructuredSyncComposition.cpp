@@ -103,6 +103,42 @@ bool applyFixed(const c::Program& p, unsigned id, c::State& state, std::string& 
             case c::FixedAction::Fence:
                 state.fence(fenceSources(p), p.core == Core::AIV);
                 break;
+            case c::FixedAction::RemoteNotify: {
+                // TNOTIFY is an authored cross-core publication, not a magic
+                // local drain.  Its peer may rely on every earlier GM access:
+                // reads must have completed before storage is released, and
+                // writes must have crossed the qualified GM publication path.
+                // The signal word itself belongs to the authored protocol and
+                // is intentionally not treated as ordinary payload storage.
+                const uint8_t scalar = uint8_t(1u) << unsigned(Pipe::S);
+                for (unsigned cell = 0; cell < p.cells; ++cell) {
+                    if (p.globalMemory.empty() || !p.globalMemory[cell])
+                        continue;
+                    if (state.remotePending[cell] & ~scalar) {
+                        reason = "authored remote notify has an unfinished local producer prefix";
+                        return false;
+                    }
+                    const uint8_t nonScalarWrites = state.written[unsigned(Pipe::S)][cell] & ~scalar;
+                    if (nonScalarWrites & ~state.fencedNonScalar[cell]) {
+                        reason = "authored remote notify has an unpublished non-scalar GM write";
+                        return false;
+                    }
+                    for (unsigned observer = 0; observer < c::LaneCount; ++observer)
+                        if (observer != unsigned(Pipe::S) && (state.written[observer][cell] & scalar)) {
+                            reason = "authored remote notify has an unpublished scalar GM write";
+                            return false;
+                        }
+                }
+                break;
+            }
+            case c::FixedAction::RemoteWait:
+                // The peer protocol and its payload are outside this
+                // intrafunction model. Preserve the blocking acquire exactly,
+                // but do not manufacture completion for local pipeline work.
+                // Conservatively require later scalar GM reads to invalidate
+                // any value that the peer may have updated.
+                state.remoteWait(p.globalMemory);
+                break;
             default:
                 reason = "invalid authored synchronization action";
                 return false;
@@ -110,7 +146,8 @@ bool applyFixed(const c::Program& p, unsigned id, c::State& state, std::string& 
     }
     return true;
 }
-bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::string& reason)
+bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::string& reason,
+               std::vector<uint8_t>* remoteWaits = nullptr)
 {
     if (!p.cells || p.cells > c::MaxCells || p.nodes.empty()) {
         reason = "invalid composition storage population";
@@ -126,13 +163,15 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
     }
     for (const auto& actions : p.fixedBefore)
         for (const auto& action : actions) {
-            bool valid = action.kind <= c::FixedAction::Fence;
+            bool valid = action.kind <= c::FixedAction::RemoteWait;
             if (action.kind == c::FixedAction::Barrier)
                 valid &= action.lane < c::LaneCount && p.target.barrier(lane(p, action.lane)) && action.cells.empty();
             else if (action.kind == c::FixedAction::CacheMaintenance) {
                 valid &= action.lane == 0 && action.cells.size() == p.cells && !p.globalMemory.empty();
                 for (unsigned cell = 0; valid && cell < p.cells; ++cell)
                     valid &= action.cells[cell] <= 1 && (!action.cells[cell] || p.globalMemory[cell]);
+            } else if (action.kind == c::FixedAction::RemoteNotify || action.kind == c::FixedAction::RemoteWait) {
+                valid &= p.core == Core::AIV && action.lane == 0 && action.cells.empty();
             } else
                 valid &= action.lane == 0 && action.cells.empty();
             if (!valid) {
@@ -141,6 +180,8 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
             }
         }
     std::vector<unsigned> parents(p.nodes.size());
+    if (remoteWaits)
+        remoteWaits->assign(p.nodes.size(), 0);
     for (unsigned id = 0; id < p.nodes.size(); ++id) {
         const auto& n = p.nodes[id];
         if (n.periodicOwner != ~0u &&
@@ -168,12 +209,17 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
                 return false;
             }
         summaries.push_back(n.effects);
+        if (remoteWaits && !p.fixedBefore.empty())
+            for (const auto& action : p.fixedBefore[id])
+                (*remoteWaits)[id] |= action.kind == c::FixedAction::RemoteWait;
         for (unsigned child : n.children) {
             if (child >= id || ++parents[child] != 1) {
                 reason = "composition is not a postorder tree";
                 return false;
             }
             merge(summaries.back(), summaries[child]);
+            if (remoteWaits)
+                (*remoteWaits)[id] |= (*remoteWaits)[child];
         }
     }
     for (unsigned i = 0; i + 1 < parents.size(); ++i)
@@ -219,6 +265,11 @@ VisibilityNeed visibilityNeed(const c::Program& p, const c::Node& n, const c::St
         bool targetWrites = n.effects[i].writers != 0;
         if (!p.globalMemory[i] || (!targetReads && !targetWrites))
             continue;
+        // A blocking remote acquisition establishes the peer protocol but not
+        // scalar-cache coherence for its unknown payload. Keep the payload
+        // association conservative and require a post-wait invalidate before
+        // any potentially observing scalar read.
+        invalidateTarget |= observer == unsigned(Pipe::S) && targetReads && state.remoteScalarStale[i];
         for (unsigned source = 0; source < c::LaneCount; ++source) {
             if (!(state.written[observer][i] & (uint8_t(1u) << source)) || source == observer)
                 continue;
@@ -343,6 +394,8 @@ c::State::State(unsigned cells)
         history.resize(cells);
     cleanedScalar.resize(cells);
     fencedNonScalar.resize(cells);
+    remotePending.resize(cells);
+    remoteScalarStale.resize(cells);
 }
 void c::State::join(const State& other)
 {
@@ -354,6 +407,8 @@ void c::State::join(const State& other)
     for (unsigned i = 0; i < cleanedScalar.size(); ++i) {
         cleanedScalar[i] &= other.cleanedScalar[i];
         fencedNonScalar[i] &= other.fencedNonScalar[i];
+        remotePending[i] |= other.remotePending[i];
+        remoteScalarStale[i] |= other.remoteScalarStale[i];
     }
 }
 void c::State::seed(const Effects& effects)
@@ -362,6 +417,7 @@ void c::State::seed(const Effects& effects)
         merge(history, effects);
     const uint8_t scalar = uint8_t(1u) << unsigned(Pipe::S);
     for (unsigned i = 0; i < effects.size(); ++i) {
+        remotePending[i] |= effects[i].readers | effects[i].writers;
         if (effects[i].writers & scalar)
             cleanedScalar[i] = 0;
         fencedNonScalar[i] &= ~(effects[i].writers & ~scalar);
@@ -375,6 +431,7 @@ void c::State::barrierAll()
     for (auto& observer : pending)
         for (auto& effect : observer)
             effect = {};
+    std::fill(remotePending.begin(), remotePending.end(), 0);
 }
 void c::State::barrier(unsigned lane)
 {
@@ -382,6 +439,8 @@ void c::State::barrier(unsigned lane)
         e.readers &= ~(1u << lane);
         e.writers &= ~(1u << lane);
     }
+    for (auto& sources : remotePending)
+        sources &= ~(uint8_t(1u) << lane);
 }
 void c::State::rendezvous(unsigned a, unsigned b)
 {
@@ -418,6 +477,7 @@ void c::State::cacheMaintenance(const std::vector<uint8_t>& cells)
     for (unsigned cell = 0; cell < cells.size(); ++cell) {
         if (!cells[cell])
             continue;
+        remoteScalarStale[cell] = 0;
         bool dirtyScalar = false;
         for (unsigned observer = 0; observer < LaneCount; ++observer)
             dirtyScalar |= written[observer][cell] & scalar;
@@ -437,6 +497,7 @@ void c::State::fence(uint8_t drainedSources, bool scalarCacheVisibility)
             pending[observer][cell].writers &= ~drainedSources;
         }
     for (unsigned cell = 0; cell < fencedNonScalar.size(); ++cell) {
+        remotePending[cell] &= ~drainedSources;
         fencedNonScalar[cell] |= written[unsigned(Pipe::S)][cell] & drainedSources & ~scalar;
         if (scalarCacheVisibility && (drainedSources & scalar) && cleanedScalar[cell])
             for (unsigned observer = 0; observer < LaneCount; ++observer)
@@ -444,6 +505,12 @@ void c::State::fence(uint8_t drainedSources, bool scalarCacheVisibility)
                     written[observer][cell] &= ~scalar;
         cleanedScalar[cell] = 0;
     }
+}
+void c::State::remoteWait(const std::vector<bool>& globalMemory)
+{
+    for (unsigned cell = 0; cell < remoteScalarStale.size(); ++cell)
+        if (globalMemory.empty() || globalMemory[cell])
+            remoteScalarStale[cell] = 1;
 }
 uint8_t c::State::demands(unsigned observer, const Effects& effects) const
 {
@@ -474,7 +541,8 @@ c::Result c::construct(const Program& p)
     result.fixedActions = fixedActionCount(p);
     result.before.resize(p.nodes.size());
     std::vector<Effects> summaries;
-    if (!summarize(p, summaries, result.reason))
+    std::vector<uint8_t> remoteWaits;
+    if (!summarize(p, summaries, result.reason, &remoteWaits))
         return result;
     std::function<bool(unsigned, State&)> visit = [&](unsigned id, State& state) {
         ++result.nodeVisits;
@@ -509,6 +577,11 @@ c::Result c::construct(const Program& p)
             // body can leave outstanding is already present for every observer.
             // Transfers only clear bits or add body effects, so one visit suffices.
             state.seed(summaries[id]);
+            // RemoteWait is also a monotone MAY effect. Seed it at entry when
+            // any body path may execute it so a scalar read at the beginning
+            // of the next iteration cannot reuse a stale cache line.
+            if (remoteWaits[id])
+                state.remoteWait(p.globalMemory);
             if (!visit(n.children[0], state))
                 return false;
             if (n.kind == Node::While) {
@@ -537,7 +610,8 @@ c::Result c::verify(const Program& p, const std::vector<std::vector<Mechanism>>&
     Result result;
     result.fixedActions = fixedActionCount(p);
     std::vector<Effects> summaries;
-    if (actual.size() != p.nodes.size() || !summarize(p, summaries, result.reason))
+    std::vector<uint8_t> remoteWaits;
+    if (actual.size() != p.nodes.size() || !summarize(p, summaries, result.reason, &remoteWaits))
         return result;
     // Independently walk actual mechanisms and test physical demands. Never
     // call construct(), acquire(), or compare against its chosen action list.
@@ -577,6 +651,8 @@ c::Result c::verify(const Program& p, const std::vector<std::vector<Mechanism>>&
             case Node::For: {
                 auto empty = state;
                 state.seed(summaries[id]);
+                if (remoteWaits[id])
+                    state.remoteWait(p.globalMemory);
                 if (!check(n.children[0], state))
                     return false;
                 state.join(empty);
@@ -584,6 +660,8 @@ c::Result c::verify(const Program& p, const std::vector<std::vector<Mechanism>>&
             }
             case Node::While: {
                 state.seed(summaries[id]);
+                if (remoteWaits[id])
+                    state.remoteWait(p.globalMemory);
                 if (!check(n.children[0], state))
                     return false;
                 auto exits = state;
@@ -630,6 +708,7 @@ struct Cycle {
 struct Cuts {
     std::vector<unsigned> parent, next, owner;
     std::vector<c::Effects> effects;
+    std::vector<uint8_t> remoteWaits;
     std::vector<Cycle> cycles;
 };
 bool alternatives(std::vector<unsigned>& a, const std::vector<unsigned>& b)
@@ -667,7 +746,7 @@ bool sameWord(const Word& a, const Word& b)
 // periodic occurrence models, dependence-pair enumeration or closure matrices.
 bool discoverCuts(const c::Program& p, Cuts& cuts, std::string& reason, bool structuredEpisodes = false)
 {
-    if (!summarize(p, cuts.effects, reason))
+    if (!summarize(p, cuts.effects, reason, &cuts.remoteWaits))
         return false;
     unsigned size = p.nodes.size();
     cuts.parent.assign(size, NoCut);
@@ -867,6 +946,12 @@ struct PrefixState : c::State {
         // still supplies its storage-specific credits.
         receipts.clear();
         State::seed(effects);
+    }
+    void enterLoop(const c::Program& p, const c::Effects& effects, bool remoteWait)
+    {
+        enterLoop(effects);
+        if (remoteWait)
+            State::remoteWait(p.globalMemory);
     }
     void join(const PrefixState& other)
     {
@@ -1450,7 +1535,7 @@ c::Result constructCutCandidate(const c::Program& p, bool reserveFallback)
         }
         if (n.kind == Node::For || n.kind == Node::While) {
             auto entry = state;
-            state.enterLoop(cuts.effects[id]);
+            state.enterLoop(p, cuts.effects[id], cuts.remoteWaits[id]);
             if (!visit(n.children[0], state))
                 return false;
             if (n.kind == Node::While) {
@@ -1669,7 +1754,7 @@ c::Result c::verifyCuts(const Program& p, const std::vector<std::vector<Mechanis
         }
         if (n.kind == Node::For || n.kind == Node::While) {
             auto entry = state;
-            state.enterLoop(cuts.effects[id]);
+            state.enterLoop(p, cuts.effects[id], cuts.remoteWaits[id]);
             if (!check(n.children[0], state))
                 return false;
             if (n.kind == Node::While) {
@@ -1744,6 +1829,7 @@ struct DemandAnalysis {
     };
     using FirstSummary = std::array<FirstLaneSummary, c::LaneCount>;
     std::vector<c::Effects> effects;
+    std::vector<uint8_t> remoteWaits;
     std::vector<uint64_t> subtreeNodes;
     std::vector<uint8_t> laneMask, followingLaneMask;
     std::vector<FirstSummary> entryFirst;
@@ -1842,7 +1928,7 @@ struct DemandAnalysis {
     {
         if (choiceIncoming && choiceIncoming->enabled)
             ++choiceIncoming->passes;
-        if (!summarize(p, effects, reason))
+        if (!summarize(p, effects, reason, &remoteWaits))
             return false;
         parent.assign(p.nodes.size(), NoCut);
         position.assign(p.nodes.size(), NoCut);
@@ -4936,6 +5022,8 @@ c::Result constructDemandCandidate(
                 ++result.entryEpisodes;
             }
             state.seed(analysis.effects[id]);
+            if (analysis.remoteWaits[id])
+                state.remoteWait(p.globalMemory);
             if (invariants) {
                 auto found = invariants->find(id);
                 if (found != invariants->end())
@@ -5702,6 +5790,8 @@ c::Result verifyDemandImpl(
             for (const auto& receipt : entryProviders[id])
                 entry.receipts.erase(receipt);
             state.seed(analysis.effects[id]);
+            if (analysis.remoteWaits[id])
+                state.remoteWait(p.globalMemory);
             // Bounded invariant narrowing for a FIXED actual plan. Top=E|S
             // is inductive. Monotonicity gives E|F(Top) <= Top, itself an
             // inductive invariant. The probe checks no hazards and recursively

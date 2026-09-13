@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @composition_authored_remote_signal(
+      %src_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<f32>,
+      %signal_ptr: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %one = arith.constant 1 : i32
+    %zero = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 1x32xf32>
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c1, %c32],
+        strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %src = pto.partition_view %src_view, offsets = [%c0, %c0],
+        sizes = [%c1, %c32]
+        : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x32xf32>
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c1, %c32],
+        strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %dst = pto.partition_view %dst_view, offsets = [%c0, %c0],
+        sizes = [%c1, %c32]
+        : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x32xf32>
+    %signal_view = pto.make_tensor_view %signal_ptr, shape = [%c1],
+        strides = [%c1] : !pto.tensor_view<1xi32>
+    %signal = pto.partition_view %signal_view, offsets = [%c0], sizes = [%c1]
+        : !pto.tensor_view<1xi32> -> !pto.partition_tensor_view<1xi32>
+
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>)
+        outs(%tile : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 1x32xf32>)
+        outs(%dst : !pto.partition_tensor_view<1x32xf32>)
+    // The GM fence drains the local vector-kernel prefixes and publishes the
+    // preceding MTE3 write before the immutable remote notification.
+    pto.fence.barrier_all #pto.fence_scope<gm>
+    pto.comm.tnotify(%signal, %one : !pto.partition_tensor_view<1xi32>, i32)
+        {notifyOp = #pto<notify_op set>}
+    // The remote acquisition is preserved but supplies no completion for
+    // unrelated local pipeline work.
+    pto.comm.twait(%signal, %one : !pto.partition_tensor_view<1xi32>, i32)
+        {cmp = #pto<wait_cmp ge>}
+    return
+  }
+}

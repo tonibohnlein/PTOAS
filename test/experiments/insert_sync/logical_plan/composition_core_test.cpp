@@ -268,6 +268,149 @@ static void execute(
     policy.choice = [&](unsigned, unsigned) { return (pattern >> (branch++ % 4)) & 1; };
     execute(p, r, id, policy, oracle);
 }
+static void testRemoteSignals()
+{
+    // Blocking remote signals are immutable cross-core protocol cuts. A
+    // TNOTIFY-like publication is accepted only after the local GM prefix has
+    // been completed and made visible; TWAIT-like acquisition must not
+    // manufacture completion for unrelated local pipeline work.
+    unsigned mte2 = unsigned(Pipe::MTE2), mte3 = unsigned(Pipe::MTE3);
+    unsigned vector = unsigned(Pipe::V), scalar = unsigned(Pipe::S);
+    c::FixedAction notify{c::FixedAction::RemoteNotify};
+    c::FixedAction wait{c::FixedAction::RemoteWait};
+
+    auto makeNotify = [&](unsigned lane, bool write) {
+        c::Program p;
+        p.cells = 1;
+        p.globalMemory = {true};
+        auto payload = op(p, lane, 0, write);
+        auto site = add(p, c::Node::Sequence);
+        add(p, c::Node::Sequence, {payload, site});
+        p.fixedBefore.resize(p.nodes.size());
+        p.fixedBefore[site] = {notify};
+        return std::pair(std::move(p), site);
+    };
+
+    auto [unfinished, unfinishedSite] = makeNotify(mte3, true);
+    auto unfinishedPlan = c::constructDemands(unfinished);
+    require(
+        !unfinishedPlan.success &&
+        unfinishedPlan.reason == "authored remote notify has an unfinished local producer prefix");
+
+    // Completing the MTE3 queue is insufficient for publication of its GM
+    // write. The following fence is a separate visibility obligation.
+    unfinished.fixedBefore[unfinishedSite].insert(
+        unfinished.fixedBefore[unfinishedSite].begin(), {c::FixedAction::Barrier, mte3});
+    auto unpublished = c::constructDemands(unfinished);
+    require(
+        !unpublished.success &&
+        unpublished.reason == "authored remote notify has an unpublished non-scalar GM write");
+
+    auto [published, publishedSite] = makeNotify(mte3, true);
+    published.fixedBefore[publishedSite].insert(
+        published.fixedBefore[publishedSite].begin(), {c::FixedAction::Fence});
+    auto publishedPlan = c::constructDemands(published);
+    require(
+        publishedPlan.success && publishedPlan.fixedActions == 2 && publishedPlan.acquisitions == 0 &&
+        c::verifyDemands(published, publishedPlan.before).success);
+    published.core = Core::AIC;
+    require(!c::constructDemands(published).success);
+
+    // A read releases remote storage after source-pipeline completion; it does
+    // not require a GM write-publication fence.
+    auto [released, releasedSite] = makeNotify(mte2, false);
+    released.fixedBefore[releasedSite].insert(
+        released.fixedBefore[releasedSite].begin(), {c::FixedAction::Barrier, mte2});
+    auto releasedPlan = c::constructDemands(released);
+    require(
+        releasedPlan.success && releasedPlan.fixedActions == 2 && releasedPlan.acquisitions == 0 &&
+        c::verifyDemands(released, releasedPlan.before).success);
+
+    // The same named barrier releases MTE2 for remote publication but does not
+    // transfer that completion to V. The local consumer still needs its own
+    // qualified cross-pipeline handoff.
+    c::Program named;
+    named.cells = 1;
+    auto namedWrite = op(named, mte2, 0, true);
+    auto namedRead = op(named, vector, 0, false);
+    add(named, c::Node::Sequence, {namedWrite, namedRead});
+    named.fixedBefore.resize(named.nodes.size());
+    named.fixedBefore[namedRead] = {{c::FixedAction::Barrier, mte2}};
+    auto namedPlan = c::constructDemands(named);
+    require(
+        namedPlan.success && namedPlan.acquisitions == 1 &&
+        c::verifyDemands(named, namedPlan.before).success);
+
+    auto [scalarUnpublished, scalarSite] = makeNotify(scalar, true);
+    scalarUnpublished.fixedBefore[scalarSite].insert(
+        scalarUnpublished.fixedBefore[scalarSite].begin(), {c::FixedAction::Fence});
+    auto dirtyScalar = c::constructDemands(scalarUnpublished);
+    require(
+        !dirtyScalar.success && dirtyScalar.reason == "authored remote notify has an unpublished scalar GM write");
+    c::FixedAction clean{c::FixedAction::CacheMaintenance};
+    clean.cells = {1};
+    scalarUnpublished.fixedBefore[scalarSite].insert(
+        scalarUnpublished.fixedBefore[scalarSite].begin(), clean);
+    auto scalarPublished = c::constructDemands(scalarUnpublished);
+    require(
+        scalarPublished.success && scalarPublished.fixedActions == 3 &&
+        c::verifyDemands(scalarUnpublished, scalarPublished.before).success);
+
+    c::Program local;
+    local.cells = 1;
+    local.globalMemory = {false};
+    auto localWrite = op(local, mte2, 0, true);
+    auto localWait = add(local, c::Node::Sequence);
+    auto localRead = op(local, vector, 0, false);
+    add(local, c::Node::Sequence, {localWrite, localWait, localRead});
+    local.fixedBefore.resize(local.nodes.size());
+    local.fixedBefore[localWait] = {wait};
+    auto localPlan = c::constructDemands(local);
+    require(
+        localPlan.success && localPlan.fixedActions == 1 && localPlan.acquisitions == 1 &&
+        c::verifyDemands(local, localPlan.before).success);
+    std::vector<std::vector<c::Mechanism>> empty(local.nodes.size());
+    require(!c::verifyDemands(local, empty).success);
+
+    c::Program remoteRead;
+    remoteRead.cells = 1;
+    remoteRead.globalMemory = {true};
+    auto remoteWait = add(remoteRead, c::Node::Sequence);
+    auto scalarRead = op(remoteRead, scalar, 0, false);
+    add(remoteRead, c::Node::Sequence, {remoteWait, scalarRead});
+    remoteRead.fixedBefore.resize(remoteRead.nodes.size());
+    remoteRead.fixedBefore[remoteWait] = {wait};
+    auto remoteReadPlan = c::constructDemands(remoteRead);
+    require(
+        remoteReadPlan.success && remoteReadPlan.visibilityRequirements == 1 &&
+        remoteReadPlan.before[scalarRead].size() == 1 &&
+        remoteReadPlan.before[scalarRead][0].kind == c::Mechanism::Visibility &&
+        remoteReadPlan.before[scalarRead][0].visibilityAction == c::VisibilityAction::InvalidateTarget &&
+        c::verifyDemands(remoteRead, remoteReadPlan.before).success);
+    std::vector<std::vector<c::Mechanism>> stale(remoteRead.nodes.size());
+    require(!c::verifyDemands(remoteRead, stale).success);
+
+    // A wait at the end of one loop visit can stale the scalar cache before a
+    // read at the beginning of the next. The bounded loop seed must therefore
+    // include fixed remote-wait effects, not only payload effects.
+    c::Program loopCarried;
+    loopCarried.cells = 1;
+    loopCarried.globalMemory = {true};
+    auto loopRead = op(loopCarried, scalar, 0, false);
+    auto loopWait = add(loopCarried, c::Node::Sequence);
+    auto loopBody = add(loopCarried, c::Node::Sequence, {loopRead, loopWait});
+    add(loopCarried, c::Node::For, {loopBody});
+    loopCarried.fixedBefore.resize(loopCarried.nodes.size());
+    loopCarried.fixedBefore[loopWait] = {wait};
+    auto loopCarriedPlan = c::constructDemands(loopCarried);
+    require(
+        loopCarriedPlan.success && loopCarriedPlan.before[loopRead].size() == 1 &&
+        loopCarriedPlan.before[loopRead][0].kind == c::Mechanism::Visibility &&
+        loopCarriedPlan.before[loopRead][0].visibilityAction == c::VisibilityAction::InvalidateTarget &&
+        c::verifyDemands(loopCarried, loopCarriedPlan.before).success);
+    std::vector<std::vector<c::Mechanism>> loopStale(loopCarried.nodes.size());
+    require(!c::verifyDemands(loopCarried, loopStale).success);
+}
 int main()
 {
     {
@@ -1825,6 +1968,8 @@ int main()
     {
         // The final lane group needs no same-visit successor cut: its next
         // publication is intentionally at the next active visit's first cut.
+        // This is a structured-episode extension; the legacy-only selector
+        // correctly retains the independently verified non-ring baseline.
         c::Program p;
         p.cells = 1;
         unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
@@ -1836,7 +1981,7 @@ int main()
         require(plan.success && plan.cutCycles == 1 && c::verifyDemands(p, plan.before).success);
         auto legacy = c::testing::constructDemandsWithoutStructuredRings(p);
         require(
-            legacy.success && legacy.cutCycles == 1 && legacy.before == c::constructDemands(p).before &&
+            legacy.success && legacy.cutCycles == 0 && legacy.before == c::constructDemands(p).before &&
             c::verifyDemands(p, legacy.before).success);
     }
     {
@@ -3440,5 +3585,6 @@ int main()
     require(boundedCheck.success);
     require(bounded.nodeVisits <= 8 * deep.nodes.size());
     require(boundedCheck.nodeVisits <= 3 * deep.nodes.size());
+    testRemoteSignals();
     std::cout << checks << " compositional native-helper/independent finite graph assertions passed\n";
 }

@@ -316,6 +316,8 @@ int main(int argc,char **argv) {
                     barrier->hasAttr("pto.test_authored_fixed")) chosen=op;
             if (mode=="drop-authored-cmo" && isa<CmoCacheInvalidOp>(op)) chosen=op;
             if (mode=="drop-authored-fence" && isa<FenceBarrierAllOp>(op)) chosen=op;
+            if (mode=="drop-authored-notify" && isa<TNotifyOp>(op)) chosen=op;
+            if (mode=="drop-authored-wait" && isa<TWaitOp>(op)) chosen=op;
             if (mode=="mix-generated-authored-visibility" && isa<CmoCacheInvalidOp>(op) &&
                 isa_and_nonnull<FenceBarrierAllOp>(op->getPrevNode()) &&
                 isa_and_nonnull<FenceBarrierAllOp>(op->getNextNode())) {
@@ -503,7 +505,8 @@ int main(int argc,char **argv) {
             mode=="drop-sequence-bridge" || mode=="drop-clean-cmo" ||
             mode=="drop-invalidate-cmo" ||
             mode=="drop-visibility-fence" || mode=="drop-authored-barrier" ||
-            mode=="drop-authored-cmo" || mode=="drop-authored-fence") { chosen->erase(); changed=true; }
+            mode=="drop-authored-cmo" || mode=="drop-authored-fence" ||
+            mode=="drop-authored-notify" || mode=="drop-authored-wait") { chosen->erase(); changed=true; }
         else if (mode=="duplicate-set" || mode=="duplicate-coalesced") { OpBuilder b(chosen); b.setInsertionPointAfter(chosen); b.clone(*chosen); changed=true; }
         else if (mode=="wrong-key") {
             // Preserve operation identity so this exercises protocol checking,

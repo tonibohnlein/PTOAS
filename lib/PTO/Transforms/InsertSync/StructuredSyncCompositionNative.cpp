@@ -59,7 +59,7 @@ PIPE pipe(unsigned id)
 }
 bool sync(Operation* op)
 {
-    return isa<SetFlagOp, WaitFlagOp, BarrierOp, CmoCacheInvalidOp, FenceBarrierAllOp>(op);
+    return isa<SetFlagOp, WaitFlagOp, BarrierOp, CmoCacheInvalidOp, FenceBarrierAllOp, TNotifyOp, TWaitOp>(op);
 }
 
 // Stage the immutable symbol closure as well as the kernel. Physical helper
@@ -256,6 +256,40 @@ struct Tree {
             result.push_back(std::move(cell));
         return result;
     }
+    bool remoteSignalSeparate(Operation* signalOp, Value signal)
+    {
+        auto signalRoots = traceInsertSyncGMRoots(inventory.function, signal);
+        for (auto* phase : inventory.physical.phases) {
+            // The signal operation's declared effect is the resource being
+            // classified, not an independent local payload conflict.
+            if (phase->elementOp == signalOp)
+                continue;
+            auto separate = [&](const auto& accesses) {
+                for (const auto* access : accesses) {
+                    if (access->scope != AddressSpace::GM)
+                        continue;
+                    const auto& payloadRoots = gmAccesses.find(access)->second;
+                    if (!signalRoots.complete || !payloadRoots.complete)
+                        return false;
+                    for (Value signalRoot : signalRoots.arguments)
+                        for (Value payloadRoot : payloadRoots.arguments) {
+                            if (signalRoot == payloadRoot)
+                                return false;
+                            unsigned signalArg = cast<BlockArgument>(signalRoot).getArgNumber();
+                            unsigned payloadArg = cast<BlockArgument>(payloadRoot).getArgNumber();
+                            if (gm != InsertSyncGMAliasMode::DisjointArguments &&
+                                !disjointPairs.count(
+                                    {std::min(signalArg, payloadArg), std::max(signalArg, payloadArg)}))
+                                return false;
+                        }
+                }
+                return true;
+            };
+            if (!separate(phase->useVec) || !separate(phase->defVec))
+                return false;
+        }
+        return true;
+    }
     void partition()
     {
         auto globalCells = gmCells();
@@ -378,6 +412,26 @@ struct Tree {
                 return false;
             }
             action.kind = c::FixedAction::Fence;
+        } else if (auto notify = dyn_cast<TNotifyOp>(op)) {
+            if (program.core != ss::Core::AIV) {
+                reason = "authored remote notify requires the qualified AIV contract";
+                return false;
+            }
+            if (!remoteSignalSeparate(op, notify.getSignal())) {
+                reason = "authored remote signal may alias local payload";
+                return false;
+            }
+            action.kind = c::FixedAction::RemoteNotify;
+        } else if (auto wait = dyn_cast<TWaitOp>(op)) {
+            if (program.core != ss::Core::AIV) {
+                reason = "authored remote wait requires the qualified AIV contract";
+                return false;
+            }
+            if (!remoteSignalSeparate(op, wait.getSignal())) {
+                reason = "authored remote signal may alias local payload";
+                return false;
+            }
+            action.kind = c::FixedAction::RemoteWait;
         } else {
             reason = "authored event protocol has no qualified compositional summary";
             return false;

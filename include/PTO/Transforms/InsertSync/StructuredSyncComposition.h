@@ -38,6 +38,14 @@ struct State {
     // published but does not itself invalidate the scalar cache.
     std::vector<uint8_t> cleanedScalar;
     std::vector<uint8_t> fencedNonScalar;
+    // Local GM accesses that have not crossed a physical drain suitable for
+    // an authored remote publication. This is deliberately separate from
+    // observer-specific completion: a named barrier does not transfer its
+    // prefix to another pipeline merely because it releases remote storage.
+    std::vector<uint8_t> remotePending;
+    // A remote wait may make any external GM payload newer than PIPE_S's
+    // cache. Whole-cell cache maintenance discharges this conservative fact.
+    std::vector<uint8_t> remoteScalarStale;
     explicit State(unsigned cells = 0);
     void join(const State& other);
     void seed(const Effects& effects);
@@ -48,14 +56,27 @@ struct State {
                     bool scalarCacheVisibility);
     void cacheMaintenance(const std::vector<uint8_t>& cells);
     void fence(uint8_t drainedSources, bool scalarCacheVisibility);
+    void remoteWait(const std::vector<bool>& globalMemory);
     uint8_t demands(unsigned observer, const Effects& effects) const;
 };
 struct FixedAction {
-    enum Kind : uint8_t { Barrier, BarrierAll, CacheMaintenance, Fence } kind = Barrier;
+    enum Kind : uint8_t {
+        Barrier,
+        BarrierAll,
+        CacheMaintenance,
+        Fence,
+        // Original cross-core signal operations are immutable protocol cuts.
+        // RemoteWait supplies no intrafunction completion. RemoteNotify is
+        // accepted only when the local release prefix is already qualified.
+        RemoteNotify,
+        RemoteWait,
+    } kind = Barrier;
     unsigned lane = 0;
     // CacheMaintenance uses a cells-sized bit vector. An addressed CMO whose
     // exact cache-line coverage is unknown has an all-zero vector and is
-    // deliberately preserved without receiving visibility credit.
+    // deliberately preserved without receiving visibility credit. Remote
+    // signals must leave this empty: their signal storage is independently
+    // required not to alias imported local payload.
     std::vector<uint8_t> cells;
 };
 struct Node {
