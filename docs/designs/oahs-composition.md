@@ -1940,3 +1940,129 @@ Artifacts reside in the existing build under `test-results/oahs-demands`,
 `test-results/oahs-alternative-final-frozen-replay`. This is base-plus-diff
 evidence, not a clean-revision or device qualification claim. Full lit/system
 suites were not run. No planner default or hardware contract changed.
+
+## Preconstruction alternative demands
+
+This follow-up replaces the preceding milestone's post-numbering publication
+edits. Alternative consumers become requests to the existing forward demand
+constructor, before event allocation. The fresh alternative-protocol checker
+is retained; the constructor no longer tries to repair a numbered plan by
+moving SETs and rewriting WAIT keys.
+
+The transaction has three explicit states:
+
+1. Construct and verify the pre-Choice demand plan, retaining the existing
+   entry, recurring and other demand refinements.
+2. Establish the existing common-Choice plan. This is the exact fallback for
+   every failure of the new alternative refinement.
+3. Construct one combined common/alternative candidate from immutable demand
+   proposals, then globally allocate and freshly verify it.
+
+There is no recursive candidate construction, subset retry, or independent
+child allocator. A failed alternative proposal must not discard accepted
+common-Choice precision. Common numeric keys may change in the combined plan,
+but their semantic cuts, directions, participation and required completion
+must remain valid. Existing fixed reservations remain fixed.
+
+An alternative family records the original scope, publication, consumer,
+source, observer and complete physical-cell witnesses for every arm. A
+structural all-path check requires exactly one matching consumer. Unsupported
+recurrence, missing arms, intervening writes to a witnessed generation and
+exceeded finite populations decline the proposal. No branch predicate is
+solved and no iteration relation is constructed.
+
+At the earlier parent cut, the constructor records a producer-prefix receipt.
+That receipt continues to accumulate subsequently issued work as **remaining**
+work. Each branch acquisition therefore completes the earlier prefix, not a
+frozen snapshot that accidentally clears a newer generation. In particular:
+
+```text
+produce B -> publish B prefix -> produce C
+    -> Choice(B consumer in each arm) -> C consumer
+```
+
+The B acquisitions do not complete C. The same ordinary forward constructor
+must discover and realize the C requirement. If doing so exceeds the allowed
+cost or available event resources, the entire candidate is discarded.
+
+One shared logical forward key and dedicated arm returns are checked before
+global numbering. Their physical colors are exclusive by directed pipeline
+domain, including against ordinary, canonical, entry and deferred protocols.
+The final checker reconstructs all actual endpoints and rechecks participation,
+consumption-before-rearm and physical completion. A causal entry-history
+certificate never grants branch-payload completion or resets an event key.
+
+Acceptance compares actual commands against the common-only fallback:
+Sequence sums command deltas, Choice takes the worst arm, and changed nested
+recurrence is refused rather than assigned a guessed trip count. The maximum
+additional cost is one SET/WAIT pair per affected owner execution, not per
+physical cell or per proposed family. An earlier producer boundary is required
+separately. A candidate that merely adds synchronization is not a precision
+improvement.
+
+Common and alternative selection have separate **1,048,576-unit** represented-
+work allowances. Alternative discovery, reconstruction and fresh verification
+share one monotonically consumed allowance, with reservations deducted before
+the final check. Child-return work uses the remaining parent allowance in an
+isolated trial: exhaustion is charged but cannot invalidate the accepted
+fallback. A missing alternative proposal returns immediately without rerunning
+the Common plan. The existing eight-family/eight-alternative limits remain.
+
+Native qualification includes a selected case where a later D production's
+ordinary handoff also supplies still-pending C. Both arms preserve B's earlier
+publication; executed mechanisms and scalar work are unchanged and one static
+SET site is removed. The C-only case explicitly constructs the residual demand
+but declines because its extra protocol exceeds the per-owner cost limit.
+Tests distinguish these paths with `alternative_choice_continuation_demands`
+and `alternative_choice_cost_rejections`, rather than counting fallback success
+as evidence that a refinement was selected.
+
+### Local qualification
+
+Validated against `59f1e70ee867d19a5e5c7e628945202267654b33` plus this six-file
+milestone, using the existing LLVM/MLIR 19.1.7 build. This is base-plus-diff
+evidence, not a device or clean-revision certification.
+
+- The four affected native targets rebuilt successfully. Strict C++17
+  ASan/UBSan passed **2,443,127 assertions**.
+- All six selected gates passed: `oahs_composition_core`, `oahs_composition`,
+  `oahs_demands`, `oahs_focused`, `oahs_structured_core`, and `oahs_structured`.
+  After the final charge-on-exhaustion accounting repair, the directly affected
+  core and demand gates were rerun and passed (37.51 seconds together).
+  The selected `insert_sync_structured_constructor.pto` lit test and Python
+  syntax check also passed. Full lit/system suites were not run.
+- The final current-arm frozen replay retained **197/363** admissions:
+  PTOAS **45/150**, PyPTO **7/35**, and pypto-lib **145/178**. There were no
+  admission or first-refusal changes. Its actual results exactly matched the
+  preceding two-arm replay in this campaign. The 46 differences from the older
+  frozen baseline are already-existing mechanism-count changes, not new
+  coverage gains from this milestone. This remains raw/prepared IR compiler
+  compatibility, not regeneration from the upstream Python sources.
+- All eight paired whole-compiler benchmarks, including historical GEMM,
+  passed the **2x** compilation-time gate: one warmup, three paired samples,
+  90-second per-run timeout, diagnostics disabled. Median demand/InsertSync
+  ratios ranged from **0.984 to 1.059**; all 16 synchronized PTO outputs also
+  emitted C++. This measures compiler time, not device execution.
+- The eight regression inputs' selected mechanism counts and later-prefix
+  observations are unchanged. In particular, historical GEMM still has
+  **56 SET / 59 WAIT / 21 named barriers**, versus InsertSync's
+  **44 / 44 / 21** (one terminal drain each). `quality_qualified` remains false;
+  neither the default nor the hardware contract changed.
+
+The architect, algorithms/performance, and correctness/design reviewers each
+accepted this milestone. The positive C/D continuation regression demonstrates
+earlier B completion with unchanged executed commands and one fewer static SET;
+it is not evidence that the remaining buffering/GEMM quality work is complete.
+
+Artifacts remain outside the source worktree in the existing build:
+`test-results/oahs-demands`, `test-results/oahs-universal-final-frozen-replay`,
+`test-results/oahs-universal-accounted-frozen-replay`, and
+`test-results/oahs-universal-final-compiler`. The frozen manifest is unchanged
+(`95beab25427b1dd3a2ff1b59cd881a3f4181e0f83c8a8b44daf35555bf46c3b6`).
+Final binary SHA-256 identities are:
+
+```text
+pto-test-opt             cbc34056a67cc892d58f7bfe3ccd32c87a311d31d1e468fd6bcd34da93dcf659
+pto-structured-sync-test 7568768bb3c144f4a4a2cc812b0eb653191f220db37f43b4f15f4d6fc077e86c
+libPTOASCompiler.so      e55cacfdbb27ec814b82d41b5b24ed8847b767c0d51d2ab161325ba76ded5592
+```

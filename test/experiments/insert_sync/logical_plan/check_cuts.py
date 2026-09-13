@@ -88,6 +88,7 @@ def main():
                         'alternative_choice_sets_removed',
                         'alternative_choice_source_scopes', 'alternative_choice_prefix_steps',
                         'rejected_alternative_choices', 'alternative_choice_work', 'alternative_choice_budget_exhausted',
+                        'alternative_choice_continuation_demands', 'alternative_choice_cost_rejections',
                         'ring_candidates', 'rejected_rings', 'ring_candidate_commands_removed', 'cut_cycles',
                         'deferred_ring_candidates', 'deferred_rings', 'rejected_deferred_rings', 'deferred_protocol_steps',
                         'periodic_deferred_rings', 'periodic_write_overlap_rejections', 'periodic_scalar_work',
@@ -528,12 +529,69 @@ def main():
                 raise RuntimeError('alternative continuation fallback failed')
             continuation_outputs[arm] = output
             continuation_profiles[arm] = native_counters(name)
-        if (not continuation_profiles['selected']['rejected_alternative_choices'] or
+        continuation_selected = bool(continuation_profiles['selected']['alternative_choice_families'])
+        if not continuation_selected and (
+                not continuation_profiles['selected']['rejected_alternative_choices'] or
                 continuation_outputs['selected'].read_bytes() != continuation_outputs['disabled'].read_bytes()):
-            raise RuntimeError('earlier B publication escaped without later C readiness')
-        path_checks.append(dict(name='alternative-continuation-fallback', profiles=continuation_profiles,
+            raise RuntimeError('declined continuation proposal did not restore exact baseline')
+        continuation_scenarios = []
+        for take in (False, True):
+            scenario = dict(arguments=['src', take])
+            old, old_metrics = run(continuation_outputs['disabled'], scenario)
+            new, new_metrics = run(continuation_outputs['selected'], scenario)
+            differences = compare(old, new)
+            if old.tokens or new.tokens or new.before[5]['completed'].get('PIPE_MTE2', -1) != 2:
+                raise RuntimeError('continuation did not acquire C or left an outstanding token')
+            if continuation_selected and new.before[4]['completed'].get('PIPE_MTE2', -1) != 1:
+                raise RuntimeError('selected continuation lost B\'s earlier producer boundary')
+            sync_ops = ('pto.set_flag', 'pto.wait_flag', 'pto.barrier')
+            command_delta = sum(new_metrics['counts'].get(op, 0) - old_metrics['counts'].get(op, 0)
+                                for op in sync_ops)
+            if command_delta > 2 or old_metrics['scalar_counts'] != new_metrics['scalar_counts']:
+                raise RuntimeError('continuation exceeded the owner path-cost/participation bound')
+            continuation_scenarios.append(dict(arguments=scenario['arguments'], differences=differences,
+                                               command_delta=command_delta))
+        path_checks.append(dict(name='alternative-continuation', profiles=continuation_profiles,
+                                selected=continuation_selected, scenarios=continuation_scenarios,
                                 source_sha256=digest(continuation_source),
                                 output_sha256=digest(continuation_outputs['selected'])))
+        # A later D production already needs an ordinary handoff. Its consumer
+        # also reads C: the earlier B publication must leave C outstanding so
+        # that same later handoff supplies both values, without another protocol.
+        shared_source = args.output.resolve() / 'alternative-shared-continuation.input.pto'
+        shared_source.write_text(continuation_text.replace('    return\n',
+            '    %d_addr = arith.constant 2560 : i64\n'
+            '    %d = pto.alloc_tile addr = %d_addr : !pto.tile_buf<vec, 16x16xf16>\n'
+            '    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf16>) '
+            'outs(%d : !pto.tile_buf<vec, 16x16xf16>)\n'
+            '    pto.tadd ins(%c, %d : !pto.tile_buf<vec, 16x16xf16>, !pto.tile_buf<vec, 16x16xf16>) '
+            'outs(%out_b : !pto.tile_buf<vec, 16x16xf16>)\n    return\n'))
+        shared_outputs, shared_profiles = {}, {}
+        for arm, mode in (('selected', 'none'), ('disabled', 'without-alternative-choices')):
+            name = 'alternative-shared-continuation-' + arm
+            output = args.output.resolve() / (name + '.pto')
+            verdict = json.loads(invoke(name, [args.driver, shared_source, 'demands:' + mode, output]))
+            if not verdict['accepted'] or not verdict['atomic']:
+                raise RuntimeError('shared continuation construction failed')
+            shared_outputs[arm] = output
+            shared_profiles[arm] = native_counters(name)
+        if shared_profiles['selected']['alternative_choice_families'] != 1:
+            raise RuntimeError('shared continuation did not exercise selected alternative family')
+        shared_scenarios = []
+        for take in (False, True):
+            scenario = dict(arguments=['src', take])
+            old, old_metrics = run(shared_outputs['disabled'], scenario)
+            new, new_metrics = run(shared_outputs['selected'], scenario)
+            differences = compare(old, new)
+            if (new.before[4]['completed'].get('PIPE_MTE2', -1) != 1 or
+                    new.before[6]['completed'].get('PIPE_MTE2', -1) != 5):
+                raise RuntimeError('shared continuation lost B precision or C/D readiness')
+            if old_metrics['counts'] != new_metrics['counts'] or old_metrics['scalar_counts'] != new_metrics['scalar_counts']:
+                raise RuntimeError('shared continuation changed executed mechanism/scalar counts')
+            shared_scenarios.append(dict(arguments=scenario['arguments'], differences=differences))
+        path_checks.append(dict(name='alternative-shared-continuation', profiles=shared_profiles,
+                                scenarios=shared_scenarios, source_sha256=digest(shared_source),
+                                output_sha256=digest(shared_outputs['selected'])))
         for mutation in ('alternative-drop-wait', 'alternative-duplicate-wait',
                          'alternative-wrong-wait-key', 'alternative-drop-return'):
             name = 'alternative-choice-' + mutation

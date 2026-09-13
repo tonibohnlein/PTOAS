@@ -140,6 +140,7 @@ struct Result {
     uint64_t alternativeChoiceSites = 0, alternativeChoiceSetsRemoved = 0;
     uint64_t alternativeChoiceSourceScopes = 0;
     uint64_t alternativeChoicePrefixSteps = 0, rejectedAlternativeChoices = 0;
+    uint64_t alternativeChoiceContinuationDemands = 0, alternativeChoiceCostRejections = 0;
     uint64_t alternativeChoiceWork = 0;
     bool alternativeChoiceBudgetExhausted = false;
     uint64_t ringCandidates = 0, rejectedRings = 0, ringCandidateCommandsRemoved = 0;

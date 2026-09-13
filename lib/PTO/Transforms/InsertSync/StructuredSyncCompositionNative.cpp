@@ -1226,6 +1226,8 @@ Outcome ss::testing::constructCompositionalSync(
             << selected.alternativeChoicePrefixSteps << " rejected_alternative_choices "
             << selected.rejectedAlternativeChoices << " alternative_choice_work " << selected.alternativeChoiceWork
             << " alternative_choice_budget_exhausted " << selected.alternativeChoiceBudgetExhausted
+            << " alternative_choice_continuation_demands " << selected.alternativeChoiceContinuationDemands
+            << " alternative_choice_cost_rejections " << selected.alternativeChoiceCostRejections
             << " ring_candidates " << selected.ringCandidates << " rejected_rings " << selected.rejectedRings
             << " ring_candidate_commands_removed " << selected.ringCandidateCommandsRemoved << " rendezvous_packets "
             << rendezvousPackets << " deferred_ring_candidates " << selected.deferredRingCandidates

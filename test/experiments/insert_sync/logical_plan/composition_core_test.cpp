@@ -47,6 +47,7 @@ struct Oracle {
     std::map<Key, Token> tokens;
     std::vector<std::pair<unsigned, unsigned>> rearms;
     uint64_t commands = 0;
+    uint64_t executedCommands = 0;
     Oracle() { control.fill(-1); }
     unsigned vertex()
     {
@@ -93,6 +94,7 @@ struct Oracle {
     void mechanism(const c::Mechanism& m)
     {
         ++commands;
+        executedCommands += m.kind == c::Mechanism::Rendezvous ? 4 : 1;
         if (m.kind == c::Mechanism::Barrier) {
             auto v = vertex();
             command(m.first, v, true);
@@ -308,6 +310,15 @@ int main()
             shortBudget.success && shortBudget.before == baseline.before &&
             shortBudget.alternativeChoiceBudgetExhausted);
         require(shortBudget.alternativeChoiceWork < selected.alternativeChoiceWork);
+        for (const auto& keys : {std::vector<unsigned>{0}, std::vector<unsigned>{0, 1}, std::vector<unsigned>{3, 5}}) {
+            auto scarce = p;
+            scarce.target.compilerKeys = keys;
+            auto oldScarce = c::testing::constructDemandsWithoutAlternativeChoices(scarce);
+            auto newScarce = c::constructDemands(scarce);
+            require(oldScarce.success && newScarce.success && !newScarce.alternativeChoiceFamilies);
+            require(newScarce.before == oldScarce.before);
+            require(c::verifyDemands(scarce, newScarce.before).success);
+        }
         for (unsigned arm = 0; arm < 2; ++arm) {
             Oracle oracle;
             ExecutionPolicy policy;
@@ -316,9 +327,10 @@ int main()
             execute(p, selected, root, policy, oracle);
             oracle.check();
         }
-        // The old broad B receipt also served a later C consumer. Hoisting it
-        // without constructing another handoff must be refused, not accepted
-        // because the alternative event participation is otherwise correct.
+        // The old broad B receipt also served a later C consumer. Earlier
+        // demand selection must leave that C history pending. The ordinary
+        // constructor may supply it, or the complete optional transaction may
+        // decline on cost; the old removal-only output remains invalid.
         auto continuation = p;
         auto last = p.nodes[root].children.back();
         continuation.nodes[last].kind = c::Node::Operation;
@@ -326,9 +338,136 @@ int main()
         continuation.nodes[last].effects[2].readers = 1u << observer;
         auto oldContinuation = c::testing::constructDemandsWithoutAlternativeChoices(continuation);
         auto newContinuation = c::constructDemands(continuation);
-        require(oldContinuation.success && newContinuation.success && newContinuation.rejectedAlternativeChoices > 0);
-        require(newContinuation.before == oldContinuation.before);
+        require(oldContinuation.success && newContinuation.success);
+        require(c::verifyDemands(continuation, newContinuation.before).success);
+        if (!newContinuation.alternativeChoiceFamilies)
+            require(newContinuation.before == oldContinuation.before);
         require(!c::verifyDemands(continuation, selected.before).success);
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            Oracle oracle;
+            ExecutionPolicy policy;
+            policy.trips = [](unsigned, unsigned) { return 0u; };
+            policy.choice = [arm](unsigned, unsigned) { return arm; };
+            execute(continuation, newContinuation, root, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // Cross-Choice continuation and storage reuse are ordinary physical
+        // demands. Exercise independently varying owners and branches rather
+        // than a fixed trip count or a kernel-specific prefetch shape.
+        for (bool withLaterProducer : {false, true})
+            for (bool recurring : {false, true})
+                for (unsigned overwrite : {0u, 1u, 2u}) {
+                    c::Program p;
+                    p.cells = 4;
+                    unsigned source = unsigned(Pipe::MTE2), observer = unsigned(Pipe::V);
+                    auto a = op(p, source, 0, true), b = op(p, source, 1, true);
+                    auto later = op(p, source, 2, true);
+                    std::vector<unsigned> arms;
+                    for (unsigned arm = 0; arm < 2; ++arm) {
+                        auto first = op(p, observer, 0, false);
+                        auto second = op(p, observer, 1, false);
+                        arms.push_back(sequence(p, {first, second}));
+                    }
+                    auto choice = add(p, c::Node::Choice, arms);
+                    std::vector<unsigned> body{a, b, later, choice};
+                    if (withLaterProducer)
+                        body.push_back(op(p, source, 3, true));
+                    auto consumer = op(p, observer, 2, false);
+                    if (withLaterProducer)
+                        p.nodes[consumer].effects[3].readers = 1u << observer;
+                    body.push_back(consumer);
+                    for (unsigned i = 0; i < overwrite; ++i) {
+                        body.push_back(op(p, source, 2, true));
+                        body.push_back(op(p, observer, 2, false));
+                    }
+                    auto owner = sequence(p, body);
+                    auto root = recurring ? sequence(p, {add(p, c::Node::For, {owner})}) : owner;
+                    auto baseline = c::testing::constructDemandsWithoutAlternativeChoices(p);
+                    auto candidate = c::constructDemands(p);
+                    require(baseline.success && candidate.success);
+                    require(c::verifyDemands(p, candidate.before).success);
+                    if (withLaterProducer && !recurring && !overwrite) {
+                        require(candidate.alternativeChoiceFamilies == 1);
+                        require(!candidate.alternativeChoiceCostRejections);
+                        auto missingContinuation = candidate.before;
+                        missingContinuation[consumer].clear();
+                        require(!c::verifyDemands(p, missingContinuation).success);
+                    }
+                    if (!withLaterProducer) {
+                        require(candidate.alternativeChoiceContinuationDemands > 0);
+                        require(candidate.alternativeChoiceCostRejections == 1);
+                    }
+                    if (!candidate.alternativeChoiceFamilies)
+                        require(candidate.before == baseline.before);
+                    for (unsigned pattern = 0; pattern < 4; ++pattern) {
+                        Oracle oldOracle, newOracle;
+                        ExecutionPolicy oldPolicy, newPolicy;
+                        oldPolicy.trips = newPolicy.trips = [pattern](unsigned, unsigned visit) {
+                            constexpr unsigned trips[] = {0, 1, 3, 0, 2};
+                            return trips[(visit + pattern) % 5];
+                        };
+                        oldPolicy.choice =
+                            newPolicy.choice = [pattern](unsigned, unsigned visit) { return (visit + pattern) % 2; };
+                        uint64_t ownerVisits = 0;
+                        for (unsigned invocation = 0; invocation < (recurring ? 5u : 1u); ++invocation) {
+                            execute(p, baseline, root, oldPolicy, oldOracle);
+                            execute(p, candidate, root, newPolicy, newOracle);
+                            oldOracle.check();
+                            newOracle.check();
+                            ownerVisits += recurring ? oldPolicy.lastTrips.at(p.nodes[root].children.front()) : 1;
+                            require(newOracle.executedCommands <= oldOracle.executedCommands + 2 * ownerVisits);
+                            require(oldOracle.accesses.size() == newOracle.accesses.size());
+                            for (unsigned i = 0; i < oldOracle.accesses.size(); ++i)
+                                for (unsigned cell = 0; cell < p.cells; ++cell) {
+                                    const auto& old = oldOracle.accesses[i].effects[cell];
+                                    const auto& fresh = newOracle.accesses[i].effects[cell];
+                                    require(old.readers == fresh.readers && old.writers == fresh.writers);
+                                }
+                        }
+                    }
+                }
+    }
+    {
+        // A branch-local newer generation, an absent consumer, or a consumed
+        // prefix inside independently repeated control cannot be promoted as
+        // one universally participating parent family.
+        for (unsigned mutation = 0; mutation < 3; ++mutation) {
+            c::Program p;
+            p.cells = 3;
+            unsigned source = unsigned(Pipe::MTE2), observer = unsigned(Pipe::V);
+            auto a = op(p, source, 0, true), b = op(p, source, 1, true);
+            auto later = op(p, source, 2, true);
+            std::vector<unsigned> arms;
+            for (unsigned arm = 0; arm < 2; ++arm) {
+                std::vector<unsigned> body{op(p, observer, 0, false)};
+                if (arm == 0 && mutation == 0)
+                    body.push_back(op(p, source, 1, true));
+                if (!(arm == 0 && mutation == 1)) {
+                    unsigned consumer = op(p, observer, 1, false);
+                    if (arm == 0 && mutation == 2)
+                        consumer = add(p, c::Node::For, {sequence(p, {consumer})});
+                    body.push_back(consumer);
+                }
+                arms.push_back(sequence(p, body));
+            }
+            auto choice = add(p, c::Node::Choice, arms);
+            auto root = sequence(p, {a, b, later, choice});
+            auto baseline = c::testing::constructDemandsWithoutAlternativeChoices(p);
+            auto candidate = c::constructDemands(p);
+            require(baseline.success && candidate.success && !candidate.alternativeChoiceFamilies);
+            require(candidate.before == baseline.before);
+            for (unsigned take = 0; take < 2; ++take)
+                for (unsigned trips : {0u, 1u, 3u}) {
+                    Oracle oracle;
+                    ExecutionPolicy policy;
+                    policy.trips = [trips](unsigned, unsigned) { return trips; };
+                    policy.choice = [take](unsigned, unsigned) { return take; };
+                    execute(p, candidate, root, policy, oracle);
+                    oracle.check();
+                }
+        }
     }
     {
         // One actual parent publication, alternative late acquisitions. The

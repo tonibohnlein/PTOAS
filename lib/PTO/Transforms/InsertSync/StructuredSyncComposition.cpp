@@ -1237,16 +1237,34 @@ namespace {
 // prefix, even when that child is an arbitrary conditional or nested loop.
 struct DemandAnalysis {
     using EntryWitnessKey = std::pair<unsigned, unsigned>;
+    using UniversalDemandKey = std::tuple<unsigned, unsigned, unsigned, unsigned, unsigned, std::vector<unsigned>>;
     static constexpr uint64_t MaxIncomingEntryWork = 1u << 20;
     static constexpr uint64_t MaxChoiceIncomingWork = 1u << 20;
     struct ChoiceIncomingOptions {
-        bool enabled = false, corrupt = false;
+        struct CommonChoiceProposal {
+            c::CompletionDemand demand;
+            c::Effects witness;
+        };
+        struct UniversalChoiceFamily {
+            unsigned choice = NoCut, parent = NoCut, publication = NoCut;
+            unsigned source = NoCut, observer = NoCut;
+            std::vector<unsigned> cells;
+            std::vector<c::CompletionDemand> alternatives;
+            uint64_t prefixSteps = 0;
+        };
+        bool enabled = false, commonEnabled = true, corrupt = false;
+        bool alternativesEnabled = false, corruptAlternative = false;
         uint64_t limit = MaxChoiceIncomingWork;
         // One allowance shared by discovery, refinement, allocation replay
         // and ring attempts. A new DemandAnalysis must not reset this budget.
         mutable uint64_t charged = 0;
         mutable bool exhausted = false;
         mutable uint64_t passes = 0, exhaustionPass = 0;
+        mutable bool commonAnalyzed = false;
+        mutable std::vector<CommonChoiceProposal> common;
+        const std::vector<c::CompletionDemand>* baselineDemands = nullptr;
+        mutable bool alternativesAnalyzed = false;
+        mutable std::vector<UniversalChoiceFamily> alternatives;
     };
     struct FirstLaneSummary {
         std::array<unsigned, MaxAlternatives> operations{};
@@ -1278,11 +1296,20 @@ struct DemandAnalysis {
     std::vector<std::vector<PrefixState::EventKey>> release;
     std::map<EntryWitnessKey, c::Effects> entryWitnesses;
     std::map<EntryWitnessKey, c::Effects> choiceWitnesses;
+    std::vector<ChoiceIncomingOptions::UniversalChoiceFamily> universalChoices;
+    std::map<UniversalDemandKey, unsigned> universalChoiceRequests;
     uint64_t entrySummarySlots = 0, entrySummaryScans = 0, entryStorageUnits = 0;
     uint64_t entryCandidatePairs = 0;
     uint64_t entryWitnessCells = 0, entryWitnessCount = 0, entrySourceOverlapRejections = 0;
     uint64_t entrySummarySkipped = 0;
     uint64_t choiceDemandCandidates = 0, choiceDemandWork = 0;
+
+    std::optional<unsigned> universalChoiceFamily(const c::CompletionDemand& demand) const
+    {
+        auto found = universalChoiceRequests.find(
+            {demand.scope, demand.publication, demand.acquisition, demand.source, demand.observer, demand.cells});
+        return found == universalChoiceRequests.end() ? std::nullopt : std::optional<unsigned>(found->second);
+    }
 
     const c::Effects* entryWitness(const c::CompletionDemand& demand) const
     {
@@ -1449,7 +1476,7 @@ struct DemandAnalysis {
             }
         }
         bool needsChoiceFirst = false;
-        if (choiceEnabled && chargeChoiceWork(p.nodes.size()))
+        if (choiceEnabled && choiceIncoming->commonEnabled && chargeChoiceWork(p.nodes.size()))
             for (unsigned id = 0; id < p.nodes.size() && !needsChoiceFirst; ++id)
                 needsChoiceFirst = p.nodes[id].kind == c::Node::Choice && parent[id] != NoCut &&
                                    p.nodes[parent[id]].kind == c::Node::Sequence && position[id] > 0;
@@ -1561,12 +1588,23 @@ struct DemandAnalysis {
         // loop entry, but a separate allowance and an ordinary Every protocol.
         // Build the whole bounded population transactionally before exposing
         // captures to the mandatory demand pass.
-        struct ChoiceProposal {
-            c::CompletionDemand demand;
-            c::Effects witness;
-        };
-        std::vector<ChoiceProposal> choiceProposals;
-        if (choiceEnabled && needsChoiceFirst && hasEntryFirst && !choiceExhausted) {
+        std::vector<ChoiceIncomingOptions::CommonChoiceProposal> choiceProposals;
+        if (choiceEnabled && choiceIncoming->commonEnabled && choiceIncoming->commonAnalyzed && needsChoiceFirst &&
+            hasEntryFirst && !choiceExhausted) {
+            uint64_t copyWork = 0;
+            for (const auto& proposal : choiceIncoming->common) {
+                uint64_t cells = proposal.demand.cells.size() + proposal.witness.size() + 8;
+                if (cells > MaxChoiceIncomingWork - copyWork) {
+                    choiceExhausted = true;
+                    break;
+                }
+                copyWork += cells;
+            }
+            if (!choiceExhausted && chargeChoiceWork(copyWork))
+                choiceProposals = choiceIncoming->common;
+        }
+        if (choiceEnabled && choiceIncoming->commonEnabled && !choiceIncoming->commonAnalyzed && needsChoiceFirst &&
+            hasEntryFirst && !choiceExhausted) {
             if (!chargeChoiceWork(p.nodes.size()))
                 choiceExhausted = true;
             std::vector<uint8_t> hasRecurrence;
@@ -1704,6 +1742,11 @@ struct DemandAnalysis {
                 }
             }
         }
+        if (choiceIncoming && choiceIncoming->commonEnabled && !choiceIncoming->commonAnalyzed) {
+            choiceIncoming->commonAnalyzed = true;
+            if (!choiceExhausted)
+                choiceIncoming->common = choiceProposals;
+        }
         if (choiceExhausted)
             choiceProposals.clear();
         else
@@ -1714,6 +1757,164 @@ struct DemandAnalysis {
                 requests[proposal.demand.acquisition].push_back(std::move(proposal.demand));
                 ++choiceDemandCandidates;
             }
+        // The same optional transaction can promote a branch-local ordinary
+        // demand to one parent-owned family. Discovery is based on the exact
+        // demands of the verified disabled plan; later analysis passes only
+        // replay these immutable identities. No command population is edited
+        // after numbering.
+        if (choiceEnabled && choiceIncoming->alternativesEnabled && choiceIncoming->baselineDemands &&
+            !choiceIncoming->alternativesAnalyzed && !choiceExhausted) {
+            choiceIncoming->alternativesAnalyzed = true;
+            std::vector<ChoiceIncomingOptions::UniversalChoiceFamily> proposals;
+            auto contains = [&](unsigned root, unsigned node) {
+                for (unsigned at = node; at != NoCut; at = parent[at])
+                    if (at == root)
+                        return true;
+                return false;
+            };
+            auto relevant = [&](const c::CompletionDemand& demand, const c::Effects& summary) {
+                if (demand.acquisition >= p.nodes.size())
+                    return false;
+                const auto& consumer = p.nodes[demand.acquisition].effects;
+                uint8_t source = uint8_t(1u << demand.source);
+                for (unsigned cell : demand.cells) {
+                    if (cell >= p.cells)
+                        return true;
+                    bool touches = consumer[cell].readers || consumer[cell].writers;
+                    if ((touches && (summary[cell].writers & source)) ||
+                        (consumer[cell].writers && (summary[cell].readers & source)))
+                        return true;
+                }
+                return false;
+            };
+            auto invalidatingPath = [&](const c::CompletionDemand& demand, unsigned choice) {
+                unsigned child = demand.acquisition;
+                for (unsigned scope = parent[child]; scope != NoCut && child != choice;
+                     child = scope, scope = parent[scope]) {
+                    if (p.nodes[scope].kind != c::Node::Sequence)
+                        continue;
+                    for (unsigned i = 0; i < position[child]; ++i)
+                        if (relevant(demand, effects[p.nodes[scope].children[i]]))
+                            return true;
+                }
+                return false;
+            };
+            for (const auto& demand : *choiceIncoming->baselineDemands) {
+                // Charge every rejected ancestry/effect scan before performing
+                // it. With at most eight retained families/sites, exhausting
+                // this shared allowance simply disables the optional proposal.
+                if (!chargeChoiceWork(uint64_t(p.nodes.size()) * (uint64_t(p.cells) + 8)))
+                    break;
+                if (demand.acquisition >= p.nodes.size() || p.nodes[demand.acquisition].kind != c::Node::Operation ||
+                    demand.source >= c::LaneCount || demand.observer >= c::LaneCount ||
+                    demand.source == demand.observer)
+                    continue;
+                unsigned choice = NoCut;
+                for (unsigned at = parent[demand.acquisition]; at != NoCut; at = parent[at])
+                    if (p.nodes[at].kind == c::Node::Choice) {
+                        choice = at;
+                        break;
+                    }
+                if (choice == NoCut || !contains(choice, demand.publication) || parent[choice] == NoCut ||
+                    p.nodes[parent[choice]].kind != c::Node::Sequence || invalidatingPath(demand, choice))
+                    continue;
+                unsigned choiceParent = parent[choice];
+                const auto& siblings = p.nodes[choiceParent].children;
+                int last = -1;
+                for (unsigned i = 0; i < position[choice]; ++i)
+                    if (relevant(demand, effects[siblings[i]]))
+                        last = i;
+                if (last < 0)
+                    continue;
+                uint64_t prefixSteps = 0;
+                uint8_t sourceBit = uint8_t(1u << demand.source);
+                for (unsigned i = unsigned(last + 1); i < position[choice]; ++i)
+                    prefixSteps += std::any_of(
+                        effects[siblings[i]].begin(), effects[siblings[i]].end(),
+                        [&](const auto& effect) { return (effect.readers | effect.writers) & sourceBit; });
+                if (!prefixSteps)
+                    continue;
+                unsigned publication = siblings[unsigned(last + 1)];
+                auto found = std::find_if(proposals.begin(), proposals.end(), [&](const auto& proposal) {
+                    return proposal.choice == choice && proposal.parent == choiceParent &&
+                           proposal.publication == publication && proposal.source == demand.source &&
+                           proposal.observer == demand.observer && proposal.cells == demand.cells;
+                });
+                if (found == proposals.end()) {
+                    if (proposals.size() == MaxAlternatives) {
+                        choiceExhausted = true;
+                        break;
+                    }
+                    proposals.push_back(
+                        {choice,
+                         choiceParent,
+                         publication,
+                         demand.source,
+                         demand.observer,
+                         demand.cells,
+                         {},
+                         prefixSteps});
+                    found = std::prev(proposals.end());
+                }
+                if (found->alternatives.size() == MaxAlternatives) {
+                    choiceExhausted = true;
+                    break;
+                }
+                found->alternatives.push_back(demand);
+            }
+            if (!choiceExhausted)
+                proposals.erase(
+                    std::remove_if(
+                        proposals.begin(), proposals.end(),
+                        [&](const auto& proposal) {
+                            std::set<unsigned> sites;
+                            for (const auto& demand : proposal.alternatives)
+                                sites.insert(demand.acquisition);
+                            std::function<std::optional<uint8_t>(unsigned)> cardinality =
+                                [&](unsigned id) -> std::optional<uint8_t> {
+                                if (!chargeChoiceWork(1))
+                                    return {};
+                                const auto& node = p.nodes[id];
+                                if (node.kind == c::Node::For || node.kind == c::Node::While)
+                                    return {};
+                                unsigned own = sites.count(id) ? 1 : 0;
+                                auto add = [](uint8_t left, uint8_t right) {
+                                    uint8_t result = 0;
+                                    for (unsigned a = 0; a < 3; ++a)
+                                        if (left & (1u << a))
+                                            for (unsigned b = 0; b < 3; ++b)
+                                                if (right & (1u << b))
+                                                    result |= uint8_t(1u << std::min(2u, a + b));
+                                    return result;
+                                };
+                                uint8_t children = 1;
+                                if (node.kind == c::Node::Choice) {
+                                    children = 0;
+                                    for (unsigned child : node.children) {
+                                        auto part = cardinality(child);
+                                        if (!part)
+                                            return {};
+                                        children |= *part;
+                                    }
+                                } else
+                                    for (unsigned child : node.children) {
+                                        auto part = cardinality(child);
+                                        if (!part)
+                                            return {};
+                                        children = add(children, *part);
+                                    }
+                                return add(uint8_t(1u << own), children);
+                            };
+                            auto counts = cardinality(proposal.choice);
+                            return !counts || *counts != uint8_t(1u << 1) || sites.size() < 2;
+                        }),
+                    proposals.end());
+            if (choiceExhausted)
+                proposals.clear();
+            choiceIncoming->alternatives = std::move(proposals);
+        }
+        if (choiceIncoming && choiceIncoming->alternativesEnabled && !choiceIncoming->exhausted)
+            universalChoices = choiceIncoming->alternatives;
         for (unsigned scope = 0; scope < p.nodes.size(); ++scope) {
             const auto& children = p.nodes[scope].children;
             if (p.nodes[scope].kind != c::Node::Sequence || children.empty())
@@ -1865,6 +2066,22 @@ struct DemandAnalysis {
                             continue;
                         if (last >= 0)
                             demand.publication = children[last + 1];
+                        for (unsigned family = 0; family < universalChoices.size(); ++family) {
+                            const auto& proposal = universalChoices[family];
+                            auto original = std::find_if(
+                                proposal.alternatives.begin(), proposal.alternatives.end(), [&](const auto& old) {
+                                    return old.scope == demand.scope && old.publication == demand.publication &&
+                                           old.acquisition == demand.acquisition && old.source == demand.source &&
+                                           old.observer == demand.observer && old.cells == demand.cells;
+                                });
+                            if (original == proposal.alternatives.end())
+                                continue;
+                            demand.publication = proposal.publication;
+                            universalChoiceRequests[{
+                                demand.scope, demand.publication, demand.acquisition, demand.source, demand.observer,
+                                demand.cells}] = family;
+                            break;
+                        }
                         capture[demand.publication].insert(source);
                         requests[child].push_back(std::move(demand));
                     }
@@ -3866,7 +4083,7 @@ c::Result verifyDemandImpl(
     uint64_t alternativeChoiceLimit = AlternativeChoiceCertificates::MaxWork, bool* usedAlternativeChoices = nullptr);
 c::Result verifyConstructionDemands(
     const c::Program& p, const Commands& actual, DemandInvariants* invariants, const ChildReturnOptions* childReturns,
-    bool* usedChildReturns = nullptr);
+    bool* usedChildReturns = nullptr, const DemandAnalysis::ChoiceIncomingOptions* choiceIncoming = nullptr);
 c::Result constructDemandCandidate(
     const c::Program& p, const DemandInvariants* invariants, DemandFallbacks& unassigned,
     const DemandFallbacks* forced = nullptr, const Cuts* recurring = nullptr,
@@ -3889,7 +4106,23 @@ c::Result constructDemandCandidate(
     };
     std::map<FamilyKey, Family> families;
     std::vector<PrefixState::EventKey> demandKeys;
+    struct UniversalRuntime {
+        std::optional<unsigned> forward;
+        std::set<unsigned> realized;
+    };
+    std::vector<UniversalRuntime> universalRuntime(analysis.universalChoices.size());
+    std::set<PrefixState::EventKey> universalForwardKeys;
+    std::set<FamilyKey> universalAckFamilies;
+    bool universalFailed = false;
     unsigned nextLogicalKey = 1;
+    if (!analysis.universalChoices.empty())
+        for (unsigned physical : p.target.compilerKeys) {
+            if (physical == NoCut) {
+                result.reason = "universal Choice logical namespace unavailable";
+                return result;
+            }
+            nextLogicalKey = std::max(nextLogicalKey, physical + 1);
+        }
     DemandRings rings(p.nodes.size());
     std::map<unsigned, State> ringIncoming;
     if (recurring) {
@@ -3932,7 +4165,16 @@ c::Result constructDemandCandidate(
             ++result.replayedFallbackDemands;
             return false;
         }
-        auto receipt = state.receipts.find({demand.source, demand.source, demand.publication});
+        auto universal = analysis.universalChoiceFamily(demand);
+        PrefixState::EventKey receiptKey{demand.source, demand.source, demand.publication};
+        if (universal) {
+            if (*universal >= universalRuntime.size() || !universalRuntime[*universal].forward) {
+                universalFailed = true;
+                return false;
+            }
+            receiptKey = {demand.source, observer, *universalRuntime[*universal].forward};
+        }
+        auto receipt = state.receipts.find(receiptKey);
         if (receipt == state.receipts.end())
             return false;
         auto trialState = state;
@@ -3942,7 +4184,7 @@ c::Result constructDemandCandidate(
         FamilyKey familyKey{demand.scope, demand.source, observer};
         auto family = families.find(familyKey);
         unsigned savedLogicalKey = nextLogicalKey;
-        auto forward = allocate(demand.source, observer);
+        auto forward = universal ? universalRuntime[*universal].forward : allocate(demand.source, observer);
         auto ack = family == families.end() ? allocate(observer, demand.source) :
                                               std::optional<unsigned>(family->second.acknowledgment);
         if (!forward || !ack) {
@@ -3950,13 +4192,21 @@ c::Result constructDemandCandidate(
             return false;
         }
         families[familyKey] = {*ack, acquisition};
-        publications[demand.publication].push_back(event(Mechanism::Publish, demand.source, observer, *forward));
+        if (!universal)
+            publications[demand.publication].push_back(event(Mechanism::Publish, demand.source, observer, *forward));
         bool corruptChoice = choiceIncoming && choiceIncoming->corrupt && analysis.choiceWitness(demand);
-        if (!corruptChoice)
+        bool corruptUniversal = universal && choiceIncoming && choiceIncoming->corruptAlternative &&
+                                universalRuntime[*universal].realized.empty();
+        if (!corruptChoice && !corruptUniversal)
             result.before[acquisition].push_back(event(Mechanism::Acquire, demand.source, observer, *forward));
         state.acquireRemaining(observer, receipt->second);
         result.demands.push_back(demand);
         demandKeys.push_back({demand.source, observer, *forward});
+        if (universal) {
+            universalRuntime[*universal].realized.insert(acquisition);
+            universalForwardKeys.insert({demand.source, observer, *forward});
+            universalAckFamilies.insert(familyKey);
+        }
         ++result.directHandoffs;
         return true;
     };
@@ -4047,6 +4297,24 @@ c::Result constructDemandCandidate(
             return true;
         }
         if (n.kind == Node::Choice) {
+            std::vector<PrefixState::EventKey> universalReceipts;
+            for (unsigned family = 0; family < analysis.universalChoices.size(); ++family) {
+                const auto& proposal = analysis.universalChoices[family];
+                if (proposal.choice != id)
+                    continue;
+                auto sourceReceipt = state.receipts.find({proposal.source, proposal.source, proposal.publication});
+                auto forward = allocate(proposal.source, proposal.observer);
+                if (sourceReceipt == state.receipts.end() || !forward) {
+                    universalFailed = true;
+                    continue;
+                }
+                universalRuntime[family].forward = *forward;
+                auto mechanism = event(Mechanism::Publish, proposal.source, proposal.observer, *forward);
+                publications[proposal.publication].push_back(mechanism);
+                PrefixState::EventKey receipt{proposal.source, proposal.observer, *forward};
+                state.receipts[receipt] = sourceReceipt->second;
+                universalReceipts.push_back(receipt);
+            }
             // A universal first-observer request executes before branch state
             // is copied. It remains an ordinary Every SET/WAIT family; failure
             // to realize this optional prefix leaves branch-local demands to
@@ -4061,7 +4329,20 @@ c::Result constructDemandCandidate(
             auto other = state;
             if (!visit(n.children[0], state) || !visit(n.children[1], other))
                 return false;
+            for (const auto& receipt : universalReceipts) {
+                state.receipts.erase(receipt);
+                other.receipts.erase(receipt);
+            }
             state.join(other);
+            for (unsigned family = 0; family < analysis.universalChoices.size(); ++family) {
+                const auto& proposal = analysis.universalChoices[family];
+                if (proposal.choice != id)
+                    continue;
+                std::set<unsigned> expected;
+                for (const auto& demand : proposal.alternatives)
+                    expected.insert(demand.acquisition);
+                universalFailed |= universalRuntime[family].realized != expected;
+            }
             for (const auto& cut : analysis.release[id])
                 state.receipts.erase(cut);
             return true;
@@ -4188,7 +4469,15 @@ c::Result constructDemandCandidate(
     };
     PrefixState state(p.cells);
     result.success = visit(p.nodes.size() - 1, state);
-    if (!result.success) {
+    for (const auto& proposal : analysis.universalChoices)
+        for (const auto& demand : proposal.alternatives) {
+            auto family = families.find({demand.scope, demand.source, demand.observer});
+            universalFailed |= family == families.end() || family->second.last != demand.acquisition;
+        }
+    if (!result.success || universalFailed) {
+        if (result.reason.empty())
+            result.reason = "universal Choice family was not realized exactly";
+        result.success = false;
         result.before.clear();
         return result;
     }
@@ -4210,6 +4499,8 @@ c::Result constructDemandCandidate(
     // trial per directed family (fixed lane population) in each scope.
     std::set<FamilyKey> removedAcknowledgments;
     for (const auto& [familyKey, family] : families) {
+        if (universalAckFamilies.count(familyKey))
+            continue;
         auto [scope, source, observer] = familyKey;
         auto& commands = result.before[family.last];
         auto saved = commands;
@@ -4242,14 +4533,68 @@ c::Result constructDemandCandidate(
     std::map<Direction, std::set<unsigned>> occupied = entryKeys;
     for (const auto& [direction, keys] : entryKeys)
         result.protocolKeys += keys.size();
+    AlternativeChoiceCertificates logicalAlternatives;
+    std::map<PrefixState::EventKey, unsigned> universalNumbering;
+    std::set<PrefixState::EventKey> universalPhysicalKeys;
+    if (!universalForwardKeys.empty()) {
+        uint64_t remaining = 0;
+        if (choiceIncoming && !choiceIncoming->exhausted && choiceIncoming->charged <= choiceIncoming->limit)
+            remaining = choiceIncoming->limit - choiceIncoming->charged;
+        std::string alternativeReason;
+        bool certified =
+            logicalAlternatives.build(p, analysis, result.before, universalForwardKeys, remaining, alternativeReason);
+        if (choiceIncoming) {
+            // Exhausted proposals still pay for the work completed before refusal.
+            if (logicalAlternatives.work > remaining)
+                choiceIncoming->exhausted = true;
+            else
+                choiceIncoming->charged += logicalAlternatives.work;
+            choiceIncoming->exhausted |= logicalAlternatives.exhausted;
+        }
+        if (!certified || logicalAlternatives.families != analysis.universalChoices.size()) {
+            result.success = false;
+            result.reason = alternativeReason.empty() ? "universal Choice logical certificate failed" :
+                                                        std::move(alternativeReason);
+            result.before.clear();
+            return result;
+        }
+        auto trial = occupied;
+        for (const auto& logical : logicalAlternatives.familyKeys) {
+            unsigned source = std::get<0>(logical), observer = std::get<1>(logical);
+            auto physical = std::find_if(p.target.compilerKeys.begin(), p.target.compilerKeys.end(), [&](unsigned k) {
+                return key(p, source, observer) != k && p.target.available(lane(p, source), lane(p, observer), k) &&
+                       !trial[{source, observer}].count(k);
+            });
+            if (physical == p.target.compilerKeys.end()) {
+                result.success = false;
+                result.reason = "universal Choice family exhausted dedicated event keys";
+                result.before.clear();
+                return result;
+            }
+            trial[{source, observer}].insert(*physical);
+            universalNumbering.emplace(logical, *physical);
+            universalPhysicalKeys.insert({source, observer, *physical});
+            ++result.protocolKeys;
+        }
+        occupied = std::move(trial);
+        result.alternativeChoiceCandidates = analysis.universalChoices.size();
+        result.alternativeChoiceFamilies = logicalAlternatives.families;
+        result.alternativeChoiceSites = logicalAlternatives.sites;
+        for (const auto& family : analysis.universalChoices)
+            result.alternativeChoiceSetsRemoved += family.alternatives.size() - 1;
+        result.alternativeChoiceSourceScopes = logicalAlternatives.sourceScopes.size();
+        result.alternativeChoicePrefixSteps = logicalAlternatives.prefixSteps;
+        result.alternativeChoiceWork = choiceIncoming ? choiceIncoming->charged : logicalAlternatives.work;
+    }
     std::set<unsigned> fallbackScopes;
     std::set<PrefixState::EventKey> fallbackKeys;
     std::map<FamilyKey, unsigned> numberedAcknowledgments;
     bool retainAckIdentity = childReturns && childReturns->enabled && childReturns->reserve(families.size(), 8);
     for (unsigned scope : analysis.scopeOrder) {
-        auto word = demandWord(p, result.before, scope, true, true);
-        if (word.empty())
-            continue;
+        const auto* excluded = logicalAlternatives.familyKeys.empty() ? nullptr : &logicalAlternatives.familyKeys;
+        auto word = demandWord(p, result.before, scope, true, true, excluded);
+        // An all-alternative scope still contains endpoints that must receive
+        // their reserved physical numbers even though its ordinary word is empty.
         ProtocolFacts facts;
         if (!verifyProtocolWord(word, result.reason, &facts)) {
             result.success = false;
@@ -4317,6 +4662,12 @@ c::Result constructDemandCandidate(
                     continue;
                 }
                 PrefixState::EventKey logical{m.first, m.second, m.forwardKey};
+                auto universalNumber = universalNumbering.find(logical);
+                if (universalNumber != universalNumbering.end()) {
+                    m.forwardKey = universalNumber->second;
+                    commands.push_back(m);
+                    continue;
+                }
                 if (fallbackKeys.count(logical) && rings.owners.count(logical)) {
                     result.success = false;
                     result.reason = "optional recurring demand ring exhausted event keys";
@@ -4343,7 +4694,11 @@ c::Result constructDemandCandidate(
         // Packet replacement preserves (and may strengthen) the original
         // acquisition's causal edges. Do not accept that argument alone: check
         // actual renamed raw events together with the actual canonical packets.
-        if (!verifyProtocolWord(demandWord(p, result.before, scope, true), result.reason)) {
+        if (!verifyProtocolWord(
+                demandWord(
+                    p, result.before, scope, true, false,
+                    universalPhysicalKeys.empty() ? nullptr : &universalPhysicalKeys),
+                result.reason)) {
             result.success = false;
             result.before.clear();
             return result;
@@ -4409,6 +4764,7 @@ c::Result constructDemandCandidate(
                     ambiguousChoices.insert(family);
             }
         std::set<PrefixState::EventKey> protectedKeys;
+        protectedKeys.insert(universalPhysicalKeys.begin(), universalPhysicalKeys.end());
         if (affordable)
             for (const auto& commands : result.before)
                 for (const auto& mechanism : commands)
@@ -4419,6 +4775,8 @@ c::Result constructDemandCandidate(
                     }
         if (affordable)
             for (const auto& [familyKey, family] : families) {
+                if (universalAckFamilies.count(familyKey))
+                    continue;
                 auto choice = choiceRoots.find(familyKey);
                 auto ackNumber = numberedAcknowledgments.find(familyKey);
                 if (choice == choiceRoots.end() || ambiguousChoices.count(familyKey) ||
@@ -4490,7 +4848,9 @@ c::Result constructDemandCandidate(
             uint64_t remaining = allowance - childReturns->charged;
             ChildReturnSummaries summaries;
             std::string optionalReason;
-            bool proved = summaries.build(p, result.before, true, false, &protectedKeys, remaining, optionalReason);
+            bool proved = summaries.build(
+                p, result.before, true, false, &protectedKeys, remaining, optionalReason,
+                logicalAlternatives.choiceReturns.empty() ? nullptr : &logicalAlternatives.choiceReturns);
             childReturns->charged += summaries.work;
             childReturns->exhausted |= summaries.exhausted;
             if (proved)
@@ -4517,7 +4877,8 @@ c::Result constructDemandCandidate(
             c::Result checked;
             bool usedStructured = false;
             if (proved) {
-                checked = verifyConstructionDemands(p, result.before, nullptr, childReturns, &usedStructured);
+                checked =
+                    verifyConstructionDemands(p, result.before, nullptr, childReturns, &usedStructured, choiceIncoming);
                 proved &= checked.success && usedStructured;
             }
             result.nodeVisits += checked.nodeVisits;
@@ -4778,25 +5139,39 @@ c::Result verifyDemandImpl(
 namespace {
 c::Result verifyConstructionDemands(
     const c::Program& p, const Commands& actual, DemandInvariants* invariants, const ChildReturnOptions* childReturns,
-    bool* usedChildReturns)
+    bool* usedChildReturns, const DemandAnalysis::ChoiceIncomingOptions* choiceIncoming)
 {
-    if (!childReturns || !childReturns->enabled)
-        return verifyDemandImpl(p, actual, invariants, 0, usedChildReturns, 0);
-    ++childReturns->checks;
-    uint64_t allowance = std::min(childReturns->limit, ChildReturnSummaries::MaxWork);
-    uint64_t remaining = childReturns->exhausted ? 0 : allowance - childReturns->charged;
-    // Alternative families are introduced only by the final post-numbering
-    // transaction. Earlier passes must not spend or borrow that allowance.
-    auto checked = verifyDemandImpl(p, actual, invariants, remaining, usedChildReturns, 0);
-    if (checked.childReturnWork > remaining) {
+    uint64_t childRemaining = 0;
+    if (childReturns && childReturns->enabled) {
+        ++childReturns->checks;
+        uint64_t allowance = std::min(childReturns->limit, ChildReturnSummaries::MaxWork);
+        childRemaining = childReturns->exhausted ? 0 : allowance - childReturns->charged;
+    }
+    uint64_t alternativeRemaining = 0;
+    if (choiceIncoming && choiceIncoming->alternativesEnabled && !choiceIncoming->exhausted &&
+        choiceIncoming->charged <= choiceIncoming->limit)
+        alternativeRemaining = choiceIncoming->limit - choiceIncoming->charged;
+    auto checked = verifyDemandImpl(p, actual, invariants, childRemaining, usedChildReturns, alternativeRemaining);
+    if (childReturns && checked.childReturnWork > childRemaining) {
         checked.success = false;
         checked.childReturnBudgetExhausted = true;
-    } else
+    } else if (childReturns)
         childReturns->charged += checked.childReturnWork;
-    if (checked.childReturnBudgetExhausted) {
+    if (childReturns && checked.childReturnBudgetExhausted) {
         childReturns->exhausted = true;
         if (!childReturns->budgetCheck)
             childReturns->budgetCheck = childReturns->checks;
+    }
+    if (choiceIncoming && choiceIncoming->alternativesEnabled) {
+        uint64_t used = checked.alternativeChoiceWork + checked.childReturnWork;
+        // Charge partial proof work independently of the eventual proof status.
+        if (used <= alternativeRemaining)
+            choiceIncoming->charged += used;
+        if (used > alternativeRemaining || checked.alternativeChoiceBudgetExhausted ||
+            checked.childReturnBudgetExhausted) {
+            choiceIncoming->exhausted = true;
+            checked.success = false;
+        }
     }
     return checked;
 }
@@ -4817,8 +5192,9 @@ c::Result constructDemandsImpl(
                     [](const auto& m) { return m.participation == c::Mechanism::First; }),
                 commands.end());
     DemandInvariants invariants;
-    auto checked =
-        initial.success ? verifyConstructionDemands(p, initial.before, &invariants, childReturns) : c::Result{};
+    auto checked = initial.success ? verifyConstructionDemands(
+                                         p, initial.before, &invariants, childReturns, nullptr, choiceIncoming) :
+                                     c::Result{};
     if (!initial.success || !checked.success) {
         bool hasEntryContract =
             std::any_of(p.nodes.begin(), p.nodes.end(), [](const auto& n) { return n.entryGuardStart != NoCut; });
@@ -4854,8 +5230,9 @@ c::Result constructDemandsImpl(
         if (corruptRefinement)
             for (auto& commands : refined.before)
                 commands.clear();
-        auto rechecked =
-            refined.success ? verifyConstructionDemands(p, refined.before, nullptr, childReturns) : c::Result{};
+        auto rechecked = refined.success ? verifyConstructionDemands(
+                                               p, refined.before, nullptr, childReturns, nullptr, choiceIncoming) :
+                                           c::Result{};
         if (refined.success && rechecked.success) {
             refined.cellVisits += initial.cellVisits + rechecked.cellVisits;
             refined.nodeVisits += initial.nodeVisits + rechecked.nodeVisits;
@@ -4883,7 +5260,9 @@ c::Result constructDemandsImpl(
     if (corruptReplay)
         for (auto& commands : replay.before)
             commands.clear();
-    auto verified = replay.success ? verifyConstructionDemands(p, replay.before, nullptr, childReturns) : c::Result{};
+    auto verified = replay.success ?
+                        verifyConstructionDemands(p, replay.before, nullptr, childReturns, nullptr, choiceIncoming) :
+                        c::Result{};
     bool acceptable =
         replay.success && verified.success &&
         std::includes(unassigned.begin(), unassigned.end(), newlyUnassigned.begin(), newlyUnassigned.end());
@@ -4999,8 +5378,9 @@ c::Result constructWithDemandRings(
     if (corrupt)
         for (auto& commands : candidate.before)
             commands.clear();
-    auto checked =
-        candidate.success ? verifyConstructionDemands(p, candidate.before, nullptr, childReturns) : c::Result{};
+    auto checked = candidate.success ?
+                       verifyConstructionDemands(p, candidate.before, nullptr, childReturns, nullptr, choiceIncoming) :
+                       c::Result{};
     bool accepted = candidate.success && checked.success;
     uint64_t removed = 0;
     if (accepted)
@@ -5223,7 +5603,9 @@ c::Result constructWithDeferredRings(
                 break;
             }
         }
-    auto checked = transformed ? verifyConstructionDemands(p, candidate.before, nullptr, childReturns) : c::Result{};
+    auto checked = transformed ?
+                       verifyConstructionDemands(p, candidate.before, nullptr, childReturns, nullptr, choiceIncoming) :
+                       c::Result{};
     baseline.nodeVisits += checked.nodeVisits;
     baseline.cellVisits += checked.cellVisits;
     baseline.deferredProtocolSteps += checked.deferredProtocolSteps;
@@ -5383,7 +5765,9 @@ c::Result constructWithLateEntry(
             }
         }
     }
-    auto checked = transformed ? verifyConstructionDemands(p, candidate.before, nullptr, childReturns) : c::Result{};
+    auto checked = transformed ?
+                       verifyConstructionDemands(p, candidate.before, nullptr, childReturns, nullptr, choiceIncoming) :
+                       c::Result{};
     baseline.nodeVisits += checked.nodeVisits;
     baseline.cellVisits += checked.cellVisits;
     if (!transformed || !checked.success) {
@@ -5398,22 +5782,20 @@ c::Result constructWithLateEntry(
     return candidate;
 }
 
-c::Result constructWithChoiceDemands(
-    const c::Program& p, bool corrupt, uint64_t limit = 1u << 20, const ChildReturnOptions* childReturns = nullptr)
+c::Result constructChoiceTransaction(
+    const c::Program& p, c::Result baseline, DemandAnalysis::ChoiceIncomingOptions& options,
+    const ChildReturnOptions* childReturns)
 {
     using namespace c;
-    // Optional source snapshots can change bounded receipt-cache pressure. Keep
-    // a fully constructed disabled plan as the exact acceptance fallback.
-    auto baseline = constructWithLateEntry(p, false, 1u << 22, nullptr, childReturns);
-    if (!baseline.success || !limit)
+    if (!baseline.success || !options.enabled || !options.limit)
         return baseline;
-    const uint64_t allowance = std::min(limit, uint64_t(1u << 20));
+    const bool universalPhase = options.alternativesEnabled;
+    const uint64_t allowance = std::min(options.limit, uint64_t(DemandAnalysis::MaxChoiceIncomingWork));
     uint64_t work = 0;
     auto charge = [&](uint64_t amount) {
         if (amount > allowance - work)
             return false;
         work += amount;
-        baseline.choiceDemandWork = work;
         return true;
     };
     if (!charge(p.nodes.size()))
@@ -5442,34 +5824,44 @@ c::Result constructWithChoiceDemands(
         commands > (allowance - work) / perCommand || !charge(commands * perCommand))
         return baseline;
 
-    DemandAnalysis::ChoiceIncomingOptions options;
-    options.enabled = true;
-    options.corrupt = corrupt;
     options.limit = allowance - work;
+    options.baselineDemands = &baseline.demands;
     const uint64_t initialReservation = work;
     auto recordChoiceWork = [&](c::Result& result) {
-        result.choiceDemandWork = work + options.charged;
-        result.choiceDemandReservedWork = initialReservation;
-        result.choiceDemandAnalysisWork = options.charged;
-        result.choiceDemandAnalysisPasses = options.passes;
-        result.choiceDemandBudgetPass = options.exhaustionPass;
+        if (universalPhase) {
+            result.alternativeChoiceWork = work + options.charged;
+            result.alternativeChoiceBudgetExhausted = options.exhausted;
+        } else {
+            result.choiceDemandWork = work + options.charged;
+            result.choiceDemandReservedWork = initialReservation;
+            result.choiceDemandAnalysisWork = options.charged;
+            result.choiceDemandAnalysisPasses = options.passes;
+            result.choiceDemandBudgetPass = options.exhaustionPass;
+        }
     };
     DemandAnalysis proposed;
     std::string proposalReason;
     bool proposedOK = proposed.build(p, proposalReason, &options);
     recordChoiceWork(baseline);
-    if (options.exhausted || !proposedOK || !proposed.choiceDemandCandidates)
+    if (options.exhausted || !proposedOK ||
+        (universalPhase ? proposed.universalChoices.empty() : !proposed.choiceDemandCandidates))
         return baseline;
     auto candidate = constructWithLateEntry(p, false, 1u << 22, &options, childReturns);
     recordChoiceWork(baseline);
-    if (options.exhausted) {
-        baseline.choiceDemandCandidates = proposed.choiceDemandCandidates;
-        baseline.rejectedChoiceDemands = proposed.choiceDemandCandidates;
+    if (options.exhausted || (universalPhase && childReturns && childReturns->exhausted)) {
+        if (universalPhase) {
+            baseline.alternativeChoiceCandidates = proposed.universalChoices.size();
+            baseline.rejectedAlternativeChoices = proposed.universalChoices.size();
+            baseline.alternativeChoiceBudgetExhausted = true;
+        } else {
+            baseline.choiceDemandCandidates = proposed.choiceDemandCandidates;
+            baseline.rejectedChoiceDemands = proposed.choiceDemandCandidates;
+        }
         baseline.nodeVisits += candidate.nodeVisits;
         baseline.cellVisits += candidate.cellVisits;
         return baseline;
     }
-    if (candidate.success && candidate.choiceDemandFamilies) {
+    if (candidate.success && (candidate.choiceDemandFamilies || candidate.alternativeChoiceFamilies)) {
         uint64_t candidateCommands = 0;
         for (const auto& group : candidate.before)
             candidateCommands += group.size();
@@ -5480,24 +5872,68 @@ c::Result constructWithChoiceDemands(
         finalWork += nodes * nodes;
         finalWork += uint64_t(candidate.demands.size()) * (nodes + MaxAlternatives * (baseline.demands.size() + nodes));
         if (finalWork > allowance - work - options.charged) {
-            baseline.choiceDemandCandidates = proposed.choiceDemandCandidates;
-            baseline.rejectedChoiceDemands = proposed.choiceDemandCandidates;
+            if (universalPhase) {
+                baseline.alternativeChoiceCandidates = proposed.universalChoices.size();
+                baseline.rejectedAlternativeChoices = proposed.universalChoices.size();
+                baseline.alternativeChoiceBudgetExhausted = true;
+            } else {
+                baseline.choiceDemandCandidates = proposed.choiceDemandCandidates;
+                baseline.rejectedChoiceDemands = proposed.choiceDemandCandidates;
+            }
             baseline.nodeVisits += candidate.nodeVisits;
             baseline.cellVisits += candidate.cellVisits;
             return baseline;
         }
         work += finalWork;
+        options.limit -= finalWork;
     }
-    auto checked = candidate.success && candidate.choiceDemandFamilies ?
-                       verifyConstructionDemands(p, candidate.before, nullptr, childReturns) :
+    bool hasCandidate =
+        candidate.success && (universalPhase ? candidate.alternativeChoiceFamilies == proposed.universalChoices.size() :
+                                               candidate.choiceDemandFamilies != 0);
+    if (candidate.success && candidate.alternativeChoiceFamilies) {
+        auto sameDemand = [](const auto& left, const auto& right) {
+            return left.scope == right.scope && left.publication == right.publication &&
+                   left.acquisition == right.acquisition && left.source == right.source &&
+                   left.observer == right.observer && left.cells == right.cells;
+        };
+        for (const auto& demand : candidate.demands) {
+            bool promoted = std::any_of(
+                proposed.universalChoices.begin(), proposed.universalChoices.end(), [&](const auto& family) {
+                    return std::any_of(family.alternatives.begin(), family.alternatives.end(), [&](const auto& old) {
+                        return old.acquisition == demand.acquisition && old.source == demand.source &&
+                               old.observer == demand.observer && old.cells == demand.cells;
+                    });
+                });
+            bool existed = std::any_of(baseline.demands.begin(), baseline.demands.end(), [&](const auto& old) {
+                return sameDemand(old, demand);
+            });
+            candidate.alternativeChoiceContinuationDemands += !promoted && !existed;
+        }
+    }
+    auto checked = hasCandidate ?
+                       verifyConstructionDemands(p, candidate.before, nullptr, childReturns, nullptr, &options) :
                        c::Result{};
-    bool accepted = candidate.success && candidate.choiceDemandFamilies && checked.success;
+    bool accepted = hasCandidate && checked.success;
+    if (accepted && universalPhase)
+        for (const auto& old : baseline.demands) {
+            if (p.nodes[old.acquisition].kind != Node::Choice)
+                continue;
+            // Recoloring is allowed; losing an accepted Common cut, witness or
+            // execution domain as a side effect of the new family is not.
+            accepted = std::any_of(candidate.demands.begin(), candidate.demands.end(), [&](const auto& fresh) {
+                return old.scope == fresh.scope && old.publication == fresh.publication &&
+                       old.acquisition == fresh.acquisition && old.source == fresh.source &&
+                       old.observer == fresh.observer && old.cells == fresh.cells;
+            });
+            if (!accepted)
+                break;
+        }
 
     // A plausible earlier cut alone is not evidence that the selected
     // baseline waits too broadly. Require an actual baseline handoff at each
     // original first site, published within this Choice after the intervening
     // parent-lane work. Otherwise this optional proposal has no proved gain.
-    if (accepted)
+    if (accepted && !universalPhase)
         for (const auto& demand : candidate.demands) {
             if (p.nodes[demand.acquisition].kind != Node::Choice)
                 continue;
@@ -5546,6 +5982,9 @@ c::Result constructWithChoiceDemands(
         for (const auto& demand : candidate.demands)
             if (demand.acquisition < p.nodes.size() && p.nodes[demand.acquisition].kind == Node::Choice)
                 ++familiesByScope[demand.scope];
+    if (accepted)
+        for (const auto& family : proposed.universalChoices)
+            ++familiesByScope[family.parent];
     if (accepted)
         for (unsigned id = 0; id < p.nodes.size(); ++id) {
             unsigned ancestor = proposed.parent[id];
@@ -5630,6 +6069,7 @@ c::Result constructWithChoiceDemands(
             // of the number of promoted requests or directed families,
             // on every structural path, without trip-count algebra.
             if (!delta || *delta > 2) {
+                candidate.alternativeChoiceCostRejections += !proposed.universalChoices.empty();
                 accepted = false;
                 break;
             }
@@ -5640,28 +6080,100 @@ c::Result constructWithChoiceDemands(
     if (!accepted) {
         baseline.nodeVisits += candidateNodeVisits;
         baseline.cellVisits += candidateCellVisits;
-        baseline.choiceDemandCandidates = candidate.choiceDemandCandidates;
+        if (universalPhase) {
+            baseline.alternativeChoiceCandidates = proposed.universalChoices.size();
+            baseline.rejectedAlternativeChoices = proposed.universalChoices.size();
+            baseline.alternativeChoiceContinuationDemands = candidate.alternativeChoiceContinuationDemands;
+            baseline.alternativeChoiceCostRejections = candidate.alternativeChoiceCostRejections;
+        } else {
+            baseline.choiceDemandCandidates = candidate.choiceDemandCandidates;
+            baseline.rejectedChoiceDemands = candidate.choiceDemandCandidates;
+        }
         recordChoiceWork(baseline);
-        baseline.rejectedChoiceDemands = candidate.choiceDemandCandidates;
         return baseline;
     }
     candidate.nodeVisits += baseline.nodeVisits + checked.nodeVisits;
     candidate.cellVisits += baseline.cellVisits + checked.cellVisits;
+    if (universalPhase) {
+        candidate.choiceDemandCandidates = baseline.choiceDemandCandidates;
+        candidate.choiceDemandFamilies = baseline.choiceDemandFamilies;
+        candidate.rejectedChoiceDemands = baseline.rejectedChoiceDemands;
+        candidate.choiceDemandWork = baseline.choiceDemandWork;
+        candidate.choiceDemandReservedWork = baseline.choiceDemandReservedWork;
+        candidate.choiceDemandAnalysisWork = baseline.choiceDemandAnalysisWork;
+        candidate.choiceDemandAnalysisPasses = baseline.choiceDemandAnalysisPasses;
+        candidate.choiceDemandBudgetPass = baseline.choiceDemandBudgetPass;
+    }
     recordChoiceWork(candidate);
     return candidate;
 }
 
-c::Result constructWithChildReturns(const c::Program& p, bool corrupt, uint64_t limit = ChildReturnSummaries::MaxWork)
+c::Result constructWithChoiceDemands(
+    const c::Program& p, bool corrupt, uint64_t limit = 1u << 20, const ChildReturnOptions* childReturns = nullptr,
+    bool enableAlternatives = false, bool corruptAlternative = false,
+    uint64_t alternativeLimit = AlternativeChoiceCertificates::MaxWork)
+{
+    // A/B/C are fixed phases, not recursive candidate attempts. Common retains
+    // its existing allowance. The alternative allowance applies only to C;
+    // every C refusal returns the already verified B exactly.
+    auto result = constructWithLateEntry(p, false, 1u << 22, nullptr, childReturns);
+    DemandAnalysis::ChoiceIncomingOptions common;
+    common.enabled = true;
+    common.corrupt = corrupt;
+    common.limit = limit;
+    result = constructChoiceTransaction(p, std::move(result), common, childReturns);
+    if (!enableAlternatives || !alternativeLimit || !result.success || (childReturns && childReturns->exhausted))
+        return result;
+
+    DemandAnalysis::ChoiceIncomingOptions alternatives;
+    alternatives.enabled = true;
+    alternatives.alternativesEnabled = true;
+    alternatives.corruptAlternative = corruptAlternative;
+    alternatives.limit = alternativeLimit;
+    alternatives.commonAnalyzed = true;
+    // Move the bounded immutable proposal population, rather than copying
+    // analysis state before the alternative allowance has been established.
+    if (result.choiceDemandFamilies)
+        alternatives.common = std::move(common.common);
+    // Failed Common proposals must not be rediscovered or rescued by C.
+    alternatives.commonEnabled = !alternatives.common.empty();
+
+    ChildReturnOptions trialChild;
+    const ChildReturnOptions* trial = nullptr;
+    if (childReturns && childReturns->enabled) {
+        trialChild.enabled = true;
+        trialChild.corrupt = childReturns->corrupt;
+        trialChild.limit = std::min(childReturns->limit, ChildReturnSummaries::MaxWork) - childReturns->charged;
+        trial = &trialChild;
+    }
+    result = constructChoiceTransaction(p, std::move(result), alternatives, trial);
+    if (trial) {
+        // Charge work, but do not let exhaustion in an optional C trial
+        // invalidate a proof already accepted in B.
+        childReturns->charged += trialChild.charged;
+        childReturns->candidates += trialChild.candidates;
+        childReturns->rejected += trialChild.rejected;
+        childReturns->checks += trialChild.checks;
+    }
+    return result;
+}
+
+c::Result constructWithChildReturns(
+    const c::Program& p, bool corrupt, uint64_t limit = ChildReturnSummaries::MaxWork, bool enableAlternatives = false,
+    bool corruptAlternative = false, uint64_t alternativeLimit = AlternativeChoiceCertificates::MaxWork)
 {
     ChildReturnOptions options;
     options.enabled = limit != 0;
     options.corrupt = corrupt;
     options.limit = limit;
-    auto result = constructWithChoiceDemands(p, false, 1u << 20, options.enabled ? &options : nullptr);
+    auto result = constructWithChoiceDemands(
+        p, false, 1u << 20, options.enabled ? &options : nullptr, enableAlternatives, corruptAlternative,
+        alternativeLimit);
     if (options.exhausted) {
         // No earlier accepted removal may escape an exhausted whole attempt.
         // Reconstruct the exact disabled plan once, never once per candidate.
-        auto fallback = constructWithChoiceDemands(p, false);
+        auto fallback = constructWithChoiceDemands(
+            p, false, 1u << 20, nullptr, enableAlternatives, corruptAlternative, alternativeLimit);
         fallback.nodeVisits += result.nodeVisits;
         fallback.cellVisits += result.cellVisits;
         result = std::move(fallback);
@@ -5678,349 +6190,9 @@ c::Result constructWithChildReturns(const c::Program& p, bool corrupt, uint64_t 
 c::Result constructWithAlternativeChoices(
     const c::Program& p, bool corrupt, uint64_t limit = AlternativeChoiceCertificates::MaxWork)
 {
-    using namespace c;
-    using Key = PrefixState::EventKey;
-    auto baseline = constructWithChildReturns(p, false);
-    if (!baseline.success || !limit || baseline.before.size() != p.nodes.size() || baseline.demands.empty())
-        return baseline;
-
-    limit = std::min(limit, AlternativeChoiceCertificates::MaxWork);
-    uint64_t work = 0;
-    bool exhausted = false;
-    auto reserve = [&](uint64_t count, uint64_t width = 1) {
-        if (exhausted || work > limit || (width && count > (limit - work) / width)) {
-            exhausted = true;
-            return false;
-        }
-        work += count * width;
-        return true;
-    };
-    auto finishFallback = [&](uint64_t candidates, uint64_t checkedWork = 0) {
-        baseline.alternativeChoiceCandidates = candidates;
-        baseline.rejectedAlternativeChoices = candidates;
-        baseline.alternativeChoiceWork = work + checkedWork;
-        baseline.alternativeChoiceBudgetExhausted = exhausted;
-        return baseline;
-    };
-
-    // Reserve the complete bounded discovery before building its relation and
-    // ancestry tables. Each demand may inspect one root-to-leaf path and the
-    // source effects of one parent prefix. This intentionally overcharges
-    // rejected proposals so the optional pass cannot become quadratic outside
-    // its fixed allowance.
-    uint64_t commands = 0;
-    if (!reserve(p.nodes.size(), 2))
-        return finishFallback(0);
-    for (const auto& at : baseline.before) {
-        if (!reserve(at.size(), 1))
-            return finishFallback(0);
-        commands += at.size();
-    }
-    uint64_t pathCells = uint64_t(p.cells) + 8;
-    for (unsigned lane = 0; lane < LaneCount; ++lane)
-        if (!reserve(p.nodes.size(), pathCells))
-            return finishFallback(0);
-    for (size_t demand = 0; demand < baseline.demands.size(); ++demand)
-        if (!reserve(p.nodes.size(), pathCells))
-            return finishFallback(0);
-    if (!reserve(commands, 24))
-        return finishFallback(0);
-
-    DemandAnalysis analysis;
-    std::string reason;
-    if (!analysis.build(p, reason))
-        return finishFallback(0);
-
-    struct Endpoint {
-        unsigned site = NoCut;
-        size_t index = 0;
-        Mechanism mechanism;
-    };
-    std::map<Key, std::vector<Endpoint>> uses;
-    for (unsigned site = 0; site < baseline.before.size(); ++site)
-        for (size_t index = 0; index < baseline.before[site].size(); ++index) {
-            const auto& mechanism = baseline.before[site][index];
-            if (mechanism.kind == Mechanism::Publish || mechanism.kind == Mechanism::Acquire)
-                uses[{mechanism.first, mechanism.second, mechanism.forwardKey}].push_back({site, index, mechanism});
-            else if (mechanism.kind == Mechanism::Rendezvous) {
-                uses[{mechanism.first, mechanism.second, mechanism.forwardKey}].push_back({site, index, mechanism});
-                uses[{mechanism.second, mechanism.first, mechanism.reverseKey}].push_back({site, index, mechanism});
-            }
-        }
-    auto contains = [&](unsigned root, unsigned node) {
-        for (unsigned at = node; at != NoCut; at = analysis.parent[at])
-            if (at == root)
-                return true;
-        return false;
-    };
-    auto relevant = [&](const CompletionDemand& demand, const Effects& effects) {
-        if (demand.acquisition >= p.nodes.size())
-            return false;
-        const auto& consumer = p.nodes[demand.acquisition].effects;
-        uint8_t source = uint8_t(1u << demand.source);
-        for (unsigned cell : demand.cells) {
-            if (cell >= p.cells)
-                return true;
-            bool touches = consumer[cell].readers || consumer[cell].writers;
-            if ((touches && (effects[cell].writers & source)) ||
-                (consumer[cell].writers && (effects[cell].readers & source)))
-                return true;
-        }
-        return false;
-    };
-    auto sourceActivity = [&](unsigned source, const Effects& effects) {
-        uint8_t bit = uint8_t(1u << source);
-        return std::any_of(effects.begin(), effects.end(), [&](const auto& effect) {
-            return (effect.readers | effect.writers) & bit;
-        });
-    };
-    auto invalidatingPath = [&](const CompletionDemand& demand, unsigned choice) {
-        unsigned child = demand.acquisition;
-        for (unsigned parent = analysis.parent[child]; parent != NoCut && child != choice;
-             child = parent, parent = analysis.parent[parent]) {
-            if (p.nodes[parent].kind != Node::Sequence)
-                continue;
-            for (unsigned i = 0; i < analysis.position[child]; ++i)
-                if (relevant(demand, analysis.effects[p.nodes[parent].children[i]]))
-                    return true;
-        }
-        return false;
-    };
-    struct Record {
-        CompletionDemand demand;
-        Endpoint publication, wait, ackSet, ackWait;
-        Key forward{}, acknowledgment{};
-    };
-    struct Family {
-        unsigned choice = NoCut, parent = NoCut, publication = NoCut;
-        unsigned source = NoCut, observer = NoCut;
-        std::vector<unsigned> cells;
-        std::vector<Record> records;
-        uint64_t prefixSteps = 0;
-    };
-    std::vector<Family> families;
-    std::set<std::pair<unsigned, size_t>> claimedEndpoints;
-    for (const auto& demand : baseline.demands) {
-        if (demand.acquisition >= p.nodes.size() || p.nodes[demand.acquisition].kind != Node::Operation ||
-            demand.source >= LaneCount || demand.observer >= LaneCount || demand.source == demand.observer)
-            continue;
-        unsigned choice = NoCut;
-        for (unsigned at = analysis.parent[demand.acquisition]; at != NoCut; at = analysis.parent[at])
-            if (p.nodes[at].kind == Node::Choice) {
-                choice = at;
-                break;
-            }
-        if (choice == NoCut || !contains(choice, demand.publication) || analysis.parent[choice] == NoCut ||
-            p.nodes[analysis.parent[choice]].kind != Node::Sequence || invalidatingPath(demand, choice))
-            continue;
-        unsigned parent = analysis.parent[choice];
-        const auto& siblings = p.nodes[parent].children;
-        int last = -1;
-        for (unsigned i = 0; i < analysis.position[choice]; ++i)
-            if (relevant(demand, analysis.effects[siblings[i]]))
-                last = i;
-        if (last < 0)
-            continue;
-        unsigned publicationSite = siblings[unsigned(last + 1)];
-        uint64_t prefixSteps = 0;
-        for (unsigned i = unsigned(last + 1); i < analysis.position[choice]; ++i)
-            prefixSteps += sourceActivity(demand.source, analysis.effects[siblings[i]]);
-        if (!prefixSteps)
-            continue; // No strict source-prefix benefit over the branch-local SET.
-
-        std::optional<Record> record;
-        for (size_t setIndex = 0; setIndex < baseline.before[demand.publication].size(); ++setIndex) {
-            const auto& set = baseline.before[demand.publication][setIndex];
-            if (set.kind != Mechanism::Publish || set.participation != Mechanism::Every || set.first != demand.source ||
-                set.second != demand.observer)
-                continue;
-            Key forward{set.first, set.second, set.forwardKey};
-            auto forwardUses = uses.find(forward);
-            if (forwardUses == uses.end() || forwardUses->second.size() != 2)
-                continue;
-            for (size_t waitIndex = 0; waitIndex + 2 < baseline.before[demand.acquisition].size(); ++waitIndex) {
-                const auto& wait = baseline.before[demand.acquisition][waitIndex];
-                if (wait.kind != Mechanism::Acquire || wait.participation != Mechanism::Every ||
-                    Key{wait.first, wait.second, wait.forwardKey} != forward)
-                    continue;
-                const auto& ackSet = baseline.before[demand.acquisition][waitIndex + 1];
-                const auto& ackWait = baseline.before[demand.acquisition][waitIndex + 2];
-                Key acknowledgment{ackSet.first, ackSet.second, ackSet.forwardKey};
-                auto ackUses = uses.find(acknowledgment);
-                bool dedicated = ackSet.kind == Mechanism::Publish && ackWait.kind == Mechanism::Acquire &&
-                                 ackSet.participation == Mechanism::Every &&
-                                 ackWait.participation == Mechanism::Every && ackSet.first == demand.observer &&
-                                 ackSet.second == demand.source && ackWait.first == ackSet.first &&
-                                 ackWait.second == ackSet.second && ackWait.forwardKey == ackSet.forwardKey &&
-                                 acknowledgment != forward && ackUses != uses.end() && ackUses->second.size() == 2;
-                if (!dedicated)
-                    continue;
-                Record candidate{
-                    demand,
-                    {demand.publication, setIndex, set},
-                    {demand.acquisition, waitIndex, wait},
-                    {demand.acquisition, waitIndex + 1, ackSet},
-                    {demand.acquisition, waitIndex + 2, ackWait},
-                    forward,
-                    acknowledgment};
-                if (record) {
-                    record.reset();
-                    break;
-                }
-                record = std::move(candidate);
-            }
-            if (!record)
-                continue;
-        }
-        if (!record)
-            continue;
-        auto family = std::find_if(families.begin(), families.end(), [&](const auto& existing) {
-            return existing.choice == choice && existing.parent == parent && existing.publication == publicationSite &&
-                   existing.source == demand.source && existing.observer == demand.observer &&
-                   existing.cells == demand.cells;
-        });
-        if (family == families.end()) {
-            if (families.size() == MaxAlternatives)
-                return finishFallback(families.size() + 1);
-            families.push_back(
-                {choice, parent, publicationSite, demand.source, demand.observer, demand.cells, {}, prefixSteps});
-            family = std::prev(families.end());
-        }
-        auto positions = std::array{
-            std::pair{record->publication.site, record->publication.index},
-            std::pair{record->wait.site, record->wait.index}, std::pair{record->ackSet.site, record->ackSet.index},
-            std::pair{record->ackWait.site, record->ackWait.index}};
-        if (std::any_of(positions.begin(), positions.end(), [&](const auto& position) {
-                return claimedEndpoints.count(position);
-            }))
-            continue;
-        claimedEndpoints.insert(positions.begin(), positions.end());
-        if (family->records.size() == MaxAlternatives)
-            return finishFallback(families.size());
-        family->records.push_back(std::move(*record));
-    }
-    families.erase(
-        std::remove_if(
-            families.begin(), families.end(),
-            [](const auto& family) { return family.records.size() < 2 || family.records.size() > MaxAlternatives; }),
-        families.end());
-    if (families.empty()) {
-        baseline.alternativeChoiceWork = work;
-        return baseline;
-    }
-    uint64_t records = 0;
-    for (const auto& family : families)
-        records += family.records.size();
-    if (families.size() > MaxAlternatives || !reserve(families.size(), 24) || !reserve(records, 48))
-        return finishFallback(families.size());
-
-    // No selected physical key may cross family boundaries. The fresh checker
-    // repeats this from the transformed actual population; this precondition
-    // merely prevents the transaction from rewriting an unrelated endpoint.
-    std::set<Key> selectedKeys;
-    for (const auto& family : families)
-        for (const auto& record : family.records)
-            if (!selectedKeys.insert(record.forward).second || !selectedKeys.insert(record.acknowledgment).second)
-                return finishFallback(families.size());
-
-    if (!reserve(commands, 2) || !reserve(p.nodes.size(), 4))
-        return finishFallback(families.size());
-    auto candidate = baseline;
-    struct Edit {
-        size_t index;
-        bool remove;
-        unsigned key;
-    };
-    std::vector<std::vector<Edit>> edits(p.nodes.size());
-    std::vector<std::vector<Mechanism>> inserted(p.nodes.size());
-    uint64_t sites = 0, setsRemoved = 0, prefixSteps = 0;
-    std::set<unsigned> sourceScopes;
-    for (const auto& family : families) {
-        unsigned chosenKey = family.records.front().wait.mechanism.forwardKey;
-        auto commonSet = family.records.front().publication.mechanism;
-        commonSet.forwardKey = chosenKey;
-        inserted[family.publication].push_back(commonSet);
-        sites += family.records.size();
-        setsRemoved += family.records.size() - 1;
-        prefixSteps += family.prefixSteps;
-        sourceScopes.insert(family.parent);
-        for (const auto& record : family.records) {
-            edits[record.publication.site].push_back({record.publication.index, true, 0});
-            edits[record.wait.site].push_back({record.wait.index, false, chosenKey});
-        }
-    }
-    bool transformed = true;
-    for (unsigned site = 0; site < candidate.before.size(); ++site) {
-        std::map<size_t, Edit> byIndex;
-        for (const auto& edit : edits[site])
-            transformed &= byIndex.emplace(edit.index, edit).second;
-        if (!transformed)
-            break;
-        std::vector<Mechanism> rewritten;
-        rewritten.reserve(candidate.before[site].size() + inserted[site].size());
-        rewritten.insert(rewritten.end(), inserted[site].begin(), inserted[site].end());
-        for (size_t index = 0; index < candidate.before[site].size(); ++index) {
-            auto edit = byIndex.find(index);
-            if (edit != byIndex.end() && edit->second.remove)
-                continue;
-            auto mechanism = candidate.before[site][index];
-            if (edit != byIndex.end())
-                mechanism.forwardKey = edit->second.key;
-            rewritten.push_back(mechanism);
-        }
-        candidate.before[site] = std::move(rewritten);
-    }
-    if (corrupt && transformed)
-        for (const auto& family : families) {
-            auto& at = candidate.before[family.records.front().wait.site];
-            auto found = std::find_if(at.begin(), at.end(), [&](const auto& mechanism) {
-                return mechanism.kind == Mechanism::Acquire && mechanism.participation == Mechanism::Every &&
-                       mechanism.first == family.source && mechanism.second == family.observer;
-            });
-            if (found != at.end()) {
-                at.erase(found);
-                break;
-            }
-        }
-
-    // Reserve the candidate checker and its physical-state copies before it is
-    // invoked. Its exact alternative certificate work is then charged from the
-    // same remaining allowance. Exhaustion or any semantic rejection restores
-    // the byte-for-byte numbered baseline.
-    uint64_t width = uint64_t(p.cells) * LaneCount;
-    if (transformed && (!reserve(p.nodes.size(), 8 + 3 * (width + uint64_t(p.cells) * commands)) ||
-                        !reserve(commands, 16 + 3 * p.cells)))
-        transformed = false;
-    c::Result checked;
-    bool usedAlternatives = false;
-    uint64_t remaining = work <= limit ? limit - work : 0;
-    if (transformed)
-        checked = verifyDemandImpl(p, candidate.before, nullptr, remaining, nullptr, remaining, &usedAlternatives);
-    exhausted |= checked.alternativeChoiceBudgetExhausted || checked.childReturnBudgetExhausted;
-    uint64_t checkedWork = checked.alternativeChoiceWork + checked.childReturnWork;
-    if (checkedWork > remaining) {
-        exhausted = true;
-        transformed = false;
-    } else
-        work += checkedWork;
-    bool accepted = transformed && checked.success && usedAlternatives &&
-                    checked.alternativeChoiceFamilies == families.size() && checked.alternativeChoiceSites == sites;
-    baseline.nodeVisits += checked.nodeVisits;
-    baseline.cellVisits += checked.cellVisits;
-    if (!accepted)
-        return finishFallback(families.size());
-
-    candidate.nodeVisits = baseline.nodeVisits;
-    candidate.cellVisits = baseline.cellVisits;
-    candidate.alternativeChoiceCandidates = families.size();
-    candidate.alternativeChoiceFamilies = checked.alternativeChoiceFamilies;
-    candidate.alternativeChoiceSites = checked.alternativeChoiceSites;
-    candidate.alternativeChoiceSetsRemoved = setsRemoved;
-    candidate.alternativeChoiceSourceScopes = sourceScopes.size();
-    candidate.alternativeChoicePrefixSteps = prefixSteps;
-    candidate.alternativeChoiceWork = work;
-    candidate.alternativeChoiceBudgetExhausted = exhausted;
-    return candidate;
+    // This is configuration for the single upstream Choice-demand
+    // transaction, not a second command-editing pass.
+    return constructWithChildReturns(p, false, ChildReturnSummaries::MaxWork, true, corrupt, limit);
 }
 } // namespace
 c::Result c::constructDemands(const Program& p) { return constructWithAlternativeChoices(p, false); }
