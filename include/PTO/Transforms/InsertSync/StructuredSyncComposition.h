@@ -46,6 +46,26 @@ struct Node {
     // parent Sequence cut at which its original trip predicate is available.
     // No contract means conservative composition, not unsupported control flow.
     unsigned entryGuardStart = ~0u;
+    // Optional lowering-owned periodic execution contract, relative to a
+    // constant nonnegative lower bound and unit-step counted owner. For a
+    // Choice, residues describes its true arm; for a Sequence it describes
+    // execution of that complete word. Native reconstruction rederives this
+    // from original scalar IR. Absence never changes semantic admission.
+    unsigned periodicOwner = ~0u, periodicPeriod = 0;
+    uint32_t periodicResidues = 0;
+    int64_t periodicLower = 0;
+    std::optional<int64_t> firstActive() const
+    {
+        if (!periodicPeriod || periodicPeriod > 32 || !periodicResidues || periodicLower < 0)
+            return {};
+        for (unsigned ordinal = 0; ordinal < periodicPeriod; ++ordinal)
+            if (periodicResidues & (uint32_t(1) << ordinal)) {
+                if (periodicLower > INT64_MAX - int64_t(ordinal))
+                    return {};
+                return periodicLower + int64_t(ordinal);
+            }
+        return {};
+    }
 };
 struct Program {
     Core core = Core::AIV;
@@ -63,6 +83,9 @@ struct Mechanism {
     // deferred-wrap certificate; neither is a general predicate vocabulary.
     enum Participation { Every, NonEmpty, First, Previous, LoopExit } participation = Every;
     unsigned loop = ~0u;
+    // A qualified periodic word uses its first active ordinal, not ordinal
+    // zero, for Previous/LoopExit. Other mechanisms must leave this unset.
+    unsigned word = ~0u;
     bool operator==(const Mechanism& other) const;
 };
 // Unnumbered completion obligation at original structural cuts. Cell witnesses
@@ -90,6 +113,11 @@ struct Result {
     uint64_t ringCandidates = 0, rejectedRings = 0, ringCandidateCommandsRemoved = 0;
     uint64_t deferredRingCandidates = 0, deferredRings = 0, rejectedDeferredRings = 0;
     uint64_t deferredProtocolSteps = 0;
+    uint64_t periodicDeferredRings = 0, periodicWriteOverlapRejections = 0;
+    uint64_t deferredEligibilityWork = 0, deferredReceiptCells = 0, deferredSkippedFamilies = 0;
+    // Reserved bounded representation work for repeated discovery, separate
+    // from actual protocol steps and selected-family eligibility scans.
+    uint64_t deferredDiscoveryWork = 0, deferredDiscoveryRefusals = 0;
     // Optional candidate diagnostics never replace the accepted baseline's
     // ordinary reason. They identify why deferred-wrap rollback occurred.
     std::string deferredRejectionStage, deferredRejectionReason;
@@ -109,12 +137,17 @@ Result verifyCuts(const Program& program, const std::vector<std::vector<Mechanis
 // of cycle recognition; unmatched structural domains retain conservative transfer.
 Result constructDemands(const Program& program);
 Result verifyDemands(const Program& program, const std::vector<std::vector<Mechanism>>& actual);
+constexpr uint64_t DeferredDiscoveryLimit = 1u << 27;
 namespace testing {
+// Same arithmetic preflight used by production, exposed for boundary tests.
+std::optional<uint64_t> deferredDiscoveryReservation(
+    uint64_t nodes, uint64_t cells, uint64_t keys, uint64_t commands, uint64_t limit = DeferredDiscoveryLimit);
 Result constructDemandsWithoutRings(const Program& program);
 Result constructDemandsRejectingRings(const Program& program);
 // Fault injection after a deferred-wrap candidate is formed. The independently
 // verified closed-ring plan must be returned unchanged.
 Result constructDemandsRejectingDeferredRings(const Program& program);
+Result constructDemandsWithoutDeferredDiscovery(const Program& program);
 // Fault injection before refinement checking/emission, never on the initial
 // plan: discard the optional candidate's mechanisms to exercise exact rollback.
 Result constructDemandsRejectingRefinement(const Program& program);

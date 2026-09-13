@@ -193,12 +193,13 @@ static void execute(const c::Program& p, const c::Result& r, unsigned id, Execut
 {
     for (auto& m : r.before[id]) {
         bool participates = true;
+        unsigned first = m.word == ~0u ? 0 : unsigned(*p.nodes[m.word].firstActive() - p.nodes[m.word].periodicLower);
         if (m.participation == c::Mechanism::First)
             participates = policy.iteration.at(m.loop) == 0;
         else if (m.participation == c::Mechanism::Previous)
-            participates = policy.iteration.at(m.loop) != 0;
+            participates = policy.iteration.at(m.loop) != first;
         else if (m.participation == c::Mechanism::LoopExit)
-            participates = policy.lastTrips.at(m.loop) != 0;
+            participates = policy.lastTrips.at(m.loop) > first;
         else if (m.participation == c::Mechanism::NonEmpty) {
             if (id <= m.loop) {
                 if (!policy.nextTrips.count(m.loop))
@@ -221,7 +222,12 @@ static void execute(const c::Program& p, const c::Result& r, unsigned id, Execut
                 run(x);
             break;
         case c::Node::Choice:
-            run(n.children[policy.choice(id, policy.visits[id]++)]);
+            if (n.periodicOwner != ~0u) {
+                unsigned ordinal = policy.iteration.at(n.periodicOwner);
+                bool take = n.periodicResidues & (uint32_t(1) << (ordinal % n.periodicPeriod));
+                run(n.children[take ? 0 : 1]);
+            } else
+                run(n.children[policy.choice(id, policy.visits[id]++)]);
             break;
         case c::Node::For: {
             unsigned trips = policy.nextTrips.count(id) ? policy.nextTrips.at(id) : policy.trips(id, policy.visits[id]);
@@ -256,6 +262,21 @@ static void execute(
 }
 int main()
 {
+    {
+        auto cost = c::testing::deferredDiscoveryReservation(64, 4, 6, 20);
+        require(bool(cost));
+        require(c::testing::deferredDiscoveryReservation(64, 4, 6, 20, *cost) == cost);
+        require(!c::testing::deferredDiscoveryReservation(64, 4, 6, 20, *cost - 1));
+        require(!c::testing::deferredDiscoveryReservation(64, 4, 6, 20, 0));
+        for (unsigned field = 0; field < 5; ++field) {
+            std::array<uint64_t, 5> args{64, 4, 6, 20, c::DeferredDiscoveryLimit};
+            args[field] = UINT64_MAX;
+            require(!c::testing::deferredDiscoveryReservation(args[0], args[1], args[2], args[3], args[4]));
+        }
+        require(!c::testing::deferredDiscoveryReservation(1u << 20, 2, 6, 20));
+        require(!c::testing::deferredDiscoveryReservation(64, 4, 65, 20));
+        require(!c::testing::deferredDiscoveryReservation(64, 4, 6, (1u << 20) + 1));
+    }
     // Closed per-visit rings: no header seed, no unconsumed last publication,
     // and one shared protocol for identical multi-cell witnesses. The finite
     // graph starts keys idle and preserves them across skipped/repeated runs.
@@ -385,6 +406,11 @@ int main()
         require(
             rollback.success && rollback.deferredRingCandidates == 2 && rollback.deferredRings == 0 &&
             rollback.rejectedDeferredRings == 2 && c::verifyDemands(p, rollback.before).success);
+        auto noDiscovery = c::testing::constructDemandsWithoutDeferredDiscovery(p);
+        require(
+            noDiscovery.success && noDiscovery.before == rollback.before && noDiscovery.deferredDiscoveryWork == 0 &&
+            noDiscovery.deferredDiscoveryRefusals == 1 && plan.deferredDiscoveryWork > 0 &&
+            plan.deferredDiscoveryWork <= c::DeferredDiscoveryLimit);
         for (unsigned trips : {0u, 1u, 2u}) {
             ExecutionPolicy deferredPolicy, closedPolicy;
             deferredPolicy.trips = [=](unsigned, unsigned) { return trips; };
@@ -478,12 +504,203 @@ int main()
             broken[laterB].erase(publication);
         });
         auto oversized = plan.before;
+        auto splitExit = plan.before;
+        auto exit = std::find_if(splitExit[after].begin(), splitExit[after].end(), [](const auto& m) {
+            return m.participation == c::Mechanism::LoopExit;
+        });
+        splitExit[p.nodes.back().children.back()].push_back(*exit);
+        splitExit[after].erase(exit);
+        require(!c::verifyDemands(p, splitExit).success);
+        auto interleaved = plan.before;
+        interleaved[after].insert(interleaved[after].begin() + 1, {c::Mechanism::Barrier, d, d});
+        require(!c::verifyDemands(p, interleaved).success);
+        auto relayed = plan.before;
+        relayed[after].push_back({c::Mechanism::Rendezvous, std::min(a, b), std::max(a, b), 0, 0});
+        auto relayCheck = c::verifyDemands(p, relayed);
+        require(
+            !relayCheck.success && relayCheck.reason == "deferred loop exit may stall a later synchronization command");
         for (unsigned i = 0; i < 30000; ++i)
             oversized[guard].push_back({c::Mechanism::Barrier, a, a});
         auto bounded = c::verifyDemands(p, oversized);
         require(
             !bounded.success && bounded.deferredRejectionStage == "protocol" &&
             bounded.deferredRejectionReason == "deferred demand ring protocol exceeds optional work bound");
+    }
+    for (unsigned period : {1u, 2u, 3u, 32u}) {
+        // A complete word selected on the last residue. First means first
+        // ACTIVE visit, not the first loop iteration. Empty/skipped iterations
+        // do not publish; repeated whole owners share actual hardware keys.
+        c::Program p;
+        p.cells = 4;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto guard = add(p, c::Node::Sequence);
+        auto load = op(p, a, 0, true), use = op(p, b, 0, false);
+        p.nodes[use].effects[1].writers = 1u << b;
+        auto later = op(p, b, 2, false), store = op(p, d, 1, false);
+        p.nodes[store].effects[3].writers = 1u << d;
+        auto word = sequence(p, {load, use, later, store});
+        auto empty = add(p, c::Node::Sequence);
+        auto choice = add(p, c::Node::Choice, {word, empty});
+        auto body = sequence(p, {choice});
+        auto loop = add(p, c::Node::For, {body});
+        auto after = add(p, c::Node::Sequence);
+        sequence(p, {guard, loop, after});
+        p.nodes[loop].entryGuardStart = guard;
+        uint32_t all = period == 32 ? UINT32_MAX : (uint32_t(1) << period) - 1;
+        uint32_t active = uint32_t(1) << (period - 1);
+        std::function<void(unsigned, uint32_t)> annotate = [&](unsigned id, uint32_t mask) {
+            auto& node = p.nodes[id];
+            if (node.kind != c::Node::Operation) {
+                node.periodicOwner = loop;
+                node.periodicPeriod = period;
+                node.periodicLower = 5;
+                node.periodicResidues = node.kind == c::Node::Choice ? active : mask;
+            }
+            if (node.kind == c::Node::Choice) {
+                annotate(node.children[0], mask & active);
+                annotate(node.children[1], mask & ~active);
+            } else
+                for (unsigned child : node.children)
+                    annotate(child, mask);
+        };
+        annotate(body, all);
+        auto plan = c::constructDemands(p);
+        require(plan.success && c::verifyDemands(p, plan.before).success);
+        if (period < 32) {
+            require(plan.deferredRings == 2 && plan.rejectedDeferredRings == 0);
+            require(std::any_of(plan.before[load].begin(), plan.before[load].end(), [&](const auto& m) {
+                return m.participation == c::Mechanism::Previous && m.word == word;
+            }));
+            auto wrongFirst = plan.before;
+            for (auto& m : wrongFirst[load])
+                if (m.participation == c::Mechanism::Previous)
+                    m.word = ~0u;
+            require(!c::verifyDemands(p, wrongFirst).success);
+            auto wrongExit = plan.before;
+            for (auto& m : wrongExit[after])
+                if (m.participation == c::Mechanism::LoopExit)
+                    m.word = ~0u;
+            require(!c::verifyDemands(p, wrongExit).success);
+            auto wrongDomain = p;
+            wrongDomain.nodes[word].periodicResidues = 0;
+            require(!c::verifyDemands(wrongDomain, plan.before).success);
+        } else {
+            require(
+                plan.deferredRings == 0 && plan.rejectedDeferredRings == 2 &&
+                plan.deferredRejectionStage == "protocol");
+        }
+        ExecutionPolicy policy;
+        std::vector<unsigned> trips{0, period - 1, period, period + 1, 2 * period + 3, 0, 1};
+        policy.trips = [&](unsigned, unsigned visit) { return trips[visit % trips.size()]; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < trips.size(); ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+        auto overflowing = p;
+        overflowing.nodes[word].periodicLower = INT64_MAX;
+        require(c::constructDemands(overflowing).success); // precision failure, not semantic refusal
+        if (period < 32) {
+            for (bool writer : {false, true}) {
+                auto outside = p;
+                auto& node = outside.nodes[empty];
+                node.kind = c::Node::Operation;
+                node.periodicOwner = ~0u;
+                node.lane = b;
+                (writer ? node.effects[0].writers : node.effects[0].readers) = 1u << b;
+                require(!c::verifyDemands(outside, plan.before).success);
+            }
+        }
+    }
+    {
+        // A later sibling's receiving-lane work and cleanup are not part of
+        // this owner's retirement packet. Only the final owner may defer here.
+        c::Program p;
+        p.cells = 4;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto guard = add(p, c::Node::Sequence);
+        auto child = [&](unsigned cell) {
+            auto load = op(p, a, cell, true), use = op(p, b, cell, false);
+            p.nodes[use].effects[cell + 1].writers = 1u << b;
+            auto store = op(p, d, cell + 1, false);
+            return add(p, c::Node::For, {sequence(p, {load, use, store})});
+        };
+        auto first = child(0), between = add(p, c::Node::Sequence), second = child(2);
+        auto after = add(p, c::Node::Sequence);
+        sequence(p, {guard, first, between, second, after});
+        p.nodes[first].entryGuardStart = guard;
+        p.nodes[second].entryGuardStart = between;
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.deferredRings == 2 && c::verifyDemands(p, plan.before).success);
+        for (const auto& commands : plan.before)
+            for (const auto& m : commands)
+                if (m.participation == c::Mechanism::LoopExit)
+                    require(m.loop == second);
+        auto wrongOwner = plan.before;
+        for (auto& m : wrongOwner[after])
+            if (m.participation == c::Mechanism::LoopExit)
+                m.loop = first;
+        require(!c::verifyDemands(p, wrongOwner).success);
+        ExecutionPolicy policy;
+        policy.trips = [=](unsigned id, unsigned visit) { return (visit + (id == first ? 1 : 0)) % 4; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 6; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // Ten otherwise eligible, disjoint families fit the directed key
+        // pools. The optional selector takes a deterministic batch of eight;
+        // unselected words keep their complete closed protocols.
+        c::Program p;
+        p.cells = 10;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto guard = add(p, c::Node::Sequence);
+        std::vector<unsigned> words;
+        for (unsigned slot = 0; slot < 5; ++slot) {
+            unsigned cell = 2 * slot;
+            auto load = op(p, a, cell, true), use = op(p, b, cell, false);
+            p.nodes[use].effects[cell + 1].writers = 1u << b;
+            auto store = op(p, d, cell + 1, false);
+            auto word = sequence(p, {load, use, store});
+            auto empty = add(p, c::Node::Sequence);
+            words.push_back(add(p, c::Node::Choice, {word, empty}));
+        }
+        auto body = sequence(p, words), loop = add(p, c::Node::For, {body});
+        auto after = add(p, c::Node::Sequence);
+        sequence(p, {guard, loop, after});
+        p.nodes[loop].entryGuardStart = guard;
+        std::function<void(unsigned, uint32_t)> annotate = [&](unsigned id, uint32_t active) {
+            auto& node = p.nodes[id];
+            if (node.kind != c::Node::Operation) {
+                node.periodicOwner = loop;
+                node.periodicPeriod = 1;
+                node.periodicResidues = node.kind == c::Node::Choice ? 1 : active;
+            }
+            if (node.kind == c::Node::Choice) {
+                annotate(node.children[0], active);
+                annotate(node.children[1], 0);
+            } else
+                for (unsigned child : node.children)
+                    annotate(child, active);
+        };
+        annotate(body, 1);
+        auto plan = c::constructDemands(p);
+        require(
+            plan.success && plan.deferredRings == 8 && plan.deferredSkippedFamilies == 2 &&
+            c::verifyDemands(p, plan.before).success);
+        require(plan.before == c::constructDemands(p).before);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned visit) { return visit % 3; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 6; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
     }
     {
         // Real same-lane writes after each proposed tail SET are not covered by

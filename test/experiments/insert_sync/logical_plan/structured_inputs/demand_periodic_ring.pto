@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A complete word on raw iv % 3 == 0, starting at lower 2. Its first
+// active ordinal is 1 (raw iv 3), not the counted loop's first iteration.
+module attributes {pto.target_arch = "a3"} {
+  func.func @periodic(%src: !pto.partition_tensor_view<16x16xf16>,
+                      %dst: !pto.partition_tensor_view<16x16xf16>,
+                      %upper: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c1 = arith.constant 1 : index
+    %lower = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %c0 = arith.constant 0 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 512 : i64
+    %a2 = arith.constant 1024 : i64
+    %a = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 16x16xf16>
+    %b = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 16x16xf16>
+    %c = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 16x16xf16>
+    scf.for %iv = %lower to %upper step %c1 {
+      %slot = arith.remui %iv, %c3 : index
+      %active = arith.cmpi eq, %slot, %c0 : index
+      scf.if %active {
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf16>) outs(%a : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tload ins(%src : !pto.partition_tensor_view<16x16xf16>) outs(%b : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tadd ins(%a, %b : !pto.tile_buf<vec, 16x16xf16>, !pto.tile_buf<vec, 16x16xf16>) outs(%c : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tstore ins(%c : !pto.tile_buf<vec, 16x16xf16>) outs(%dst : !pto.partition_tensor_view<16x16xf16>)
+      }
+    }
+    return
+  }
+}

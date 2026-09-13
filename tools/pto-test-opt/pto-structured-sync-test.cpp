@@ -80,7 +80,7 @@ int main(int argc,char **argv) {
         };
         working.walk([&](Operation *op) {
             if (chosen) return;
-            if (demandPlacement && mode.starts_with("deferred-")) {
+            if (demandPlacement && (mode.starts_with("deferred-") || mode.starts_with("periodic-"))) {
                 auto branch=dyn_cast<scf::IfOp>(op);
                 if (!branch || !syncOnly(branch)) return;
                 auto cmp=branch.getCondition().getDefiningOp<arith::CmpIOp>();
@@ -93,6 +93,8 @@ int main(int argc,char **argv) {
                 if (events.size()!=1 || !isa<WaitFlagOp>(events[0])) return;
                 if ((mode=="deferred-wrong-previous" && previous) ||
                     (mode=="deferred-wrong-exit" && exit)) chosen=cmp;
+                if (mode=="periodic-wrong-first" && previous) chosen=cmp.getRhs().getDefiningOp();
+                if (mode=="periodic-wrong-exit" && exit) chosen=cmp.getLhs().getDefiningOp();
                 if ((mode=="deferred-drop-previous" && previous) ||
                     (mode=="deferred-drop-exit" && exit)) chosen=events[0];
                 if (mode=="deferred-late-previous" && previous) {
@@ -273,6 +275,12 @@ int main(int argc,char **argv) {
             }
         });
         if (!chosen) return;
+        if (mode=="periodic-wrong-first" || mode=="periodic-wrong-exit") {
+            auto constant=dyn_cast<arith::ConstantIndexOp>(chosen);
+            if (!constant || constant.value()==INT64_MAX) return;
+            chosen->setAttr("value",IntegerAttr::get(IndexType::get(&context),constant.value()+1));
+            changed=true;return;
+        }
         if (mode=="deferred-wrong-previous" || mode=="deferred-wrong-exit") {
             cast<arith::CmpIOp>(chosen).setPredicate(mode=="deferred-wrong-previous"?
                 arith::CmpIPredicate::eq:arith::CmpIPredicate::sle);

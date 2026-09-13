@@ -8,6 +8,7 @@
 #include "PTO/Transforms/InsertSync/StructuredSyncPlan.h"
 #include "PTO/Transforms/InsertSync/StructuredSyncComposition.h"
 #include "PTO/Transforms/InsertSync/StructuredSyncCoverage.h"
+#include "PTO/Transforms/InsertSync/StructuredSyncPeriodicScalar.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncPayloadSnapshot.h"
 #include "mlir/IR/Dominance.h"
@@ -158,6 +159,8 @@ struct Tree {
     llvm::DenseMap<Operation*, const CompoundInstanceElement*> phases;
     std::string reason;
     uint64_t widenedSpaces = 0;
+    uint64_t periodicScalarWork = 0;
+    uint64_t periodicDagVisits = 0, periodicEvaluations = 0;
     InsertSyncGMAliasMode gm;
     llvm::DenseMap<const BaseMemInfo*, InsertSyncGMRoots> gmAccesses;
     std::set<std::pair<unsigned, unsigned>> disjointPairs;
@@ -422,7 +425,7 @@ struct Tree {
         id = add(std::move(sequence));
         return true;
     }
-    bool build()
+    bool build(bool periodicPrecision)
     {
         if (!gmContracts())
             return false;
@@ -466,7 +469,138 @@ struct Tree {
                 }
             }
         }
+        if (periodicPrecision)
+            qualifyPeriodicWords();
         return true;
+    }
+
+    void qualifyPeriodicWords()
+    {
+        // Optional metadata only. One bounded scalar DAG and at most 32
+        // ordinal evaluations per owner, never a Boolean path product.
+        uint64_t& work = periodicScalarWork;
+        constexpr uint64_t MaxWork = 1u << 20;
+        for (unsigned owner = 0; owner < program.nodes.size(); ++owner) {
+            if (work >= MaxWork)
+                break;
+            const auto& n = program.nodes[owner];
+            if (n.kind != c::Node::For || n.entryGuardStart == ~0u)
+                continue;
+            auto loop = cast<scf::ForOp>(anchors[owner]);
+            APInt lower;
+            if (loop->hasAttr("unsignedCmp") || !matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) ||
+                !lower.isSignedIntN(64) || lower.isNegative())
+                continue;
+            ss::LoopOrdinal induction{lower.getSExtValue(), 1};
+            ss::PeriodicScalar scalar(loop.getInductionVar(), induction);
+            std::vector<unsigned> nodes, choices;
+            bool qualified = true;
+            std::function<void(unsigned, unsigned)> collect = [&](unsigned id, unsigned nesting) {
+                if (!qualified || work >= MaxWork || nesting >= 64) {
+                    qualified = false;
+                    return;
+                }
+                ++work;
+                const auto& child = program.nodes[id];
+                if (child.kind == c::Node::For || child.kind == c::Node::While) {
+                    qualified = false;
+                    return;
+                }
+                nodes.push_back(id);
+                if (child.kind == c::Node::Choice)
+                    choices.push_back(id);
+                for (unsigned next : child.children)
+                    collect(next, nesting + 1);
+            };
+            collect(n.children[0], 0);
+            if (!qualified || choices.empty())
+                continue;
+            llvm::DenseMap<Value, unsigned> depths;
+            std::function<std::optional<unsigned>(Value, unsigned)> depth =
+                [&](Value value, unsigned nesting) -> std::optional<unsigned> {
+                if (work >= MaxWork || nesting >= 64 || depths.size() >= 256)
+                    return {};
+                ++work;
+                ++periodicDagVisits;
+                if (value == loop.getInductionVar())
+                    return 0;
+                auto found = depths.find(value);
+                if (found != depths.end())
+                    return found->second;
+                auto* op = value.getDefiningOp();
+                if (!op)
+                    return {};
+                // Reserve before descending so a deep expression is refused
+                // before PeriodicScalar's recursive matcher is invoked.
+                depths[value] = 64;
+                unsigned result = 0;
+                for (Value operand : op->getOperands()) {
+                    auto nested = depth(operand, nesting + 1);
+                    if (!nested || *nested >= 63)
+                        return {};
+                    result = std::max(result, *nested + 1);
+                }
+                depths[value] = result;
+                return result;
+            };
+            uint64_t period = 1;
+            for (unsigned id : choices) {
+                Value condition = cast<scf::IfOp>(anchors[id]).getCondition();
+                if (!depth(condition, 0)) {
+                    qualified = false;
+                    break;
+                }
+                auto p = scalar.period(condition);
+                if (!p || !*p || *p > 32) {
+                    qualified = false;
+                    break;
+                }
+                period = period / std::gcd(period, *p) * *p;
+                if (period > 32) {
+                    qualified = false;
+                    break;
+                }
+            }
+            uint64_t evaluation = nodes.size() + choices.size() * depths.size();
+            if (!qualified || evaluation > (MaxWork - std::min(work, MaxWork)) / period)
+                continue;
+            work += evaluation * period;
+            std::map<unsigned, uint32_t> truth;
+            for (unsigned id : choices) {
+                Value condition = cast<scf::IfOp>(anchors[id]).getCondition();
+                for (unsigned ordinal = 0; ordinal < period; ++ordinal) {
+                    ++periodicEvaluations;
+                    auto value = scalar.evaluate(condition, ordinal);
+                    if (!value) {
+                        qualified = false;
+                        break;
+                    }
+                    if (*value)
+                        truth[id] |= uint32_t(1) << ordinal;
+                }
+                if (!qualified)
+                    break;
+            }
+            if (!qualified)
+                continue;
+            uint32_t all = period == 32 ? UINT32_MAX : (uint32_t(1) << period) - 1;
+            std::function<void(unsigned, uint32_t)> record = [&](unsigned id, uint32_t active) {
+                auto& child = program.nodes[id];
+                if (child.kind == c::Node::Sequence || child.kind == c::Node::Choice) {
+                    child.periodicOwner = owner;
+                    child.periodicPeriod = unsigned(period);
+                    child.periodicLower = induction.lower;
+                    child.periodicResidues = child.kind == c::Node::Choice ? truth[id] : active;
+                }
+                if (child.kind == c::Node::Choice) {
+                    record(child.children[0], active & truth[id]);
+                    record(child.children[1], active & ~truth[id]);
+                } else
+                    for (unsigned next : child.children)
+                        record(next, active);
+            };
+            record(n.children[0], all);
+        }
     }
 };
 
@@ -484,13 +618,16 @@ void emit(Tree& tree, const c::Result& plan)
                 auto loop = cast<scf::ForOp>(tree.anchors[m.loop]);
                 bool first = m.participation == c::Mechanism::First;
                 bool previous = m.participation == c::Mechanism::Previous;
+                Value boundary = loop.getLowerBound();
+                if (m.word != ~0u)
+                    boundary = b.create<arith::ConstantIndexOp>(loc, *tree.program.nodes[m.word].firstActive());
                 auto condition = b.create<arith::CmpIOp>(
                     loc,
                     first    ? arith::CmpIPredicate::eq :
                     previous ? arith::CmpIPredicate::ne :
                                arith::CmpIPredicate::slt,
-                    first || previous ? loop.getInductionVar() : loop.getLowerBound(),
-                    first || previous ? loop.getLowerBound() : loop.getUpperBound());
+                    first || previous ? loop.getInductionVar() : boundary,
+                    first || previous ? boundary : loop.getUpperBound());
                 auto branch = b.create<scf::IfOp>(loc, condition, false);
                 OpBuilder nested = OpBuilder::atBlockBegin(&branch.getThenRegion().front());
                 auto emitEvent = [&](const c::Mechanism& command) {
@@ -548,7 +685,7 @@ struct ParticipationGuards {
     bool build(Tree& original, const llvm::SmallPtrSetImpl<Operation*>& generated, std::string& reason)
     {
         using Key = std::tuple<unsigned, unsigned, unsigned>;
-        std::map<Key, unsigned> firstLoops, previousLoops;
+        std::map<Key, unsigned> firstLoops, previousLoops, previousWords;
         std::vector<scf::IfOp> candidates;
         std::vector<unsigned> parent(original.program.nodes.size(), ~0u), position(parent.size());
         for (unsigned id = 0; id < original.program.nodes.size(); ++id)
@@ -560,6 +697,17 @@ struct ParticipationGuards {
         auto fail = [&]() {
             reason = "invalid native participation guard or original loop binding";
             return false;
+        };
+        auto exactBoundary = [&](Value value, unsigned word, Operation* cmp) {
+            if (word >= original.program.nodes.size())
+                return false;
+            auto first = original.program.nodes[word].firstActive();
+            auto constant = value.getDefiningOp<arith::ConstantIndexOp>();
+            if (!first || !constant || constant.value() != *first || !generated.contains(constant) ||
+                !constant.getResult().hasOneUse() || constant->getNextNode() != cmp)
+                return false;
+            operations.insert(constant);
+            return true;
         };
         auto nextOriginal = [&](Operation* from) {
             while (from && !original.ids.count(from))
@@ -615,15 +763,27 @@ struct ParticipationGuards {
             auto loop = iv ? dyn_cast_or_null<scf::ForOp>(iv.getOwner()->getParentOp()) : scf::ForOp{};
             auto found = loop ? original.ids.find(loop) : original.ids.end();
             if (!loop || found == original.ids.end() || original.program.nodes[found->second].entryGuardStart == ~0u ||
-                cmp.getLhs() != loop.getInductionVar() || cmp.getRhs() != loop.getLowerBound() ||
-                branch->getBlock() != loop.getBody() || list.size() != 1 || list[0].kind != c::Mechanism::Acquire)
+                cmp.getLhs() != loop.getInductionVar() || list.size() != 1 || list[0].kind != c::Mechanism::Acquire)
                 return fail();
             auto& m = list[0];
+            if (branch->getBlock() == loop.getBody()) {
+                if (cmp.getRhs() != loop.getLowerBound())
+                    return fail();
+            } else {
+                unsigned cut = original.ids.lookup(targets[branch]);
+                unsigned word = parent[cut];
+                if (!previous || word == ~0u || original.program.nodes[word].periodicOwner != found->second ||
+                    !exactBoundary(cmp.getRhs(), word, cmp))
+                    return fail();
+                m.word = word;
+            }
             m.participation = previous ? c::Mechanism::Previous : c::Mechanism::First;
             m.loop = found->second;
             auto& loops = previous ? previousLoops : firstLoops;
             if (!loops.emplace(Key{m.first, m.second, m.forwardKey}, m.loop).second)
                 return fail();
+            if (previous)
+                previousWords[{m.first, m.second, m.forwardKey}] = m.word;
         }
         for (auto branch : candidates) {
             auto cmp = branch.getCondition().getDefiningOp<arith::CmpIOp>();
@@ -661,12 +821,14 @@ struct ParticipationGuards {
                     original.program.nodes[loopId].entryGuardStart == ~0u)
                     return fail();
                 auto loop = cast<scf::ForOp>(original.anchors[loopId]);
-                if (cmp.getLhs() != loop.getLowerBound() || cmp.getRhs() != loop.getUpperBound() ||
-                    branch->getBlock() != loop->getBlock())
+                unsigned word = loopExit ? previousWords.at({list[0].first, list[0].second, list[0].forwardKey}) : ~0u;
+                if ((word == ~0u ? cmp.getLhs() != loop.getLowerBound() : !exactBoundary(cmp.getLhs(), word, cmp)) ||
+                    cmp.getRhs() != loop.getUpperBound() || branch->getBlock() != loop->getBlock())
                     return fail();
                 for (auto& m : list) {
                     m.participation = loopExit ? c::Mechanism::LoopExit : c::Mechanism::NonEmpty;
                     m.loop = loopId;
+                    m.word = word;
                 }
             }
             operations.insert(branch);
@@ -861,7 +1023,7 @@ Outcome ss::testing::constructCompositionalSync(
         return out;
     }
     Tree tree(inventory, hardware, gm);
-    if (!tree.build()) {
+    if (!tree.build(demandPlacement)) {
         out.reason = tree.reason;
         return out;
     }
@@ -927,7 +1089,7 @@ Outcome ss::testing::constructCompositionalSync(
     }
     Tree rebuilt(fresh, hardware, gm);
     rebuilt.ignored = &guards.operations;
-    if (!rebuilt.build()) {
+    if (!rebuilt.build(demandPlacement)) {
         out.reason = rebuilt.reason;
         return out;
     }
@@ -978,6 +1140,7 @@ Outcome ss::testing::constructCompositionalSync(
         }
     out.requirements = selected.acquisitions;
     out.work = selected.cellVisits + checked.cellVisits;
+    out.work += tree.periodicScalarWork + rebuilt.periodicScalarWork;
     out.status = Outcome::Applied;
     out.reason = "compositional storage, completion, reusable protocols and retirement verified";
     function.getBody().takeBody(working.getBody());
@@ -1003,12 +1166,24 @@ Outcome ss::testing::constructCompositionalSync(
                      << selected.ringCandidateCommandsRemoved << " rendezvous_packets " << rendezvousPackets
                      << " deferred_ring_candidates " << selected.deferredRingCandidates << " deferred_rings "
                      << selected.deferredRings << " rejected_deferred_rings " << selected.rejectedDeferredRings
-                     << " deferred_protocol_steps " << selected.deferredProtocolSteps + checked.deferredProtocolSteps
-                     << " demand_fallbacks " << selected.demandFallbacks << " nodes " << tree.program.nodes.size()
-                     << " cells " << tree.program.cells << " widened_spaces " << tree.widenedSpaces << " node_visits "
-                     << selected.nodeVisits + checked.nodeVisits << " cell_visits " << out.work << " handoffs "
-                     << out.handoffs << " cut_cycles " << checked.cutCycles << " allocation_retries "
-                     << selected.allocationRetries << " barriers " << out.barriers << " seconds "
+                     << " periodic_deferred_rings " << selected.periodicDeferredRings
+                     << " periodic_write_overlap_rejections " << selected.periodicWriteOverlapRejections
+                     << " periodic_scalar_work " << tree.periodicScalarWork + rebuilt.periodicScalarWork
+                     << " periodic_dag_visits " << tree.periodicDagVisits + rebuilt.periodicDagVisits
+                     << " periodic_residue_evaluations " << tree.periodicEvaluations + rebuilt.periodicEvaluations
+                     << " deferred_discovery_work " << selected.deferredDiscoveryWork << " deferred_discovery_refusals "
+                     << selected.deferredDiscoveryRefusals << " deferred_discovery_limit " << c::DeferredDiscoveryLimit
+                     << " deferred_eligibility_work "
+                     << selected.deferredEligibilityWork + checked.deferredEligibilityWork << " deferred_receipt_cells "
+                     << selected.deferredReceiptCells + checked.deferredReceiptCells << " deferred_skipped_families "
+                     << selected.deferredSkippedFamilies << " deferred_protocol_steps "
+                     << selected.deferredProtocolSteps + checked.deferredProtocolSteps << " demand_fallbacks "
+                     << selected.demandFallbacks << " nodes " << tree.program.nodes.size() << " cells "
+                     << tree.program.cells << " widened_spaces " << tree.widenedSpaces << " node_visits "
+                     << selected.nodeVisits + checked.nodeVisits << " cell_visits "
+                     << selected.cellVisits + checked.cellVisits << " handoffs " << out.handoffs << " cut_cycles "
+                     << checked.cutCycles << " allocation_retries " << selected.allocationRetries << " barriers "
+                     << out.barriers << " seconds "
                      << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() << "\n";
     return out;
 }

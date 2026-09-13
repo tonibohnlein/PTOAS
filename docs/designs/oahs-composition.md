@@ -34,11 +34,13 @@ structured or symbolic constructor as a fallback. The existing planner default
 and the migration behavior of `planner=structured` are unchanged. This exposure
 permits real pass-pipeline corpus and whole-compilation measurements; it is not
 a replacement-quality approval.
-It constructs direct transfers from physical completion demands without calling
-`discoverCuts()` or constructing per-cell cycles. It is still a **migration
-candidate**, not completion of the four-milestone replacement plan. In
-particular, cross-domain incoming placement, rotating-generation precision,
-and replacement qualification remain open.
+Its base constructor derives direct transfers from physical completion demands
+without cycle recognition. Optional bounded refinements now share recurring
+handoff families and recover qualified incoming and periodic release cuts; they
+use `discoverCuts()` as a precision provider, not a semantic admission gate.
+It is still a **migration candidate**, not a qualified replacement: the full
+benchmark overlap/command-quality gate remains open. Precision disabled skips
+periodic scalar qualification and retains the same general composition engine.
 
 The positive operation/effect registry and selected A2/A3 hardware contract are
 retained. Moving that registry to a lowering-owned operation interface remains
@@ -1112,3 +1114,156 @@ and `test-results/oahs-demands` directories. The default planner is unchanged.
 One remaining cost limitation is that continuation eligibility checks payload
 lanes, not a later synchronization command that could relay the exit stall to
 another lane; that needs qualification before any replacement-quality claim.
+
+## Periodic release within the same demand constructor
+
+The next refinement supports complete leaf words under qualified periodic
+choices. A word contains only fixed physical operations and empty scalar cuts;
+its payload and source ordering are therefore identical on every active
+residue. Arbitrary choices, nested control and unknown expressions still use
+the existing demand/closed-ring baseline when this optional fact is unavailable.
+No kernel-name or pipeline-name recognition is involved.
+
+`PeriodicScalar` is extracted from the existing structured adapter and reused
+by both adapters. There is no duplicated scalar grammar. The new caller uses
+only its periodic fragment, with startup splitting disabled, an original index
+IV, constant nonnegative lower bound, and unit step. It evaluates at most one
+period of at most 32 ordinals. All choices in the owner must be qualified with
+a common period; their original nesting determines the active mask without
+enumerating independent Boolean assignments. Nested loops are declined by this
+provider. The core validates owner ancestry and mask propagation, and native
+reconstruction rederives the facts from the original scalar IR.
+
+If the first active ordinal is r and the original lower bound is L, emission
+uses checked, representable `firstRaw = L+r`:
+
+```text
+original loop and original choice:
+    if iv != firstRaw: WAIT previous release
+    original first group ... original last group
+    SET release at the immediate last-use cut
+if firstRaw < originalUpper: WAIT final release
+```
+
+The first loop iteration need not execute the word. An empty loop, a loop
+ending before its first active ordinal, and skipped residues execute no partial
+protocol. The complete ring word provides the consumption-before-republication
+cycle; the actual combined owner protocol additionally checks every exit residue
+through two periods and repeated whole-owner invocations. This is bounded
+qualification of a structural recurring protocol, not general loop unrolling or
+a device proof.
+
+Outside-word history is retained across skipped residues. Source receipts keep
+incoming history, current-visit source work, the source suffix after publication,
+and all owner source effects outside the word. Internal-generation normalization
+is restricted to cell witnesses whose complete access population is inside the
+word; the code also explicitly retains outside bits and never clears GM
+visibility history. A cheap MAY-write-overlap prefilter excludes a release family
+when its source writes the same physical cell inside and outside the word.
+For ordinary buffering this keeps shared-GM-output families closed while allowing
+early input-slot release. It does not infer disjointness from SSA names.
+
+Selection is a deterministic batch of at most eight complete families with
+disjoint cell witnesses and directed keys. One combined fresh check accepts the
+selected batch or returns the untouched baseline. Skipped, selected, accepted
+and rolled-back counts are separate; there are no individual-family acceptance
+claims after a failed combined check and no per-family backtracking campaign.
+The publication crosses the backedge strictly earlier in dynamic cut order:
+`first(v) < tail(v) < first(v+1)`. This does not promise a smaller source prefix
+in every input, nor does it turn extra guard execution into a free operation.
+
+The previous continuation limitation is tightened here. Actual synchronization
+commands, including nested and other-owner cleanup, contribute their issuing
+lanes to the suffix. Only a validated adjacent cleanup prefix belonging to the
+same owner at its exact immediate-exit cut is exempted. A publication/acquisition
+interleaved into that batch, a different exit cut, or another owner's cleanup
+does not receive the exemption. This permits multiple slot waits at one common
+retirement boundary without hiding later relay commands.
+
+### Bounded work and evidence scope
+
+There are separate explicit optional-stage ceilings, not a single wall-clock
+budget: scalar qualification, eligibility/continuation scans, receipt cells,
+actual command population and protocol-word work each have a 1,048,576-unit
+ceiling. Repeated demand analysis/closed-ring discovery has a separate
+134,217,728-unit representation reservation, checked before either analysis
+runs. It accounts for the node/cell scan with bounded lane, group and alternative
+widths, cell signature/key matching, and command population sorting. This is a
+conservative reservation, not an actual instruction count; its work/refusal
+counters are separate from protocol work. Zero allowance retains the byte-for-byte
+same closed-ring mechanism plan. `deferred_ring_candidates` counts the families
+selected after the max-eight/disjointness filter, not every eligible family;
+`deferred_skipped_families` records the difference.
+Scalar qualification also caps expression DAGs at 256 values and
+structural/expression depth at 64. Residue evaluation is charged for its fresh
+per-condition cache. Protocol products are charged before copying words. The
+trace separates DAG visits, residue evaluations, eligibility work, receipt cells,
+protocol work, selected periodic families and write-overlap exclusions. The
+reported work statistic includes native scalar qualification but is not a time
+or allocation-byte bound. Reaching any optional cap retains the baseline; it is
+never interpreted as an empty execution domain.
+
+The targeted core and native demand gates exercise nonzero first-active bounds,
+empty and skipped visits, repeated invocations, corrupted constants/keys/waits,
+outside-word read/write corruption, split/interleaved cleanup, and sibling
+owners. The unchanged two-/three-buffer inputs exercise actual periodic release
+and shared-output exclusion. A separate fixture starts at raw IV 2 and first
+executes at raw IV 3. Period overflow, excessive period, unknown predicates and
+never-active words retain the native baseline.
+
+Initial eight-case observations decrease from 62 to 37 for two buffers, 76 to 42
+for three buffers and 66 to 22 for four-use, counting acquisitions that require
+a later producer prefix than InsertSync. These are observer results, not device
+timings or complete quality acceptance. Static counts become 8 SET/10 WAIT for
+two buffers and 12 SET/15 WAIT for three; executed synchronization remains no
+worse than InsertSync in the recorded scenarios. Added guards and cleanup sites
+are reported separately. Softmax, QK, Q projection and historical GEMM remain
+unqualified on the whole quality gate, and the default planner is unchanged.
+
+### Final periodic-candidate validation
+
+The targeted four-target native rebuild passes. The final build passes all six
+selected gates: focused (142.57 s), composition core (5.04 s), composition
+(3.06 s), demands (19.94 s), structured core (44.18 s), and structured
+(81.63 s). ASan/UBSan passes **2,216,627 assertions**, including exact discovery
+reservation boundaries and maximal-integer refusal. The one selected public
+option lit test passes; 1,879 other lit tests were excluded. Its Python launcher
+requires the build-matching Python 3.12 environment on PATH; the initial system
+Python invocation failed to import that extension and was corrected without a
+source change.
+
+All eight unchanged inputs pass three paired complete-compiler timing rounds
+after one warm-up, with untimed C++ emission. Median candidate/InsertSync ratios
+are **0.986–1.054**, passing the <=2x compilation gate. These serial timings ran
+without another resource-intensive local worker. They do not measure device
+runtime, and the whole synchronization-quality gate remains **false**.
+
+| Input | Candidate SET / WAIT / named barrier | Later-prefix observations | Executed sync no worse in all recorded scenarios |
+| --- | ---: | ---: | --- |
+| One buffer | 4 / 6 / 0 | 0 | Yes |
+| Two buffers | 8 / 10 / 0 | 37 | Yes |
+| Three buffers | 12 / 15 / 0 | 42 | Yes |
+| Four-use | 20 / 22 / 6 | 22 | No |
+| Online softmax | 17 / 17 / 21 | 42 | No |
+| QK matmul | 18 / 18 / 4 | 32 | Yes |
+| Q projection | 18 / 18 / 6 | 410 | Yes |
+| Historical GEMM | 62 / 62 / 21 | 45 | No |
+
+Each output also has one terminal ALL drain. Later-prefix counts compare
+acquired producer boundaries with existing InsertSync, not a hardware timing
+model. Scalar guard execution is recorded separately by the demand runner.
+
+A rootless replay from the frozen original/prepared content-addressed snapshots
+matches **726/726** recorded outcomes (363 inputs in each of conservative and
+demand modes), including all refusal reasons and mechanism counts. The frozen
+corpus remains **45/150 PTOAS** and **152/213 generated PyPTO/pypto-lib**; the
+new focused periodic fixture does not enter either denominator. The corpus has
+336 unique original-byte hashes, not 363 distinct production kernels.
+
+The tested native driver SHA-256 is
+`e166d5a8ac833e70527a13a47c2949e3797870af08f4494fcdf512208caf8442`.
+Detailed artifacts remain outside Git under the existing build's
+`test-results/oahs-periodic-frozen-replay`, `test-results/oahs-periodic-compiler`,
+and `test-results/oahs-demands`. The separate frozen-corpus milestone supplies
+the portable manifest, exact public command templates, and CAS replay runner.
+This remains an opt-in implementation checkpoint, not replacement acceptance.

@@ -74,6 +74,10 @@ def main():
                         'replayed_fallback_demands', 'entry_episodes', 'entry_reply_families', 'rejected_entry_proposals',
                         'ring_candidates', 'rejected_rings', 'ring_candidate_commands_removed', 'cut_cycles',
                         'deferred_ring_candidates', 'deferred_rings', 'rejected_deferred_rings', 'deferred_protocol_steps',
+                        'periodic_deferred_rings', 'periodic_write_overlap_rejections', 'periodic_scalar_work',
+                        'periodic_dag_visits', 'periodic_residue_evaluations', 'deferred_eligibility_work',
+                        'deferred_discovery_work', 'deferred_discovery_refusals',
+                        'deferred_receipt_cells', 'deferred_skipped_families',
                         'rendezvous_packets', 'demand_fallbacks'):
             matches = re.findall(r'\b' + counter + r' (\d+)\b', trace)
             if len(matches) != 1:
@@ -97,6 +101,9 @@ def main():
         if not verdict['accepted'] or not verdict['atomic']:
             raise RuntimeError('native construction/reconstruction failed: ' + name)
         counters = native_counters(name + '-native') if args.constructor == 'demands' else {}
+        if args.constructor == 'demands' and name in ('two_buffer', 'three_buffer'):
+            if not counters['periodic_deferred_rings'] or not counters['periodic_write_overlap_rejections']:
+                raise RuntimeError('periodic input release / shared-output refusal not exercised: ' + name)
         invoke(name + '-normalize', compiler + [raw, '-o', emitted])
         cpp = None
         if args.constructor == 'demands' and name == 'historical_gemm':
@@ -236,6 +243,58 @@ def main():
             if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
                 raise RuntimeError('deferred release corruption escaped reconstruction: ' + mutation)
             path_checks.append(dict(name=mutation, verdict=verdict))
+        periodic = Path(__file__).parent / 'structured_inputs/demand_periodic_ring.pto'
+        periodic_raw = args.output.resolve() / 'periodic-rings.native.pto'
+        verdict = json.loads(invoke('periodic-rings', [args.driver, periodic, 'demands:none', periodic_raw]))
+        counters = native_counters('periodic-rings')
+        if not verdict['accepted'] or not verdict['atomic'] or counters['periodic_deferred_rings'] != 2:
+            raise RuntimeError('native nonzero first-active release path not exercised')
+        periodic_normalized = args.output.resolve() / 'periodic-rings.pto'
+        invoke('periodic-rings-normalize', compiler + [periodic_raw, '-o', periodic_normalized])
+        episodes = []
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            module = ir.Module.parse(periodic_normalized.read_text())
+            function = next(op for op in children(module.operation) if op.name == 'func.func')
+            observer = Boundaries()
+            for upper in (0, 2, 3, 4, 7, 10, 3, 4):
+                metrics = replay(function, ['src', 'dst', upper], observer=observer.observe)
+                visits = sum(iv % 3 == 0 for iv in range(2, upper))
+                if observer.tokens:
+                    raise RuntimeError('periodic release exports an unconsumed publication')
+                if any(metrics['counts'].get(op, 0) != 4 * visits for op in ('pto.set_flag', 'pto.wait_flag')):
+                    raise RuntimeError('periodic release has incorrect first/steady/final command count')
+                episodes.append(dict(upper=upper, active_visits=visits, counts=metrics['counts'],
+                                     scalar_counts=metrics['scalar_counts']))
+        path_checks.append(dict(name='periodic-rings', verdict=verdict, counters=counters, episodes=episodes,
+                                source_sha256=digest(periodic), output_sha256=digest(periodic_normalized)))
+        periodic_text = periodic.read_text()
+        declined = {
+            'period-too-large': periodic_text.replace('%c3 = arith.constant 3', '%c3 = arith.constant 33'),
+            'unknown-predicate': periodic_text.replace('arith.cmpi eq, %slot, %c0', 'arith.cmpi eq, %slot, %upper'),
+            'never-active': periodic_text.replace('%c0 = arith.constant 0', '%c0 = arith.constant 99'),
+            'first-active-overflow': periodic_text.replace('%lower = arith.constant 2',
+                '%lower = arith.constant 9223372036854775806').replace('%c3 = arith.constant 3',
+                '%c3 = arith.constant 32'),
+        }
+        for name, fixture_text in declined.items():
+            fixture = args.output.resolve() / (name + '.input.pto')
+            fixture.write_text(fixture_text)
+            verdict = json.loads(invoke(name, [args.driver, fixture, 'demands:none',
+                                               args.output.resolve() / (name + '.pto')]))
+            counters = native_counters(name)
+            if not verdict['accepted'] or not verdict['atomic'] or counters['periodic_deferred_rings']:
+                raise RuntimeError('optional periodic refusal poisoned baseline: ' + name)
+            path_checks.append(dict(name=name, verdict=verdict, counters=counters, source_sha256=digest(fixture)))
+        for mutation in ('periodic-wrong-first', 'periodic-wrong-exit', 'deferred-drop-previous',
+                         'deferred-drop-exit', 'deferred-late-previous', 'deferred-early-exit',
+                         'wrong-key', 'early-publication'):
+            verdict = json.loads(invoke('periodic-' + mutation, [args.driver, periodic,
+                'demands:' + mutation, args.output.resolve() / ('periodic-' + mutation + '.pto')]))
+            if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
+                raise RuntimeError('periodic release corruption escaped reconstruction: ' + mutation)
+            path_checks.append(dict(name='periodic-' + mutation, verdict=verdict))
         for mutation in ('wrong-key', 'drop-set', 'drop-wait', 'early-publication', 'late-acquisition'):
             verdict = json.loads(invoke('shared-rings-' + mutation, [args.driver, shared,
                 'demands:' + mutation, args.output.resolve() / ('shared-rings-' + mutation + '.pto')]))

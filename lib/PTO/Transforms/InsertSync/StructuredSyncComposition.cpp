@@ -35,7 +35,7 @@ std::optional<unsigned> key(const c::Program& p, unsigned a, unsigned b)
 }
 bool validMechanism(const c::Program& p, const c::Mechanism& m)
 {
-    if (m.participation != c::Mechanism::Every || m.loop != ~0u)
+    if (m.participation != c::Mechanism::Every || m.loop != ~0u || m.word != ~0u)
         return false;
     if (m.first >= c::LaneCount || m.second >= c::LaneCount)
         return false;
@@ -68,6 +68,13 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
     std::vector<unsigned> parents(p.nodes.size());
     for (unsigned id = 0; id < p.nodes.size(); ++id) {
         const auto& n = p.nodes[id];
+        if (n.periodicOwner != ~0u &&
+            (n.periodicOwner >= p.nodes.size() || p.nodes[n.periodicOwner].kind != c::Node::For ||
+             (n.kind != c::Node::Sequence && n.kind != c::Node::Choice) || !n.periodicPeriod || n.periodicPeriod > 32 ||
+             n.periodicLower < 0 || (n.periodicPeriod < 32 && (n.periodicResidues >> n.periodicPeriod)))) {
+            reason = "invalid optional periodic domain";
+            return false;
+        }
         if (n.effects.size() != p.cells || n.lane >= c::LaneCount ||
             (n.entryGuardStart != ~0u && (n.kind != c::Node::For || n.entryGuardStart >= p.nodes.size())) ||
             (n.kind == c::Node::Operation && (!n.children.empty() || !p.target.barrier(lane(p, n.lane)))) ||
@@ -97,6 +104,30 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
             reason = "orphan composition node";
             return false;
         }
+    if (std::any_of(p.nodes.begin(), p.nodes.end(), [](const auto& n) { return n.periodicOwner != ~0u; })) {
+        std::vector<uint64_t> begin(p.nodes.size()), end(p.nodes.size());
+        std::vector<std::pair<unsigned, bool>> stack{{unsigned(p.nodes.size() - 1), false}};
+        uint64_t position = 0;
+        while (!stack.empty()) {
+            auto [id, exiting] = stack.back();
+            stack.pop_back();
+            if (exiting) {
+                end[id] = position++;
+                continue;
+            }
+            begin[id] = position++;
+            stack.push_back({id, true});
+            for (unsigned child : p.nodes[id].children)
+                stack.push_back({child, false});
+        }
+        for (unsigned id = 0; id < p.nodes.size(); ++id) {
+            unsigned owner = p.nodes[id].periodicOwner;
+            if (owner != ~0u && !(begin[owner] < begin[id] && end[id] < end[owner])) {
+                reason = "periodic owner is not an original ancestor";
+                return false;
+            }
+        }
+    }
     return true;
 }
 
@@ -210,7 +241,7 @@ uint8_t c::State::demands(unsigned observer, const Effects& effects) const
 bool c::Mechanism::operator==(const Mechanism& m) const
 {
     return kind == m.kind && first == m.first && second == m.second && forwardKey == m.forwardKey &&
-           reverseKey == m.reverseKey && participation == m.participation && loop == m.loop;
+           reverseKey == m.reverseKey && participation == m.participation && loop == m.loop && word == m.word;
 }
 
 c::Result c::construct(const Program& p)
@@ -1490,7 +1521,7 @@ struct DeferredDemandRings {
         unsigned cut = NoCut;
         c::Mechanism::Kind kind = c::Mechanism::Publish;
         c::Mechanism::Participation participation = c::Mechanism::Every;
-        unsigned source = 0, target = 0, loop = NoCut;
+        unsigned source = 0, target = 0, loop = NoCut, word = NoCut;
     };
     struct Span {
         unsigned firstRead = NoCut, lastRead = NoCut;
@@ -1500,7 +1531,7 @@ struct DeferredDemandRings {
         unsigned owner = NoCut;
         unsigned publicationCut = NoCut, publicationIndex = NoCut;
         unsigned previousCut = NoCut, previousIndex = NoCut;
-        c::Effects publishedPrefix, currentPrefix, unacquiredSuffix;
+        c::Effects publishedPrefix, currentPrefix, unacquiredSuffix, outsideHistory;
     };
     using CellSpans = std::array<Span, c::LaneCount>;
     Cuts cuts;
@@ -1510,18 +1541,107 @@ struct DeferredDemandRings {
     std::set<Key> keys;
     std::set<unsigned> loopOwners;
     uint64_t extentWork = 0;
+    uint64_t eligibilityWork = 0;
     uint64_t protocolSteps = 0;
     explicit DeferredDemandRings(unsigned size) : sites(size) {}
 
-    static bool eligible(const c::Program& p, const DemandAnalysis& analysis, const Cycle& cycle)
+    // Payload-free synchronization may still relay an exit stall. Summarize
+    // actual issuing lanes once, including commands in later nested regions.
+    // A certified LoopExit only retires a token; any later publication that
+    // could forward its stall is still counted. This is placement eligibility,
+    // not a completion or event-consumption proof.
+    static std::vector<uint8_t> followingCommands(
+        const c::Program& p, const Commands& actual, unsigned retiringOwner = NoCut, unsigned retirementCut = NoCut)
+    {
+        std::vector<uint8_t> subtree(p.nodes.size()), following(p.nodes.size());
+        for (unsigned id = 0; id < p.nodes.size(); ++id) {
+            for (const auto& m : actual[id]) {
+                if (m.first >= c::LaneCount || m.second >= c::LaneCount) {
+                    subtree[id] = UINT8_MAX;
+                    continue;
+                }
+                if (m.participation == c::Mechanism::LoopExit && m.loop == retiringOwner && id == retirementCut)
+                    continue;
+                if (m.kind == c::Mechanism::Acquire)
+                    subtree[id] |= uint8_t(1u << m.second);
+                else {
+                    subtree[id] |= uint8_t(1u << m.first);
+                    if (m.kind == c::Mechanism::Rendezvous)
+                        subtree[id] |= uint8_t(1u << m.second);
+                }
+            }
+            for (unsigned child : p.nodes[id].children)
+                subtree[id] |= subtree[child];
+            if (p.nodes[id].kind == c::Node::Sequence) {
+                uint8_t later = 0;
+                for (auto child = p.nodes[id].children.rbegin(); child != p.nodes[id].children.rend(); ++child) {
+                    following[*child] = later;
+                    later |= subtree[*child];
+                }
+            }
+        }
+        return following;
+    }
+
+    static bool continuationSafe(
+        const c::Program& p, const DemandAnalysis& analysis, const Cycle& cycle, const std::vector<uint8_t>& following)
+    {
+        uint8_t target = uint8_t(1u << cycle.groups.front().lane);
+        for (unsigned cursor = cycle.owner; analysis.parent[cursor] != NoCut; cursor = analysis.parent[cursor])
+            if (following[cursor] & target)
+                return false;
+        return true;
+    }
+
+    static bool chargeEligibility(const c::Program& p, uint64_t& work)
+    {
+        // Bound repeated owner/path/physical-cell scans before visiting them.
+        const uint64_t factor = 3 * (uint64_t(p.cells) + 1);
+        if (p.nodes.size() > (DemandRings::MaxCells - work) / factor)
+            return false;
+        work += p.nodes.size() * factor;
+        return true;
+    }
+
+    static bool eligible(
+        const c::Program& p, const DemandAnalysis& analysis, const Cycle& cycle, uint64_t* overlapRejections = nullptr)
     {
         if (cycle.owner >= p.nodes.size() || cycle.region >= p.nodes.size())
             return false;
         const auto& owner = p.nodes[cycle.owner];
-        if (owner.kind != c::Node::For || owner.children.size() != 1 || owner.children[0] != cycle.region ||
+        bool periodic = owner.children.size() == 1 && owner.children[0] != cycle.region;
+        const auto& word = p.nodes[cycle.region];
+        if (owner.kind != c::Node::For || owner.children.size() != 1 ||
             p.nodes[cycle.region].kind != c::Node::Sequence || owner.entryGuardStart == NoCut ||
             analysis.next[cycle.owner] == NoCut)
             return false;
+        if (periodic && (word.periodicOwner != cycle.owner || !word.firstActive()))
+            return false;
+        if (periodic) {
+            unsigned period = word.periodicPeriod;
+            uint32_t all = period == 32 ? UINT32_MAX : (uint32_t(1) << period) - 1;
+            std::function<bool(unsigned, uint32_t)> complete = [&](unsigned id, uint32_t active) {
+                const auto& node = p.nodes[id];
+                if (node.kind == c::Node::For || node.kind == c::Node::While)
+                    return false;
+                if (node.kind == c::Node::Sequence || node.kind == c::Node::Choice) {
+                    if (node.periodicOwner != cycle.owner || node.periodicPeriod != period ||
+                        node.periodicLower != word.periodicLower)
+                        return false;
+                    if (node.kind == c::Node::Sequence && node.periodicResidues != active)
+                        return false;
+                }
+                if (node.kind == c::Node::Choice)
+                    return complete(node.children[0], active & node.periodicResidues) &&
+                           complete(node.children[1], active & ~node.periodicResidues);
+                for (unsigned child : node.children)
+                    if (!complete(child, active))
+                        return false;
+                return true;
+            };
+            if (!complete(owner.children[0], all))
+                return false;
+        }
         // The source-prefix receipt below is reconstructed from one linear
         // body word. Empty Sequences represent scalar/terminator cuts; nested
         // control remains on the already verified closed-ring baseline.
@@ -1529,6 +1649,30 @@ struct DeferredDemandRings {
             if (p.nodes[child].kind != c::Node::Operation &&
                 !(p.nodes[child].kind == c::Node::Sequence && p.nodes[child].children.empty()))
                 return false;
+        unsigned tail = analysis.next[cycle.groups.back().last.front()];
+        if (tail == NoCut || analysis.parent[tail] != cycle.region ||
+            analysis.position[cycle.groups.front().first.front()] >= analysis.position[tail])
+            return false; // publication moves strictly before the next visit
+        if (periodic) {
+            // MAY effects outside this complete word remain uncovered by its
+            // earlier wrap publication. Reject obvious same-cell source WAW
+            // cases up front; this filters a family, never an entire program.
+            auto outside = outsideWord(p, analysis, cycle);
+            // discoverCuts already requires equal complete access populations
+            // for each witness cell in word and owner. Keep the exclusion
+            // explicit here: no residue-dependent hidden reader/writer belongs
+            // to an internal generation normalized by this certificate.
+            for (unsigned cell : cycle.cells)
+                if (outside[cell].readers || outside[cell].writers)
+                    return false;
+            uint8_t source = uint8_t(1u << cycle.groups.back().lane);
+            for (unsigned cell = 0; cell < p.cells; ++cell)
+                if (outside[cell].writers & analysis.effects[cycle.region][cell].writers & source) {
+                    if (overlapRejections)
+                        ++*overlapRejections;
+                    return false;
+                }
+        }
         unsigned scope = analysis.parent[cycle.owner];
         if (scope == NoCut || p.nodes[scope].kind != c::Node::Sequence ||
             analysis.parent[owner.entryGuardStart] != scope ||
@@ -1548,6 +1692,21 @@ struct DeferredDemandRings {
             cursor = parent;
         }
         return true;
+    }
+
+    static c::Effects outsideWord(const c::Program& p, const DemandAnalysis& analysis, const Cycle& cycle)
+    {
+        c::Effects result(p.cells);
+        for (unsigned cursor = cycle.region; cursor != cycle.owner;) {
+            unsigned parent = analysis.parent[cursor];
+            if (parent == NoCut)
+                return analysis.effects[cycle.owner];
+            for (unsigned sibling : p.nodes[parent].children)
+                if (sibling != cursor)
+                    merge(result, analysis.effects[sibling]);
+            cursor = parent;
+        }
+        return result;
     }
 
     std::vector<Endpoint> pattern(const Cycle& cycle, const DemandAnalysis& analysis) const
@@ -1570,7 +1729,16 @@ struct DeferredDemandRings {
             {cuts.next[groups.back().last.front()], c::Mechanism::Publish, c::Mechanism::Every, last, first, NoCut});
         out.push_back(
             {analysis.next[cycle.owner], c::Mechanism::Acquire, c::Mechanism::LoopExit, last, first, cycle.owner});
+        if (pWord(cycle, analysis)) {
+            out.front().word = cycle.region;
+            out.back().word = cycle.region;
+        }
         return out;
+    }
+
+    static bool pWord(const Cycle& cycle, const DemandAnalysis& analysis)
+    {
+        return analysis.parent[cycle.region] != cycle.owner;
     }
 
     bool buildSourceReceipts(
@@ -1578,7 +1746,7 @@ struct DeferredDemandRings {
     {
         std::map<unsigned, std::vector<CellSpans>> spans;
         for (const auto& cycle : cuts.cycles) {
-            if (spans.count(cycle.owner))
+            if (spans.count(cycle.region))
                 continue;
             const auto& children = p.nodes[cycle.region].children;
             uint64_t remaining = DemandRings::MaxCells - extentWork;
@@ -1587,7 +1755,7 @@ struct DeferredDemandRings {
                 return false;
             }
             extentWork += uint64_t(p.cells) * children.size();
-            auto [where, inserted] = spans.emplace(cycle.owner, std::vector<CellSpans>(p.cells));
+            auto [where, inserted] = spans.emplace(cycle.region, std::vector<CellSpans>(p.cells));
             (void)inserted;
             auto& ownerSpans = where->second;
             for (unsigned position = 0; position < children.size(); ++position) {
@@ -1631,7 +1799,17 @@ struct DeferredDemandRings {
             receipt.publishedPrefix.resize(p.cells);
             receipt.currentPrefix.resize(p.cells);
             receipt.unacquiredSuffix.resize(p.cells);
-            const auto& ownerSpans = spans.at(cycle.owner);
+            const auto& ownerSpans = spans.at(cycle.region);
+            // Receipt construction repeats the outside-word traversal after
+            // eligibility. Charge that traversal explicitly before doing it;
+            // its ancestor-sibling population is at most the original tree.
+            if (p.nodes.size() > (DemandRings::MaxCells - extentWork) / p.cells) {
+                reason = "deferred outside receipt exceeds optional work bound";
+                return false;
+            }
+            extentWork += uint64_t(p.cells) * p.nodes.size();
+            auto outside = outsideWord(p, analysis, cycle);
+            receipt.outsideHistory = outside;
             for (unsigned cell = 0; cell < p.cells; ++cell) {
                 const auto& span = ownerSpans[cell][source];
                 uint8_t sourceBit = uint8_t(1u << source);
@@ -1647,6 +1825,8 @@ struct DeferredDemandRings {
                     receipt.unacquiredSuffix[cell].readers |= sourceBit;
                 if (span.lastWrite != NoCut && span.lastWrite >= tailPosition)
                     receipt.unacquiredSuffix[cell].writers |= sourceBit;
+                receipt.unacquiredSuffix[cell].readers |= outside[cell].readers & sourceBit;
+                receipt.unacquiredSuffix[cell].writers |= outside[cell].writers & sourceBit;
             }
             Key wrap{source, target, cycle.keys.at({source, target})};
             auto locate = [&](unsigned cut, c::Mechanism::Kind kind, c::Mechanism::Participation participation,
@@ -1681,19 +1861,24 @@ struct DeferredDemandRings {
     }
 
     void appendActual(
-        std::vector<c::Mechanism>& word, const std::vector<c::Mechanism>& commands, unsigned owner, unsigned trips,
-        std::optional<unsigned> iteration) const
+        const c::Program& p, std::vector<c::Mechanism>& word, const std::vector<c::Mechanism>& commands, unsigned owner,
+        unsigned trips, std::optional<unsigned> iteration) const
     {
         for (const auto& mechanism : commands) {
             bool participate = mechanism.participation == c::Mechanism::Every;
             if (mechanism.loop == owner) {
+                unsigned first = 0;
+                if (mechanism.word != NoCut) {
+                    const auto& domain = p.nodes[mechanism.word];
+                    first = unsigned(*domain.firstActive() - domain.periodicLower);
+                }
                 if (mechanism.participation == c::Mechanism::NonEmpty ||
                     mechanism.participation == c::Mechanism::LoopExit)
-                    participate = trips != 0;
+                    participate = trips > first;
                 else if (mechanism.participation == c::Mechanism::First)
                     participate = iteration && *iteration == 0;
                 else if (mechanism.participation == c::Mechanism::Previous)
-                    participate = iteration && *iteration != 0;
+                    participate = iteration && *iteration != first;
             }
             if (!participate)
                 continue;
@@ -1714,16 +1899,24 @@ struct DeferredDemandRings {
     {
         std::vector<c::Mechanism> word;
         unsigned scope = analysis.parent[owner];
-        appendActual(word, actual[scope], owner, trips, std::nullopt);
+        appendActual(p, word, actual[scope], owner, trips, std::nullopt);
         for (unsigned child : p.nodes[scope].children) {
-            appendActual(word, actual[child], owner, trips, std::nullopt);
+            appendActual(p, word, actual[child], owner, trips, std::nullopt);
             if (child != owner)
                 continue;
             unsigned body = p.nodes[owner].children[0];
             for (unsigned iteration = 0; iteration < trips; ++iteration) {
-                appendActual(word, actual[body], owner, trips, iteration);
-                for (unsigned bodyChild : p.nodes[body].children)
-                    appendActual(word, actual[bodyChild], owner, trips, iteration);
+                std::function<void(unsigned)> visit = [&](unsigned id) {
+                    appendActual(p, word, actual[id], owner, trips, iteration);
+                    const auto& node = p.nodes[id];
+                    if (node.kind == c::Node::Choice) {
+                        bool take = node.periodicResidues & (uint32_t(1) << (iteration % node.periodicPeriod));
+                        visit(node.children[take ? 0 : 1]);
+                    } else
+                        for (unsigned nested : node.children)
+                            visit(nested);
+                };
+                visit(body);
             }
         }
         return word;
@@ -1738,7 +1931,7 @@ struct DeferredDemandRings {
         // Rendezvous expands to four event operations; barriers still cost one
         // because appendActual must inspect them.
         constexpr uint64_t MaxProtocolSteps = 1u << 20;
-        std::vector<uint64_t> direct(actual.size()), sequence(actual.size());
+        std::vector<uint64_t> direct(actual.size()), sequence(actual.size()), subtree(actual.size());
         auto boundedAdd = [](uint64_t& total, uint64_t extra) {
             constexpr uint64_t limit = (1u << 20) + 1;
             total = total >= limit || extra >= limit - total ? limit : total + extra;
@@ -1746,6 +1939,9 @@ struct DeferredDemandRings {
         for (unsigned id = 0; id < actual.size(); ++id) {
             for (const auto& mechanism : actual[id])
                 boundedAdd(direct[id], mechanism.kind == c::Mechanism::Rendezvous ? 4 : 1);
+            subtree[id] = direct[id] + 1; // include original node traversal
+            for (unsigned child : p.nodes[id].children)
+                boundedAdd(subtree[id], subtree[child]);
             if (p.nodes[id].kind == c::Node::Sequence) {
                 sequence[id] = direct[id];
                 for (unsigned child : p.nodes[id].children)
@@ -1755,15 +1951,21 @@ struct DeferredDemandRings {
         protocolSteps = 0;
         for (unsigned owner : loopOwners) {
             uint64_t parent = sequence[analysis.parent[owner]];
-            uint64_t body = sequence[p.nodes[owner].children[0]];
-            if (body > (MaxProtocolSteps - protocolSteps) / 72 ||
-                parent > (MaxProtocolSteps - protocolSteps - 72 * body) / 36) {
+            unsigned bodyId = p.nodes[owner].children[0];
+            uint64_t body = subtree[bodyId];
+            uint64_t period = std::max(1u, p.nodes[bodyId].periodicPeriod);
+            uint64_t maxTrips = 2 * period;
+            uint64_t pairs = (maxTrips + 1) * (maxTrips + 1);
+            uint64_t factor = 4 * pairs;
+            if (body > (MaxProtocolSteps - protocolSteps) / (factor * maxTrips) ||
+                parent > (MaxProtocolSteps - protocolSteps - factor * maxTrips * body) / factor) {
                 reason = "deferred demand ring protocol exceeds optional work bound";
                 return false;
             }
-            // Nine 0/1/2 trip pairs, two owner invocations per pair, and the
-            // two-copy recurrence check; two body visits are the maximum word.
-            protocolSteps += 36 * (parent + 2 * body);
+            // Every first/steady-period exit residue, two owner invocations
+            // per pair and the two-copy recurrence check. Period one is the
+            // original nine 0/1/2 trip pairs. Charge before materializing words.
+            protocolSteps += factor * (parent + maxTrips * body);
         }
         // Check first/steady/final behavior and retain physical token state
         // across two complete owner invocations.  Unlike the ordinary
@@ -1773,15 +1975,17 @@ struct DeferredDemandRings {
         // the first copy establishes initialization/finalization and the
         // second establishes the same consumption-before-next-publication
         // recurrence used by verifyProtocolWord for arbitrary repetitions.
-        for (unsigned owner : loopOwners)
-            for (unsigned firstTrips : {0u, 1u, 2u})
-                for (unsigned secondTrips : {0u, 1u, 2u}) {
+        for (unsigned owner : loopOwners) {
+            unsigned maxTrips = 2 * std::max(1u, p.nodes[p.nodes[owner].children[0]].periodicPeriod);
+            for (unsigned firstTrips = 0; firstTrips <= maxTrips; ++firstTrips)
+                for (unsigned secondTrips = 0; secondTrips <= maxTrips; ++secondTrips) {
                     auto word = invocation(p, analysis, actual, owner, firstTrips);
                     auto second = invocation(p, analysis, actual, owner, secondTrips);
                     word.insert(word.end(), second.begin(), second.end());
                     if (!verifyProtocolWord(word, reason))
                         return false;
                 }
+        }
         return true;
     }
 
@@ -1795,18 +1999,27 @@ struct DeferredDemandRings {
             });
         if (!active)
             return true;
+        uint64_t commandRecords = p.nodes.size();
+        for (const auto& commands : actual) {
+            if (commandRecords > DemandRings::MaxCells || commands.size() > DemandRings::MaxCells - commandRecords) {
+                reason = "deferred demand ring command population exceeds optional work bound";
+                return false;
+            }
+            commandRecords += commands.size();
+        }
         DemandRings shapes(p.nodes.size());
         if (!shapes.discover(p, reason))
             return false;
         cuts = std::move(shapes.cuts);
-        using Position = std::tuple<unsigned, unsigned, unsigned, unsigned>;
+        using Position = std::tuple<unsigned, unsigned, unsigned, unsigned, unsigned>;
         std::map<Key, std::vector<Position>> population;
         for (unsigned id = 0; id < actual.size(); ++id)
             for (unsigned index = 0; index < actual[id].size(); ++index) {
                 const auto& mechanism = actual[id][index];
                 if (mechanism.kind == c::Mechanism::Publish || mechanism.kind == c::Mechanism::Acquire)
                     population[{mechanism.first, mechanism.second, mechanism.forwardKey}].push_back(
-                        {id, unsigned(mechanism.kind), unsigned(mechanism.participation), mechanism.loop});
+                        {id, unsigned(mechanism.kind), unsigned(mechanism.participation), mechanism.loop,
+                         mechanism.word});
             }
         for (auto& [eventKey, positions] : population) {
             (void)eventKey;
@@ -1815,6 +2028,10 @@ struct DeferredDemandRings {
         std::set<Key> used;
         std::vector<Cycle> certified;
         for (auto cycle : cuts.cycles) {
+            if (!chargeEligibility(p, eligibilityWork)) {
+                reason = "deferred demand ring eligibility exceeds optional work bound";
+                return false;
+            }
             if (!eligible(p, analysis, cycle))
                 continue;
             std::map<std::pair<unsigned, unsigned>, std::vector<Endpoint>> wanted;
@@ -1825,7 +2042,8 @@ struct DeferredDemandRings {
                 std::vector<Position> expected;
                 for (const auto& endpoint : endpoints)
                     expected.push_back(
-                        {endpoint.cut, unsigned(endpoint.kind), unsigned(endpoint.participation), endpoint.loop});
+                        {endpoint.cut, unsigned(endpoint.kind), unsigned(endpoint.participation), endpoint.loop,
+                         endpoint.word});
                 std::sort(expected.begin(), expected.end());
                 bool matched = false;
                 for (unsigned candidate : p.target.compilerKeys) {
@@ -1864,6 +2082,7 @@ struct DeferredDemandRings {
                     cuts.cycles[index].keys.at({endpoint.source, endpoint.target}));
                 mechanism.participation = endpoint.participation;
                 mechanism.loop = endpoint.loop;
+                mechanism.word = endpoint.word;
                 sites[endpoint.cut].push_back(mechanism);
             }
         // Population equality above prevents extra sites for an owned key;
@@ -1887,6 +2106,33 @@ struct DeferredDemandRings {
                     reason = "canonical packet collides with a deferred demand ring";
                     return false;
                 }
+        for (unsigned owner : loopOwners) {
+            if (commandRecords > DemandRings::MaxCells - eligibilityWork) {
+                reason = "deferred demand ring continuation exceeds optional work bound";
+                return false;
+            }
+            eligibilityWork += commandRecords;
+            // One owner's adjacent final waits form its retirement packet.
+            // Do not exempt another owner's cleanup from continuation analysis.
+            unsigned exit = analysis.next[owner], prefix = 0;
+            for (const auto& m : actual[exit]) {
+                if (m.kind != c::Mechanism::Acquire || m.participation != c::Mechanism::LoopExit || m.loop != owner)
+                    break;
+                ++prefix;
+            }
+            if (prefix != std::count_if(cuts.cycles.begin(), cuts.cycles.end(), [&](const auto& cycle) {
+                    return cycle.owner == owner;
+                })) {
+                reason = "deferred retirement packet is not an adjacent immediate-exit prefix";
+                return false;
+            }
+            auto following = followingCommands(p, actual, owner, exit);
+            for (const auto& cycle : cuts.cycles)
+                if (cycle.owner == owner && !continuationSafe(p, analysis, cycle, following)) {
+                    reason = "deferred loop exit may stall a later synchronization command";
+                    return false;
+                }
+        }
         return true;
     }
 
@@ -1943,14 +2189,17 @@ struct DeferredDemandRings {
         for (unsigned cell : cycle.cells) {
             auto& pending = state.pending[mechanism.second][cell];
             const auto& external = entry->second.pending[mechanism.second][cell];
-            const auto& internal = cuts.effects[cycle.owner][cell];
-            if ((pending.readers & ~(external.readers | internal.readers)) ||
-                (pending.writers & ~(external.writers | internal.writers))) {
+            const auto& internal = cuts.effects[cycle.region][cell];
+            unsigned source = cycle.groups.back().lane, target = cycle.groups.front().lane;
+            const auto& outside =
+                sourceReceipts.at({source, target, cycle.keys.at({source, target})}).outsideHistory[cell];
+            if ((pending.readers & ~(external.readers | internal.readers | outside.readers)) ||
+                (pending.writers & ~(external.writers | internal.writers | outside.writers))) {
                 reason = "deferred demand ring omits external physical history";
                 return false;
             }
-            pending.readers &= external.readers;
-            pending.writers &= external.writers;
+            pending.readers &= external.readers | outside.readers;
+            pending.writers &= external.writers | outside.writers;
         }
         return true;
     }
@@ -2008,7 +2257,7 @@ bool verifyEntryProtocols(
         for (unsigned index = 0; index < actual[id].size(); ++index) {
             const auto& m = actual[id][index];
             if (m.participation == Mechanism::Every) {
-                if (m.loop != NoCut)
+                if (m.loop != NoCut || m.word != NoCut)
                     return refuse();
                 continue;
             }
@@ -2018,6 +2267,8 @@ bool verifyEntryProtocols(
                     return refuse();
                 continue;
             }
+            if (m.word != NoCut)
+                return refuse();
             if (m.loop >= p.nodes.size() || p.nodes[m.loop].kind != Node::For ||
                 p.nodes[m.loop].entryGuardStart == NoCut || analysis.next[m.loop] == NoCut || m.first >= LaneCount ||
                 m.second >= LaneCount || !p.target.event(lane(p, m.first), lane(p, m.second)) ||
@@ -2719,13 +2970,26 @@ c::Result verifyDemandImpl(
     DemandAnalysis analysis;
     if (actual.size() != p.nodes.size() || !analysis.build(p, result.reason))
         return result;
+    for (const auto& commands : actual)
+        for (const auto& m : commands)
+            if (m.first >= LaneCount || m.second >= LaneCount ||
+                (m.word != NoCut &&
+                 (m.word >= p.nodes.size() || !p.nodes[m.word].firstActive() ||
+                  p.nodes[m.word].periodicOwner != m.loop ||
+                  (m.participation != Mechanism::Previous && m.participation != Mechanism::LoopExit)))) {
+                result.reason = "invalid actual demand lane or periodic word";
+                return result;
+            }
     DeferredDemandRings deferred(p.nodes.size());
-    if (!deferred.infer(p, analysis, actual, result.reason)) {
+    bool inferred = deferred.infer(p, analysis, actual, result.reason);
+    result.deferredEligibilityWork = deferred.eligibilityWork;
+    result.deferredReceiptCells = deferred.extentWork;
+    result.cellVisits += deferred.extentWork * LaneCount + deferred.eligibilityWork;
+    if (!inferred) {
         result.deferredRejectionStage = "inference";
         result.deferredRejectionReason = result.reason;
         return result;
     }
-    result.cellVisits += deferred.extentWork * LaneCount;
     if (!deferred.verifyCombined(p, analysis, actual, result.reason)) {
         result.deferredProtocolSteps = deferred.protocolSteps;
         result.deferredRejectionStage = "protocol";
@@ -3158,7 +3422,40 @@ c::Result constructWithDemandRings(const c::Program& p, bool corrupt)
     return candidate;
 }
 
-c::Result constructWithDeferredRings(const c::Program& p, bool corrupt)
+std::optional<uint64_t> discoveryReservation(
+    uint64_t nodes, uint64_t cells, uint64_t keys, uint64_t commands, uint64_t limit)
+{
+    // Establish small operand bounds before EVERY subsequent product/sum.
+    // NC <= 2^20, K <= 64 and log(NC),log(commands) <= 21 keep all
+    // intermediate widths below 2^18. Only reserve() multiplies a width by
+    // population, after division against the remaining allowance.
+    if (!nodes || !cells || nodes > DemandRings::MaxCells || cells > DemandRings::MaxCells / nodes || keys > 64 ||
+        commands > DemandRings::MaxCells || limit > c::DeferredDiscoveryLimit)
+        return {};
+    const uint64_t scanCells = cells * nodes;
+    auto logarithm = [](uint64_t size) {
+        uint64_t bits = 1;
+        while (size >>= 1)
+            ++bits;
+        return bits;
+    };
+    uint64_t work = 0;
+    auto reserve = [&](uint64_t count, uint64_t width) {
+        if (width && count > (limit - work) / width)
+            return false;
+        work += count * width;
+        return true;
+    };
+    const uint64_t wordWidth = MaxGroups * (MaxAlternatives * MaxAlternatives + 2 * MaxAlternatives + keys);
+    if (!reserve(nodes, 8) || !reserve(scanCells, wordWidth + 8 * c::LaneCount * (1 + logarithm(scanCells)) + 64) ||
+        !reserve(cells, MaxGroups * (keys + 1) * (MaxGroups + logarithm(scanCells))) ||
+        !reserve(commands, 32 + 4 * logarithm(commands)))
+        return {};
+    return work;
+}
+
+c::Result constructWithDeferredRings(
+    const c::Program& p, bool corrupt, uint64_t discoveryLimit = c::DeferredDiscoveryLimit)
 {
     using namespace c;
     // The starting point is already independently verified by the existing
@@ -3167,25 +3464,76 @@ c::Result constructWithDeferredRings(const c::Program& p, bool corrupt)
     auto baseline = constructWithDemandRings(p, false);
     if (!baseline.success || baseline.cutCycles == 0 || !DemandRings::affordable(p))
         return baseline;
-    // This optional pass reruns one bounded composition analysis and one
-    // bounded closed-ring discovery/inference over the selected plan. Charge
-    // those scans themselves; do not duplicate the baseline constructor's
-    // accumulated history merely because its Result was copied below.
+    // Reserve representation work BEFORE rerunning discovery/inference. The
+    // word scan has bounded groups/alternatives, at most one cycle per cell,
+    // and fixed-lane demand scans; signature/key matching and command sorting
+    // are charged separately. This is a conservative reservation, not a CPU
+    // instruction count or wall-clock bound. Overflow/limit refusal leaves the
+    // already verified baseline unchanged.
     const uint64_t scanNodes = p.nodes.size();
-    const uint64_t scanCells = uint64_t(p.cells) * scanNodes;
+    uint64_t commands = 0;
+    for (const auto& site : baseline.before) {
+        if (site.size() > (1u << 20) - commands) {
+            ++baseline.deferredDiscoveryRefusals;
+            return baseline;
+        }
+        commands += site.size();
+    }
+    auto discoveryWork =
+        discoveryReservation(scanNodes, p.cells, p.target.compilerKeys.size(), commands, discoveryLimit);
+    if (!discoveryWork) {
+        ++baseline.deferredDiscoveryRefusals;
+        return baseline;
+    }
+    baseline.deferredDiscoveryWork += *discoveryWork;
+    baseline.cellVisits += *discoveryWork;
     baseline.nodeVisits += 2 * scanNodes;
-    baseline.cellVisits += 2 * scanCells;
     DemandAnalysis analysis;
     DemandRings closed(p.nodes.size());
     std::string reason;
     if (!analysis.build(p, reason) || !closed.infer(p, baseline.before, reason))
         return baseline;
+    auto following = DeferredDemandRings::followingCommands(p, baseline.before);
     std::vector<Cycle> eligible;
-    for (const auto& cycle : closed.cuts.cycles)
-        if (DeferredDemandRings::eligible(p, analysis, cycle))
+    uint64_t eligibilityWork = 0;
+    for (const auto& cycle : closed.cuts.cycles) {
+        if (!DeferredDemandRings::chargeEligibility(p, eligibilityWork)) {
+            baseline.cellVisits += eligibilityWork;
+            baseline.deferredEligibilityWork += eligibilityWork;
+            return baseline;
+        }
+        if (DeferredDemandRings::eligible(p, analysis, cycle, &baseline.periodicWriteOverlapRejections) &&
+            DeferredDemandRings::continuationSafe(p, analysis, cycle, following))
             eligible.push_back(cycle);
+    }
+    baseline.cellVisits += eligibilityWork;
+    baseline.deferredEligibilityWork += eligibilityWork;
     if (eligible.empty())
         return baseline;
+
+    // Select a bounded population of complete, disjoint witness/key families
+    // before trying emission. One combined check accepts this subset or the
+    // original baseline; no per-family proof/backtracking campaign is run.
+    constexpr unsigned MaxDeferredFamilies = 8;
+    std::vector<Cycle> selected;
+    std::set<unsigned> selectedCells;
+    std::set<PrefixState::EventKey> selectedKeys;
+    for (auto& cycle : eligible) {
+        bool disjoint = selected.size() < MaxDeferredFamilies;
+        for (unsigned cell : cycle.cells)
+            disjoint &= !selectedCells.count(cell);
+        for (auto [direction, eventKey] : cycle.keys)
+            disjoint &= !selectedKeys.count({direction.first, direction.second, eventKey});
+        if (!disjoint) {
+            ++baseline.deferredSkippedFamilies;
+            continue;
+        }
+        selectedCells.insert(cycle.cells.begin(), cycle.cells.end());
+        for (auto [direction, eventKey] : cycle.keys)
+            selectedKeys.insert({direction.first, direction.second, eventKey});
+        selected.push_back(std::move(cycle));
+    }
+    eligible = std::move(selected);
 
     baseline.deferredRingCandidates = eligible.size();
     auto candidate = baseline;
@@ -3218,11 +3566,13 @@ c::Result constructWithDeferredRings(const c::Program& p, bool corrupt)
         }
         previous->participation = Mechanism::Previous;
         previous->loop = cycle.owner;
+        previous->word = DeferredDemandRings::pWord(cycle, analysis) ? cycle.region : NoCut;
         firstCommands.erase(publication);
         moved[lastCut].push_back(event(Mechanism::Publish, source, target, eventKey));
         auto finalWait = event(Mechanism::Acquire, source, target, eventKey);
         finalWait.participation = Mechanism::LoopExit;
         finalWait.loop = cycle.owner;
+        finalWait.word = DeferredDemandRings::pWord(cycle, analysis) ? cycle.region : NoCut;
         exits[exitCut].push_back(finalWait);
     }
     if (transformed)
@@ -3247,6 +3597,8 @@ c::Result constructWithDeferredRings(const c::Program& p, bool corrupt)
     baseline.nodeVisits += checked.nodeVisits;
     baseline.cellVisits += checked.cellVisits;
     baseline.deferredProtocolSteps += checked.deferredProtocolSteps;
+    baseline.deferredEligibilityWork += checked.deferredEligibilityWork;
+    baseline.deferredReceiptCells += checked.deferredReceiptCells;
     if (!transformed || !checked.success) {
         baseline.deferredRejectionStage = transformed ? checked.deferredRejectionStage : "placement";
         baseline.deferredRejectionReason =
@@ -3261,16 +3613,30 @@ c::Result constructWithDeferredRings(const c::Program& p, bool corrupt)
     candidate.nodeVisits = baseline.nodeVisits;
     candidate.cellVisits = baseline.cellVisits;
     candidate.deferredProtocolSteps = baseline.deferredProtocolSteps;
+    candidate.deferredEligibilityWork = baseline.deferredEligibilityWork;
+    candidate.deferredReceiptCells = baseline.deferredReceiptCells;
     candidate.deferredRingCandidates = eligible.size();
     candidate.deferredRings = eligible.size();
+    candidate.periodicDeferredRings = std::count_if(eligible.begin(), eligible.end(), [&](const auto& cycle) {
+        return DeferredDemandRings::pWord(cycle, analysis);
+    });
     return candidate;
 }
 } // namespace
 c::Result c::constructDemands(const Program& p) { return constructWithDeferredRings(p, false); }
+std::optional<uint64_t> c::testing::deferredDiscoveryReservation(
+    uint64_t nodes, uint64_t cells, uint64_t keys, uint64_t commands, uint64_t limit)
+{
+    return discoveryReservation(nodes, cells, keys, commands, limit);
+}
 c::Result c::testing::constructDemandsRejectingRings(const Program& p) { return constructWithDemandRings(p, true); }
 c::Result c::testing::constructDemandsRejectingDeferredRings(const Program& p)
 {
     return constructWithDeferredRings(p, true);
+}
+c::Result c::testing::constructDemandsWithoutDeferredDiscovery(const Program& p)
+{
+    return constructWithDeferredRings(p, false, 0);
 }
 c::Result c::testing::constructDemandsWithoutRings(const Program& p) { return constructDemandsImpl(p, false); }
 c::Result c::testing::constructDemandsRejectingRefinement(const Program& p) { return constructDemandsImpl(p, true); }
