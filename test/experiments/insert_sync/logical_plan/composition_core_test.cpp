@@ -117,6 +117,12 @@ struct Oracle {
     {
         unsigned issue = vertex(), done = vertex();
         edge(control[n.lane], issue);
+        // The only PIPE_S payload admitted by the native composition adapter
+        // has synchronous same-pipeline completion. Keep this oracle rule
+        // independent of the production State::demands implementation.
+        if (n.lane == unsigned(Pipe::S))
+            for (auto prior : issued[n.lane])
+                edge(prior, issue);
         edge(issue, done);
         issued[n.lane].push_back(done);
         accesses.push_back({issue, done, n.effects});
@@ -282,6 +288,8 @@ int main()
         auto baseline = c::testing::constructDemandsWithoutAlternativeChoices(p);
         auto selected = c::constructDemands(p);
         require(baseline.success && selected.success && selected.alternativeChoiceFamilies == 1);
+        require(selected.dedicatedAllocationDomains == 0 && selected.dedicatedAllocationKeys == 0);
+        require(selected.protocolKeys == 5);
         require(selected.alternativeChoiceSetsRemoved == 1 && selected.alternativeChoiceSites == 2);
         require(selected.alternativeChoicePrefixSteps == 1 && !selected.alternativeChoiceBudgetExhausted);
         require(c::verifyDemands(p, selected.before).success);
@@ -310,13 +318,36 @@ int main()
             shortBudget.success && shortBudget.before == baseline.before &&
             shortBudget.alternativeChoiceBudgetExhausted);
         require(shortBudget.alternativeChoiceWork < selected.alternativeChoiceWork);
-        for (const auto& keys : {std::vector<unsigned>{0}, std::vector<unsigned>{0, 1}, std::vector<unsigned>{3, 5}}) {
+        for (const auto& keys : {std::vector<unsigned>{0}, std::vector<unsigned>{0, 1},
+                                 std::vector<unsigned>{0, 1, 2}, std::vector<unsigned>{0, 1, 2, 3},
+                                 std::vector<unsigned>{3, 5}}) {
             auto scarce = p;
             scarce.target.compilerKeys = keys;
             auto oldScarce = c::testing::constructDemandsWithoutAlternativeChoices(scarce);
             auto newScarce = c::constructDemands(scarce);
-            require(oldScarce.success && newScarce.success && !newScarce.alternativeChoiceFamilies);
-            require(newScarce.before == oldScarce.before);
+            require(oldScarce.success && newScarce.success);
+            if (keys == std::vector<unsigned>({0, 1, 2})) {
+                // This selected word mixes a Universal Choice family with an
+                // ordinary exact-fit population. Universal forward and return
+                // keys were numbered first and must not inflate the latter.
+                require(newScarce.alternativeChoiceFamilies == 1);
+                require(newScarce.dedicatedAllocationDomains == 2);
+                require(newScarce.dedicatedAllocationKeys == 2 && newScarce.protocolKeys == 5);
+                bool directCanonical = false;
+                for (const auto& group : newScarce.before)
+                    for (const auto& mechanism : group)
+                        directCanonical |=
+                            (mechanism.kind == c::Mechanism::Publish || mechanism.kind == c::Mechanism::Acquire) &&
+                            mechanism.forwardKey == 0;
+                require(directCanonical);
+            } else if (keys == std::vector<unsigned>({0, 1, 2, 3})) {
+                require(newScarce.alternativeChoiceFamilies == 1);
+                require(newScarce.dedicatedAllocationDomains == 0 && newScarce.dedicatedAllocationKeys == 0);
+                require(newScarce.protocolKeys == 5);
+            } else {
+                require(!newScarce.alternativeChoiceFamilies);
+                require(newScarce.before == oldScarce.before);
+            }
             require(c::verifyDemands(scarce, newScarce.before).success);
         }
         for (unsigned arm = 0; arm < 2; ++arm) {
@@ -2359,6 +2390,33 @@ int main()
         }
     }
     {
+        // Two complete directed populations fit the two-key pool only when
+        // the canonical packet key is available for direct assignment. Since
+        // no fallback packet is needed, both sibling scopes remain direct.
+        c::Program p;
+        p.cells = 2;
+        p.target.compilerKeys = {0, 1};
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto wa = op(p, a, 0, true), ra = op(p, b, 0, false);
+        auto first = add(p, c::Node::For, {sequence(p, {wa, ra})});
+        auto wb = op(p, a, 1, true), rb = op(p, b, 1, false);
+        auto second = add(p, c::Node::For, {sequence(p, {wb, rb})});
+        sequence(p, {first, second});
+        auto plan = c::testing::constructDemandsWithoutAllocationReplay(p);
+        require(plan.success && c::verifyDemands(p, plan.before).success);
+        require(plan.dedicatedAllocationDomains == 2);
+        require(plan.dedicatedAllocationKeys == 4);
+        require(plan.allocationFallbackScopes == 0 && plan.demandFallbacks == 0);
+        ExecutionPolicy policy;
+        policy.trips = [=](unsigned id, unsigned visit) { return (id + visit) % 3; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 4; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
         // Overlapping publications cannot share just because their lexical
         // waits exist. Keep feasible handoffs, but never share their physical
         // colors with the following independently executing scope.
@@ -2686,6 +2744,34 @@ int main()
         broken = plan.before;
         broken[end].clear();
         require(!c::verifyCuts(p, broken).success);
+    }
+    {
+        // Exact scalar-pipeline contracts: same-PIPE_S hazards need no illegal
+        // barrier, while S->V completion uses a qualified event.
+        c::Program p;
+        p.cells = 1;
+        auto first = op(p, unsigned(Pipe::S), 0, true);
+        auto second = op(p, unsigned(Pipe::S), 0, true);
+        auto vectorRead = op(p, unsigned(Pipe::V), 0, false);
+        add(p, c::Node::Sequence, {first, second, vectorRead});
+        for (bool demandDriven : {false, true}) {
+            auto plan = demandDriven ? c::constructDemands(p) : c::construct(p);
+            require(plan.success);
+            require(plan.before[second].empty());
+            require(!plan.before[vectorRead].empty());
+            require((demandDriven ? c::verifyDemands(p, plan.before) :
+                                    c::verify(p, plan.before))
+                        .success);
+            unsigned branch = 0;
+            Oracle oracle;
+            execute(p, plan, p.nodes.size() - 1, 1, 0, branch, oracle);
+            oracle.check();
+        }
+        auto broken = c::constructDemands(p);
+        broken.before[vectorRead].clear();
+        require(!c::verifyDemands(p, broken.before).success);
+        p.core = Core::AIC;
+        require(!c::constructDemands(p).success);
     }
     {
         // A pending B write remains pending at B after its reply SET, even

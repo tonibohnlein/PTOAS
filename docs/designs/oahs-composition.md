@@ -2066,3 +2066,68 @@ pto-test-opt             cbc34056a67cc892d58f7bfe3ccd32c87a311d31d1e468fd6bcd34d
 pto-structured-sync-test 7568768bb3c144f4a4a2cc812b0eb653191f220db37f43b4f15f4d6fc077e86c
 libPTOASCompiler.so      e55cacfdbb27ec814b82d41b5b24ed8847b767c0d51d2ab161325ba76ded5592
 ```
+
+## Exact scalar-memory coverage and fitting-domain allocation
+
+This follow-up widens semantic coverage through audited operation contracts,
+not through another control-flow arrangement recognizer. The general
+composition adapter now admits exact one-phase contracts for `pto.tci`,
+`pto.tgetval`, `pto.tsetval`, `pto.tconcat`, `pto.tdivs`,
+`pto.load_scalar`, and `pto.store_scalar`. `pto.treshape` remains a transparent
+SSA/storage alias rather than a physical scalar phase.
+
+The scalar-memory contract is deliberately narrow. `load_scalar` and
+`store_scalar` remain physical GM accesses on `PIPE_S`; they are not treated as
+pure address arithmetic. Sequential `PIPE_S` work has intrinsic same-pipeline
+completion and therefore never receives an illegal scalar barrier. A hazard
+between `PIPE_S` and another pipeline still requires a target-qualified event,
+and same-address GM publication still requires an independently qualified
+visibility recipe. No event is reclassified as GM visibility by this change.
+The CanonicalSync hardware-model branch was used as read-only semantic evidence
+for these boundaries; its symbolic planner was not imported.
+
+The demand allocator now implements the fitting-population part of C1. It may
+give every logical protocol a distinct physical key, including the canonical
+fallback key, only when the complete population in **both directions** of the
+pipeline pair fits. Scope is part of logical protocol identity. If either
+direction is over capacity, or an existing packet uses the pair, allocation
+retains the previous sharing-first/fallback policy. Native reconstruction now
+recognizes a fallback packet from its actual adjacent four-command word and
+otherwise accepts any target-available raw event key. Fresh protocol checking
+still rejects packet/raw collisions and independent-domain reuse.
+
+### Local qualification
+
+Validated as an uncommitted diff on `85d1130507329f6bf6c6f916bdd8c1b87b526325`
+with the existing LLVM/MLIR 19.1.7 build:
+
+- Incremental builds of `pto-composition-core-test`,
+  `pto-structured-sync-test`, and `pto-test-opt` passed with at most two build
+  workers.
+- `oahs_composition_core`, `oahs_composition`, `oahs_demands`,
+  `oahs_structured_core`, and `oahs_structured` passed serially. The independent
+  composition core reports more than 2.4 million finite assertions. The full
+  lit/system suite and device execution were not run.
+- The hash-frozen 363-input replay admits **222/363** inputs: PTOAS **53/150**,
+  PyPTO **7/35**, and pypto-lib **162/178**. This is 25 admissions above the
+  checked-in 197/363 result and 16 above the immediately preceding local
+  206/363 coverage slice, with no losses. The manifest remains
+  `95beab25427b1dd3a2ff1b59cd881a3f4181e0f83c8a8b44daf35555bf46c3b6`.
+  This is prepared-IR compiler compatibility, not source regeneration, device
+  correctness, or performance.
+- The remaining first refusals are explicit: 81 unqualified visibility cases,
+  18 authored cache-maintenance cases, 15 authored-synchronization cases, 11
+  communication cases, 8 reserved-buffer cases, four invalid physical-context
+  fixtures, two helper-contract cases, and two `tmrgsort` register-effect
+  mismatches.
+- On the unchanged demand benchmark, exact-fit allocation changes Q projection
+  from 18/18 to **17/17** SET/WAIT sites. Historical GEMM remains **56 SET / 59
+  WAIT / 21 named barriers**, versus InsertSync's **44 / 44 / 21**. The allocator
+  refinement does not address GEMM's over-capacity fallback packets, so quality
+  remains unqualified.
+
+Reproducible artifacts are outside the source tree under
+`oahs-clean-c1-build/test-results/oahs-coverage-m3-final` and
+`oahs-clean-c1-build/test-results/oahs-demands`. The final replay identifies the
+candidate `pto-test-opt` binary as
+`76e9af55ed00eeabfd8331e765531b46ca2d17dcc36ab29aa5d0596a46f66da4`.

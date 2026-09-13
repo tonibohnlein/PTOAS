@@ -873,26 +873,55 @@ bool parsePacket(Operation*& cursor, c::Mechanism& m, const c::Program& program,
         cursor = cursor->getNextNode();
         return true;
     }
+    // A canonical key is available to an independent protocol when the whole
+    // bidirectional population fits without fallback. Identify fallback by
+    // its actual adjacent four-command word, not by reserving one magic key
+    // from otherwise legal reconstructed events.
+    if (!precision)
+        if (auto s = dyn_cast<SetFlagOp>(cursor)) {
+            auto* n = cursor->getNextNode();
+            auto w = dyn_cast_or_null<WaitFlagOp>(n);
+            n = n ? n->getNextNode() : nullptr;
+            auto reply = dyn_cast_or_null<SetFlagOp>(n);
+            n = n ? n->getNextNode() : nullptr;
+            auto ack = dyn_cast_or_null<WaitFlagOp>(n);
+            auto a = lane(s.getSrcPipe().getPipe()), b = lane(s.getDstPipe().getPipe());
+            auto canonical = [&](unsigned source, unsigned observer) -> std::optional<unsigned> {
+                for (unsigned eventKey : program.target.compilerKeys)
+                    if (program.target.available(
+                            {program.core, static_cast<ss::Pipe>(source)},
+                            {program.core, static_cast<ss::Pipe>(observer)}, eventKey))
+                        return eventKey;
+                return {};
+            };
+            auto forward = a && b ? canonical(*a, *b) : std::optional<unsigned>{};
+            auto reverse = a && b ? canonical(*b, *a) : std::optional<unsigned>{};
+            if (w && reply && ack && a && b && *a < *b && forward && reverse &&
+                unsigned(s.getEventId().getEvent()) == *forward &&
+                unsigned(reply.getEventId().getEvent()) == *reverse && w.getSrcPipe() == s.getSrcPipe() &&
+                w.getDstPipe() == s.getDstPipe() && w.getEventId() == s.getEventId() &&
+                reply.getSrcPipe() == s.getDstPipe() && reply.getDstPipe() == s.getSrcPipe() &&
+                ack.getSrcPipe() == reply.getSrcPipe() && ack.getDstPipe() == reply.getDstPipe() &&
+                ack.getEventId() == reply.getEventId()) {
+                m = {c::Mechanism::Rendezvous, *a, *b, unsigned(s.getEventId().getEvent()),
+                     unsigned(reply.getEventId().getEvent())};
+                cursor = ack->getNextNode();
+                return true;
+            }
+        }
     auto independent = [&](auto op, c::Mechanism::Kind kind) {
         auto a = lane(op.getSrcPipe().getPipe()), b = lane(op.getDstPipe().getPipe());
         if (!a || !b)
             return false;
-        auto key = unsigned(op.getEventId().getEvent());
-        if (precision) {
-            m = {kind, *a, *b, key, 0};
-            cursor = cursor->getNextNode();
-            return true;
-        }
-        for (unsigned fallback : program.target.compilerKeys)
-            if (program.target.available(
-                    {program.core, static_cast<ss::Pipe>(*a)}, {program.core, static_cast<ss::Pipe>(*b)}, fallback)) {
-                if (key == fallback)
-                    return false;
-                m = {kind, *a, *b, key, 0};
-                cursor = cursor->getNextNode();
-                return true;
-            }
-        return false;
+        unsigned eventKey = unsigned(op.getEventId().getEvent());
+        if (std::find(program.target.compilerKeys.begin(), program.target.compilerKeys.end(), eventKey) ==
+                program.target.compilerKeys.end() ||
+            !program.target.available(
+                {program.core, static_cast<ss::Pipe>(*a)}, {program.core, static_cast<ss::Pipe>(*b)}, eventKey))
+            return false;
+        m = {kind, *a, *b, eventKey, 0};
+        cursor = cursor->getNextNode();
+        return true;
     };
     if (auto s = dyn_cast<SetFlagOp>(cursor))
         if (independent(s, c::Mechanism::Publish))
@@ -900,27 +929,7 @@ bool parsePacket(Operation*& cursor, c::Mechanism& m, const c::Program& program,
     if (auto w = dyn_cast<WaitFlagOp>(cursor))
         if (independent(w, c::Mechanism::Acquire))
             return true;
-    auto s = dyn_cast<SetFlagOp>(cursor);
-    if (!s)
-        return false;
-    auto* n = cursor->getNextNode();
-    auto w = dyn_cast_or_null<WaitFlagOp>(n);
-    n = n ? n->getNextNode() : nullptr;
-    auto reply = dyn_cast_or_null<SetFlagOp>(n);
-    n = n ? n->getNextNode() : nullptr;
-    auto ack = dyn_cast_or_null<WaitFlagOp>(n);
-    if (!w || !reply || !ack)
-        return false;
-    auto a = lane(s.getSrcPipe().getPipe()), b = lane(s.getDstPipe().getPipe());
-    if (!a || !b || *a >= *b || w.getSrcPipe() != s.getSrcPipe() || w.getDstPipe() != s.getDstPipe() ||
-        w.getEventId() != s.getEventId() || reply.getSrcPipe() != s.getDstPipe() ||
-        reply.getDstPipe() != s.getSrcPipe() || ack.getSrcPipe() != reply.getSrcPipe() ||
-        ack.getDstPipe() != reply.getDstPipe() || ack.getEventId() != reply.getEventId())
-        return false;
-    m = {
-        c::Mechanism::Rendezvous, *a, *b, unsigned(s.getEventId().getEvent()), unsigned(reply.getEventId().getEvent())};
-    cursor = ack->getNextNode();
-    return true;
+    return false;
 }
 
 bool reconstruct(
@@ -1195,6 +1204,8 @@ Outcome ss::testing::constructCompositionalSync(
             << " owned_refinements " << checked.ownedRefinements << " protocol_keys " << selected.protocolKeys
             << " shared_protocol_keys " << selected.sharedProtocolKeys << " allocation_fallback_keys "
             << selected.allocationFallbackKeys << " allocation_replays " << selected.allocationReplays
+            << " dedicated_allocation_domains " << selected.dedicatedAllocationDomains
+            << " dedicated_allocation_keys " << selected.dedicatedAllocationKeys
             << " rejected_allocation_replays " << selected.rejectedAllocationReplays << " replay_commands_removed "
             << selected.replayCommandsRemoved << " replayed_fallback_demands " << selected.replayedFallbackDemands
             << " allocation_fallback_scopes " << selected.allocationFallbackScopes << " entry_episodes "

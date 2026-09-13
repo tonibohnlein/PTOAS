@@ -143,6 +143,22 @@ bool scalarDescriptorInput(Value input)
         Operation* op = value.getDefiningOp();
         if (auto result = dyn_cast<OpResult>(value)) {
             unsigned i = result.getResultNumber();
+            if (auto get = dyn_cast<TGetValOp>(op)) {
+                // TGETVAL is an exact synchronous PIPE_S producer. Its tile
+                // readiness remains a physical completion obligation handled
+                // by InsertSync; only its scalar offset is a prerequisite for
+                // using the returned value in scalar control or descriptors.
+                pending.push_back(get.getOffset());
+                continue;
+            }
+            if (auto load = dyn_cast<LoadScalarOp>(op)) {
+                // LOAD_SCALAR is an exact synchronous PIPE_S producer. Its
+                // pointer read remains a physical effect, while the offset is
+                // the only scalar prerequisite needed to use the returned
+                // value in subsequent scalar control or operation setup.
+                pending.push_back(load.getOffset());
+                continue;
+            }
             if (auto branch = dyn_cast<scf::IfOp>(op)) {
                 for (Region &arm : branch->getRegions())
                     pending.push_back(cast<scf::YieldOp>(arm.front().getTerminator()).getOperand(i));

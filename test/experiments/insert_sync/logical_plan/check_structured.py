@@ -133,7 +133,7 @@ def main():
         args.output/'missing_positive_contract.pto'])
     evidence=json.loads(response.stdout)
     assert evidence['expected'] and evidence['atomic'] and not evidence['accepted'],evidence
-    assert 'missing-positive-single-phase-contract:pto.tconcat' in evidence['reason'],evidence
+    assert 'missing-positive-single-phase-contract:pto.tconcatidx' in evidence['reason'],evidence
 
     # Reconstruct sibling requirements from fresh physical facts. In
     # particular a same-pipe barrier must remain after its source loop.

@@ -70,6 +70,7 @@ def main():
         for counter in ('direct_handoffs', 'shared_acknowledgments', 'reused_acknowledgments',
                         'completion_refinements', 'rejected_refinements', 'owned_refinements',
                         'protocol_keys', 'shared_protocol_keys', 'allocation_fallback_scopes', 'allocation_fallback_keys',
+                        'dedicated_allocation_domains', 'dedicated_allocation_keys',
                         'allocation_replays', 'rejected_allocation_replays', 'replay_commands_removed',
                         'replayed_fallback_demands', 'entry_episodes', 'entry_reply_families', 'rejected_entry_proposals',
                         'entry_summary_slots', 'entry_summary_scans', 'entry_storage_units', 'entry_candidate_pairs',
@@ -124,6 +125,9 @@ def main():
         if args.constructor == 'demands' and name in ('two_buffer', 'three_buffer'):
             if not counters['periodic_deferred_rings'] or not counters['periodic_write_overlap_rejections']:
                 raise RuntimeError('periodic input release / shared-output refusal not exercised: ' + name)
+        if args.constructor == 'demands' and name == 'q_proj':
+            if not counters['dedicated_allocation_domains'] or not counters['dedicated_allocation_keys']:
+                raise RuntimeError('native fitting-domain dedicated allocation not exercised: ' + name)
         invoke(name + '-normalize', compiler + [raw, '-o', emitted])
         cpp = None
         if args.constructor == 'demands' and name == 'historical_gemm':
@@ -345,7 +349,7 @@ def main():
         counters = native_counters('overlap-fallback')
         if (not verdict['accepted'] or not verdict['atomic'] or counters['allocation_fallback_scopes'] != 1 or
                 counters['direct_handoffs'] != 5 or counters['allocation_fallback_keys'] != 3 or
-                counters['rendezvous_packets'] != 3):
+                counters['rendezvous_packets'] != 3 or counters['dedicated_allocation_domains']):
             raise RuntimeError('overlapping logical publications did not exercise qualified allocation fallback')
         path_checks.append(dict(name='overlap-fallback', verdict=verdict, counters=counters,
                                 source_sha256=digest(overlap), output_sha256=digest(overlap_output)))

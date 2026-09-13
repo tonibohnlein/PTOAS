@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @composition_tci()
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i32
+    %c2 = arith.constant 2 : i32
+    %i0 = arith.constant 0 : index
+    %addr = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %addr
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tci ins(%c0 : i32)
+      outs(%tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %view = pto.treshape %tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      -> !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tmuls ins(%view, %c2 : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, i32)
+      outs(%view : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tdivs ins(%view, %c2 : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, i32)
+      outs(%view : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %value = pto.tgetval ins(%view, %i0 : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, index) outs : i32
+    pto.tsetval ins(%i0, %value : index, i32)
+      outs(%view : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%view, %c2 : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, i32)
+      outs(%view : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}

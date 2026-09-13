@@ -45,6 +45,23 @@ inline bool supportedLane(PIPE pipe, bool cube) {
   return pipe == PIPE::PIPE_V;
 }
 
+inline bool supportedOperationLane(Operation *op, PIPE pipe, bool cube) {
+  if (supportedLane(pipe, cube))
+    return true;
+  // These operations have lowering-owned PIPE_S models and complete declared
+  // memory effects. Admit the exact operations without turning PIPE_S into a
+  // generic physical-operation contract.
+  if (pipe != PIPE::PIPE_S)
+    return false;
+  return llvm::StringSwitch<bool>(op->getName().getStringRef())
+      .Case("pto.load_scalar", true)
+      .Case("pto.store_scalar", true)
+      .Case("pto.tci", true)
+      .Case("pto.tgetval", true)
+      .Case("pto.tsetval", true)
+      .Default(false);
+}
+
 inline std::string diagnostic(StringRef kind, Operation *op, StringRef detail = {}) {
   std::string result = kind.str();
   if (op) {
@@ -116,6 +133,8 @@ inline bool implicitResourceOperation(Operation *op) {
 // from the implicit-resource denylist is never evidence of completeness.
 inline bool singlePhaseMemoryOnlyOperation(Operation *op) {
   return llvm::StringSwitch<bool>(op->getName().getStringRef())
+      .Case("pto.load_scalar", true)
+      .Case("pto.store_scalar", true)
       .Case("pto.tload", true)
       .Case("pto.tstore", true)
       .Case("pto.tabs", true)
@@ -123,13 +142,17 @@ inline bool singlePhaseMemoryOnlyOperation(Operation *op) {
       .Case("pto.tadds", true)
       .Case("pto.tcolexpand", true)
       .Case("pto.tcolexpandmul", true)
+      .Case("pto.tconcat", true)
+      .Case("pto.tci", true)
       .Case("pto.tcvt", true)
       .Case("pto.tdiv", true)
+      .Case("pto.tdivs", true)
       .Case("pto.texp", true)
       .Case("pto.texpands", true)
       .Case("pto.textract", true)
       .Case("pto.tfillpad", true)
       .Case("pto.tgather", true)
+      .Case("pto.tgetval", true)
       .Case("pto.tmatmul", true)
       .Case("pto.tmatmul.acc", true)
       .Case("pto.tmax", true)
@@ -152,6 +175,7 @@ inline bool singlePhaseMemoryOnlyOperation(Operation *op) {
       .Case("pto.tsqrt", true)
       .Case("pto.tsub", true)
       .Case("pto.tsubs", true)
+      .Case("pto.tsetval", true)
       .Case("pto.ttrans", true)
       .Default(false);
 }
@@ -463,9 +487,15 @@ class Importer {
           return false;
         continue;
       }
+      // TReshape is an SSA view: it aliases its source storage and performs no
+      // physical work. PTOIRTranslator has already forwarded that alias into
+      // the phase footprints. Its PIPE_S interface is an ISA modeling detail,
+      // not a scalar payload that needs completion or an event protocol.
+      if (isa<TReshapeOp>(op))
+        continue;
       if (auto physical = dyn_cast<OpPipeInterface>(op)) {
         PIPE p = physical.getPipe();
-        if (!supportedLane(p, result.cube))
+        if (!supportedOperationLane(&op, p, result.cube))
           return fail("unsupported-lane", &op);
         if (implicitResourceOperation(&op))
           return fail("unsupported-implicit-resource", &op);

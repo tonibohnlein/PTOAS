@@ -75,9 +75,12 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
             reason = "invalid optional periodic domain";
             return false;
         }
+        const auto operationLane = lane(p, n.lane);
         if (n.effects.size() != p.cells || n.lane >= c::LaneCount ||
             (n.entryGuardStart != ~0u && (n.kind != c::Node::For || n.entryGuardStart >= p.nodes.size())) ||
-            (n.kind == c::Node::Operation && (!n.children.empty() || !p.target.barrier(lane(p, n.lane)))) ||
+            (n.kind == c::Node::Operation &&
+             (!n.children.empty() || !p.target.supports(operationLane) ||
+              (n.lane != unsigned(Pipe::S) && !p.target.barrier(operationLane)))) ||
             (n.kind == c::Node::For && n.children.size() != 1) ||
             ((n.kind == c::Node::Choice || n.kind == c::Node::While) && n.children.size() != 2) ||
             n.kind > c::Node::While) {
@@ -236,6 +239,11 @@ uint8_t c::State::demands(unsigned observer, const Effects& effects) const
         if (effects[i].writers)
             result |= pending[observer][i].readers;
     }
+    // The admitted scalar payload contract is synchronous within PIPE_S. It
+    // does not imply scalar-to-other-pipe completion and never licenses a
+    // PIPE_S barrier; those demands still require a qualified directed event.
+    if (observer == unsigned(Pipe::S))
+        result &= ~(uint8_t(1u) << unsigned(Pipe::S));
     return result;
 }
 bool c::Mechanism::operator==(const Mechanism& m) const
@@ -3872,6 +3880,13 @@ bool verifyDemandProtocols(
     std::set<Key> entryKeys = deferred.keys;
     if (!verifyEntryProtocols(p, analysis, actual, deferred.keys, entryKeys, reason))
         return false;
+    std::set<Key> packetKeys;
+    for (const auto& commands : actual)
+        for (const auto& mechanism : commands)
+            if (mechanism.kind == c::Mechanism::Rendezvous) {
+                packetKeys.insert({mechanism.first, mechanism.second, mechanism.forwardKey});
+                packetKeys.insert({mechanism.second, mechanism.first, mechanism.reverseKey});
+            }
     struct Population {
         unsigned scope = NoCut, sets = 0, waits = 0;
         bool multipleScopes = false;
@@ -3915,7 +3930,7 @@ bool verifyDemandProtocols(
                 !p.target.available(lane(p, m.first), lane(p, m.second), m.forwardKey) ||
                 std::find(p.target.compilerKeys.begin(), p.target.compilerKeys.end(), m.forwardKey) ==
                     p.target.compilerKeys.end() ||
-                key(p, m.first, m.second) == m.forwardKey || analysis.parent[id] == NoCut ||
+                packetKeys.count(forward) || analysis.parent[id] == NoCut ||
                 entryKeys.count({m.first, m.second, m.forwardKey}) ||
                 p.nodes[analysis.parent[id]].kind != c::Node::Sequence) {
                 reason = "invalid demand protocol mechanism or execution domain";
@@ -4590,6 +4605,86 @@ c::Result constructDemandCandidate(
     std::set<PrefixState::EventKey> fallbackKeys;
     std::map<FamilyKey, unsigned> numberedAcknowledgments;
     bool retainAckIdentity = childReturns && childReturns->enabled && childReturns->reserve(families.size(), 8);
+
+    // If an entire directed-domain population fits, every logical protocol can
+    // own a distinct physical key. In that case the canonical packet key is not
+    // needed for fallback and may be used by one direct protocol. This is a
+    // complete-population decision made before scope-local coloring: partial
+    // use of the canonical key could otherwise collide with a later fallback.
+    // Over-capacity domains retain the existing sharing-first policy.
+    using ScopedEventKey = std::tuple<unsigned, unsigned, unsigned, unsigned>;
+    std::map<Direction, std::set<ScopedEventKey>> domainPopulation;
+    std::set<Direction> packetDirections;
+    for (unsigned site = 0; site < result.before.size(); ++site)
+        for (const auto& mechanism : result.before[site]) {
+            if (mechanism.participation != Mechanism::Every)
+                continue;
+            if (mechanism.kind == Mechanism::Rendezvous) {
+                packetDirections.insert({mechanism.first, mechanism.second});
+                packetDirections.insert({mechanism.second, mechanism.first});
+                continue;
+            }
+            if (mechanism.kind != Mechanism::Publish && mechanism.kind != Mechanism::Acquire)
+                continue;
+            PrefixState::EventKey logical{mechanism.first, mechanism.second, mechanism.forwardKey};
+            unsigned scope = analysis.parent[site];
+            // Alternative Choice numbering has already assigned both the
+            // forward family and every arm-local return acknowledgment.  None
+            // of those logical keys belong to the ordinary population below.
+            if (scope != NoCut && !logicalAlternatives.familyKeys.count(logical))
+                domainPopulation[{mechanism.first, mechanism.second}].insert(
+                    {scope, mechanism.first, mechanism.second, mechanism.forwardKey});
+        }
+    std::map<ScopedEventKey, unsigned> dedicatedNumbering;
+    std::set<std::pair<unsigned, unsigned>> consideredPairs;
+    for (const auto& [direction, ignored] : domainPopulation) {
+        (void)ignored;
+        std::pair<unsigned, unsigned> pair = std::minmax(direction.first, direction.second);
+        if (!consideredPairs.insert(pair).second)
+            continue;
+        std::array<Direction, 2> directions{{{pair.first, pair.second}, {pair.second, pair.first}}};
+        std::array<std::vector<unsigned>, 2> available;
+        bool feasible = true, usesCanonical = false;
+        for (unsigned i = 0; i < directions.size(); ++i) {
+            const auto& candidate = directions[i];
+            if (packetDirections.count(candidate)) {
+                feasible = false;
+                break;
+            }
+            auto population = domainPopulation.find(candidate);
+            size_t populationSize = population == domainPopulation.end() ? 0 : population->second.size();
+            unsigned noncanonical = 0;
+            auto canonical = key(p, candidate.first, candidate.second);
+            for (unsigned physical : p.target.compilerKeys)
+                if (p.target.available(lane(p, candidate.first), lane(p, candidate.second), physical) &&
+                    !occupied[candidate].count(physical)) {
+                    available[i].push_back(physical);
+                    noncanonical += !canonical || physical != *canonical;
+                }
+            feasible &= populationSize <= available[i].size();
+            usesCanonical |= populationSize > noncanonical;
+        }
+        // A canonical packet occupies both directions. Dedicate canonical keys
+        // only if every raw protocol in both directions fits, so no later
+        // allocation fallback can need that packet. Otherwise preserve the
+        // established sharing-first policy and stable numbering unchanged.
+        if (!feasible || !usesCanonical)
+            continue;
+        for (unsigned i = 0; i < directions.size(); ++i) {
+            const auto& candidate = directions[i];
+            auto population = domainPopulation.find(candidate);
+            if (population == domainPopulation.end() || population->second.empty())
+                continue;
+            auto physical = available[i].begin();
+            for (const auto& scoped : population->second) {
+                dedicatedNumbering.emplace(scoped, *physical);
+                occupied[candidate].insert(*physical++);
+            }
+            ++result.dedicatedAllocationDomains;
+            result.dedicatedAllocationKeys += population->second.size();
+            result.protocolKeys += population->second.size();
+        }
+    }
     for (unsigned scope : analysis.scopeOrder) {
         const auto* excluded = logicalAlternatives.familyKeys.empty() ? nullptr : &logicalAlternatives.familyKeys;
         auto word = demandWord(p, result.before, scope, true, true, excluded);
@@ -4609,9 +4704,15 @@ c::Result constructDemandCandidate(
         std::map<Direction, std::vector<Color>> colors;
         std::map<PrefixState::EventKey, unsigned> numbering;
         auto trial = occupied;
-        unsigned count = 0;
+        unsigned count = 0, dedicatedCount = 0;
         for (const auto& logical : facts.order) {
             unsigned a = std::get<0>(logical), b = std::get<1>(logical);
+            auto dedicated = dedicatedNumbering.find({scope, a, b, std::get<2>(logical)});
+            if (dedicated != dedicatedNumbering.end()) {
+                numbering[logical] = dedicated->second;
+                ++dedicatedCount;
+                continue;
+            }
             const auto& use = facts.uses.at(logical);
             auto& choices = colors[{a, b}];
             auto reusable = std::find_if(choices.begin(), choices.end(), [&](const Color& c) {
@@ -4638,7 +4739,7 @@ c::Result constructDemandCandidate(
         }
         occupied = std::move(trial);
         result.protocolKeys += count;
-        result.sharedProtocolKeys += numbering.size() - count;
+        result.sharedProtocolKeys += numbering.size() - count - dedicatedCount;
         if (retainAckIdentity)
             for (auto it = families.lower_bound({scope, 0, 0}); it != families.end() && std::get<0>(it->first) == scope;
                  ++it) {

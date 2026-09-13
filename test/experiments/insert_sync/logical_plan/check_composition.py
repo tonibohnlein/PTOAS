@@ -101,7 +101,8 @@ def main():
     positive = ('composition_while_forwarding', 'nested_mixed_sequence',
                 'nested_varying_choice', 'nested_varying_bound', 'nested_three_levels',
                 'unknown_guard', 'ordinal_dynamic_step', 'ordinal_negative_lower',
-                'sequential_cross_pipe', 'sequential_same_pipe', 'section_vector')
+                'sequential_cross_pipe', 'sequential_same_pipe', 'section_vector',
+                'composition_tci', 'composition_tconcat', 'composition_scalar_memory')
     for name in positive:
         source = fixtures / (name + '.pto')
         compile_case(name, source, gm='assume-disjoint-arguments')

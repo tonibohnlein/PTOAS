@@ -107,6 +107,7 @@ struct Result {
     uint64_t ownedRefinements = 0;
     uint64_t protocolKeys = 0, sharedProtocolKeys = 0, allocationFallbackScopes = 0;
     uint64_t allocationFallbackKeys = 0;
+    uint64_t dedicatedAllocationDomains = 0, dedicatedAllocationKeys = 0;
     uint64_t allocationReplays = 0, rejectedAllocationReplays = 0, replayCommandsRemoved = 0;
     uint64_t replayedFallbackDemands = 0;
     uint64_t entryEpisodes = 0, entryReplyFamilies = 0, rejectedEntryProposals = 0;
