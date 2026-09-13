@@ -84,6 +84,7 @@ struct Result {
     uint64_t allocationReplays = 0, rejectedAllocationReplays = 0, replayCommandsRemoved = 0;
     uint64_t replayedFallbackDemands = 0;
     uint64_t entryEpisodes = 0, entryReplyFamilies = 0, rejectedEntryProposals = 0;
+    uint64_t ringCandidates = 0, rejectedRings = 0, ringCandidateCommandsRemoved = 0;
     std::vector<CompletionDemand> demands;
 };
 // One summary pass and one structural transfer. No trip-count enumeration,
@@ -101,6 +102,8 @@ Result verifyCuts(const Program& program, const std::vector<std::vector<Mechanis
 Result constructDemands(const Program& program);
 Result verifyDemands(const Program& program, const std::vector<std::vector<Mechanism>>& actual);
 namespace testing {
+Result constructDemandsWithoutRings(const Program& program);
+Result constructDemandsRejectingRings(const Program& program);
 // Fault injection before refinement checking/emission, never on the initial
 // plan: discard the optional candidate's mechanisms to exercise exact rollback.
 Result constructDemandsRejectingRefinement(const Program& program);

@@ -623,6 +623,231 @@ struct PrefixState : c::State {
         }
     }
 };
+
+// A closed, single-Sequence ring has no seed or cleanup outside its visit.
+// The last lane publishes at the NEXT visit's first cut, after its previous
+// work in that lane's queue. The normal two-copy event-word proof establishes
+// consumption-before-rearm; skipped visits execute no partial protocol.
+// This optional certificate concerns internal cell generations only. Every
+// incoming history bit is retained until an ordinary prefix transfer proves it.
+struct DemandRings {
+    // Optional precision has a representation-work ceiling, independent of
+    // numeric trip counts. Exceeding it leaves ordinary demands unchanged.
+    static constexpr uint64_t MaxCells = 1u << 20;
+    static bool affordable(const c::Program& p) { return !p.nodes.empty() && p.cells <= MaxCells / p.nodes.size(); }
+    Cuts cuts;
+    Commands sites;
+    std::map<PrefixState::EventKey, unsigned> owners;
+    std::set<unsigned> loopOwners;
+    explicit DemandRings(unsigned size) : sites(size) {}
+    bool discover(const c::Program& p, std::string& reason)
+    {
+        if (!affordable(p))
+            return true;
+        if (!discoverCuts(p, cuts, reason))
+            return false;
+        std::vector<Cycle> shapes;
+        std::map<std::vector<unsigned>, unsigned> shared;
+        for (auto cycle : cuts.cycles) {
+            bool straight = p.nodes[cycle.owner].kind == c::Node::For;
+            // No cell-accessing nested segment is hidden between endpoints.
+            // The path from this Sequence to its nearest For contains only
+            // Sequence/Choice nodes: one iteration executes the entire word
+            // once or skips it. No nested trip count is assigned a generation.
+            for (unsigned child : p.nodes[cycle.region].children)
+                if (p.nodes[child].kind != c::Node::Operation)
+                    for (unsigned cell : cycle.cells) {
+                        const auto& e = cuts.effects[child][cell];
+                        straight &= !(e.readers | e.writers);
+                    }
+            std::set<std::pair<unsigned, unsigned>> directions;
+            for (unsigned g = 0; g < cycle.groups.size(); ++g)
+                straight &=
+                    directions.insert({cycle.groups[g].lane, cycle.groups[(g + 1) % cycle.groups.size()].lane}).second;
+            std::vector<unsigned> signature{cycle.owner, cycle.region};
+            for (const auto& g : cycle.groups) {
+                straight &= g.first.size() == 1 && g.last.size() == 1;
+                for (unsigned id : g.first)
+                    straight &= cuts.parent[id] == cycle.region && p.nodes[id].kind == c::Node::Operation;
+                for (unsigned id : g.last)
+                    straight &= cuts.parent[id] == cycle.region && p.nodes[id].kind == c::Node::Operation;
+                signature.insert(signature.end(), {g.lane, g.first.front(), g.last.front()});
+            }
+            if (!straight)
+                continue;
+            auto [it, inserted] = shared.emplace(signature, shapes.size());
+            if (inserted)
+                shapes.push_back(std::move(cycle));
+            else
+                shapes[it->second].cells.insert(shapes[it->second].cells.end(), cycle.cells.begin(), cycle.cells.end());
+        }
+        cuts.cycles = std::move(shapes);
+        // Two-group directional sharing: one group's exact boundaries are
+        // common, and the other group's union remains one noninterleaving lane
+        // interval. Within-visit edges retain a common publication/acquisition.
+        // The wrap SET/WAIT may move to an earlier first cut together: its SET
+        // still follows the common last lane's prior visit and cannot capture
+        // MORE intervening source work. Incoming E remains a separate demand.
+        // Two linear grouping passes, not pairwise family/set-cover search.
+        std::vector<unsigned> position(p.nodes.size());
+        for (const auto& n : p.nodes)
+            for (unsigned i = 0; i < n.children.size(); ++i)
+                position[n.children[i]] = i;
+        std::set<unsigned> firstPassFamilies;
+        for (unsigned anchor : {0u, 1u}) {
+            std::map<std::vector<unsigned>, unsigned> families;
+            std::vector<Cycle> merged;
+            for (auto cycle : cuts.cycles) {
+                if (cycle.groups.size() != 2 || (anchor == 1 && firstPassFamilies.count(cycle.cells.front()))) {
+                    merged.push_back(std::move(cycle));
+                    continue;
+                }
+                const auto& fixed = cycle.groups[anchor];
+                std::vector<unsigned> signature{cycle.owner,          cycle.region,        cycle.groups[0].lane,
+                                                cycle.groups[1].lane, fixed.first.front(), fixed.last.front()};
+                auto found = families.find(signature);
+                if (found != families.end()) {
+                    auto groups = merged[found->second].groups;
+                    auto& extent = groups[1 - anchor];
+                    const auto& extra = cycle.groups[1 - anchor];
+                    if (position[extra.first.front()] < position[extent.first.front()])
+                        extent.first = extra.first;
+                    if (position[extra.last.front()] > position[extent.last.front()])
+                        extent.last = extra.last;
+                    if (position[groups[0].last.front()] < position[groups[1].first.front()]) {
+                        auto& family = merged[found->second];
+                        family.groups = std::move(groups);
+                        family.cells.insert(family.cells.end(), cycle.cells.begin(), cycle.cells.end());
+                        if (anchor == 0)
+                            firstPassFamilies.insert(family.cells.front());
+                        continue;
+                    }
+                }
+                families[std::move(signature)] = merged.size();
+                merged.push_back(std::move(cycle));
+            }
+            cuts.cycles = std::move(merged);
+        }
+        return true;
+    }
+    struct Endpoint {
+        unsigned cut;
+        c::Mechanism::Kind kind;
+        unsigned source, target;
+    };
+    std::vector<Endpoint> pattern(const Cycle& cycle) const
+    {
+        std::vector<Endpoint> out;
+        out.push_back(
+            {cycle.groups.front().first.front(), c::Mechanism::Publish, cycle.groups.back().lane,
+             cycle.groups.front().lane});
+        for (unsigned g = 0; g < cycle.groups.size(); ++g) {
+            const auto& group = cycle.groups[g];
+            const auto& previous = cycle.groups[(g + cycle.groups.size() - 1) % cycle.groups.size()];
+            out.push_back({group.first.front(), c::Mechanism::Acquire, previous.lane, group.lane});
+            if (g + 1 < cycle.groups.size())
+                out.push_back(
+                    {cuts.next[group.last.front()], c::Mechanism::Publish, group.lane, cycle.groups[g + 1].lane});
+        }
+        return out;
+    }
+    void index()
+    {
+        for (unsigned i = 0; i < cuts.cycles.size(); ++i) {
+            const auto& cycle = cuts.cycles[i];
+            loopOwners.insert(cycle.owner);
+            for (const auto& e : pattern(cycle))
+                sites[e.cut].push_back(event(e.kind, e.source, e.target, cycle.keys.at({e.source, e.target})));
+            for (auto [direction, key] : cycle.keys)
+                owners.emplace(PrefixState::EventKey{direction.first, direction.second, key}, i);
+        }
+    }
+    bool infer(const c::Program& p, const Commands& actual, std::string& reason)
+    {
+        if (!discover(p, reason))
+            return false;
+        using Position = std::pair<unsigned, unsigned>;
+        std::map<PrefixState::EventKey, std::vector<Position>> population;
+        for (unsigned id = 0; id < actual.size(); ++id)
+            for (const auto& m : actual[id])
+                if (m.participation == c::Mechanism::Every &&
+                    (m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire))
+                    population[{m.first, m.second, m.forwardKey}].push_back({id, unsigned(m.kind)});
+        for (auto& [key, positions] : population)
+            std::sort(positions.begin(), positions.end());
+        std::set<PrefixState::EventKey> used;
+        std::vector<Cycle> certified;
+        for (auto cycle : cuts.cycles) {
+            std::map<std::pair<unsigned, unsigned>, std::vector<Position>> wanted;
+            for (const auto& e : pattern(cycle))
+                wanted[{e.source, e.target}].push_back({e.cut, unsigned(e.kind)});
+            bool found = true;
+            for (auto& [direction, positions] : wanted) {
+                std::sort(positions.begin(), positions.end());
+                bool matched = false;
+                for (unsigned k : p.target.compilerKeys) {
+                    PrefixState::EventKey key{direction.first, direction.second, k};
+                    auto it = population.find(key);
+                    if (!used.count(key) && it != population.end() && it->second == positions) {
+                        cycle.keys[direction] = k;
+                        matched = true;
+                        break;
+                    }
+                }
+                found &= matched;
+            }
+            if (found) {
+                for (auto [direction, k] : cycle.keys)
+                    used.insert({direction.first, direction.second, k});
+                certified.push_back(std::move(cycle));
+            }
+        }
+        cuts.cycles = std::move(certified);
+        index();
+        // Endpoint populations alone do not establish same-cut ordering.
+        for (unsigned id = 0; id < actual.size(); ++id) {
+            std::vector<c::Mechanism> word;
+            for (const auto& m : actual[id])
+                if (m.participation == c::Mechanism::Every && owners.count({m.first, m.second, m.forwardKey}) &&
+                    (m.kind == c::Mechanism::Publish || m.kind == c::Mechanism::Acquire))
+                    word.push_back(m);
+            if (word != sites[id]) {
+                reason = "recurring demand ring command order changed";
+                return false;
+            }
+        }
+        return true;
+    }
+    bool credit(
+        const c::Mechanism& m, PrefixState& state, const std::map<unsigned, c::State>& incoming,
+        std::string& reason) const
+    {
+        if (m.kind != c::Mechanism::Acquire || m.participation != c::Mechanism::Every)
+            return true;
+        auto found = owners.find({m.first, m.second, m.forwardKey});
+        if (found == owners.end())
+            return true;
+        const auto& cycle = cuts.cycles[found->second];
+        auto entry = incoming.find(cycle.owner);
+        if (entry == incoming.end()) {
+            reason = "recurring demand ring has no incoming generation scope";
+            return false;
+        }
+        for (unsigned cell : cycle.cells) {
+            auto& pending = state.pending[m.second][cell];
+            const auto& external = entry->second.pending[m.second][cell];
+            const auto& internal = cuts.effects[cycle.owner][cell];
+            if ((pending.readers & ~(external.readers | internal.readers)) ||
+                (pending.writers & ~(external.writers | internal.writers))) {
+                reason = "recurring demand ring omits external physical history";
+                return false;
+            }
+            pending.readers &= external.readers;
+            pending.writers &= external.writers;
+        }
+        return true;
+    }
+};
 } // namespace
 
 namespace {
@@ -1516,7 +1741,7 @@ c::Result verifyDemandImpl(
     const c::Program& p, const std::vector<std::vector<c::Mechanism>>& actual, DemandInvariants* invariants);
 c::Result constructDemandCandidate(
     const c::Program& p, const DemandInvariants* invariants, DemandFallbacks& unassigned,
-    const DemandFallbacks* forced = nullptr)
+    const DemandFallbacks* forced = nullptr, const Cuts* recurring = nullptr)
 {
     using namespace c;
     c::Result result;
@@ -1534,6 +1759,34 @@ c::Result constructDemandCandidate(
     std::map<FamilyKey, Family> families;
     std::vector<PrefixState::EventKey> demandKeys;
     unsigned nextLogicalKey = 1;
+    DemandRings rings(p.nodes.size());
+    std::map<unsigned, State> ringIncoming;
+    if (recurring) {
+        result.cellVisits += uint64_t(p.cells) * p.nodes.size();
+        rings.cuts = *recurring; // Reuse immutable discovery, charge before its state copy.
+        // A virtual namespace disjoint from physical entry keys. Final global
+        // numbering and protocol checks remain the ordinary demand allocator.
+        for (unsigned k : p.target.compilerKeys) {
+            if (k == NoCut) {
+                result.reason = "optional ring logical namespace unavailable";
+                return result;
+            }
+            nextLogicalKey = std::max(nextLogicalKey, k + 1);
+        }
+        for (auto& cycle : rings.cuts.cycles)
+            for (unsigned g = 0; g < cycle.groups.size(); ++g) {
+                auto direction = std::make_pair(cycle.groups[g].lane, cycle.groups[(g + 1) % cycle.groups.size()].lane);
+                if (!cycle.keys.count(direction)) {
+                    if (nextLogicalKey == NoCut) {
+                        result.reason = "optional ring logical namespace exhausted";
+                        return result;
+                    }
+                    cycle.keys[direction] = nextLogicalKey++;
+                }
+            }
+        rings.index();
+        result.cutCycles = rings.cuts.cycles.size();
+    }
     auto allocate = [&](unsigned a, unsigned b) -> std::optional<unsigned> {
         if (!p.target.event(lane(p, a), lane(p, b)))
             return {};
@@ -1573,6 +1826,20 @@ c::Result constructDemandCandidate(
         for (const auto& m : result.before[id])
             if (m.participation != Mechanism::Every && !applyEntryCredit(state, m, analysis, result.reason))
                 return false;
+        for (const auto& m : rings.sites[id]) {
+            result.before[id].push_back(m);
+            if (m.kind == Mechanism::Publish)
+                state.publish(m);
+            else {
+                if (!state.receipts.count({m.first, m.second, m.forwardKey})) {
+                    result.reason = "optional ring acquisition has no publication";
+                    return false;
+                }
+                state.acquirePrefix(m);
+                if (!rings.credit(m, state, ringIncoming, result.reason))
+                    return false;
+            }
+        }
         const auto& n = p.nodes[id];
         if (n.kind == Node::Operation) {
             if (needsVisibility(p, n, state)) {
@@ -1642,6 +1909,8 @@ c::Result constructDemandCandidate(
         }
         if (n.kind == Node::For || n.kind == Node::While) {
             auto entry = state;
+            if (rings.loopOwners.count(id))
+                ringIncoming.insert_or_assign(id, entry);
             std::vector<PrefixState::EventKey> episodeReceipts;
             std::map<Direction, Effects> acquiredEntry;
             std::map<Direction, unsigned> entryReplies;
@@ -1747,6 +2016,7 @@ c::Result constructDemandCandidate(
                 state = std::move(exit);
             } else
                 state.join(entry);
+            ringIncoming.erase(id);
             return true;
         }
         for (unsigned child : n.children)
@@ -1825,6 +2095,7 @@ c::Result constructDemandCandidate(
         struct Color {
             unsigned number;
             uint64_t nextFirst, lastConsumed;
+            bool ring;
         };
         std::map<Direction, std::vector<Color>> colors;
         std::map<PrefixState::EventKey, unsigned> numbering;
@@ -1835,7 +2106,8 @@ c::Result constructDemandCandidate(
             const auto& use = facts.uses.at(logical);
             auto& choices = colors[{a, b}];
             auto reusable = std::find_if(choices.begin(), choices.end(), [&](const Color& c) {
-                return use.firstPublish >= c.lastConsumed && c.nextFirst >= use.consumed;
+                return !c.ring && !rings.owners.count(logical) && use.firstPublish >= c.lastConsumed &&
+                       c.nextFirst >= use.consumed;
             });
             if (reusable != choices.end()) {
                 numbering[logical] = reusable->number;
@@ -1851,7 +2123,7 @@ c::Result constructDemandCandidate(
                 continue;
             }
             trial[{a, b}].insert(*fresh);
-            choices.push_back({*fresh, use.nextPublish, use.consumed});
+            choices.push_back({*fresh, use.nextPublish, use.consumed, bool(rings.owners.count(logical))});
             numbering[logical] = *fresh;
             ++count;
         }
@@ -1872,6 +2144,12 @@ c::Result constructDemandCandidate(
                     continue;
                 }
                 PrefixState::EventKey logical{m.first, m.second, m.forwardKey};
+                if (fallbackKeys.count(logical) && rings.owners.count(logical)) {
+                    result.success = false;
+                    result.reason = "optional recurring demand ring exhausted event keys";
+                    result.before.clear();
+                    return result;
+                }
                 if (!fallbackKeys.count(logical)) {
                     m.forwardKey = numbering.at(logical);
                     commands.push_back(m);
@@ -1931,6 +2209,13 @@ c::Result verifyDemandImpl(
     if (actual.size() != p.nodes.size() || !analysis.build(p, result.reason) ||
         !verifyDemandProtocols(p, analysis, actual, result.reason))
         return result;
+    DemandRings rings(p.nodes.size());
+    if (!rings.infer(p, actual, result.reason))
+        return result;
+    if (DemandRings::affordable(p))
+        result.cellVisits += uint64_t(p.cells) * p.nodes.size();
+    result.cutCycles = rings.cuts.cycles.size();
+    std::map<unsigned, State> ringIncoming;
     // Fresh physical requirements and actual event-prefix transfer. No chosen
     // demand, source-cut proposal, family membership, or initialization receipt
     // is consumed by this checker.
@@ -1957,6 +2242,8 @@ c::Result verifyDemandImpl(
                     return false;
                 }
                 state.acquirePrefix(m);
+                if (!rings.credit(m, state, ringIncoming, result.reason))
+                    return false;
             } else
                 apply(state, m);
         }
@@ -2008,6 +2295,8 @@ c::Result verifyDemandImpl(
             // They must not survive the zero-trip branch of this abstract join;
             // ordinary receipts and ordinary commands at the same cut do.
             auto entry = state;
+            if (rings.loopOwners.count(id))
+                ringIncoming.insert_or_assign(id, entry);
             for (const auto& receipt : entryProviders[id])
                 entry.receipts.erase(receipt);
             state.seed(analysis.effects[id]);
@@ -2055,6 +2344,7 @@ c::Result verifyDemandImpl(
                 state = std::move(exit);
             else
                 state.join(entry);
+            ringIncoming.erase(id);
             return true;
         }
         for (unsigned child : n.children)
@@ -2212,7 +2502,114 @@ c::Result constructDemandsImpl(
 }
 } // namespace
 
-c::Result c::constructDemands(const Program& p) { return constructDemandsImpl(p, false); }
+namespace {
+c::Result constructWithDemandRings(const c::Program& p, bool corrupt)
+{
+    using namespace c;
+    auto baseline = constructDemandsImpl(p, false);
+    if (!baseline.success)
+        return baseline;
+    DemandRings shapes(p.nodes.size());
+    std::string why;
+    if (DemandRings::affordable(p))
+        baseline.cellVisits += uint64_t(p.cells) * p.nodes.size();
+    if (!shapes.discover(p, why) || shapes.cuts.cycles.empty())
+        return baseline;
+    baseline.ringCandidates = 1;
+    // Cheap necessary resource and local savings checks precede construction.
+    // They may forgo a useful candidate, but never affect baseline admission.
+    std::map<unsigned, uint64_t> minimum;
+    std::map<std::pair<unsigned, unsigned>, unsigned> required;
+    std::set<PrefixState::EventKey> entryKeys;
+    for (const auto& commands : baseline.before)
+        for (const auto& m : commands)
+            if (m.participation != Mechanism::Every)
+                entryKeys.insert({m.first, m.second, m.forwardKey});
+    for (const auto& cycle : shapes.cuts.cycles) {
+        minimum[cycle.region] += 2 * cycle.groups.size();
+        for (unsigned g = 0; g < cycle.groups.size(); ++g)
+            ++required[{cycle.groups[g].lane, cycle.groups[(g + 1) % cycle.groups.size()].lane}];
+    }
+    bool useful = false, feasible = true;
+    for (const auto& [scope, lower] : minimum) {
+        uint64_t old = 0;
+        for (unsigned child : p.nodes[scope].children)
+            for (const auto& m : baseline.before[child])
+                if (m.participation == Mechanism::Every)
+                    old += m.kind == Mechanism::Rendezvous ? 4 : 1;
+        feasible &= lower <= old;
+        useful |= lower < old;
+    }
+    for (const auto& [direction, count] : required) {
+        unsigned available = 0;
+        for (unsigned k : p.target.compilerKeys)
+            available += key(p, direction.first, direction.second) != k &&
+                         p.target.available(lane(p, direction.first), lane(p, direction.second), k) &&
+                         !entryKeys.count({direction.first, direction.second, k});
+        feasible &= count <= available;
+    }
+    if (!useful || !feasible) {
+        baseline.rejectedRings = 1;
+        return baseline;
+    }
+    DemandFallbacks unassigned;
+    auto candidate = constructDemandCandidate(p, nullptr, unassigned, nullptr, &shapes.cuts);
+    if (corrupt)
+        for (auto& commands : candidate.before)
+            commands.clear();
+    auto checked = candidate.success ? verifyDemandImpl(p, candidate.before, nullptr) : c::Result{};
+    bool accepted = candidate.success && checked.success;
+    uint64_t removed = 0;
+    if (accepted)
+        for (unsigned id = 0; id < p.nodes.size(); ++id) {
+            // Preserve every conditional entry episode exactly. For ordinary
+            // commands require non-increase in EACH independently executed
+            // Sequence, not an amortized trip-count or whole-function total.
+            auto guarded = [](const auto& commands) {
+                std::vector<Mechanism> out;
+                for (const auto& m : commands)
+                    if (m.participation != Mechanism::Every)
+                        out.push_back(m);
+                return out;
+            };
+            if (guarded(baseline.before[id]) != guarded(candidate.before[id])) {
+                accepted = false;
+                break;
+            }
+            if (p.nodes[id].kind != Node::Sequence)
+                continue;
+            auto cost = [&](const c::Result& plan) {
+                uint64_t total = 0;
+                for (unsigned child : p.nodes[id].children)
+                    for (const auto& m : plan.before[child])
+                        if (m.participation == Mechanism::Every)
+                            total += m.kind == Mechanism::Rendezvous ? 4 : 1;
+                return total;
+            };
+            auto old = cost(baseline), next = cost(candidate);
+            if (next > old) {
+                accepted = false;
+                break;
+            }
+            removed += old - next;
+        }
+    baseline.nodeVisits += candidate.nodeVisits + checked.nodeVisits;
+    baseline.cellVisits += candidate.cellVisits + checked.cellVisits;
+    baseline.ringCandidates = 1;
+    if (!accepted || !removed) {
+        baseline.rejectedRings = 1;
+        return baseline;
+    }
+    candidate.nodeVisits = baseline.nodeVisits;
+    candidate.cellVisits = baseline.cellVisits;
+    candidate.ringCandidates = 1;
+    candidate.ringCandidateCommandsRemoved = removed;
+    return candidate;
+}
+} // namespace
+c::Result c::constructDemands(const Program& p) { return constructWithDemandRings(p, false); }
+c::Result c::testing::constructDemandsRejectingRings(const Program& p) { return constructWithDemandRings(p, true); }
+c::Result c::testing::constructDemandsWithoutRings(const Program& p) { return constructDemandsImpl(p, false); }
 c::Result c::testing::constructDemandsRejectingRefinement(const Program& p) { return constructDemandsImpl(p, true); }
 c::Result c::testing::constructDemandsRejectingEntryProposal(const Program& p)
 {

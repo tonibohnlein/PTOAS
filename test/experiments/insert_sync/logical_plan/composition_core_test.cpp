@@ -250,6 +250,165 @@ static void execute(
 }
 int main()
 {
+    // Closed per-visit rings: no header seed, no unconsumed last publication,
+    // and one shared protocol for identical multi-cell witnesses. The finite
+    // graph starts keys idle and preserves them across skipped/repeated runs.
+    for (unsigned cells : {1u, 2u}) {
+        c::Program p;
+        p.cells = cells;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto write = op(p, a, 0, true), read = op(p, b, 0, false);
+        if (cells == 2) {
+            p.nodes[write].effects[1].writers = 1u << a;
+            p.nodes[read].effects[1].readers = 1u << b;
+        }
+        auto body = sequence(p, {write, read});
+        auto loop = add(p, c::Node::For, {body});
+        sequence(p, {loop});
+        auto old = c::testing::constructDemandsWithoutRings(p);
+        auto plan = c::constructDemands(p);
+        require(old.success && plan.success && plan.ringCandidates == 1);
+        require(plan.rejectedRings == 1 && plan.before == old.before); // Equal cost is not an improvement.
+        require(c::verifyDemands(p, plan.before).success);
+        require(plan.before[loop].empty());
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned invocation) { return (invocation * 3) % 5; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 8; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+        auto missing = plan.before;
+        missing[write].erase(missing[write].begin());
+        require(!c::verifyDemands(p, missing).success);
+        auto reversed = plan.before;
+        std::reverse(reversed[write].begin(), reversed[write].end());
+        require(!c::verifyDemands(p, reversed).success);
+        auto outside = p;
+        // Changing an immutable cell witness invalidates the selected word;
+        // a second observer cannot borrow the first observer's cycle credit.
+        outside.nodes[read].lane = unsigned(Pipe::MTE3);
+        outside.nodes[read].effects[0].readers = 1u << unsigned(Pipe::MTE3);
+        require(!c::verifyDemands(outside, plan.before).success);
+    }
+    for (unsigned copies : {1u, 2u}) {
+        c::Program p;
+        p.cells = 2 * copies;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto load = op(p, a, 0, true), compute = op(p, b, 0, false), store = op(p, d, 1, false);
+        p.nodes[compute].effects[1].writers = 1u << b;
+        if (copies == 2) {
+            p.nodes[load].effects[2] = p.nodes[load].effects[0];
+            p.nodes[compute].effects[2] = p.nodes[compute].effects[0];
+            p.nodes[compute].effects[3] = p.nodes[compute].effects[1];
+            p.nodes[store].effects[3] = p.nodes[store].effects[1];
+        }
+        auto loop = add(p, c::Node::For, {sequence(p, {load, compute, store})});
+        sequence(p, {loop});
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.cutCycles == 2 && plan.ringCandidateCommandsRemoved > 0);
+        require(c::verifyDemands(p, plan.before).success && plan.before[loop].empty());
+        auto rejected = c::testing::constructDemandsRejectingRings(p);
+        require(
+            rejected.success && rejected.rejectedRings == 1 &&
+            rejected.before == c::testing::constructDemandsWithoutRings(p).before);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned visit) { return (visit * 3) % 5; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 8; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // Distinct source cuts, one actual consumer: sharing keeps the common
+        // wait and publishes the latest necessary prefix, not one pair/cell.
+        c::Program p;
+        p.cells = 4;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V), d = unsigned(Pipe::MTE3);
+        auto first = op(p, a, 0, true), second = op(p, a, 1, true);
+        auto unrelated = op(p, b, 3, false);
+        auto use = op(p, b, 0, false), output = op(p, d, 2, false);
+        p.nodes[use].effects[1].readers = 1u << b;
+        p.nodes[use].effects[2].writers = 1u << b;
+        auto loop = add(p, c::Node::For, {sequence(p, {first, unrelated, second, use, output})});
+        sequence(p, {loop});
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.cutCycles == 2 && plan.ringCandidateCommandsRemoved > 0);
+        require(c::verifyDemands(p, plan.before).success);
+        unsigned readiness = 0;
+        for (const auto& m : plan.before[use])
+            readiness += m.kind == c::Mechanism::Acquire && m.first == a && m.second == b;
+        require(readiness == 1);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned visit) { return (visit * 3) % 5; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 8; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+            for (unsigned i = 0; i < oracle.accesses.size(); i += 5)
+                require(!oracle.reaches(oracle.accesses[i + 1].done, oracle.accesses[i + 2].issue));
+        }
+        auto corrupted = plan.before;
+        corrupted[use].erase(
+            std::remove_if(
+                corrupted[use].begin(), corrupted[use].end(),
+                [&](const auto& m) { return m.kind == c::Mechanism::Acquire && m.first == a && m.second == b; }),
+            corrupted[use].end());
+        require(!c::verifyDemands(p, corrupted).success);
+    }
+    {
+        // A collapsed single-lane nested loop is not one cell generation.
+        // Refuse only the optional ring, not general structural composition.
+        c::Program p;
+        p.cells = 1;
+        auto write = op(p, unsigned(Pipe::MTE2), 0, true);
+        auto inner = add(p, c::Node::For, {sequence(p, {write})});
+        auto read = op(p, unsigned(Pipe::V), 0, false);
+        auto outer = add(p, c::Node::For, {sequence(p, {inner, read})});
+        sequence(p, {outer});
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.ringCandidates == 0 && c::verifyDemands(p, plan.before).success);
+        ExecutionPolicy policy;
+        policy.trips = [=](unsigned id, unsigned visit) { return id == outer ? 2u : visit % 4; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 4; ++invocation) {
+            execute(p, plan, p.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+    }
+    {
+        // Interleaved cell words cannot borrow a single later readiness wait.
+        c::Program p;
+        p.cells = 2;
+        unsigned a = unsigned(Pipe::MTE2), b = unsigned(Pipe::V);
+        auto x = op(p, a, 0, true), rx = op(p, b, 0, false);
+        auto y = op(p, a, 1, true), ry = op(p, b, 1, false);
+        auto loop = add(p, c::Node::For, {sequence(p, {x, rx, y, ry})});
+        sequence(p, {loop});
+        auto plan = c::constructDemands(p);
+        require(plan.success && c::verifyDemands(p, plan.before).success);
+        std::vector<std::vector<c::Mechanism>> merged(p.nodes.size());
+        merged[x] = {{c::Mechanism::Publish, b, a, 1, 0}, {c::Mechanism::Acquire, b, a, 1, 0}};
+        merged[ry] = {{c::Mechanism::Publish, a, b, 1, 0}, {c::Mechanism::Acquire, a, b, 1, 0}};
+        require(!c::verifyDemands(p, merged).success);
+    }
+    {
+        c::Program p;
+        p.cells = c::MaxCells;
+        auto write = op(p, unsigned(Pipe::MTE2), 0, true), read = op(p, unsigned(Pipe::V), 0, false);
+        std::vector<unsigned> body{write, read};
+        for (unsigned i = 0; i < 4096; ++i)
+            body.push_back(add(p, c::Node::Sequence));
+        auto loop = add(p, c::Node::For, {sequence(p, std::move(body))});
+        sequence(p, {loop});
+        auto plan = c::constructDemands(p);
+        require(plan.success && plan.ringCandidates == 0 && c::verifyDemands(p, plan.before).success);
+    }
     {
         // A parent-side completion handoff between two possible publication
         // cuts must not invalidate or invent shared incoming-prefix coverage.

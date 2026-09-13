@@ -976,7 +976,9 @@ Outcome ss::testing::constructCompositionalSync(
                      << selected.replayedFallbackDemands << " allocation_fallback_scopes "
                      << selected.allocationFallbackScopes << " entry_episodes " << selected.entryEpisodes
                      << " entry_reply_families " << selected.entryReplyFamilies << " rejected_entry_proposals "
-                     << selected.rejectedEntryProposals << " rendezvous_packets " << rendezvousPackets
+                     << selected.rejectedEntryProposals << " ring_candidates " << selected.ringCandidates
+                     << " rejected_rings " << selected.rejectedRings << " ring_candidate_commands_removed "
+                     << selected.ringCandidateCommandsRemoved << " rendezvous_packets " << rendezvousPackets
                      << " demand_fallbacks " << selected.demandFallbacks << " nodes " << tree.program.nodes.size()
                      << " cells " << tree.program.cells << " widened_spaces " << tree.widenedSpaces << " node_visits "
                      << selected.nodeVisits + checked.nodeVisits << " cell_visits " << out.work << " handoffs "

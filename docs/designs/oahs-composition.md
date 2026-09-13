@@ -892,3 +892,127 @@ software-architecture, algorithms/performance and correctness/design reviewers
 accept this opt-in increment subject to those passing checks, not general
 replacement or performance qualification. No full system suite or device run
 is claimed.
+
+## Closed recurring handoffs within the demand constructor
+
+The next optional provider handles a complete storage-access lane word in one
+Sequence. It uses the existing demand constructor, global completion state,
+logical event allocation and actual-word reconstruction, not the old cut
+constructor's initialization/retirement visitor. For two lanes its word is:
+
+```text
+Q: SET Q -> P       // includes Q work from a previous visit, if any
+P: WAIT Q -> P
+P: access storage
+P: SET P -> Q       // earliest cut after this group's last relevant access
+Q: WAIT P -> Q      // first relevant consumer, not the region's entry
+Q: access storage
+```
+
+The first SET publishes Q's existing prefix on the first visit; it does not
+wait for a fictitious previous payload. On later visits it follows Q's prior
+access and acquisition in Q's queue. Each visit starts with idle/consumed keys
+and consumes every publication. There is no external seed, tail publication,
+first-iteration exception or exit acknowledgment. A skipped visit executes no
+ring commands. The ordinary actual two-copy word checker proves the wraparound
+consumption-before-rearm edges and progress, with SET fire distinct from a
+source-side issue barrier.
+
+The physical certificate is separate. Original effects must establish that the
+word contains the whole cell-access population in its repeated owner. First
+and last boundaries must be physical operations that are immediate children
+of the same Sequence. No nested structural child may access a certified cell,
+the nearest repeated owner must be a counted For, and each directed edge must
+occur once per word. A surrounding choice may skip the whole Sequence, but
+cannot skip individual endpoints. Partial or repeated-direction words lose
+this optional precision. One cell belongs to one such certificate.
+Let E be pending history entering that owner, and S its complete MAY effects.
+Only after an actual certified WAIT can internal-generation completion reduce
+the receiving observer's cell history to `pending & E`. The checker explicitly
+requires `pending` to be within `E | S`. Incoming histories, including outer
+loop overapproximations, survive this credit. Ordinary prefix receipts still
+carry completion across cells, and subsequent payload always adds new pending
+history. The zero-trip join retains E. This is a scoped internal-generation
+certificate, not a permanent completed bit for a storage slot.
+
+Identical multi-cell lane shapes share one protocol; each cell retains its own
+reader/writer effects and incoming-generation mask. This is compatible prefix
+coverage, not equality of the cells' effects. Two-group words can also share
+when one group's exact first/last boundaries coincide and the other group's
+union remains a noninterleaving single-lane interval. Each shared direction
+retains a common publication or acquisition within the visit. The wrap pair
+can move together to the earliest merged producer: its source publication
+still follows the last lane's common previous-visit group and, being earlier,
+does not capture additional intervening source work. Initial external history
+is still retained in E. Two bounded grouping passes replace pairwise
+family search. This covers separate operand preparations feeding one consumer
+without recognizing a kernel name or requiring a periodic expression.
+A family widened in the first directional grouping pass is excluded from the
+second pass, so a final family still has one unchanged group relative to its
+original cell words.
+
+The candidate uses disjoint virtual IDs above physical entry keys. Ordinary
+global numbering assigns ring keys dedicated colors, excluding them from
+unrelated raw reuse, while checking the complete combined word. Reconstruction
+rederives shapes and infers exact numeric endpoint populations and same-cut
+ordering from actual mechanisms before granting any cell credit. It does not
+consume the constructor's cell assignments or selected protocol metadata.
+
+There is at most one optional candidate attempt after the verified demand baseline.
+Before constructing it, cheap per-domain key-capacity and per-Sequence minimum
+command-count checks reject infeasible or non-saving ring populations.
+Allocation, reconstruction or quality rejection restores that baseline exactly.
+The quality check preserves conditional entry episodes and requires ordinary
+command cost not to increase in *any* independently executing Sequence, with
+a strict decrease somewhere. It does not amortize header commands against a
+guessed trip count. Counters `ring_candidates`, `rejected_rings`,
+`ring_candidate_commands_removed` and `cut_cycles` distinguish attempted, rejected and
+actually certified behavior. This command-count check alone is not an overlap
+or device-performance qualification; the eight-case boundary gate remains
+separate.
+The reduction counter compares the entire candidate's ordinary commands with
+the baseline. It includes any ordinary allocation/placement changes caused by
+reconstruction; it does not attribute every removed command solely to a ring.
+
+Optional discovery is capped at 1,048,576 static node/cell combinations and
+retains the existing bounded word/alternative limits. The constructor reuses
+one immutable discovery result; fresh verification deliberately rederives it.
+Construction and reconstruction use one structural endpoint-pattern generator,
+while the independent finite graph oracle implements event semantics separately.
+`node_visits` and `cell_visits` accumulate attempted transfer/analysis work,
+including rejected candidates; protocol and refinement counters describe the
+returned plan. The new ring counters separately expose optional selection.
+These work units and the static cap are not a wall-clock or allocation-byte
+bound; paired full-compiler timings remain required.
+
+### Local closed-ring qualification
+
+All three reviewers accept this opt-in increment with the following final
+local checks: core (4.99 s), composition (3.04 s), demand/native mutation
+(16.41 s) and focused (144.31 s) gates pass. The added shared native fixture
+constructs and reconstructs two multi-cell handoff families, executes no
+partial protocol on skipped visits, and rejects five in-place protocol
+mutations. The independent finite graph suite passes **2,198,295 assertions**
+under Clang C++17 ASan/UBSan, with unsupported leak inspection disabled. It
+includes staggered producers, intervening unrelated last-lane work, an invalid
+interleaving merge, exact rollback, nested-segment refusal and cap fallback.
+The targeted public-option lit test also passes.
+
+One-/two-/three-buffer outputs now use respectively 4/4, 8/8 and 12/12 SET/WAIT
+sites and **zero named barriers**, plus the unchanged terminal drain. These
+remove respectively 1, 2 and 3 named barriers from the preceding demand
+revision, without adding event sites. InsertSync uses 6/6, 12/12 and 18/18
+SET/WAIT sites and 0, 2 and 3 named barriers. The other five regression inputs'
+static counts are unchanged, including historical GEMM at 62/62/21. The
+remaining later-prefix observations are unchanged too: this is not yet a
+solution to cross-slot early release. **`quality_qualified` remains false.**
+
+Three paired compiler rounds after one warm-up pass the <=2x median gate on
+all eight unchanged inputs, with median ratios **0.969–1.035** against
+InsertSync; untimed C++ emission passes. Artifacts are in the existing build's
+`test-results/oahs-rings-compiler` and `test-results/oahs-demands` directories.
+The frozen corpus campaign `test-results/oahs-rings-corpus` preserves all
+**363** input hashes, prepared-IR hashes and outcomes exactly: **45/150 PTOAS**
+and **152/213 PyPTO/pypto-lib** admissions. The shared test fixture is not added
+to those frozen denominators. No device execution, full system suite, default
+switch or comparison with handwritten GEMM performance is claimed.

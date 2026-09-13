@@ -43,6 +43,10 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(args.python_root.resolve()))
     from compare_boundaries import compare, run
+    from ptoas.mlir import ir
+    from ptoas.mlir.dialects import pto
+    from compare_boundaries import Boundaries
+    from measure import children, replay
 
     commands, cases = [], []
     env = dict(os.environ, PTOAS_LOGICAL_TRACE='1')
@@ -68,6 +72,7 @@ def main():
                         'protocol_keys', 'shared_protocol_keys', 'allocation_fallback_scopes', 'allocation_fallback_keys',
                         'allocation_replays', 'rejected_allocation_replays', 'replay_commands_removed',
                         'replayed_fallback_demands', 'entry_episodes', 'entry_reply_families', 'rejected_entry_proposals',
+                        'ring_candidates', 'rejected_rings', 'ring_candidate_commands_removed', 'cut_cycles',
                         'rendezvous_packets', 'demand_fallbacks'):
             matches = re.findall(r'\b' + counter + r' (\d+)\b', trace)
             if len(matches) != 1:
@@ -153,6 +158,40 @@ def main():
                         for c in cases for s in c['scenarios'])
     path_checks = []
     if args.constructor == 'demands':
+        for name, slots in (('one_buffer', 1), ('two_buffer', 2), ('three_buffer', 3)):
+            row = next(c for c in cases if c['case'] == name)
+            counters = row['native_counters']
+            if (counters['ring_candidates'] != 1 or counters['rejected_rings'] or
+                    counters['cut_cycles'] != 2 * slots or counters['ring_candidate_commands_removed'] < slots):
+                raise RuntimeError('native recurring handoff path not exercised: ' + name)
+            path_checks.append(dict(name=name + '-recurring-rings', counters=counters))
+        shared = Path(__file__).parent / 'structured_inputs/demand_ring_shared.pto'
+        shared_raw = args.output.resolve() / 'shared-rings.native.pto'
+        verdict = json.loads(invoke('shared-rings', [args.driver, shared, 'demands:none', shared_raw]))
+        counters = native_counters('shared-rings')
+        if (not verdict['accepted'] or not verdict['atomic'] or counters['cut_cycles'] != 2 or
+                counters['rejected_rings'] or not counters['ring_candidate_commands_removed']):
+            raise RuntimeError('native multi-cell recurring handoff sharing not exercised')
+        shared_normalized = args.output.resolve() / 'shared-rings.pto'
+        invoke('shared-rings-normalize', compiler + [shared_raw, '-o', shared_normalized])
+        with ir.Context() as context:
+            context.enable_multithreading(False)
+            pto.register_dialect(context, load=True)
+            module = ir.Module.parse(shared_normalized.read_text())
+            function = next(op for op in children(module.operation) if op.name == 'func.func')
+            observer = Boundaries()
+            for n, take in ((0, True), (3, False), (1, True), (3, True), (0, False), (2, True)):
+                replay(function, ['src', 'dst', n, take], observer=observer.observe)
+                if observer.tokens:
+                    raise RuntimeError('shared recurring handoff exports an unconsumed publication')
+        path_checks.append(dict(name='shared-rings', verdict=verdict, counters=counters,
+                                source_sha256=digest(shared), output_sha256=digest(shared_normalized)))
+        for mutation in ('wrong-key', 'drop-set', 'drop-wait', 'early-publication', 'late-acquisition'):
+            verdict = json.loads(invoke('shared-rings-' + mutation, [args.driver, shared,
+                'demands:' + mutation, args.output.resolve() / ('shared-rings-' + mutation + '.pto')]))
+            if verdict['accepted'] or not verdict['expected'] or not verdict['atomic']:
+                raise RuntimeError('shared recurring handoff corruption escaped reconstruction: ' + mutation)
+            path_checks.append(dict(name='shared-rings-' + mutation, verdict=verdict))
         for counter in ('direct_handoffs', 'reused_acknowledgments', 'owned_refinements',
                         'protocol_keys', 'shared_protocol_keys',
                         'rendezvous_packets', 'demand_fallbacks'):
@@ -211,10 +250,6 @@ def main():
             raise RuntimeError('native fallback packet path not exercised')
         normalized = args.output.resolve() / 'fallback.pto'
         invoke('fallback-normalize', compiler + [raw, '-o', normalized])
-        from ptoas.mlir import ir
-        from ptoas.mlir.dialects import pto
-        from compare_boundaries import Boundaries
-        from measure import children, replay
         authored = Path(__file__).parent / 'structured_inputs/demand_authored_guard.pto'
         verdict = json.loads(invoke('entry-authored-guard', [args.driver, authored, 'demands:expect-unsupported',
             args.output.resolve() / 'entry-authored-guard.pto']))
