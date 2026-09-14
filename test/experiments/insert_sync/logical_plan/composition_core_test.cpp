@@ -331,6 +331,55 @@ static void testRemoteSignals()
         !unfinishedPlan.success &&
         unfinishedPlan.reason == "authored remote notify has an unfinished local producer prefix");
 
+    for (auto [source, writes] : {std::pair(mte2, false), std::pair(mte3, true), std::pair(scalar, true)}) {
+        c::Program p;
+        p.cells = 1;
+        p.globalMemory = {true};
+        auto payload = op(p, source, 0, writes);
+        auto prerequisite = add(p, c::Node::Sequence);
+        p.nodes[prerequisite].notificationPrerequisite = true;
+        auto notification = add(p, c::Node::Sequence);
+        add(p, c::Node::Sequence, {payload, prerequisite, notification});
+        p.fixedBefore.resize(p.nodes.size());
+        p.fixedBefore[notification] = {notify};
+        for (bool precision : {false, true}) {
+            auto plan = precision ? c::constructDemands(p) : c::construct(p);
+            require(plan.success && !plan.before[prerequisite].empty());
+            require(c::verifyDemands(p, plan.before).success);
+            auto missing = plan.before;
+            missing[prerequisite].clear();
+            require(!c::verifyDemands(p, missing).success);
+            auto late = plan.before;
+            late[notification] = std::move(late[prerequisite]);
+            late[prerequisite].clear();
+            require(!c::verifyDemands(p, late).success);
+        }
+        if (writes) {
+            auto repeated = p;
+            unsigned first = repeated.nodes.size() - 1;
+            auto fresh = op(repeated, source, 0, true);
+            auto secondCut = add(repeated, c::Node::Sequence);
+            repeated.nodes[secondCut].notificationPrerequisite = true;
+            auto secondNotify = add(repeated, c::Node::Sequence);
+            add(repeated, c::Node::Sequence, {first, fresh, secondCut, secondNotify});
+            repeated.fixedBefore.resize(repeated.nodes.size());
+            repeated.fixedBefore[secondNotify] = {notify};
+            auto plan = c::constructDemands(repeated);
+            require(plan.success && !plan.before[secondCut].empty());
+            require(c::verifyDemands(repeated, plan.before).success);
+            plan.before[secondCut].clear();
+            require(!c::verifyDemands(repeated, plan.before).success);
+        }
+        if (source == mte3) {
+            unsigned body = p.nodes.size() - 1;
+            auto reload = op(p, mte2, 0, false);
+            add(p, c::Node::Sequence, {body, reload});
+            p.fixedBefore.resize(p.nodes.size());
+            auto unsupported = c::constructDemands(p);
+            require(!unsupported.success && unsupported.reason.find("MTE3-to-MTE2 GM publication") != std::string::npos);
+        }
+    }
+
     // Completing the MTE3 queue is insufficient for publication of its GM
     // write. The following fence is a separate visibility obligation.
     unfinished.fixedBefore[unfinishedSite].insert(

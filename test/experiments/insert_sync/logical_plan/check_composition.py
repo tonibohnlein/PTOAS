@@ -329,9 +329,16 @@ def main():
         compile_case(name, fixtures / (name + '.pto'), expected=False)
     row = compile_case('composition_authored_remote_notify_unreleased',
                        fixtures / 'composition_authored_remote_notify_unreleased.pto',
-                       gm='assume-disjoint-arguments', expected=False)
-    if 'authored remote notify has an unfinished local producer prefix' not in row.get('first_refusal', ''):
-        raise RuntimeError('unreleased remote notification did not fail closed at its local release contract')
+                       gm='assume-disjoint-arguments', expected=True)
+    if row['fences'] != 1:
+        raise RuntimeError('remote notification did not construct its non-scalar publication prerequisite')
+    source = fixtures / 'composition_authored_remote_notify_unreleased.pto'
+    row = run('remote-notification-drop-prerequisite',
+              [args.driver, source, 'demands:drop-visibility-fence',
+               args.output / 'remote-notification-drop-prerequisite.pto',
+               'conservative', 'assume-disjoint-arguments'], source, 'mutation', True)
+    if not row['verdict']['expected'] or not row['verdict']['atomic']:
+        raise RuntimeError('remote notification accepted a deleted publication prerequisite')
     row = compile_case('composition_authored_remote_signal_aic',
                        fixtures / 'composition_authored_remote_signal_aic.pto', expected=False)
     if 'authored remote notify requires the qualified AIV contract' not in row.get('first_refusal', ''):

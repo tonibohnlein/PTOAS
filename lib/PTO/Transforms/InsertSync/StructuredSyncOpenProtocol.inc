@@ -233,6 +233,21 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                 apply(p, state, m);
         }
         const auto& node = p.nodes[id];
+        // Proposal transfers must also satisfy the authored notify during
+        // invariant discovery. Pure emitted verification has no residual sink
+        // and therefore cannot invent this prerequisite.
+        if (residual && node.notificationPrerequisite) {
+            if (!charge((2 + LaneCount) * width + uint64_t(p.cells) * (LaneCount + 2))) return false;
+            std::vector<Mechanism> prerequisites;
+            if (!realizeNotificationPrerequisite(p, id, state, prerequisites, result.reason,
+                                                result.visibilityRequirements, result.cellVisits)) return false;
+            auto& commands = (*residual)[id];
+            for (const auto& command : prerequisites) {
+                if (!charge(1 + commands.size())) return false;
+                if (std::find(commands.begin(), commands.end(), command) == commands.end())
+                    commands.push_back(command);
+            }
+        }
         if (node.kind == Node::Operation) {
             if (validate && residual) {
                 auto& commands = (*residual)[id];

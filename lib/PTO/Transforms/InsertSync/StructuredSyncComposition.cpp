@@ -443,6 +443,53 @@ bool realizeVisibility(
     return true;
 }
 
+// Construct at the original cut BEFORE the notification, never after the
+// immutable action. These are existing AIV cache/fence and lane-drain recipes;
+// no new GM MTE3-to-MTE2 visibility credit is introduced here.
+bool realizeNotificationPrerequisite(const c::Program& p, unsigned id, c::State& state,
+                                    std::vector<c::Mechanism>& commands, std::string& reason,
+                                    uint64_t& visibilityRequirements, uint64_t& cellVisits)
+{
+    if (!p.nodes[id].notificationPrerequisite) return true;
+    cellVisits += uint64_t(p.cells) * (c::LaneCount + 2);
+    if (p.core != Core::AIV || p.nodes[id].kind != c::Node::Sequence || !p.nodes[id].children.empty()) {
+        reason = "remote notification prerequisite requires an empty AIV structural cut";
+        return false;
+    }
+    const uint8_t scalar = 1u << unsigned(Pipe::S);
+    bool clean = false, fence = false;
+    for (unsigned cell = 0; cell < p.cells; ++cell) {
+        if (p.globalMemory.empty() || !p.globalMemory[cell]) continue;
+        fence |= bool((state.written[unsigned(Pipe::S)][cell] & ~scalar) & ~state.fencedNonScalar[cell]);
+        for (unsigned observer = 0; observer < c::LaneCount; ++observer)
+            if (observer != unsigned(Pipe::S)) clean |= bool(state.written[observer][cell] & scalar);
+    }
+    if (clean || fence) {
+        c::Mechanism mechanism;
+        mechanism.kind = c::Mechanism::Visibility;
+        mechanism.visibilityAction = clean ? c::VisibilityAction::CleanSource : c::VisibilityAction::FenceOnly;
+        apply(p, state, mechanism);
+        commands.push_back(mechanism);
+        cellVisits += uint64_t(p.cells) * c::LaneCount * 4;
+        ++visibilityRequirements;
+    }
+    uint8_t pending = 0;
+    for (unsigned cell = 0; cell < p.cells; ++cell)
+        if (!p.globalMemory.empty() && p.globalMemory[cell]) pending |= state.remotePending[cell] & ~scalar;
+    for (unsigned source = 0; source < c::LaneCount; ++source)
+        if (pending & (1u << source)) {
+            if (!p.target.barrier(lane(p, source))) {
+                reason = "target cannot drain the remote notification's local prefix";
+                return false;
+            }
+            c::Mechanism mechanism{c::Mechanism::Barrier, source, source};
+            apply(p, state, mechanism);
+            commands.push_back(mechanism);
+            cellVisits += uint64_t(p.cells) * c::LaneCount * 4;
+        }
+    return true;
+}
+
 // Bidirectional, target-qualified shortest path; fixed lane count. Each
 // rendezvous transports completion acquired at its preceding path vertex.
 bool acquire(const c::Program& p, unsigned source, unsigned target, c::State& state, std::vector<c::Mechanism>& out)
@@ -753,6 +800,8 @@ c::Result c::construct(const Program& p)
         if (!applyFixed(p, id, state, result.reason))
             return false;
         const auto& n = p.nodes[id];
+        if (!realizeNotificationPrerequisite(p, id, state, result.before[id], result.reason,
+                                            result.visibilityRequirements, result.cellVisits)) return false;
         if (n.kind == Node::Operation) {
             if (!realizeVisibility(p, n, state, result.before[id], result.reason, result.visibilityRequirements))
                 return false;
@@ -1736,6 +1785,8 @@ c::Result constructCutCandidate(const c::Program& p, bool reserveFallback)
             else
                 receive(m);
         }
+        if (!realizeNotificationPrerequisite(p, id, state, commands, result.reason,
+                                            result.visibilityRequirements, result.cellVisits)) return false;
         if (n.kind == Node::Operation) {
             if (!realizeVisibility(p, n, state, commands, result.reason, result.visibilityRequirements))
                 return false;
@@ -5554,6 +5605,8 @@ c::Result constructDemandCandidate(
                 state.receipts.erase(cut);
             return true;
         }
+        if (!realizeNotificationPrerequisite(p, id, state, result.before[id], result.reason,
+                                            result.visibilityRequirements, result.cellVisits)) return false;
         if (n.kind == Node::Operation) {
             if (!realizeVisibility(p, n, state, result.before[id], result.reason, result.visibilityRequirements))
                 return false;

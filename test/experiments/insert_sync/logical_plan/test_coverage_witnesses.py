@@ -38,6 +38,7 @@ class PublicationWitnessTests(unittest.TestCase):
         left = dict(roots=['A'], origins_complete=True, gm_lower='0', gm_upper='512')
         right = dict(roots=['B'], origins_complete=True, gm_lower='512', gm_upper='1024')
         self.assertFalse(self.classify(left, right)['proven_disjoint_ranges'])
+        self.assertEqual(self.classify(left, right)['classification'], 'unresolved-evidence')
         self.assertEqual(self.classify(left, right, False)['classification'], 'unresolved-evidence')
 
     def test_coarsening_does_not_erase_disjointness_evidence(self):

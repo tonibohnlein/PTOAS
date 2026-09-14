@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import time
 
@@ -28,6 +29,28 @@ ROOT = HERE.parents[3]
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def source_identity():
+    return dict(
+        revision=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+        dirty=subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True),
+        source_diff_sha256=hashlib.sha256(
+            subprocess.check_output(['git', 'diff', 'HEAD'], cwd=ROOT)).hexdigest())
+
+
+def synchronization_origin(source, output, accepted):
+    # Composition preserves authored actions. Record static deltas rather than
+    # treating every accepted function as a newly synthesized protocol.
+    pattern = r'\bpto\.(?:set_flag|wait_flag|barrier|cmo\.[\w]+|fence\.[\w]+|comm\.(?:tnotify|twait))\b'
+    original = Counter(re.findall(pattern, source))
+    emitted = Counter(re.findall(pattern, output)) if accepted else Counter()
+    added = emitted - original if accepted else Counter()
+    kind = ('refused' if not accepted else 'generated-synchronization' if added else
+            'authored-protocol-preserved' if original else 'no-op')
+    return dict(kind=kind, original_static=dict(original), emitted_static=dict(emitted),
+                added_static=dict(added), terminal_drain_included=True,
+                executed_counts='not measured by corpus replay')
 
 
 def witness_classes(reports):
@@ -56,7 +79,7 @@ def witness_classes(reports):
                 classification = 'lost-provenance-or-range-precision'
             elif not pair['native_overlap']:
                 classification = 'unresolved-evidence'
-            elif known and exact and not report.get('report_exhausted', False):
+            elif same_root and exact and not report.get('report_exhausted', False):
                 classification = 'genuine-possible-overlap'
             else:
                 classification = 'unresolved-evidence'
@@ -93,6 +116,7 @@ def main():
     env = dict(os.environ, PTOAS_LOGICAL_TRACE='1', PTOAS_COMPOSITION_WITNESSES='1',
                OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1', MKL_NUM_THREADS='1')
     binary_hash = digest(args.opt)
+    identity = source_identity()
     cache, rows = {}, []
     for record, _, _, payload in prepared:
         key = (record['prepared']['sha256'], record['gm_contract'])
@@ -118,6 +142,8 @@ def main():
                 reports = [json.loads(line[len('OAHS_WITNESS '):]) for line in result.stderr.splitlines()
                            if line.startswith('OAHS_WITNESS ')]
                 arms[arm] = dict(command=command, outcome=outcome, seconds=time.monotonic()-start,
+                                 synchronization=synchronization_origin(payload.decode(), result.stdout,
+                                                                        result.returncode == 0),
                                  output=str(stdout), output_sha256=digest(stdout), stderr=str(stderr),
                                  stderr_sha256=digest(stderr), witnesses=reports)
             cache[key] = arms
@@ -151,10 +177,10 @@ def main():
             print(f'{len(rows)}/{len(records)} replay rows complete', flush=True)
     if digest(args.opt) != binary_hash:
         raise RuntimeError('binary changed during replay')
+    if source_identity() != identity:
+        raise RuntimeError('source identity changed during replay')
     summary = dict(schema='oahs.coverage.campaign.v1', rows=rows, device='NOT_RUN',
-                   revision=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
-                   dirty=subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True),
-                   source_diff_sha256=hashlib.sha256(subprocess.check_output(['git', 'diff', 'HEAD'], cwd=ROOT)).hexdigest(),
+                   **identity,
                    manifest_sha256=manifest_hash, binary_sha256=binary_hash,
                    publication_reference=dict(path=str(args.publication_reference),
                        sha256=digest(args.publication_reference), measurement='historical-reference'),

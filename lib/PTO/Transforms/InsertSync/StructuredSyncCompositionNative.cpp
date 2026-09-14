@@ -1157,6 +1157,7 @@ struct Tree {
                     // its own transfer node. Arbitrary authored event/CMO/fence
                     // order must not be regrouped at the next payload node.
                     unsigned cut = add(node(c::Node::Sequence), &op);
+                    program.nodes[cut].notificationPrerequisite = action.kind == c::FixedAction::RemoteNotify;
                     sequence.children.push_back(cut);
                     unsigned fixedId = add(node(c::Node::Sequence));
                     program.fixedBefore[fixedId].push_back(std::move(action));
@@ -1256,6 +1257,7 @@ struct Tree {
     bool build(bool periodicPrecision, bool wholeFunction = false)
     {
         preserveFixedCuts = wholeFunction;
+        inventory.function.walk([&](TNotifyOp) { preserveFixedCuts = true; });
         if (!gmContracts() || !scalarContracts())
             return false;
         partition();

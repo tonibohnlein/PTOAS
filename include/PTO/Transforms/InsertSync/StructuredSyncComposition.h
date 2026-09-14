@@ -94,6 +94,10 @@ struct MacroTransfer {
 struct Node {
     enum Kind { Operation, Macro, Sequence, Choice, For, While } kind = Sequence;
     unsigned lane = 0;
+    // Empty structural cut immediately before an immutable remote notification.
+    // Requests construction of its existing local release/publication recipe;
+    // the later FixedAction still verifies every original obligation.
+    bool notificationPrerequisite = false;
     // Only Operation nodes carry direct physical effects. Macro nodes carry
     // ordered phase effects below. Structural nodes are summarized from their
     // children.
