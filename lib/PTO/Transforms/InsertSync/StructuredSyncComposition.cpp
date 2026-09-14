@@ -5423,9 +5423,13 @@ using ProtocolResiduals = std::map<std::pair<unsigned, unsigned>, std::vector<c:
 // Observed pending-bit removals by actual acquisitions, keyed by protocol
 // identity. These guide provider retention, never verification credit.
 using ProviderCompletions = std::map<std::tuple<unsigned, unsigned, unsigned>, c::Effects>;
+struct BoundaryObservation {
+    c::Effects leastPending, mostPending;
+};
+using BoundaryObservations = std::map<unsigned, BoundaryObservation>;
 c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64_t limit,
                             Commands* residual = nullptr, ProtocolResiduals* protocolResidual = nullptr,
-                            ProviderCompletions* completions = nullptr);
+                            ProviderCompletions* completions = nullptr, BoundaryObservations* boundaries = nullptr);
 c::Result constructDemandCandidate(
     const c::Program& p, const DemandInvariants* invariants, DemandFallbacks& unassigned,
     const DemandFallbacks* forced = nullptr, const Cuts* recurring = nullptr,
@@ -7817,7 +7821,9 @@ c::Result constructWithAlternativeChoices(
     return constructWithChildReturns(p, false, ChildReturnSummaries::MaxWork, true, corrupt, limit, ringOptions);
 }
 
-c::Result constructWithPersistentLifetimes(const c::Program& p)
+c::Result constructWithPersistentLifetimes(const c::Program& p, bool allowCompletionGroups = true,
+                                         uint64_t observationLimit = c::OpenProtocolLimit,
+                                         bool rejectCompletionAllocation = false)
 {
     using namespace c;
     auto baseline = constructWithAlternativeChoices(p, false);
@@ -7843,7 +7849,7 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         baseline.lifetimeAnalysisWork = discovery.work;
         baseline.lifetimeStorageUnits = discovery.storage;
         baseline.lifetimeBudgetExhausted |= discovery.exhausted;
-        if (baseline.lifetimeBudgetExhausted) {
+        if (baseline.lifetimeBudgetExhausted && !baseline.lifetimeObservationExhausted) {
             baseline.rejectedPersistentLifetimes = summaries.size();
             baseline.deferredRejectionStage = "persistent-analysis";
             baseline.deferredRejectionReason = "persistent lifetime eligibility or construction analysis exhausted";
@@ -7856,12 +7862,18 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
     // unguarded providers and persistent storage protocols share one symbolic
     // event population regardless of their producer/consumer pipe names.
     bool ordinaryProviders = true;
+    bool entryProviders = true;
     if (!discovery.charge(baseline.before.size())) return fallback();
     for (const auto& site : baseline.before) {
         if (!discovery.charge(site.size())) return fallback();
-        for (const auto& command : site)
+        for (const auto& command : site) {
             ordinaryProviders &= command.participation == Mechanism::Every &&
                                  command.loop == NoCut && command.word == NoCut;
+            entryProviders &= command.word == NoCut &&
+                ((command.participation == Mechanism::Every && command.loop == NoCut) ||
+                 ((command.participation == Mechanism::First || command.participation == Mechanism::NonEmpty) &&
+                  command.loop < p.nodes.size()));
+        }
     }
     // Macro prerequisites are not yet constructed by the open residual walk.
     // Only affected cells are excluded; unrelated macros keep their providers.
@@ -7881,7 +7893,7 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
     // An authored ownership contract can discharge ACC before discovery. Its
     // remaining operand lifetimes still need the same residual construction;
     // removing an ACC obligation must not switch them back to pair deletion.
-    const bool residualMode = ordinaryProviders || p.target.ownership == OwnershipContract::A2A3UnitFlagPairedV1 ||
+    const bool residualMode = entryProviders || p.target.ownership == OwnershipContract::A2A3UnitFlagPairedV1 ||
                               std::any_of(summaries.begin(), summaries.end(), accumulatorFamily);
     // Guarded ACC entry helpers may be superseded by a selected lifetime.
     // Decide that after selection; unrelated guarded providers still require
@@ -8244,21 +8256,22 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         baseline.rejectedPersistentLifetimes = summaries.size();
         return fallback();
     }
+    Effects byteUses(p.cells);
     if (residualMode) {
         // Retain complete ordinary event families in independent regions.
         // A key is retained only when every endpoint has a footprint disjoint
         // from the selected cells. This is a provider selection rule, not a
         // permission to drop an obligation; residual construction below still
         // examines every original operation.
-        using Identity = std::tuple<unsigned, unsigned, unsigned>;
+        using Identity = std::tuple<unsigned, unsigned, unsigned, unsigned>;
         std::set<Identity> affected;
         auto identities = [](const Mechanism& command) {
             std::vector<Identity> result;
             if (command.kind == Mechanism::Publish || command.kind == Mechanism::Acquire ||
                 command.kind == Mechanism::Rendezvous)
-                result.emplace_back(command.first, command.second, command.forwardKey);
+                result.emplace_back(command.first, command.second, command.forwardKey, command.loop);
             if (command.kind == Mechanism::Rendezvous)
-                result.emplace_back(command.second, command.first, command.reverseKey);
+                result.emplace_back(command.second, command.first, command.reverseKey, command.loop);
             return result;
         };
         auto appendActual = [](std::vector<Mechanism>& commands, const Mechanism& command) {
@@ -8285,15 +8298,24 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         // rather than treating endpoint footprints as the receipt's payload.
         std::set<Direction> completionGroups;
         uint64_t providerObservationWork = 0;
-        if (ordinaryProviders) {
+        if (ordinaryProviders && allowCompletionGroups) {
             ProviderCompletions supplied;
-            auto observed = verifyOpenProtocol(p, baseline.before, OpenProtocolLimit, nullptr, nullptr, &supplied);
+            auto observed = verifyOpenProtocol(p, baseline.before, observationLimit, nullptr, nullptr, &supplied);
             residualAttemptNodes += observed.nodeVisits;
             residualAttemptCells += observed.cellVisits;
             candidate.nodeVisits += observed.nodeVisits;
             candidate.cellVisits += observed.cellVisits;
             providerObservationWork = observed.selectedAccountingWork;
+            candidate.lifetimeObservationWork = baseline.lifetimeObservationWork = providerObservationWork;
             discovery.storage += supplied.size() * (1 + p.cells);
+            if (!observed.success) {
+                baseline.lifetimeObservationExhausted = observed.reason.find("exhausted") != std::string::npos;
+                baseline.lifetimeBudgetExhausted |= baseline.lifetimeObservationExhausted;
+                baseline.rejectedPersistentLifetimes = summaries.size();
+                baseline.deferredRejectionStage = "persistent-observation";
+                baseline.deferredRejectionReason = observed.reason;
+                return fallback();
+            }
             if (observed.success) {
                 if (!discovery.charge(supplied.size() * (1 + p.cells))) return fallback();
                 for (const auto& [identity, effects] : supplied) {
@@ -8312,8 +8334,10 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
                     for (const auto& commands : *rows) {
                         if (!discovery.charge(1 + commands.size() * 4)) return fallback();
                         for (const auto& command : commands)
-                            for (auto [source, observer, key] : identities(command))
+                            for (auto [source, observer, key, scope] : identities(command)) {
+                                (void)scope;
                                 (rows == &baseline.before ? proposed : existing)[{source, observer}].insert(key);
+                            }
                     }
                 for (auto group = completionGroups.begin(); group != completionGroups.end();) {
                     bool fits = true;
@@ -8337,274 +8361,370 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
                  command.kind == Mechanism::Rendezvous) &&
                 completionGroups.count(std::minmax(command.first, command.second));
         };
-        candidate.retainedCompletionGroups = completionGroups.size();
-        // The baseline has already verified complete First/NonEmpty entry
-        // protocols. Replace only those whose every first-consumer witness is
-        // an ACC obligation of the selected lifetime. This removes a provider,
-        // never its original obligations: the residual walk rebuilds those.
-        std::set<unsigned> accEntryOwners;
-        bool supportedEntries = true;
-        std::string entryRejection;
-        if (!discovery.charge(baseline.before.size())) return fallback();
-        for (unsigned site = 0; site < baseline.before.size(); ++site)
-            for (const auto& command : baseline.before[site]) {
-                if (!discovery.charge(1)) return fallback();
-                if (command.participation != Mechanism::First) continue;
-                if (command.loop >= analysis.entries.size()) { supportedEntries = false; continue; }
-                if (!discovery.charge(1 + analysis.entries[command.loop].size() * (2 + MaxAlternatives) + p.cells))
-                    return fallback();
-                const auto* demand = analysis.entryDemand(command.loop, site, command.first, command.second);
-                if (!demand)
-                    demand = analysis.lateEntryDemand(command.loop, site, command.first, command.second);
-                bool matching = command.first == unsigned(Pipe::FIX) && command.second == unsigned(Pipe::M) &&
-                    command.word == NoCut && demand && !demand->cells.empty() &&
-                    std::any_of(demand->cells.begin(), demand->cells.end(),
-                                [&](unsigned cell) { return selectedCells.count(cell); }) &&
-                    std::all_of(demand->cells.begin(), demand->cells.end(),
-                                [&](unsigned cell) {
-                                    // Entry witnesses include all first-consumer
-                                    // operands. A cell never accessed by FIX
-                                    // cannot supply a FIX-to-M obligation.
-                                    const auto& uses = analysis.effects.back()[cell];
-                                    return !((uses.readers | uses.writers) & (1u << unsigned(Pipe::FIX))) ||
-                                        selectedCells.count(cell);
-                                });
-                if (!matching && entryRejection.empty()) {
-                    entryRejection = "guarded first consumer at node " + std::to_string(site) +
-                        (demand ? " covers obligations outside the selected ACC lifetime" : " has no retained entry witness");
-                }
-                supportedEntries &= matching;
-                if (matching) accEntryOwners.insert(command.loop);
-            }
-        for (const auto& site : baseline.before)
-            for (const auto& command : site) {
-                if (!discovery.charge(1)) return fallback();
-                if (command.participation == Mechanism::Every) {
-                    supportedEntries &= command.loop == NoCut && command.word == NoCut;
-                    continue;
-                }
-                bool accDirection =
-                    (command.first == unsigned(Pipe::FIX) && command.second == unsigned(Pipe::M)) ||
-                    (command.first == unsigned(Pipe::M) && command.second == unsigned(Pipe::FIX));
-                supportedEntries &= accDirection && command.word == NoCut && accEntryOwners.count(command.loop) &&
-                    (command.participation == Mechanism::First || command.participation == Mechanism::NonEmpty);
-            }
-        if (!supportedEntries) {
-            baseline.lifetimeProtocolRejections = selected;
-            baseline.rejectedPersistentLifetimes = summaries.size();
-            baseline.deferredRejectionStage = "persistent-protocol";
-            baseline.deferredRejectionReason = entryRejection.empty() ?
-                "persistent lifetime has an unrelated or unsupported guarded provider" : entryRejection;
-            return fallback();
-        }
-        if (!discovery.charge(uint64_t(p.nodes.size()) * (1 + selectedCells.size()))) {
-            baseline.lifetimeBudgetExhausted = true;
-            return fallback();
-        }
-        for (unsigned site = 0; site < baseline.before.size(); ++site)
-            for (const auto& command : baseline.before[site]) {
-                if (!discovery.charge(1 + selectedCells.size())) {
-                    baseline.lifetimeBudgetExhausted = true;
-                    return fallback();
-                }
-                if ((!independent(site) || command.participation != Mechanism::Every) && !keepCompletion(command))
-                    for (const auto& identity : identities(command)) affected.insert(identity);
-            }
-        std::map<Identity, unsigned> retained;
-        auto retain = [&](unsigned first, unsigned second, unsigned oldKey) {
-            auto identity = std::make_tuple(first, second, oldKey);
-            auto inserted = retained.emplace(identity, nextProtocolIdentity);
-            if (inserted.second) ++nextProtocolIdentity;
-            return inserted.first->second;
-        };
-        for (unsigned site = 0; site < baseline.before.size(); ++site) {
-            std::vector<Mechanism> commands;
-            for (auto command : baseline.before[site]) {
-                if (!discovery.charge(1 + selectedCells.size())) return fallback();
-                auto keys = identities(command);
-                if ((!independent(site) && !keepCompletion(command)) || command.participation != Mechanism::Every ||
-                    std::any_of(keys.begin(), keys.end(), [&](const auto& id) { return affected.count(id); }))
-                    continue;
-                if (!keys.empty()) command.forwardKey = retain(command.first, command.second, command.forwardKey);
-                if (command.kind == Mechanism::Rendezvous)
-                    command.reverseKey = retain(command.second, command.first, command.reverseKey);
-                appendActual(commands, command);
-                candidate.visibilityRequirements += command.kind == Mechanism::Visibility;
-            }
-            candidate.before[site].insert(candidate.before[site].begin(), commands.begin(), commands.end());
-        }
-        // Plan in a symbolic namespace. Identity zero belongs to the ordinary
-        // same-cut provider; persistent directions retain distinct identities.
-        // Number the combined population only after residual construction.
-        if (!discovery.charge(uint64_t(p.nodes.size()) * (1 + uint64_t(p.cells) * 4))) {
-            baseline.lifetimeBudgetExhausted = true;
-            baseline.rejectedPersistentLifetimes = summaries.size();
-            return fallback();
-        }
-        auto symbolic = p;
-        symbolic.target.reservations.clear();
-        symbolic.target.compilerKeys.clear();
-        for (unsigned id = 0; id < nextProtocolIdentity; ++id)
-            symbolic.target.compilerKeys.push_back(id);
         uint64_t remaining = OpenProtocolLimit - std::min(OpenProtocolLimit, providerObservationWork);
-        bool settled = false;
-        for (unsigned round = 0; round < 4; ++round) {
-            if (!discovery.charge(uint64_t(p.nodes.size()) * (1 + LaneCount * 2))) {
-                baseline.lifetimeBudgetExhausted = true;
-                break;
-            }
-            Commands residual(p.nodes.size());
-            ProtocolResiduals protocolResidual;
-            auto constructed = verifyOpenProtocol(symbolic, candidate.before, remaining, &residual, &protocolResidual);
-            uint64_t used = constructed.selectedAccountingWork;
-            remaining -= std::min(remaining, used);
-            candidate.nodeVisits += constructed.nodeVisits;
-            candidate.cellVisits += constructed.cellVisits;
-            residualAttemptNodes += constructed.nodeVisits;
-            residualAttemptCells += constructed.cellVisits;
-            candidate.acquisitions += constructed.acquisitions;
-            candidate.visibilityRequirements += constructed.visibilityRequirements;
-            if (!constructed.success) {
-                reason = constructed.reason;
-                break;
-            }
-            bool changed = !protocolResidual.empty();
-            for (unsigned site = 0; site < residual.size(); ++site) {
-                changed |= !residual[site].empty();
-                if (!discovery.charge(residual[site].size() * (1 + nextProtocolIdentity))) {
-                    baseline.lifetimeBudgetExhausted = true;
-                    break;
-                }
-                for (const auto& command : residual[site]) appendActual(candidate.before[site], command);
-            }
-            // Reverse order preserves the command positions from this replay.
-            for (auto insertion = protocolResidual.rbegin(); insertion != protocolResidual.rend(); ++insertion) {
-                auto [site, position] = insertion->first;
-                if (!discovery.charge(candidate.before[site].size() + 4 * insertion->second.size())) break;
-                std::vector<Mechanism> commands;
-                for (const auto& command : insertion->second) appendActual(commands, command);
-                candidate.before[site].insert(candidate.before[site].begin() + position,
-                                               commands.begin(), commands.end());
-            }
-            if (discovery.exhausted) break;
-            if (!changed) { settled = true; break; }
+        uint64_t snapshotWork = candidate.before.size();
+        for (const auto& row : candidate.before) {
+            if (!discovery.charge(1)) return fallback();
+            snapshotWork += row.size();
         }
-        if (!settled) {
-            baseline.lifetimeVerificationRejections = selected;
-            baseline.rejectedPersistentLifetimes = summaries.size();
-            baseline.deferredRejectionStage = "persistent-residual";
-            baseline.deferredRejectionReason = reason.empty() ? "persistent residual construction exhausted" : reason;
-            return fallback();
-        }
-        std::map<std::tuple<unsigned, unsigned, unsigned>, unsigned> numbering;
-        std::map<Direction, std::set<unsigned>> assigned;
-        auto number = [&](unsigned source, unsigned observer, unsigned identity) -> std::optional<unsigned> {
-            auto protocol = std::make_tuple(source, observer, identity);
-            auto found = numbering.find(protocol);
-            if (found != numbering.end()) return found->second;
-            for (unsigned physical : p.target.compilerKeys)
-                if (p.target.available(lane(p, source), lane(p, observer), physical) &&
-                    assigned[{source, observer}].insert(physical).second) {
-                    numbering[protocol] = physical;
-                    return physical;
-                }
-            return {};
+        if (!discovery.charge(snapshotWork)) return fallback();
+        const auto persistentCommands = candidate.before;
+        discovery.storage += snapshotWork;
+        const unsigned persistentIdentityEnd = nextProtocolIdentity;
+        const uint64_t priorAllocationRejections = baseline.lifetimeAllocationRejections;
+        // Incoming readiness is an original prefix demand, not a lifetime
+        // seed or a consumption acknowledgment. Keep its complete endpoint
+        // family so another consumer/storage sharing that prefix retains it.
+        struct IncomingProvider {
+            CompletionDemand demand;
+            unsigned generationScope;
+            Mechanism acquisition;
         };
-        for (auto& site : candidate.before)
-            for (auto& command : site) {
-                if (!discovery.charge(1 + 2 * p.target.compilerKeys.size() *
-                                     (1 + p.target.compilerKeys.size() + p.target.reservations.size())))
-                    return fallback();
-                if (command.kind != Mechanism::Publish && command.kind != Mechanism::Acquire &&
-                    command.kind != Mechanism::Rendezvous) continue;
-                auto forward = number(command.first, command.second, command.forwardKey);
-                auto reverse = command.kind == Mechanism::Rendezvous ?
-                    number(command.second, command.first, command.reverseKey) : std::optional<unsigned>(0);
-                if (!forward || !reverse) {
-                    baseline.lifetimeAllocationRejections = selected;
-                    baseline.rejectedPersistentLifetimes = summaries.size();
-                    baseline.deferredRejectionStage = "persistent-allocation";
-                    baseline.deferredRejectionReason = "combined persistent and residual event pool exhausted";
-                    return fallback();
-                }
-                if (command.forwardKey == 0)
-                    residualPackets.emplace(command.first, command.second, *forward);
-                command.forwardKey = *forward;
-                if (command.kind == Mechanism::Rendezvous) command.reverseKey = *reverse;
-            }
-    }
-    // A complete same-site bidirectional exchange carries both source
-    // prefixes and their consumption receipts. Remove an adjacent local
-    // barrier only under that exact actual-command condition; the full open
-    // checker below remains the acceptance boundary.
-    if (!discovery.charge(candidate.before.size())) return fallback();
-    for (unsigned site = 0; site < candidate.before.size(); ++site) {
-        auto& commands = candidate.before[site];
-        if (!discovery.charge(commands.size())) return fallback();
-        auto publicationAtOrBefore = [&](unsigned source, unsigned observer, unsigned key) {
-            auto contains = [&](unsigned cut) {
-                if (!discovery.charge(candidate.before[cut].size())) return false;
-                return std::any_of(candidate.before[cut].begin(), candidate.before[cut].end(),
-                                   [&](const auto& mechanism) {
-                                       return mechanism.kind == Mechanism::Publish && mechanism.first == source &&
-                                              mechanism.second == observer && mechanism.forwardKey == key;
-                                   });
-            };
-            if (contains(site))
-                return true;
-            unsigned parent = analysis.parent[site];
-            if (parent == NoCut || p.nodes[parent].kind != Node::Sequence)
-                return false;
-            unsigned position = analysis.position[site];
-            while (position) {
-                unsigned preceding = p.nodes[parent].children[--position];
-                if (!discovery.charge(1 + analysis.effects[preceding].size())) return false;
-                bool physical = std::any_of(analysis.effects[preceding].begin(), analysis.effects[preceding].end(),
-                                            [](const auto& effect) {
-                                                return effect.readers || effect.writers;
-                                            });
-                if (physical)
-                    return false;
-                if (contains(preceding))
-                    return true;
-            }
-            return false;
+        std::vector<IncomingProvider> incoming;
+        using SourceCuts = std::array<unsigned, LaneCount>;
+        if (!discovery.charge(uint64_t(p.nodes.size()) * (1 + 4 * LaneCount))) return fallback();
+        std::vector<SourceCuts> sourceCuts(p.nodes.size());
+        discovery.storage += uint64_t(p.nodes.size()) * LaneCount + p.cells;
+        std::function<SourceCuts(unsigned, SourceCuts)> prefixCuts = [&](unsigned id, SourceCuts current) {
+            sourceCuts[id] = current;
+            const auto& node = p.nodes[id];
+            if (node.kind == Node::Operation) current[node.lane] = id + 1;
+            else if (node.kind == Node::Choice) {
+                auto other = prefixCuts(node.children[1], current);
+                current = prefixCuts(node.children[0], current);
+                for (unsigned lane = 0; lane < LaneCount; ++lane)
+                    if (current[lane] != other[lane]) current[lane] = NoCut;
+            } else if (node.kind == Node::For || node.kind == Node::While) {
+                for (unsigned lane = 0; lane < LaneCount; ++lane)
+                    if (analysis.laneMask[id] & (1u << lane)) current[lane] = NoCut;
+                auto body = current;
+                for (unsigned child : node.children) body = prefixCuts(child, body);
+            } else if (node.kind == Node::Macro) {
+                for (unsigned lane = 0; lane < LaneCount; ++lane)
+                    if (analysis.laneMask[id] & (1u << lane)) current[lane] = NoCut;
+            } else for (unsigned child : node.children) current = prefixCuts(child, current);
+            return current;
         };
-        auto completeExchange = [&](unsigned laneId) {
-            for (unsigned peer = 0; peer < LaneCount; ++peer) {
-                if (!discovery.charge(1)) return false;
-                if (peer == laneId)
-                    continue;
-                auto endpoint = [&](Mechanism::Kind kind, unsigned source, unsigned observer,
-                                    unsigned key) {
-                    if (!discovery.charge(commands.size())) return false;
-                    return std::any_of(commands.begin(), commands.end(), [&](const auto& mechanism) {
-                        return mechanism.kind == kind && mechanism.first == source &&
-                               mechanism.second == observer && mechanism.forwardKey == key;
-                    });
-                };
-                for (const auto& forward : commands) {
+        prefixCuts(p.nodes.size() - 1, SourceCuts{});
+        if (!discovery.charge(uint64_t(p.nodes.size()) * (1 + p.cells))) return fallback();
+        for (const auto& node : p.nodes)
+            if (node.kind == Node::Operation)
+                for (unsigned cell = 0; cell < p.cells; ++cell) {
+                    const auto& use = node.byteEffects.empty() ? node.effects[cell] : node.byteEffects[cell];
+                    byteUses[cell].readers |= use.readers;
+                    byteUses[cell].writers |= use.writers;
+                }
+        auto constructResidual = [&]() -> bool {
+            candidate.retainedCompletionGroups = completionGroups.size();
+            // Replace complete baseline First/NonEmpty entry providers. Their
+            // original obligations need not belong to a selected lifetime:
+            // the residual walk reconstructs them all with actual transfers.
+            std::set<std::tuple<unsigned, unsigned, unsigned>> entryFamilies;
+            std::set<Identity> incomingIdentities;
+            incoming.clear();
+            bool supportedEntries = true;
+            std::string entryRejection;
+            if (!discovery.charge(baseline.before.size())) return false;
+            for (unsigned site = 0; site < baseline.before.size(); ++site)
+                for (const auto& command : baseline.before[site]) {
                     if (!discovery.charge(1)) return false;
-                    if (forward.kind != Mechanism::Acquire || forward.first != peer ||
-                        forward.second != laneId ||
-                        !publicationAtOrBefore(peer, laneId, forward.forwardKey))
-                        continue;
-                    for (const auto& reverse : commands) {
+                    if (command.participation != Mechanism::First) continue;
+                    if (command.loop >= analysis.entries.size()) { supportedEntries = false; continue; }
+                    if (!discovery.charge(1 + analysis.entries[command.loop].size() * (2 + MaxAlternatives) + p.cells))
+                        return false;
+                    const auto* demand = analysis.entryDemand(command.loop, site, command.first, command.second);
+                    if (!demand)
+                        demand = analysis.lateEntryDemand(command.loop, site, command.first, command.second);
+                    bool matching = command.word == NoCut && demand && !demand->cells.empty();
+                    if (!matching && entryRejection.empty()) {
+                        entryRejection = "guarded first consumer at node " + std::to_string(site) +
+                            " has no retained nonempty entry witness";
+                    }
+                    supportedEntries &= matching;
+                    if (matching) entryFamilies.emplace(command.loop, std::min(command.first, command.second),
+                                                         std::max(command.first, command.second));
+                    if (matching && command.kind == Mechanism::Acquire &&
+                        std::any_of(demand->cells.begin(), demand->cells.end(), [&](unsigned cell) {
+                            return (byteUses[cell].writers & (1u << demand->source)) &&
+                                   (byteUses[cell].readers & (1u << demand->observer));
+                        })) {
+                        incoming.push_back({*demand, command.loop, command});
+                        discovery.storage += 1 + demand->cells.size();
+                    }
+                }
+            auto keepIncoming = [&](const Mechanism& command) {
+                auto keys = identities(command);
+                return !keys.empty() && std::all_of(keys.begin(), keys.end(),
+                    [&](const auto& identity) { return incomingIdentities.count(identity); });
+            };
+            // Preserve an earlier ordinary readiness publication when the
+            // selected lifetime has not proposed that same source cut. Keep
+            // its forward provider; residual reconstruction supplies missing
+            // acknowledgment without replacing readiness by a later return.
+            for (const auto& demand : baseline.demands) {
+                if (!discovery.charge(1 + demand.cells.size() + candidate.before.size()))
+                    return false;
+                unsigned origin = sourceCuts[demand.publication][demand.source];
+                const auto* firstConsumers = analysis.firstSummary(demand.acquisition, demand.observer);
+                bool readiness = origin != NoCut && origin && firstConsumers && firstConsumers->valid &&
+                    !firstConsumers->mayNoLane && firstConsumers->count;
+                if (readiness) {
+                    const auto& writer = p.nodes[origin - 1];
+                    const auto& writes = writer.byteEffects.empty() ? writer.effects : writer.byteEffects;
+                    if (!discovery.charge(firstConsumers->count * (1 + demand.cells.size()))) return false;
+                    for (unsigned index = 0; index < firstConsumers->count; ++index) {
+                        const auto& reader = p.nodes[firstConsumers->operations[index]];
+                        const auto& reads = reader.byteEffects.empty() ? reader.effects : reader.byteEffects;
+                        readiness &= std::any_of(demand.cells.begin(), demand.cells.end(), [&](unsigned cell) {
+                            return (writes[cell].writers & (1u << demand.source)) &&
+                                   (reads[cell].readers & (1u << demand.observer));
+                        });
+                    }
+                }
+                bool supplied = false;
+                for (unsigned site = 0; site < candidate.before.size(); ++site) {
+                    if (!discovery.charge(candidate.before[site].size())) return false;
+                    if (site != demand.publication &&
+                        (analysis.parent[site] != analysis.parent[demand.publication] ||
+                         sourceCuts[site][demand.source] == NoCut ||
+                         sourceCuts[site][demand.source] != sourceCuts[demand.publication][demand.source])) continue;
+                    for (const auto& command : candidate.before[site]) {
+                        if (command.kind != Mechanism::Publish || command.first != demand.source ||
+                            command.second != demand.observer) continue;
+                        auto atCut = [&](unsigned cut) {
+                            return std::any_of(candidate.before[cut].begin(), candidate.before[cut].end(),
+                                [&](const auto& wait) {
+                                    return wait.kind == Mechanism::Acquire && wait.first == command.first &&
+                                           wait.second == command.second && wait.forwardKey == command.forwardKey;
+                                });
+                        };
+                        if (!discovery.charge(candidate.before[demand.acquisition].size())) return false;
+                        bool acquired = atCut(demand.acquisition);
+                        if (!acquired && firstConsumers && firstConsumers->valid && !firstConsumers->mayNoLane &&
+                            firstConsumers->count) {
+                            acquired = true;
+                            for (unsigned index = 0; index < firstConsumers->count; ++index) {
+                                unsigned cut = firstConsumers->operations[index];
+                                if (!discovery.charge(candidate.before[cut].size())) return false;
+                                acquired &= atCut(cut);
+                            }
+                        }
+                        supplied |= acquired;
+                    }
+                }
+                if (readiness && !supplied && demand.publication != demand.acquisition) {
+                    for (const auto& command : baseline.before[demand.acquisition]) {
                         if (!discovery.charge(1)) return false;
-                        if (reverse.kind == Mechanism::Publish && reverse.first == laneId &&
-                            reverse.second == peer &&
-                            endpoint(Mechanism::Acquire, laneId, peer, reverse.forwardKey))
-                            return true;
+                        if (command.kind == Mechanism::Acquire && command.first == demand.source &&
+                            command.second == demand.observer) {
+                            if (!discovery.charge(baseline.before[demand.publication].size())) return false;
+                            bool originalPrefix = std::any_of(baseline.before[demand.publication].begin(),
+                                baseline.before[demand.publication].end(), [&](const auto& publication) {
+                                    return publication.kind == Mechanism::Publish &&
+                                        publication.first == command.first && publication.second == command.second &&
+                                        publication.forwardKey == command.forwardKey;
+                                });
+                            if (!originalPrefix) continue;
+                            incoming.push_back({demand, command.loop, command});
+                            discovery.storage += 1 + demand.cells.size();
+                        }
                     }
                 }
             }
-            return false;
+            // Consumption is a separate original obligation. Do not copy an
+            // entry-only reply when another selected handoff (or terminal
+            // retirement) already returns that receipt. The residual protocol
+            // walk reconstructs any genuinely missing acknowledgment.
+            for (const auto& provider : incoming) {
+                if (!discovery.charge(1 + provider.demand.cells.size())) return false;
+                const auto& command = provider.acquisition;
+                incomingIdentities.insert({command.first, command.second, command.forwardKey, provider.generationScope});
+            }
+            for (const auto& site : baseline.before)
+                for (const auto& command : site) {
+                    if (!discovery.charge(1)) return false;
+                    if (command.participation == Mechanism::Every) {
+                        supportedEntries &= command.loop == NoCut && command.word == NoCut;
+                        continue;
+                    }
+                    supportedEntries &= command.word == NoCut && entryFamilies.count(
+                        {command.loop, std::min(command.first, command.second), std::max(command.first, command.second)}) &&
+                        (command.participation == Mechanism::First || command.participation == Mechanism::NonEmpty);
+                }
+            if (!supportedEntries) {
+                baseline.lifetimeProtocolRejections = selected;
+                baseline.rejectedPersistentLifetimes = summaries.size();
+                baseline.deferredRejectionStage = "persistent-protocol";
+                baseline.deferredRejectionReason = entryRejection.empty() ?
+                    "persistent lifetime has an unrelated or unsupported guarded provider" : entryRejection;
+                return false;
+            }
+            if (!discovery.charge(uint64_t(p.nodes.size()) * (1 + selectedCells.size()))) {
+                baseline.lifetimeBudgetExhausted = true;
+                return false;
+            }
+            for (unsigned site = 0; site < baseline.before.size(); ++site)
+                for (const auto& command : baseline.before[site]) {
+                    if (!discovery.charge(1 + selectedCells.size())) {
+                        baseline.lifetimeBudgetExhausted = true;
+                        return false;
+                    }
+                    if ((!independent(site) || command.participation != Mechanism::Every) &&
+                        !keepCompletion(command) && !keepIncoming(command))
+                        for (const auto& identity : identities(command)) affected.insert(identity);
+                }
+            std::map<Identity, unsigned> retained;
+            auto retain = [&](unsigned first, unsigned second, unsigned oldKey, unsigned scope) {
+                auto identity = std::make_tuple(first, second, oldKey, scope);
+                auto inserted = retained.emplace(identity, nextProtocolIdentity);
+                if (inserted.second) ++nextProtocolIdentity;
+                return inserted.first->second;
+            };
+            for (unsigned site = 0; site < baseline.before.size(); ++site) {
+                std::vector<Mechanism> commands;
+                for (auto command : baseline.before[site]) {
+                    if (!discovery.charge(1 + selectedCells.size())) return false;
+                    auto keys = identities(command);
+                    if (((!independent(site) && !keepCompletion(command)) || command.participation != Mechanism::Every) &&
+                        !keepIncoming(command))
+                        continue;
+                    if (std::any_of(keys.begin(), keys.end(), [&](const auto& id) { return affected.count(id); }))
+                        continue;
+                    if (!keys.empty()) command.forwardKey = retain(command.first, command.second, command.forwardKey, command.loop);
+                    if (command.kind == Mechanism::Rendezvous)
+                        command.reverseKey = retain(command.second, command.first, command.reverseKey, command.loop);
+                    appendActual(commands, command);
+                    candidate.visibilityRequirements += command.kind == Mechanism::Visibility;
+                }
+                candidate.before[site].insert(candidate.before[site].begin(), commands.begin(), commands.end());
+            }
+            // Plan in a symbolic namespace. Identity zero belongs to the ordinary
+            // same-cut provider; persistent directions retain distinct identities.
+            // Number the combined population only after residual construction.
+            if (!discovery.charge(uint64_t(p.nodes.size()) * (1 + uint64_t(p.cells) * 4))) {
+                baseline.lifetimeBudgetExhausted = true;
+                baseline.rejectedPersistentLifetimes = summaries.size();
+                return false;
+            }
+            auto symbolic = p;
+            symbolic.target.reservations.clear();
+            symbolic.target.compilerKeys.clear();
+            for (unsigned id = 0; id < nextProtocolIdentity; ++id)
+                symbolic.target.compilerKeys.push_back(id);
+            bool settled = false;
+            for (unsigned round = 0; round < 4; ++round) {
+                if (!discovery.charge(uint64_t(p.nodes.size()) * (1 + LaneCount * 2))) {
+                    baseline.lifetimeBudgetExhausted = true;
+                    break;
+                }
+                Commands residual(p.nodes.size());
+                ProtocolResiduals protocolResidual;
+                auto constructed = verifyOpenProtocol(symbolic, candidate.before, remaining, &residual, &protocolResidual);
+                uint64_t used = constructed.selectedAccountingWork;
+                remaining -= std::min(remaining, used);
+                candidate.nodeVisits += constructed.nodeVisits;
+                candidate.cellVisits += constructed.cellVisits;
+                residualAttemptNodes += constructed.nodeVisits;
+                residualAttemptCells += constructed.cellVisits;
+                candidate.acquisitions += constructed.acquisitions;
+                candidate.visibilityRequirements += constructed.visibilityRequirements;
+                if (!constructed.success) {
+                    reason = constructed.reason;
+                    break;
+                }
+                bool changed = !protocolResidual.empty();
+                for (unsigned site = 0; site < residual.size(); ++site) {
+                    changed |= !residual[site].empty();
+                    if (!discovery.charge(residual[site].size() * (1 + nextProtocolIdentity))) {
+                        baseline.lifetimeBudgetExhausted = true;
+                        break;
+                    }
+                    for (const auto& command : residual[site]) appendActual(candidate.before[site], command);
+                }
+                // Reverse order preserves the command positions from this replay.
+                for (auto insertion = protocolResidual.rbegin(); insertion != protocolResidual.rend(); ++insertion) {
+                    auto [site, position] = insertion->first;
+                    if (!discovery.charge(candidate.before[site].size() + 4 * insertion->second.size())) break;
+                    std::vector<Mechanism> commands;
+                    for (const auto& command : insertion->second) appendActual(commands, command);
+                    candidate.before[site].insert(candidate.before[site].begin() + position,
+                                                   commands.begin(), commands.end());
+                }
+                if (discovery.exhausted) break;
+                if (!changed) { settled = true; break; }
+            }
+            if (!settled) {
+                baseline.lifetimeVerificationRejections = selected;
+                baseline.rejectedPersistentLifetimes = summaries.size();
+                baseline.deferredRejectionStage = "persistent-residual";
+                baseline.deferredRejectionReason = reason.empty() ? "persistent residual construction exhausted" : reason;
+                return false;
+            }
+            std::map<std::tuple<unsigned, unsigned, unsigned>, unsigned> numbering;
+            std::map<Direction, std::set<unsigned>> assigned;
+            auto number = [&](unsigned source, unsigned observer, unsigned identity) -> std::optional<unsigned> {
+                auto protocol = std::make_tuple(source, observer, identity);
+                auto found = numbering.find(protocol);
+                if (found != numbering.end()) return found->second;
+                // Test-only allocation fault after partial numbering. The
+                // retry must restore symbolic identities before proceeding.
+                if (rejectCompletionAllocation && !completionGroups.empty() && !numbering.empty()) return {};
+                for (unsigned physical : p.target.compilerKeys)
+                    if (p.target.available(lane(p, source), lane(p, observer), physical) &&
+                        assigned[{source, observer}].insert(physical).second) {
+                        numbering[protocol] = physical;
+                        return physical;
+                    }
+                return {};
+            };
+            for (auto& site : candidate.before)
+                for (auto& command : site) {
+                    if (!discovery.charge(1 + 2 * p.target.compilerKeys.size() *
+                                         (1 + p.target.compilerKeys.size() + p.target.reservations.size())))
+                        return false;
+                    if (command.kind != Mechanism::Publish && command.kind != Mechanism::Acquire &&
+                        command.kind != Mechanism::Rendezvous) continue;
+                    auto forward = number(command.first, command.second, command.forwardKey);
+                    auto reverse = command.kind == Mechanism::Rendezvous ?
+                        number(command.second, command.first, command.reverseKey) : std::optional<unsigned>(0);
+                    if (!forward || !reverse) {
+                        baseline.lifetimeAllocationRejections = selected;
+                        baseline.rejectedPersistentLifetimes = summaries.size();
+                        baseline.deferredRejectionStage = "persistent-allocation";
+                        baseline.deferredRejectionReason = "combined persistent and residual event pool exhausted";
+                        return false;
+                    }
+                    if (command.forwardKey == 0)
+                        residualPackets.emplace(command.first, command.second, *forward);
+                    command.forwardKey = *forward;
+                    if (command.kind == Mechanism::Rendezvous) command.reverseKey = *reverse;
+                }
+            return true;
         };
-        commands.erase(std::remove_if(commands.begin(), commands.end(), [&](const auto& mechanism) {
-                           return mechanism.kind == Mechanism::Barrier && completeExchange(mechanism.first);
-                       }), commands.end());
-        if (discovery.exhausted) return fallback();
+        if (!constructResidual()) {
+            // Optional receipt retention may fit before ordinary residual keys
+            // exist, yet crowd out the completed population. Retry once from
+            // immutable persistent handoffs, never from partly numbered output.
+            if (discovery.exhausted || completionGroups.empty() ||
+                baseline.deferredRejectionStage != "persistent-allocation") return fallback();
+            if (!discovery.charge(snapshotWork)) return fallback();
+            ++baseline.lifetimeCompletionRetries;
+            ++candidate.lifetimeCompletionRetries;
+            candidate.before = persistentCommands;
+            nextProtocolIdentity = persistentIdentityEnd;
+            completionGroups.clear();
+            affected.clear();
+            residualPackets.clear();
+            reason.clear();
+            if (!constructResidual()) return fallback();
+            baseline.lifetimeAllocationRejections = priorAllocationRejections;
+            baseline.deferredRejectionStage.clear();
+            baseline.deferredRejectionReason.clear();
+        }
     }
+    // Verify the complete residual population before optional cleanup. A
+    // syntactically present return exchange may carry an older prefix; it
+    // cannot justify deleting a local barrier before checking its effects.
     auto checked = verifyOpenProtocol(p, candidate.before, OpenProtocolLimit);
     if (!checked.success) {
         baseline.nodeVisits += checked.nodeVisits;
@@ -8714,6 +8834,55 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
                 }
         candidate.lifetimeCleanupWork = OpenProtocolLimit - remaining;
     }
+    if (residualMode && !ordinaryProviders && entryProviders) {
+        // A successful lifetime count is not a quality certificate. Compare
+        // actual completion effects at original consumer cuts, including all
+        // abstract visits; an unresolved additional cross-lane completion
+        // keeps the previously verified ordinary option.
+        BoundaryObservations oldBoundaries, newBoundaries;
+        uint64_t remaining = OpenProtocolLimit;
+        auto oldProof = verifyOpenProtocol(p, baseline.before, remaining, nullptr, nullptr, nullptr, &oldBoundaries);
+        remaining -= std::min(remaining, oldProof.selectedAccountingWork);
+        auto newProof = oldProof.success ?
+            verifyOpenProtocol(p, candidate.before, remaining, nullptr, nullptr, nullptr, &newBoundaries) : c::Result{};
+        residualAttemptNodes += oldProof.nodeVisits + newProof.nodeVisits;
+        residualAttemptCells += oldProof.cellVisits + newProof.cellVisits;
+        candidate.nodeVisits += oldProof.nodeVisits + newProof.nodeVisits;
+        candidate.cellVisits += oldProof.cellVisits + newProof.cellVisits;
+        discovery.storage += (oldBoundaries.size() + newBoundaries.size()) * (1 + 2 * uint64_t(p.cells));
+        bool preserved = oldProof.success && newProof.success;
+        unsigned changedSite = NoCut;
+        for (const auto& [site, old] : oldBoundaries) {
+            if (!discovery.charge(1 + 2 * p.cells)) return fallback();
+            auto found = newBoundaries.find(site);
+            if (found == newBoundaries.end()) { preserved = false; changedSite = site; break; }
+            const auto& node = p.nodes[site];
+            const auto& reads = node.byteEffects.empty() ? node.effects : node.byteEffects;
+            unsigned incomingSources = 0;
+            for (unsigned cell = 0; cell < p.cells; ++cell)
+                if (reads[cell].readers & (1u << node.lane)) incomingSources |= byteUses[cell].writers;
+            // Readiness imports a writer's prefix. Operand-release receipts
+            // and resource exclusion remain separately verified obligations;
+            // they must not be mistaken for incoming data providers.
+            unsigned other = incomingSources & ~(1u << node.lane);
+            for (unsigned cell = 0; cell < p.cells; ++cell)
+                if ((old.mostPending[cell].writers & ~found->second.leastPending[cell].writers) & other) {
+                    preserved = false;
+                    changedSite = site;
+                    break;
+                }
+            if (!preserved) break;
+        }
+        if (!preserved) {
+            baseline.lifetimeBoundaryRejections += selected;
+            baseline.rejectedPersistentLifetimes = summaries.size();
+            baseline.deferredRejectionStage = "persistent-boundary";
+            baseline.deferredRejectionReason = changedSite != NoCut ?
+                "additional incoming completion at node " + std::to_string(changedSite) :
+                "incoming boundary comparison unresolved: " + (oldProof.success ? newProof.reason : oldProof.reason);
+            return fallback();
+        }
+    }
     candidate.nodeVisits += baseline.nodeVisits;
     candidate.cellVisits += baseline.cellVisits;
     candidate.lifetimeEligibilityWork = baseline.lifetimeEligibilityWork;
@@ -8801,6 +8970,18 @@ c::Result c::constructDemands(const Program& p) { return constructWithPersistent
 c::Result c::testing::constructDemandsWithoutPersistentLifetimes(const Program& p)
 {
     return constructWithAlternativeChoices(p, false);
+}
+c::Result c::testing::constructDemandsWithoutCompletionGroups(const Program& p)
+{
+    return constructWithPersistentLifetimes(p, false);
+}
+c::Result c::testing::constructDemandsWithLifetimeObservationLimit(const Program& p, uint64_t limit)
+{
+    return constructWithPersistentLifetimes(p, true, std::min(limit, OpenProtocolLimit));
+}
+c::Result c::testing::constructDemandsRejectingCompletionAllocation(const Program& p)
+{
+    return constructWithPersistentLifetimes(p, true, OpenProtocolLimit, true);
 }
 std::vector<c::StorageLifetimeSummary> c::testing::summarizeStorageLifetimes(const Program& p, uint64_t limit)
 {
@@ -8932,21 +9113,14 @@ c::Result c::verifyDemands(const Program& p, const std::vector<std::vector<Mecha
     if (closed.success)
         return closed;
     auto open = verifyOpenProtocol(p, actual, OpenProtocolLimit);
-    // Preserve the established fallback diagnostic unless this is an actual
-    // all-Every open population.  The latter has the more precise causal-key
-    // or physical-coverage failure from the open checker.
-    bool every = actual.size() == p.nodes.size() &&
-                 std::all_of(actual.begin(), actual.end(), [](const auto& site) {
-                     return std::all_of(site.begin(), site.end(), [](const auto& m) {
-                         return m.participation == Mechanism::Every;
-                     });
-                 });
-    if (every && open.success) {
+    // The open checker also reconstructs qualified First/NonEmpty providers;
+    // successful reconstruction needs no planner-family membership premise.
+    if (open.success) {
         open.ownedRefinements = std::max<uint64_t>(1, closed.ownedRefinements);
         open.completionRefinements = closed.completionRefinements;
         open.rejectedRefinements = closed.rejectedRefinements;
     }
-    return every && open.success ? open : closed;
+    return open.success ? open : closed;
 }
 
 std::optional<std::vector<std::vector<c::Mechanism>>> c::testing::combineEpisodeWords(

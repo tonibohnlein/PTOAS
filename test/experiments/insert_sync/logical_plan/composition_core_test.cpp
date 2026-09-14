@@ -227,6 +227,7 @@ struct ExecutionPolicy {
     std::map<unsigned, unsigned> nextTrips, lastTrips, iteration;
     std::function<unsigned(unsigned, unsigned)> trips;
     std::function<unsigned(unsigned, unsigned)> choice;
+    std::function<void(unsigned, const c::Mechanism&)> observeMechanism;
 };
 static void execute(const c::Program& p, const c::Result& r, unsigned id, ExecutionPolicy& policy, Oracle& oracle)
 {
@@ -247,8 +248,10 @@ static void execute(const c::Program& p, const c::Result& r, unsigned id, Execut
             } else
                 participates = policy.lastTrips.at(m.loop) != 0;
         }
-        if (participates)
+        if (participates) {
+            if (policy.observeMechanism) policy.observeMechanism(id, m);
             oracle.mechanism(m);
+        }
     }
     const auto& n = p.nodes[id];
     auto run = [&](unsigned child) { execute(p, r, child, policy, oracle); };
@@ -2663,7 +2666,20 @@ int main()
                 noReply[nextGeneration].begin(), noReply[nextGeneration].end(),
                 [](const auto& m) { return m.participation == c::Mechanism::NonEmpty; }),
             noReply[nextGeneration].end());
-        require(!c::verifyDemands(p, noReply).success);
+        // The residual interface can prove consumption through the ordinary
+        // return before the next write. A particular episode ACK is not an
+        // immutable obligation when another actual handoff supplies it.
+        require(c::testing::verifyOpenDemands(p, noReply).success);
+        auto sharedReceipt = plan;
+        sharedReceipt.before = noReply;
+        Oracle receiptOracle;
+        ExecutionPolicy receiptPolicy;
+        receiptPolicy.trips = [](unsigned id, unsigned visit) { return (id + visit) % 4; };
+        receiptPolicy.choice = [](unsigned, unsigned visit) { return visit % 2; };
+        for (unsigned invocation = 0; invocation < 5; ++invocation) {
+            execute(p, sharedReceipt, root, receiptPolicy, receiptOracle);
+            receiptOracle.check();
+        }
         auto sourceInside = p;
         sourceInside.nodes[sourceMarker].lane = a;
         sourceInside.nodes[sourceMarker].effects.assign(p.cells, {});
@@ -3894,6 +3910,18 @@ int main()
         require(persistent.persistentLifetimes == 1 && persistent.persistentReaderFamilies == 1);
         require(persistent.residualLifetimes == 1);
         require(persistent.retainedCompletionGroups > 0 && persistent.selectedNamedBarriers == 0);
+        auto exhausted = c::testing::constructDemandsWithLifetimeObservationLimit(lifetime, 0);
+        auto ordinary = c::testing::constructDemandsWithoutPersistentLifetimes(lifetime);
+        require(exhausted.success && exhausted.before == ordinary.before);
+        require(exhausted.lifetimeObservationExhausted && exhausted.lifetimeBudgetExhausted);
+        require(exhausted.deferredRejectionStage == "persistent-observation");
+        require(exhausted.deferredRejectionReason.find("exhausted") != std::string::npos);
+        auto retried = c::testing::constructDemandsRejectingCompletionAllocation(lifetime);
+        auto withoutGroups = c::testing::constructDemandsWithoutCompletionGroups(lifetime);
+        require(retried.success && retried.residualLifetimes == 1 && retried.lifetimeCompletionRetries == 1);
+        require(retried.retainedCompletionGroups == 0 && retried.before == withoutGroups.before);
+        require(retried.deferredRejectionStage.empty() && retried.lifetimeAllocationRejections == 0);
+        require(c::testing::verifyOpenDemands(lifetime, retried.before).success);
         require(c::verifyDemands(lifetime, persistent.before).success);
         bool earlyRelease = std::any_of(persistent.before[unrelated].begin(), persistent.before[unrelated].end(),
                                         [&](const auto& m) {

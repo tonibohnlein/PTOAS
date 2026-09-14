@@ -259,6 +259,8 @@ struct Result {
     uint64_t lifetimeCandidates = 0, persistentLifetimes = 0;
     uint64_t residualLifetimes = 0;
     uint64_t retainedCompletionGroups = 0, selectedVisibilitySites = 0;
+    uint64_t lifetimeCompletionRetries = 0, lifetimeObservationWork = 0;
+    bool lifetimeObservationExhausted = false;
     uint64_t lifetimeCleanupTrials = 0, lifetimeCleanupRemoved = 0, lifetimeCleanupWork = 0;
     bool lifetimeCleanupBudgetExhausted = false;
     uint64_t persistentReaderFamilies = 0, rejectedPersistentLifetimes = 0;
@@ -337,6 +339,9 @@ Result constructDemandsRejectingChildReturns(const Program& program);
 Result constructDemandsWithoutAlternativeChoices(const Program& program);
 // Isolate the established demand providers from persistent lifetime selection.
 Result constructDemandsWithoutPersistentLifetimes(const Program& program);
+Result constructDemandsWithoutCompletionGroups(const Program& program);
+Result constructDemandsWithLifetimeObservationLimit(const Program& program, uint64_t limit);
+Result constructDemandsRejectingCompletionAllocation(const Program& program);
 Result constructDemandsWithAlternativeChoiceWorkLimit(const Program& program, uint64_t limit);
 Result constructDemandsRejectingAlternativeChoices(const Program& program);
 // Fault injection before refinement checking/emission, never on the initial

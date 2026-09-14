@@ -19,6 +19,7 @@ from pathlib import Path
 import re
 
 from coverage_campaign import witness_classes
+from reaching_writers import WriterFlow
 
 
 def digest(path):
@@ -59,7 +60,8 @@ def control_relation(nodes, writer, reader):
                 exclusive_choices=conflicts, possible_loop_backedge=bool(common_loops),
                 possible_cross_invocation=True,
                 causal_refusal_proven=False,
-                missing_causal_evidence='failing consumer/cell and reaching write generation not recorded')
+                missing_causal_evidence='reaching write generation, predicate and publication-kill evidence missing; '
+                    'consumer/cell matching is recorded separately in failure_relation')
 
 
 def operation_kind(text):
@@ -92,6 +94,9 @@ def main():
     parser.add_argument('--campaign', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
+    analysis_paths = [Path(__file__).with_name(name) for name in
+                      ('audit_publication_refusals.py', 'reaching_writers.py', 'coverage_campaign.py')]
+    analysis_hashes = {path.name: digest(path) for path in analysis_paths}
     summary = json.loads(args.campaign.read_text())
     args.output.mkdir(parents=True, exist_ok=False)
     cases, counts = [], Counter()
@@ -104,11 +109,15 @@ def main():
         source = Path(row['arms']['existing']['command'][-1])
         if digest(source) != row['prepared_sha256'] or digest(legacy) != row['arms']['existing']['output_sha256']:
             raise ValueError('input/output identity changed: ' + row['id'])
-        pairs = []
+        pairs, flow_reports = [], []
         for report in reports:
+            flow = WriterFlow(report)
             nodes = {node['id']: node for node in report['nodes']}
             for pair in witness_classes([report]):
                 w, r = pair['writer_access'], pair['reader_access']
+                pair['writer_flow_relation'] = flow.relation(w, r)
+                if pair['failure_relation'] == 'matching-consumer-cell':
+                    pair['writer_flow_witness'] = flow.witness(w, r)
                 if w['node'] not in nodes or r['node'] not in nodes:
                     pairs.append(dict(**pair, category='insufficient-node-mapping',
                                       missing_fact_or_realization='Original access has no mapped construction node.'))
@@ -127,6 +136,8 @@ def main():
                                   range_note='legacy bytes=0 is unknown, not an empty access',
                                   fixed_protocol_nodes=[n for n in report['nodes'] if any(
                                       op in n['operation'] for op in ('pto.cmo.', 'pto.fence.', 'pto.comm.tnotify', 'pto.comm.twait'))]))
+            flow_reports.append(dict(function=report['function'], work=flow.work, limit=flow.limit,
+                                     incomplete=flow.failure))
         text = source.read_text()
         case = dict(id=row['id'], index=row['index'], family=row['family'],
                     prepared_sha256=row['prepared_sha256'], input=str(source),
@@ -142,19 +153,27 @@ def main():
                     report_sha256=digest(reports_path),
                     actual_failures=[dict(function=r['function'], failure=r.get('publication_failure')) for r in reports],
                     failure_relations=dict(Counter(p['failure_relation'] for p in pairs)),
+                    writer_flow=flow_reports,
                     report_exhausted=any(r['report_exhausted'] for r in reports),
                     categories=dict(Counter(p['category'] for p in pairs)), pairs=pairs)
         cases.append(case)
         (args.output / f'{row["index"]:04d}.json').write_text(json.dumps(case, indent=2) + '\n')
     if len(cases) != 86:
         raise ValueError('expected all 86 frozen publication refusals')
+    if any(digest(path) != analysis_hashes[path.name] for path in analysis_paths):
+        raise ValueError('analysis implementation changed during audit')
     result = dict(schema='oahs.publication.audit.v1', campaign=str(args.campaign),
+                  analysis_source_sha256=analysis_hashes,
                   campaign_sha256=digest(args.campaign), measurement='analysis-of-pinned-replay',
                   cases=len(cases), distinct_inputs=len({c['prepared_sha256'] for c in cases}),
                   pair_categories=dict(counts), causal_witness_limit='Candidate pairs, not a proof of the first refusal.',
                   actual_failure_rows=sum(any(r['failure'] for r in c['actual_failures']) for c in cases),
                   matching_failure_categories=dict(Counter(p['category'] for c in cases for p in c['pairs']
                       if p['failure_relation'] == 'matching-consumer-cell')),
+                  matching_writer_flow=dict(Counter(p['writer_flow_relation'] for c in cases for p in c['pairs']
+                      if p['failure_relation'] == 'matching-consumer-cell')),
+                  writer_flow_scope='Within one invocation only. May-predecessors; no branch predicate, '
+                      'last-write, publication-kill, cross-invocation or causality proof.',
                   rows=[{k: v for k, v in c.items() if k not in ('pairs', 'legacy_sync')} for c in cases])
     (args.output / 'summary.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({k: result[k] for k in ('cases', 'distinct_inputs', 'pair_categories')}, indent=2))

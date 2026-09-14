@@ -62,7 +62,8 @@ struct OpenProtocolState : PrefixState {
 };
 
 c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64_t limit, Commands* residual,
-                            ProtocolResiduals* protocolResidual, ProviderCompletions* completions)
+                            ProtocolResiduals* protocolResidual, ProviderCompletions* completions,
+                            BoundaryObservations* boundaries)
 {
     using namespace c;
     c::Result result;
@@ -91,6 +92,78 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
     std::vector<Effects> effects;
     if (!summarize(p, effects, result.reason))
         return result;
+    // Correlate guarded entry endpoints with the same loop decision. Split
+    // at their common owner, not independently at each SET/WAIT. First visits
+    // are peeled below so an acquired prefix cannot consume a token twice or
+    // erase a new write on a subsequent visit.
+    std::vector<unsigned> parent(p.nodes.size(), NoCut);
+    for (unsigned id = 0; id < p.nodes.size(); ++id)
+        for (unsigned child : p.nodes[id].children) parent[child] = id;
+    std::map<unsigned, unsigned> guardedOwners;
+    uint64_t guardCommandCount = 0;
+    auto commonOwner = [&](unsigned a, unsigned b) {
+        std::set<unsigned> ancestors;
+        for (unsigned at = a; at != NoCut; at = parent[at]) {
+            if (!charge(1)) return NoCut;
+            ancestors.insert(at);
+        }
+        for (unsigned at = b; at != NoCut; at = parent[at]) {
+            if (!charge(1)) return NoCut;
+            if (ancestors.count(at)) return at;
+        }
+        return NoCut;
+    };
+    for (unsigned site = 0; site < actual.size(); ++site)
+        for (const auto& m : actual[site]) {
+            if (!charge(1)) return result;
+            ++guardCommandCount;
+            if (m.participation == Mechanism::Every) continue;
+            if ((m.participation != Mechanism::First && m.participation != Mechanism::NonEmpty) ||
+                m.loop >= p.nodes.size() || p.nodes[m.loop].kind != Node::For ||
+                p.nodes[m.loop].entryGuardStart == NoCut || m.word != NoCut ||
+                (m.kind != Mechanism::Publish && m.kind != Mechanism::Acquire)) {
+                result.reason = "unsupported guarded open provider";
+                return result;
+            }
+            if (m.participation == Mechanism::First) {
+                unsigned owner = commonOwner(site, m.loop);
+                if (!result.reason.empty()) return result;
+                if (owner != m.loop) {
+                    result.reason = "first acquisition is outside its owning loop";
+                    return result;
+                }
+            }
+            auto inserted = guardedOwners.emplace(m.loop, m.loop);
+            inserted.first->second = commonOwner(inserted.first->second, site);
+            if (inserted.first->second == NoCut) return result;
+        }
+    if (!guardedOwners.empty()) {
+        // Re-extract the original first consumer and its storage witness.
+        // Correct token flow alone must not admit an earlier unrelated cut.
+        if (!charge(DemandAnalysis::MaxIncomingEntryWork + DemandAnalysis::MaxChoiceIncomingWork +
+                    uint64_t(p.nodes.size()) * (16 + uint64_t(p.cells) * LaneCount))) return result;
+        DemandAnalysis guardedAnalysis;
+        if (!guardedAnalysis.build(p, result.reason)) return result;
+        for (const auto& [loop, owner] : guardedOwners) {
+            (void)owner;
+            if (!charge(uint64_t(p.nodes.size()) * (1 + guardCommandCount))) return result;
+            std::vector<Mechanism> word;
+            for (unsigned child : p.nodes[loop].children)
+                if (!projectEntryWord(p, actual, child, loop, word, result.reason)) return result;
+        }
+        for (unsigned site = 0; site < actual.size(); ++site)
+            for (const auto& m : actual[site]) {
+                if (!charge(1)) return result;
+                if (m.participation != Mechanism::First) continue;
+                if (!charge(1 + guardedAnalysis.entries[m.loop].size() * (2 + MaxAlternatives))) return result;
+                if (m.kind != Mechanism::Acquire ||
+                    (!guardedAnalysis.entryDemand(m.loop, site, m.first, m.second) &&
+                     !guardedAnalysis.lateEntryDemand(m.loop, site, m.first, m.second))) {
+                    result.reason = "guarded acquisition lost its original first-consumer witness";
+                    return result;
+                }
+            }
+    }
     if (p.terminalRetirementCut != NoCut) {
         const auto& root = p.nodes.back();
         unsigned cut = p.terminalRetirementCut;
@@ -113,7 +186,7 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                     return result;
                 }
             } else if (
-                m.participation != Mechanism::Every || m.loop != NoCut || m.word != NoCut || m.first >= LaneCount ||
+                (m.participation == Mechanism::Every && m.loop != NoCut) || m.word != NoCut || m.first >= LaneCount ||
                 m.second >= LaneCount || !p.target.event(lane(p, m.first), lane(p, m.second)) ||
                 std::find(p.target.compilerKeys.begin(), p.target.compilerKeys.end(), m.forwardKey) ==
                     p.target.compilerKeys.end() ||
@@ -218,8 +291,24 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
         return true;
     };
     std::function<bool(unsigned, OpenProtocolState&, bool, unsigned, unsigned, int)> visit;
+    std::map<unsigned, bool> nonempty, firstVisit;
     visit = [&](unsigned id, OpenProtocolState& state, bool validate, unsigned activeOwner,
                 unsigned residue, int more) {
+        for (auto [loop, owner] : guardedOwners) {
+            if (!charge(1)) return false;
+            if (owner != id || nonempty.count(loop)) continue;
+            if (!charge(2 * width)) return false;
+            auto empty = state;
+            nonempty[loop] = true;
+            bool ok = visit(id, state, validate, activeOwner, residue, more);
+            if (ok && !p.nodes[loop].nonEmpty) {
+                nonempty[loop] = false;
+                ok = visit(id, empty, validate, activeOwner, residue, more);
+                if (ok) state.join(empty);
+            }
+            nonempty.erase(loop);
+            return ok;
+        }
         uint64_t transfers = actual[id].size() * 4 + p.nodes[id].macroPhases.size() * (1 + p.nodes[id].macroTransfers.size());
         if (!p.fixedBefore.empty())
             transfers += p.fixedBefore[id].size();
@@ -236,6 +325,15 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
         auto visibilityState = state;
         for (unsigned position = 0; position < actual[id].size(); ++position) {
             const auto& m = actual[id][position];
+            if (m.participation != Mechanism::Every) {
+                auto decision = m.participation == Mechanism::First ? firstVisit.find(m.loop) : nonempty.find(m.loop);
+                const auto& decisions = m.participation == Mechanism::First ? firstVisit : nonempty;
+                if (decision == decisions.end()) {
+                    result.reason = "guarded endpoint has no structural participation decision";
+                    return false;
+                }
+                if (!decision->second) continue;
+            }
             if (m.kind == Mechanism::Publish || m.kind == Mechanism::Acquire) {
                 if (!endpoint(state, m, validate, id, position))
                     return false;
@@ -309,6 +407,20 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                 result.reason = "uncovered open-protocol physical or visibility demand at node " + std::to_string(id);
                 return false;
             }
+            if (validate && boundaries) {
+                if (!charge(1 + 3 * uint64_t(p.cells))) return false;
+                auto inserted = boundaries->try_emplace(id);
+                auto& observation = inserted.first->second;
+                if (inserted.second) {
+                    observation.leastPending = observation.mostPending = state.pending[node.lane];
+                } else for (unsigned cell = 0; cell < p.cells; ++cell) {
+                    const auto& pending = state.pending[node.lane][cell];
+                    observation.leastPending[cell].readers &= pending.readers;
+                    observation.leastPending[cell].writers &= pending.writers;
+                    observation.mostPending[cell].readers |= pending.readers;
+                    observation.mostPending[cell].writers |= pending.writers;
+                }
+            }
             seedOperation(p, node, state);
             return true;
         }
@@ -331,12 +443,14 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
             return true;
         }
         if (node.kind == Node::For || node.kind == Node::While) {
+            const bool guarded = guardedOwners.count(id);
+            if (guarded && !nonempty.at(id)) return true;
             if (!charge(2 * width))
                 return false;
             const auto entry = state;
             unsigned period = 0;
-            if (node.kind == Node::For && activeOwner == NoCut) {
-                if (node.nonEmpty)
+            if (node.kind == Node::For && (activeOwner == NoCut || guarded)) {
+                if (node.nonEmpty || guarded)
                     period = 1;
                 std::function<void(unsigned)> findPeriod = [&](unsigned child) {
                     const auto& nested = p.nodes[child];
@@ -358,7 +472,19 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                     return false;
                 std::vector<std::optional<OpenProtocolState>> starts(period);
                 unsigned first = unsigned(node.periodicLower) % period;
-                starts[first] = entry;
+                std::optional<OpenProtocolState> firstExit;
+                if (guarded) {
+                    if (!charge(3 * width)) return false;
+                    firstVisit[id] = true;
+                    auto continuing = entry;
+                    firstExit = entry;
+                    for (unsigned child : node.children)
+                        if (!visit(child, continuing, validate, id, first, 1)) return false;
+                    for (unsigned child : node.children)
+                        if (!visit(child, *firstExit, validate, id, first, 0)) return false;
+                    firstVisit[id] = false;
+                    starts[(first + 1) % period] = std::move(continuing);
+                } else starts[first] = entry;
                 bool changed = true;
                 while (changed) {
                     changed = false;
@@ -384,8 +510,8 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                         }
                     }
                 }
-                std::optional<OpenProtocolState> exit;
-                if (!node.nonEmpty)
+                std::optional<OpenProtocolState> exit = std::move(firstExit);
+                if (!node.nonEmpty && !guarded)
                     exit = entry; // original zero-trip successor
                 for (unsigned current = 0; current < period; ++current) {
                     if (!starts[current])
@@ -409,7 +535,12 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                     return false;
                 }
                 state = std::move(*exit);
+                if (guarded) firstVisit.erase(id);
                 return true;
+            }
+            if (guarded) {
+                result.reason = "guarded open provider requires a checked loop ordinal";
+                return false;
             }
             auto invariant = entry;
             for (;;) {

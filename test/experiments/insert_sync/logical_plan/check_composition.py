@@ -120,6 +120,21 @@ def main():
     for name in positive:
         source = fixtures / (name + '.pto')
         compile_case(name, source, gm='assume-disjoint-arguments')
+    # The emitted entry predicate is signed. An unsigned comparison attribute
+    # must not acquire the signed First/NonEmpty contract by accident.
+    entry_text = (fixtures / 'demand_entry.pto').read_text()
+    for unsigned in (False, True):
+        source = args.output / ('entry-unsigned.pto' if unsigned else 'entry-signed.pto')
+        source.write_text(entry_text.replace('\n      }\n', '\n      } {unsignedCmp}\n', 1)
+                          if unsigned else entry_text)
+        row = run('entry-unsigned' if unsigned else 'entry-signed',
+                  [args.opt, '--mlir-disable-threading',
+                   '--pto-insert-sync=planner=composition structured-precision=true gm-alias=may-alias', source],
+                  source, 'native', True)
+        emitted = (args.output / (row['log'] + '.stdout')).read_text()
+        has_first = 'arith.cmpi eq' in emitted
+        if has_first == unsigned or (unsigned and 'arith.cmpi slt' in emitted):
+            raise RuntimeError('signed entry guard contract leaked or disappeared')
     persistent_outputs = {}
     for name in ('persistent_early_vector', 'persistent_multiple_readers',
                  'persistent_bias_table'):

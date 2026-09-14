@@ -64,6 +64,13 @@ if(TARGET pto-structured-sync-test AND PTO_ENABLE_PYTHON_BINDING)
       --output-root "${CMAKE_BINARY_DIR}/test-results/oahs-coverage")
   add_test(NAME oahs_coverage_witnesses
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_coverage_witnesses.py")
+  add_test(NAME oahs_reaching_writers
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_reaching_writers.py")
+  add_test(NAME oahs_quality_endpoints
+    COMMAND "${CMAKE_COMMAND}" -E env "PYTHONPATH=${CMAKE_BINARY_DIR}/python"
+      "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_quality_matrix.py")
+  set_tests_properties(oahs_reaching_writers oahs_quality_endpoints
+    PROPERTIES LABELS "OAHS" RUN_SERIAL TRUE)
   set_tests_properties(oahs_coverage_handoffs oahs_coverage_witnesses
     PROPERTIES LABELS "OAHS" RUN_SERIAL TRUE)
   add_test(NAME oahs_composition

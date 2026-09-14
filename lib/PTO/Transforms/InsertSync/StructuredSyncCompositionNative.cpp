@@ -825,6 +825,9 @@ struct Tree {
             {"families_selected", selected.persistentLifetimes},
             {"families_residual", selected.residualLifetimes},
             {"retained_completion_groups", selected.retainedCompletionGroups},
+            {"completion_group_retries", selected.lifetimeCompletionRetries},
+            {"observation_work", selected.lifetimeObservationWork},
+            {"observation_exhausted", selected.lifetimeObservationExhausted},
             {"selected_visibility_sites", selected.selectedCountsValid ?
                 llvm::json::Value(selected.selectedVisibilitySites) : llvm::json::Value(nullptr)},
             {"families_rejected", selected.rejectedPersistentLifetimes},
@@ -1352,7 +1355,7 @@ struct Tree {
                     program.nodes[body].children.front() >= anchors.size())
                     continue;
                 APInt step;
-                if (!loop.getInductionVar().getType().isIndex() ||
+                if (loop->hasAttr("unsignedCmp") || !loop.getInductionVar().getType().isIndex() ||
                     !matchPattern(loop.getStep(), m_ConstantInt(&step)) || step != 1)
                     continue;
                 for (unsigned cut = 0; cut <= index; ++cut) {
@@ -1510,7 +1513,7 @@ struct Tree {
                 continue;
             auto choice = dyn_cast<scf::IfOp>(anchors[id]);
             auto loop = choice ? choice->getParentOfType<scf::ForOp>() : scf::ForOp{};
-            if (!loop || ids.find(loop.getOperation()) == ids.end())
+            if (!loop || loop->hasAttr("unsignedCmp") || ids.find(loop.getOperation()) == ids.end())
                 continue;
             APInt step;
             if (!matchPattern(loop.getStep(), m_ConstantInt(&step)) || step != 1)

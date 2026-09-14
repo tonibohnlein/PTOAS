@@ -188,8 +188,40 @@ static void testLifetimeRevision()
     unrelatedGuard.nodes[fix].byteEffects[1].writers = 1u << unsigned(Pipe::FIX);
     auto unrelatedBaseline = c::testing::constructDemandsWithoutPersistentLifetimes(unrelatedGuard);
     auto unrelatedPlan = c::constructDemands(unrelatedGuard);
-    require(unrelatedPlan.success && !unrelatedPlan.persistentLifetimes &&
-            unrelatedPlan.lifetimeProtocolRejections > 0 && unrelatedPlan.before == unrelatedBaseline.before);
+    require(unrelatedBaseline.success && unrelatedPlan.success && unrelatedPlan.residualLifetimes > 0);
+    require(c::testing::verifyOpenDemands(unrelatedGuard, unrelatedPlan.before).success);
+    // Entry obligations outside selected storage remain residual demands,
+    // including when zero-trip geometry prevents ACC lifetime discovery.
+    auto optionalInner = guarded;
+    optionalInner.nodes[inner].nonEmpty = false;
+    auto optionalPlan = c::constructDemands(optionalInner);
+    if (optionalPlan.residualLifetimes != 1)
+        std::cerr << "optional inner lifetime: " << optionalPlan.lifetimeCandidates << " "
+                  << optionalPlan.persistentLifetimes << " " << optionalPlan.deferredRejectionReason << '\n';
+    require(optionalPlan.success && optionalPlan.residualLifetimes == 1);
+    require(c::testing::verifyOpenDemands(optionalInner, optionalPlan.before).success);
+    for (const auto& [program, result] : {std::pair{unrelatedGuard, unrelatedPlan},
+                                         std::pair{optionalInner, optionalPlan}}) {
+        Oracle oracle;
+        ExecutionPolicy policy;
+        policy.trips = [&](unsigned id, unsigned visit) {
+            return id == inner ? (program.nodes[inner].nonEmpty ? 1 + visit % 2 : visit % 3) : visit % 3;
+        };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        for (unsigned invocation = 0; invocation < 6; ++invocation) {
+            execute(program, result, program.nodes.size() - 1, policy, oracle);
+            oracle.check();
+            auto retirement = oracle.vertex();
+            for (unsigned lane = 0; lane < c::LaneCount; ++lane) oracle.command(lane, retirement, true);
+        }
+        auto missing = result.before;
+        for (auto& commands : missing)
+            commands.erase(std::remove_if(commands.begin(), commands.end(), [](const auto& command) {
+                return command.kind == c::Mechanism::Acquire && command.first == unsigned(Pipe::FIX) &&
+                       command.second == unsigned(Pipe::M);
+            }), commands.end());
+        require(!c::testing::verifyOpenDemands(program, missing).success);
+    }
 
     // Multiple ACC updates and multiple FIX visits retain their original
     // exclusion; optional lifetime discovery must not collapse these uses.
@@ -366,7 +398,90 @@ static void testLifetimeRevision()
     require(scarcePlan.before == scarceBaseline.before && scarcePlan.lifetimeAllocationRejections == 1);
     require(scarcePlan.lifetimeAnalysisWork > scarcePlan.lifetimeEligibilityWork);
 
+    // Optional completion groups fit the preliminary two-key screen, but
+    // combined residual demands exceed it. Retry must be bounded and cannot
+    // rescue a population that still exceeds capacity without those groups.
+    c::Program crowded;
+    crowded.cells = 4;
+    crowded.target.compilerKeys = {0, 1};
+    unsigned dma = unsigned(Pipe::MTE2), vector = unsigned(Pipe::V), store = unsigned(Pipe::MTE3);
+    auto loadX = op(crowded, dma, 0, true);
+    auto useX = op(crowded, vector, 0, false);
+    crowded.nodes[useX].effects[2].writers = 1u << vector;
+    auto laterVector = op(crowded, vector, 1, true);
+    crowded.nodes[laterVector].effects[3].readers = 1u << vector;
+    auto storeX = op(crowded, store, 0, false);
+    crowded.nodes[storeX].effects[1].readers = 1u << store;
+    auto oldInput = op(crowded, dma, 2, false);
+    auto newInput = op(crowded, dma, 3, true);
+    auto crowdedLoop = add(crowded, c::Node::For,
+        {sequence(crowded, {oldInput, newInput, loadX, useX, storeX, laterVector})});
+    sequence(crowded, {crowdedLoop});
+    auto retried = c::constructDemands(crowded);
+    auto withoutGroups = c::testing::constructDemandsWithoutCompletionGroups(crowded);
+    require(retried.success && retried.lifetimeCompletionRetries == 1);
+    require(!retried.persistentLifetimes && retried.before == withoutGroups.before);
+    require(retried.deferredRejectionStage == "persistent-allocation");
+    require(c::verifyDemands(crowded, retried.before).success);
+    crowded.target.compilerKeys.push_back(2);
+    auto roomy = c::constructDemands(crowded);
+    require(roomy.success && roomy.residualLifetimes > 0);
+    require(c::testing::verifyOpenDemands(crowded, roomy.before).success);
+
     auto invalid = p;
     invalid.nodes[reader].byteEffects[0].readers = 0;
     require(!c::constructDemands(invalid).success);
+
+    // Two independent incoming prefixes plus an unrelated recurring lifetime.
+    // A readiness is shared by two consumers and the zero-trip continuation;
+    // B must not become a predecessor merely because it was loaded later.
+    c::Program incoming;
+    incoming.cells = 3;
+    unsigned input = unsigned(Pipe::MTE2), consumer = unsigned(Pipe::V);
+    auto preloadA = op(incoming, input, 0, true);
+    auto preloadB = op(incoming, input, 1, true);
+    auto readA = op(incoming, consumer, 0, false);
+    auto againA = op(incoming, consumer, 0, false);
+    auto recurringWrite = op(incoming, input, 2, true);
+    auto recurringRead = op(incoming, consumer, 2, false);
+    auto incomingLoop = add(incoming, c::Node::For,
+        {sequence(incoming, {readA, againA, recurringWrite, recurringRead})});
+    incoming.nodes[incomingLoop].entryGuardStart = preloadA;
+    auto continuationA = op(incoming, consumer, 0, false);
+    auto continuationB = op(incoming, consumer, 1, false);
+    auto incomingEnd = sequence(incoming, {});
+    auto incomingRoot = sequence(incoming, {preloadA, preloadB, incomingLoop,
+                                            continuationA, continuationB, incomingEnd});
+    incoming.terminalRetirementCut = incomingEnd;
+    auto incomingPlan = c::constructDemands(incoming);
+    require(incomingPlan.success && c::verifyDemands(incoming, incomingPlan.before).success);
+    for (unsigned trips : {0u, 1u, 3u}) {
+        ExecutionPolicy policy;
+        policy.trips = [=](unsigned, unsigned) { return trips; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        unsigned entryAcquisitions = 0, sharedAcquisitions = 0;
+        policy.observeMechanism = [&](unsigned site, const c::Mechanism& command) {
+            if (command.kind != c::Mechanism::Acquire && command.kind != c::Mechanism::Rendezvous) return;
+            if (command.first != input || command.second != consumer) return;
+            entryAcquisitions += site == readA;
+            sharedAcquisitions += site == againA;
+        };
+        Oracle oracle;
+        execute(incoming, incomingPlan, incomingRoot, policy, oracle);
+        oracle.check();
+        // Count entry readiness separately from continuation readiness and
+        // the unrelated recurring cell: extra visits do not reacquire A.
+        require(entryAcquisitions == unsigned(trips != 0));
+        require(sharedAcquisitions == 0);
+        unsigned firstA = 2;
+        require(oracle.reaches(oracle.accesses[0].done, oracle.accesses[firstA].issue));
+        require(!oracle.reaches(oracle.accesses[1].done, oracle.accesses[firstA].issue));
+        if (trips) {
+            require(oracle.reaches(oracle.accesses[0].done, oracle.accesses[firstA + 1].issue));
+            require(!oracle.reaches(oracle.accesses[1].done, oracle.accesses[firstA + 1].issue));
+        }
+    }
+    auto overwritten = incoming;
+    overwritten.nodes[preloadB].effects[0].writers = 1u << input;
+    require(!c::verifyDemands(overwritten, incomingPlan.before).success);
 }
