@@ -246,6 +246,10 @@ struct Result {
     uint64_t lifetimeCandidates = 0, persistentLifetimes = 0;
     uint64_t persistentReaderFamilies = 0, rejectedPersistentLifetimes = 0;
     bool lifetimeBudgetExhausted = false;
+    uint64_t lifetimeEligibilityWork = 0;
+    uint64_t lifetimeStrongerRejections = 0, lifetimeProtocolRejections = 0;
+    uint64_t lifetimeBoundaryRejections = 0, lifetimeAllocationRejections = 0;
+    uint64_t lifetimeOverlapRejections = 0, lifetimeVerificationRejections = 0;
     // Attempted earlier-stage populations are not selected-plan populations.
     uint64_t preLifetimeCutCycles = 0, preLifetimeProtocolKeys = 0;
     uint64_t selectedSetSites = 0, selectedWaitSites = 0, selectedNamedBarriers = 0;

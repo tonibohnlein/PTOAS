@@ -70,7 +70,9 @@ def main():
         (args.output / (stem + '.stderr')).write_text(stderr)
         row = dict(id=name, category=category, source=str(source),
                    source_sha256=digest(before), command=list(map(str, command)),
-                   returncode=code, status=status, seconds=elapsed, log=stem)
+                   returncode=code, status=status, seconds=elapsed, log=stem,
+                   output_sha256=digest(stdout.encode()), stderr_sha256=digest(stderr.encode()),
+                   measurement="fresh", hardware_contract="conservative")
         if code != 0:
             reason = re.search(r'structured construction: [^;]+; (.*?); work=', stderr)
             row['first_refusal'] = reason.group(1) if reason else next(

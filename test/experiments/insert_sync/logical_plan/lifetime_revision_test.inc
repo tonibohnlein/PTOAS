@@ -47,11 +47,12 @@ static void testLifetimeRevision()
 
     auto plan = c::constructDemands(p);
     require(plan.success);
-    // Discovery retains the true reader role, but this stronger exclusion is
-    // not yet eligible for persistent replacement. The verified ordinary
-    // path remains selected instead of poisoning unrelated lifetimes.
-    require(plan.lifetimeCandidates == 1 && !plan.persistentLifetimes &&
-            plan.rejectedPersistentLifetimes == 1);
+    // The persistent prefix protocol and residual provider retain the
+    // stronger ACC exclusion and verify against the original effects.
+    require(plan.lifetimeCandidates == 1 && plan.persistentLifetimes == 1 &&
+            plan.rejectedPersistentLifetimes == 0);
+    require(plan.lifetimeStrongerRejections == 0 && plan.lifetimeOverlapRejections == 0);
+    require(plan.lifetimeEligibilityWork == p.cells * p.nodes.size() + 1);
     require(c::verifyDemands(p, plan.before).success);
     require(!c::testing::verifyOpenDemands(p, std::vector<std::vector<c::Mechanism>>(p.nodes.size())).success);
     auto corrupted = plan.before;

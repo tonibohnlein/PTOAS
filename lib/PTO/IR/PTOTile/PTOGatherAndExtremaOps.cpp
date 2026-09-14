@@ -8,7 +8,7 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
-constexpr unsigned kI32BitWidth = 32;
+constexpr unsigned kGatherI32BitWidth = 32;
 constexpr unsigned kExpectedTileRank = 2;
 constexpr int64_t kTmovAlignBytes = 16;
 constexpr unsigned kFp8ElemBitWidth = 8;
@@ -89,7 +89,7 @@ static LogicalResult verifyTGatherBA2A3(TGatherBOp op) {
            << "expects A2/A3 dst element size to be 1, 2, or 4 bytes";
   }
   Type offElemTy = getElemTy(offTy);
-  if (!offElemTy.isInteger(kI32BitWidth)) {
+  if (!offElemTy.isInteger(kGatherI32BitWidth)) {
     return op.emitOpError() << "expects offsets element type to be i32";
   }
 

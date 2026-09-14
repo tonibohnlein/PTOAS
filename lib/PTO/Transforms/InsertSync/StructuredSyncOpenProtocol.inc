@@ -61,7 +61,7 @@ struct OpenProtocolState : PrefixState {
     }
 };
 
-c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64_t limit)
+c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64_t limit, Commands* residual)
 {
     using namespace c;
     c::Result result;
@@ -74,6 +74,7 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
             return false;
         }
         work += count;
+        result.selectedAccountingWork = work;
         return true;
     };
     if (p.cells > MaxCells || p.nodes.empty() || actual.size() != p.nodes.size() ||
@@ -187,7 +188,33 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
         }
         const auto& node = p.nodes[id];
         if (node.kind == Node::Operation) {
-            if (validate &&
+            if (validate && residual) {
+                auto& commands = (*residual)[id];
+                if (!realizeVisibility(p, node, state, commands, result.reason, result.visibilityRequirements))
+                    return false;
+                for (unsigned source = 0; source < LaneCount; ++source) {
+                    if (!(operationDemands(p, node, state) & (1u << source))) continue;
+                    ++result.acquisitions;
+                    std::vector<Mechanism> generated;
+                    if (!acquire(p, source, node.lane, state, generated)) {
+                        result.reason = "target cannot realize residual physical obligation";
+                        return false;
+                    }
+                    // Same-cut exchanges transport consumption knowledge too.
+                    // These are proposal effects only; the next complete pass
+                    // reconstructs their real SET/WAIT occupancy and receipts.
+                    for (const auto& command : generated)
+                        if (command.kind == Mechanism::Rendezvous)
+                            for (auto& known : state.known) {
+                                if (known & (1u << command.first)) known |= 1u << command.second;
+                                if (known & (1u << command.second)) known |= 1u << command.first;
+                            }
+                    for (const auto& command : generated)
+                        if (std::find(commands.begin(), commands.end(), command) == commands.end())
+                            commands.push_back(command);
+                }
+            }
+            if (validate && !residual &&
                 (!visibilityCovered(p, node, visibilityState, actual[id]) || operationDemands(p, node, state))) {
                 result.reason = "uncovered open-protocol physical or visibility demand at node " + std::to_string(id);
                 return false;

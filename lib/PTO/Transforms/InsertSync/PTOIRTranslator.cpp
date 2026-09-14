@@ -12,6 +12,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "PTO/Transforms/InsertSync/SyncGMAlias.h"
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
@@ -238,9 +239,13 @@ LogicalResult PTOIRTranslator::Build() {
   Region &funcRegion = func_.getBody();
   UpdateKernelArgMemInfo();
   if (conservativeStructuredForwarding_) {
-    // The historical single traversal does not compute backedge aliases.
-    // Seed every SCF-forwarded handle with a whole-space may alias before
-    // translating payload, including uses in the BEFORE region of while.
+    // Backing origins are solved before translating payload, including both
+    // while regions and condition-false exits. Materialize allocation facts
+    // first so a backedge can refer to an allocation visited later in IR order.
+    func_.walk([&](Operation *op) {
+      if (auto result = dispatchAllocOp(op); result && result->wasInterrupted())
+        translationFailed_ = true;
+    });
     auto seed = [&](Value value) {
       Type type = value.getType();
       if (!isa<pto::TileBufType, pto::MultiTileBufType, pto::TensorViewType,
@@ -255,8 +260,24 @@ LogicalResult PTOIRTranslator::Build() {
         if (auto attr = dyn_cast_or_null<pto::AddressSpaceAttr>(memref.getMemorySpace()))
           space = attr.getAddressSpace();
       } else space = getPointerLikeAddressSpace(type);
-      buffer2MemInfoMap_[value].emplace_back(std::make_unique<BaseMemInfo>(
-          value, value, space, SmallVector<uint64_t>{}, 0, false, true));
+      auto origins = traceInsertSyncMemoryOrigins(func_, value);
+      bool complete = origins.complete;
+      for (Value root : origins.values) {
+        auto found = buffer2MemInfoMap_.find(root);
+        if (found == buffer2MemInfoMap_.end()) {
+          complete = false;
+          continue;
+        }
+        for (const auto &info : found->second) {
+          auto forwarded = info->clone(value);
+          if (!origins.preservesRootRange)
+            forwarded->aliasesUnknownRange = true;
+          appendUniqueMemInfo(buffer2MemInfoMap_[value], std::move(forwarded));
+        }
+      }
+      if (!complete)
+        buffer2MemInfoMap_[value].emplace_back(std::make_unique<BaseMemInfo>(
+            value, value, space, SmallVector<uint64_t>{}, 0, false, true));
     };
     func_.walk([&](Operation *op) {
       if (!isa<scf::ForOp, scf::WhileOp, scf::IfOp>(op)) return;
@@ -321,6 +342,10 @@ void PTOIRTranslator::UpdateKernelArgMemInfo() {
 // --- Case A: 内存分配 (AllocTile / AllocMultiTile / Declare*) ---
 std::optional<WalkResult>
 PTOIRTranslator::dispatchAllocOp(Operation *op) {
+  if (conservativeStructuredForwarding_ &&
+      isa<pto::AllocTileOp, pto::AllocMultiTileOp, pto::DeclareTileOp, pto::DeclareGlobalOp>(op) &&
+      op->getNumResults() == 1 && buffer2MemInfoMap_.contains(op->getResult(0)))
+    return WalkResult::advance();
   if (auto allocOp = dyn_cast<pto::AllocTileOp>(op)) {
     if (failed(UpdateAllocTileOpMemInfo(allocOp))) {
       return WalkResult::interrupt();

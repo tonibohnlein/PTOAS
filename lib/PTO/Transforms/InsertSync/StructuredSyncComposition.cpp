@@ -5320,7 +5320,7 @@ c::Result verifyDemandImpl(
 c::Result verifyConstructionDemands(
     const c::Program& p, const Commands& actual, DemandInvariants* invariants, const ChildReturnOptions* childReturns,
     bool* usedChildReturns = nullptr, const DemandAnalysis::ChoiceIncomingOptions* choiceIncoming = nullptr);
-c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64_t limit);
+c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64_t limit, Commands* residual = nullptr);
 c::Result constructDemandCandidate(
     const c::Program& p, const DemandInvariants* invariants, DemandFallbacks& unassigned,
     const DemandFallbacks* forced = nullptr, const Cuts* recurring = nullptr,
@@ -7730,12 +7730,23 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
     baseline.cellVisits += discovery.work;
     if (summaries.empty())
         return baseline;
+    // ACC families migrate to obligation-driven residual construction. No
+    // scheduling effect is deleted: actual prefix transfers determine what
+    // the ordinary provider must still supply.
+    const bool residualMode = std::any_of(summaries.begin(), summaries.end(), [](const auto& summary) {
+        return summary.producer == unsigned(Pipe::M) && (summary.readers & (1u << unsigned(Pipe::FIX)));
+    });
     // Existing guarded/open and structured-episode protocols cannot yet be
     // combined with persistent lifetimes by the open verifier. Keep their
     // already verified command population until joint participation is modeled.
     if (baseline.recurringEpisodeWords || baseline.deferredRings ||
-        baseline.childReturnAcksRemoved || baseline.alternativeChoiceFamilies)
+        baseline.childReturnAcksRemoved || baseline.alternativeChoiceFamilies) {
+        baseline.lifetimeProtocolRejections = summaries.size();
+        baseline.rejectedPersistentLifetimes = summaries.size();
+        baseline.deferredRejectionStage = "persistent-protocol";
+        baseline.deferredRejectionReason = "persistent lifetime has incompatible protocol participation";
         return baseline;
+    }
 
     // Build one all-Every residual population. Persistent families replace
     // only matching pairs in this transaction; unrelated precise plans remain
@@ -7747,12 +7758,16 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         node.periodicPeriod = 0;
         node.periodicResidues = 0;
     }
-    auto candidateBase = constructDemandsImpl(conservativeFacts, false, true, false, false, false);
+    auto candidateBase = residualMode ? c::Result{} :
+        constructDemandsImpl(conservativeFacts, false, true, false, false, false);
+    if (residualMode) {
+        candidateBase.success = true;
+        candidateBase.before.resize(p.nodes.size());
+    }
     if (!candidateBase.success) {
         baseline.rejectedPersistentLifetimes = summaries.size();
         return baseline;
     }
-    const std::set<unsigned> protectedEpisodeCells;
 
     auto candidate = candidateBase;
     using Direction = std::pair<unsigned, unsigned>;
@@ -7766,7 +7781,13 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
                 occupied[{m.second, m.first}].insert(m.reverseKey);
             }
         }
+    unsigned nextProtocolIdentity = 1;
     auto allocate = [&](unsigned source, unsigned observer) -> std::optional<unsigned> {
+        if (residualMode) {
+            if (!p.target.event(lane(p, source), lane(p, observer)))
+                return {};
+            return nextProtocolIdentity++;
+        }
         for (unsigned key : p.target.compilerKeys)
             if (p.target.available(lane(p, source), lane(p, observer), key) &&
                 !occupied[{source, observer}].count(key)) {
@@ -7785,6 +7806,8 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         return NoCut;
     };
     auto removeFallback = [&](unsigned site, unsigned first, unsigned second) {
+        if (residualMode)
+            return;
         auto& commands = candidate.before[site];
         commands.erase(std::remove_if(commands.begin(), commands.end(), [&](const auto& m) {
                            if (m.kind == Mechanism::Barrier)
@@ -7801,22 +7824,35 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
             ++count;
         return count;
     };
-    // A byte-role summary is not yet sufficient to replace a protocol when
-    // the authoritative scheduling view carries a stronger resource
-    // exclusion on the same cell (currently ACC read/read exclusion). Keep
-    // the role split for discovery and diagnostics, but leave such a cell on
-    // the already verified ordinary/typed path until the open constructor can
-    // compose both obligations in one lifetime protocol.
+    // Cache stronger scheduling obligations once per physical cell. Range/byte
+    // discovery never weakens the immutable authoritative effects.
+    uint64_t eligibilityWork = uint64_t(p.nodes.size()) * p.cells;
+    for (const auto& lifetime : summaries)
+        eligibilityWork += lifetime.cells.size();
+    // Also reserve the required-cell scan before examining its effects.
+    uint64_t requiredWork = 0;
+    for (const auto& node : p.nodes)
+        requiredWork += uint64_t(p.cells) * std::max(size_t(1), node.macroPhases.size());
+    if (!discovery.charge(eligibilityWork + requiredWork)) {
+        baseline.lifetimeBudgetExhausted = true;
+        baseline.rejectedPersistentLifetimes = summaries.size();
+        baseline.deferredRejectionStage = "persistent-analysis";
+        baseline.deferredRejectionReason = "persistent lifetime eligibility analysis exhausted";
+        return baseline;
+    }
+    baseline.lifetimeEligibilityWork = eligibilityWork;
+    std::vector<bool> stronger(p.cells, false), strongerWitness(summaries.size(), false);
+    for (const auto& node : p.nodes)
+        if (node.kind == Node::Operation && !node.byteEffects.empty())
+            for (unsigned cell = 0; cell < p.cells; ++cell)
+                stronger[cell] = stronger[cell] ||
+                    node.effects[cell].readers != node.byteEffects[cell].readers ||
+                    node.effects[cell].writers != node.byteEffects[cell].writers;
+    for (unsigned index = 0; index < summaries.size(); ++index)
+        for (unsigned cell : summaries[index].cells)
+            strongerWitness[index] = strongerWitness[index] || stronger[cell];
     auto hasStrongerObligation = [&](const StorageLifetimeSummary& lifetime) {
-        return std::any_of(lifetime.cells.begin(), lifetime.cells.end(), [&](unsigned cell) {
-            return std::any_of(p.nodes.begin(), p.nodes.end(), [&](const Node& node) {
-                if (node.kind != Node::Operation || node.byteEffects.empty())
-                    return false;
-                const auto& obligation = node.effects[cell];
-                const auto& bytes = node.byteEffects[cell];
-                return obligation.readers != bytes.readers || obligation.writers != bytes.writers;
-            });
-        });
+        return strongerWitness[&lifetime - summaries.data()];
     };
     std::map<Direction, std::set<unsigned>> requiredCells, coveredCells;
     for (unsigned cell = 0; cell < p.cells; ++cell) {
@@ -7845,9 +7881,7 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         requiredCells[std::minmax(producer, reader)].insert(cell);
     }
     for (const auto& lifetime : summaries)
-        if (lifetime.wholeProgram && !hasStrongerObligation(lifetime) &&
-            std::none_of(lifetime.cells.begin(), lifetime.cells.end(),
-                         [&](unsigned cell) { return protectedEpisodeCells.count(cell); }))
+        if (lifetime.wholeProgram && !hasStrongerObligation(lifetime))
             for (unsigned reader = 0; reader < LaneCount; ++reader)
                 if (lifetime.readers & (1u << reader))
                     coveredCells[std::minmax(lifetime.producer, reader)].insert(
@@ -7880,15 +7914,18 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
     bool boundaryRejected = false, allocationRejected = false;
     unsigned proposalTrials = 0;
     for (const auto& lifetime : summaries) {
-        if (hasStrongerObligation(lifetime))
+        if (!residualMode && hasStrongerObligation(lifetime)) {
+            ++baseline.lifetimeStrongerRejections;
             continue;
-        if (std::any_of(lifetime.cells.begin(), lifetime.cells.end(),
-                        [&](unsigned cell) { return protectedEpisodeCells.count(cell); }))
-            continue;
+        }
         if (selected == MaxAlternatives || proposalTrials++ == MaxAlternatives)
             break;
         bool disjoint = std::none_of(lifetime.cells.begin(), lifetime.cells.end(),
                                      [&](unsigned cell) { return selectedCells.count(cell); });
+        if (!disjoint) {
+            ++baseline.lifetimeOverlapRejections;
+            continue;
+        }
         std::set<unsigned> writes(
             lifetime.firstWrite.cuts.begin(), lifetime.firstWrite.cuts.begin() + lifetime.firstWrite.count);
         std::set<unsigned> readySites;
@@ -7901,6 +7938,7 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         }
         if (!disjoint || writes.empty() || readySites.empty() || lifetime.exit == NoCut) {
             boundaryRejected = true;
+            ++baseline.lifetimeBoundaryRejections;
             continue;
         }
         struct Keys {
@@ -7923,7 +7961,7 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         for (unsigned reader = 0; reader < LaneCount; ++reader) {
             if (!(lifetime.readers & (1u << reader)))
                 continue;
-            if (lifetime.wholeProgram)
+            if (!residualMode && lifetime.wholeProgram)
                 stripOrdinaryPair(lifetime.producer, reader);
             auto readiness = allocate(lifetime.producer, reader);
             auto release = allocate(reader, lifetime.producer);
@@ -7945,6 +7983,7 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         }
         if (!realizable) {
             allocationRejected = true;
+            ++baseline.lifetimeAllocationRejections;
             candidate.before = std::move(commandsTrial);
             strippedPairs = std::move(strippedTrial);
             occupied = std::move(occupiedTrial);
@@ -8008,9 +8047,149 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         baseline.deferredRejectionStage = "persistent";
         baseline.deferredRejectionReason = allocationRejected ? "persistent lifetime event pool exhausted" :
             boundaryRejected ? "persistent lifetime has no useful structural boundary" :
+            baseline.lifetimeStrongerRejections ? "persistent lifetime retains stronger resource obligations" :
                                "persistent lifetime families overlap";
         baseline.rejectedPersistentLifetimes = summaries.size();
         return baseline;
+    }
+    if (residualMode) {
+        // Retain complete ordinary event families in independent regions.
+        // A key is retained only when every endpoint has a footprint disjoint
+        // from the selected cells. This is a provider selection rule, not a
+        // permission to drop an obligation; residual construction below still
+        // examines every original operation.
+        using Identity = std::tuple<unsigned, unsigned, unsigned>;
+        std::set<Identity> affected;
+        auto identities = [](const Mechanism& command) {
+            std::vector<Identity> result;
+            if (command.kind == Mechanism::Publish || command.kind == Mechanism::Acquire ||
+                command.kind == Mechanism::Rendezvous)
+                result.emplace_back(command.first, command.second, command.forwardKey);
+            if (command.kind == Mechanism::Rendezvous)
+                result.emplace_back(command.second, command.first, command.reverseKey);
+            return result;
+        };
+        auto independent = [&](unsigned site) {
+            return std::none_of(selectedCells.begin(), selectedCells.end(), [&](unsigned cell) {
+                return analysis.effects[site][cell].readers || analysis.effects[site][cell].writers;
+            });
+        };
+        if (!discovery.charge(uint64_t(p.nodes.size()) * (1 + selectedCells.size()))) {
+            baseline.lifetimeBudgetExhausted = true;
+            return baseline;
+        }
+        for (unsigned site = 0; site < baseline.before.size(); ++site)
+            for (const auto& command : baseline.before[site]) {
+                if (!discovery.charge(1 + selectedCells.size())) {
+                    baseline.lifetimeBudgetExhausted = true;
+                    return baseline;
+                }
+                if (!independent(site) || command.participation != Mechanism::Every)
+                    for (const auto& identity : identities(command)) affected.insert(identity);
+            }
+        std::map<Identity, unsigned> retained;
+        auto retain = [&](unsigned first, unsigned second, unsigned oldKey) {
+            auto identity = std::make_tuple(first, second, oldKey);
+            auto inserted = retained.emplace(identity, nextProtocolIdentity);
+            if (inserted.second) ++nextProtocolIdentity;
+            return inserted.first->second;
+        };
+        for (unsigned site = 0; site < baseline.before.size(); ++site) {
+            std::vector<Mechanism> commands;
+            for (auto command : baseline.before[site]) {
+                auto keys = identities(command);
+                if (!independent(site) || command.participation != Mechanism::Every ||
+                    std::any_of(keys.begin(), keys.end(), [&](const auto& id) { return affected.count(id); }))
+                    continue;
+                if (!keys.empty()) command.forwardKey = retain(command.first, command.second, command.forwardKey);
+                if (command.kind == Mechanism::Rendezvous)
+                    command.reverseKey = retain(command.second, command.first, command.reverseKey);
+                commands.push_back(command);
+            }
+            candidate.before[site].insert(candidate.before[site].begin(), commands.begin(), commands.end());
+        }
+        // Plan in a symbolic namespace. Identity zero belongs to the ordinary
+        // same-cut provider; persistent directions retain distinct identities.
+        // Number the combined population only after residual construction.
+        if (!discovery.charge(uint64_t(p.nodes.size()) * (1 + uint64_t(p.cells) * 4))) {
+            baseline.lifetimeBudgetExhausted = true;
+            baseline.rejectedPersistentLifetimes = summaries.size();
+            return baseline;
+        }
+        auto symbolic = p;
+        symbolic.target.reservations.clear();
+        symbolic.target.compilerKeys.clear();
+        for (unsigned id = 0; id < nextProtocolIdentity; ++id)
+            symbolic.target.compilerKeys.push_back(id);
+        uint64_t remaining = OpenProtocolLimit;
+        bool settled = false;
+        for (unsigned round = 0; round < 4; ++round) {
+            if (!discovery.charge(uint64_t(p.nodes.size()) * (1 + LaneCount * 2))) {
+                baseline.lifetimeBudgetExhausted = true;
+                break;
+            }
+            Commands residual(p.nodes.size());
+            auto constructed = verifyOpenProtocol(symbolic, candidate.before, remaining, &residual);
+            uint64_t used = constructed.selectedAccountingWork;
+            remaining -= std::min(remaining, used);
+            candidate.nodeVisits += constructed.nodeVisits;
+            candidate.cellVisits += constructed.cellVisits;
+            candidate.acquisitions += constructed.acquisitions;
+            candidate.visibilityRequirements += constructed.visibilityRequirements;
+            if (!constructed.success) {
+                reason = constructed.reason;
+                break;
+            }
+            bool changed = false;
+            for (unsigned site = 0; site < residual.size(); ++site) {
+                changed |= !residual[site].empty();
+                if (!discovery.charge(residual[site].size() * (1 + nextProtocolIdentity))) {
+                    baseline.lifetimeBudgetExhausted = true;
+                    break;
+                }
+                candidate.before[site].insert(candidate.before[site].end(), residual[site].begin(), residual[site].end());
+            }
+            if (discovery.exhausted) break;
+            if (!changed) { settled = true; break; }
+        }
+        if (!settled) {
+            baseline.lifetimeVerificationRejections = selected;
+            baseline.rejectedPersistentLifetimes = summaries.size();
+            baseline.deferredRejectionStage = "persistent-residual";
+            baseline.deferredRejectionReason = reason.empty() ? "persistent residual construction exhausted" : reason;
+            return baseline;
+        }
+        std::map<std::tuple<unsigned, unsigned, unsigned>, unsigned> numbering;
+        std::map<Direction, std::set<unsigned>> assigned;
+        auto number = [&](unsigned source, unsigned observer, unsigned identity) -> std::optional<unsigned> {
+            auto protocol = std::make_tuple(source, observer, identity);
+            auto found = numbering.find(protocol);
+            if (found != numbering.end()) return found->second;
+            for (unsigned physical : p.target.compilerKeys)
+                if (p.target.available(lane(p, source), lane(p, observer), physical) &&
+                    assigned[{source, observer}].insert(physical).second) {
+                    numbering[protocol] = physical;
+                    return physical;
+                }
+            return {};
+        };
+        for (auto& site : candidate.before)
+            for (auto& command : site) {
+                if (command.kind != Mechanism::Publish && command.kind != Mechanism::Acquire &&
+                    command.kind != Mechanism::Rendezvous) continue;
+                auto forward = number(command.first, command.second, command.forwardKey);
+                auto reverse = command.kind == Mechanism::Rendezvous ?
+                    number(command.second, command.first, command.reverseKey) : std::optional<unsigned>(0);
+                if (!forward || !reverse) {
+                    baseline.lifetimeAllocationRejections = selected;
+                    baseline.rejectedPersistentLifetimes = summaries.size();
+                    baseline.deferredRejectionStage = "persistent-allocation";
+                    baseline.deferredRejectionReason = "combined persistent and residual event pool exhausted";
+                    return baseline;
+                }
+                command.forwardKey = *forward;
+                if (command.kind == Mechanism::Rendezvous) command.reverseKey = *reverse;
+            }
     }
     // A complete same-site bidirectional exchange carries both source
     // prefixes and their consumption receipts. Remove an adjacent local
@@ -8079,7 +8258,8 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         baseline.nodeVisits += checked.nodeVisits;
         baseline.cellVisits += checked.cellVisits;
         baseline.deferredRejectionStage = "persistent";
-        baseline.deferredRejectionReason = checked.reason;
+        baseline.deferredRejectionReason = "persistent combined verification failed: " + checked.reason;
+        baseline.lifetimeVerificationRejections = selected;
         baseline.rejectedPersistentLifetimes = summaries.size();
         return baseline;
     }
@@ -8089,6 +8269,13 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         candidate.nodeVisits += baseline.nodeVisits;
         candidate.cellVisits += baseline.cellVisits;
     }
+    candidate.lifetimeEligibilityWork = baseline.lifetimeEligibilityWork;
+    candidate.lifetimeStrongerRejections = baseline.lifetimeStrongerRejections;
+    candidate.lifetimeProtocolRejections = baseline.lifetimeProtocolRejections;
+    candidate.lifetimeBoundaryRejections = baseline.lifetimeBoundaryRejections;
+    candidate.lifetimeAllocationRejections = baseline.lifetimeAllocationRejections;
+    candidate.lifetimeOverlapRejections = baseline.lifetimeOverlapRejections;
+    candidate.lifetimeVerificationRejections = baseline.lifetimeVerificationRejections;
     candidate.lifetimeAnalysisWork = discovery.work;
     candidate.lifetimeStorageUnits = discovery.storage;
     candidate.lifetimeCandidates = summaries.size();

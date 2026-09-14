@@ -14,10 +14,31 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include <optional>
 
 namespace mlir::pto {
 
 enum class InsertSyncGMAliasMode { MayAlias, DisjointArguments };
+
+// Possible backing origins and range precision are independent. A complete
+// result contains every possible origin, including initialization and loop
+// backedges; unknown/unsupported paths never certify disjointness.
+struct InsertSyncMemoryOrigins {
+    llvm::SmallVector<Value, 2> values;
+    bool complete = false;
+    // False when an unqualified view/selector can shift a local access beyond
+    // the backing allocation's recorded interval. Origins remain useful.
+    bool preservesRootRange = false;
+    uint64_t work = 0;
+};
+InsertSyncMemoryOrigins traceInsertSyncMemoryOrigins(func::FuncOp function, Value value);
+struct InsertSyncGMRange {
+    Value root;
+    uint64_t lower = 0, upper = 0;
+};
+// Checked, constant, contiguous byte interval through supported pointer/views.
+// Absence loses only range precision, never the independently traced origins.
+std::optional<InsertSyncGMRange> traceInsertSyncGMRange(func::FuncOp function, Value value);
 
 struct InsertSyncGMRoots {
     llvm::SmallVector<Value, 2> arguments;

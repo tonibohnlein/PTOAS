@@ -151,7 +151,7 @@ def main():
     # S6 diagnostics deliberately perform extra per-handoff verification. They
     # are not part of normal compilation and cannot contaminate paired timings.
     disabled_diagnostics = {name: env.pop(name) for name in
-                            ("PTOAS_STRUCTURED_PLAN_JSON", "PTOAS_LOGICAL_TRACE") if name in env}
+                            ("PTOAS_STRUCTURED_PLAN_JSON", "PTOAS_LOGICAL_TRACE", "PTOAS_COMPOSITION_WITNESSES") if name in env}
     cases = {item["case_id"]: item for item in demand_population()}
     if set(cases) != set(POPULATION):
         raise RuntimeError("review the declared population before changing its coverage denominator")
