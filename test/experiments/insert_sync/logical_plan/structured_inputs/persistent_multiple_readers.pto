@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+// %x has independent V and MTE3 readers. Reuse needs both releases, each
+// published before later unrelated work on that reader pipeline.
+module attributes {pto.target_arch = "a3"} {
+  func.func @persistent_multiple_readers(%a: !pto.partition_tensor_view<16x16xf16>,
+                                         %out_x: !pto.partition_tensor_view<16x16xf16>,
+                                         %out_y: !pto.partition_tensor_view<16x16xf16>,
+                                         %lower: index, %upper: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %one = arith.constant 1 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 512 : i64
+    %a2 = arith.constant 1024 : i64
+    %x = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 16x16xf16>
+    %y = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 16x16xf16>
+    %u = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 16x16xf16>
+    pto.section.vector {
+      scf.for %iv = %lower to %upper step %one {
+        pto.tload ins(%a : !pto.partition_tensor_view<16x16xf16>) outs(%x : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tabs ins(%x : !pto.tile_buf<vec, 16x16xf16>) outs(%y : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tabs ins(%u : !pto.tile_buf<vec, 16x16xf16>) outs(%u : !pto.tile_buf<vec, 16x16xf16>)
+        pto.tstore ins(%x : !pto.tile_buf<vec, 16x16xf16>) outs(%out_x : !pto.partition_tensor_view<16x16xf16>)
+        pto.tstore ins(%y : !pto.tile_buf<vec, 16x16xf16>) outs(%out_y : !pto.partition_tensor_view<16x16xf16>)
+      }
+    }
+    return
+  }
+}

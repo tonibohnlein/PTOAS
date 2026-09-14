@@ -156,6 +156,18 @@ llvm::cl::opt<uint64_t> insertSyncLogicalWorkBudget(
 llvm::cl::opt<std::string> insertSyncGMAlias(
     "insert-sync-gm-alias", llvm::cl::desc("Logical constructor GM contract: may-alias or assume-disjoint-arguments"),
     llvm::cl::init(""));
+llvm::cl::opt<std::string> insertSyncHardwareContract(
+    "insert-sync-hardware-contract",
+    llvm::cl::desc("Structured hardware premise: conservative or a2a3-mmad-acc-v1"),
+    llvm::cl::init("conservative"));
+llvm::cl::opt<std::string> insertSyncOwnershipContract(
+    "insert-sync-ownership-contract",
+    llvm::cl::desc("Composition ownership premise: none or a2a3-unitflag-paired-v1"),
+    llvm::cl::init("none"));
+llvm::cl::opt<bool> insertSyncOwnershipCredit(
+    "insert-sync-ownership-credit",
+    llvm::cl::desc("Allow a validated authored UnitFlag pair to discharge its ACC ownership edge"),
+    llvm::cl::init(true));
 llvm::cl::opt<bool> insertSyncStructuredPrecision(
     "insert-sync-structured-precision",
     llvm::cl::desc("Enable demand precision in composition; structured retains periodic precision during migration"),

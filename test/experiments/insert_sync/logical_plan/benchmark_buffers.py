@@ -122,13 +122,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--python-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--arms", nargs="+", choices=ARMS, default=["existing", "structured"])
+    parser.add_argument("--arms", nargs="+", choices=ARMS,
+                        default=["existing", "structured", "composition"])
     parser.add_argument("--cases", nargs="+", choices=POPULATION, default=list(POPULATION))
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=180.0,
                         help="External harness deadline; not a compiler analysis quota")
     parser.add_argument("--emit-cpp", action="store_true")
+    parser.add_argument("--hardware-contract", default="conservative",
+                        choices=("conservative", "a2a3-mmad-acc-v1"))
+    parser.add_argument("--ownership-contract", default="none",
+                        choices=("none", "a2a3-unitflag-paired-v1"))
+    parser.add_argument("--ownership-credit", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--require-ratio", type=float,
                         help="Gate each candidate's median paired whole-compilation ratio (at least 3 rounds)")
     args = parser.parse_args()
@@ -155,7 +161,10 @@ def main():
     if set(cases) != set(POPULATION):
         raise RuntimeError("review the declared population before changing its coverage denominator")
     output = dict(provenance=provenance(python_root), disabled_diagnostics=disabled_diagnostics,
-                  manifest_sha256=digest(HERE / "demand_manifest.json"), hardware_contract="conservative",
+                  manifest_sha256=digest(HERE / "demand_manifest.json"),
+                  hardware_contract=args.hardware_contract,
+                  ownership_contract=args.ownership_contract,
+                  ownership_credit=args.ownership_credit,
                   population=list(POPULATION),
                   requested_cases=args.cases, requested_arms=args.arms,
                   omitted_cases=[c for c in POPULATION if c not in args.cases],
@@ -178,20 +187,23 @@ def main():
                 pto = Path(str(stem) + ".pto")
                 command = [sys.executable, "-c", SERIAL_DRIVER, str(python_root),
                            "--pto-arch=a3", "--pto-level=level3", "--enable-insert-sync",
-                           f"--insert-sync-planner={'composition' if arm == 'demands' else 'structured' if arm == 'composition' else arm}",
+                           f"--insert-sync-planner={'composition' if arm in ('composition', 'demands') else arm}",
                            f"--insert-sync-gm-alias={case['gm_contract']}",
                            "--emit-pto-ir", str(case["source"].resolve()), "-o", str(pto.resolve())]
                 if arm in ("structured", "composition", "demands"):
                     command.insert(-4, "--insert-sync-logical-work-budget=0")
-                if arm == "composition":
-                    command.insert(-4, "--insert-sync-structured-precision=false")
+                if arm in ("composition", "demands"):
+                    command.insert(-4, "--insert-sync-structured-precision=true")
+                    command.insert(-4, f"--insert-sync-hardware-contract={args.hardware_contract}")
+                    command.insert(-4, f"--insert-sync-ownership-contract={args.ownership_contract}")
+                    command.insert(-4, f"--insert-sync-ownership-credit={'true' if args.ownership_credit else 'false'}")
                 result = invoke(command, stem, env, args.timeout)
                 result.update(round=repeat, arm=arm)
                 if result["status"] == "applied":
                     try:
                         report = analyze(pto)
                         projection = {key: report[key] for key in ("payload", "allocations", "views", "abi")}
-                        producer = 'composition' if arm == 'demands' else 'structured' if arm == 'composition' else arm
+                        producer = 'composition' if arm in ('composition', 'demands') else arm
                         if arm in ("logical", "structured", "composition", "demands") and not any(
                                 attrs.get("pto.insert_sync.producer") == f'"{producer}"'
                                 for attrs in report["status_attributes"]):

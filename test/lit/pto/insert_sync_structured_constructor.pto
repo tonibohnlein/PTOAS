@@ -12,7 +12,9 @@
 // RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=composition logical-work-budget=0 gm-alias=assume-disjoint-arguments' %s | FileCheck %s --check-prefix=DEMAND
 // RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=composition structured-precision=false logical-work-budget=0 gm-alias=assume-disjoint-arguments' %s | FileCheck %s --check-prefix=BASELINE
 // RUN: not pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=composition hardware-contract=typo' %s 2>&1 | FileCheck %s --check-prefix=CONTRACT
+// RUN: not pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=composition ownership-contract=typo' %s 2>&1 | FileCheck %s --check-prefix=OWNERSHIP
 // RUN: ptoas %s --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-planner=composition --insert-sync-logical-work-budget=0 --insert-sync-gm-alias=assume-disjoint-arguments --emit-pto-ir -o - | FileCheck %s --check-prefix=DEMAND
+// RUN: ptoas %s --pto-arch=a3 --pto-level=level3 --enable-insert-sync --insert-sync-planner=composition --insert-sync-hardware-contract=a2a3-mmad-acc-v1 --insert-sync-gm-alias=assume-disjoint-arguments --emit-pto-ir -o - | FileCheck %s --check-prefix=CLI-HARDWARE
 
 // STRUCTURED: pto.insert_sync.logical_status = "applied"
 // STRUCTURED-SAME: pto.insert_sync.producer = "structured"
@@ -40,6 +42,7 @@
 
 // INVALID: InsertSync planner must be existing, logical, logical-or-existing, structured, or composition
 // CONTRACT: hardware-contract requires structured or composition and must be conservative or a2a3-mmad-acc-v1
+// OWNERSHIP: ownership-contract requires composition and must be none or a2a3-unitflag-paired-v1
 
 // Both opt-in settings use the general engine; default InsertSync is unchanged.
 // DEMAND: pto.insert_sync.logical_status = "applied"
@@ -55,6 +58,7 @@
 // BASELINE: pto.insert_sync.logical_status = "applied"
 // BASELINE-SAME: pto.insert_sync.precision = false
 // BASELINE-SAME: pto.insert_sync.producer = "composition"
+// CLI-HARDWARE: pto.insert_sync.hardware_contract = "a2a3-mmad-acc-v1"
 
 module attributes {pto.target_arch = "a3"} {
   func.func @independent_panels(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>)

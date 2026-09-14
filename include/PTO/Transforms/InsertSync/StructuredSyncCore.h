@@ -38,12 +38,18 @@ struct Reservation {
 // development documentation is NOT a release/device qualification. Conservative
 // is the default; A2A3MmadAccV1 is the source-qualified S7 experimental contract.
 enum class HardwareContract : uint8_t { Conservative, A2A3MmadAccV1 };
+// Authored UnitFlag ownership is selected independently of accumulator-update
+// ordering.  Selection validates the original instructions even when credit
+// is disabled; it never enables or rewrites their phase attributes.
+enum class OwnershipContract : uint8_t { None, A2A3UnitFlagPairedV1 };
 struct Target {
     // NPU2201, static-tensor library-safe pool. IDs 6/7 are NOT claimed absent
     // in hardware: they are withheld by this selected lowering contract.
     std::vector<unsigned> compilerKeys{0, 1, 2, 3, 4, 5};
     std::vector<Reservation> reservations;
     HardwareContract hardware = HardwareContract::Conservative;
+    OwnershipContract ownership = OwnershipContract::None;
+    bool ownershipCredit = true;
     bool supports(Lane lane) const;
     bool event(Lane source, Lane target) const;
     bool barrier(Lane lane) const;
@@ -218,6 +224,12 @@ std::optional<std::vector<HandoffAudit>> auditRegionHandoffs(const Model &, cons
 // It does not consume the planner's coverage receipts or an assumed pairing.
 Result verify(const Model &, const std::vector<Action> &);
 std::vector<Action> actionsForPlan(const Model &, const Plan &);
+
+// Exact arithmetic profile for the existing A2A3MmadAccV1 accumulator rule.
+// This checks lowering facts only; callers must separately establish the
+// selected hardware contract, storage witness and uninterrupted M chain.
+// A qualified descriptor alone proves no ordering or completion.
+bool qualifiedAccumulatorInfo(const MmadInfo &);
 
 // Narrow property query. No completion edge is inserted by an intrinsic proof.
 // Every intervening M occurrence must continue the same qualified accumulator

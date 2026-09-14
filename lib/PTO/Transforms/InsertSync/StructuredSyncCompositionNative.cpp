@@ -9,6 +9,8 @@
 #include "PTO/Transforms/InsertSync/StructuredSyncComposition.h"
 #include "PTO/Transforms/InsertSync/StructuredSyncCoverage.h"
 #include "PTO/Transforms/InsertSync/StructuredSyncPeriodicScalar.h"
+#include "PTO/Transforms/InsertSync/StructuredSyncMatrixContract.h"
+#include "PTO/Transforms/InsertSync/StructuredSyncUnitFlagContract.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncPayloadSnapshot.h"
 #include "mlir/IR/Dominance.h"
@@ -133,18 +135,190 @@ struct Inventory {
     SyncPhysicalFacts physical;
     std::string reason;
     explicit Inventory(func::FuncOp f) : function(f) {}
-    bool build(bool actual = false)
+    bool build(bool actual = false, bool authored = false)
     {
         PTOIRTranslator translator(ir, memory, buffers, function, SyncAnalysisMode::NORMALSYNC, true);
         if (failed(translator.Build())) {
             reason = "physical translation failed";
             return false;
         }
-        physical = importCoverageStructuredSyncPhysicalFacts(function, ir, true, actual);
+        physical = importCoverageStructuredSyncPhysicalFacts(function, ir, true, actual, authored);
         reason = physical.reason;
         return physical.status == SyncPhysicalFacts::Status::Complete;
     }
 };
+
+using UnitFlagMap = llvm::DenseMap<Operation*, ss::UnitFlagInfo>;
+
+bool validateUnitFlagOwnership(Inventory& inventory, ss::OwnershipContract contract, UnitFlagMap& transitions,
+                               std::string& reason)
+{
+    bool authored = false;
+    inventory.function.walk([&](Operation* op) {
+        if (auto phase = op->getAttrOfType<AccPhaseAttr>("accPhase"))
+            authored |= phase.getValue() != AccPhase::Unspecified;
+        if (auto phase = op->getAttrOfType<STPhaseAttr>("stPhase"))
+            authored |= phase.getValue() != STPhase::Unspecified;
+    });
+    if (!authored)
+        return true;
+    if (contract != ss::OwnershipContract::A2A3UnitFlagPairedV1) {
+        reason = "authored UnitFlag ownership requires a2a3-unitflag-paired-v1";
+        return false;
+    }
+    if (!inventory.physical.cube) {
+        reason = "a2a3 UnitFlag ownership requires an AIC physical context";
+        return false;
+    }
+
+    std::vector<std::pair<uint64_t, uint64_t>> domains;
+    for (auto* phase : inventory.physical.phases) {
+        bool enabled = false;
+        if (auto attr = phase->elementOp->getAttrOfType<AccPhaseAttr>("accPhase"))
+            enabled |= attr.getValue() != AccPhase::Unspecified;
+        if (auto attr = phase->elementOp->getAttrOfType<STPhaseAttr>("stPhase"))
+            enabled |= attr.getValue() != STPhase::Unspecified;
+        if (!enabled)
+            continue;
+        auto info = ss::unitFlagLoweringFacts(*phase);
+        if (!info || transitions.count(phase->elementOp)) {
+            reason = "authored UnitFlag operation lacks exact paired lowering coverage";
+            return false;
+        }
+        transitions[phase->elementOp] = info;
+        domains.emplace_back(info.base, info.base + info.bytes);
+    }
+    llvm::sort(domains);
+    domains.erase(std::unique(domains.begin(), domains.end()), domains.end());
+    auto metadata = inventory.function->getAttrOfType<DenseI64ArrayAttr>("pto.unitflag_entry_writable");
+    if (!metadata || metadata.size() % 2) {
+        reason = "UnitFlag profile requires base/length pto.unitflag_entry_writable metadata";
+        return false;
+    }
+    std::vector<std::pair<uint64_t, uint64_t>> declared;
+    for (unsigned i = 0; i < metadata.size(); i += 2) {
+        int64_t base = metadata[i], bytes = metadata[i + 1];
+        if (base < 0 || bytes <= 0 || (base % 512) || (bytes % 512) ||
+            uint64_t(base) > UINT64_MAX - uint64_t(bytes)) {
+            reason = "invalid UnitFlag entry-writable interval";
+            return false;
+        }
+        std::pair<uint64_t, uint64_t> interval{uint64_t(base), uint64_t(base) + uint64_t(bytes)};
+        if (!declared.empty() && declared.back().second > interval.first) {
+            reason = "UnitFlag entry-writable intervals overlap or are unsorted";
+            return false;
+        }
+        declared.push_back(interval);
+    }
+    if (declared != domains) {
+        reason = "UnitFlag entry-writable metadata does not exactly cover qualified domains";
+        return false;
+    }
+
+    // Every ACC access overlapping a tracked domain must be exactly the
+    // qualified transition.  Operand and GM effects are intentionally outside
+    // this ownership state machine.
+    for (auto* phase : inventory.physical.phases) {
+        auto transition = transitions.find(phase->elementOp);
+        auto inspect = [&](const auto& entries) {
+            for (auto* memory : entries) {
+                if (!memory || memory->scope != AddressSpace::ACC)
+                    continue;
+                for (uint64_t base : memory->baseAddresses)
+                    for (auto domain : domains)
+                        if (base < domain.second && domain.first < base + memory->allocateSize) {
+                            if (transition == transitions.end() || memory->baseAddresses.size() != 1 ||
+                                base != transition->second.base || memory->allocateSize != transition->second.bytes)
+                                return false;
+                        }
+            }
+            return true;
+        };
+        if (!inspect(phase->useVec) || !inspect(phase->defVec)) {
+            reason = "unqualified or partial ACC access overlaps a UnitFlag ownership domain";
+            return false;
+        }
+    }
+
+    std::map<std::pair<uint64_t, uint64_t>, unsigned> index;
+    for (unsigned i = 0; i < domains.size(); ++i)
+        index[domains[i]] = i;
+    using State = std::vector<uint8_t>;
+    std::function<bool(Region&, State&)> region;
+    std::function<bool(Operation*, State&)> operation = [&](Operation* op, State& state) {
+        auto found = transitions.find(op);
+        if (found != transitions.end()) {
+            auto domain = std::make_pair(found->second.base, found->second.base + found->second.bytes);
+            unsigned id = index.at(domain);
+            bool producer = found->second.kind == ss::UnitFlagInfo::ProducerFinal;
+            if (state[id] != unsigned(producer)) {
+                reason = producer ? "UnitFlag producer requires writable entry ownership" :
+                                    "UnitFlag store requires readable producer ownership";
+                return false;
+            }
+            state[id] = !producer;
+            return true;
+        }
+        if (auto loop = dyn_cast<scf::ForOp>(op)) {
+            auto body = state;
+            if (!region(loop.getRegion(), body) || body != state) {
+                if (reason.empty())
+                    reason = "UnitFlag counted-loop ownership is not balanced";
+                return false;
+            }
+            return true; // includes the original zero-trip edge
+        }
+        if (auto choice = dyn_cast<scf::IfOp>(op)) {
+            auto yes = state, no = state;
+            if (!region(choice.getThenRegion(), yes) || !region(choice.getElseRegion(), no) || yes != no) {
+                if (reason.empty())
+                    reason = "UnitFlag branch ownership does not agree on every successor";
+                return false;
+            }
+            state = std::move(yes);
+            return true;
+        }
+        if (auto loop = dyn_cast<scf::WhileOp>(op)) {
+            auto before = state, after = state;
+            if (!region(loop.getBefore(), before) || before != state || !region(loop.getAfter(), after) ||
+                after != state) {
+                if (reason.empty())
+                    reason = "UnitFlag while ownership is not independently balanced";
+                return false;
+            }
+            return true;
+        }
+        if (op->getNumRegions()) {
+            bool contains = false;
+            op->walk([&](Operation* nested) { contains |= nested != op && transitions.count(nested); });
+            if (contains) {
+                reason = "UnitFlag ownership appears in unsupported region control";
+                return false;
+            }
+        }
+        return true;
+    };
+    region = [&](Region& current, State& state) {
+        if (current.empty())
+            return true;
+        if (!llvm::hasSingleElement(current)) {
+            reason = "UnitFlag ownership requires single-block structured regions";
+            return false;
+        }
+        for (Operation& op : current.front())
+            if (!op.hasTrait<OpTrait::IsTerminator>() && !operation(&op, state))
+                return false;
+        return true;
+    };
+    State state(domains.size(), 1);
+    if (!region(inventory.function.getBody(), state))
+        return false;
+    if (llvm::any_of(state, [](uint8_t writable) { return writable != 1; })) {
+        reason = "UnitFlag ownership is not returned writable at function exit";
+        return false;
+    }
+    return true;
+}
 
 struct Cell {
     AddressSpace space;
@@ -157,22 +331,38 @@ struct Tree {
     c::Program program;
     std::vector<Cell> cells;
     std::vector<Operation*> anchors;
+    // Demand construction needs a real post-body cut even for region kinds
+    // with no implicit terminator.  Native emission binds this synthetic leaf
+    // to the required retirement drain, and reconstruction maps commands
+    // immediately preceding that drain back to the same leaf.
+    unsigned terminal = ~0u;
     llvm::DenseMap<Operation*, unsigned> ids;
     llvm::SmallPtrSet<Operation*, 32> fixedOperations;
     const llvm::SmallPtrSetImpl<Operation*>* ignored = nullptr;
     llvm::DenseMap<Operation*, SmallVector<const CompoundInstanceElement*, 2>> phases;
     std::string reason;
+    bool preserveFixedCuts = false;
     uint64_t widenedSpaces = 0;
     uint64_t periodicScalarWork = 0;
     uint64_t periodicDagVisits = 0, periodicEvaluations = 0;
     InsertSyncGMAliasMode gm;
     llvm::DenseMap<const BaseMemInfo*, InsertSyncGMRoots> gmAccesses;
     std::set<std::pair<unsigned, unsigned>> disjointPairs;
+    struct ScalarArgumentContract {
+        int64_t minimum = 0, maximum = 0, multiple = 1;
+    };
+    std::map<unsigned, ScalarArgumentContract> scalarArguments;
+    const UnitFlagMap* unitFlags = nullptr;
 
-    Tree(Inventory& i, ss::HardwareContract hardware, InsertSyncGMAliasMode alias) : inventory(i), gm(alias)
+    Tree(Inventory& i, ss::HardwareContract hardware, InsertSyncGMAliasMode alias,
+         ss::OwnershipContract ownership = ss::OwnershipContract::None, bool ownershipCredit = true,
+         const UnitFlagMap* qualifiedUnitFlags = nullptr)
+        : inventory(i), gm(alias), unitFlags(qualifiedUnitFlags)
     {
         program.core = i.physical.cube ? ss::Core::AIC : ss::Core::AIV;
         program.target.hardware = hardware;
+        program.target.ownership = ownership;
+        program.target.ownershipCredit = ownershipCredit;
     }
     bool gmContracts()
     {
@@ -197,6 +387,60 @@ struct Tree {
             }
         }
         return true;
+    }
+    bool scalarContracts()
+    {
+        auto raw = inventory.function->getAttr("pto.scalar_argument_preconditions");
+        if (!raw)
+            return true;
+        auto values = dyn_cast<DenseI64ArrayAttr>(raw);
+        if (!values || values.size() % 4) {
+            reason = "scalar argument preconditions require arg/min/max/multiple quadruples";
+            return false;
+        }
+        for (unsigned offset = 0; offset < values.size(); offset += 4) {
+            int64_t argument = values[offset], minimum = values[offset + 1];
+            int64_t maximum = values[offset + 2], multiple = values[offset + 3];
+            if (argument < 0 || uint64_t(argument) >= inventory.function.getNumArguments() ||
+                minimum > maximum || multiple <= 0) {
+                reason = "invalid scalar argument precondition interval";
+                return false;
+            }
+            auto type = dyn_cast<IntegerType>(inventory.function.getArgument(unsigned(argument)).getType());
+            if (!type || !APInt(64, uint64_t(minimum), true).isSignedIntN(type.getWidth()) ||
+                !APInt(64, uint64_t(maximum), true).isSignedIntN(type.getWidth()) ||
+                !scalarArguments.emplace(unsigned(argument), ScalarArgumentContract{minimum, maximum, multiple}).second) {
+                reason = "scalar argument precondition type or argument is invalid";
+                return false;
+            }
+        }
+        return true;
+    }
+    void qualifyNonEmptyLoops()
+    {
+        for (unsigned id = 0; id < program.nodes.size(); ++id) {
+            auto& node = program.nodes[id];
+            if (node.kind != c::Node::For || !anchors[id])
+                continue;
+            auto loop = cast<scf::ForOp>(anchors[id]);
+            APInt lower, step, divisor;
+            if (!matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) || lower != 0 ||
+                !matchPattern(loop.getStep(), m_ConstantInt(&step)) || step != 1)
+                continue;
+            auto division = loop.getUpperBound().getDefiningOp<arith::DivSIOp>();
+            if (!division || !matchPattern(division.getRhs(), m_ConstantInt(&divisor)) ||
+                !divisor.isStrictlyPositive() || !divisor.isSignedIntN(64))
+                continue;
+            auto cast = division.getLhs().getDefiningOp<arith::IndexCastOp>();
+            auto argument = cast ? dyn_cast<BlockArgument>(cast.getIn()) : dyn_cast<BlockArgument>(division.getLhs());
+            if (!argument || argument.getOwner() != &inventory.function.getBody().front())
+                continue;
+            auto contract = scalarArguments.find(argument.getArgNumber());
+            int64_t width = divisor.getSExtValue();
+            if (contract != scalarArguments.end() && contract->second.minimum >= width &&
+                contract->second.multiple % width == 0)
+                node.nonEmpty = true;
+        }
     }
     std::vector<Cell> gmCells()
     {
@@ -567,7 +811,17 @@ struct Tree {
                 c::FixedAction action;
                 if (!fixed(&op, action))
                     return false;
-                pendingFixed.push_back(std::move(action));
+                if (preserveFixedCuts) {
+                    // Keep an insertion cut BEFORE the immutable action, then
+                    // its own transfer node. Arbitrary authored event/CMO/fence
+                    // order must not be regrouped at the next payload node.
+                    unsigned cut = add(node(c::Node::Sequence), &op);
+                    sequence.children.push_back(cut);
+                    unsigned fixedId = add(node(c::Node::Sequence));
+                    program.fixedBefore[fixedId].push_back(std::move(action));
+                    sequence.children.push_back(fixedId);
+                } else
+                    pendingFixed.push_back(std::move(action));
                 continue;
             }
             c::Node current = node(c::Node::Sequence);
@@ -613,6 +867,31 @@ struct Tree {
                     current.kind = c::Node::Operation;
                     current.lane = *source;
                     addEffects(current.effects, *source, phase);
+                    if (program.target.ownershipCredit && unitFlags) {
+                        auto ownership = unitFlags->find(&op);
+                        if (ownership != unitFlags->end())
+                            for (unsigned cell = 0; cell < cells.size(); ++cell)
+                                if (cells[cell].space == AddressSpace::ACC && !cells[cell].whole &&
+                                    cells[cell].lower == ownership->second.base &&
+                                    cells[cell].upper - cells[cell].lower == ownership->second.bytes) {
+                                    // Only the exact ACC ownership edge is
+                                    // discharged. LEFT/RIGHT operands and the
+                                    // store's GM write remain in current.effects.
+                                    current.effects[cell].readers &= ~(1u << *source);
+                                    current.effects[cell].writers &= ~(1u << *source);
+                                }
+                    }
+                    if (program.core == ss::Core::AIC) {
+                        auto matrix = ss::matrixLoweringFacts(*phase);
+                        if (ss::qualifiedAccumulatorInfo(matrix))
+                            for (unsigned cell = 0; cell < cells.size(); ++cell)
+                                if (cells[cell].space == AddressSpace::ACC && !cells[cell].whole &&
+                                    cells[cell].lower == matrix.accumulatorBase &&
+                                    cells[cell].upper - cells[cell].lower == matrix.accumulatorBytes) {
+                                    current.matrix = matrix;
+                                    current.matrixCell = cell;
+                                }
+                    }
                 }
             }
             unsigned child = add(std::move(current), &op);
@@ -628,16 +907,41 @@ struct Tree {
         id = add(std::move(sequence));
         return true;
     }
-    bool build(bool periodicPrecision)
+    bool build(bool periodicPrecision, bool wholeFunction = false)
     {
-        if (!gmContracts())
+        preserveFixedCuts = wholeFunction;
+        if (!gmContracts() || !scalarContracts())
             return false;
         partition();
         unsigned root;
         auto* scope = inventory.physical.lifetimeScope;
         if (!region(
-                scope == inventory.function.getOperation() ? inventory.function.getBody() : scope->getRegion(0), root))
+                wholeFunction || scope == inventory.function.getOperation() ? inventory.function.getBody() : scope->getRegion(0), root))
             return false;
+        if (periodicPrecision) {
+            unsigned tail = add(node(c::Node::Sequence));
+            program.nodes[root].children.push_back(tail);
+            // Program consumers deliberately use the final postorder node as
+            // the root. Keep that invariant while placing the terminal leaf
+            // immediately before it in the numbering.
+            std::swap(program.nodes[root], program.nodes[tail]);
+            std::swap(program.fixedBefore[root], program.fixedBefore[tail]);
+            std::swap(anchors[root], anchors[tail]);
+            for (auto& current : program.nodes)
+                for (unsigned& child : current.children)
+                    if (child == root)
+                        child = tail;
+                    else if (child == tail)
+                        child = root;
+            for (auto& [operation, id] : ids)
+                if (id == root)
+                    id = tail;
+                else if (id == tail)
+                    id = root;
+            terminal = root;
+            root = tail;
+        }
+        qualifyNonEmptyLoops();
         // This optional guard contract is deliberately narrower than For
         // admission. Other steps/bounds still use conservative composition.
         // Publication remains in the loop's own parent Sequence. Choose its
@@ -705,10 +1009,8 @@ struct Tree {
                 }
                 ++work;
                 const auto& child = program.nodes[id];
-                if (child.kind == c::Node::For || child.kind == c::Node::While) {
-                    qualified = false;
-                    return;
-                }
+                if (child.kind == c::Node::For || child.kind == c::Node::While)
+                    return; // Its induction domain is qualified independently.
                 nodes.push_back(id);
                 if (child.kind == c::Node::Choice)
                     choices.push_back(id);
@@ -747,62 +1049,92 @@ struct Tree {
                 return result;
             };
             uint64_t period = 1;
+            std::vector<unsigned> periodicChoices;
             for (unsigned id : choices) {
                 Value condition = cast<scf::IfOp>(anchors[id]).getCondition();
-                if (!depth(condition, 0)) {
-                    qualified = false;
-                    break;
-                }
+                if (!depth(condition, 0))
+                    continue;
                 auto p = scalar.period(condition);
-                if (!p || !*p || *p > 32) {
-                    qualified = false;
-                    break;
-                }
-                period = period / std::gcd(period, *p) * *p;
-                if (period > 32) {
-                    qualified = false;
-                    break;
-                }
+                if (!p || !*p || *p > 32)
+                    continue;
+                uint64_t combined = period / std::gcd(period, *p) * *p;
+                if (combined > 32)
+                    continue;
+                period = combined;
+                periodicChoices.push_back(id);
             }
-            uint64_t evaluation = nodes.size() + choices.size() * depths.size();
-            if (!qualified || evaluation > (MaxWork - std::min(work, MaxWork)) / period)
+            uint64_t evaluation = nodes.size() + periodicChoices.size() * depths.size();
+            if (periodicChoices.empty() || evaluation > (MaxWork - std::min(work, MaxWork)) / period)
                 continue;
             work += evaluation * period;
             std::map<unsigned, uint32_t> truth;
-            for (unsigned id : choices) {
+            for (unsigned id : periodicChoices) {
                 Value condition = cast<scf::IfOp>(anchors[id]).getCondition();
+                uint32_t mask = 0;
+                bool exact = true;
                 for (unsigned ordinal = 0; ordinal < period; ++ordinal) {
                     ++periodicEvaluations;
                     auto value = scalar.evaluate(condition, ordinal);
                     if (!value) {
-                        qualified = false;
+                        exact = false;
                         break;
                     }
                     if (*value)
-                        truth[id] |= uint32_t(1) << ordinal;
+                        mask |= uint32_t(1) << ordinal;
                 }
-                if (!qualified)
-                    break;
+                if (exact)
+                    truth[id] = mask;
             }
-            if (!qualified)
-                continue;
             uint32_t all = period == 32 ? UINT32_MAX : (uint32_t(1) << period) - 1;
-            std::function<void(unsigned, uint32_t)> record = [&](unsigned id, uint32_t active) {
+            std::function<void(unsigned, std::optional<uint32_t>)> record =
+                [&](unsigned id, std::optional<uint32_t> active) {
                 auto& child = program.nodes[id];
-                if (child.kind == c::Node::Sequence || child.kind == c::Node::Choice) {
+                if (child.kind == c::Node::For || child.kind == c::Node::While)
+                    return;
+                auto known = truth.find(id);
+                if ((child.kind == c::Node::Sequence && active) ||
+                    (child.kind == c::Node::Choice && known != truth.end())) {
                     child.periodicOwner = owner;
                     child.periodicPeriod = unsigned(period);
                     child.periodicLower = induction.lower;
-                    child.periodicResidues = child.kind == c::Node::Choice ? truth[id] : active;
+                    child.periodicResidues = child.kind == c::Node::Choice ? known->second : *active;
                 }
                 if (child.kind == c::Node::Choice) {
-                    record(child.children[0], active & truth[id]);
-                    record(child.children[1], active & ~truth[id]);
+                    // An unknown condition retains both successors. Its child
+                    // participation is unknown even if a sibling's parity is exact.
+                    record(child.children[0], active && known != truth.end() ?
+                        std::optional<uint32_t>(*active & known->second) : std::nullopt);
+                    record(child.children[1], active && known != truth.end() ?
+                        std::optional<uint32_t>(*active & ~known->second) : std::nullopt);
                 } else
                     for (unsigned next : child.children)
                         record(next, active);
             };
             record(n.children[0], all);
+        }
+        // Qualify the separate next-iteration predicate directly from the
+        // original SSA. Failure here does not erase an already established
+        // residue fact, and residue failure does not affect this fact.
+        for (unsigned id = 0; id < program.nodes.size(); ++id) {
+            auto& node = program.nodes[id];
+            if (node.kind != c::Node::Choice || !anchors[id])
+                continue;
+            auto choice = dyn_cast<scf::IfOp>(anchors[id]);
+            auto loop = choice ? choice->getParentOfType<scf::ForOp>() : scf::ForOp{};
+            if (!loop || ids.find(loop.getOperation()) == ids.end())
+                continue;
+            APInt step;
+            if (!matchPattern(loop.getStep(), m_ConstantInt(&step)) || step != 1)
+                continue;
+            auto compare = choice.getCondition().getDefiningOp<arith::CmpIOp>();
+            if (!compare || compare.getPredicate() != arith::CmpIPredicate::slt ||
+                compare.getRhs() != loop.getUpperBound())
+                continue;
+            auto add = compare.getLhs().getDefiningOp<arith::AddIOp>();
+            if (!add || !((add.getLhs() == loop.getInductionVar() && add.getRhs() == loop.getStep()) ||
+                          (add.getRhs() == loop.getInductionVar() && add.getLhs() == loop.getStep())))
+                continue;
+            node.nextIterationOwner = ids.lookup(loop.getOperation());
         }
     }
 };
@@ -1219,7 +1551,8 @@ bool reconstruct(
                         continue;
                     }
                     std::vector<c::Mechanism> packets;
-                    while (cursor && sync(cursor) && cursor != drain) {
+                    while (cursor && sync(cursor) && cursor != drain &&
+                           (!tree.preserveFixedCuts || !tree.fixedOperations.contains(cursor))) {
                         c::Mechanism m;
                         if (!parsePacket(cursor, m, tree.program, tree.fixedOperations, precision)) {
                             valid = false;
@@ -1232,7 +1565,13 @@ bool reconstruct(
                     // The retirement drain is not an original cut or completion receipt.
                     // Exit acquisitions immediately before it still belong to the
                     // original terminator boundary.
-                    if (cursor == drain)
+                    if (cursor == drain && tree.terminal != ~0u) {
+                        auto& out = actual[tree.terminal];
+                        out.insert(out.end(), packets.begin(), packets.end());
+                        cursor = cursor->getNextNode();
+                        continue;
+                    }
+                    if (cursor == drain && !tree.ids.count(cursor))
                         cursor = cursor->getNextNode();
                     auto* target = cursor;
                     while (target && !tree.ids.count(target))
@@ -1253,17 +1592,84 @@ bool reconstruct(
 }
 } // namespace
 
+Outcome ss::testing::verifyAuthoredCompositionalSync(
+    func::FuncOp function, InsertSyncGMAliasMode gm, HardwareContract hardware, OwnershipContract ownership,
+    bool ownershipCredit)
+{
+    Outcome out;
+    if (function.isDeclaration() || !llvm::hasSingleElement(function.getBody()) ||
+        (hardware != HardwareContract::Conservative && hardware != HardwareContract::A2A3MmadAccV1) ||
+        (ownership != OwnershipContract::None && ownership != OwnershipContract::A2A3UnitFlagPairedV1)) {
+        out.reason = "invalid authored verification function or hardware contract";
+        return out;
+    }
+    Inventory inventory(function);
+    if (!inventory.build(true, true)) {
+        out.reason = inventory.reason;
+        return out;
+    }
+    UnitFlagMap unitFlags;
+    if (!validateUnitFlagOwnership(inventory, ownership, unitFlags, out.reason))
+        return out;
+    Operation* scope = inventory.physical.lifetimeScope;
+    Block& block = scope == function.getOperation() ? function.getBody().front() : scope->getRegion(0).front();
+    Operation* end = block.empty() ? nullptr : &block.back();
+    if (end && end->hasTrait<OpTrait::IsTerminator>())
+        end = end->getPrevNode();
+    auto drain = dyn_cast_or_null<BarrierOp>(end);
+    if (!drain || drain.getPipe().getPipe() != PIPE::PIPE_ALL ||
+        drain->hasAttr("pto.auto_sync_tail_barrier") || drain->hasAttr("pto.auto_sync_tail_hint")) {
+        out.reason = "authored plan requires an unconditional physical-context retirement drain";
+        return out;
+    }
+    Tree tree(inventory, hardware, gm, ownership, ownershipCredit, &unitFlags);
+    llvm::SmallPtrSet<Operation*, 32> commands;
+    function.walk([&](Operation* op) {
+        if (isa<SetFlagOp, WaitFlagOp>(op) ||
+            (isa<BarrierOp>(op) && cast<BarrierOp>(op).getPipe().getPipe() != PIPE::PIPE_ALL))
+            commands.insert(op);
+    });
+    tree.ignored = &commands;
+    // Include the containing function: priming and cleanup outside a physical
+    // section must participate in the same protocol verification population.
+    if (!tree.build(true, true)) {
+        out.reason = tree.reason;
+        return out;
+    }
+    std::vector<std::vector<c::Mechanism>> actual;
+    ParticipationGuards guards;
+    if (!reconstruct(tree, drain, actual, out.reason, false, guards))
+        return out;
+    auto checked = c::testing::verifyOpenDemands(tree.program, actual);
+    if (!checked.success) {
+        out.reason = checked.reason;
+        return out;
+    }
+    out.status = Outcome::Applied;
+    out.fixedSync = checked.fixedActions;
+    out.work = checked.nodeVisits + checked.cellVisits;
+    for (const auto& site : actual)
+        for (const auto& m : site) {
+            out.barriers += m.kind == c::Mechanism::Barrier;
+            out.handoffs += m.kind == c::Mechanism::Publish ? 1 : m.kind == c::Mechanism::Rendezvous ? 2 : 0;
+        }
+    return out;
+}
+
 Outcome ss::constructCompositionalSync(
-    func::FuncOp function, InsertSyncGMAliasMode gm, HardwareContract hardware, bool enablePrecision)
+    func::FuncOp function, InsertSyncGMAliasMode gm, HardwareContract hardware, bool enablePrecision,
+    OwnershipContract ownership, bool ownershipCredit)
 {
     return testing::constructCompositionalSync(
         function, gm, {}, hardware,
-        enablePrecision ? testing::CompositionConstructor::Demands : testing::CompositionConstructor::Conservative);
+        enablePrecision ? testing::CompositionConstructor::Demands : testing::CompositionConstructor::Conservative,
+        ownership, ownershipCredit);
 }
 
 Outcome ss::testing::constructCompositionalSync(
     func::FuncOp function, InsertSyncGMAliasMode gm, llvm::function_ref<void(func::FuncOp)> mutate,
-    HardwareContract hardware, CompositionConstructor constructor)
+    HardwareContract hardware, CompositionConstructor constructor, OwnershipContract ownership,
+    bool ownershipCredit)
 {
     const bool precision = constructor == CompositionConstructor::Cuts;
     const bool rejectRefinement = constructor == CompositionConstructor::DemandsRejectRefinement;
@@ -1299,6 +1705,10 @@ Outcome ss::testing::constructCompositionalSync(
         out.reason = "unknown structured hardware contract";
         return out;
     }
+    if (ownership != OwnershipContract::None && ownership != OwnershipContract::A2A3UnitFlagPairedV1) {
+        out.reason = "unknown structured ownership contract";
+        return out;
+    }
     auto start = std::chrono::steady_clock::now();
     OwningOpRef<ModuleOp> stage(ModuleOp::create(function.getLoc()));
     SmallVector<ModuleOp> ancestors;
@@ -1325,22 +1735,24 @@ Outcome ss::testing::constructCompositionalSync(
         out.reason = inventory.reason;
         return out;
     }
-    Tree tree(inventory, hardware, gm);
+    UnitFlagMap unitFlags;
+    if (!validateUnitFlagOwnership(inventory, ownership, unitFlags, out.reason))
+        return out;
+    Tree tree(inventory, hardware, gm, ownership, ownershipCredit, &unitFlags);
     if (!tree.build(demandPlacement)) {
         out.reason = tree.reason;
         return out;
     }
-    // Macro internals are opaque original payload. Until demand placement has
-    // an atomic macro transfer, retain the same general conservative engine
-    // for the complete function instead of exposing impossible internal cuts.
+    // Demand construction executes macros atomically and reserves their
+    // private keys globally. The older cut-only API still declines macros.
     const bool hasMacro = llvm::any_of(tree.program.nodes, [](const auto& node) {
         return node.kind == c::Node::Macro;
     });
-    const bool useDemandPlacement = demandPlacement && !hasMacro;
+    const bool useDemandPlacement = demandPlacement;
     const bool useCutPrecision = precision && !hasMacro;
     if (fallbackOnly)
         tree.program.target.compilerKeys = {0};
-    auto selected = hasMacro            ? c::construct(tree.program) :
+    auto selected = hasMacro && !demandPlacement ? c::construct(tree.program) :
                     withoutAlternatives ? c::testing::constructDemandsWithoutAlternativeChoices(tree.program) :
                     rejectAlternatives  ? c::testing::constructDemandsRejectingAlternativeChoices(tree.program) :
                     withoutChildReturns ? c::testing::constructDemandsWithoutChildReturns(tree.program) :
@@ -1359,6 +1771,7 @@ Outcome ss::testing::constructCompositionalSync(
                     withoutReplay       ? c::testing::constructDemandsWithoutAllocationReplay(tree.program) :
                     rejectReplay        ? c::testing::constructDemandsRejectingAllocationReplay(tree.program) :
                     rejectRefinement    ? c::testing::constructDemandsRejectingRefinement(tree.program) :
+                    fallbackOnly        ? c::testing::constructDemandsWithoutPersistentLifetimes(tree.program) :
                     useDemandPlacement  ? c::constructDemands(tree.program) :
                     useCutPrecision     ? c::constructCuts(tree.program) :
                                           c::construct(tree.program);
@@ -1369,7 +1782,6 @@ Outcome ss::testing::constructCompositionalSync(
     SyncPayloadSnapshot snapshot(working);
     llvm::SmallPtrSet<Operation*, 32> originalOperations, generatedOperations;
     working.walk([&](Operation* op) { originalOperations.insert(op); });
-    emit(tree, selected);
     Operation* scope = inventory.physical.lifetimeScope;
     Block& last = scope == working.getOperation() ? working.getBody().front() : scope->getRegion(0).front();
     Operation* terminator = !last.empty() && last.back().hasTrait<OpTrait::IsTerminator>() ? &last.back() : nullptr;
@@ -1378,7 +1790,17 @@ Outcome ss::testing::constructCompositionalSync(
         b.setInsertionPoint(terminator);
     else
         b.setInsertionPointToEnd(&last);
-    b.create<BarrierOp>(working.getLoc(), PipeAttr::get(working.getContext(), PIPE::PIPE_ALL));
+    auto retirement = b.create<BarrierOp>(working.getLoc(), PipeAttr::get(working.getContext(), PIPE::PIPE_ALL));
+    if (tree.terminal != ~0u)
+        tree.anchors[tree.terminal] = retirement.getOperation();
+    emit(tree, selected);
+    // Other exit-cut packets can share the original terminator anchor.  Emit
+    // everything first, then restore the retirement drain as the final command
+    // in the physical context; terminal packets remain immediately before it.
+    if (terminator)
+        retirement->moveBefore(terminator);
+    else
+        retirement->moveBefore(&last, last.end());
     working.walk([&](Operation* op) {
         if (!originalOperations.contains(op))
             generatedOperations.insert(op);
@@ -1403,9 +1825,21 @@ Outcome ss::testing::constructCompositionalSync(
             ++drains;
         }
     });
-    if (drains != 1 || drain->getBlock() != &last || drain->getNextNode() != terminator ||
-        drain->hasAttr("pto.auto_sync_tail_barrier") || drain->hasAttr("pto.auto_sync_tail_hint")) {
-        out.reason = "one explicit unconditional physical-context retirement drain is required";
+    if (drains != 1) {
+        out.reason = "one explicit unconditional physical-context retirement drain is required: emitted " +
+                     std::to_string(drains);
+        return out;
+    }
+    if (drain->getBlock() != &last || drain->getNextNode() != terminator) {
+        out.reason = "the retirement drain must be the final command in its physical context (block=" +
+                     std::string(drain->getBlock() == &last ? "expected" : "other") + ", next=" +
+                     (drain->getNextNode() ? drain->getNextNode()->getName().getStringRef().str() : "none") +
+                     ", terminator=" +
+                     (terminator ? terminator->getName().getStringRef().str() : "none") + ")";
+        return out;
+    }
+    if (drain->hasAttr("pto.auto_sync_tail_barrier") || drain->hasAttr("pto.auto_sync_tail_hint")) {
+        out.reason = "the retirement drain cannot be an inferred tail barrier";
         return out;
     }
     Inventory fresh(working);
@@ -1413,7 +1847,10 @@ Outcome ss::testing::constructCompositionalSync(
         out.reason = fresh.reason;
         return out;
     }
-    Tree rebuilt(fresh, hardware, gm);
+    UnitFlagMap rebuiltUnitFlags;
+    if (!validateUnitFlagOwnership(fresh, ownership, rebuiltUnitFlags, out.reason))
+        return out;
+    Tree rebuilt(fresh, hardware, gm, ownership, ownershipCredit, &rebuiltUnitFlags);
     llvm::SmallPtrSet<Operation*, 32> rebuiltIgnored;
     rebuiltIgnored.insert(generatedOperations.begin(), generatedOperations.end());
     rebuiltIgnored.insert(guards.operations.begin(), guards.operations.end());
@@ -1482,7 +1919,10 @@ Outcome ss::testing::constructCompositionalSync(
     if (std::getenv("PTOAS_LOGICAL_TRACE"))
         llvm::errs()
             << "structured composition precision " << useCutPrecision << " demands " << useDemandPlacement
-            << " macro_fallback " << ((demandPlacement || precision) && hasMacro) << " direct_handoffs "
+            << " ownership_contract "
+            << (ownership == OwnershipContract::None ? "none" : "a2a3-unitflag-paired-v1")
+            << " ownership_credit " << ownershipCredit
+            << " macro_fallback " << (precision && hasMacro) << " direct_handoffs "
             << selected.directHandoffs << " visibility_requirements " << selected.visibilityRequirements
             << " visibility_actions " << out.visibility << " fixed_sync " << out.fixedSync
             << " shared_acknowledgments " << selected.sharedAcknowledgments
@@ -1547,11 +1987,17 @@ Outcome ss::testing::constructCompositionalSync(
             << " deferred_eligibility_work " << selected.deferredEligibilityWork + checked.deferredEligibilityWork
             << " deferred_receipt_cells " << selected.deferredReceiptCells + checked.deferredReceiptCells
             << " deferred_skipped_families " << selected.deferredSkippedFamilies << " deferred_protocol_steps "
-            << selected.deferredProtocolSteps + checked.deferredProtocolSteps << " demand_fallbacks "
+            << selected.deferredProtocolSteps + checked.deferredProtocolSteps << " lifetime_analysis_work "
+            << selected.lifetimeAnalysisWork
+            << " lifetime_storage_units " << selected.lifetimeStorageUnits << " lifetime_candidates "
+            << selected.lifetimeCandidates << " persistent_lifetimes " << selected.persistentLifetimes
+            << " persistent_reader_families " << selected.persistentReaderFamilies
+            << " rejected_persistent_lifetimes " << selected.rejectedPersistentLifetimes
+            << " lifetime_budget_exhausted " << selected.lifetimeBudgetExhausted << " demand_fallbacks "
             << selected.demandFallbacks << " nodes " << tree.program.nodes.size() << " cells " << tree.program.cells
             << " widened_spaces " << tree.widenedSpaces << " node_visits " << selected.nodeVisits + checked.nodeVisits
             << " cell_visits " << selected.cellVisits + checked.cellVisits << " handoffs " << out.handoffs
-            << " cut_cycles " << checked.cutCycles << " allocation_retries " << selected.allocationRetries
+            << " cut_cycles " << selected.cutCycles << " allocation_retries " << selected.allocationRetries
             << " barriers " << out.barriers << " seconds "
             << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() << "\n";
     return out;

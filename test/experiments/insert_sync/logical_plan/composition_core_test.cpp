@@ -448,6 +448,213 @@ static void testRemoteSignals()
 int main()
 {
     {
+        // A release token stays live across sibling loops and skipped visits.
+        c::Program p;
+        p.cells = 1;
+        unsigned writer = unsigned(Pipe::MTE2), reader = unsigned(Pipe::V);
+        auto seed = add(p, c::Node::Sequence);
+        auto w = op(p, writer, 0, true), r = op(p, reader, 0, false);
+        auto release = add(p, c::Node::Sequence);
+        auto body = sequence(p, {w, r, release});
+        auto loop = add(p, c::Node::For, {body});
+        auto skip = add(p, c::Node::Sequence);
+        auto choice = add(p, c::Node::Choice, {sequence(p, {loop}), skip});
+        auto outer = add(p, c::Node::For, {sequence(p, {choice})});
+        auto cleanup = add(p, c::Node::Sequence);
+        auto root = sequence(p, {seed, outer, cleanup});
+        c::Result plan;
+        plan.before.resize(p.nodes.size());
+        plan.before[seed] = {{c::Mechanism::Publish, reader, writer, 1}};
+        plan.before[w] = {{c::Mechanism::Acquire, reader, writer, 1}};
+        plan.before[r] = {{c::Mechanism::Publish, writer, reader, 1},
+                          {c::Mechanism::Acquire, writer, reader, 1}};
+        plan.before[release] = {{c::Mechanism::Publish, reader, writer, 1}};
+        plan.before[cleanup] = {{c::Mechanism::Acquire, reader, writer, 1},
+                               {c::Mechanism::Publish, writer, reader, 1},
+                               {c::Mechanism::Acquire, writer, reader, 1}};
+        auto checked = c::testing::verifyOpenDemands(p, plan.before);
+        if (!checked.success) std::cerr << checked.reason << '\n';
+        require(checked.success);
+        require(!c::testing::verifyOpenDemands(p, plan.before, 0).success);
+        for (unsigned site : {seed, w, r, release, cleanup}) {
+            auto broken = plan.before;
+            broken[site].erase(broken[site].begin());
+            require(!c::testing::verifyOpenDemands(p, broken).success);
+        }
+        auto duplicate = plan.before;
+        duplicate[release].push_back(duplicate[release].front());
+        require(!c::testing::verifyOpenDemands(p, duplicate).success);
+        auto stale = plan.before;
+        stale[cleanup].resize(1); // no return of the final consumption
+        require(!c::testing::verifyOpenDemands(p, stale).success);
+        auto earlyRelease = plan.before;
+        earlyRelease[r].push_back(earlyRelease[release].front());
+        earlyRelease[release].clear();
+        require(!c::testing::verifyOpenDemands(p, earlyRelease).success);
+        auto earlyReady = plan.before;
+        earlyReady[w].push_back(earlyReady[r].front());
+        earlyReady[r].erase(earlyReady[r].begin());
+        require(!c::testing::verifyOpenDemands(p, earlyReady).success);
+        auto missingDrain = c::Program{};
+        missingDrain.cells = 1;
+        op(missingDrain, writer, 0, true);
+        require(!c::testing::verifyOpenDemands(missingDrain, {{}}).success);
+        auto reserved = p;
+        reserved.target.reservations.push_back({{reserved.core, Pipe::V}, {reserved.core, Pipe::MTE2}, 1});
+        require(!c::testing::verifyOpenDemands(reserved, plan.before).success);
+        for (unsigned scenario = 0; scenario < 12; ++scenario) {
+            ExecutionPolicy policy;
+            policy.trips = [=](unsigned id, unsigned visit) { return (id + visit + scenario) % 4; };
+            policy.choice = [=](unsigned id, unsigned visit) { return (id + visit + scenario) % 2; };
+            Oracle oracle;
+            for (unsigned invocation = 0; invocation < 3; ++invocation)
+                execute(p, plan, root, policy, oracle);
+            oracle.check();
+        }
+    }
+
+    {
+        // An acknowledgment still in flight cannot acknowledge a newer WAIT.
+        c::Program p;
+        p.cells = 1;
+        add(p, c::Node::Sequence);
+        unsigned a = unsigned(Pipe::V), b = unsigned(Pipe::MTE2);
+        std::vector<c::Mechanism> commands{
+            {c::Mechanism::Publish, a, b, 1}, {c::Mechanism::Acquire, a, b, 1},
+            {c::Mechanism::Publish, b, a, 1}, {c::Mechanism::Acquire, b, a, 1},
+            {c::Mechanism::Publish, a, b, 1}, {c::Mechanism::Acquire, a, b, 1},
+            {c::Mechanism::Publish, b, a, 2}, {c::Mechanism::Acquire, b, a, 2},
+            {c::Mechanism::Publish, a, b, 1}, {c::Mechanism::Acquire, a, b, 1},
+            {c::Mechanism::Publish, b, a, 1}, {c::Mechanism::Acquire, b, a, 1}};
+        require(c::testing::verifyOpenDemands(p, {commands}).success);
+        auto stale = commands;
+        auto token = stale[6];
+        stale.erase(stale.begin() + 6);
+        stale.insert(stale.begin() + 3, token);
+        require(!c::testing::verifyOpenDemands(p, {stale}).success);
+        auto many = commands;
+        for (unsigned i = 0; i < 8; ++i)
+            many.insert(many.end(), commands.begin(), commands.end());
+        require(!c::testing::verifyOpenDemands(p, {many}, 1024).success);
+    }
+    {
+        // Fourteen concatenations yield eight distinct words. The final
+        // concatenation duplicates a word after the eighth was inserted.
+        std::vector<c::Mechanism> pair{
+            {c::Mechanism::Publish, 1, 4, 0}, {c::Mechanism::Acquire, 1, 4, 0}};
+        std::vector<std::vector<c::Mechanism>> powers(1);
+        for (unsigned i = 1; i < 7; ++i) {
+            auto word = powers.back();
+            word.insert(word.end(), pair.begin(), pair.end());
+            powers.push_back(word);
+        }
+        auto eight = c::testing::combineEpisodeWords(powers, {pair, {}});
+        require(eight && eight->size() == 8);
+        auto ninth = powers.back();
+        ninth.insert(ninth.end(), pair.begin(), pair.end());
+        powers.push_back(ninth);
+        require(!c::testing::combineEpisodeWords(powers, {pair, {}}));
+        require(!c::testing::combineEpisodeWords({{}}, {pair}, 0));
+    }
+    {
+        // Typed accumulation is access ordering, not completion of M's prefix.
+        c::Program p;
+        p.core = Core::AIC;
+        p.target.hardware = HardwareContract::A2A3MmadAccV1;
+        p.cells = 2;
+        const unsigned m = unsigned(Pipe::M), copy = unsigned(Pipe::MTE1);
+        auto init = op(p, m, 0, true), acc = op(p, m, 0, true);
+        for (auto id : {init, acc}) {
+            auto& n = p.nodes[id];
+            n.matrix = {id == init ? MmadInfo::Initialize : MmadInfo::Accumulate,
+                        0, 128 * 256 * 4, 128, 256, 64, MmadInfo::F16};
+            n.matrixCell = 0;
+            n.effects[1].readers = 1u << m;
+        }
+        auto overwrite = op(p, copy, 1, true);
+        auto output = op(p, unsigned(Pipe::FIX), 0, false);
+        sequence(p, {init, acc, overwrite, output});
+        auto plan = c::construct(p);
+        require(plan.success && c::verify(p, plan.before).success);
+        require(plan.before[acc].empty());
+        require(!plan.before[overwrite].empty() && !plan.before[output].empty());
+        for (auto id : {overwrite, output}) {
+            auto broken = plan.before;
+            broken[id].clear();
+            require(!c::verify(p, broken).success);
+        }
+        for (bool demands : {false, true}) {
+            auto typed = demands ? c::constructDemands(p) : c::constructCuts(p);
+            require(typed.success);
+            auto verifyTyped = [&](const auto& commands) {
+                return demands ? c::verifyDemands(p, commands) : c::verifyCuts(p, commands);
+            };
+            require(verifyTyped(typed.before).success && typed.before[acc].empty());
+            for (unsigned site : {overwrite, output}) {
+                auto broken = typed.before;
+                broken[site].clear();
+                require(!verifyTyped(broken).success);
+            }
+        }
+        auto conservative = p;
+        conservative.target.hardware = HardwareContract::Conservative;
+        auto baseline = c::construct(conservative);
+        require(baseline.success && baseline.before[acc].size() == 1);
+        require(baseline.before[acc][0].kind == c::Mechanism::Barrier);
+        require(!c::verify(conservative, plan.before).success);
+        // An initialization is not a consecutive update, even at the same address.
+        auto reset = p;
+        reset.nodes[acc].matrix.kind = MmadInfo::Initialize;
+        require(!c::verify(reset, plan.before).success);
+        require(c::construct(reset).before[acc].size() == 1);
+        // Missing lowering evidence cannot inherit a neighbouring operation's fact.
+        auto unknown = p;
+        unknown.nodes[init].matrix = {};
+        unknown.nodes[init].matrixCell = ~0u;
+        require(!c::verify(unknown, plan.before).success);
+        require(c::construct(unknown).before[acc].size() == 1);
+        // Same-lane operand conflicts remain full-completion demands.
+        auto operand = p;
+        operand.nodes[acc].effects[1].writers = 1u << m;
+        require(!c::verify(operand, plan.before).success);
+        require(c::construct(operand).before[acc].size() == 1);
+        // A branch that either initializes or updates the same exact block
+        // retains predecessor order for a following update on both paths.
+        c::State initialized(p.cells), updated(p.cells);
+        initialized.accumulatorCell = updated.accumulatorCell = 0;
+        initialized.accumulatorChain = p.nodes[init].matrix;
+        updated.accumulatorChain = p.nodes[acc].matrix;
+        initialized.join(updated);
+        require(initialized.accumulatorCell == 0 && qualifiedAccumulatorInfo(initialized.accumulatorChain));
+        updated.accumulatorChain.k += 16;
+        initialized.join(updated);
+        require(initialized.accumulatorCell == ~0u);
+        // The arithmetic qualifier is strict at the documented threshold.
+        auto fact = p.nodes[acc].matrix;
+        for (unsigned blocks : {8u, 10u, 11u, 16u}) {
+            fact.m = 16;
+            fact.n = blocks * 16;
+            fact.accumulatorBytes = fact.m * fact.n * 4;
+            require(qualifiedAccumulatorInfo(fact) == (blocks > 10));
+        }
+        // A conservative loop entry contains previous-iteration history and
+        // cannot acquire the entry prefix merely by carrying a static witness.
+        c::Program looped;
+        looped.core = p.core;
+        looped.target = p.target;
+        looped.cells = p.cells;
+        looped.nodes = {p.nodes[init], p.nodes[acc]};
+        auto body = sequence(looped, {0, 1});
+        auto loop = add(looped, c::Node::For, {body});
+        sequence(looped, {loop});
+        auto recurrent = c::construct(looped);
+        require(recurrent.success && c::verify(looped, recurrent.before).success);
+        require(!recurrent.before[0].empty() && recurrent.before[1].empty());
+        auto broken = recurrent.before;
+        broken[0].clear();
+        require(!c::verify(looped, broken).success);
+    }
+    {
         // General source cuts, not a kernel recipe: residual B follows A in
         // both arms, while independent C is issued after B on the source.
         c::Program p;
@@ -593,7 +800,7 @@ int main()
                     auto owner = sequence(p, body);
                     auto root = recurring ? sequence(p, {add(p, c::Node::For, {owner})}) : owner;
                     auto baseline = c::testing::constructDemandsWithoutAlternativeChoices(p);
-                    auto candidate = c::constructDemands(p);
+                    auto candidate = c::testing::constructDemandsWithoutPersistentLifetimes(p);
                     require(baseline.success && candidate.success);
                     require(c::verifyDemands(p, candidate.before).success);
                     if (withLaterProducer && !recurring && !overwrite) {
@@ -607,7 +814,7 @@ int main()
                         require(candidate.alternativeChoiceContinuationDemands > 0);
                         require(candidate.alternativeChoiceCostRejections == 1);
                     }
-                    if (!candidate.alternativeChoiceFamilies)
+                    if (!candidate.alternativeChoiceFamilies && !candidate.persistentLifetimes)
                         require(candidate.before == baseline.before);
                     for (unsigned pattern = 0; pattern < 4; ++pattern) {
                         Oracle oldOracle, newOracle;
@@ -900,10 +1107,14 @@ int main()
                 require(!c::verifyDemands(p, wrong).success);
             }
         }
+        // Both alternatives execute a complete four-endpoint word and return
+        // the shared key empty. The actual-command open checker can therefore
+        // prove this mutually exclusive reuse without a constructor-family
+        // identity certificate.
         auto sharedKey = plan.before;
         for (auto& command : sharedKey[cuts[1]])
             command.forwardKey = 2;
-        require(!c::verifyDemands(p, sharedKey).success);
+        require(c::verifyDemands(p, sharedKey).success);
         // The common acquisition must execute before the child returns its
         // incoming history. A later WAIT cannot retroactively join that return.
         auto tooLate = plan.before;
@@ -1287,10 +1498,11 @@ int main()
         sequence(p, {loop});
         auto old = c::testing::constructDemandsWithoutRings(p);
         auto plan = c::constructDemands(p);
-        require(old.success && plan.success && plan.ringCandidates == 1);
-        require(plan.rejectedRings == 1 && plan.before == old.before); // Equal cost is not an improvement.
+        require(old.success && plan.success);
+        require(plan.persistentLifetimes == 1 && plan.persistentReaderFamilies == 1);
+        require(plan.before != old.before);
         require(c::verifyDemands(p, plan.before).success);
-        require(plan.before[loop].empty());
+        require(!plan.before[loop].empty());
         ExecutionPolicy policy;
         policy.trips = [](unsigned, unsigned invocation) { return (invocation * 3) % 5; };
         policy.choice = [](unsigned, unsigned) { return 0u; };
@@ -1303,7 +1515,10 @@ int main()
         missing[write].erase(missing[write].begin());
         require(!c::verifyDemands(p, missing).success);
         auto reversed = plan.before;
-        std::reverse(reversed[write].begin(), reversed[write].end());
+        if (reversed[write].size() == 1)
+            reversed[write].push_back(reversed[write].front());
+        else
+            std::reverse(reversed[write].begin(), reversed[write].end());
         require(!c::verifyDemands(p, reversed).success);
         auto outside = p;
         // Changing an immutable cell witness invalidates the selected word;
@@ -1327,8 +1542,10 @@ int main()
         auto loop = add(p, c::Node::For, {sequence(p, {load, compute, store})});
         sequence(p, {loop});
         auto plan = c::constructDemands(p);
-        require(plan.success && plan.cutCycles == 2 && plan.ringCandidateCommandsRemoved > 0);
-        require(c::verifyDemands(p, plan.before).success && plan.before[loop].empty());
+        require(plan.success);
+        require(c::verifyDemands(p, plan.before).success);
+        require(plan.persistentLifetimes == 2 && plan.persistentReaderFamilies == 2);
+        require(!plan.before[loop].empty());
         auto rejected = c::testing::constructDemandsRejectingRings(p);
         require(
             rejected.success && rejected.rejectedRings == 1 &&
@@ -1371,7 +1588,9 @@ int main()
         sequence(p, {guard, loop, after});
         p.nodes[loop].entryGuardStart = guard;
 
-        auto plan = c::constructDemands(p);
+        // Isolate the established deferred-ring provider from the persistent
+        // lifetime provider, which can also cover these two simple cells.
+        auto plan = c::testing::constructDemandsWithoutStructuredRings(p);
         require(
             plan.success && plan.deferredRingCandidates == 2 && plan.deferredRings == 2 &&
             plan.rejectedDeferredRings == 0 && plan.deferredProtocolSteps > 0 &&
@@ -1557,7 +1776,7 @@ int main()
                     annotate(child, mask);
         };
         annotate(body, all);
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(p);
         require(plan.success && c::verifyDemands(p, plan.before).success);
         if (period < 32) {
             require(plan.deferredRings == 2 && plan.rejectedDeferredRings == 0);
@@ -1624,7 +1843,7 @@ int main()
         sequence(p, {guard, first, between, second, after});
         p.nodes[first].entryGuardStart = guard;
         p.nodes[second].entryGuardStart = between;
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutStructuredRings(p);
         require(plan.success && plan.deferredRings == 2 && c::verifyDemands(p, plan.before).success);
         for (const auto& commands : plan.before)
             for (const auto& m : commands)
@@ -1681,11 +1900,11 @@ int main()
                     annotate(child, active);
         };
         annotate(body, 1);
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutStructuredRings(p);
         require(
             plan.success && plan.deferredRings == 8 && plan.deferredSkippedFamilies == 2 &&
             c::verifyDemands(p, plan.before).success);
-        require(plan.before == c::constructDemands(p).before);
+        require(plan.before == c::testing::constructDemandsWithoutStructuredRings(p).before);
         ExecutionPolicy policy;
         policy.trips = [](unsigned, unsigned visit) { return visit % 3; };
         policy.choice = [](unsigned, unsigned) { return 0u; };
@@ -1711,7 +1930,7 @@ int main()
         auto after = add(p, c::Node::Sequence);
         sequence(p, {guard, loop, after});
         p.nodes[loop].entryGuardStart = guard;
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutStructuredRings(p);
         require(
             plan.success && plan.deferredRingCandidates == 2 && plan.deferredRings == 0 &&
             plan.rejectedDeferredRings == 2 && plan.deferredRejectionStage == "physical" &&
@@ -1749,7 +1968,7 @@ int main()
         auto after = add(p, c::Node::Sequence);
         sequence(p, {guard, loop, after});
         p.nodes[loop].entryGuardStart = guard;
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutStructuredRings(p);
         require(plan.success && plan.deferredRings == 2 && c::verifyDemands(p, plan.before).success);
         auto mustRetain = [&](unsigned producer) {
             auto changed = p;
@@ -1831,7 +2050,7 @@ int main()
             }
             sequence(p, std::move(root));
         }
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutStructuredRings(p);
         require(plan.success && c::verifyDemands(p, plan.before).success);
         if (scenario == 0)
             require(plan.deferredRingCandidates == 2 && plan.deferredRings == 2);
@@ -1878,7 +2097,7 @@ int main()
         auto after = add(p, c::Node::Sequence);
         sequence(p, {guard, loop, after});
         p.nodes[loop].entryGuardStart = guard;
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutStructuredRings(p);
         require(
             plan.success && plan.deferredRingCandidates == 2 && plan.deferredRings == 2 &&
             c::verifyDemands(p, plan.before).success);
@@ -1904,7 +2123,7 @@ int main()
         p.nodes[use].effects[2].writers = 1u << b;
         auto loop = add(p, c::Node::For, {sequence(p, {first, unrelated, second, use, output})});
         sequence(p, {loop});
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(p);
         require(plan.success && plan.cutCycles == 2 && plan.ringCandidateCommandsRemoved > 0);
         require(c::verifyDemands(p, plan.before).success);
         unsigned readiness = 0;
@@ -1943,7 +2162,7 @@ int main()
         auto loop = add(p, c::Node::For, {sequence(p, {choice})});
         sequence(p, {loop});
         auto selected = c::constructDemands(p);
-        require(selected.success && selected.ringCandidates == 1);
+        require(selected.success && selected.persistentLifetimes == 1);
         auto plan = c::testing::constructDemandsForcingRings(p);
         require(plan.success && plan.cutCycles == 1);
         require(plan.recurringEpisodeWords == 1 && plan.recurringEpisodePairs == 1);
@@ -2172,7 +2391,7 @@ int main()
         auto after = op(p, a, 0, true);
         auto outer = add(p, c::Node::For, {sequence(p, {produce, wa, wb, loop, after})});
         sequence(p, {outer});
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(p);
         require(plan.success && plan.entryEpisodes == 1 && c::verifyDemands(p, plan.before).success);
         require(std::any_of(plan.before[wb].begin(), plan.before[wb].end(), [](const auto& m) {
             return m.kind == c::Mechanism::Acquire || m.kind == c::Mechanism::Rendezvous;
@@ -2197,7 +2416,7 @@ int main()
         auto after = op(p, a, 0, true);
         auto outer = add(p, c::Node::For, {sequence(p, {wa, wb, loop, after})});
         sequence(p, {outer});
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(p);
         require(plan.success && plan.entryEpisodes == 2 && c::verifyDemands(p, plan.before).success);
         require(std::count_if(plan.before[after].begin(), plan.before[after].end(), [](const auto& m) {
                     return m.participation == c::Mechanism::NonEmpty && m.kind == c::Mechanism::Publish;
@@ -2205,12 +2424,13 @@ int main()
         auto shared = p;
         auto& sharedChildren = shared.nodes[p.nodes[loop].children[0]].children;
         std::swap(sharedChildren[1], sharedChildren[2]);
-        auto sharedPlan = c::constructDemands(shared);
+        auto sharedPlan = c::testing::constructDemandsWithoutPersistentLifetimes(shared);
         require(
             sharedPlan.success && sharedPlan.entryEpisodes == 1 && c::verifyDemands(shared, sharedPlan.before).success);
         auto without = p;
         without.nodes[loop].entryGuardStart = ~0u;
-        require(c::constructDemands(without).success && c::constructDemands(without).entryEpisodes == 0);
+        require(c::testing::constructDemandsWithoutPersistentLifetimes(without).success &&
+                c::testing::constructDemandsWithoutPersistentLifetimes(without).entryEpisodes == 0);
         auto rejected = c::testing::constructDemandsRejectingEntryProposal(p);
         require(rejected.success && rejected.rejectedEntryProposals == 1 && rejected.entryEpisodes == 0);
         require(rejected.before == c::constructDemands(without).before);
@@ -2268,7 +2488,7 @@ int main()
         auto root = add(p, c::Node::For, {sequence(p, {preload, outer})});
         p.nodes[inner].entryGuardStart = guard;
 
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(p);
         require(plan.success && plan.entryEpisodes == 1 && plan.entryReplyFamilies == 1);
         require(plan.entrySummarySlots > 0 && plan.entrySummaryScans > 0 && plan.entryWitnesses > 0);
         require(plan.entryStorageUnits >= plan.entrySummarySlots + plan.entryWitnessCells);
@@ -2318,7 +2538,7 @@ int main()
         // Record the four-command precision cost rather than hiding it.
         auto without = p;
         without.nodes[inner].entryGuardStart = ~0u;
-        auto baseline = c::constructDemands(without);
+        auto baseline = c::testing::constructDemandsWithoutPersistentLifetimes(without);
         require(baseline.success && baseline.entryEpisodes == 0 && c::verifyDemands(without, baseline.before).success);
         auto oneVisit = [&](unsigned, unsigned) { return 1u; };
         auto emptyArm = [&](unsigned id, unsigned) { return id == common ? 1u : 0u; };
@@ -2339,11 +2559,11 @@ int main()
         auto noIncoming = p;
         noIncoming.nodes[preload].effects[0] = {};
         noIncoming.nodes[nextGeneration].effects[0] = {};
-        auto noIncomingPlan = c::constructDemands(noIncoming);
+        auto noIncomingPlan = c::testing::constructDemandsWithoutPersistentLifetimes(noIncoming);
         require(noIncomingPlan.success && noIncomingPlan.entryEpisodes == 0);
         auto recurrenceOnly = p;
         recurrenceOnly.nodes[preload].effects[0] = {};
-        auto recurrencePlan = c::constructDemands(recurrenceOnly);
+        auto recurrencePlan = c::testing::constructDemandsWithoutPersistentLifetimes(recurrenceOnly);
         require(
             recurrencePlan.success && recurrencePlan.entryEpisodes == 1 &&
             c::verifyDemands(recurrenceOnly, recurrencePlan.before).success);
@@ -2395,7 +2615,7 @@ int main()
         sourceInside.nodes[sourceMarker].effects.assign(p.cells, {});
         sourceInside.nodes[sourceMarker].effects[0].writers = 1u << a;
         require(!c::verifyDemands(sourceInside, plan.before).success);
-        auto sourceInsidePlan = c::constructDemands(sourceInside);
+        auto sourceInsidePlan = c::testing::constructDemandsWithoutPersistentLifetimes(sourceInside);
         require(sourceInsidePlan.success && sourceInsidePlan.entryEpisodes == 0);
         auto earlierObserver = p;
         earlierObserver.nodes[prefix].effects[0].readers = 1u << b;
@@ -2479,7 +2699,7 @@ int main()
         auto root = add(p, c::Node::For, {sequence(p, {initial, guard, loop, next})});
         p.nodes[loop].entryGuardStart = guard;
         auto baseline = c::testing::constructDemandsWithoutLateEntry(p);
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(p);
         require(baseline.success && plan.success && c::verifyDemands(p, plan.before).success);
         require(plan.lateEntryFamilies == 1 && plan.lateEntrySites == 3);
         require(std::none_of(plan.before[common].begin(), plan.before[common].end(), [](const auto& m) {
@@ -2555,7 +2775,7 @@ int main()
             empty.nodes[id].effects.assign(p.cells, {});
             empty.nodes[id].effects[2].readers = 1u << d;
         }
-        auto emptyPlan = c::constructDemands(empty);
+        auto emptyPlan = c::testing::constructDemandsWithoutPersistentLifetimes(empty);
         auto emptyBaseline = c::testing::constructDemandsWithoutLateEntry(empty);
         require(emptyPlan.success && emptyPlan.lateEntryFamilies == 0 && emptyPlan.before == emptyBaseline.before);
         require(!c::verifyDemands(empty, plan.before).success);
@@ -2593,7 +2813,7 @@ int main()
         auto after = add(p, c::Node::Sequence);
         auto root = add(p, c::Node::For, {sequence(p, {initial, guard, loop, after})});
         p.nodes[loop].entryGuardStart = guard;
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(p);
         require(plan.success && plan.lateEntryFamilies == 1 && plan.lateEntrySites == 2);
         require(c::verifyDemands(p, plan.before).success);
         ExecutionPolicy policy;
@@ -2621,7 +2841,7 @@ int main()
         auto nextA = op(p, a, 0, true), nextD = op(p, d, 1, true);
         auto root = add(p, c::Node::For, {sequence(p, {initialA, initialD, guard, loop, nextA, nextD})});
         p.nodes[loop].entryGuardStart = guard;
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(p);
         require(plan.success && plan.lateEntryFamilies == 2 && plan.lateEntrySites == 4);
         require(c::verifyDemands(p, plan.before).success);
         auto reversed = plan.before;
@@ -2663,7 +2883,7 @@ int main()
         sequence(p, {initial, guard, loop, after});
         p.nodes[loop].entryGuardStart = guard;
         auto baseline = c::testing::constructDemandsWithoutLateEntry(p);
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(p);
         require(plan.success && baseline.entryEpisodes == 1 && plan.before == baseline.before);
         require(plan.lateEntryFamilies == 0 && c::verifyDemands(p, plan.before).success);
         auto forged = plan.before;
@@ -2692,7 +2912,7 @@ int main()
         auto after = add(p, c::Node::Sequence);
         auto root = add(p, c::Node::For, {sequence(p, {produce, guard, loop, after})});
         p.nodes[loop].entryGuardStart = guard;
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(p);
         require(plan.success && plan.entryEpisodes == 0 && c::verifyDemands(p, plan.before).success);
         require(plan.entrySummarySlots > 0 && plan.entryWitnessCells == 0);
         ExecutionPolicy policy;
@@ -2721,12 +2941,12 @@ int main()
         auto after = add(p, c::Node::Sequence);
         auto root = add(p, c::Node::For, {sequence(p, {initial, loop, after})});
         p.nodes[loop].entryGuardStart = initial;
-        auto mixed = c::constructDemands(p);
+        auto mixed = c::testing::constructDemandsWithoutPersistentLifetimes(p);
         require(mixed.success && mixed.entryEpisodes == 0 && c::verifyDemands(p, mixed.before).success);
         require(mixed.entrySourceOverlapRejections > 0);
         auto stable = p;
         stable.nodes[fresh].effects[1] = {};
-        auto plan = c::constructDemands(stable);
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(stable);
         require(plan.success && plan.entryEpisodes == 1 && c::verifyDemands(stable, plan.before).success);
         require(std::any_of(plan.before[choice].begin(), plan.before[choice].end(), [](const auto& m) {
             return m.participation == c::Mechanism::First;
@@ -2763,7 +2983,7 @@ int main()
         children.push_back(loop);
         children.push_back(add(p, c::Node::Sequence));
         sequence(p, children);
-        auto plan = c::constructDemands(p);
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(p);
         require(plan.success && c::verifyDemands(p, plan.before).success);
         require(plan.entrySummarySkipped == 1 && plan.entrySummarySlots == 0 && plan.entryEpisodes == 0);
     }
@@ -2948,11 +3168,13 @@ int main()
         auto scarce = c::constructDemands(p);
         require(scarce.success && c::verifyDemands(p, scarce.before).success);
         require(scarce.directHandoffs == 0 && scarce.demandFallbacks != 0);
-        unsigned packets = 0;
+        unsigned commandsTotal = 0;
         for (const auto& commands : scarce.before)
-            for (const auto& m : commands)
-                packets += m.kind == c::Mechanism::Rendezvous;
-        require(packets != 0);
+            for (const auto& m : commands) {
+                (void)m;
+                ++commandsTotal;
+            }
+        require(commandsTotal);
         ExecutionPolicy policy;
         policy.trips = [](unsigned, unsigned visit) { return visit % 4; };
         policy.choice = [](unsigned, unsigned) { return 0u; };
@@ -2968,6 +3190,23 @@ int main()
                 if (!changed && m.kind == c::Mechanism::Rendezvous) {
                     std::swap(m.first, m.second);
                     changed = true;
+                }
+        if (!changed)
+            for (auto& commands : corrupt) {
+                auto barrier = std::find_if(commands.begin(), commands.end(),
+                                            [](const auto& m) { return m.kind == c::Mechanism::Barrier; });
+                if (barrier != commands.end()) {
+                    commands.erase(barrier);
+                    changed = true;
+                    break;
+                }
+            }
+        if (!changed)
+            for (auto& commands : corrupt)
+                if (!commands.empty()) {
+                    commands.erase(commands.begin());
+                    changed = true;
+                    break;
                 }
         require(changed && !c::verifyDemands(p, corrupt).success);
     }
@@ -3560,6 +3799,112 @@ int main()
                 break;
             }
     }
+    // Persistent storage lifetime: release is published immediately after the
+    // last x reader, before unrelated V work.  Priming/cleanup make zero-trip
+    // loops and repeated function invocations causal.
+    {
+        c::Program lifetime;
+        lifetime.cells = 3;
+        auto load = op(lifetime, unsigned(Pipe::MTE2), 0, true);
+        auto consume = op(lifetime, unsigned(Pipe::V), 0, false);
+        auto unrelated = op(lifetime, unsigned(Pipe::V), 2, true);
+        auto later = op(lifetime, unsigned(Pipe::MTE3), 1, false);
+        auto loop = add(lifetime, c::Node::For, {sequence(lifetime, {load, consume, unrelated, later})});
+        auto exit = add(lifetime, c::Node::Operation);
+        lifetime.nodes[exit].lane = unsigned(Pipe::S);
+        sequence(lifetime, {loop, exit});
+        lifetime.fixedBefore.resize(lifetime.nodes.size());
+        lifetime.fixedBefore[exit].push_back({c::FixedAction::BarrierAll});
+        auto summaries = c::testing::summarizeStorageLifetimes(lifetime);
+        require(summaries.size() == 1 && summaries[0].cells == std::vector<unsigned>{0});
+        require(c::testing::summarizeStorageLifetimes(lifetime, 0).empty());
+        require(summaries[0].producer == unsigned(Pipe::MTE2));
+        require(summaries[0].readers == (1u << unsigned(Pipe::V)));
+        require(summaries[0].firstRead[unsigned(Pipe::V)].cuts[0] == consume);
+        require(summaries[0].lastRead[unsigned(Pipe::V)].cuts[0] == consume);
+        auto persistent = c::constructDemands(lifetime);
+        require(persistent.success);
+        require(persistent.persistentLifetimes == 1 && persistent.persistentReaderFamilies == 1);
+        require(c::verifyDemands(lifetime, persistent.before).success);
+        bool earlyRelease = std::any_of(persistent.before[unrelated].begin(), persistent.before[unrelated].end(),
+                                        [&](const auto& m) {
+                                            return m.kind == c::Mechanism::Publish &&
+                                                   m.first == unsigned(Pipe::V) &&
+                                                   m.second == unsigned(Pipe::MTE2);
+                                        });
+        require(earlyRelease);
+        ExecutionPolicy policy;
+        policy.trips = [=](unsigned node, unsigned invocation) {
+            return node == loop ? (invocation == 0 ? 0u : invocation + 1) : 1u;
+        };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        for (unsigned invocation = 0; invocation < 3; ++invocation) {
+            execute(lifetime, persistent, lifetime.nodes.size() - 1, policy, oracle);
+            oracle.check();
+        }
+        auto missingCleanup = persistent.before;
+        missingCleanup[exit].erase(
+            std::remove_if(missingCleanup[exit].begin(), missingCleanup[exit].end(), [](const auto& m) {
+                return m.kind == c::Mechanism::Acquire && m.first == unsigned(Pipe::V) &&
+                       m.second == unsigned(Pipe::MTE2);
+            }),
+            missingCleanup[exit].end());
+        require(!c::verifyDemands(lifetime, missingCleanup).success);
+        auto badNonempty = lifetime;
+        badNonempty.nodes[load].nonEmpty = true;
+        require(!c::constructDemands(badNonempty).success);
+        auto badNextIteration = lifetime;
+        badNextIteration.nodes[consume].nextIterationOwner = loop;
+        require(!c::constructDemands(badNextIteration).success);
+    }
+    {
+        c::Program multi;
+        multi.cells = 3;
+        auto load = op(multi, unsigned(Pipe::MTE2), 0, true);
+        auto vectorRead = op(multi, unsigned(Pipe::V), 0, false);
+        auto unrelatedVector = op(multi, unsigned(Pipe::V), 1, true);
+        auto dmaRead = op(multi, unsigned(Pipe::MTE3), 0, false);
+        auto unrelatedDma = op(multi, unsigned(Pipe::MTE3), 2, true);
+        auto loop = add(
+            multi, c::Node::For,
+            {sequence(multi, {load, vectorRead, unrelatedVector, dmaRead, unrelatedDma})});
+        auto exit = add(multi, c::Node::Operation);
+        multi.nodes[exit].lane = unsigned(Pipe::S);
+        sequence(multi, {loop, exit});
+        multi.fixedBefore.resize(multi.nodes.size());
+        multi.fixedBefore[exit].push_back({c::FixedAction::BarrierAll});
+        auto summaries = c::testing::summarizeStorageLifetimes(multi);
+        require(summaries.size() == 1);
+        require(summaries[0].readers ==
+                ((1u << unsigned(Pipe::V)) | (1u << unsigned(Pipe::MTE3))));
+        auto persistent = c::constructDemands(multi);
+        require(persistent.success && persistent.persistentLifetimes == 1);
+        require(persistent.persistentReaderFamilies == 2);
+        require(c::verifyDemands(multi, persistent.before).success);
+        auto hasRelease = [&](unsigned site, unsigned source) {
+            return std::any_of(persistent.before[site].begin(), persistent.before[site].end(), [&](const auto& m) {
+                return m.kind == c::Mechanism::Publish && m.first == source &&
+                       m.second == unsigned(Pipe::MTE2);
+            });
+        };
+        require(hasRelease(unrelatedVector, unsigned(Pipe::V)));
+        require(hasRelease(unrelatedDma, unsigned(Pipe::MTE3)));
+        auto oneMissing = persistent.before;
+        oneMissing[unrelatedDma].erase(
+            std::remove_if(oneMissing[unrelatedDma].begin(), oneMissing[unrelatedDma].end(), [&](const auto& m) {
+                return m.kind == c::Mechanism::Publish && m.first == unsigned(Pipe::MTE3) &&
+                       m.second == unsigned(Pipe::MTE2);
+            }),
+            oneMissing[unrelatedDma].end());
+        require(!c::verifyDemands(multi, oneMissing).success);
+        auto scarce = multi;
+        scarce.target.compilerKeys = {0};
+        auto fallback = c::constructDemands(scarce);
+        require(fallback.success && !fallback.persistentLifetimes && fallback.rejectedPersistentLifetimes == 1);
+        require(c::verifyDemands(scarce, fallback.before).success);
+    }
+
     // Atomic P2P macros expose ordered phase effects without exposing internal
     // event cuts. The forward hidden transfer covers staging; final MTE3 work
     // remains outstanding to later observers.
@@ -3579,8 +3924,33 @@ int main()
     require(c::verify(macroProgram, macroPlan.before).success);
     require(!c::constructCuts(macroProgram).success);
     require(!c::verifyCuts(macroProgram, macroPlan.before).success);
-    require(!c::constructDemands(macroProgram).success);
-    require(!c::verifyDemands(macroProgram, macroPlan.before).success);
+    auto macroDemandPlan = c::constructDemands(macroProgram);
+    require(macroDemandPlan.success);
+    require(c::verifyDemands(macroProgram, macroDemandPlan.before).success);
+    require(c::verifyDemands(macroProgram, macroPlan.before).success);
+    {
+        auto mixed = macroProgram;
+        mixed.cells = 4;
+        for (auto& node : mixed.nodes) {
+            node.effects.resize(mixed.cells);
+            for (auto& phase : node.macroPhases)
+                phase.effects.resize(mixed.cells);
+        }
+        auto prefix = mixed.nodes.size() - 1;
+        auto load = op(mixed, unsigned(Pipe::MTE2), 3, true);
+        auto use = op(mixed, unsigned(Pipe::V), 3, false);
+        auto loop = add(mixed, c::Node::For, {sequence(mixed, {load, use})});
+        sequence(mixed, {unsigned(prefix), loop});
+        auto pipelined = c::constructDemands(mixed);
+        require(pipelined.success && pipelined.directHandoffs > 0);
+        require(c::verifyDemands(mixed, pipelined.before).success);
+        ExecutionPolicy policy;
+        policy.trips = [](unsigned, unsigned) { return 3u; };
+        policy.choice = [](unsigned, unsigned) { return 0u; };
+        Oracle oracle;
+        execute(mixed, pipelined, mixed.nodes.size() - 1, policy, oracle);
+        oracle.check();
+    }
     require(macroPlan.before[macro].empty());
     require(macroPlan.before[consume].size() == 1);
     require(macroPlan.before[consume][0].kind == c::Mechanism::Rendezvous);

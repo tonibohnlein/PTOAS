@@ -285,6 +285,18 @@ public:
 
 } // namespace
 
+bool mlir::pto::structured_sync::qualifiedAccumulatorInfo(const MmadInfo &a) {
+    // Strictly above ten avoids the prose/code ambiguity at exactly ten.
+    // Multiples of 16 and <=4095 also keep arithmetic and L0C coverage exact.
+    if ((a.kind!=MmadInfo::Initialize && a.kind!=MmadInfo::Accumulate) ||
+        (a.input!=MmadInfo::F16 && a.input!=MmadInfo::BF16) ||
+        !a.m || !a.n || !a.k || a.m>4095 || a.n>4095 || a.k>4095 ||
+        a.m%16 || a.n%16 || a.k%16 || (a.m/16)*(a.n/16)<=10 ||
+        a.accumulatorBase%1024 || a.accumulatorBytes!=4*a.m*a.n ||
+        a.accumulatorBase>uint64_t(INT64_MAX)-a.accumulatorBytes) return false;
+    return true;
+}
+
 // This function proves only the documented accumulator write/read order. A
 // successful result is intentionally NOT installed in Completion::cuts or
 // EventCausality. In particular it cannot acknowledge an event or free operands.
@@ -304,20 +316,9 @@ bool mlir::pto::structured_sync::intrinsicAccumulatorOrder(
     const Lane matrixLane{Core::AIC,Pipe::M};
     if (source.lane!=matrixLane || target.lane!=matrixLane ||
         source.segment!=target.segment) return false;
-    auto qualified=[](const MmadInfo &a) {
-        // Strictly above ten avoids the prose/code ambiguity at exactly ten.
-        // Multiples of 16 and <=4095 also keep arithmetic and L0C coverage exact.
-        if ((a.kind!=MmadInfo::Initialize && a.kind!=MmadInfo::Accumulate) ||
-            (a.input!=MmadInfo::F16 && a.input!=MmadInfo::BF16) ||
-            !a.m || !a.n || !a.k || a.m>4095 || a.n>4095 || a.k>4095 ||
-            a.m%16 || a.n%16 || a.k%16 || (a.m/16)*(a.n/16)<=10 ||
-            a.accumulatorBase%1024 || a.accumulatorBytes!=4*a.m*a.n ||
-            a.accumulatorBase>uint64_t(INT64_MAX)-a.accumulatorBytes) return false;
-        return true;
-    };
-    if (!qualified(source.matrix)) return false;
+    if (!qualifiedAccumulatorInfo(source.matrix)) return false;
     auto continues=[&](const MmadInfo &a) {
-        return qualified(a) && a.kind==MmadInfo::Accumulate &&
+        return qualifiedAccumulatorInfo(a) && a.kind==MmadInfo::Accumulate &&
             a.accumulatorBase==source.matrix.accumulatorBase &&
             a.accumulatorBytes==source.matrix.accumulatorBytes &&
             a.m==source.matrix.m && a.n==source.matrix.n &&

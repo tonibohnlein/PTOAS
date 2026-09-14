@@ -70,6 +70,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     logicalWorkBudget = options.logicalWorkBudget;
     gmAlias = options.gmAlias;
     hardwareContract = options.hardwareContract;
+    ownershipContract = options.ownershipContract;
+    ownershipCredit = options.ownershipCredit;
     structuredPrecision = options.structuredPrecision;
   }
   PTOInsertSyncPass(const PTOInsertSyncPass &other) : PTOInsertSyncBase(other) {
@@ -77,6 +79,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     logicalWorkBudget = other.logicalWorkBudget;
     gmAlias = other.gmAlias;
     hardwareContract = other.hardwareContract;
+    ownershipContract = other.ownershipContract;
+    ownershipCredit = other.ownershipCredit;
     structuredPrecision = other.structuredPrecision;
   }
   Option<std::string> planner{*this, "planner", llvm::cl::init("existing"),
@@ -88,6 +92,10 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
   Option<std::string> hardwareContract{*this, "hardware-contract", llvm::cl::init("conservative"),
       llvm::cl::desc("Structured hardware premises: conservative or a2a3-mmad-acc-v1 (experimental)")};
+  Option<std::string> ownershipContract{*this, "ownership-contract", llvm::cl::init("none"),
+      llvm::cl::desc("Authored ownership premise: none or a2a3-unitflag-paired-v1 (experimental)")};
+  Option<bool> ownershipCredit{*this, "ownership-credit", llvm::cl::init(true),
+      llvm::cl::desc("Allow a validated authored UnitFlag pair to discharge only its ACC ownership edge")};
   Option<bool> structuredPrecision{*this, "structured-precision", llvm::cl::init(true),
       llvm::cl::desc("Enable precision within composition; structured retains periodic precision during migration")};
 
@@ -120,7 +128,10 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       result = structured_sync::constructCompositionalSync(func, *contract,
           hardwareContract == "a2a3-mmad-acc-v1"
               ? structured_sync::HardwareContract::A2A3MmadAccV1
-              : structured_sync::HardwareContract::Conservative, structuredPrecision);
+              : structured_sync::HardwareContract::Conservative, structuredPrecision,
+          ownershipContract == "a2a3-unitflag-paired-v1"
+              ? structured_sync::OwnershipContract::A2A3UnitFlagPairedV1
+              : structured_sync::OwnershipContract::None, ownershipCredit);
     else if (planner == "structured")
       result = structured_sync::constructStructuredSync(func, *contract,
           hardwareContract == "a2a3-mmad-acc-v1"
@@ -138,6 +149,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     }
     auto i64 = IntegerType::get(&getContext(), 64);
     func->setAttr("pto.insert_sync.hardware_contract", StringAttr::get(&getContext(), hardwareContract));
+    func->setAttr("pto.insert_sync.ownership_contract", StringAttr::get(&getContext(), ownershipContract));
+    func->setAttr("pto.insert_sync.ownership_credit", BoolAttr::get(&getContext(), ownershipCredit));
     if (isStructuredEngine())
       func->setAttr("pto.insert_sync.precision", BoolAttr::get(&getContext(), structuredPrecision));
     func->setAttr("pto.insert_sync.logical_status", StringAttr::get(&getContext(), status));
@@ -180,6 +193,11 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     if ((hardwareContract != "conservative" && hardwareContract != "a2a3-mmad-acc-v1") ||
         (hardwareContract != "conservative" && !isStructuredEngine())) {
       func.emitError("hardware-contract requires structured or composition and must be conservative or a2a3-mmad-acc-v1");
+      signalPassFailure(); return;
+    }
+    if ((ownershipContract != "none" && ownershipContract != "a2a3-unitflag-paired-v1") ||
+        (ownershipContract != "none" && planner != "composition")) {
+      func.emitError("ownership-contract requires composition and must be none or a2a3-unitflag-paired-v1");
       signalPassFailure(); return;
     }
     // Neither constructor imports authored event ownership. Classify once,

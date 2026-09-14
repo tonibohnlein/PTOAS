@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+// Bias-table release must follow the biased MMAD and precede the unrelated
+// plain MMAD on PIPE_M.
+module attributes {pto.target_arch = "a3"} {
+  func.func @persistent_bias_table(%out: !pto.partition_tensor_view<16x16xf32>,
+                                   %lower: index, %upper: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %one = arith.constant 1 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 1024 : i64
+    %a2 = arith.constant 2048 : i64
+    %lhs = pto.alloc_tile addr = %a0 : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>
+    %rhs = pto.alloc_tile addr = %a0 : !pto.tile_buf<right, 16x16xf16, blayout=row_major, slayout=col_major>
+    %acc = pto.alloc_tile addr = %a0 : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+    %acc2 = pto.alloc_tile addr = %a1 : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>
+    %bias_in = pto.alloc_tile addr = %a0 : !pto.tile_buf<mat, 1x16xf32, blayout=row_major, slayout=none_box>
+    %bias_new = pto.alloc_tile addr = %a2 : !pto.tile_buf<mat, 1x16xf32, blayout=row_major, slayout=none_box>
+    %bias = pto.alloc_tile addr = %a0 : !pto.tile_buf<bias, 1x16xf32, blayout=row_major, slayout=none_box>
+    pto.section.cube {
+      scf.for %iv = %lower to %upper step %one {
+        pto.tmov ins(%bias_in : !pto.tile_buf<mat, 1x16xf32, blayout=row_major, slayout=none_box>) outs(%bias : !pto.tile_buf<bias, 1x16xf32, blayout=row_major, slayout=none_box>)
+        pto.tmatmul.bias ins(%lhs, %rhs, %bias : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 16x16xf16, blayout=row_major, slayout=col_major>, !pto.tile_buf<bias, 1x16xf32, blayout=row_major, slayout=none_box>) outs(%acc : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+        pto.tmatmul ins(%lhs, %rhs : !pto.tile_buf<left, 16x16xf16, blayout=col_major, slayout=row_major>, !pto.tile_buf<right, 16x16xf16, blayout=row_major, slayout=col_major>) outs(%acc2 : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>)
+        pto.tmov ins(%bias_new : !pto.tile_buf<mat, 1x16xf32, blayout=row_major, slayout=none_box>) outs(%bias : !pto.tile_buf<bias, 1x16xf32, blayout=row_major, slayout=none_box>)
+        pto.tstore ins(%acc : !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major, fractal=1024>) outs(%out : !pto.partition_tensor_view<16x16xf32>)
+      }
+    }
+    return
+  }
+}

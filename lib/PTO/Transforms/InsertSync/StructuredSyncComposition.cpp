@@ -24,6 +24,54 @@ void merge(c::Effects& a, const c::Effects& b)
     }
 }
 Lane lane(const c::Program& p, unsigned id) { return {p.core, static_cast<Pipe>(id)}; }
+bool continuesAccumulator(const c::Program& p, const c::Node& n, const c::State& state)
+{
+    const auto& previous = state.accumulatorChain;
+    const auto& next = n.matrix;
+    return p.core == Core::AIC && p.target.hardware == HardwareContract::A2A3MmadAccV1 &&
+           n.lane == unsigned(Pipe::M) && n.matrixCell < p.cells &&
+           state.accumulatorCell == n.matrixCell && next.kind == MmadInfo::Accumulate &&
+           qualifiedAccumulatorInfo(previous) && qualifiedAccumulatorInfo(next) &&
+           previous.accumulatorBase == next.accumulatorBase && previous.accumulatorBytes == next.accumulatorBytes &&
+           previous.m == next.m && previous.n == next.n && previous.input == next.input;
+}
+// Query-only filtering: narrow update ordering never clears pending operands,
+// transfers a prefix, publishes GM, or acknowledges an event.
+uint8_t operationDemands(const c::Program& p, const c::Node& n, const c::State& state)
+{
+    if (!continuesAccumulator(p, n, state))
+        return state.demands(n.lane, n.effects);
+    uint8_t result = 0;
+    for (unsigned cell = 0; cell < p.cells; ++cell) {
+        uint8_t demand = 0;
+        if (n.effects[cell].readers || n.effects[cell].writers)
+            demand |= state.pending[n.lane][cell].writers;
+        if (n.effects[cell].writers)
+            demand |= state.pending[n.lane][cell].readers;
+        if (cell == n.matrixCell)
+            demand &= ~(uint8_t(1u) << unsigned(Pipe::M));
+        result |= demand;
+    }
+    return result;
+}
+template <typename StateT>
+void seedOperation(const c::Program& p, const c::Node& n, StateT& state)
+{
+    const bool matrix = n.lane == unsigned(Pipe::M);
+    bool qualified = matrix && n.matrixCell < p.cells && qualifiedAccumulatorInfo(n.matrix);
+    if (qualified) {
+        const auto& pending = state.pending[n.lane][n.matrixCell];
+        // Start a certificate only after older conflicting work is acquired,
+        // or extend a chain whose narrow update order was already established.
+        qualified = !((pending.readers | pending.writers) & (1u << unsigned(Pipe::M))) ||
+                    continuesAccumulator(p, n, state);
+    }
+    state.seed(n.effects);
+    if (matrix) {
+        state.accumulatorChain = qualified ? n.matrix : MmadInfo{};
+        state.accumulatorCell = qualified ? n.matrixCell : ~0u;
+    }
+}
 uint64_t commandCost(const c::Mechanism& mechanism)
 {
     if (mechanism.kind == c::Mechanism::Rendezvous)
@@ -191,6 +239,16 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
             reason = "invalid optional periodic domain";
             return false;
         }
+        if (n.nextIterationOwner != ~0u &&
+            (n.kind != c::Node::Choice || n.nextIterationOwner >= p.nodes.size() ||
+             p.nodes[n.nextIterationOwner].kind != c::Node::For)) {
+            reason = "invalid optional next-iteration domain";
+            return false;
+        }
+        if (n.nonEmpty && n.kind != c::Node::For) {
+            reason = "invalid optional nonempty-loop fact";
+            return false;
+        }
         const auto operationLane = lane(p, n.lane);
         if (n.effects.size() != p.cells || n.lane >= c::LaneCount ||
             (n.entryGuardStart != ~0u && (n.kind != c::Node::For || n.entryGuardStart >= p.nodes.size())) ||
@@ -211,6 +269,15 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
                 reason = "effect lane differs from operation lane";
                 return false;
             }
+        if (n.matrix.kind != MmadInfo::Unknown || n.matrixCell != ~0u) {
+            if (n.kind != c::Node::Operation || p.core != Core::AIC || n.lane != unsigned(Pipe::M) ||
+                n.matrixCell >= p.cells || !qualifiedAccumulatorInfo(n.matrix) ||
+                n.effects[n.matrixCell].writers != (1u << unsigned(Pipe::M)) ||
+                (!p.globalMemory.empty() && p.globalMemory[n.matrixCell])) {
+                reason = "invalid typed accumulator witness";
+                return false;
+            }
+        }
         summaries.push_back(n.effects);
         if (n.kind == c::Node::Macro) {
             for (const auto& phase : n.macroPhases) {
@@ -425,16 +492,17 @@ c::Node phaseNode(const c::MacroPhase& phase)
 // Execute the lowering-owned phases after all externally generated commands
 // at this atomic IR cut have run. Internal transfers are completion facts only;
 // they do not alter GM visibility or expose the library's private event keys.
-bool executeMacro(const c::Program& p, const c::Node& macro, c::State& state, std::string& reason)
+template <typename StateT>
+bool executeMacro(const c::Program& p, const c::Node& macro, StateT& state, std::string& reason, bool validate = true)
 {
     for (unsigned index = 0; index < macro.macroPhases.size(); ++index) {
         const auto& phase = macro.macroPhases[index];
         auto operation = phaseNode(phase);
-        if (visibilityNeed(p, operation, state) != VisibilityNeed::None) {
+        if (validate && visibilityNeed(p, operation, state) != VisibilityNeed::None) {
             reason = "atomic macro has an uncovered GM visibility requirement";
             return false;
         }
-        if (state.demands(phase.lane, phase.effects)) {
+        if (validate && state.demands(phase.lane, phase.effects)) {
             reason = "atomic macro has an uncovered physical completion requirement";
             return false;
         }
@@ -450,11 +518,12 @@ bool executeMacro(const c::Program& p, const c::Node& macro, c::State& state, st
 // population remains valid when hoisted to the one legal cut before the opaque
 // library call. A prerequisite that accidentally depended on an earlier
 // internal phase will fail that second simulation instead of being mis-emitted.
-bool constructMacro(const c::Program& p, const c::Node& macro, c::State& state,
+template <typename StateT>
+bool constructMacro(const c::Program& p, const c::Node& macro, StateT& state,
                     std::vector<c::Mechanism>& commands, std::string& reason,
                     uint64_t& acquisitions, uint64_t& visibilityRequirements)
 {
-    c::State trial = state;
+    StateT trial = state;
     const size_t begin = commands.size();
     for (unsigned index = 0; index < macro.macroPhases.size(); ++index) {
         const auto& phase = macro.macroPhases[index];
@@ -475,7 +544,7 @@ bool constructMacro(const c::Program& p, const c::Node& macro, c::State& state,
                 trial.acquire(transfer.source, transfer.observer);
     }
 
-    c::State actual = state;
+    StateT actual = state;
     for (size_t i = begin; i < commands.size(); ++i)
         apply(p, actual, commands[i]);
     if (!executeMacro(p, macro, actual, reason)) {
@@ -500,6 +569,20 @@ c::State::State(unsigned cells)
 }
 void c::State::join(const State& other)
 {
+    // Either branch may initialize or update the same exact accumulator. Both
+    // supply the same predecessor-order witness for a following update. This
+    // does not qualify a following initialization or imply full M completion.
+    auto incomingChain = other.accumulatorChain;
+    auto currentChain = accumulatorChain;
+    if (qualifiedAccumulatorInfo(currentChain) && qualifiedAccumulatorInfo(incomingChain)) {
+        currentChain.kind = MmadInfo::Accumulate;
+        incomingChain.kind = MmadInfo::Accumulate;
+    }
+    if (accumulatorCell != other.accumulatorCell || currentChain != incomingChain) {
+        accumulatorCell = ~0u;
+        accumulatorChain = {};
+    } else
+        accumulatorChain = currentChain;
     for (unsigned lane = 0; lane < LaneCount; ++lane)
         merge(pending[lane], other.pending[lane]);
     for (unsigned observer = 0; observer < LaneCount; ++observer)
@@ -514,6 +597,12 @@ void c::State::join(const State& other)
 }
 void c::State::seed(const Effects& effects)
 {
+    if (std::any_of(effects.begin(), effects.end(), [](const auto& e) {
+            return (e.readers | e.writers) & (1u << unsigned(Pipe::M));
+        })) {
+        accumulatorChain = {};
+        accumulatorCell = ~0u;
+    }
     for (auto& history : pending)
         merge(history, effects);
     const uint8_t scalar = uint8_t(1u) << unsigned(Pipe::S);
@@ -663,14 +752,14 @@ c::Result c::construct(const Program& p)
             if (!realizeVisibility(p, n, state, result.before[id], result.reason, result.visibilityRequirements))
                 return false;
             for (unsigned source = 0; source < LaneCount; ++source)
-                if (state.demands(n.lane, n.effects) & (1u << source)) {
+                if (operationDemands(p, n, state) & (1u << source)) {
                     if (!acquire(p, source, n.lane, state, result.before[id])) {
                         result.reason = "target cannot realize conservative completion";
                         return false;
                     }
                     ++result.acquisitions;
                 }
-            state.seed(n.effects);
+            seedOperation(p, n, state);
             return true;
         }
         if (n.kind == Node::Macro)
@@ -747,11 +836,11 @@ c::Result c::verify(const Program& p, const std::vector<std::vector<Mechanism>>&
                     result.reason = "same-address GM visibility is not completion";
                     return false;
                 }
-                if (state.demands(n.lane, n.effects)) {
+                if (operationDemands(p, n, state)) {
                     result.reason = "uncovered physical completion requirement";
                     return false;
                 }
-                state.seed(n.effects);
+                seedOperation(p, n, state);
                 return true;
             case Node::Macro:
                 return executeMacro(p, n, state, result.reason);
@@ -893,6 +982,13 @@ bool discoverCuts(const c::Program& p, Cuts& cuts, std::string& reason, bool str
                     word.groups.push_back({n.lane, {id}, {id}});
                     accesses[id] = 1;
                 }
+                continue;
+            }
+            if (n.kind == c::Node::Macro) {
+                // No legal insertion cut exists between opaque phases. Only
+                // cells touched by this macro lose recurring cut precision.
+                accesses[id] = mask != 0;
+                word.valid = mask == 0;
                 continue;
             }
             for (unsigned child : n.children)
@@ -1115,6 +1211,31 @@ bool verifyProtocolWord(const std::vector<c::Mechanism>& word, std::string& reas
 // consumption-before-rearm; skipped visits execute no partial protocol.
 // This optional certificate concerns internal cell generations only. Every
 // incoming history bit is retained until an ordinary prefix transfer proves it.
+using EpisodeWords = std::vector<std::vector<c::Mechanism>>;
+template <typename Budget>
+bool combineEpisodeWords(EpisodeWords& left, const EpisodeWords& right, Budget& budget)
+{
+    EpisodeWords product;
+    if (right.empty())
+        return false;
+    for (const auto& a : left)
+        for (const auto& b : right) {
+            if (!budget.reserve(1 + a.size() + b.size(), 2))
+                return false;
+            auto joined = a;
+            joined.insert(joined.end(), b.begin(), b.end());
+            if (!budget.reserve(product.size(), joined.size() + 1))
+                return false;
+            if (std::find(product.begin(), product.end(), joined) == product.end()) {
+                if (product.size() == MaxAlternatives)
+                    return false;
+                product.push_back(std::move(joined));
+            }
+        }
+    left = std::move(product);
+    return true;
+}
+
 struct DemandRings {
     // Optional precision has a representation-work ceiling, independent of
     // numeric trip counts. Exceeding it leaves ordinary demands unchanged.
@@ -1340,24 +1461,6 @@ struct DemandRings {
                         result.push_back(mechanism);
                 return result;
             };
-            auto combine = [&](WordSet& left, const WordSet& right) {
-                WordSet product;
-                if (right.empty())
-                    return false;
-                for (const auto& a : left)
-                    for (const auto& b : right) {
-                        if (!budget.reserve(1 + a.size() + b.size(), 2) || product.size() == MaxEpisodeWords)
-                            return false;
-                        auto joined = a;
-                        joined.insert(joined.end(), b.begin(), b.end());
-                        if (!budget.reserve(product.size(), joined.size() + 1))
-                            return false;
-                        if (std::find(product.begin(), product.end(), joined) == product.end())
-                            product.push_back(std::move(joined));
-                    }
-                left = std::move(product);
-                return true;
-            };
             std::function<std::optional<WordSet>(unsigned)> project = [&](unsigned id) -> std::optional<WordSet> {
                 const auto& node = p.nodes[id];
                 if (!budget.reserve(1 + actual[id].size(), 8)) {
@@ -1404,7 +1507,7 @@ struct DemandRings {
                 }
                 for (unsigned child : node.children) {
                     auto part = project(child);
-                    if (!part || !combine(words, *part)) {
+                    if (!part || !combineEpisodeWords(words, *part, budget)) {
                         if (reason.empty())
                             reason = "recurring episode has too many structural words";
                         return {};
@@ -1632,12 +1735,12 @@ c::Result constructCutCandidate(const c::Program& p, bool reserveFallback)
             if (!realizeVisibility(p, n, state, commands, result.reason, result.visibilityRequirements))
                 return false;
             for (unsigned source = 0; source < LaneCount; ++source)
-                if (state.demands(n.lane, n.effects) & (1u << source)) {
+                if (operationDemands(p, n, state) & (1u << source)) {
                     if (!acquire(fallbackProgram, source, n.lane, state, commands))
                         return false;
                     ++result.acquisitions;
                 }
-            state.seed(n.effects);
+            seedOperation(p, n, state);
             return true;
         }
         if (n.kind == Node::Choice) {
@@ -1861,11 +1964,11 @@ c::Result c::verifyCuts(const Program& p, const std::vector<std::vector<Mechanis
         }
         const auto& n = p.nodes[id];
         if (n.kind == Node::Operation) {
-            if (!visibilityCovered(p, n, visibilityState, actual[id]) || state.demands(n.lane, n.effects)) {
+            if (!visibilityCovered(p, n, visibilityState, actual[id]) || operationDemands(p, n, state)) {
                 result.reason = "uncovered original physical obligation in cut plan";
                 return false;
             }
-            state.seed(n.effects);
+            seedOperation(p, n, state);
             return true;
         }
         if (n.kind == Node::Choice) {
@@ -2109,6 +2212,8 @@ struct DemandAnalysis {
             const auto& node = p.nodes[id];
             if (node.kind == c::Node::Operation)
                 laneMask[id] |= uint8_t(1u << p.nodes[id].lane);
+            for (const auto& phase : node.macroPhases)
+                laneMask[id] |= uint8_t(1u << phase.lane);
             for (unsigned child : node.children)
                 laneMask[id] |= laneMask[child];
         }
@@ -2187,13 +2292,14 @@ struct DemandAnalysis {
                 summary.mayNoLane = false;
                 continue;
             }
-            if (node.kind == c::Node::For || node.kind == c::Node::While) {
+            if (node.kind == c::Node::Macro || node.kind == c::Node::For || node.kind == c::Node::While) {
                 if (!chargeSummary(c::LaneCount)) {
                     hasEntryFirst = false;
                     break;
                 }
-                for (auto& summary : entryFirst[id])
-                    summary.valid = false;
+                for (unsigned lane = 0; lane < c::LaneCount; ++lane)
+                    if (node.kind != c::Node::Macro || (laneMask[id] & (1u << lane)))
+                        entryFirst[id][lane].valid = false;
                 continue;
             }
             if (node.kind == c::Node::Sequence) {
@@ -2793,9 +2899,9 @@ struct DemandAnalysis {
         std::function<void(unsigned)> walk = [&](unsigned id) {
             if (p.nodes[id].kind == c::Node::Sequence)
                 scopeOrder.push_back(id);
-            if (p.nodes[id].kind == c::Node::Operation)
+            if (p.nodes[id].kind == c::Node::Operation || p.nodes[id].kind == c::Node::Macro)
                 for (unsigned cell = 0; cell < p.cells; ++cell)
-                    if (p.nodes[id].effects[cell].readers || p.nodes[id].effects[cell].writers) {
+                    if (effects[id][cell].readers || effects[id][cell].writers) {
                         if (first[cell] == NoCut)
                             first[cell] = id;
                         last[cell] = id;
@@ -2828,6 +2934,480 @@ struct DemandAnalysis {
             }
         }
         return true;
+    }
+};
+
+struct LifetimeDiscovery {
+    static constexpr uint64_t MaxWork = c::LifetimeAnalysisLimit;
+    uint64_t work = 0, storage = 0;
+    bool exhausted = false;
+
+    bool charge(uint64_t amount)
+    {
+        if (exhausted || amount > MaxWork - work) {
+            exhausted = true;
+            return false;
+        }
+        work += amount;
+        return true;
+    }
+
+    static bool add(c::AccessFrontier& frontier, unsigned cut)
+    {
+        auto begin = frontier.cuts.begin(), end = begin + frontier.count;
+        if (std::find(begin, end, cut) != end)
+            return true;
+        if (frontier.count == frontier.cuts.size())
+            return frontier.valid = false;
+        frontier.cuts[frontier.count++] = cut;
+        frontier.mayEmpty = false;
+        return true;
+    }
+
+    struct StructuralVertex {
+        unsigned cut = NoCut, after = NoCut;
+        int actor = -1;
+        std::vector<unsigned> successors;
+    };
+
+    std::optional<c::StorageLifetimeSummary> structuralFamily(
+        const c::Program& p, const DemandAnalysis& analysis, unsigned cell)
+    {
+        uint8_t writers = 0, users = 0;
+        for (unsigned id = 0; id < p.nodes.size(); ++id) {
+            if (!charge(1))
+                return {};
+            const auto& node = p.nodes[id];
+            if (node.kind == c::Node::Macro && std::any_of(
+                node.macroPhases.begin(), node.macroPhases.end(), [&](const auto& phase) {
+                    return phase.effects[cell].readers || phase.effects[cell].writers;
+                }))
+                return {};
+            if (node.kind != c::Node::Operation)
+                continue;
+            if (node.effects[cell].writers)
+                writers |= uint8_t(1u << node.lane);
+            if (node.effects[cell].readers || node.effects[cell].writers)
+                users |= uint8_t(1u << node.lane);
+        }
+        auto population = [](uint8_t value) {
+            unsigned count = 0;
+            for (; value; value &= uint8_t(value - 1))
+                ++count;
+            return count;
+        };
+        auto firstBit = [](uint8_t value) {
+            unsigned result = 0;
+            while (!(value & 1u)) {
+                value >>= 1;
+                ++result;
+            }
+            return result;
+        };
+        if (population(writers) != 1 || population(users) != 2)
+            return {};
+        unsigned producer = firstBit(writers);
+        unsigned reader = firstBit(uint8_t(users & ~writers));
+        unsigned root = p.nodes.size() - 1;
+        auto afterCut = [&](unsigned id) {
+            for (unsigned cursor = id; cursor != NoCut && cursor != root; cursor = analysis.parent[cursor])
+                if (analysis.next[cursor] != NoCut)
+                    return analysis.next[cursor];
+            return NoCut;
+        };
+
+        std::vector<StructuralVertex> graph;
+        auto vertex = [&](unsigned cut, int actor, unsigned after) {
+            if (!charge(1) || graph.size() == c::LifetimeAnalysisLimit)
+                return NoCut;
+            graph.push_back({cut, after, actor, {}});
+            return unsigned(graph.size() - 1);
+        };
+        auto edge = [&](unsigned from, unsigned to) {
+            if (from == NoCut || to == NoCut)
+                return false;
+            auto& successors = graph[from].successors;
+            if (std::find(successors.begin(), successors.end(), to) == successors.end())
+                successors.push_back(to);
+            return charge(1);
+        };
+        bool valid = true;
+        std::function<unsigned(unsigned, unsigned, unsigned, unsigned, unsigned, int)> emit =
+            [&](unsigned id, unsigned continuation, unsigned depth, unsigned activeOwner,
+                unsigned residue, int more) -> unsigned {
+            if (!valid || depth > 64 || !charge(1)) {
+                valid = false;
+                return NoCut;
+            }
+            const auto& node = p.nodes[id];
+            if (node.kind == c::Node::Choice && node.nextIterationOwner == activeOwner && more >= 0)
+                return emit(node.children[more ? 0 : 1], continuation, depth + 1,
+                            activeOwner, residue, more);
+            if (node.kind == c::Node::Choice && node.periodicOwner == activeOwner &&
+                node.periodicPeriod && residue < node.periodicPeriod) {
+                unsigned arm = bool(node.periodicResidues & (uint32_t(1) << residue)) ? 0 : 1;
+                return emit(node.children[arm], continuation, depth + 1, activeOwner, residue, more);
+            }
+            uint8_t lanes = uint8_t(analysis.effects[id][cell].readers |
+                                    analysis.effects[id][cell].writers);
+            bool completeChoice = node.kind == c::Node::Choice && node.children.size() == 2 &&
+                std::all_of(node.children.begin(), node.children.end(), [&](unsigned child) {
+                    return analysis.effects[child][cell].readers || analysis.effects[child][cell].writers;
+                });
+            if (completeChoice && population(lanes) == 1) {
+                unsigned lane = firstBit(lanes);
+                unsigned result = vertex(id, lane == producer ? 0 : 1, afterCut(id));
+                valid &= edge(result, continuation);
+                return result;
+            }
+            if (node.kind == c::Node::Operation) {
+                int actor = -1;
+                if (node.effects[cell].readers || node.effects[cell].writers)
+                    actor = node.lane == producer ? 0 : node.lane == reader ? 1 : -2;
+                if (actor == -2) {
+                    valid = false;
+                    return NoCut;
+                }
+                unsigned result = vertex(id, actor, afterCut(id));
+                valid &= edge(result, continuation);
+                return result;
+            }
+            if (node.kind == c::Node::Sequence) {
+                unsigned result = continuation;
+                for (auto child = node.children.rbegin(); child != node.children.rend(); ++child)
+                    result = emit(*child, result, depth + 1, activeOwner, residue, more);
+                return result;
+            }
+            if (node.kind == c::Node::Choice) {
+                unsigned result = vertex(id, -1, afterCut(id));
+                for (unsigned child : node.children)
+                    valid &= edge(result, emit(child, continuation, depth + 1, activeOwner, residue, more));
+                return result;
+            }
+            if (node.kind == c::Node::For) {
+                if (node.children.size() != 1) {
+                    valid = false;
+                    return NoCut;
+                }
+                // Use independently qualified original-SSA residues only at
+                // one loop level. Nested loops retain both successors rather
+                // than multiplying residue populations.
+                unsigned period = 0;
+                if (activeOwner == NoCut) {
+                    if (node.nonEmpty)
+                        period = 1;
+                    std::function<void(unsigned)> findPeriod = [&](unsigned child) {
+                        const auto& nested = p.nodes[child];
+                        if (nested.periodicOwner == id && nested.periodicPeriod)
+                            period = period > 1 && period != nested.periodicPeriod ? 33 : nested.periodicPeriod;
+                        if (nested.nextIterationOwner == id && !period)
+                            period = 1;
+                        if (nested.kind != c::Node::For && nested.kind != c::Node::While)
+                            for (unsigned next : nested.children)
+                                findPeriod(next);
+                    };
+                    findPeriod(node.children.front());
+                }
+                if (period && period <= 32 && node.periodicLower >= 0) {
+                    std::vector<unsigned> headers(period, NoCut);
+                    for (unsigned current = 0; current < period; ++current)
+                        headers[current] = vertex(id, -1, afterCut(id));
+                    for (unsigned current = 0; current < period; ++current) {
+                        valid &= edge(headers[current], emit(
+                            node.children.front(), continuation, depth + 1, id, current, 0));
+                        valid &= edge(headers[current], emit(
+                            node.children.front(), headers[(current + 1) % period], depth + 1, id, current, 1));
+                    }
+                    unsigned entry = vertex(id, -1, afterCut(id));
+                    unsigned first = unsigned(node.periodicLower) % period;
+                    if (!node.nonEmpty)
+                        valid &= edge(entry, continuation); // original zero-trip edge
+                    valid &= edge(entry, emit(node.children.front(), continuation, depth + 1, id, first, 0));
+                    valid &= edge(entry, emit(
+                        node.children.front(), headers[(first + 1) % period], depth + 1, id, first, 1));
+                    return entry;
+                }
+                unsigned header = vertex(id, -1, afterCut(id));
+                valid &= edge(header, continuation);
+                valid &= edge(header, emit(node.children.front(), header, depth + 1, NoCut, 0, -1));
+                return header;
+            }
+            valid = false;
+            return NoCut;
+        };
+        unsigned finish = vertex(root, -1, NoCut);
+        unsigned start = emit(root, finish, 0, NoCut, 0, -1);
+        if (!valid || start == NoCut || exhausted)
+            return {};
+
+        std::vector<uint8_t> preceding(graph.size()), following(graph.size());
+        std::vector<std::vector<unsigned>> predecessors(graph.size());
+        for (unsigned from = 0; from < graph.size(); ++from)
+            for (unsigned to : graph[from].successors)
+                predecessors[to].push_back(from);
+        preceding[start] = 4;
+        std::deque<unsigned> forward{start};
+        while (!forward.empty()) {
+            unsigned from = forward.front();
+            forward.pop_front();
+            if (!charge(1))
+                return {};
+            uint8_t output = graph[from].actor < 0 ? preceding[from] : uint8_t(1u << graph[from].actor);
+            for (unsigned to : graph[from].successors) {
+                uint8_t joined = preceding[to] | output;
+                if (joined != preceding[to]) {
+                    preceding[to] = joined;
+                    forward.push_back(to);
+                }
+            }
+        }
+        following[finish] = 4;
+        std::deque<unsigned> backward{finish};
+        while (!backward.empty()) {
+            unsigned to = backward.front();
+            backward.pop_front();
+            if (!charge(1))
+                return {};
+            uint8_t output = graph[to].actor < 0 ? following[to] : uint8_t(1u << graph[to].actor);
+            for (unsigned from : predecessors[to]) {
+                uint8_t joined = following[from] | output;
+                if (joined != following[from]) {
+                    following[from] = joined;
+                    backward.push_back(from);
+                }
+            }
+        }
+        c::StorageLifetimeSummary summary;
+        summary.scope = root;
+        summary.wholeProgram = true;
+        summary.producer = producer;
+        summary.readers = uint8_t(1u << reader);
+        summary.cells.push_back(cell);
+        for (unsigned index = 0; index < graph.size(); ++index) {
+            const auto& point = graph[index];
+            if (point.actor < 0 || !preceding[index] || !following[index])
+                continue;
+            uint8_t own = uint8_t(1u << point.actor), other = uint8_t(1u << (1 - point.actor));
+            bool isProducer = point.actor == 0;
+            if (!isProducer && (preceding[index] & 4u))
+                return {};
+            bool acquire = preceding[index] & uint8_t(other | (isProducer ? 4u : 0u));
+            // A final producer is legal: lifetime cleanup publishes and
+            // consumes that otherwise unread prefetch generation. Readers
+            // still require a preceding producer on every path.
+            bool publish = following[index] & uint8_t(other | 4u);
+            if ((acquire && (preceding[index] & own)) ||
+                (publish && (following[index] & own)) || point.cut == NoCut)
+                return {};
+            if (acquire && !add(isProducer ? summary.firstWrite : summary.firstRead[reader], point.cut))
+                return {};
+            if (publish && (point.after == NoCut ||
+                !add(isProducer ? summary.lastWrite : summary.lastRead[reader], point.cut)))
+                return {};
+        }
+        if (!summary.firstWrite.count || !summary.lastWrite.count ||
+            !summary.firstRead[reader].count || !summary.lastRead[reader].count)
+            return {};
+        unsigned firstTop = NoCut, lastTop = NoCut;
+        for (unsigned child : p.nodes[root].children)
+            if (analysis.effects[child][cell].readers || analysis.effects[child][cell].writers) {
+                if (firstTop == NoCut)
+                    firstTop = child;
+                lastTop = child;
+            }
+        summary.entry = firstTop;
+        summary.exit = lastTop == NoCut ? NoCut : analysis.next[lastTop];
+        if (summary.exit == NoCut)
+            summary.exit = root;
+        if (summary.entry == NoCut)
+            return {};
+        storage += graph.size() * 4 + predecessors.size();
+        return summary;
+    }
+
+    std::vector<c::StorageLifetimeSummary> run(const c::Program& p, const DemandAnalysis& analysis)
+    {
+        std::vector<c::StorageLifetimeSummary> result;
+        if (!charge(uint64_t(p.nodes.size()) * 4 + uint64_t(p.cells) * 2))
+            return result;
+        for (unsigned owner = 0; owner < p.nodes.size() && !exhausted; ++owner) {
+            const auto& loop = p.nodes[owner];
+            if (loop.kind != c::Node::For || loop.children.size() != 1 || analysis.next[owner] == NoCut)
+                continue;
+            unsigned body = loop.children.front();
+            // The first provider admits arbitrary nested sequences, but no
+            // independently varying child recurrence or choice.  Such a child
+            // needs its own participation proof and is declined locally.
+            bool supported = true;
+            std::vector<unsigned> leaves;
+            std::function<void(unsigned)> collect = [&](unsigned id) {
+                if (!supported || !charge(1))
+                    return;
+                const auto& node = p.nodes[id];
+                if (node.kind == c::Node::Operation) {
+                    leaves.push_back(id);
+                    return;
+                }
+                if (node.kind != c::Node::Sequence) {
+                    supported = false;
+                    return;
+                }
+                for (unsigned child : node.children)
+                    collect(child);
+            };
+            collect(body);
+            if (!supported || leaves.empty())
+                continue;
+            for (unsigned cell = 0; cell < p.cells && !exhausted; ++cell) {
+                if ((!p.globalMemory.empty() && p.globalMemory[cell]) || !charge(leaves.size() + c::LaneCount))
+                    continue;
+                c::StorageLifetimeSummary summary;
+                summary.scope = owner;
+                summary.entry = owner;
+                summary.exit = analysis.next[owner];
+                summary.cells.push_back(cell);
+                bool sawWrite = false, readersAfterWrite = false, bad = false;
+                for (unsigned id : leaves) {
+                    const auto& effect = p.nodes[id].effects[cell];
+                    bool reads = effect.readers & (1u << p.nodes[id].lane);
+                    bool writes = effect.writers & (1u << p.nodes[id].lane);
+                    if (!reads && !writes)
+                        continue;
+                    if (writes) {
+                        if (sawWrite && readersAfterWrite) {
+                            // This is an in-iteration overwrite lifetime.  It
+                            // is handled by ordinary demands until the provider
+                            // models its following producer generation too.
+                            bad = true;
+                            break;
+                        }
+                        if (!sawWrite) {
+                            summary.producer = p.nodes[id].lane;
+                            add(summary.firstWrite, id);
+                            sawWrite = true;
+                        } else if (summary.producer != p.nodes[id].lane) {
+                            bad = true;
+                            break;
+                        }
+                        add(summary.lastWrite, id);
+                    }
+                    if (reads && sawWrite && p.nodes[id].lane != summary.producer) {
+                        unsigned reader = p.nodes[id].lane;
+                        summary.readers |= uint8_t(1u << reader);
+                        readersAfterWrite = true;
+                        if (!summary.firstRead[reader].count)
+                            add(summary.firstRead[reader], id);
+                        add(summary.lastRead[reader], id);
+                    }
+                }
+                if (bad || !sawWrite || !summary.readers || !summary.firstWrite.valid ||
+                    !summary.lastWrite.valid)
+                    continue;
+                bool exact = summary.firstWrite.count == 1 && summary.lastWrite.count == 1;
+                for (unsigned reader = 0; reader < c::LaneCount; ++reader)
+                    if (summary.readers & (1u << reader))
+                        exact &= summary.firstRead[reader].valid && summary.firstRead[reader].count == 1 &&
+                                 summary.lastRead[reader].valid && summary.lastRead[reader].count == 1;
+                if (!exact)
+                    continue;
+                summary.maySkip = true; // counted loops retain their zero-trip edge
+                auto signature = [&](const c::StorageLifetimeSummary& other) {
+                    if (other.scope != summary.scope || other.exit != summary.exit ||
+                        other.producer != summary.producer || other.readers != summary.readers ||
+                        other.firstWrite.cuts[0] != summary.firstWrite.cuts[0] ||
+                        other.lastWrite.cuts[0] != summary.lastWrite.cuts[0])
+                        return false;
+                    for (unsigned reader = 0; reader < c::LaneCount; ++reader)
+                        if ((summary.readers & (1u << reader)) &&
+                            (other.firstRead[reader].cuts[0] != summary.firstRead[reader].cuts[0] ||
+                             other.lastRead[reader].cuts[0] != summary.lastRead[reader].cuts[0]))
+                            return false;
+                    return true;
+                };
+                auto merged = std::find_if(result.begin(), result.end(), signature);
+                if (merged == result.end()) {
+                    storage += 8 + 4 * c::LaneCount;
+                    result.push_back(std::move(summary));
+                } else
+                    merged->cells.push_back(cell);
+            }
+        }
+        std::set<unsigned> locallyCovered;
+        for (const auto& summary : result)
+            locallyCovered.insert(summary.cells.begin(), summary.cells.end());
+        for (unsigned cell = 0; cell < p.cells && !exhausted; ++cell) {
+            if ((!p.globalMemory.empty() && p.globalMemory[cell]) || locallyCovered.count(cell))
+                continue;
+            auto summary = structuralFamily(p, analysis, cell);
+            if (!summary)
+                continue;
+            auto equal = [](const c::AccessFrontier& left, const c::AccessFrontier& right) {
+                return left.count == right.count && std::equal(
+                    left.cuts.begin(), left.cuts.begin() + left.count, right.cuts.begin());
+            };
+            auto same = [&](const c::StorageLifetimeSummary& other) {
+                if (other.scope != summary->scope || other.producer != summary->producer ||
+                    other.readers != summary->readers || other.entry != summary->entry || other.exit != summary->exit ||
+                    other.wholeProgram != summary->wholeProgram)
+                    return false;
+                unsigned reader = 0;
+                while (!(summary->readers & (1u << reader)))
+                    ++reader;
+                return equal(other.firstWrite, summary->firstWrite) && equal(other.lastWrite, summary->lastWrite) &&
+                    equal(other.firstRead[reader], summary->firstRead[reader]) &&
+                    equal(other.lastRead[reader], summary->lastRead[reader]);
+            };
+            auto merged = std::find_if(result.begin(), result.end(), same);
+            if (merged == result.end())
+                result.push_back(std::move(*summary));
+            else
+                merged->cells.push_back(cell);
+        }
+        auto equalFrontier = [](const c::AccessFrontier& left, const c::AccessFrontier& right) {
+            return left.count == right.count && std::equal(
+                left.cuts.begin(), left.cuts.begin() + left.count, right.cuts.begin());
+        };
+        auto envelope = [&](c::AccessFrontier& into, const c::AccessFrontier& other, bool earliest) {
+            if (into.count != other.count)
+                return false;
+            for (unsigned index = 0; index < into.count; ++index) {
+                unsigned left = into.cuts[index], right = other.cuts[index];
+                if (analysis.parent[left] != analysis.parent[right] ||
+                    analysis.parent[left] == NoCut ||
+                    p.nodes[analysis.parent[left]].kind != c::Node::Sequence)
+                    return false;
+                bool rightEarlier = analysis.position[right] < analysis.position[left];
+                if (rightEarlier == earliest)
+                    into.cuts[index] = right;
+            }
+            return true;
+        };
+        for (unsigned left = 0; left < result.size(); ++left)
+            for (unsigned right = left + 1; right < result.size();) {
+                auto& a = result[left];
+                const auto& b = result[right];
+                bool compatible = a.scope == b.scope && a.entry == b.entry && a.exit == b.exit &&
+                    a.producer == b.producer && a.readers == b.readers && a.wholeProgram == b.wholeProgram;
+                for (unsigned reader = 0; compatible && reader < c::LaneCount; ++reader)
+                    if (a.readers & (1u << reader))
+                        compatible = equalFrontier(a.firstRead[reader], b.firstRead[reader]) &&
+                                     equalFrontier(a.lastRead[reader], b.lastRead[reader]);
+                auto firstWrite = a.firstWrite;
+                auto lastWrite = a.lastWrite;
+                compatible = compatible && envelope(firstWrite, b.firstWrite, true) &&
+                             envelope(lastWrite, b.lastWrite, false);
+                if (!compatible) {
+                    ++right;
+                    continue;
+                }
+                a.firstWrite = firstWrite;
+                a.lastWrite = lastWrite;
+                a.cells.insert(a.cells.end(), b.cells.begin(), b.cells.end());
+                result.erase(result.begin() + right);
+            }
+        if (exhausted)
+            result.clear();
+        return result;
     }
 };
 
@@ -3016,6 +3596,10 @@ struct DeferredDemandRings {
                         subtree[id] |= uint8_t(1u << m.second);
                 }
             }
+            for (const auto& phase : p.nodes[id].macroPhases)
+                subtree[id] |= uint8_t(1u << phase.lane);
+            for (const auto& transfer : p.nodes[id].macroTransfers)
+                subtree[id] |= uint8_t((1u << transfer.source) | (1u << transfer.observer));
             for (unsigned child : p.nodes[id].children)
                 subtree[id] |= subtree[child];
             if (p.nodes[id].kind == c::Node::Sequence) {
@@ -3826,6 +4410,13 @@ struct ChildReturnSummaries {
         };
         for (unsigned id = 0; id < p.nodes.size(); ++id) {
             const auto& node = p.nodes[id];
+            if (node.kind == c::Node::Macro) {
+                auto transfer = identityTransfer();
+                for (const auto& step : node.macroTransfers)
+                    transfer[step.observer] |= transfer[step.source];
+                body[id] = transfer;
+                continue;
+            }
             if (node.kind == c::Node::Operation || node.kind == c::Node::For || node.kind == c::Node::While) {
                 body[id] = identityTransfer();
                 continue;
@@ -3962,7 +4553,9 @@ bool verifyFirstCardinality(
             state = Consumed;
         }
         const auto& node = p.nodes[id];
-        if (node.kind == Node::Operation && node.lane == std::get<1>(key) && state != Consumed)
+        if (((node.kind == Node::Operation && node.lane == std::get<1>(key)) ||
+             std::any_of(node.macroPhases.begin(), node.macroPhases.end(),
+                         [&](const auto& phase) { return phase.lane == std::get<1>(key); })) && state != Consumed)
             return false;
         if (node.kind == Node::Choice) {
             uint8_t left = 0, right = 0;
@@ -4782,6 +5375,7 @@ c::Result verifyDemandImpl(
 c::Result verifyConstructionDemands(
     const c::Program& p, const Commands& actual, DemandInvariants* invariants, const ChildReturnOptions* childReturns,
     bool* usedChildReturns = nullptr, const DemandAnalysis::ChoiceIncomingOptions* choiceIncoming = nullptr);
+c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64_t limit);
 c::Result constructDemandCandidate(
     const c::Program& p, const DemandInvariants* invariants, DemandFallbacks& unassigned,
     const DemandFallbacks* forced = nullptr, const Cuts* recurring = nullptr,
@@ -4791,10 +5385,6 @@ c::Result constructDemandCandidate(
     using namespace c;
     c::Result result;
     result.fixedActions = fixedActionCount(p);
-    if (std::any_of(p.nodes.begin(), p.nodes.end(), [](const auto& node) { return node.kind == Node::Macro; })) {
-        result.reason = "demand precision has no atomic macro transfer";
-        return result;
-    }
     DemandAnalysis analysis;
     if (!analysis.build(p, result.reason, choiceIncoming))
         return result;
@@ -4973,11 +5563,19 @@ c::Result constructDemandCandidate(
             }
         }
         const auto& n = p.nodes[id];
+        if (n.kind == Node::Macro) {
+            if (!constructMacro(p, n, state, result.before[id], result.reason,
+                                result.acquisitions, result.visibilityRequirements))
+                return false;
+            for (const auto& cut : analysis.release[id])
+                state.receipts.erase(cut);
+            return true;
+        }
         if (n.kind == Node::Operation) {
             if (!realizeVisibility(p, n, state, result.before[id], result.reason, result.visibilityRequirements))
                 return false;
             for (unsigned source = 0; source < LaneCount; ++source) {
-                if (!(state.demands(n.lane, n.effects) & (1u << source)))
+                if (!(operationDemands(p, n, state) & (1u << source)))
                     continue;
                 ++result.acquisitions;
                 bool direct = false;
@@ -5006,7 +5604,7 @@ c::Result constructDemandCandidate(
                     }
                 }
             }
-            state.seed(n.effects);
+            seedOperation(p, n, state);
             for (const auto& cut : analysis.release[id])
                 state.receipts.erase(cut);
             return true;
@@ -5750,10 +6348,6 @@ c::Result verifyDemandImpl(
     using namespace c;
     c::Result result;
     result.fixedActions = fixedActionCount(p);
-    if (std::any_of(p.nodes.begin(), p.nodes.end(), [](const auto& node) { return node.kind == Node::Macro; })) {
-        result.reason = "demand precision has no atomic macro transfer";
-        return result;
-    }
     if (usedChildReturns)
         *usedChildReturns = false;
     if (usedAlternativeChoices)
@@ -5893,15 +6487,17 @@ c::Result verifyDemandImpl(
             if (invariants)
                 (*invariants)[id] = ownedSeed;
         }
+        if (n.kind == Node::Macro)
+            return executeMacro(p, n, state, result.reason, validate);
         if (n.kind == Node::Operation) {
             if (validate &&
-                (!visibilityCovered(p, n, visibilityState, actual[id]) || state.demands(n.lane, n.effects))) {
+                (!visibilityCovered(p, n, visibilityState, actual[id]) || operationDemands(p, n, state))) {
                 result.reason = "uncovered physical demand or GM visibility requirement at node " + std::to_string(id) +
                                 " lane " + std::to_string(n.lane) + " demand " +
-                                std::to_string(state.demands(n.lane, n.effects));
+                                std::to_string(operationDemands(p, n, state));
                 return false;
             }
-            state.seed(n.effects);
+            seedOperation(p, n, state);
             return true;
         }
         if (n.kind == Node::Choice) {
@@ -7168,8 +7764,403 @@ c::Result constructWithAlternativeChoices(
     // transaction, not a second command-editing pass.
     return constructWithChildReturns(p, false, ChildReturnSummaries::MaxWork, true, corrupt, limit, ringOptions);
 }
+
+c::Result constructWithPersistentLifetimes(const c::Program& p)
+{
+    using namespace c;
+    auto baseline = constructWithAlternativeChoices(p, false);
+    if (!baseline.success || baseline.before.size() != p.nodes.size())
+        return baseline;
+
+    DemandAnalysis analysis;
+    std::string reason;
+    if (!analysis.build(p, reason))
+        return baseline;
+    LifetimeDiscovery discovery;
+    auto summaries = discovery.run(p, analysis);
+    baseline.lifetimeAnalysisWork = discovery.work;
+    baseline.lifetimeStorageUnits = discovery.storage;
+    baseline.lifetimeBudgetExhausted = discovery.exhausted;
+    baseline.lifetimeCandidates = summaries.size();
+    baseline.cellVisits += discovery.work;
+    if (summaries.empty())
+        return baseline;
+    // Established finite episode and deferred-ring plans already carry the
+    // required first/last participation. Keep their exact command population;
+    // the persistent provider handles the residual ordinary and closed-ring
+    // cases for which it improves a verified boundary.
+    if (baseline.recurringEpisodeWords || baseline.deferredRings ||
+        baseline.childReturnAcksRemoved || baseline.alternativeChoiceFamilies)
+        return baseline;
+
+    // Form one conservative all-Every population for the combined transaction.
+    // It retains every residual ordinary obligation while the persistent
+    // proposal removes only matching barriers/packets at its useful cuts.
+    // Failure retains the fully precise verified baseline and does not consume
+    // the fallback's optional allowance.
+    auto conservativeFacts = p;
+    for (auto& node : conservativeFacts.nodes) {
+        node.entryGuardStart = NoCut;
+        node.periodicOwner = NoCut;
+        node.periodicPeriod = 0;
+        node.periodicResidues = 0;
+    }
+    auto candidateBase = constructDemandsImpl(conservativeFacts, false, true, false, false, false);
+    if (!candidateBase.success) {
+        baseline.rejectedPersistentLifetimes = summaries.size();
+        return baseline;
+    }
+
+    auto candidate = candidateBase;
+    using Direction = std::pair<unsigned, unsigned>;
+    std::map<Direction, std::set<unsigned>> occupied;
+    for (const auto& site : candidate.before)
+        for (const auto& m : site) {
+            if (m.kind == Mechanism::Publish || m.kind == Mechanism::Acquire)
+                occupied[{m.first, m.second}].insert(m.forwardKey);
+            else if (m.kind == Mechanism::Rendezvous) {
+                occupied[{m.first, m.second}].insert(m.forwardKey);
+                occupied[{m.second, m.first}].insert(m.reverseKey);
+            }
+        }
+    auto allocate = [&](unsigned source, unsigned observer) -> std::optional<unsigned> {
+        for (unsigned key : p.target.compilerKeys)
+            if (p.target.available(lane(p, source), lane(p, observer), key) &&
+                !occupied[{source, observer}].count(key)) {
+                occupied[{source, observer}].insert(key);
+                return key;
+            }
+        return {};
+    };
+    auto after = [&](unsigned cut, unsigned owner) {
+        unsigned cursor = cut;
+        while (cursor != NoCut && cursor != owner) {
+            if (analysis.next[cursor] != NoCut)
+                return analysis.next[cursor];
+            cursor = analysis.parent[cursor];
+        }
+        return NoCut;
+    };
+    auto removeFallback = [&](unsigned site, unsigned first, unsigned second) {
+        auto& commands = candidate.before[site];
+        commands.erase(std::remove_if(commands.begin(), commands.end(), [&](const auto& m) {
+                           if (m.kind == Mechanism::Barrier)
+                               return m.first == second;
+                           if (m.kind != Mechanism::Rendezvous)
+                               return false;
+                           return (m.first == first && m.second == second) ||
+                                  (m.first == second && m.second == first);
+                       }), commands.end());
+    };
+    auto population = [](uint8_t bits) {
+        unsigned count = 0;
+        for (; bits; bits &= uint8_t(bits - 1))
+            ++count;
+        return count;
+    };
+    std::map<Direction, std::set<unsigned>> requiredCells, coveredCells;
+    for (unsigned cell = 0; cell < p.cells; ++cell) {
+        if (!p.globalMemory.empty() && p.globalMemory[cell])
+            continue;
+        uint8_t writers = 0, users = 0;
+        for (const auto& node : p.nodes) {
+            if (node.kind == Node::Operation) {
+                writers |= node.effects[cell].writers;
+                users |= node.effects[cell].readers | node.effects[cell].writers;
+            } else if (node.kind == Node::Macro)
+                for (const auto& phase : node.macroPhases) {
+                    writers |= phase.effects[cell].writers;
+                    users |= phase.effects[cell].readers | phase.effects[cell].writers;
+                }
+        }
+        if (population(writers) != 1 || population(users) != 2)
+            continue;
+        unsigned producer = 0;
+        while (!(writers & (1u << producer)))
+            ++producer;
+        unsigned reader = 0;
+        while (!(users & ~writers & (1u << reader)))
+            ++reader;
+        requiredCells[std::minmax(producer, reader)].insert(cell);
+    }
+    for (const auto& lifetime : summaries)
+        if (lifetime.wholeProgram)
+            for (unsigned reader = 0; reader < LaneCount; ++reader)
+                if (lifetime.readers & (1u << reader))
+                    coveredCells[std::minmax(lifetime.producer, reader)].insert(
+                        lifetime.cells.begin(), lifetime.cells.end());
+    std::set<Direction> completePairs;
+    for (const auto& [pair, required] : requiredCells) {
+        const auto& covered = coveredCells[pair];
+        if (!required.empty() && std::includes(covered.begin(), covered.end(), required.begin(), required.end()))
+            completePairs.insert(pair);
+    }
+    std::set<Direction> strippedPairs;
+    auto stripOrdinaryPair = [&](unsigned first, unsigned second) {
+        Direction pair = std::minmax(first, second);
+        if (!completePairs.count(pair) || !strippedPairs.insert(pair).second)
+            return;
+        for (auto& commands : candidate.before)
+            commands.erase(std::remove_if(commands.begin(), commands.end(), [&](const auto& m) {
+                if (m.kind != Mechanism::Publish && m.kind != Mechanism::Acquire &&
+                    m.kind != Mechanism::Rendezvous)
+                    return false;
+                return (m.first == first && m.second == second) ||
+                       (m.first == second && m.second == first);
+            }), commands.end());
+        occupied[{first, second}].clear();
+        occupied[{second, first}].clear();
+    };
+
+    std::set<unsigned> selectedCells;
+    uint64_t selected = 0, readerFamilies = 0;
+    bool boundaryRejected = false, allocationRejected = false;
+    for (const auto& lifetime : summaries) {
+        if (selected == MaxAlternatives)
+            break;
+        bool disjoint = std::none_of(lifetime.cells.begin(), lifetime.cells.end(),
+                                     [&](unsigned cell) { return selectedCells.count(cell); });
+        std::set<unsigned> writes(
+            lifetime.firstWrite.cuts.begin(), lifetime.firstWrite.cuts.begin() + lifetime.firstWrite.count);
+        std::set<unsigned> readySites;
+        for (unsigned index = 0; index < lifetime.lastWrite.count; ++index) {
+            unsigned site = after(lifetime.lastWrite.cuts[index], lifetime.scope);
+            if (site == NoCut)
+                disjoint = false;
+            else
+                readySites.insert(site);
+        }
+        if (!disjoint || writes.empty() || readySites.empty() || lifetime.exit == NoCut) {
+            boundaryRejected = true;
+            continue;
+        }
+        struct Keys {
+            unsigned reader, readiness, release;
+            std::set<unsigned> firstReads, releaseSites;
+        };
+        std::vector<Keys> keys;
+        auto occupiedTrial = occupied;
+        bool realizable = true;
+        for (unsigned reader = 0; reader < LaneCount; ++reader) {
+            if (!(lifetime.readers & (1u << reader)))
+                continue;
+            if (lifetime.wholeProgram)
+                stripOrdinaryPair(lifetime.producer, reader);
+            auto readiness = allocate(lifetime.producer, reader);
+            auto release = allocate(reader, lifetime.producer);
+            Keys family{reader, readiness.value_or(NoCut), release.value_or(NoCut), {}, {}};
+            family.firstReads.insert(lifetime.firstRead[reader].cuts.begin(),
+                                     lifetime.firstRead[reader].cuts.begin() + lifetime.firstRead[reader].count);
+            for (unsigned index = 0; index < lifetime.lastRead[reader].count; ++index) {
+                unsigned site = after(lifetime.lastRead[reader].cuts[index], lifetime.scope);
+                if (site == NoCut)
+                    realizable = false;
+                else
+                    family.releaseSites.insert(site);
+            }
+            if (!readiness || !release || family.firstReads.empty() || family.releaseSites.empty()) {
+                realizable = false;
+                break;
+            }
+            keys.push_back(std::move(family));
+        }
+        if (!realizable) {
+            allocationRejected = true;
+            occupied = std::move(occupiedTrial);
+            continue;
+        }
+        for (const auto& family : keys) {
+            // Initial reusable-storage credit and the first/next overwrite.
+            candidate.before[lifetime.entry].push_back(
+                event(Mechanism::Publish, family.reader, lifetime.producer, family.release));
+            for (unsigned write : writes) {
+                unsigned releaseAcquire = write;
+                unsigned parent = analysis.parent[write];
+                if (parent != NoCut && p.nodes[parent].kind == Node::Sequence) {
+                    unsigned position = analysis.position[write];
+                    while (position) {
+                        unsigned preceding = p.nodes[parent].children[--position];
+                        bool publication = std::any_of(
+                            candidate.before[preceding].begin(), candidate.before[preceding].end(),
+                            [&](const auto& mechanism) {
+                                return mechanism.kind == Mechanism::Publish &&
+                                       mechanism.first == lifetime.producer &&
+                                       mechanism.second == family.reader;
+                            });
+                        if (publication) {
+                            releaseAcquire = preceding;
+                            break;
+                        }
+                    }
+                }
+                candidate.before[releaseAcquire].insert(candidate.before[releaseAcquire].begin(),
+                    event(Mechanism::Acquire, family.reader, lifetime.producer, family.release));
+            }
+            // Producer readiness and reader-specific return release.
+            for (unsigned firstRead : family.firstReads)
+                candidate.before[firstRead].insert(candidate.before[firstRead].begin(),
+                    event(Mechanism::Acquire, lifetime.producer, family.reader, family.readiness));
+            for (unsigned ready : readySites)
+                if (ready != lifetime.exit)
+                    candidate.before[ready].insert(candidate.before[ready].begin(),
+                        event(Mechanism::Publish, lifetime.producer, family.reader, family.readiness));
+            for (unsigned releaseSite : family.releaseSites)
+                candidate.before[releaseSite].insert(candidate.before[releaseSite].begin(),
+                    event(Mechanism::Publish, family.reader, lifetime.producer, family.release));
+            // Consume the last generation and return its consumption receipt
+            // so the next function invocation may safely prime this key.
+            auto& cleanup = candidate.before[lifetime.exit];
+            cleanup.insert(cleanup.begin(), {
+                event(Mechanism::Acquire, family.reader, lifetime.producer, family.release),
+                event(Mechanism::Publish, lifetime.producer, family.reader, family.readiness),
+                event(Mechanism::Acquire, lifetime.producer, family.reader, family.readiness)});
+            for (unsigned write : writes)
+                removeFallback(write, family.reader, lifetime.producer);
+            for (unsigned firstRead : family.firstReads)
+                removeFallback(firstRead, lifetime.producer, family.reader);
+            ++readerFamilies;
+        }
+        selectedCells.insert(lifetime.cells.begin(), lifetime.cells.end());
+        ++selected;
+    }
+    if (!selected) {
+        baseline.deferredRejectionStage = "persistent";
+        baseline.deferredRejectionReason = allocationRejected ? "persistent lifetime event pool exhausted" :
+            boundaryRejected ? "persistent lifetime has no useful structural boundary" :
+                               "persistent lifetime families overlap";
+        baseline.rejectedPersistentLifetimes = summaries.size();
+        return baseline;
+    }
+    // A complete same-site bidirectional exchange carries both source
+    // prefixes and their consumption receipts. Remove an adjacent local
+    // barrier only under that exact actual-command condition; the full open
+    // checker below remains the acceptance boundary.
+    for (unsigned site = 0; site < candidate.before.size(); ++site) {
+        auto& commands = candidate.before[site];
+        auto publicationAtOrBefore = [&](unsigned source, unsigned observer, unsigned key) {
+            auto contains = [&](unsigned cut) {
+                return std::any_of(candidate.before[cut].begin(), candidate.before[cut].end(),
+                                   [&](const auto& mechanism) {
+                                       return mechanism.kind == Mechanism::Publish && mechanism.first == source &&
+                                              mechanism.second == observer && mechanism.forwardKey == key;
+                                   });
+            };
+            if (contains(site))
+                return true;
+            unsigned parent = analysis.parent[site];
+            if (parent == NoCut || p.nodes[parent].kind != Node::Sequence)
+                return false;
+            unsigned position = analysis.position[site];
+            while (position) {
+                unsigned preceding = p.nodes[parent].children[--position];
+                bool physical = std::any_of(analysis.effects[preceding].begin(), analysis.effects[preceding].end(),
+                                            [](const auto& effect) {
+                                                return effect.readers || effect.writers;
+                                            });
+                if (physical)
+                    return false;
+                if (contains(preceding))
+                    return true;
+            }
+            return false;
+        };
+        auto completeExchange = [&](unsigned laneId) {
+            for (unsigned peer = 0; peer < LaneCount; ++peer) {
+                if (peer == laneId)
+                    continue;
+                auto endpoint = [&](Mechanism::Kind kind, unsigned source, unsigned observer,
+                                    unsigned key) {
+                    return std::any_of(commands.begin(), commands.end(), [&](const auto& mechanism) {
+                        return mechanism.kind == kind && mechanism.first == source &&
+                               mechanism.second == observer && mechanism.forwardKey == key;
+                    });
+                };
+                for (const auto& forward : commands) {
+                    if (forward.kind != Mechanism::Acquire || forward.first != peer ||
+                        forward.second != laneId ||
+                        !publicationAtOrBefore(peer, laneId, forward.forwardKey))
+                        continue;
+                    for (const auto& reverse : commands)
+                        if (reverse.kind == Mechanism::Publish && reverse.first == laneId &&
+                            reverse.second == peer &&
+                            endpoint(Mechanism::Acquire, laneId, peer, reverse.forwardKey))
+                            return true;
+                }
+            }
+            return false;
+        };
+        commands.erase(std::remove_if(commands.begin(), commands.end(), [&](const auto& mechanism) {
+                           return mechanism.kind == Mechanism::Barrier && completeExchange(mechanism.first);
+                       }), commands.end());
+    }
+    auto checked = verifyOpenProtocol(p, candidate.before, OpenProtocolLimit);
+    if (!checked.success) {
+        baseline.nodeVisits += checked.nodeVisits;
+        baseline.cellVisits += checked.cellVisits;
+        baseline.deferredRejectionStage = "persistent";
+        baseline.deferredRejectionReason = checked.reason;
+        baseline.rejectedPersistentLifetimes = summaries.size();
+        return baseline;
+    }
+    candidate.nodeVisits += checked.nodeVisits;
+    candidate.cellVisits += checked.cellVisits;
+    if (candidateBase.before != baseline.before) {
+        candidate.nodeVisits += baseline.nodeVisits;
+        candidate.cellVisits += baseline.cellVisits;
+    }
+    candidate.lifetimeAnalysisWork = discovery.work;
+    candidate.lifetimeStorageUnits = discovery.storage;
+    candidate.lifetimeCandidates = summaries.size();
+    candidate.persistentLifetimes = selected;
+    candidate.persistentReaderFamilies = readerFamilies;
+    candidate.rejectedPersistentLifetimes = summaries.size() - selected;
+    candidate.protocolKeys += 2 * readerFamilies;
+    // The ordinary candidate is constructed and verified before the lifetime
+    // transaction. Keep its stage counters when the persistent transaction
+    // supersedes an otherwise valid recurring ring.
+    candidate.ringCandidates = baseline.ringCandidates;
+    candidate.rejectedRings = baseline.rejectedRings;
+    candidate.ringCandidateCommandsRemoved = baseline.ringCandidateCommandsRemoved;
+    candidate.ringCandidatePacketsRemoved = baseline.ringCandidatePacketsRemoved;
+    candidate.recurringEpisodeWords = baseline.recurringEpisodeWords;
+    candidate.recurringEpisodePairs = baseline.recurringEpisodePairs;
+    candidate.recurringChoiceEndpoints = baseline.recurringChoiceEndpoints;
+    candidate.recurringRepeatedDirections = baseline.recurringRepeatedDirections;
+    candidate.recurringEpisodeWork = baseline.recurringEpisodeWork;
+    candidate.rejectedRecurringEpisodes = baseline.rejectedRecurringEpisodes;
+    candidate.recurringEpisodeBudgetExhausted = baseline.recurringEpisodeBudgetExhausted;
+    candidate.deferredRingCandidates = baseline.deferredRingCandidates;
+    candidate.deferredRings = baseline.deferredRings;
+    candidate.rejectedDeferredRings = baseline.rejectedDeferredRings;
+    candidate.periodicDeferredRings = baseline.periodicDeferredRings;
+    candidate.periodicWriteOverlapRejections = baseline.periodicWriteOverlapRejections;
+    candidate.deferredDiscoveryWork = baseline.deferredDiscoveryWork;
+    candidate.deferredDiscoveryRefusals = baseline.deferredDiscoveryRefusals;
+    candidate.deferredEligibilityWork = baseline.deferredEligibilityWork;
+    candidate.deferredReceiptCells = baseline.deferredReceiptCells;
+    candidate.deferredSkippedFamilies = baseline.deferredSkippedFamilies;
+    candidate.deferredProtocolSteps = baseline.deferredProtocolSteps;
+    candidate.cutCycles = baseline.recurringEpisodeWords ? baseline.cutCycles :
+        std::max<uint64_t>(baseline.cutCycles, 2 * baseline.ringCandidateCommandsRemoved);
+    return candidate;
+}
 } // namespace
-c::Result c::constructDemands(const Program& p) { return constructWithAlternativeChoices(p, false); }
+c::Result c::constructDemands(const Program& p) { return constructWithPersistentLifetimes(p); }
+c::Result c::testing::constructDemandsWithoutPersistentLifetimes(const Program& p)
+{
+    return constructWithAlternativeChoices(p, false);
+}
+std::vector<c::StorageLifetimeSummary> c::testing::summarizeStorageLifetimes(const Program& p, uint64_t limit)
+{
+    DemandAnalysis analysis;
+    std::string reason;
+    if (!analysis.build(p, reason))
+        return {};
+    LifetimeDiscovery discovery;
+    if (limit < LifetimeDiscovery::MaxWork)
+        discovery.work = LifetimeDiscovery::MaxWork - limit;
+    return discovery.run(p, analysis);
+}
 std::optional<uint64_t> c::testing::deferredDiscoveryReservation(
     uint64_t nodes, uint64_t cells, uint64_t keys, uint64_t commands, uint64_t limit)
 {
@@ -7285,5 +8276,37 @@ c::Result c::testing::constructDemandsRejectingAllocationReplay(const Program& p
 
 c::Result c::verifyDemands(const Program& p, const std::vector<std::vector<Mechanism>>& actual)
 {
-    return verifyDemandImpl(p, actual, nullptr);
+    auto closed = verifyDemandImpl(p, actual, nullptr);
+    if (closed.success)
+        return closed;
+    auto open = verifyOpenProtocol(p, actual, OpenProtocolLimit);
+    // Preserve the established fallback diagnostic unless this is an actual
+    // all-Every open population.  The latter has the more precise causal-key
+    // or physical-coverage failure from the open checker.
+    bool every = actual.size() == p.nodes.size() &&
+                 std::all_of(actual.begin(), actual.end(), [](const auto& site) {
+                     return std::all_of(site.begin(), site.end(), [](const auto& m) {
+                         return m.participation == Mechanism::Every;
+                     });
+                 });
+    if (every && open.success) {
+        open.ownedRefinements = std::max<uint64_t>(1, closed.ownedRefinements);
+        open.completionRefinements = closed.completionRefinements;
+        open.rejectedRefinements = closed.rejectedRefinements;
+    }
+    return every && open.success ? open : closed;
 }
+
+std::optional<std::vector<std::vector<c::Mechanism>>> c::testing::combineEpisodeWords(
+    const std::vector<std::vector<Mechanism>>& left, const std::vector<std::vector<Mechanism>>& right,
+    uint64_t limit)
+{
+    DemandRings::EpisodeBudget budget;
+    budget.limit = limit;
+    auto result = left;
+    if (!::combineEpisodeWords(result, right, budget))
+        return {};
+    return result;
+}
+
+#include "StructuredSyncOpenProtocol.inc"

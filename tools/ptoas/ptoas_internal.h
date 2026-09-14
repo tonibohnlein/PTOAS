@@ -125,6 +125,9 @@ extern llvm::cl::opt<bool> enableInsertSync;
 extern llvm::cl::opt<std::string> insertSyncPlanner;
 extern llvm::cl::opt<uint64_t> insertSyncLogicalWorkBudget;
 extern llvm::cl::opt<std::string> insertSyncGMAlias;
+extern llvm::cl::opt<std::string> insertSyncHardwareContract;
+extern llvm::cl::opt<std::string> insertSyncOwnershipContract;
+extern llvm::cl::opt<bool> insertSyncOwnershipCredit;
 extern llvm::cl::opt<bool> insertSyncStructuredPrecision;
 
 extern llvm::cl::opt<bool> enableBufidSync;

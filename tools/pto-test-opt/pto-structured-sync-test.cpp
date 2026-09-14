@@ -25,14 +25,21 @@ static std::string printed(Operation *op) {
     std::string text; llvm::raw_string_ostream stream(text); op->print(stream); return text;
 }
 int main(int argc,char **argv) {
-    if (argc<4 || argc>6) { llvm::errs()<<"input.pto mutation output.pto [conservative|a2a3-mmad-acc-v1] [may-alias|assume-disjoint-arguments]\n"; return 2; }
+    if (argc<4 || argc>8) { llvm::errs()<<"input.pto mutation output.pto [hardware] [alias] [ownership] [credit]\n"; return 2; }
     const StringRef contract=argc>=5?StringRef(argv[4]):StringRef("conservative");
     if (contract!="conservative" && contract!="a2a3-mmad-acc-v1") return 2;
-    const StringRef alias=argc==6?StringRef(argv[5]):StringRef("assume-disjoint-arguments");
+    const StringRef alias=argc>=6?StringRef(argv[5]):StringRef("assume-disjoint-arguments");
     if (alias!="may-alias" && alias!="assume-disjoint-arguments") return 2;
     auto gm=alias=="may-alias"?InsertSyncGMAliasMode::MayAlias:InsertSyncGMAliasMode::DisjointArguments;
     auto hardware=contract=="conservative"?structured_sync::HardwareContract::Conservative:
                                          structured_sync::HardwareContract::A2A3MmadAccV1;
+    const StringRef ownershipName=argc>=7?StringRef(argv[6]):StringRef("none");
+    if (ownershipName!="none" && ownershipName!="a2a3-unitflag-paired-v1") return 2;
+    auto ownership=ownershipName=="none"?structured_sync::OwnershipContract::None:
+        structured_sync::OwnershipContract::A2A3UnitFlagPairedV1;
+    const StringRef creditName=argc>=8?StringRef(argv[7]):StringRef("true");
+    if (creditName!="true" && creditName!="false") return 2;
+    bool ownershipCredit=creditName=="true";
     DialectRegistry registry;
     registry.insert<PTODialect,func::FuncDialect,scf::SCFDialect,arith::ArithDialect,DLTIDialect>();
     MLIRContext context(registry,MLIRContext::Threading::DISABLED);
@@ -47,6 +54,7 @@ int main(int argc,char **argv) {
     if (!arch || arch.getValue()=="a2a3") module->getOperation()->setAttr("pto.target_arch",StringAttr::get(&context,"a3"));
     auto function=kernels.front();
     const auto before=printed(function); StringRef mode(argv[2]); bool changed=false;
+    const bool authored = mode.consume_front("authored:");
     const bool demandPlacement = mode.consume_front("demands:");
     const bool fallbackOnly = demandPlacement && mode.consume_front("fallback:");
     const bool rejectRefinement = demandPlacement && mode=="reject-refinement";
@@ -230,6 +238,22 @@ int main(int argc,char **argv) {
                     if (wait.getSrcPipe().getPipe()==PIPE::PIPE_M &&
                         wait.getDstPipe().getPipe()==(mode=="drop-m-to-mte1"?PIPE::PIPE_MTE1:PIPE::PIPE_FIX))
                         chosen=op;
+            if (mode=="drop-m-to-mte2")
+                if (auto wait=dyn_cast<WaitFlagOp>(op))
+                    if (wait.getSrcPipe().getPipe()==PIPE::PIPE_M &&
+                        wait.getDstPipe().getPipe()==PIPE::PIPE_MTE2)
+                        chosen=op;
+            if (demandPlacement && mode=="persistent-drop-cleanup")
+                if (auto wait=dyn_cast<WaitFlagOp>(op); wait &&
+                    !op->getParentOfType<scf::ForOp>() &&
+                    wait.getSrcPipe().getPipe()==PIPE::PIPE_V &&
+                    wait.getDstPipe().getPipe()==PIPE::PIPE_MTE2)
+                    chosen=op;
+            if (demandPlacement && mode=="persistent-drop-mte3-release")
+                if (auto set=dyn_cast<SetFlagOp>(op); set && op->getParentOfType<scf::ForOp>() &&
+                    set.getSrcPipe().getPipe()==PIPE::PIPE_MTE3 &&
+                    set.getDstPipe().getPipe()==PIPE::PIPE_MTE2)
+                    chosen=op;
             if(mode=="narrow-coalesced"||mode=="duplicate-coalesced"||mode=="late-coalesced-set") {
                 // A shared startup publication is directly in its original
                 // loop body, not in an initial/steady generated guard. This
@@ -524,7 +548,8 @@ int main(int argc,char **argv) {
         }
         else if (mode=="drop-wait" || mode=="drop-set" || mode=="drop-retirement" ||
             (composition && mode=="drop-named-barrier") ||
-            mode=="drop-m-to-mte1" || mode=="drop-m-to-fix" ||
+            mode=="drop-m-to-mte1" || mode=="drop-m-to-fix" || mode=="drop-m-to-mte2" ||
+            mode=="persistent-drop-cleanup" || mode=="persistent-drop-mte3-release" ||
             mode=="drop-sequence-bridge" || mode=="drop-clean-cmo" ||
             mode=="drop-invalidate-cmo" ||
             mode=="drop-visibility-fence" || mode=="drop-authored-barrier" ||
@@ -565,7 +590,9 @@ int main(int argc,char **argv) {
         }
     };
     using Constructor=structured_sync::testing::CompositionConstructor;
-    auto result=composition ? structured_sync::testing::constructCompositionalSync(
+    auto result=authored ? structured_sync::testing::verifyAuthoredCompositionalSync(
+        function,gm,hardware,ownership,ownershipCredit) :
+        composition ? structured_sync::testing::constructCompositionalSync(
         function,gm,mutate,hardware,withoutAlternatives?Constructor::DemandsWithoutAlternativeChoices:
         rejectAlternatives?Constructor::DemandsRejectAlternativeChoices:withoutChild?Constructor::DemandsWithoutChildReturns:
         rejectChild?Constructor::DemandsRejectChildReturns:withoutChoice?Constructor::DemandsWithoutChoiceDemands:
@@ -580,7 +607,7 @@ int main(int argc,char **argv) {
         rejectReplay?Constructor::DemandsRejectAllocationReplay:rejectRefinement?Constructor::DemandsRejectRefinement:
             fallbackOnly?Constructor::DemandsFallbackOnly:
             demandPlacement?Constructor::Demands:
-            precision?Constructor::Cuts:Constructor::Conservative) :
+            precision?Constructor::Cuts:Constructor::Conservative,ownership,ownershipCredit) :
         structured_sync::testing::constructWithEmissionMutation(
         function,gm,mutate,hardware);
     using Result=logical_sync::ConstructionResult;
@@ -588,13 +615,15 @@ int main(int argc,char **argv) {
     bool expected=(mode=="none")?applied:
         mode=="expect-unsupported"?(!applied && result.status!=Result::InternalError):
         (changed && !applied);
-    bool preserved=applied || printed(function)==before;
+    bool preserved=(!authored && applied) || printed(function)==before;
     std::error_code error;
     llvm::raw_fd_ostream output(argv[3],error,llvm::sys::fs::OF_Text);
     if(error) { llvm::errs()<<error.message(); return 2; }
     module->print(output);
     llvm::outs()<<llvm::json::Value(llvm::json::Object{
-        {"hardware_contract",contract.str()},{"gm_alias",alias.str()},{"accepted",applied},{"mutation_applied",changed},{"expected",expected},{"atomic",preserved},
+        {"hardware_contract",contract.str()},{"ownership_contract",ownershipName.str()},
+        {"ownership_credit",ownershipCredit},{"gm_alias",alias.str()},{"accepted",applied},
+        {"mutation_applied",changed},{"expected",expected},{"atomic",preserved},
         {"status",unsigned(result.status)},{"reason",result.reason},
         {"requirements",result.requirements},{"handoffs",result.handoffs},{"barriers",result.barriers},
         {"visibility",result.visibility},{"fixed_sync",result.fixedSync},

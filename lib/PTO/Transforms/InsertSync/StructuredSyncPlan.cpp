@@ -9,6 +9,7 @@
 
 #include "PTO/Transforms/InsertSync/StructuredSyncPlan.h"
 #include "PTO/Transforms/InsertSync/StructuredSyncCore.h"
+#include "PTO/Transforms/InsertSync/StructuredSyncMatrixContract.h"
 #include "PTO/Transforms/InsertSync/StructuredSyncOrdinal.h"
 #include "PTO/Transforms/InsertSync/StructuredSyncPeriodicScalar.h"
 #include "PTO/Transforms/InsertSync/SyncPhysicalFacts.h"
@@ -90,88 +91,6 @@ bool producedBy(Value value,StringRef operation) {
 bool blockDistributedWrapper(scf::ForOp loop) {
     return producedBy(loop.getLowerBound(),"pto.get_block_idx") &&
            producedBy(loop.getStep(),"pto.get_block_num");
-}
-
-// S7's lowering witness is deliberately stricter than may-access extraction.
-// An allocation's maximum shape alone does not establish mad's effective m/n/k.
-// Only direct immutable descriptors with constant FULL valid dimensions enter
-// this first rule. Unqualified geometry retains ordinary completion demands.
-std::optional<std::pair<uint64_t,uint64_t>> exactMatrixValid(Value value) {
-    auto type=dyn_cast<TileBufType>(value.getType());
-    auto alloc=value.getDefiningOp<AllocTileOp>();
-    if (!type || !alloc || type.getRank()!=2 || type.getCompactModeI32()!=0)
-        return {};
-    for (Operation *user:value.getUsers())
-        if (isa<SetValidShapeOp>(user)) return {};
-    auto shape=type.getShape(), valid=type.getValidShape();
-    if (shape.size()!=2 || valid.size()!=2 || shape[0]<=0 || shape[1]<=0)
-        return {};
-    std::optional<int64_t> rows=valid[0]>=0?std::optional<int64_t>(valid[0]):literal(alloc.getValidRow());
-    std::optional<int64_t> cols=valid[1]>=0?std::optional<int64_t>(valid[1]):literal(alloc.getValidCol());
-    if (!rows || !cols || *rows!=shape[0] || *cols!=shape[1]) return {};
-    // Explicit operands, when present, must agree as well; do not trust a
-    // static type over a conflicting runtime descriptor argument.
-    if ((alloc.getValidRow() && literal(alloc.getValidRow())!=rows) ||
-        (alloc.getValidCol() && literal(alloc.getValidCol())!=cols)) return {};
-    return std::make_pair(uint64_t(*rows),uint64_t(*cols));
-}
-std::optional<std::pair<uint64_t,uint64_t>> exactAccFootprint(
-    Value value,const CompoundInstanceElement &phase,bool write) {
-    const auto &entries=write?phase.defVec:phase.useVec;
-    const BaseMemInfo *match=nullptr;
-    for (auto *entry:entries) if (entry && entry->baseBuffer==value) {
-        if (match) return {};
-        match=entry;
-    }
-    if (!match || match->scope!=AddressSpace::ACC || !match->hasKnownPhysicalAddresses ||
-        match->aliasesUnknownRange || match->baseAddresses.size()!=1 || !match->allocateSize || match->allocateSize>uint64_t(INT64_MAX) ||
-        match->baseAddresses[0]>uint64_t(INT64_MAX)-match->allocateSize) return {};
-    return std::make_pair(match->baseAddresses[0],match->allocateSize);
-}
-ss::MmadInfo matrixLoweringFacts(const CompoundInstanceElement &phase) {
-    ss::MmadInfo result;
-    Operation *op=phase.elementOp;
-    Value a,b,dst,input;
-    if (auto init=dyn_cast<TMatmulOp>(op)) {
-        if (auto accPhase=init.getAccPhaseAttr())
-            if (accPhase.getValue()!=AccPhase::Unspecified) return result;
-        a=init.getLhs(); b=init.getRhs(); dst=init.getDst();
-    } else if (auto update=dyn_cast<TMatmulAccOp>(op)) {
-        if (auto accPhase=update.getAccPhaseAttr())
-            if (accPhase.getValue()!=AccPhase::Unspecified) return result;
-        a=update.getLhs(); b=update.getRhs(); dst=update.getDst(); input=update.getAccIn();
-    } else return result; // no GEMV, bias, MX, partial implicit lowering or UnitFlag claim
-    if (phase.kPipeValue!=static_cast<PipelineType>(PIPE::PIPE_M)) return result;
-    auto at=dyn_cast<TileBufType>(a.getType()),bt=dyn_cast<TileBufType>(b.getType()),
-         ct=dyn_cast<TileBufType>(dst.getType());
-    if (!at || !bt || !ct || !ct.getElementType().isF32() ||
-        at.getElementType()!=bt.getElementType() ||
-        (!at.getElementType().isF16() && !at.getElementType().isBF16())) return result;
-    auto space=[](TileBufType t,AddressSpace expected) {
-        auto s=dyn_cast_or_null<AddressSpaceAttr>(t.getMemorySpace());
-        return s && s.getAddressSpace()==expected;
-    };
-    if (!space(at,AddressSpace::LEFT) || !space(bt,AddressSpace::RIGHT) ||
-        !space(ct,AddressSpace::ACC) ||
-        at.getBLayoutValueI32()!=0 || at.getSLayoutValueI32()!=1 || at.getSFractalSizeI32()!=512 ||
-        bt.getBLayoutValueI32()!=0 || bt.getSLayoutValueI32()!=2 || bt.getSFractalSizeI32()!=512 ||
-        ct.getBLayoutValueI32()!=1 || ct.getSLayoutValueI32()!=1 || ct.getSFractalSizeI32()!=1024)
-        return result;
-    auto av=exactMatrixValid(a),bv=exactMatrixValid(b),cv=exactMatrixValid(dst);
-    auto footprint=exactAccFootprint(dst,phase,true);
-    if (!av || !bv || !cv || !footprint || av->second!=bv->first ||
-        av->first!=cv->first || bv->second!=cv->second) return result;
-    if (input && (input.getType()!=dst.getType() || exactMatrixValid(input)!=cv ||
-                  exactAccFootprint(input,phase,false)!=footprint)) return result;
-    // These plain PTO-ISA overloads derive m/k from LEFT valid shape and n from
-    // RIGHT valid shape. No descriptor/source-independent m/n estimate is used.
-    if (cv->first>4095 || cv->second>4095 || av->second>4095 ||
-        footprint->second!=4*cv->first*cv->second) return result;
-    result.kind=input?ss::MmadInfo::Accumulate:ss::MmadInfo::Initialize;
-    result.accumulatorBase=footprint->first; result.accumulatorBytes=footprint->second;
-    result.m=cv->first; result.n=cv->second; result.k=av->second;
-    result.input=at.getElementType().isF16()?ss::MmadInfo::F16:ss::MmadInfo::BF16;
-    return result;
 }
 
 // Exact scalar interpretation in ITERATION ORDINALS. A first-only predicate
@@ -539,7 +458,7 @@ struct NativeFacts {
         }
         model.allowBoundaryKeyReuse=startup&&startupCase==StartupCase::Nonempty;
         for (std::size_t id=0;id<origin.size();++id)
-            model.atoms[id].matrix=matrixLoweringFacts(*physical.phases[origin[id]]);
+            model.atoms[id].matrix=ss::matrixLoweringFacts(*physical.phases[origin[id]]);
         auto recurringScalar=scalar(),initialScalar=scalar(true);
         auto alias=[&](const BaseMemInfo *a,std::size_t pa,const BaseMemInfo *b,std::size_t pb) {
             if (!logicalSyncMayAlias(a,b,function,gm)) return false;
@@ -1750,7 +1669,7 @@ Outcome run(func::FuncOp function,InsertSyncGMAliasMode gm,
     // descriptor operands/attributes and controls. This is not a second hardware spec.
     for (const auto &unit:units) for (std::size_t id=0;id<unit->origin.size();++id) {
         auto *op=unit->physical.phases[unit->origin[id]]->elementOp;
-        if (matrixLoweringFacts(*phases.at(op))!=unit->model.atoms[id].matrix) {
+        if (ss::matrixLoweringFacts(*phases.at(op))!=unit->model.atoms[id].matrix) {
             out.reason="emitted matrix hardware premise changed";return out;
         }
     }

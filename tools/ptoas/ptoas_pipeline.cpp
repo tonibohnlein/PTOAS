@@ -608,7 +608,8 @@ struct SerialAutoSyncPass
     case Mode::InsertSync:
       functionPM.addPass(pto::createPTOInsertSyncPass(pto::InsertSyncOptions{
           insertSyncPlanner, insertSyncLogicalWorkBudget, insertSyncGMAlias,
-          "conservative", insertSyncStructuredPrecision}));
+          insertSyncHardwareContract, insertSyncOwnershipContract,
+          insertSyncOwnershipCredit, insertSyncStructuredPrecision}));
       break;
     case Mode::Bufid: {
       PTOBufidSyncOptions options;
@@ -1319,7 +1320,8 @@ static void appendAutoSyncPasses(PassManager &pm) {
     } else {
       pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass(pto::InsertSyncOptions{
           insertSyncPlanner, insertSyncLogicalWorkBudget, insertSyncGMAlias,
-          "conservative", insertSyncStructuredPrecision}));
+          insertSyncHardwareContract, insertSyncOwnershipContract,
+          insertSyncOwnershipCredit, insertSyncStructuredPrecision}));
     }
   }
   else if (enableBufidSync) {

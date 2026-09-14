@@ -45,6 +45,7 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     rows = []
+    historical_evidence = None
     env = dict(os.environ, PTOAS_LOGICAL_TRACE='1')
     env.pop('PTOAS_STRUCTURED_PLAN_JSON', None)
 
@@ -113,6 +114,119 @@ def main():
     for name in positive:
         source = fixtures / (name + '.pto')
         compile_case(name, source, gm='assume-disjoint-arguments')
+    persistent_outputs = {}
+    for name in ('persistent_early_vector', 'persistent_multiple_readers',
+                 'persistent_bias_table'):
+        source = fixtures / (name + '.pto')
+        output = args.output / (name + '-demands.pto')
+        row = run(name + '-demands',
+                  [args.driver, source, 'demands:none', output],
+                  source, 'mutation', True)
+        if not row['verdict']['accepted']:
+            raise RuntimeError(name + ': persistent demand construction was not accepted')
+        persistent_outputs[name] = output.read_text()
+    if any(run_name != 'persistent_bias_table' and
+           next(row['verdict']['barriers'] for row in rows
+                if row['id'] == run_name + '-demands') != 0
+           for run_name in persistent_outputs):
+        raise RuntimeError('persistent vector/multi-reader bodies retained a barrier')
+
+    early = persistent_outputs['persistent_early_vector']
+    first_tabs = early.find('pto.tabs')
+    second_tabs = early.find('pto.tabs', first_tabs + 1)
+    release = early.find('pto.set_flag[<PIPE_V>, <PIPE_MTE2>', first_tabs)
+    if min(first_tabs, second_tabs, release) < 0 or not first_tabs < release < second_tabs:
+        raise RuntimeError('persistent-early-vector: release was delayed past unrelated vector work')
+    multi = persistent_outputs['persistent_multiple_readers']
+    first_store = multi.find('pto.tstore')
+    second_store = multi.find('pto.tstore', first_store + 1)
+    release = multi.find('pto.set_flag[<PIPE_MTE3>, <PIPE_MTE2>', first_store)
+    if min(first_store, second_store, release) < 0 or not first_store < release < second_store:
+        raise RuntimeError('persistent-multiple-readers: MTE3 release was delayed past unrelated work')
+    bias = persistent_outputs['persistent_bias_table']
+    biased = bias.find('pto.tmatmul.bias')
+    plain = bias.find('pto.tmatmul ins', biased + 1)
+    release = bias.find('pto.set_flag[<PIPE_M>, <PIPE_MTE1>', biased)
+    if min(biased, plain, release) < 0 or not biased < release < plain:
+        raise RuntimeError('persistent-bias-table: release was delayed past the unrelated MMAD')
+    for name, mutation in (('persistent_early_vector', 'persistent-drop-cleanup'),
+                           ('persistent_multiple_readers', 'persistent-drop-mte3-release')):
+        source = fixtures / (name + '.pto')
+        row = run(name + '-' + mutation,
+                  [args.driver, source, 'demands:' + mutation,
+                   args.output / (name + '-' + mutation + '.pto')],
+                  source, 'mutation', True)
+        if not row['verdict']['mutation_applied'] or row['verdict']['accepted']:
+            raise RuntimeError(name + ': persistent endpoint mutation escaped verification')
+    for name, qualified in (('mmad_boundary_10', False), ('mmad_large_11', True)):
+        source = HERE / 'hardware_inputs' / (name + '.pto')
+        counts = []
+        for hardware in ('conservative', 'a2a3-mmad-acc-v1'):
+            row = run(name + '-composition-' + hardware,
+                      [args.driver, source, 'demands:none',
+                       args.output / (name + '-' + hardware + '.pto'), hardware],
+                      source, 'mutation', True)
+            counts.append(row['verdict']['barriers'])
+        if (counts[1] < counts[0]) != qualified:
+            raise RuntimeError('composition accumulator qualification crossed its exact block threshold')
+    hardware_source = HERE / 'hardware_inputs' / 'mmad_large_11.pto'
+    for mutation in ('drop-m-to-mte1', 'drop-m-to-fix'):
+        run('composition-accumulator-' + mutation,
+            [args.driver, hardware_source, 'demands:' + mutation,
+             args.output / ('composition-accumulator-' + mutation + '.pto'), 'a2a3-mmad-acc-v1'],
+            hardware_source, 'mutation', True)
+    unitflag = fixtures / 'unitflag_paired.pto'
+    ownership_rows = []
+    for credit in ('true', 'false'):
+        row = run('unitflag-paired-credit-' + credit,
+                  [args.driver, unitflag, 'demands:none',
+                   args.output / ('unitflag-paired-credit-' + credit + '.pto'),
+                   'conservative', 'assume-disjoint-arguments',
+                   'a2a3-unitflag-paired-v1', credit],
+                  unitflag, 'mutation', True)
+        ownership_rows.append(row)
+    command_cost = lambda row: row['verdict']['barriers'] + 2 * row['verdict']['handoffs']
+    if command_cost(ownership_rows[0]) >= command_cost(ownership_rows[1]):
+        raise RuntimeError('UnitFlag credit did not remove its exact ACC ownership protocol')
+    for mutation in ('drop-m-to-mte1', 'drop-m-to-mte2'):
+        row = run('unitflag-' + mutation,
+                  [args.driver, unitflag, 'demands:' + mutation,
+                   args.output / ('unitflag-' + mutation + '.pto'),
+                   'conservative', 'assume-disjoint-arguments',
+                   'a2a3-unitflag-paired-v1', 'true'],
+                  unitflag, 'mutation', True)
+        if not row['verdict']['mutation_applied'] or row['verdict']['accepted']:
+            raise RuntimeError('UnitFlag credit incorrectly implied operand release or GM completion')
+    run('unitflag-missing-profile',
+        [args.driver, unitflag, 'demands:expect-unsupported',
+         args.output / 'unitflag-missing-profile.pto'], unitflag, 'mutation', True)
+    for label, old, new in (
+            ('bad-entry-range', 'array<i64: 0, 1024>', 'array<i64: 512, 1024>'),
+            ('partial-producer', '#pto<acc_phase final>', '#pto<acc_phase partial>'),
+            ('partial-store', '#pto<st_phase final>', '#pto<st_phase partial>')):
+        broken = args.output / ('unitflag-' + label + '-input.pto')
+        broken.write_text(unitflag.read_text().replace(old, new, 1))
+        run('unitflag-' + label,
+            [args.driver, broken, 'demands:expect-unsupported',
+             args.output / ('unitflag-' + label + '.pto'),
+             'conservative', 'assume-disjoint-arguments',
+             'a2a3-unitflag-paired-v1', 'true'],
+            broken, 'mutation', True)
+    authored = fixtures / 'authored_open_section.pto'
+    run('authored-open-section', [args.driver, authored, 'authored:none',
+        args.output / 'authored-open-section.pto'], authored, 'mutation', True)
+    for label, fragment in (
+            ('missing-prime', '    pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]\n'),
+            ('missing-cleanup', '    pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]\n'),
+            ('missing-drain', '      pto.barrier <PIPE_ALL>\n')):
+        broken = args.output / ('authored-' + label + '.pto')
+        # Only the exact outer indentation matches: inside-section endpoints
+        # have six spaces and are retained by this mutation.
+        text = authored.read_text()
+        text = text.replace('\n' + fragment, '\n', 1)
+        broken.write_text(text)
+        run('authored-' + label, [args.driver, broken, 'authored:expect-unsupported',
+            args.output / ('authored-' + label + '-checked.pto')], broken, 'mutation', True)
     source = fixtures / 'composition_tput_macro.pto'
     row = run('tput-macro-drop-original',
               [args.driver, source, 'composition:drop-macro',
@@ -134,6 +248,14 @@ def main():
               source, 'mutation', True)
     if not row['verdict']['atomic'] or not row['verdict']['expected']:
         raise RuntimeError('cut precision did not use the conservative atomic macro fallback')
+    for mode in ('none', 'drop-macro-prerequisite', 'late-macro-prerequisite',
+                 'macro-hidden-key0', 'macro-hidden-key1'):
+        row = run('tput-macro-demands-' + mode,
+                  [args.driver, source, 'demands:' + mode,
+                   args.output / ('tput-macro-demands-' + mode + '.pto')],
+                  source, 'mutation', True)
+        if not row['verdict']['atomic'] or not row['verdict']['expected']:
+            raise RuntimeError('demand placement lost atomic macro prerequisites')
     aic_source = args.output / 'composition_tput_macro_aic.pto'
     aic_source.write_text(source.read_text().replace(
         '#pto.kernel_kind<vector>', '#pto.kernel_kind<cube>', 1))
@@ -233,7 +355,100 @@ def main():
         if not row['verdict']['atomic'] or not row['verdict']['expected']:
             raise RuntimeError('authored fixed synchronization was not preserved')
     if args.historical:
-        compile_case('pinned-historical-gemm', args.historical)
+        raw = args.historical.read_bytes()
+        contract_path = args.historical.parent / 'abi-preconditions.json'
+        if not contract_path.exists():
+            raise RuntimeError('historical GEMM requires adjacent abi-preconditions.json')
+        contract = json.loads(contract_path.read_text())
+        quadruples = []
+        for argument, bounds in sorted(contract['arguments'].items(), key=lambda item: int(item[0])):
+            multiple = int(bounds['multiple'])
+            maximum = int(bounds['max']) // multiple * multiple
+            quadruples.extend((int(argument), int(bounds['min']), maximum, multiple))
+        metadata = 'pto.scalar_argument_preconditions = array<i64: ' + \
+            ', '.join(map(str, quadruples)) + '>'
+        marker = 'pto.noalias_pairs = array<i64: 0, 1, 0, 2, 1, 2>'
+        text = raw.decode()
+        if text.count(marker) != 1 or 'pto.scalar_argument_preconditions' in text:
+            raise RuntimeError('historical source has an unexpected ABI metadata boundary')
+        qualified = args.output / 'historical-gemm.abi-qualified.pto'
+        qualified.write_text(text.replace(marker, marker + ', ' + metadata, 1))
+        historical_evidence = dict(
+            source=str(args.historical), source_sha256=digest(raw),
+            contract=str(contract_path), contract_sha256=digest(contract_path.read_bytes()),
+            prepared=str(qualified), prepared_sha256=digest(qualified.read_bytes()),
+            preparation='add recorded scalar arg/min/max/multiple ABI metadata; payload, addresses, and control unchanged',
+            scalar_argument_preconditions=quadruples, arms={}, boundaries=[])
+
+        # These four arms keep the hardware and persistent-lifetime effects
+        # visible as separate static observations.  Only the final arm is the
+        # combined acceptance target.
+        for name, source, constructor, hardware in (
+                ('ordinary-conservative', args.historical, 'composition', 'conservative'),
+                ('ordinary-accumulator', args.historical, 'composition', 'a2a3-mmad-acc-v1'),
+                ('persistent-unqualified', args.historical, 'demands', 'a2a3-mmad-acc-v1'),
+                ('persistent-qualified', qualified, 'demands', 'a2a3-mmad-acc-v1')):
+            output = args.output / ('historical-gemm.' + name + '.pto')
+            row = run('historical-gemm-' + name,
+                      [args.driver, source, constructor + ':none', output,
+                       hardware, 'assume-disjoint-arguments'],
+                      source, 'mutation', True)
+            if not row['verdict']['accepted']:
+                raise RuntimeError(name + ': historical construction was not accepted')
+            emitted = output.read_text()
+            historical_evidence['arms'][name] = dict(
+                output=str(output), output_sha256=digest(output.read_bytes()),
+                verdict=row['verdict'], sets=emitted.count('pto.set_flag['),
+                waits=emitted.count('pto.wait_flag['),
+                barriers=emitted.count('pto.barrier'),
+                terminal_drains=emitted.count('pto.barrier <PIPE_ALL>'))
+        final = historical_evidence['arms']['persistent-qualified']
+        if final['verdict']['barriers'] != 0 or final['terminal_drains'] != 1:
+            raise RuntimeError('qualified historical GEMM did not recover a barrier-free body plus terminal drain')
+
+        # Metadata syntax/type errors are fatal.  A valid but insufficient
+        # lower bound merely declines the optional nonempty fact and retains a
+        # verified conservative result.
+        malformed = args.output / 'historical-gemm.bad-scalar-metadata.pto'
+        malformed.write_text(qualified.read_text().replace(
+            metadata, 'pto.scalar_argument_preconditions = array<i64: 3, 0, 128>', 1))
+        row = run('historical-gemm-bad-scalar-metadata',
+                  [args.driver, malformed, 'demands:expect-unsupported',
+                   args.output / 'historical-gemm.bad-scalar-metadata.output.pto',
+                   'a2a3-mmad-acc-v1', 'assume-disjoint-arguments'],
+                  malformed, 'mutation', True)
+        if row['verdict']['accepted']:
+            raise RuntimeError('malformed scalar ABI metadata was accepted')
+        insufficient = args.output / 'historical-gemm.insufficient-scalar-bound.pto'
+        insufficient_values = list(quadruples)
+        for index in range(1, len(insufficient_values), 4):
+            insufficient_values[index] = 0
+        insufficient_metadata = 'pto.scalar_argument_preconditions = array<i64: ' + \
+            ', '.join(map(str, insufficient_values)) + '>'
+        insufficient.write_text(qualified.read_text().replace(metadata, insufficient_metadata, 1))
+        row = run('historical-gemm-insufficient-scalar-bound',
+                  [args.driver, insufficient, 'demands:none',
+                   args.output / 'historical-gemm.insufficient-scalar-bound.output.pto',
+                   'a2a3-mmad-acc-v1', 'assume-disjoint-arguments'],
+                  insufficient, 'mutation', True)
+        if not row['verdict']['accepted'] or row['verdict']['barriers'] == 0:
+            raise RuntimeError('insufficient scalar bound did not retain the conservative zero-trip path')
+
+        reference = args.historical.parent / 'prototype.pto'
+        if reference.exists():
+            from compare_boundaries import compare, run as observe_boundaries
+            manifest = json.loads((HERE / 'demand_manifest.json').read_text())
+            case = next(item for item in manifest['cases'] if item['case_id'] == 'historical_gemm')
+            final_path = Path(historical_evidence['arms']['persistent-qualified']['output'])
+            for scenario in case['scenarios']:
+                expected, expected_metrics = observe_boundaries(reference, scenario)
+                actual, actual_metrics = observe_boundaries(final_path, scenario)
+                differences = compare(expected, actual)
+                historical_evidence['boundaries'].append(dict(
+                    scenario=scenario['name'], differences=differences,
+                    reference_metrics=expected_metrics, actual_metrics=actual_metrics))
+                if differences:
+                    raise RuntimeError('historical handoff boundaries differ in ' + scenario['name'])
         if args.python_root:
             from observations import SERIAL_DRIVER
             prefix = [sys.executable, '-c', SERIAL_DRIVER, args.python_root.resolve(),
@@ -279,7 +494,7 @@ def main():
                    revision=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                    dirty=subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True),
                    binaries={str(p): digest(p.read_bytes()) for p in binaries},
-                   manifests=corpus_manifests, results=rows,
+                   manifests=corpus_manifests, historical=historical_evidence, results=rows,
                    totals=dict(Counter(r['category'] + ':' + r['status'] for r in rows)))
     (args.output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary['totals'], indent=2))

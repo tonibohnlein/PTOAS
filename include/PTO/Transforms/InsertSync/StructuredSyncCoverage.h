@@ -167,6 +167,7 @@ inline bool singlePhaseMemoryOnlyOperation(Operation *op) {
       .Case("pto.tgetval", true)
       .Case("pto.tmatmul", true)
       .Case("pto.tmatmul.acc", true)
+      .Case("pto.tmatmul.bias", true)
       .Case("pto.tmax", true)
       .Case("pto.tmaxs", true)
       .Case("pto.tmins", true)
@@ -264,6 +265,7 @@ class Importer {
   uint64_t fragments = 0;
   bool compositional = false;
   bool emitted = false;
+  bool authoredWholeFunction = false;
 
   bool fail(StringRef kind, Operation *op = nullptr, StringRef detail = {}) {
     result.status = SyncPhysicalFacts::Status::Unsupported;
@@ -364,6 +366,10 @@ class Importer {
         return WalkResult::advance();
       }
       ++result.work;
+      // Test-only whole-function reconstruction owns these exact commands.
+      // Dynamic/frontend events and outside physical effects still decline.
+      if (authoredWholeFunction && isa<SetFlagOp, WaitFlagOp, BarrierOp>(op))
+        return WalkResult::advance();
       if (isa<SetFlagOp, WaitFlagOp, SetFlagDynOp, WaitFlagDynOp, BarrierOp,
               RecordEventOp, WaitEventOp>(op)) {
         fail("explicit-synchronization-outside-physical-section", op);
@@ -576,8 +582,8 @@ class Importer {
 
 public:
   Importer(func::FuncOp f, const SyncIRs &ir, bool composition = false,
-           bool actual = false)
-      : function(f), compositional(composition), emitted(actual) {
+           bool actual = false, bool authored = false)
+      : function(f), compositional(composition), emitted(actual), authoredWholeFunction(authored) {
     for (const auto &element : ir)
       if (auto *phase = dyn_cast<CompoundInstanceElement>(element.get()))
         if (phase->elementOp)
@@ -630,8 +636,8 @@ public:
 
 inline SyncPhysicalFacts importCoverageStructuredSyncPhysicalFacts(
     func::FuncOp function, const SyncIRs &ir, bool compositional = false,
-    bool emitted = false) {
-  return structured_sync_coverage_detail::Importer(function, ir, compositional, emitted).run();
+    bool emitted = false, bool authoredWholeFunction = false) {
+  return structured_sync_coverage_detail::Importer(function, ir, compositional, emitted, authoredWholeFunction).run();
 }
 
 

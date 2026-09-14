@@ -20,6 +20,8 @@ struct InsertSyncOptions {
   // Explicit source-qualified S7 contract; selecting an architecture alone
   // does not assert a release/toolchain's optional instruction guarantees.
   std::string hardwareContract = "conservative";
+  std::string ownershipContract = "none";
+  bool ownershipCredit = true;
   // composition: bounded demands vs conservative transfer in one engine.
   // structured: previous periodic backend vs composition during migration.
   bool structuredPrecision = true;

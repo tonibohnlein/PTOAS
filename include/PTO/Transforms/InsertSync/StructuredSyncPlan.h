@@ -26,8 +26,15 @@ logical_sync::ConstructionResult constructStructuredSync(
 // Precision enables the demand candidate, not replacement-quality acceptance.
 logical_sync::ConstructionResult constructCompositionalSync(
     func::FuncOp function, InsertSyncGMAliasMode gm, HardwareContract hardware = HardwareContract::Conservative,
-    bool enablePrecision = true);
+    bool enablePrecision = true, OwnershipContract ownership = OwnershipContract::None,
+    bool ownershipCredit = true);
 namespace testing {
+// Read-only qualification of an externally authored command population. No
+// constructor assignments or reference annotations are coverage certificates.
+logical_sync::ConstructionResult verifyAuthoredCompositionalSync(
+    func::FuncOp function, InsertSyncGMAliasMode gm,
+    HardwareContract hardware = HardwareContract::Conservative,
+    OwnershipContract ownership = OwnershipContract::None, bool ownershipCredit = true);
 enum class CompositionConstructor {
     Conservative,
     Cuts,
@@ -53,7 +60,8 @@ enum class CompositionConstructor {
 logical_sync::ConstructionResult constructCompositionalSync(
     func::FuncOp function, InsertSyncGMAliasMode gm, llvm::function_ref<void(func::FuncOp)> mutate,
     HardwareContract hardware = HardwareContract::Conservative,
-    CompositionConstructor constructor = CompositionConstructor::Conservative);
+    CompositionConstructor constructor = CompositionConstructor::Conservative,
+    OwnershipContract ownership = OwnershipContract::None, bool ownershipCredit = true);
 logical_sync::ConstructionResult constructWithEmissionMutation(
     func::FuncOp function, InsertSyncGMAliasMode gm, llvm::function_ref<void(func::FuncOp)> mutate,
     HardwareContract hardware = HardwareContract::Conservative);

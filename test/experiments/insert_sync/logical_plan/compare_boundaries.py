@@ -81,6 +81,7 @@ class Boundaries:
     def observe(self, op, point, signature):
         lane = {"pto.tload": "PIPE_MTE2", "pto.textract": "PIPE_MTE1",
                 "pto.tmatmul": "PIPE_M", "pto.tmatmul.acc": "PIPE_M",
+                "pto.tmatmul.bias": "PIPE_M",
                 "pto.tabs": "PIPE_V", "pto.tadd": "PIPE_V", "pto.tsub": "PIPE_V",
                 "pto.tmax": "PIPE_V", "pto.tmul": "PIPE_V", "pto.texp": "PIPE_V",
                 "pto.tcvt": "PIPE_V", "pto.trowexpanddiv": "PIPE_V",
@@ -93,7 +94,7 @@ class Boundaries:
             # Qualified by TMovOp::getPipe: MAT -> LEFT/RIGHT uses MTE1.
             # Other TMOV directions have different physical completion domains.
             if ("tile_buf<mat," in str(op.operands[0].type) and
-                    re.search(r"tile_buf<(?:left|right),", str(op.operands[1].type))):
+                    re.search(r"tile_buf<(?:left|right|bias),", str(op.operands[1].type))):
                 lane = "PIPE_MTE1"
             elif all("tile_buf<vec," in str(v.type) for v in op.operands):
                 lane = "PIPE_V"

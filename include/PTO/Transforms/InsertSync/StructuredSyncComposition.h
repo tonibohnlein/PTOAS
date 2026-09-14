@@ -46,6 +46,10 @@ struct State {
     // A remote wait may make any external GM payload newer than PIPE_S's
     // cache. Whole-cell cache maintenance discharges this conservative fact.
     std::vector<uint8_t> remoteScalarStale;
+    // A must fact about the uninterrupted M accumulator-update chain. It is
+    // never a completion receipt and is discarded at unknown loop entries.
+    MmadInfo accumulatorChain;
+    unsigned accumulatorCell = ~0u;
     explicit State(unsigned cells = 0);
     void join(const State& other);
     void seed(const Effects& effects);
@@ -100,6 +104,9 @@ struct Node {
     Effects effects;
     std::vector<MacroPhase> macroPhases;
     std::vector<MacroTransfer> macroTransfers;
+    // Exact lowering-owned accumulator witness; no fact is the default.
+    MmadInfo matrix;
+    unsigned matrixCell = ~0u;
     // Postorder, strictly smaller child IDs. For has one body, While has before
     // and after, Choice has both arms (an omitted else is an empty Sequence).
     std::vector<unsigned> children;
@@ -115,6 +122,12 @@ struct Node {
     unsigned periodicOwner = ~0u, periodicPeriod = 0;
     uint32_t periodicResidues = 0;
     int64_t periodicLower = 0;
+    // Exact `iv + step < upper` Choice. Its true arm executes precisely when
+    // another iteration of the counted owner follows.
+    unsigned nextIterationOwner = ~0u;
+    // Independently qualified positive trip count. Absence preserves the
+    // original zero-trip successor.
+    bool nonEmpty = false;
     std::optional<int64_t> firstActive() const
     {
         if (!periodicPeriod || periodicPeriod > 32 || !periodicResidues || periodicLower < 0)
@@ -161,6 +174,25 @@ struct CompletionDemand {
     unsigned scope = 0, publication = 0, acquisition = 0;
     unsigned source = 0, observer = 0;
     std::vector<unsigned> cells;
+};
+// A bounded physical-storage lifetime recovered from original structural
+// control.  Frontiers contain original insertion cuts; an empty/overflowed
+// frontier simply declines this optional precision.  Reader lanes remain
+// separate so reuse waits for every missing reader completion.
+struct AccessFrontier {
+    std::array<unsigned, 8> cuts{};
+    unsigned count = 0;
+    bool mayEmpty = true, valid = true;
+};
+struct StorageLifetimeSummary {
+    unsigned scope = ~0u, entry = ~0u, exit = ~0u;
+    std::vector<unsigned> cells;
+    unsigned producer = ~0u;
+    AccessFrontier firstWrite, lastWrite;
+    std::array<AccessFrontier, LaneCount> firstRead, lastRead;
+    uint8_t readers = 0;
+    bool maySkip = true;
+    bool wholeProgram = false;
 };
 struct Result {
     bool success = false;
@@ -226,6 +258,10 @@ struct Result {
     // Reserved bounded representation work for repeated discovery, separate
     // from actual protocol steps and selected-family eligibility scans.
     uint64_t deferredDiscoveryWork = 0, deferredDiscoveryRefusals = 0;
+    uint64_t lifetimeAnalysisWork = 0, lifetimeStorageUnits = 0;
+    uint64_t lifetimeCandidates = 0, persistentLifetimes = 0;
+    uint64_t persistentReaderFamilies = 0, rejectedPersistentLifetimes = 0;
+    bool lifetimeBudgetExhausted = false;
     // Optional candidate diagnostics never replace the accepted baseline's
     // ordinary reason. They identify why deferred-wrap rollback occurred.
     std::string deferredRejectionStage, deferredRejectionReason;
@@ -246,7 +282,16 @@ Result verifyCuts(const Program& program, const std::vector<std::vector<Mechanis
 Result constructDemands(const Program& program);
 Result verifyDemands(const Program& program, const std::vector<std::vector<Mechanism>>& actual);
 constexpr uint64_t DeferredDiscoveryLimit = 1u << 27;
+constexpr uint64_t LifetimeAnalysisLimit = 1u << 24;
+constexpr uint64_t OpenProtocolLimit = 1u << 28;
 namespace testing {
+Result verifyOpenDemands(const Program& program, const std::vector<std::vector<Mechanism>>& actual,
+                         uint64_t limit = OpenProtocolLimit);
+std::vector<StorageLifetimeSummary> summarizeStorageLifetimes(
+    const Program& program, uint64_t limit = LifetimeAnalysisLimit);
+std::optional<std::vector<std::vector<Mechanism>>> combineEpisodeWords(
+    const std::vector<std::vector<Mechanism>>& left, const std::vector<std::vector<Mechanism>>& right,
+    uint64_t limit = 1u << 22);
 // Same arithmetic preflight used by production, exposed for boundary tests.
 std::optional<uint64_t> deferredDiscoveryReservation(
     uint64_t nodes, uint64_t cells, uint64_t keys, uint64_t commands, uint64_t limit = DeferredDiscoveryLimit);
@@ -280,6 +325,8 @@ Result constructDemandsWithoutChildReturns(const Program& program);
 Result constructDemandsWithChildReturnWorkLimit(const Program& program, uint64_t limit);
 Result constructDemandsRejectingChildReturns(const Program& program);
 Result constructDemandsWithoutAlternativeChoices(const Program& program);
+// Isolate the established demand providers from persistent lifetime selection.
+Result constructDemandsWithoutPersistentLifetimes(const Program& program);
 Result constructDemandsWithAlternativeChoiceWorkLimit(const Program& program, uint64_t limit);
 Result constructDemandsRejectingAlternativeChoices(const Program& program);
 // Fault injection before refinement checking/emission, never on the initial
