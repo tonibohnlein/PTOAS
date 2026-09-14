@@ -622,6 +622,23 @@ struct Tree {
             if (value) value.printAsOperand(stream, names);
             return text;
         };
+        // Export the bounded actual failure before optional pair enumeration
+        // can exhaust its independent diagnostic allowance.
+        llvm::json::Value failure = nullptr;
+        if (selected.publicationFailureNode != ~0u) {
+            llvm::json::Array failedCells;
+            bool complete = charge(selected.publicationFailureCells.size());
+            if (complete)
+                for (unsigned cell : selected.publicationFailureCells) failedCells.push_back(cell);
+            failure = llvm::json::Object{
+                {"node", selected.publicationFailureNode},
+                {"macro_phase", selected.publicationFailurePhase == ~0u ? llvm::json::Value(nullptr) :
+                    llvm::json::Value(selected.publicationFailurePhase)},
+                {"cells", std::move(failedCells)}, {"cells_complete", complete},
+                {"producer", "MTE3"}, {"consumer", "MTE2"},
+                {"evidence", "actual-construction-may-obligation"},
+                {"reaching_writer_identified", false}};
+        }
         auto gather = [&]() {
             for (unsigned index = 0; index < cells.size(); ++index) {
                 const auto& cell = cells[index];
@@ -660,6 +677,21 @@ struct Tree {
                     {"effects", std::move(effects)}});
             }
             for (auto* phase : inventory.physical.phases) {
+                auto mapped = ids.find(phase->elementOp);
+                unsigned nodeId = mapped == ids.end() ? ~0u : mapped->second;
+                unsigned phaseIndex = ~0u;
+                if (nodeId != ~0u && program.nodes[nodeId].kind == c::Node::Macro) {
+                    // The supported two-phase macro model has bounded private
+                    // event/transfer storage. Reserve its reconstruction too.
+                    if (!charge(16 + program.nodes[nodeId].macroPhases.size())) return;
+                    auto model = getSyncMacroModel(phase->elementOp);
+                    if (model) {
+                        if (!charge(model->phases.size())) return;
+                        for (unsigned i = 0; i < model->phases.size(); ++i)
+                            if (int(model->phases[i].phaseId) == phase->macroOpInstanceId)
+                                phaseIndex = i;
+                    }
+                }
                 auto append = [&](const auto& entries, bool write) {
                     for (const auto* access : entries) {
                         auto cached = gmAccesses.find(access);
@@ -673,7 +705,7 @@ struct Tree {
                             for (Value root : cached->second.arguments) roots.push_back(name(root));
                         } else roots.push_back(name(access->rootBuffer));
                         Access record{access, phase->elementOp, unsigned(recorded.size()),
-                            ids.lookup(phase->elementOp), phase->kPipeValue, write, {}};
+                            nodeId, phase->kPipeValue, write, {}};
                         for (Operation* owner = phase->elementOp->getParentOp();
                              owner && owner != inventory.function.getOperation(); owner = owner->getParentOp()) {
                             if (!charge(1)) return false;
@@ -690,7 +722,11 @@ struct Tree {
                             if (!write && phase->kPipeValue == PipelineType::PIPE_MTE2) readers.push_back(record.id);
                         }
                         for (uint64_t base : access->baseAddresses) ranges.push_back(std::to_string(base));
-                        llvm::json::Object row{{"node", ids.lookup(phase->elementOp)}, {"write", write},
+                        llvm::json::Object row{{"node", nodeId == ~0u ? llvm::json::Value(nullptr) : llvm::json::Value(nodeId)},
+                            {"mapping_status", nodeId == ~0u ? "unmapped" : "mapped"},
+                            {"macro_phase", phaseIndex == ~0u ? llvm::json::Value(nullptr) : llvm::json::Value(phaseIndex)},
+                            {"native_phase_id", phase->macroOpInstanceId},
+                            {"pipeline", unsigned(phase->kPipeValue)}, {"write", write},
                             {"base", name(access->baseBuffer)}, {"space", unsigned(access->scope)},
                             {"roots", std::move(roots)}, {"origins_complete", complete}, {"id", record.id}, {"cells", std::move(cellIds)},
                             {"offsets", std::move(ranges)}, {"bytes", std::to_string(access->allocateSize)},
@@ -776,6 +812,7 @@ struct Tree {
             {"function", inventory.function.getSymName().str()},
             {"alias_contract", gm == InsertSyncGMAliasMode::DisjointArguments ? "assume-disjoint-arguments" : "may-alias"},
             {"success", selected.success}, {"reason", selected.reason},
+            {"publication_failure", std::move(failure)},
             {"command_stage", "proposed-before-reconstruction"},
             {"pairwise_alias_contract", std::move(aliasPairs)},
             {"disjoint_root_pairs", std::move(disjointRootPairs)},
@@ -786,6 +823,10 @@ struct Tree {
             {"legacy_translation_accounting", "separate diagnostic; translator internals not charged"},
             {"families_discovered", selected.lifetimeCandidates},
             {"families_selected", selected.persistentLifetimes},
+            {"families_residual", selected.residualLifetimes},
+            {"retained_completion_groups", selected.retainedCompletionGroups},
+            {"selected_visibility_sites", selected.selectedCountsValid ?
+                llvm::json::Value(selected.selectedVisibilitySites) : llvm::json::Value(nullptr)},
             {"families_rejected", selected.rejectedPersistentLifetimes},
             {"cleanup_trials", selected.lifetimeCleanupTrials}, {"cleanup_commands_removed", selected.lifetimeCleanupRemoved},
             {"cleanup_work", selected.lifetimeCleanupWork}, {"cleanup_budget_exhausted", selected.lifetimeCleanupBudgetExhausted},

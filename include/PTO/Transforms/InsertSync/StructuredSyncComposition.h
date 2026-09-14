@@ -190,6 +190,10 @@ struct CompletionDemand {
 struct Result {
     bool success = false;
     std::string reason;
+    // Actual abstract-state refusal site, distinct from Cartesian candidate
+    // pairs in the optional native report. No reaching writer is inferred.
+    unsigned publicationFailureNode = ~0u, publicationFailurePhase = ~0u;
+    std::vector<unsigned> publicationFailureCells;
     std::vector<std::vector<Mechanism>> before;
     uint64_t nodeVisits = 0, cellVisits = 0, acquisitions = 0;
     uint64_t visibilityRequirements = 0;
@@ -253,6 +257,8 @@ struct Result {
     uint64_t deferredDiscoveryWork = 0, deferredDiscoveryRefusals = 0;
     uint64_t lifetimeAnalysisWork = 0, lifetimeStorageUnits = 0;
     uint64_t lifetimeCandidates = 0, persistentLifetimes = 0;
+    uint64_t residualLifetimes = 0;
+    uint64_t retainedCompletionGroups = 0, selectedVisibilitySites = 0;
     uint64_t lifetimeCleanupTrials = 0, lifetimeCleanupRemoved = 0, lifetimeCleanupWork = 0;
     bool lifetimeCleanupBudgetExhausted = false;
     uint64_t persistentReaderFamilies = 0, rejectedPersistentLifetimes = 0;

@@ -419,13 +419,24 @@ bool visibilityCovered(
 
 bool realizeVisibility(
     const c::Program& p, const c::Node& n, c::State& state, std::vector<c::Mechanism>& commands, std::string& reason,
-    uint64_t& requirements)
+    uint64_t& requirements, c::Result* diagnostic = nullptr, unsigned site = ~0u,
+    unsigned phase = ~0u)
 {
     auto need = visibilityNeed(p, n, state);
     if (need == VisibilityNeed::None)
         return true;
     if (need == VisibilityNeed::UnsupportedMte3ToMte2) {
         reason = "MTE3-to-MTE2 GM publication has no qualified compositional realization";
+        if (diagnostic) {
+            diagnostic->publicationFailureNode = site;
+            diagnostic->publicationFailurePhase = phase;
+            diagnostic->publicationFailureCells.clear();
+            diagnostic->cellVisits += p.globalMemory.size();
+            for (unsigned cell = 0; cell < p.globalMemory.size(); ++cell)
+                if (p.globalMemory[cell] && n.effects[cell].readers &&
+                    (state.written[unsigned(Pipe::MTE2)][cell] & (1u << unsigned(Pipe::MTE3))))
+                    diagnostic->publicationFailureCells.push_back(cell);
+        }
         return false;
     }
     c::Mechanism mechanism;
@@ -573,14 +584,15 @@ bool executeMacro(const c::Program& p, const c::Node& macro, StateT& state, std:
 template <typename StateT>
 bool constructMacro(const c::Program& p, const c::Node& macro, StateT& state,
                     std::vector<c::Mechanism>& commands, std::string& reason,
-                    uint64_t& acquisitions, uint64_t& visibilityRequirements)
+                    uint64_t& acquisitions, uint64_t& visibilityRequirements,
+                    c::Result* diagnostic = nullptr, unsigned site = ~0u)
 {
     StateT trial = state;
     const size_t begin = commands.size();
     for (unsigned index = 0; index < macro.macroPhases.size(); ++index) {
         const auto& phase = macro.macroPhases[index];
         auto operation = phaseNode(phase);
-        if (!realizeVisibility(p, operation, trial, commands, reason, visibilityRequirements))
+        if (!realizeVisibility(p, operation, trial, commands, reason, visibilityRequirements, diagnostic, site, index))
             return false;
         for (unsigned source = 0; source < c::LaneCount; ++source)
             if (trial.demands(phase.lane, phase.effects) & (1u << source)) {
@@ -803,7 +815,7 @@ c::Result c::construct(const Program& p)
         if (!realizeNotificationPrerequisite(p, id, state, result.before[id], result.reason,
                                             result.visibilityRequirements, result.cellVisits)) return false;
         if (n.kind == Node::Operation) {
-            if (!realizeVisibility(p, n, state, result.before[id], result.reason, result.visibilityRequirements))
+            if (!realizeVisibility(p, n, state, result.before[id], result.reason, result.visibilityRequirements, &result, id))
                 return false;
             for (unsigned source = 0; source < LaneCount; ++source)
                 if (operationDemands(p, n, state) & (1u << source)) {
@@ -818,7 +830,7 @@ c::Result c::construct(const Program& p)
         }
         if (n.kind == Node::Macro)
             return constructMacro(p, n, state, result.before[id], result.reason, result.acquisitions,
-                                  result.visibilityRequirements);
+                                  result.visibilityRequirements, &result, id);
         if (n.kind == Node::Choice) {
             State alternative = state;
             if (!visit(n.children[0], state) || !visit(n.children[1], alternative))
@@ -1788,7 +1800,7 @@ c::Result constructCutCandidate(const c::Program& p, bool reserveFallback)
         if (!realizeNotificationPrerequisite(p, id, state, commands, result.reason,
                                             result.visibilityRequirements, result.cellVisits)) return false;
         if (n.kind == Node::Operation) {
-            if (!realizeVisibility(p, n, state, commands, result.reason, result.visibilityRequirements))
+            if (!realizeVisibility(p, n, state, commands, result.reason, result.visibilityRequirements, &result, id))
                 return false;
             for (unsigned source = 0; source < LaneCount; ++source)
                 if (operationDemands(p, n, state) & (1u << source)) {
@@ -5408,8 +5420,12 @@ c::Result verifyConstructionDemands(
 // Residual consumption obligations attach before an actual command, whereas
 // byte obligations attach after the site's protocol and before its payload.
 using ProtocolResiduals = std::map<std::pair<unsigned, unsigned>, std::vector<c::Mechanism>>;
+// Observed pending-bit removals by actual acquisitions, keyed by protocol
+// identity. These guide provider retention, never verification credit.
+using ProviderCompletions = std::map<std::tuple<unsigned, unsigned, unsigned>, c::Effects>;
 c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64_t limit,
-                            Commands* residual = nullptr, ProtocolResiduals* protocolResidual = nullptr);
+                            Commands* residual = nullptr, ProtocolResiduals* protocolResidual = nullptr,
+                            ProviderCompletions* completions = nullptr);
 c::Result constructDemandCandidate(
     const c::Program& p, const DemandInvariants* invariants, DemandFallbacks& unassigned,
     const DemandFallbacks* forced = nullptr, const Cuts* recurring = nullptr,
@@ -5599,7 +5615,7 @@ c::Result constructDemandCandidate(
         const auto& n = p.nodes[id];
         if (n.kind == Node::Macro) {
             if (!constructMacro(p, n, state, result.before[id], result.reason,
-                                result.acquisitions, result.visibilityRequirements))
+                                result.acquisitions, result.visibilityRequirements, &result, id))
                 return false;
             for (const auto& cut : analysis.release[id])
                 state.receipts.erase(cut);
@@ -5608,7 +5624,7 @@ c::Result constructDemandCandidate(
         if (!realizeNotificationPrerequisite(p, id, state, result.before[id], result.reason,
                                             result.visibilityRequirements, result.cellVisits)) return false;
         if (n.kind == Node::Operation) {
-            if (!realizeVisibility(p, n, state, result.before[id], result.reason, result.visibilityRequirements))
+            if (!realizeVisibility(p, n, state, result.before[id], result.reason, result.visibilityRequirements, &result, id))
                 return false;
             for (unsigned source = 0; source < LaneCount; ++source) {
                 if (!(operationDemands(p, n, state) & (1u << source)))
@@ -7836,16 +7852,36 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
     };
     if (summaries.empty())
         return fallback();
-    // ACC families migrate to obligation-driven residual construction. No
-    // scheduling effect is deleted: actual prefix transfers determine what
-    // the ordinary provider must still supply.
+    // Select the residual interface by provider participation. Ordinary
+    // unguarded providers and persistent storage protocols share one symbolic
+    // event population regardless of their producer/consumer pipe names.
+    bool ordinaryProviders = true;
+    if (!discovery.charge(baseline.before.size())) return fallback();
+    for (const auto& site : baseline.before) {
+        if (!discovery.charge(site.size())) return fallback();
+        for (const auto& command : site)
+            ordinaryProviders &= command.participation == Mechanism::Every &&
+                                 command.loop == NoCut && command.word == NoCut;
+    }
+    // Macro prerequisites are not yet constructed by the open residual walk.
+    // Only affected cells are excluded; unrelated macros keep their providers.
+    if (!discovery.charge(p.nodes.size() + p.cells)) return fallback();
+    std::vector<bool> macroCells(p.cells, false);
+    discovery.storage += macroCells.size();
+    for (const auto& node : p.nodes)
+        if (node.kind == Node::Macro)
+            for (unsigned cell = 0; cell < p.cells; ++cell) {
+                if (!discovery.charge(node.macroPhases.size())) return fallback();
+                for (const auto& phase : node.macroPhases)
+                    macroCells[cell] = macroCells[cell] || phase.effects[cell].readers || phase.effects[cell].writers;
+            }
     auto accumulatorFamily = [](const auto& summary) {
         return summary.producer == unsigned(Pipe::M) && (summary.readers & (1u << unsigned(Pipe::FIX)));
     };
     // An authored ownership contract can discharge ACC before discovery. Its
     // remaining operand lifetimes still need the same residual construction;
     // removing an ACC obligation must not switch them back to pair deletion.
-    const bool residualMode = p.target.ownership == OwnershipContract::A2A3UnitFlagPairedV1 ||
+    const bool residualMode = ordinaryProviders || p.target.ownership == OwnershipContract::A2A3UnitFlagPairedV1 ||
                               std::any_of(summaries.begin(), summaries.end(), accumulatorFamily);
     // Guarded ACC entry helpers may be superseded by a selected lifetime.
     // Decide that after selection; unrelated guarded providers still require
@@ -8039,6 +8075,12 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
     unsigned proposalTrials = 0;
     for (const auto& lifetime : summaries) {
         if (discovery.exhausted) return fallback();
+        if (!discovery.charge(lifetime.cells.size())) return fallback();
+        if (residualMode && std::any_of(lifetime.cells.begin(), lifetime.cells.end(),
+                                       [&](unsigned cell) { return macroCells[cell]; })) {
+            ++baseline.lifetimeProtocolRejections;
+            continue;
+        }
         // Ordinary lifetime families can share the residual protocol ledger.
         // Alternative-acquisition families retain their existing providers
         // until their own lifetime participation has been migrated.
@@ -8196,6 +8238,7 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         baseline.deferredRejectionStage = "persistent";
         baseline.deferredRejectionReason = allocationRejected ? "persistent lifetime event pool exhausted" :
             boundaryRejected ? "persistent lifetime has no useful structural boundary" :
+            baseline.lifetimeProtocolRejections ? "persistent lifetime requires unsupported macro or protocol participation" :
             baseline.lifetimeStrongerRejections ? "persistent lifetime retains stronger resource obligations" :
                                "persistent lifetime families overlap";
         baseline.rejectedPersistentLifetimes = summaries.size();
@@ -8237,6 +8280,64 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
                 return analysis.effects[site][cell].readers || analysis.effects[site][cell].writers;
             });
         };
+        // A receipt can complete unselected storage even when its endpoints
+        // also access a selected lifetime. Observe actual baseline transfers
+        // rather than treating endpoint footprints as the receipt's payload.
+        std::set<Direction> completionGroups;
+        uint64_t providerObservationWork = 0;
+        if (ordinaryProviders) {
+            ProviderCompletions supplied;
+            auto observed = verifyOpenProtocol(p, baseline.before, OpenProtocolLimit, nullptr, nullptr, &supplied);
+            residualAttemptNodes += observed.nodeVisits;
+            residualAttemptCells += observed.cellVisits;
+            candidate.nodeVisits += observed.nodeVisits;
+            candidate.cellVisits += observed.cellVisits;
+            providerObservationWork = observed.selectedAccountingWork;
+            discovery.storage += supplied.size() * (1 + p.cells);
+            if (observed.success) {
+                if (!discovery.charge(supplied.size() * (1 + p.cells))) return fallback();
+                for (const auto& [identity, effects] : supplied) {
+                    auto [source, observer, key] = identity;
+                    (void)key;
+                    for (unsigned cell = 0; cell < p.cells; ++cell)
+                        if (!selectedCells.count(cell) &&
+                            ((effects[cell].readers | effects[cell].writers) & (1u << observer)))
+                            completionGroups.insert(std::minmax(source, observer));
+                }
+                // Keep both directions and all keys of a chosen baseline
+                // group. An optional group cannot consume a key already
+                // required by a persistent provider in that direction.
+                std::map<Direction, std::set<unsigned>> proposed, existing;
+                for (const auto& rows : {&baseline.before, &candidate.before})
+                    for (const auto& commands : *rows) {
+                        if (!discovery.charge(1 + commands.size() * 4)) return fallback();
+                        for (const auto& command : commands)
+                            for (auto [source, observer, key] : identities(command))
+                                (rows == &baseline.before ? proposed : existing)[{source, observer}].insert(key);
+                    }
+                for (auto group = completionGroups.begin(); group != completionGroups.end();) {
+                    bool fits = true;
+                    for (auto direction : {Direction{group->first, group->second}, Direction{group->second, group->first}}) {
+                        if (!discovery.charge(p.target.compilerKeys.size() *
+                                              (1 + p.target.compilerKeys.size() + p.target.reservations.size()) + 1))
+                            return fallback();
+                        unsigned available = 0;
+                        for (unsigned key : p.target.compilerKeys)
+                            available += p.target.available(lane(p, direction.first), lane(p, direction.second), key);
+                        fits &= proposed[direction].size() + existing[direction].size() <= available;
+                    }
+                    if (!fits) group = completionGroups.erase(group);
+                    else ++group;
+                }
+            }
+        }
+        auto keepCompletion = [&](const Mechanism& command) {
+            return command.participation == Mechanism::Every &&
+                (command.kind == Mechanism::Publish || command.kind == Mechanism::Acquire ||
+                 command.kind == Mechanism::Rendezvous) &&
+                completionGroups.count(std::minmax(command.first, command.second));
+        };
+        candidate.retainedCompletionGroups = completionGroups.size();
         // The baseline has already verified complete First/NonEmpty entry
         // protocols. Replace only those whose every first-consumer witness is
         // an ACC obligation of the selected lifetime. This removes a provider,
@@ -8306,7 +8407,7 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
                     baseline.lifetimeBudgetExhausted = true;
                     return fallback();
                 }
-                if (!independent(site) || command.participation != Mechanism::Every)
+                if ((!independent(site) || command.participation != Mechanism::Every) && !keepCompletion(command))
                     for (const auto& identity : identities(command)) affected.insert(identity);
             }
         std::map<Identity, unsigned> retained;
@@ -8321,13 +8422,14 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
             for (auto command : baseline.before[site]) {
                 if (!discovery.charge(1 + selectedCells.size())) return fallback();
                 auto keys = identities(command);
-                if (!independent(site) || command.participation != Mechanism::Every ||
+                if ((!independent(site) && !keepCompletion(command)) || command.participation != Mechanism::Every ||
                     std::any_of(keys.begin(), keys.end(), [&](const auto& id) { return affected.count(id); }))
                     continue;
                 if (!keys.empty()) command.forwardKey = retain(command.first, command.second, command.forwardKey);
                 if (command.kind == Mechanism::Rendezvous)
                     command.reverseKey = retain(command.second, command.first, command.reverseKey);
                 appendActual(commands, command);
+                candidate.visibilityRequirements += command.kind == Mechanism::Visibility;
             }
             candidate.before[site].insert(candidate.before[site].begin(), commands.begin(), commands.end());
         }
@@ -8344,7 +8446,7 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
         symbolic.target.compilerKeys.clear();
         for (unsigned id = 0; id < nextProtocolIdentity; ++id)
             symbolic.target.compilerKeys.push_back(id);
-        uint64_t remaining = OpenProtocolLimit;
+        uint64_t remaining = OpenProtocolLimit - std::min(OpenProtocolLimit, providerObservationWork);
         bool settled = false;
         for (unsigned round = 0; round < 4; ++round) {
             if (!discovery.charge(uint64_t(p.nodes.size()) * (1 + LaneCount * 2))) {
@@ -8570,7 +8672,8 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
                         const auto& wait = commands[position + 1];
                         bool acc = (command.first == unsigned(Pipe::M) && command.second == unsigned(Pipe::FIX)) ||
                                    (command.first == unsigned(Pipe::FIX) && command.second == unsigned(Pipe::M));
-                        if ((acc || residualPackets.count({command.first, command.second, command.forwardKey})) &&
+                        if ((acc || command.participation == Mechanism::Every ||
+                             residualPackets.count({command.first, command.second, command.forwardKey})) &&
                             wait.kind == Mechanism::Acquire && wait.first == command.first &&
                             wait.second == command.second && wait.forwardKey == command.forwardKey)
                             count = 2;
@@ -8625,6 +8728,7 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
     candidate.lifetimeStorageUnits = discovery.storage;
     candidate.lifetimeCandidates = summaries.size();
     candidate.persistentLifetimes = selected;
+    candidate.residualLifetimes = residualMode ? selected : 0;
     candidate.persistentReaderFamilies = readerFamilies;
     candidate.rejectedPersistentLifetimes = summaries.size() - selected;
     candidate.protocolKeys += 2 * readerFamilies;
@@ -8656,9 +8760,13 @@ c::Result constructWithPersistentLifetimes(const c::Program& p)
     candidate.preLifetimeCutCycles = baseline.cutCycles;
     candidate.preLifetimeProtocolKeys = baseline.protocolKeys;
     candidate.selectedSetSites = candidate.selectedWaitSites = candidate.selectedNamedBarriers = 0;
+    // Include retained ordinary recipes and exclude repeated proposal visits.
+    // This counter describes the selected static visibility population.
+    candidate.selectedVisibilitySites = 0;
     std::set<PrefixState::EventKey> selectedKeys;
     for (const auto& site : candidate.before)
         for (const auto& mechanism : site) {
+            candidate.selectedVisibilitySites += mechanism.kind == Mechanism::Visibility;
             if (mechanism.kind == Mechanism::Barrier)
                 ++candidate.selectedNamedBarriers;
             else if (mechanism.kind == Mechanism::Rendezvous) {

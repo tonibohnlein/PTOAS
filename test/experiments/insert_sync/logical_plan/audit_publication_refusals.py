@@ -109,6 +109,11 @@ def main():
             nodes = {node['id']: node for node in report['nodes']}
             for pair in witness_classes([report]):
                 w, r = pair['writer_access'], pair['reader_access']
+                if w['node'] not in nodes or r['node'] not in nodes:
+                    pairs.append(dict(**pair, category='insufficient-node-mapping',
+                                      missing_fact_or_realization='Original access has no mapped construction node.'))
+                    counts['insufficient-node-mapping'] += 1
+                    continue
                 writer, reader = nodes[w['node']], nodes[r['node']]
                 wk, rk = operation_kind(writer['operation']), operation_kind(reader['operation'])
                 category, missing = explain(pair, wk, rk)
@@ -135,6 +140,8 @@ def main():
                                  enumerate(legacy.read_text().splitlines(), 1) if re.search(
                                      r'pto\.(set_flag|wait_flag|barrier|cmo\.|fence\.|comm\.tnotify|comm\.twait)', line)],
                     report_sha256=digest(reports_path),
+                    actual_failures=[dict(function=r['function'], failure=r.get('publication_failure')) for r in reports],
+                    failure_relations=dict(Counter(p['failure_relation'] for p in pairs)),
                     report_exhausted=any(r['report_exhausted'] for r in reports),
                     categories=dict(Counter(p['category'] for p in pairs)), pairs=pairs)
         cases.append(case)
@@ -145,6 +152,9 @@ def main():
                   campaign_sha256=digest(args.campaign), measurement='analysis-of-pinned-replay',
                   cases=len(cases), distinct_inputs=len({c['prepared_sha256'] for c in cases}),
                   pair_categories=dict(counts), causal_witness_limit='Candidate pairs, not a proof of the first refusal.',
+                  actual_failure_rows=sum(any(r['failure'] for r in c['actual_failures']) for c in cases),
+                  matching_failure_categories=dict(Counter(p['category'] for c in cases for p in c['pairs']
+                      if p['failure_relation'] == 'matching-consumer-cell')),
                   rows=[{k: v for k, v in c.items() if k not in ('pairs', 'legacy_sync')} for c in cases])
     (args.output / 'summary.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({k: result[k] for k in ('cases', 'distinct_inputs', 'pair_categories')}, indent=2))

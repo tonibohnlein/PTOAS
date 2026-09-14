@@ -377,6 +377,9 @@ static void testRemoteSignals()
             p.fixedBefore.resize(p.nodes.size());
             auto unsupported = c::constructDemands(p);
             require(!unsupported.success && unsupported.reason.find("MTE3-to-MTE2 GM publication") != std::string::npos);
+            require(unsupported.publicationFailureNode == reload);
+            require(unsupported.publicationFailurePhase == ~0u);
+            require(unsupported.publicationFailureCells == std::vector<unsigned>{0});
         }
     }
 
@@ -3196,7 +3199,11 @@ int main()
         auto read = op(p, unsigned(Pipe::V), 0, false);
         auto loop = add(p, c::Node::For, {sequence(p, {write, read})});
         sequence(p, {loop});
-        auto plan = c::constructDemands(p);
+        // Exercise ordinary completion refinement directly; generic lifetime
+        // composition may supersede this provider in the final selected plan.
+        auto plan = c::testing::constructDemandsWithoutPersistentLifetimes(p);
+        auto production = c::constructDemands(p);
+        require(production.success && c::verifyDemands(p, production.before).success);
         require(plan.success && c::verifyDemands(p, plan.before).success);
         require(plan.completionRefinements == 1 && plan.rejectedRefinements == 0);
         require(c::verifyDemands(p, plan.before).ownedRefinements > 0);
@@ -3210,13 +3217,19 @@ int main()
             execute(p, plan, p.nodes.size() - 1, trips, 0, branch, oracle);
             execute(p, plan, p.nodes.size() - 1, 4 - trips, 0, branch, oracle);
             oracle.check();
+            Oracle combined;
+            execute(p, production, p.nodes.size() - 1, trips, 0, branch, combined);
+            execute(p, production, p.nodes.size() - 1, 4 - trips, 0, branch, combined);
+            combined.check();
             Oracle rollback;
             execute(p, rejected, p.nodes.size() - 1, trips, 0, branch, rollback);
             execute(p, rejected, p.nodes.size() - 1, 4 - trips, 0, branch, rollback);
             rollback.check();
         }
         p.target.compilerKeys = {0};
-        auto scarce = c::constructDemands(p);
+        auto scarce = c::testing::constructDemandsWithoutPersistentLifetimes(p);
+        auto scarceProduction = c::constructDemands(p);
+        require(scarceProduction.success && c::verifyDemands(p, scarceProduction.before).success);
         require(scarce.success && c::verifyDemands(p, scarce.before).success);
         require(scarce.directHandoffs == 0 && scarce.demandFallbacks != 0);
         unsigned commandsTotal = 0;
@@ -3230,9 +3243,12 @@ int main()
         policy.trips = [](unsigned, unsigned visit) { return visit % 4; };
         policy.choice = [](unsigned, unsigned) { return 0u; };
         Oracle repeated;
+        Oracle repeatedProduction;
         for (unsigned invocation = 0; invocation < 5; ++invocation) {
             execute(p, scarce, p.nodes.size() - 1, policy, repeated);
             repeated.check();
+            execute(p, scarceProduction, p.nodes.size() - 1, policy, repeatedProduction);
+            repeatedProduction.check();
         }
         auto corrupt = scarce.before;
         bool changed = false;
@@ -3876,6 +3892,8 @@ int main()
         auto persistent = c::constructDemands(lifetime);
         require(persistent.success);
         require(persistent.persistentLifetimes == 1 && persistent.persistentReaderFamilies == 1);
+        require(persistent.residualLifetimes == 1);
+        require(persistent.retainedCompletionGroups > 0 && persistent.selectedNamedBarriers == 0);
         require(c::verifyDemands(lifetime, persistent.before).success);
         bool earlyRelease = std::any_of(persistent.before[unrelated].begin(), persistent.before[unrelated].end(),
                                         [&](const auto& m) {
@@ -3884,6 +3902,35 @@ int main()
                                                    m.second == unsigned(Pipe::MTE2);
                                         });
         require(earlyRelease);
+        // A persistent vector lifetime must retain an independent ordinary
+        // acquisition at its original cut on the same pipe direction.
+        auto mixed = lifetime;
+        mixed.cells = 4;
+        for (auto& node : mixed.nodes) node.effects.resize(4);
+        auto mixedChildren = mixed.nodes.back().children;
+        mixed.nodes.pop_back();
+        mixed.fixedBefore.pop_back();
+        auto ordinaryWrite = op(mixed, unsigned(Pipe::MTE2), 3, true);
+        auto ordinaryRead = op(mixed, unsigned(Pipe::V), 3, false);
+        auto ordinaryOverwrite = op(mixed, unsigned(Pipe::V), 3, true);
+        mixedChildren.insert(mixedChildren.begin(), {ordinaryWrite, ordinaryRead, ordinaryOverwrite});
+        sequence(mixed, std::move(mixedChildren));
+        mixed.fixedBefore.resize(mixed.nodes.size());
+        auto mixedPlan = c::constructDemands(mixed);
+        if (!mixedPlan.success || mixedPlan.residualLifetimes != 1)
+            std::cerr << "independent vector region: " << mixedPlan.reason << "; "
+                      << mixedPlan.deferredRejectionReason << " selected=" << mixedPlan.persistentLifetimes
+                      << " residual=" << mixedPlan.residualLifetimes << '\n';
+        require(mixedPlan.success && mixedPlan.residualLifetimes == 1);
+        require(c::testing::verifyOpenDemands(mixed, mixedPlan.before).success);
+        bool ordinaryAcquisition = false;
+        for (const auto& m : mixedPlan.before[ordinaryRead])
+            ordinaryAcquisition |= m.kind == c::Mechanism::Acquire &&
+                m.first == unsigned(Pipe::MTE2) && m.second == unsigned(Pipe::V);
+        require(ordinaryAcquisition);
+        auto omittedOrdinary = mixedPlan.before;
+        omittedOrdinary[ordinaryRead].clear();
+        require(!c::testing::verifyOpenDemands(mixed, omittedOrdinary).success);
         ExecutionPolicy policy;
         policy.trips = [=](unsigned node, unsigned invocation) {
             return node == loop ? (invocation == 0 ? 0u : invocation + 1) : 1u;
@@ -3951,9 +3998,11 @@ int main()
         require(!c::verifyDemands(multi, oneMissing).success);
         auto scarce = multi;
         scarce.target.compilerKeys = {0};
-        auto fallback = c::constructDemands(scarce);
-        require(fallback.success && !fallback.persistentLifetimes && fallback.rejectedPersistentLifetimes == 1);
-        require(c::verifyDemands(scarce, fallback.before).success);
+        auto oneKey = c::constructDemands(scarce);
+        // Physical IDs are scoped by direction. The combined allocator can
+        // use key zero for both independent reader families.
+        require(oneKey.success && oneKey.residualLifetimes == 1 && oneKey.persistentReaderFamilies == 2);
+        require(c::verifyDemands(scarce, oneKey.before).success);
     }
 
     // Atomic P2P macros expose ordered phase effects without exposing internal
@@ -3993,7 +4042,7 @@ int main()
         auto loop = add(mixed, c::Node::For, {sequence(mixed, {load, use})});
         sequence(mixed, {unsigned(prefix), loop});
         auto pipelined = c::constructDemands(mixed);
-        require(pipelined.success && pipelined.directHandoffs > 0);
+        require(pipelined.success && pipelined.residualLifetimes == 1);
         require(c::verifyDemands(mixed, pipelined.before).success);
         ExecutionPolicy policy;
         policy.trips = [](unsigned, unsigned) { return 3u; };
@@ -4038,6 +4087,15 @@ int main()
     auto producer = op(incomingMacro, unsigned(Pipe::V), 0, true);
     auto incoming = p2pMacro(incomingMacro, 0, 1, 2);
     add(incomingMacro, c::Node::Sequence, {producer, incoming});
+    auto unpublishedMacro = incomingMacro;
+    unpublishedMacro.globalMemory = {true, false, false};
+    unpublishedMacro.nodes[producer].lane = unsigned(Pipe::MTE3);
+    unpublishedMacro.nodes[producer].effects[0].writers = 1u << unsigned(Pipe::MTE3);
+    auto macroFailure = c::construct(unpublishedMacro);
+    require(!macroFailure.success);
+    require(macroFailure.publicationFailureNode == incoming);
+    require(macroFailure.publicationFailurePhase == 0);
+    require(macroFailure.publicationFailureCells == std::vector<unsigned>{0});
     auto incomingPlan = c::construct(incomingMacro);
     require(incomingPlan.success && !incomingPlan.before[incoming].empty());
     require(c::verify(incomingMacro, incomingPlan.before).success);

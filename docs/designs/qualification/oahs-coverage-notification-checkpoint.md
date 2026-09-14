@@ -111,3 +111,94 @@ paired trials after one warmup; the serial corpus replay ran concurrently, so
 these host times do not establish isolated compilation or device performance.
 The complete causal witness audit and a gain in justified generic-ABI corpus
 admissions remain unfinished acceptance criteria.
+
+## Follow-up: capture the actual publication refusal
+
+Construction now records the consumer node, optional macro-phase index and
+physical cells where the failing MTE2 read observes unpublished MTE3 history.
+This bounded payload is exported before optional diagnostic enumeration. An
+exhausted or unmapped report cannot establish that a candidate is unrelated.
+Native access records preserve pipeline and macro-phase identities, and a
+missing operation mapping is explicit instead of silently becoming node zero.
+
+The audit retains every original candidate, but separately counts those matching
+the actual failing consumer phase and cell. This is stronger evidence than the
+old Cartesian population. It still does not identify an exact reaching writer
+generation: the construction state tracks may-write history by pipeline and
+cell. No alias or publication credit follows from the diagnostic record.
+
+The `campaign-failure-site-r1` replay records actual failures for all 86 original
+refusal rows. Of 1,084 Cartesian pairs, 166 match the actual failing consumer
+phase and cell: 126 cross-root alias questions, 27 unresolved range/reaching-write
+cases, seven ordinary exact overlaps and six macro overlaps. Admissions remain
+253/363 with no changes. `publication-failure-site-r1` preserves the full audit;
+`composition-failure-site-r1` and `benchmarks-failure-site-r1` retain independent
+native and conservative benchmark evidence for that diagnostic increment.
+
+## Follow-up: ordinary providers share residual construction
+
+Unguarded ordinary providers (Every participation without loop/word qualifiers)
+now activate the same lifetime-plus-residual construction as the qualified
+ACC/ownership cases. Their original obligations remain intact, ordinary
+families in independent regions retain their cuts, and the complete symbolic
+event population is allocated together. The migrated path does not delete
+pipe-pair obligations. `families_residual` reports actual selected lifetimes
+that used this construction.
+
+Tests cover a vector lifetime beside an independent ordinary region on the
+same pipe pair, early vector release, multi-reader storage, unrelated macros,
+scalar visibility recipes, repeated/empty invocations and actual allocation
+failure with baseline fallback. A single physical ID per direction can now
+support the multi-reader family; the old path's reservation caused a refusal.
+`selected_visibility_sites` counts retained static recipes separately from the
+construction-visit telemetry.
+
+Endpoint footprints alone proved insufficient for preserving ordinary
+completion: the early-vector return receipt completes later, unselected vector
+writes from the preceding visit. Construction now observes the verified
+baseline's actual acquisition effects and can retain both directions of the
+corresponding protocol group, within physical capacity. These observations
+guide selection only; residual construction and fresh combined verification
+must establish all credit again. Observation scans, map initialization and
+capacity searches are charged, including failed attempts.
+
+The intermediate `composition-ordinary-residual-r2` run restores the early-vector
+and multi-reader barrier-free checks but exposes a UnitFlag traffic regression.
+It is not a passing integration checkpoint. The generic migration remains under
+development until qualified ownership and GEMM regressions pass together.
+The subsequent construction retains conservative receipt groups and extends
+the existing bounded cleanup to adjacent ordinary event pairs. Each optional
+removal requires a complete proof against the immutable obligations. This
+recovers the UnitFlag traffic benefit without weakening the multi-reader
+barrier check; cleanup is not the residual synthesis algorithm.
+
+Guarded/deferred and alternative acquisitions are not generally migrated.
+Lifetimes whose cells overlap macro phases are excluded because the open walk
+does not yet synthesize their macro prerequisites. This is a cell-specific
+restriction, not a whole-function macro exclusion. Unsupported cases retain
+their verified baseline, and native reconstruction remains mandatory.
+
+The verified `ordinary-residual-r4` increment passes 2,430,457 core assertions,
+22 native positives, 191 mutations, nine expected refusals and two frontend
+cases. Qualified GEMM remains 54/54 with zero body barriers and one terminal
+drain. All eight conservative benchmark synchronization, scalar guards, key
+usage and executed-model metrics match `failure-site-r1`; the structured GEMM
+refusal remains open. Timings use one paired trial without warmup while the
+serial corpus replay runs concurrently, and are telemetry only.
+
+The frozen replay remains 253/363 with no gains or losses. Reports in
+`campaign-ordinary-residual-r4`, `publication-ordinary-residual-r4`,
+`composition-ordinary-residual-r4` and `benchmarks-ordinary-residual-r4` record
+dirty-source measurements based on `a5a5ad928`, not tests of a later commit.
+The campaign pins the complete source diff during its run; this documentation
+was completed afterward. `ordinary-residual-increment-results.json` records
+the report identities and comparisons. Device execution remains `NOT_RUN`.
+
+`retained_completion_groups` counts proposed receipt groups before optional
+cleanup; it is not a final emitted-group count. `selected_visibility_sites`
+describes the final static visibility population. Review found no correctness
+blocker after the accounting fixes. Two coverage/diagnostic limitations remain:
+an optional retained group can consume capacity needed by later residual keys,
+causing verified-baseline fallback, and observation exhaustion can surface as
+a later residual failure instead of retaining the original analysis reason.
+These do not supply acceptance credit or bypass emitted verification.

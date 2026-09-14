@@ -8,10 +8,24 @@
 """Regression checks for the evidence required by publication classification."""
 import unittest
 
-from coverage_campaign import witness_classes
+from coverage_campaign import failure_relation, witness_classes
 
 
 class PublicationWitnessTests(unittest.TestCase):
+    def test_failure_identity_requires_consumer_phase_and_cell(self):
+        report = dict(publication_failure=dict(node=9, macro_phase=1, cells=[3]))
+        writer = dict(node=2, cells=[3])
+        reader = dict(node=9, macro_phase=1, cells=[3, 4])
+        self.assertEqual(failure_relation(report, writer, reader), 'matching-consumer-cell')
+        self.assertEqual(failure_relation(report, writer, dict(reader, node=8)), 'different-consumer')
+        self.assertEqual(failure_relation(report, writer, dict(reader, macro_phase=0)), 'different-phase')
+        self.assertEqual(failure_relation(report, dict(writer, cells=[4]), reader), 'different-cell')
+        self.assertEqual(failure_relation(report, dict(writer, node=None), reader), 'unmapped')
+        self.assertEqual(failure_relation({}, writer, reader), 'unrecorded')
+        report['publication_failure'].update(cells=[], cells_complete=False)
+        report['report_exhausted'] = True
+        self.assertEqual(failure_relation(report, writer, reader), 'incomplete-failure')
+
     def classify(self, left, right, overlap=True, **contracts):
         return witness_classes([
             dict(function='test', accesses=[dict(id=0, **left), dict(id=1, **right)],

@@ -53,6 +53,23 @@ def synchronization_origin(source, output, accepted):
                 executed_counts='not measured by corpus replay')
 
 
+def failure_relation(report, writer, reader):
+    failure = report.get('publication_failure')
+    if not failure:
+        return 'unrecorded'
+    if failure.get('cells_complete') is False:
+        return 'incomplete-failure'
+    if reader.get('node') is None or writer.get('node') is None:
+        return 'unmapped'
+    if reader['node'] != failure['node']:
+        return 'different-consumer'
+    if reader.get('macro_phase') != failure['macro_phase']:
+        return 'different-phase'
+    if not (set(writer['cells']) & set(reader['cells']) & set(failure['cells'])):
+        return 'different-cell'
+    return 'matching-consumer-cell'
+
+
 def witness_classes(reports):
     output = []
     for report in reports:
@@ -84,6 +101,7 @@ def witness_classes(reports):
             else:
                 classification = 'unresolved-evidence'
             output.append(dict(function=report['function'], **pair, classification=classification,
+                               failure_relation=failure_relation(report, writer, reader),
                                exact_ranges=exact, proven_disjoint_ranges=disjoint_ranges,
                                proven_disjoint_contract=disjoint_contract,
                                writer_access=writer, reader_access=reader))

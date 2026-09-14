@@ -62,7 +62,7 @@ struct OpenProtocolState : PrefixState {
 };
 
 c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64_t limit, Commands* residual,
-                            ProtocolResiduals* protocolResidual)
+                            ProtocolResiduals* protocolResidual, ProviderCompletions* completions)
 {
     using namespace c;
     c::Result result;
@@ -186,7 +186,25 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                     " occupancy " + std::to_string(state.occupancy[k]);
                 return false;
             }
+            Effects before;
+            if (validate && completions) {
+                if (!charge(2 * uint64_t(p.cells) + completions->size() + 1)) return false;
+                result.cellVisits += 2 * uint64_t(p.cells);
+                before = state.pending[m.second];
+            }
             state.acquirePrefix(m);
+            if (validate && completions) {
+                auto identity = std::make_tuple(m.first, m.second, m.forwardKey);
+                if (!completions->count(identity)) {
+                    if (!charge(p.cells)) return false;
+                    result.cellVisits += p.cells;
+                }
+                auto& supplied = completions->try_emplace(identity, p.cells).first->second;
+                for (unsigned cell = 0; cell < p.cells; ++cell) {
+                    supplied[cell].readers |= before[cell].readers & ~state.pending[m.second][cell].readers;
+                    supplied[cell].writers |= before[cell].writers & ~state.pending[m.second][cell].writers;
+                }
+            }
             for (unsigned j = 0; j < keys.size(); ++j)
                 if (state.acknowledgment[k][j])
                     state.known[j] |= uint8_t(1u << m.second);
@@ -252,7 +270,7 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
             if (validate && residual) {
                 auto& commands = (*residual)[id];
                 std::vector<Mechanism> visibility;
-                if (!realizeVisibility(p, node, state, visibility, result.reason, result.visibilityRequirements))
+                if (!realizeVisibility(p, node, state, visibility, result.reason, result.visibilityRequirements, &result, id))
                     return false;
                 // A structural site may be visited for several residues and
                 // for both continuing and final iterations. Its residual
