@@ -46,6 +46,34 @@ The positive operation/effect registry and selected A2/A3 hardware contract are
 retained. Moving that registry to a lowering-owned operation interface remains
 unfinished; unknown effects are not admitted by their absence from a denylist.
 
+The current residual migration selects ACC and ordinary storage lifetimes from
+byte effects while retaining the original stronger scheduling obligations.
+Actual persistent prefix transfers are applied before constructing residual
+demands and assigning physical events. Independent unconditional ordinary
+providers can participate, and matching First/NonEmpty ACC entry helpers can be
+replaced by the lifetime. A proven-nonempty single-producer loop may form one
+producer episode; reconstruction still checks its original accesses. Non-ACC
+lifetimes remain ordinary when an alternative-acquisition population is present.
+Other guarded/deferred combinations still require additional protocol support.
+Residual consumption acknowledgments are inserted before the exact publication
+that needs them; byte obligations remain at payload cuts. Every combined
+candidate must pass open-protocol verification and fresh native reconstruction;
+an optional failure keeps the previously verified plan. Bounded cleanup keeps
+the best verified candidate when a trial fails or exhausts its allowance.
+
+An explicit final physical-context ALL now supplies retirement between function
+invocations. The portable program records an optional empty final root cut;
+without it, explicit exit acknowledgments remain required. Retirement applies
+only after the complete root transfer and only when every event is consumed.
+It does not empty live flags, acknowledge an in-body rearm, or publish GM.
+Native reconstruction independently checks the actual drain and its final
+unconditional position before granting this premise. Lifetimes ending at that
+exact cut need a final release acquisition but no additional return pair.
+This explains the seven-pair reduction from 61/61 to 54/54 in historical GEMM:
+four MTE2-to-MTE1, two MTE1-to-M, and one M-to-FIX exit acknowledgments.
+The body remains barrier-free under the explicit MMAD and scalar/alias
+contracts. Reference placement and device acceptance remain separate results.
+
 ## State and transfers
 
 The pure production core is `StructuredSyncComposition`. Its input is an
@@ -59,12 +87,33 @@ Subsequent source accesses introduce new outstanding bits for every observer.
 Writes never kill readers or imply definite initialization.
 
 The native adapter partitions known local intervals, up to 256 cells per
-function. Unknown ranges, forwarded local handles, or excessive interval
-populations widen to whole-space cells. GM root groups remain separate only
-under a qualified distinct-argument contract or explicit `pto.noalias_pairs`.
-The latter must be an even-length i64 list of distinct, valid GM-capable argument
-indices; only its listed pairs are assumed disjoint. Unknown provenance merges
-groups. No all-access-disjoint policy is introduced.
+function. Unknown accesses touch every potentially affected interval and a
+remainder cell; they do not merge otherwise disjoint intervals. At the cell
+limit, the largest affected address-space group is coarsened deterministically.
+Memory origin analysis retains possible roots independently of range knowledge,
+including `while` initialization, condition forwarding, backedges and exits.
+Unresolved origins remain conservative.
+
+GM roots can be proved disjoint only under a qualified distinct-argument
+contract or explicit `pto.noalias_pairs`. The latter must be an even-length
+i64 list of distinct, valid GM-capable argument indices; only its listed pairs
+are assumed disjoint. Checked constant contiguous pointer/view ranges retain
+their byte coordinates within a root. A may-alias root pair uses pairs of
+intervals, with separate coordinates for each root: an uncertain B access can
+overlap two disjoint A intervals without making those A intervals overlap each
+other. Pair products and endpoint storage are bounded; an oversized pair
+coarsens conservatively. Unknown layouts, offsets and overflow receive no exact
+range credit. No all-access-disjoint policy is introduced.
+
+Optional `PTOAS_COMPOSITION_WITNESSES=1` reports identify original operations,
+physical cells (including both coordinates of alias pairs), contracts, retained
+origins/ranges, and legacy overlap decisions when available within the report
+budget. Command lists are explicitly labelled as proposals before native
+emission/reconstruction. Exhausted reports are partial evidence. The coverage
+campaign retains the complete separately emitted legacy output, and classifies
+missing geometry as unresolved rather than equating known roots with known
+overlap. The `oahs_coverage_handoffs` and `oahs_coverage_witnesses` CTest entries
+exercise these boundaries; each native run writes a fresh artifact directory.
 
 GM write history is separate from completion state and survives barriers and
 events. A subsequent possibly aliasing GM read requires visibility. No current

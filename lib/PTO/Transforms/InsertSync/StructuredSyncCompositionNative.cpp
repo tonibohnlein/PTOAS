@@ -346,6 +346,13 @@ struct Cell {
     // Covers coordinates outside retained exact intervals. Known accesses
     // never touch it merely because another access has unknown geometry.
     bool remainder = false;
+    // A may-alias pair has independent coordinates in each backing root.
+    // Keeping both coordinates prevents B from merging disjoint A intervals.
+    struct PeerRange {
+        uint64_t lower, upper;
+        bool whole, remainder;
+    };
+    std::optional<PeerRange> peerRange;
 };
 struct Tree {
     Inventory& inventory;
@@ -364,6 +371,8 @@ struct Tree {
     std::string reason;
     bool preserveFixedCuts = false;
     uint64_t widenedSpaces = 0;
+    uint64_t gmGeometryWork = 0;
+    bool gmGeometryExhausted = false;
     uint64_t periodicScalarWork = 0;
     uint64_t periodicDagVisits = 0, periodicEvaluations = 0;
     InsertSyncGMAliasMode gm;
@@ -466,49 +475,74 @@ struct Tree {
     }
     std::vector<Cell> gmCells()
     {
+        auto charge = [&](uint64_t amount) {
+            if (amount > (1u << 20) - gmGeometryWork) {
+                gmGeometryExhausted = true;
+                return false;
+            }
+            gmGeometryWork += amount;
+            return true;
+        };
         SmallVector<Value> roots;
+        llvm::DenseMap<Value, SmallVector<const BaseMemInfo*>> byRoot;
         bool unknown = false;
         for (auto* p : inventory.physical.phases) {
             auto collect = [&](const auto& entries) {
                 for (auto* a : entries)
                     if (a->scope == AddressSpace::GM) {
+                        // Translation facts are cached even if optional cell
+                        // geometry exhausts its allowance: the whole GM cell
+                        // still needs every access during reconstruction.
                         if (gmAccesses.count(a))
                             continue;
                         auto traced = traceInsertSyncGMRoots(inventory.function, a->rootBuffer);
                         unknown |= !traced.complete;
-                        for (Value root : traced.arguments)
-                            if (roots.size() <= c::MaxCells && !llvm::is_contained(roots, root))
+                        if (charge(1 + traced.arguments.size())) for (Value root : traced.arguments) {
+                            if (roots.size() <= c::MaxCells && !byRoot.count(root))
                                 roots.push_back(root);
+                            if (roots.size() <= c::MaxCells) {
+                                auto& group = byRoot[root];
+                                if (traced.complete) group.push_back(a);
+                            }
+                        }
                         gmAccesses[a] = std::move(traced);
-                        gmRanges[a] = traceInsertSyncGMRange(inventory.function, a->baseBuffer);
+                        gmRanges[a] = gmGeometryExhausted ? std::optional<InsertSyncGMRange>{} :
+                            traceInsertSyncGMRange(inventory.function, a->baseBuffer);
                     }
             };
             collect(p->useVec);
             collect(p->defVec);
         }
-        if (roots.size() > c::MaxCells || roots.empty())
+        if (gmGeometryExhausted || roots.size() > c::MaxCells || roots.empty())
             return {{AddressSpace::GM, 0, 0, true, {}}};
         std::vector<Cell> result;
+        llvm::DenseMap<Value, std::pair<unsigned, unsigned>> rootCells;
         // One cell per origin plus one per possible alias pair. Unlike a
         // transitive may-alias component, this does not make A and B overlap
         // just because a third origin can overlap either of them.
         for (Value root : roots) {
+            if (!charge(1)) return {{AddressSpace::GM, 0, 0, true, {}}};
             if (result.size() == c::MaxCells)
                 return {{AddressSpace::GM, 0, 0, true, {}}};
             std::set<uint64_t> bounds;
             bool uncertain = false;
-            for (const auto& access : gmAccesses) {
-                if (!access.second.complete || !llvm::is_contained(access.second.arguments, root))
-                    continue;
-                const auto& range = gmRanges.find(access.first)->second;
+            bool coarsened = false;
+            for (const auto* access : byRoot[root]) {
+                if (!charge(1)) return {{AddressSpace::GM, 0, 0, true, {}}};
+                const auto& range = gmRanges.find(access)->second;
                 if (!range || range->root != root)
                     uncertain = true;
                 else {
                     bounds.insert(range->lower);
                     bounds.insert(range->upper);
+                    if (bounds.size() > c::MaxCells) {
+                        coarsened = true;
+                        break;
+                    }
                 }
             }
-            if (bounds.empty() || result.size() + bounds.size() > c::MaxCells) {
+            unsigned begin = result.size();
+            if (coarsened || bounds.empty() || result.size() + bounds.size() > c::MaxCells) {
                 result.push_back({AddressSpace::GM, 0, 0, true, {root}});
             } else {
                 for (auto it = bounds.begin(); std::next(it) != bounds.end(); ++it)
@@ -516,9 +550,11 @@ struct Tree {
                 if (uncertain)
                     result.push_back({AddressSpace::GM, 0, 0, false, {root}, true});
             }
+            rootCells[root] = {begin, result.size()};
         }
         for (unsigned i = 0; i < roots.size(); ++i)
             for (unsigned j = i + 1; j < roots.size(); ++j) {
+                if (!charge(1)) return {{AddressSpace::GM, 0, 0, true, {}}};
                 unsigned a = cast<BlockArgument>(roots[i]).getArgNumber();
                 unsigned b = cast<BlockArgument>(roots[j]).getArgNumber();
                 bool disjoint = gm == InsertSyncGMAliasMode::DisjointArguments ||
@@ -526,7 +562,23 @@ struct Tree {
                 if (!disjoint) {
                     if (result.size() == c::MaxCells)
                         return {{AddressSpace::GM, 0, 0, true, {}}};
-                    result.push_back({AddressSpace::GM, 0, 0, true, {roots[i], roots[j]}});
+                    auto [leftBegin, leftEnd] = rootCells.lookup(roots[i]);
+                    auto [rightBegin, rightEnd] = rootCells.lookup(roots[j]);
+                    uint64_t count = uint64_t(leftEnd - leftBegin) * (rightEnd - rightBegin);
+                    if (count > c::MaxCells - result.size()) {
+                        // Only this alias group loses geometry at the limit.
+                        result.push_back({AddressSpace::GM, 0, 0, true, {roots[i], roots[j]}});
+                        continue;
+                    }
+                    if (!charge(count)) return {{AddressSpace::GM, 0, 0, true, {}}};
+                    for (unsigned left = leftBegin; left < leftEnd; ++left)
+                        for (unsigned right = rightBegin; right < rightEnd; ++right) {
+                            Cell pair = result[left];
+                            const auto& peer = result[right];
+                            pair.gmRoots.push_back(roots[j]);
+                            pair.peerRange = Cell::PeerRange{peer.lower, peer.upper, peer.whole, peer.remainder};
+                            result.push_back(std::move(pair));
+                        }
                 }
             }
         if (unknown) {
@@ -548,8 +600,21 @@ struct Tree {
             PipelineType pipeline;
             bool write;
             std::set<unsigned> cells;
+            SmallVector<Operation*, 4> loops;
         };
         std::vector<Access> recorded;
+        std::vector<unsigned> writers, readers;
+        uint64_t reportWork = 0;
+        constexpr uint64_t ReportLimit = 1u << 20;
+        bool exhausted = false, legacyAvailable = false;
+        auto charge = [&](uint64_t amount) {
+            if (exhausted || amount > ReportLimit - reportWork) {
+                exhausted = true;
+                return false;
+            }
+            reportWork += amount;
+            return true;
+        };
         AsmState names(inventory.function);
         auto name = [&](Value value) {
             std::string text;
@@ -557,131 +622,176 @@ struct Tree {
             if (value) value.printAsOperand(stream, names);
             return text;
         };
-        for (unsigned index = 0; index < cells.size(); ++index) {
-            const auto& cell = cells[index];
-            llvm::json::Array roots;
-            for (Value root : cell.gmRoots) roots.push_back(name(root));
-            physical.push_back(llvm::json::Object{
-                {"id", index}, {"space", unsigned(cell.space)}, {"whole", cell.whole},
-                {"remainder", cell.remainder}, {"lower", std::to_string(cell.lower)},
-                {"upper", std::to_string(cell.upper)}, {"roots", std::move(roots)}});
-        }
-        uint64_t reportWork = 0;
-        bool exhausted = false;
-        for (unsigned id = 0; id < program.nodes.size(); ++id) {
-            if (++reportWork > 65536) { exhausted = true; break; }
-            const auto& node = program.nodes[id];
-            llvm::json::Array effects, children;
-            for (unsigned child : node.children) children.push_back(child);
-            for (unsigned cell = 0; cell < node.effects.size(); ++cell)
-                if (node.effects[cell].readers || node.effects[cell].writers)
-                    effects.push_back(llvm::json::Object{{"cell", cell},
-                        {"readers", unsigned(node.effects[cell].readers)},
-                        {"writers", unsigned(node.effects[cell].writers)},
-                        {"byte_readers", unsigned(node.storageAccesses()[cell].readers)},
-                        {"byte_writers", unsigned(node.storageAccesses()[cell].writers)}});
-            std::string operation;
-            llvm::raw_string_ostream stream(operation);
-            if (anchors[id]) anchors[id]->print(stream, OpPrintingFlags().skipRegions());
-            operations.push_back(llvm::json::Object{{"id", id}, {"kind", unsigned(node.kind)},
-                {"lane", node.lane}, {"operation", operation}, {"children", std::move(children)},
-                {"effects", std::move(effects)}});
-        }
-        for (auto* phase : inventory.physical.phases) {
-            auto append = [&](const auto& entries, bool write) {
-                for (const auto* access : entries) {
-                    if (++reportWork > 65536) { exhausted = true; break; }
-                    llvm::json::Array roots, ranges, cellIds;
-                    bool complete = !access->aliasesUnknownRange;
-                    auto cached = gmAccesses.find(access);
-                    if (cached != gmAccesses.end()) {
-                        complete = cached->second.complete;
-                        for (Value root : cached->second.arguments) roots.push_back(name(root));
-                    } else roots.push_back(name(access->rootBuffer));
-                    Access record{access, phase->elementOp, unsigned(recorded.size()),
-                        ids.lookup(phase->elementOp), phase->kPipeValue, write, {}};
-                    for (unsigned cell = 0; cell < cells.size(); ++cell)
-                        if (accessOverlaps(cells[cell], access)) {
-                            record.cells.insert(cell);
-                            cellIds.push_back(cell);
+        auto gather = [&]() {
+            for (unsigned index = 0; index < cells.size(); ++index) {
+                const auto& cell = cells[index];
+                if (!charge(1 + cell.gmRoots.size())) return;
+                llvm::json::Array roots;
+                for (Value root : cell.gmRoots) roots.push_back(name(root));
+                llvm::json::Object description{
+                    {"id", index}, {"space", unsigned(cell.space)}, {"whole", cell.whole},
+                    {"remainder", cell.remainder}, {"lower", std::to_string(cell.lower)},
+                    {"upper", std::to_string(cell.upper)}, {"roots", std::move(roots)}};
+                if (cell.peerRange) {
+                    const auto& peer = *cell.peerRange;
+                    description["peer_range"] = llvm::json::Object{
+                        {"lower", std::to_string(peer.lower)}, {"upper", std::to_string(peer.upper)},
+                        {"whole", peer.whole}, {"remainder", peer.remainder}};
+                }
+                physical.push_back(std::move(description));
+            }
+            for (unsigned id = 0; id < program.nodes.size(); ++id) {
+                const auto& node = program.nodes[id];
+                if (!charge(1 + node.children.size() + node.effects.size())) return;
+                llvm::json::Array effects, children;
+                for (unsigned child : node.children) children.push_back(child);
+                for (unsigned cell = 0; cell < node.effects.size(); ++cell)
+                    if (node.effects[cell].readers || node.effects[cell].writers)
+                        effects.push_back(llvm::json::Object{{"cell", cell},
+                            {"readers", unsigned(node.effects[cell].readers)},
+                            {"writers", unsigned(node.effects[cell].writers)},
+                            {"byte_readers", unsigned(node.storageAccesses()[cell].readers)},
+                            {"byte_writers", unsigned(node.storageAccesses()[cell].writers)}});
+                std::string operation;
+                llvm::raw_string_ostream stream(operation);
+                if (anchors[id]) anchors[id]->print(stream, OpPrintingFlags().skipRegions());
+                operations.push_back(llvm::json::Object{{"id", id}, {"kind", unsigned(node.kind)},
+                    {"lane", node.lane}, {"operation", operation}, {"children", std::move(children)},
+                    {"effects", std::move(effects)}});
+            }
+            for (auto* phase : inventory.physical.phases) {
+                auto append = [&](const auto& entries, bool write) {
+                    for (const auto* access : entries) {
+                        auto cached = gmAccesses.find(access);
+                        uint64_t rootCount = cached == gmAccesses.end() ? 1 : cached->second.arguments.size();
+                        if (!charge(1 + rootCount + cells.size() * (1 + 2 * rootCount + access->baseAddresses.size())))
+                            return false;
+                        llvm::json::Array roots, ranges, cellIds;
+                        bool complete = !access->aliasesUnknownRange;
+                        if (cached != gmAccesses.end()) {
+                            complete = cached->second.complete;
+                            for (Value root : cached->second.arguments) roots.push_back(name(root));
+                        } else roots.push_back(name(access->rootBuffer));
+                        Access record{access, phase->elementOp, unsigned(recorded.size()),
+                            ids.lookup(phase->elementOp), phase->kPipeValue, write, {}};
+                        for (Operation* owner = phase->elementOp->getParentOp();
+                             owner && owner != inventory.function.getOperation(); owner = owner->getParentOp()) {
+                            if (!charge(1)) return false;
+                            if (isa<scf::ForOp, scf::WhileOp>(owner)) record.loops.push_back(owner);
                         }
-                    recorded.push_back(record);
-                    for (uint64_t base : access->baseAddresses) ranges.push_back(std::to_string(base));
-                    llvm::json::Object row{{"node", ids.lookup(phase->elementOp)}, {"write", write},
-                        {"base", name(access->baseBuffer)}, {"space", unsigned(access->scope)},
-                        {"roots", std::move(roots)}, {"origins_complete", complete}, {"id", record.id}, {"cells", std::move(cellIds)},
-                        {"offsets", std::move(ranges)}, {"bytes", std::to_string(access->allocateSize)},
-                        {"unknown_range", access->aliasesUnknownRange},
-                        {"physical_addresses", access->hasKnownPhysicalAddresses}};
-                    auto found = gmRanges.find(access);
-                    if (found != gmRanges.end() && found->second) {
-                        row["gm_lower"] = std::to_string(found->second->lower);
-                        row["gm_upper"] = std::to_string(found->second->upper);
+                        for (unsigned cell = 0; cell < cells.size(); ++cell)
+                            if (accessOverlaps(cells[cell], access)) {
+                                record.cells.insert(cell);
+                                cellIds.push_back(cell);
+                            }
+                        recorded.push_back(record);
+                        if (access->scope == AddressSpace::GM) {
+                            if (write && phase->kPipeValue == PipelineType::PIPE_MTE3) writers.push_back(record.id);
+                            if (!write && phase->kPipeValue == PipelineType::PIPE_MTE2) readers.push_back(record.id);
+                        }
+                        for (uint64_t base : access->baseAddresses) ranges.push_back(std::to_string(base));
+                        llvm::json::Object row{{"node", ids.lookup(phase->elementOp)}, {"write", write},
+                            {"base", name(access->baseBuffer)}, {"space", unsigned(access->scope)},
+                            {"roots", std::move(roots)}, {"origins_complete", complete}, {"id", record.id}, {"cells", std::move(cellIds)},
+                            {"offsets", std::move(ranges)}, {"bytes", std::to_string(access->allocateSize)},
+                            {"unknown_range", access->aliasesUnknownRange},
+                            {"physical_addresses", access->hasKnownPhysicalAddresses}};
+                        auto found = gmRanges.find(access);
+                        if (found != gmRanges.end() && found->second) {
+                            row["gm_lower"] = std::to_string(found->second->lower);
+                            row["gm_upper"] = std::to_string(found->second->upper);
+                        }
+                        accesses.push_back(std::move(row));
                     }
-                    accesses.push_back(std::move(row));
-                }
-            };
-            append(phase->useVec, false);
-            append(phase->defVec, true);
-        }
-        for (unsigned site = 0; site < selected.before.size(); ++site)
-            for (const auto& command : selected.before[site]) {
-                if (++reportWork > 65536) { exhausted = true; break; }
-                commands.push_back(llvm::json::Object{{"cut", site}, {"kind", unsigned(command.kind)},
-                    {"source", command.first}, {"observer", command.second},
-                    {"forward_key", command.forwardKey}, {"reverse_key", command.reverseKey},
-                    {"participation", unsigned(command.participation)}});
+                    return true;
+                };
+                if (!append(phase->useVec, false) || !append(phase->defVec, true)) return;
             }
-        // Legacy decisions are measured with its own forwarding mode on the
-        // same original IR. They are evidence of behavior, not alias promises.
-        SyncIRs legacyIR;
-        Buffer2MemInfoMap legacyBuffers;
-        MemoryDependentAnalyzer legacyMemory;
-        bool legacyAvailable;
-        {
-            ScopedDiagnosticHandler diagnostics(inventory.function.getContext(), [](Diagnostic&) { return success(); });
-            PTOIRTranslator legacy(legacyIR, legacyMemory, legacyBuffers, inventory.function,
-                                    SyncAnalysisMode::NORMALSYNC, false);
-            legacyAvailable = succeeded(legacy.Build());
-        }
-        for (const auto& writer : recorded) {
-            if (!writer.write || writer.pipeline != PipelineType::PIPE_MTE3 || writer.memory->scope != AddressSpace::GM)
-                continue;
-            for (const auto& reader : recorded) {
-                if (reader.write || reader.pipeline != PipelineType::PIPE_MTE2 || reader.memory->scope != AddressSpace::GM)
-                    continue;
-                if (++reportWork > 65536) { exhausted = true; break; }
-                bool overlap = std::any_of(writer.cells.begin(), writer.cells.end(),
-                    [&](unsigned cell) { return reader.cells.count(cell); });
-                bool loop = false;
-                for (Operation* owner = writer.operation->getParentOp(); owner; owner = owner->getParentOp())
-                    loop |= isa<scf::ForOp, scf::WhileOp>(owner) && owner->isProperAncestor(reader.operation);
-                auto left = legacyBuffers.find(writer.memory->baseBuffer);
-                auto right = legacyBuffers.find(reader.memory->baseBuffer);
-                llvm::json::Object pair{{"writer", writer.id}, {"reader", reader.id},
-                    {"native_overlap", overlap},
-                    {"possible_relation", loop ? "same-iteration-or-backedge" : "same-invocation"}};
-                if (legacyAvailable && left != legacyBuffers.end() && right != legacyBuffers.end()) {
-                    bool legacyOverlap = false;
-                    for (const auto& a : left->second)
-                        for (const auto& b : right->second) legacyOverlap |= legacyMemory.MemAlias(a.get(), b.get());
-                    pair["legacy_overlap"] = legacyOverlap;
+            for (unsigned site = 0; site < selected.before.size(); ++site)
+                for (const auto& command : selected.before[site]) {
+                    if (!charge(1)) return;
+                    commands.push_back(llvm::json::Object{{"cut", site}, {"kind", unsigned(command.kind)},
+                        {"source", command.first}, {"observer", command.second},
+                        {"forward_key", command.forwardKey}, {"reverse_key", command.reverseKey},
+                        {"loop", command.loop}, {"word", command.word},
+                        {"participation", unsigned(command.participation)}});
                 }
-                pairs.push_back(std::move(pair));
+            // Legacy decisions are measured with its own forwarding mode on the
+            // same original IR. They are evidence of behavior, not alias promises.
+            SyncIRs legacyIR;
+            Buffer2MemInfoMap legacyBuffers;
+            MemoryDependentAnalyzer legacyMemory;
+            // Reserve a bounded traversal before invoking the legacy translator.
+            // Its original-operation scan includes scalar/view operations absent
+            // from the composition tree; stop before translation if it cannot fit.
+            auto preflight = inventory.function.walk([&](Operation* op) {
+                return charge(1 + op->getNumOperands() + op->getNumResults()) ?
+                    WalkResult::advance() : WalkResult::interrupt();
+            });
+            if (preflight.wasInterrupted() || !charge(recorded.size() * (1 + c::MaxCells))) return;
+            {
+                ScopedDiagnosticHandler diagnostics(inventory.function.getContext(), [](Diagnostic&) { return success(); });
+                PTOIRTranslator legacy(legacyIR, legacyMemory, legacyBuffers, inventory.function,
+                                        SyncAnalysisMode::NORMALSYNC, false);
+                legacyAvailable = succeeded(legacy.Build());
             }
+            for (unsigned writerId : writers) {
+                const auto& writer = recorded[writerId];
+                for (unsigned readerId : readers) {
+                    const auto& reader = recorded[readerId];
+                    if (!charge(1 + writer.cells.size())) return;
+                    bool overlap = std::any_of(writer.cells.begin(), writer.cells.end(),
+                        [&](unsigned cell) { return reader.cells.count(cell); });
+                    if (!charge((1 + writer.loops.size()) * (1 + reader.loops.size()))) return;
+                    bool loop = llvm::any_of(writer.loops, [&](Operation* owner) {
+                        return llvm::is_contained(reader.loops, owner);
+                    });
+                    auto left = legacyBuffers.find(writer.memory->baseBuffer);
+                    auto right = legacyBuffers.find(reader.memory->baseBuffer);
+                    llvm::json::Object pair{{"writer", writer.id}, {"reader", reader.id},
+                        {"native_overlap", overlap},
+                        {"possible_relation", loop ? "same-iteration-or-backedge" : "same-invocation"}};
+                    if (legacyAvailable && left != legacyBuffers.end() && right != legacyBuffers.end()) {
+                        bool legacyOverlap = false;
+                        for (const auto& a : left->second)
+                            for (const auto& b : right->second) {
+                                if (!charge(1 + uint64_t(a->baseAddresses.size()) * b->baseAddresses.size())) return;
+                                legacyOverlap |= legacyMemory.MemAlias(a.get(), b.get());
+                            }
+                        pair["legacy_overlap"] = legacyOverlap;
+                    }
+                    pairs.push_back(std::move(pair));
+                }
+            }
+        };
+        gather();
+        llvm::json::Array aliasPairs, disjointRootPairs;
+        for (auto [first, second] : disjointPairs) {
+            if (!charge(1)) break;
+            aliasPairs.push_back(llvm::json::Array{first, second});
+            disjointRootPairs.push_back(llvm::json::Array{
+                name(inventory.function.getArgument(first)), name(inventory.function.getArgument(second))});
         }
         llvm::json::Object report{{"schema", "oahs.composition.witness.v1"},
             {"function", inventory.function.getSymName().str()},
             {"alias_contract", gm == InsertSyncGMAliasMode::DisjointArguments ? "assume-disjoint-arguments" : "may-alias"},
             {"success", selected.success}, {"reason", selected.reason},
+            {"command_stage", "proposed-before-reconstruction"},
+            {"pairwise_alias_contract", std::move(aliasPairs)},
+            {"disjoint_root_pairs", std::move(disjointRootPairs)},
+            {"gm_geometry_work", gmGeometryWork}, {"gm_geometry_exhausted", gmGeometryExhausted},
             {"cells", std::move(physical)}, {"nodes", std::move(operations)},
             {"accesses", std::move(accesses)}, {"commands", std::move(commands)},
             {"publication_pairs", std::move(pairs)}, {"legacy_translation_available", legacyAvailable},
+            {"legacy_translation_accounting", "separate diagnostic; translator internals not charged"},
             {"families_discovered", selected.lifetimeCandidates},
             {"families_selected", selected.persistentLifetimes},
             {"families_rejected", selected.rejectedPersistentLifetimes},
+            {"cleanup_trials", selected.lifetimeCleanupTrials}, {"cleanup_commands_removed", selected.lifetimeCleanupRemoved},
+            {"cleanup_work", selected.lifetimeCleanupWork}, {"cleanup_budget_exhausted", selected.lifetimeCleanupBudgetExhausted},
             {"rejection", selected.deferredRejectionReason},
             {"report_work", reportWork}, {"report_exhausted", exhausted}};
+        report["report_limit"] = ReportLimit;
         llvm::errs() << "OAHS_WITNESS " << llvm::json::Value(std::move(report)) << "\n";
     }
     bool remoteSignalSeparate(Operation* signalOp, Value signal)
@@ -894,16 +1004,19 @@ struct Tree {
         bool overlaps = cell.whole;
         if (cell.space == AddressSpace::GM) {
             const auto& roots = gmAccesses.find(a)->second;
-            overlaps = !roots.complete ||
-                ((!cell.gmRoots.empty() || !cell.remainder) &&
-                 (cell.gmRoots.empty() || llvm::any_of(roots.arguments, [&](Value root) {
-                     return llvm::is_contained(cell.gmRoots, root);
-                 })));
-            if (overlaps && roots.complete && cell.gmRoots.size() == 1 && !cell.whole) {
-                const auto& range = gmRanges.find(a)->second;
-                if (range && range->root == cell.gmRoots.front())
-                    overlaps = !cell.remainder && range->lower < cell.upper && cell.lower < range->upper;
+            if (!roots.complete) return true;
+            if (cell.gmRoots.empty()) return !cell.remainder;
+            const auto& range = gmRanges.find(a)->second;
+            for (unsigned index = 0; index < cell.gmRoots.size(); ++index) {
+                Value root = cell.gmRoots[index];
+                if (!llvm::is_contained(roots.arguments, root)) continue;
+                Cell::PeerRange coordinate{cell.lower, cell.upper, cell.whole, cell.remainder};
+                if (index == 1 && cell.peerRange) coordinate = *cell.peerRange;
+                if (coordinate.whole || !range || range->root != root) return true;
+                if (!coordinate.remainder && range->lower < coordinate.upper && coordinate.lower < range->upper)
+                    return true;
             }
+            return false;
         } else if (!knownRange(a)) {
             overlaps = true;
         } else if (!cell.remainder && !overlaps) {
@@ -1870,6 +1983,14 @@ Outcome ss::testing::verifyAuthoredCompositionalSync(
         out.reason = "authored plan requires an unconditional physical-context retirement drain";
         return out;
     }
+    // Authored priming/cleanup may occur outside the physical section. The
+    // whole-function tree below must not credit this drain with retiring a
+    // later issuing command, even when it is final inside its own section.
+    bool passedDrain = false, trailingSync = false;
+    function.walk<WalkOrder::PreOrder>([&](Operation* op) {
+        if (op == drain.getOperation()) passedDrain = true;
+        else if (passedDrain && sync(op)) trailingSync = true;
+    });
     Tree tree(inventory, hardware, gm, ownership, ownershipCredit, &unitFlags);
     llvm::SmallPtrSet<Operation*, 32> commands;
     function.walk([&](Operation* op) {
@@ -1884,13 +2005,17 @@ Outcome ss::testing::verifyAuthoredCompositionalSync(
         out.reason = tree.reason;
         return out;
     }
+    // Such authored plans can still prove explicit return acknowledgments;
+    // they simply receive no end-of-invocation retirement credit.
+    tree.program.terminalRetirementCut = trailingSync ? ~0u : tree.terminal;
     std::vector<std::vector<c::Mechanism>> actual;
     ParticipationGuards guards;
     if (!reconstruct(tree, drain, actual, out.reason, false, guards))
         return out;
     auto checked = c::testing::verifyOpenDemands(tree.program, actual);
     if (!checked.success) {
-        out.reason = checked.reason;
+        out.reason = trailingSync ? "authored synchronization follows the physical-context retirement drain: " +
+                                        checked.reason : checked.reason;
         return out;
     }
     out.status = Outcome::Applied;
@@ -1991,6 +2116,9 @@ Outcome ss::testing::constructCompositionalSync(
         out.reason = tree.reason;
         return out;
     }
+    // Construction promises a real final ALL. The fresh tree receives this
+    // premise only after the emitted drain's presence and position are checked.
+    tree.program.terminalRetirementCut = tree.terminal;
     // Demand construction executes macros atomically and reserves their
     // private keys globally. The older cut-only API still declines macros.
     const bool hasMacro = llvm::any_of(tree.program.nodes, [](const auto& node) {
@@ -2118,6 +2246,7 @@ Outcome ss::testing::constructCompositionalSync(
     }
     if (rebuilt.terminal != ~0u)
         rebuilt.anchors[rebuilt.terminal] = drain;
+    rebuilt.program.terminalRetirementCut = rebuilt.terminal;
     // Re-extract the original phase population after emission, including all
     // sibling and loop-carried effects. Never trust selected child requirements.
     if (fresh.physical.phases.size() != inventory.physical.phases.size()) {
@@ -2260,6 +2389,10 @@ Outcome ss::testing::constructCompositionalSync(
             << " selected_cycle_count_known " << selected.selectedCycleCountKnown
             << " selected_accounting_work " << selected.selectedAccountingWork
             << " lifetime_eligibility_work " << selected.lifetimeEligibilityWork
+            << " lifetime_cleanup_trials " << selected.lifetimeCleanupTrials
+            << " lifetime_cleanup_removed " << selected.lifetimeCleanupRemoved
+            << " lifetime_cleanup_work " << selected.lifetimeCleanupWork
+            << " lifetime_cleanup_budget_exhausted " << selected.lifetimeCleanupBudgetExhausted
             << " lifetime_stronger_rejections " << selected.lifetimeStrongerRejections
             << " lifetime_protocol_rejections " << selected.lifetimeProtocolRejections
             << " lifetime_boundary_rejections " << selected.lifetimeBoundaryRejections

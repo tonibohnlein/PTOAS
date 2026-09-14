@@ -151,6 +151,11 @@ struct Program {
     // Original synchronization is immutable input, not a generated
     // Mechanism. Each list executes immediately before its node.
     std::vector<std::vector<FixedAction>> fixedBefore;
+    // An explicit ALL drain follows the commands at this empty final root
+    // child. The native adapter must re-establish this premise from emission.
+    // It retires completed consumption between invocations, never live tokens
+    // or GM visibility. Portable callers receive no implicit retirement.
+    unsigned terminalRetirementCut = ~0u;
 };
 struct Mechanism {
     enum Kind { Barrier, Rendezvous, Publish, Acquire, Visibility } kind = Barrier;
@@ -244,6 +249,8 @@ struct Result {
     uint64_t deferredDiscoveryWork = 0, deferredDiscoveryRefusals = 0;
     uint64_t lifetimeAnalysisWork = 0, lifetimeStorageUnits = 0;
     uint64_t lifetimeCandidates = 0, persistentLifetimes = 0;
+    uint64_t lifetimeCleanupTrials = 0, lifetimeCleanupRemoved = 0, lifetimeCleanupWork = 0;
+    bool lifetimeCleanupBudgetExhausted = false;
     uint64_t persistentReaderFamilies = 0, rejectedPersistentLifetimes = 0;
     bool lifetimeBudgetExhausted = false;
     uint64_t lifetimeEligibilityWork = 0;

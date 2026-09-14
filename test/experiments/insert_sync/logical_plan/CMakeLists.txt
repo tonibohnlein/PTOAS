@@ -58,6 +58,14 @@ target_include_directories(pto-composition-core-test PRIVATE "${PTO_RELATION_ROO
 add_test(NAME oahs_composition_core COMMAND pto-composition-core-test)
 set_tests_properties(oahs_composition_core PROPERTIES LABELS "OAHS" RUN_SERIAL TRUE)
 if(TARGET pto-structured-sync-test AND PTO_ENABLE_PYTHON_BINDING)
+  add_test(NAME oahs_coverage_handoffs
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/check_coverage_handoffs.py"
+      --opt "$<TARGET_FILE:pto-test-opt>"
+      --output-root "${CMAKE_BINARY_DIR}/test-results/oahs-coverage")
+  add_test(NAME oahs_coverage_witnesses
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_coverage_witnesses.py")
+  set_tests_properties(oahs_coverage_handoffs oahs_coverage_witnesses
+    PROPERTIES LABELS "OAHS" RUN_SERIAL TRUE)
   add_test(NAME oahs_composition
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/check_composition.py"
       --driver "$<TARGET_FILE:pto-structured-sync-test>"

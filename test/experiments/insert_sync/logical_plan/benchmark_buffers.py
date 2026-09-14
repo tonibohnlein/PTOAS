@@ -188,7 +188,9 @@ def main():
                 if arm in ("structured", "composition", "demands"):
                     command.insert(-4, "--insert-sync-logical-work-budget=0")
                 if arm in ("composition", "demands"):
-                    command.insert(-4, "--insert-sync-structured-precision=true")
+                    # Preserve historical arm identities: composition is the
+                    # conservative baseline; demands enables current precision.
+                    command.insert(-4, f"--insert-sync-structured-precision={'true' if arm == 'demands' else 'false'}")
                     command.insert(-4, f"--insert-sync-hardware-contract={args.hardware_contract}")
                     command.insert(-4, f"--insert-sync-ownership-contract={args.ownership_contract}")
                     command.insert(-4, f"--insert-sync-ownership-credit={'true' if args.ownership_credit else 'false'}")
@@ -203,6 +205,10 @@ def main():
                                 attrs.get("pto.insert_sync.producer") == f'"{producer}"'
                                 for attrs in report["status_attributes"]):
                             raise ValueError("the requested strict planner did not produce this output")
+                        if arm in ("composition", "demands") and not any(
+                                attrs.get("pto.insert_sync.precision") == ('true' if arm == 'demands' else 'false')
+                                for attrs in report["status_attributes"]):
+                            raise ValueError("the requested benchmark precision did not produce this output")
                         if reference is None:
                             reference = projection
                         if projection != reference:

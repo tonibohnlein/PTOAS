@@ -20,6 +20,24 @@ Local lowering premises to audit:
 - Record any lowering or consistency pass that changes the instructions,
   cache hints, fences, or event placement in the tested binary.
 
+Local source audit on `7584d9dc5` (compiler changes remain uncommitted):
+
+| PTO operation or option | Observed EmitC lowering | Qualification boundary |
+| --- | --- | --- |
+| Default `pto.tload` | `TLOAD(dst, src)` | Native instruction and cache behavior still need the pinned PTO headers and device specification. |
+| `pto.tload` with `L2Bypass` | `TLOAD<pto::TLoadL2Hint::NotAllocKeep>(dst, src)` | Separate cache premise; no credit inherited from the default load. |
+| Default `pto.tstore` | `TSTORE(dst, src)` | Audit independently from phase, atomic, and conversion overloads. |
+| Store phase / atomic / ReLU / prequantization | Distinct `TSTORE` template and operand combinations | No blanket store publication capability. |
+| Store with FP operand | `TSTORE_FP(dst, src, fp)` with optional template arguments | Separate instruction family. |
+| Prefetch and asynchronous prefetch | `TPREFETCH` and `TPREFETCH_ASYNC` | Not ordinary MTE2 reload witnesses. |
+
+`tools/ptoas/ptoas_pipeline.cpp::appendAutoSyncPasses` selects InsertSync,
+BufidSync, or barrier-all as alternatives. The barrier-all alternative is not
+an additional consistency pass on the InsertSync path. Synchronization precedes
+buffer-select resolution. This source inspection does not establish what the
+event or load/store intrinsics expand to in a device binary; that remains part
+of the device audit below.
+
 Task for the device qualification agent:
 
 1. Pin device model/stepping, firmware, driver, CANN version, PTO headers and

@@ -61,7 +61,8 @@ struct OpenProtocolState : PrefixState {
     }
 };
 
-c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64_t limit, Commands* residual)
+c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64_t limit, Commands* residual,
+                            ProtocolResiduals* protocolResidual)
 {
     using namespace c;
     c::Result result;
@@ -90,6 +91,18 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
     std::vector<Effects> effects;
     if (!summarize(p, effects, result.reason))
         return result;
+    if (p.terminalRetirementCut != NoCut) {
+        const auto& root = p.nodes.back();
+        unsigned cut = p.terminalRetirementCut;
+        if (cut >= p.nodes.size() - 1 || root.kind != Node::Sequence || root.children.empty() ||
+            root.children.back() != cut || p.nodes[cut].kind != Node::Sequence ||
+            !p.nodes[cut].children.empty() ||
+            std::any_of(effects[cut].begin(), effects[cut].end(),
+                        [](auto effect) { return effect.readers || effect.writers; })) {
+            result.reason = "terminal retirement requires an empty final root cut";
+            return result;
+        }
+    }
     for (const auto& site : actual)
         for (const auto& m : site) {
             if (!charge(1 + p.target.compilerKeys.size() + p.target.reservations.size()))
@@ -119,9 +132,41 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
         1 + uint64_t(keys.size()) * (keys.size() + 3) + uint64_t(p.cells) * (8 * LaneCount + 4 * keys.size() + 8);
     if (!charge(width))
         return result;
-    auto endpoint = [&](OpenProtocolState& state, const Mechanism& m, bool validate, unsigned site) {
+    auto endpoint = [&](OpenProtocolState& state, const Mechanism& m, bool validate, unsigned site, unsigned position) {
         unsigned k = keys.at({m.first, m.second, m.forwardKey});
         if (m.kind == Mechanism::Publish) {
+            if (validate && protocolResidual && state.occupancy[k] == 1 &&
+                !(state.known[k] & (1u << m.first)) && (state.known[k] & (1u << m.second))) {
+                // The prior generation has been consumed, but its producer
+                // still needs the consumption receipt before rearming. Propose
+                // an actual return at this precise command boundary. Its own
+                // rearm still has to be proved on the next complete replay.
+                if (!charge(1 + protocolResidual->size() + width +
+                            LaneCount * LaneCount * p.target.compilerKeys.size() *
+                                (1 + p.target.compilerKeys.size() + p.target.reservations.size()))) return false;
+                std::vector<Mechanism> acknowledgment;
+                if (auto receiptKey = key(p, m.second, m.first)) {
+                    acknowledgment.push_back(event(Mechanism::Publish, m.second, m.first, *receiptKey));
+                    acknowledgment.push_back(event(Mechanism::Acquire, m.second, m.first, *receiptKey));
+                    state.acquire(m.second, m.first);
+                } else if (!acquire(p, m.second, m.first, state, acknowledgment)) {
+                    result.reason = "target cannot realize residual consumption acknowledgment";
+                    return false;
+                }
+                auto& commands = (*protocolResidual)[{site, position}];
+                for (const auto& command : acknowledgment) {
+                    if (!charge(1 + commands.size())) return false;
+                    if (std::find(commands.begin(), commands.end(), command) == commands.end())
+                        commands.push_back(command);
+                    if (command.kind == Mechanism::Rendezvous)
+                        for (auto& known : state.known) {
+                            if (known & (1u << command.first)) known |= 1u << command.second;
+                            if (known & (1u << command.second)) known |= 1u << command.first;
+                        }
+                }
+                // This is only proposal state. The next complete replay
+                // reconstructs the inserted packet's occupancy and snapshots.
+            }
             if (validate && (state.occupancy[k] != 1 || !(state.known[k] & (1u << m.first)))) {
                 result.reason = "open publication can rearm before fresh consumption at node " +
                     std::to_string(site) + " for " + std::to_string(m.first) + "->" +
@@ -171,9 +216,10 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
         if (!applyFixed(p, id, state, result.reason))
             return false;
         auto visibilityState = state;
-        for (const auto& m : actual[id]) {
+        for (unsigned position = 0; position < actual[id].size(); ++position) {
+            const auto& m = actual[id][position];
             if (m.kind == Mechanism::Publish || m.kind == Mechanism::Acquire) {
-                if (!endpoint(state, m, validate, id))
+                if (!endpoint(state, m, validate, id, position))
                     return false;
             } else if (m.kind == Mechanism::Rendezvous) {
                 for (auto e :
@@ -181,7 +227,7 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                       event(Mechanism::Acquire, m.first, m.second, m.forwardKey),
                       event(Mechanism::Publish, m.second, m.first, m.reverseKey),
                       event(Mechanism::Acquire, m.second, m.first, m.reverseKey)})
-                    if (!endpoint(state, e, validate, id))
+                    if (!endpoint(state, e, validate, id, position))
                         return false;
             } else
                 apply(p, state, m);
@@ -190,8 +236,17 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
         if (node.kind == Node::Operation) {
             if (validate && residual) {
                 auto& commands = (*residual)[id];
-                if (!realizeVisibility(p, node, state, commands, result.reason, result.visibilityRequirements))
+                std::vector<Mechanism> visibility;
+                if (!realizeVisibility(p, node, state, visibility, result.reason, result.visibilityRequirements))
                     return false;
+                // A structural site may be visited for several residues and
+                // for both continuing and final iterations. Its residual
+                // recipe is emitted once, regardless of abstract visit count.
+                for (const auto& command : visibility) {
+                    if (!charge(1 + commands.size())) return false;
+                    if (std::find(commands.begin(), commands.end(), command) == commands.end())
+                        commands.push_back(command);
+                }
                 for (unsigned source = 0; source < LaneCount; ++source) {
                     if (!(operationDemands(p, node, state) & (1u << source))) continue;
                     ++result.acquisitions;
@@ -209,9 +264,11 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                                 if (known & (1u << command.first)) known |= 1u << command.second;
                                 if (known & (1u << command.second)) known |= 1u << command.first;
                             }
-                    for (const auto& command : generated)
+                    for (const auto& command : generated) {
+                        if (!charge(1 + commands.size())) return false;
                         if (std::find(commands.begin(), commands.end(), command) == commands.end())
                             commands.push_back(command);
+                    }
                 }
             }
             if (validate && !residual &&
@@ -250,6 +307,7 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                     period = 1;
                 std::function<void(unsigned)> findPeriod = [&](unsigned child) {
                     const auto& nested = p.nodes[child];
+                    if (!result.reason.empty() || !charge(1 + nested.children.size())) return;
                     if (nested.periodicOwner == id && nested.periodicPeriod)
                         period = period > 1 && period != nested.periodicPeriod ? 33 : nested.periodicPeriod;
                     if (nested.nextIterationOwner == id && !period)
@@ -260,6 +318,7 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                 };
                 for (unsigned child : node.children)
                     findPeriod(child);
+                if (!result.reason.empty()) return false;
             }
             if (period && period <= 32 && node.periodicLower >= 0) {
                 if (!charge(uint64_t(period) * 8 * width))
@@ -273,6 +332,7 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                     for (unsigned current = 0; current < period; ++current) {
                         if (!starts[current])
                             continue;
+                        if (!charge(6 * width)) return false;
                         auto backedge = *starts[current];
                         for (unsigned child : node.children)
                             if (!visit(child, backedge, false, id, current, 1))
@@ -297,6 +357,7 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
                 for (unsigned current = 0; current < period; ++current) {
                     if (!starts[current])
                         continue;
+                    if (!charge(6 * width)) return false;
                     auto continuing = *starts[current];
                     for (unsigned child : node.children)
                         if (!visit(child, continuing, validate, id, current, 1))
@@ -354,14 +415,25 @@ c::Result verifyOpenProtocol(const c::Program& p, const Commands& actual, uint64
         return true;
     };
     OpenProtocolState initial(p.cells, keys.size()), invariant = initial;
-    // Repeated invocations share event generations. Only actual modeled
-    // commands may retire physical work; no implicit drain is introduced.
+    // Repeated invocations share event generations. An explicit terminal ALL
+    // orders only already-consumed tokens before the next invocation. It must
+    // not conceal a missing WAIT, provide an in-body receipt, or publish GM.
+    auto retire = [&](OpenProtocolState& state) {
+        if (p.terminalRetirementCut == NoCut) return;
+        if (std::any_of(state.occupancy.begin(), state.occupancy.end(), [](auto bits) { return bits != 1; }))
+            return;
+        state.barrierAll();
+        std::fill(state.known.begin(), state.known.end(), (1u << LaneCount) - 1);
+    };
     for (;;) {
         if (!charge(3 * width))
             return result;
         auto next = invariant;
         if (!visit(p.nodes.size() - 1, next, false, NoCut, 0, -1))
             return result;
+        if (p.terminalRetirementCut != NoCut && !charge(width))
+            return result;
+        retire(next);
         next.join(initial);
         next.join(invariant);
         if (next.same(invariant))

@@ -34,18 +34,35 @@ def witness_classes(reports):
     output = []
     for report in reports:
         accesses = {a['id']: a for a in report['accesses']}
+        disjoint_pairs = {frozenset(pair) for pair in report.get('disjoint_root_pairs', [])}
         for pair in report['publication_pairs']:
             writer, reader = accesses[pair['writer']], accesses[pair['reader']]
             known = writer['origins_complete'] and reader['origins_complete']
-            common = set(writer['roots']) & set(reader['roots'])
-            if not pair['native_overlap']:
-                classification = ('established-disjointness-contract' if known and not common else
-                                  'lost-provenance-or-range-precision')
-            elif known:
+            exact = all('gm_lower' in access and 'gm_upper' in access for access in (writer, reader))
+            same_root = known and len(writer['roots']) == 1 and writer['roots'] == reader['roots']
+            disjoint_ranges = exact and same_root and (
+                int(writer['gm_upper']) <= int(reader['gm_lower']) or
+                int(reader['gm_upper']) <= int(writer['gm_lower']))
+            disjoint_contract = known and bool(writer['roots']) and bool(reader['roots']) and all(
+                left != right and (report.get('alias_contract') == 'assume-disjoint-arguments' or
+                                   frozenset((left, right)) in disjoint_pairs)
+                for left in writer['roots'] for right in reader['roots'])
+            if disjoint_contract:
+                classification = ('lost-provenance-or-range-precision' if pair['native_overlap'] else
+                                  'established-disjointness-contract')
+            elif disjoint_ranges:
+                # A synthetic alias cell can lose geometry even when origin
+                # discovery is complete. Do not call that genuine overlap.
+                classification = 'lost-provenance-or-range-precision'
+            elif not pair['native_overlap']:
+                classification = 'unresolved-evidence'
+            elif known and exact and not report.get('report_exhausted', False):
                 classification = 'genuine-possible-overlap'
             else:
                 classification = 'unresolved-evidence'
             output.append(dict(function=report['function'], **pair, classification=classification,
+                               exact_ranges=exact, proven_disjoint_ranges=disjoint_ranges,
+                               proven_disjoint_contract=disjoint_contract,
                                writer_access=writer, reader_access=reader))
     return output
 
@@ -69,6 +86,9 @@ def main():
         raise ValueError('publication reference must contain the reviewed 86 first refusals')
     baseline = json.loads(args.baseline.read_text()) if args.baseline else None
     before = {r['id']: r for r in baseline['rows']} if baseline else {}
+    if baseline and (len(before) != len(baseline['rows']) or
+                     set(before) != {record['id'] for record in records}):
+        raise ValueError('baseline must contain exactly the same frozen input population')
     args.output.mkdir(parents=True, exist_ok=False)
     env = dict(os.environ, PTOAS_LOGICAL_TRACE='1', PTOAS_COMPOSITION_WITNESSES='1',
                OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1', MKL_NUM_THREADS='1')
@@ -105,6 +125,10 @@ def main():
         old = before.get(record['id'])
         if old and (old['prepared_sha256'] != key[0] or old['gm_alias'] != key[1]):
             raise ValueError('before/after input or alias identity differs: ' + record['id'])
+        if old and (old.get('measurement') != 'fresh' or
+                    old.get('hardware_contract') != 'conservative' or
+                    old.get('ownership_contract') != 'none'):
+            raise ValueError('baseline freshness or hardware/ownership contract differs: ' + record['id'])
         actual = arms['composition']['outcome']
         prior = old['actual'] if old else record['current']
         row = dict(id=record['id'], index=record['index'], family=record['family'],

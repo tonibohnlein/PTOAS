@@ -80,6 +80,10 @@ def main():
                  if 'error: ' in line), status)
         if category == 'mutation':
             row['verdict'] = json.loads(stdout) if code == 0 else None
+            if row['verdict']:
+                for contract in ('hardware_contract', 'gm_alias', 'ownership_contract', 'ownership_credit'):
+                    if contract in row['verdict']:
+                        row[contract] = row['verdict'][contract]
         else:
             row['sets'] = stdout.count('pto.set_flag[')
             row['waits'] = stdout.count('pto.wait_flag[')
@@ -415,6 +419,41 @@ def main():
         if final['verdict']['barriers'] != 0 or final['terminal_drains'] != 1:
             raise RuntimeError('qualified historical GEMM did not recover a barrier-free body plus terminal drain')
 
+        # Re-import the actual emitted population without constructor metadata.
+        # The terminal drain orders consumed events across invocations; it must
+        # never compensate for a deleted event or an absent/misplaced drain.
+        final_source = Path(final['output'])
+        final_lines = final_source.read_text().splitlines(keepends=True)
+        mutations = [(f'drop-event-{index}', final_lines[:index] + final_lines[index + 1:])
+                     for index, line in enumerate(final_lines)
+                     if 'pto.set_flag[' in line or 'pto.wait_flag[' in line]
+        drain_index = next(index for index, line in enumerate(final_lines)
+                           if 'pto.barrier <PIPE_ALL>' in line)
+        no_drain = final_lines[:drain_index] + final_lines[drain_index + 1:]
+        mutations.append(('drop-terminal', no_drain))
+        early = next(index for index, line in enumerate(no_drain) if 'pto.section.cube {' in line) + 1
+        mutations.append(('early-terminal', no_drain[:early] + [final_lines[drain_index]] + no_drain[early:]))
+        late_cleanup = list(final_lines)
+        cleanup_index = max(index for index in range(drain_index) if 'pto.wait_flag[' in late_cleanup[index])
+        cleanup = late_cleanup.pop(cleanup_index)
+        section_exit = next(index for index in range(drain_index, len(late_cleanup))
+                            if late_cleanup[index].strip() == '}')
+        late_cleanup.insert(section_exit + 1, cleanup)
+        mutations.append(('cleanup-after-terminal', late_cleanup))
+        for name, lines in [('intact', final_lines)] + mutations:
+            source = args.output / ('historical-gemm.reconstructed-' + name + '.pto')
+            source.write_text(''.join(lines))
+            mode = 'none' if name == 'intact' else 'expect-unsupported'
+            row = run('historical-gemm-reconstructed-' + name,
+                      [args.driver, source, 'authored:' + mode,
+                       source.with_suffix('.output.pto'), 'a2a3-mmad-acc-v1', 'assume-disjoint-arguments'],
+                      source, 'mutation', True)
+            if not row['verdict']['expected'] or not row['verdict']['atomic']:
+                raise RuntimeError('historical actual-command reconstruction failed: ' + name)
+            if name == 'cleanup-after-terminal' and 'synchronization follows' not in row['verdict']['reason']:
+                raise RuntimeError('post-section cleanup did not fail at the retirement boundary')
+        historical_evidence['actual_command_mutations'] = len(mutations)
+
         # Metadata syntax/type errors are fatal.  A valid but insufficient
         # lower bound merely declines the optional nonempty fact and retains a
         # verified conservative result.
@@ -465,14 +504,24 @@ def main():
             synchronized = args.output.resolve() / 'historical-gemm.composed.pto'
             generated = args.output.resolve() / 'historical-gemm.composed.cpp'
             commands = (
-                ('historical-gemm-pto', args.historical, synchronized,
-                 ['--enable-insert-sync', '--insert-sync-planner=structured',
-                  '--insert-sync-structured-precision=false', '--emit-pto-ir']),
+                ('historical-gemm-pto', qualified, synchronized,
+                 ['--enable-insert-sync', '--insert-sync-planner=composition',
+                  '--insert-sync-structured-precision=true',
+                  '--insert-sync-hardware-contract=a2a3-mmad-acc-v1',
+                  '--insert-sync-gm-alias=assume-disjoint-arguments', '--emit-pto-ir']),
                 ('historical-gemm-cpp', synchronized, generated, []))
             for name, source, output, flags in commands:
                 row = run(name, prefix + flags + [source, '-o', output],
                           source, 'frontend', True)
                 row.update(artifact=str(output), artifact_sha256=digest(output.read_bytes()))
+                row.update(hardware_contract='a2a3-mmad-acc-v1', gm_alias='assume-disjoint-arguments',
+                           ownership_contract='none')
+                if name == 'historical-gemm-pto':
+                    text = output.read_text()
+                    if (text.count('pto.set_flag[') != final['sets'] or
+                            text.count('pto.wait_flag[') != final['waits'] or
+                            text.count('pto.barrier') != final['terminal_drains']):
+                        raise RuntimeError('compiler pipeline changed the qualified native GEMM event population')
 
     corpus_manifests = []
     for path in args.corpus_manifest:
