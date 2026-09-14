@@ -25,6 +25,7 @@ from s7_corpus import prepare_bytes
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
+PUBLICATION = 'MTE3-to-MTE2 GM publication has no qualified compositional realization'
 
 
 def digest(data):
@@ -46,7 +47,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     rows = []
     historical_evidence = None
-    env = dict(os.environ, PTOAS_LOGICAL_TRACE='1')
+    env = dict(os.environ, PTOAS_LOGICAL_TRACE='1', PTOAS_COMPOSITION_WITNESSES='1')
     env.pop('PTOAS_STRUCTURED_PLAN_JSON', None)
 
     def run(name, command, source, category, expected=None):
@@ -106,6 +107,109 @@ def main():
         row.update(planner=planner, precision=demands)
         return row
 
+    def compile_precision(name, source, gm='may-alias', expected=True):
+        return run(name, [args.opt, '--mlir-disable-threading',
+                          '--pto-insert-sync=planner=composition structured-precision=true '
+                          'logical-work-budget=0 gm-alias=' + gm, source],
+                   source, 'native', expected)
+
+    def write_origin_budget_case(path):
+        lines = [
+            'module attributes {pto.target_arch = "a3"} {',
+            '  func.func @gm_origin_budget(%a: !pto.ptr<i8>, %b: !pto.ptr<i8>,',
+            '      %c: !pto.ptr<i8>, %take: i1) attributes {pto.kernel_kind = #pto.kernel_kind<vector>,',
+            '      pto.noalias_pairs = array<i64: 0, 2>} {',
+            '    %c0 = arith.constant 0 : index',
+            '    %c1 = arith.constant 1 : index',
+            '    %c32 = arith.constant 32 : index',
+            '    %a0 = arith.constant 0 : i64',
+            '    %a1 = arith.constant 512 : i64',
+        ]
+        previous = '%b'
+        for index in range(300):
+            current = f'%p{index}'
+            lines.append(f'    {current} = pto.addptr {previous}, %c0 : !pto.ptr<i8> -> !pto.ptr<i8>')
+            previous = current
+        lines += [
+            '    %selected = scf.if %take -> (!pto.ptr<i8>) {',
+            '      scf.yield %a : !pto.ptr<i8>',
+            '    } else {',
+            f'      scf.yield {previous} : !pto.ptr<i8>',
+            '    }',
+            '    %av = pto.make_tensor_view %selected, shape = [%c32], strides = [%c1]',
+            '      {layout = #pto.layout<nd>} : !pto.tensor_view<?xi8>',
+            '    %cv = pto.make_tensor_view %c, shape = [%c32], strides = [%c1]',
+            '      {layout = #pto.layout<nd>} : !pto.tensor_view<?xi8>',
+            '    %ap = pto.partition_view %av, offsets = [%c0], sizes = [%c32]',
+            '      : !pto.tensor_view<?xi8> -> !pto.partition_tensor_view<32xi8>',
+            '    %cp = pto.partition_view %cv, offsets = [%c0], sizes = [%c32]',
+            '      : !pto.tensor_view<?xi8> -> !pto.partition_tensor_view<32xi8>',
+            '    %source = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x32xi8>',
+            '    %sink = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xi8>',
+            '    pto.tstore ins(%source : !pto.tile_buf<vec, 1x32xi8>)',
+            '      outs(%cp : !pto.partition_tensor_view<32xi8>)',
+            '    pto.tload ins(%ap : !pto.partition_tensor_view<32xi8>)',
+            '      outs(%sink : !pto.tile_buf<vec, 1x32xi8>)',
+            '    return',
+            '  }',
+            '}',
+        ]
+        path.write_text('\n'.join(lines) + '\n')
+
+    def write_cell_capacity_case(path):
+        lines = [
+            'module attributes {pto.target_arch = "a3"} {',
+            '  func.func @gm_cell_capacity(%a: !pto.ptr<i8>, %c: !pto.ptr<i8>,',
+            '      %d: !pto.ptr<i8>, %raw: i64) attributes {pto.kernel_kind = #pto.kernel_kind<vector>,',
+            '      pto.noalias_pairs = array<i64: 0, 1, 0, 2, 1, 2>} {',
+            '    %a0 = arith.constant 0 : i64',
+            '    %a1 = arith.constant 512 : i64',
+            '    %c0 = arith.constant 0 : index',
+            '    %c1 = arith.constant 1 : index',
+            '    %c32 = arith.constant 32 : index',
+            '    %c8128 = arith.constant 8128 : index',
+        ]
+        for index in range(254):
+            lines.append(f'    %o{index} = arith.constant {index * 32} : index')
+        lines += [
+            '    %a_view = pto.make_tensor_view %a, shape = [%c8128], strides = [%c1]',
+            '      {layout = #pto.layout<nd>} : !pto.tensor_view<?xi8>',
+            '    %c_view = pto.make_tensor_view %c, shape = [%c32], strides = [%c1]',
+            '      {layout = #pto.layout<nd>} : !pto.tensor_view<?xi8>',
+            '    %d_view = pto.make_tensor_view %d, shape = [%c32], strides = [%c1]',
+            '      {layout = #pto.layout<nd>} : !pto.tensor_view<?xi8>',
+            '    %opaque = pto.inttoptr %raw : i64 -> !pto.ptr<i8>',
+            '    %u_view = pto.make_tensor_view %opaque, shape = [%c32], strides = [%c1]',
+            '      {layout = #pto.layout<nd>} : !pto.tensor_view<?xi8>',
+            '    %cp = pto.partition_view %c_view, offsets = [%c0], sizes = [%c32]',
+            '      : !pto.tensor_view<?xi8> -> !pto.partition_tensor_view<32xi8>',
+            '    %dp = pto.partition_view %d_view, offsets = [%c0], sizes = [%c32]',
+            '      : !pto.tensor_view<?xi8> -> !pto.partition_tensor_view<32xi8>',
+            '    %up = pto.partition_view %u_view, offsets = [%c0], sizes = [%c32]',
+            '      : !pto.tensor_view<?xi8> -> !pto.partition_tensor_view<32xi8>',
+            '    %source = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x32xi8>',
+            '    %sink = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xi8>',
+            '    pto.tstore ins(%source : !pto.tile_buf<vec, 1x32xi8>)',
+            '      outs(%up : !pto.partition_tensor_view<32xi8>)',
+        ]
+        for index in range(254):
+            lines += [
+                f'    %ap{index} = pto.partition_view %a_view, offsets = [%o{index}], sizes = [%c32]',
+                '      : !pto.tensor_view<?xi8> -> !pto.partition_tensor_view<32xi8>',
+                f'    pto.tload ins(%ap{index} : !pto.partition_tensor_view<32xi8>)',
+                '      outs(%sink : !pto.tile_buf<vec, 1x32xi8>)',
+            ]
+        lines += [
+            '    pto.tload ins(%cp : !pto.partition_tensor_view<32xi8>)',
+            '      outs(%sink : !pto.tile_buf<vec, 1x32xi8>)',
+            '    pto.tload ins(%dp : !pto.partition_tensor_view<32xi8>)',
+            '      outs(%sink : !pto.tile_buf<vec, 1x32xi8>)',
+            '    return',
+            '  }',
+            '}',
+        ]
+        path.write_text('\n'.join(lines) + '\n')
+
     fixtures = HERE / 'structured_inputs'
     positive = ('composition_while_forwarding', 'nested_mixed_sequence',
                 'nested_varying_choice', 'nested_varying_bound', 'nested_three_levels',
@@ -120,6 +224,84 @@ def main():
     for name in positive:
         source = fixtures / (name + '.pto')
         compile_case(name, source, gm='assume-disjoint-arguments')
+    forwarded = fixtures / 'gm_forwarded_origins.pto'
+    row = compile_precision('gm-forwarded-origins', forwarded)
+    report = next(json.loads(line.removeprefix('OAHS_WITNESS '))
+                  for line in (args.output / (row['log'] + '.stderr')).read_text().splitlines()
+                  if line.startswith('OAHS_WITNESS '))
+    gm_reads = [a for a in report['accesses'] if a['space'] == 1 and not a['write'] and a['pipeline'] == 4]
+    gm_writes = [a for a in report['accesses'] if a['space'] == 1 and a['write'] and a['pipeline'] == 5]
+    if (len(gm_reads) != 2 or len(gm_writes) != 1 or
+            any(not access['origins_complete'] for access in gm_reads) or
+            {tuple(access['roots']) for access in gm_reads} != {('%arg0',), ('%arg1',)} or
+            gm_writes[0]['roots'] != ['%arg2'] or any(
+                set(access['cells']) & set(gm_writes[0]['cells']) for access in gm_reads)):
+        raise RuntimeError('structured GM forwarding lost finite disjoint origins')
+    unqualified = args.output / 'gm-forwarded-origins-may-alias.pto'
+    unqualified.write_text(forwarded.read_text().replace(
+        ',\n      pto.noalias_pairs = array<i64: 0, 1, 0, 2, 1, 2>', ''))
+    row = compile_precision('gm-forwarded-origins-may-alias', unqualified, expected=False)
+    if PUBLICATION not in row.get('first_refusal', ''):
+        raise RuntimeError('unqualified forwarded GM roots lost conservative publication refusal')
+    unknown_source = fixtures / 'gm_unknown_isolation.pto'
+    row = compile_precision('gm-unknown-isolation', unknown_source, expected=False)
+    if PUBLICATION not in row.get('first_refusal', ''):
+        raise RuntimeError('unknown GM access lost conservative publication refusal')
+    report = next(json.loads(line.removeprefix('OAHS_WITNESS '))
+                  for line in (args.output / (row['log'] + '.stderr')).read_text().splitlines()
+                  if line.startswith('OAHS_WITNESS '))
+    gm = [a for a in report['accesses'] if a['space'] == 1]
+    known_a = [a for a in gm if a['roots'] == ['%arg0']]
+    known_c = [a for a in gm if a['roots'] == ['%arg1']]
+    opaque = [a for a in gm if not a['origins_complete']]
+    if (len(known_a) != 1 or len(known_c) != 1 or len(opaque) != 1 or
+            set(known_a[0]['cells']) & set(known_c[0]['cells']) or
+            not set(known_a[0]['cells']).issubset(opaque[0]['cells']) or
+            not set(known_c[0]['cells']).issubset(opaque[0]['cells'])):
+        raise RuntimeError('unknown GM access collapsed or failed to cover known disjoint roots')
+    budget_source = args.output / 'gm-origin-budget.pto'
+    write_origin_budget_case(budget_source)
+    row = compile_precision('gm-origin-budget', budget_source, expected=False)
+    report = next(json.loads(line.removeprefix('OAHS_WITNESS '))
+                  for line in (args.output / (row['log'] + '.stderr')).read_text().splitlines()
+                  if line.startswith('OAHS_WITNESS '))
+    gm_reads = [a for a in report['accesses'] if a['space'] == 1 and not a['write']]
+    if (not any(a['origins_complete'] and a['roots'] == ['%arg0'] for a in gm_reads) or
+            not any(not a['origins_complete'] and '%arg0' in a['roots'] for a in gm_reads)):
+        raise RuntimeError('bounded origin exhaustion discarded a discovered finite root')
+    capacity_source = args.output / 'gm-cell-capacity.pto'
+    write_cell_capacity_case(capacity_source)
+    row = compile_precision('gm-cell-capacity', capacity_source, expected=False)
+    report = next(json.loads(line.removeprefix('OAHS_WITNESS '))
+                  for line in (args.output / (row['log'] + '.stderr')).read_text().splitlines()
+                  if line.startswith('OAHS_WITNESS '))
+    gm = [a for a in report['accesses'] if a['space'] == 1]
+    groups = {root: [a for a in gm if a['origins_complete'] and a['roots'] == [root]]
+              for root in ('%arg0', '%arg1', '%arg2')}
+    opaque = [a for a in gm if not a['origins_complete']]
+    group_cells = {root: set().union(*(set(a['cells']) for a in accesses))
+                   for root, accesses in groups.items()}
+    if (any(not accesses for accesses in groups.values()) or len(opaque) != 1 or
+            any(group_cells[left] & group_cells[right]
+                for left, right in (('%arg0', '%arg1'), ('%arg0', '%arg2'), ('%arg1', '%arg2'))) or
+            not set().union(*group_cells.values()).issubset(set(opaque[0]['cells']))):
+        raise RuntimeError('bounded GM coarsening collapsed independent known-root groups')
+    ranges = fixtures / 'gm_same_root_ranges.pto'
+    row = compile_precision('gm-same-root-disjoint-ranges', ranges)
+    report = next(json.loads(line.removeprefix('OAHS_WITNESS '))
+                  for line in (args.output / (row['log'] + '.stderr')).read_text().splitlines()
+                  if line.startswith('OAHS_WITNESS '))
+    gm = [a for a in report['accesses'] if a['space'] == 1]
+    intervals = {(int(a['gm_lower']), int(a['gm_upper'])) for a in gm
+                 if 'gm_lower' in a and 'gm_upper' in a}
+    if intervals != {(0, 64), (64, 128)}:
+        raise RuntimeError('constant same-root GM intervals were not preserved')
+    overlap = args.output / 'gm-same-root-overlap.pto'
+    overlap.write_text(ranges.read_text().replace(
+        'offsets = [%c64], sizes = [%c64]', 'offsets = [%c32], sizes = [%c64]'))
+    row = compile_precision('gm-same-root-overlap', overlap, expected=False)
+    if PUBLICATION not in row.get('first_refusal', ''):
+        raise RuntimeError('overlapping same-root GM intervals lost publication refusal')
     # The emitted entry predicate is signed. An unsigned comparison attribute
     # must not acquire the signed First/NonEmpty contract by accident.
     entry_text = (fixtures / 'demand_entry.pto').read_text()

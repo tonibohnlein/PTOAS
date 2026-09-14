@@ -261,11 +261,21 @@ InsertSyncMemoryOrigins mlir::pto::traceInsertSyncMemoryOrigins(func::FuncOp fun
     };
     llvm::DenseMap<Value, unsigned> ids;
     SmallVector<Value> values{value};
+    llvm::DenseSet<Value> seenRoots;
     ids[value] = 0;
     std::vector<Fact> facts;
+    auto finish = [&](bool exhausted) {
+        // Every queued value is reachable from the query by a conservative
+        // source edge. Retain roots when discovery itself hits the cap; a
+        // fixed point is needed only to decide whether the set is complete.
+        result.hasUnknown = exhausted || facts.empty() || facts[0].unknown || result.values.empty();
+        result.complete = !result.hasUnknown;
+        result.preservesRootRange = result.complete && !facts[0].unknownRange;
+        return result;
+    };
     for (unsigned index = 0; index < values.size(); ++index) {
         if (!charge(1))
-            return result;
+            return finish(true);
         SmallVector<Value> sources, roots;
         Fact fact;
         fact.unknown = !appendSources(values[index], function, sources, roots);
@@ -273,15 +283,23 @@ InsertSyncMemoryOrigins mlir::pto::traceInsertSyncMemoryOrigins(func::FuncOp fun
         // the backing allocation. Preserve provenance but widen its footprint
         // before extracting any use, including loop-before effects.
         fact.unknownRange = fact.unknown || isa_and_nonnull<SubViewOp>(values[index].getDefiningOp());
-        for (Value root : roots)
+        if (!charge(roots.size()))
+            return finish(true);
+        for (Value root : roots) {
             fact.origins.insert(root);
+            if (seenRoots.insert(root).second) {
+                if (!charge(1))
+                    return finish(true);
+                result.values.push_back(root);
+            }
+        }
         for (Value source : sources) {
             if (!source || !charge(1))
-                return result;
+                return finish(true);
             auto found = ids.find(source);
             if (found == ids.end()) {
                 if (values.size() == kMaximumRootValues)
-                    return result;
+                    return finish(true);
                 unsigned id = values.size();
                 ids[source] = id;
                 values.push_back(source);
@@ -302,7 +320,7 @@ InsertSyncMemoryOrigins mlir::pto::traceInsertSyncMemoryOrigins(func::FuncOp fun
                 for (unsigned source : fact.sources) {
                     const auto& from = facts[source];
                     if (!charge(1 + from.origins.size()))
-                        return result;
+                        return finish(true);
                     if (from.unknown && !fact.unknown)
                         changed = fact.unknown = true;
                     if (from.unknownRange && !fact.unknownRange)
@@ -319,12 +337,7 @@ InsertSyncMemoryOrigins mlir::pto::traceInsertSyncMemoryOrigins(func::FuncOp fun
                 fact.unknown |= fact.origins.empty();
     }
     // Stable source order makes both cell partitions and reports repeatable.
-    for (Value candidate : values)
-        if (facts[0].origins.count(candidate))
-            result.values.push_back(candidate);
-    result.complete = !facts[0].unknown && !result.values.empty();
-    result.preservesRootRange = result.complete && !facts[0].unknownRange;
-    return result;
+    return finish(false);
 }
 
 InsertSyncGMRoots mlir::pto::traceInsertSyncGMRoots(func::FuncOp function, Value value)

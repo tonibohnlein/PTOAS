@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+module attributes {pto.target_arch = "a3"} {
+  func.func @gm_forwarded_origins(%a: !pto.ptr<i8>, %b: !pto.ptr<i8>, %c: !pto.ptr<i8>,
+      %take: i1, %n: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>,
+      pto.noalias_pairs = array<i64: 0, 1, 0, 2, 1, 2>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 512 : i64
+    %av = pto.make_tensor_view %a, shape = [%c64], strides = [%c1]
+      {layout = #pto.layout<nd>} : !pto.tensor_view<?xi8>
+    %bv = pto.make_tensor_view %b, shape = [%c64], strides = [%c1]
+      {layout = #pto.layout<nd>} : !pto.tensor_view<?xi8>
+    %cv = pto.make_tensor_view %c, shape = [%c64], strides = [%c1]
+      {layout = #pto.layout<nd>} : !pto.tensor_view<?xi8>
+    %selected = scf.if %take -> (!pto.tensor_view<?xi8>) {
+      scf.yield %av : !pto.tensor_view<?xi8>
+    } else {
+      scf.yield %bv : !pto.tensor_view<?xi8>
+    }
+    %carried = scf.for %i = %c0 to %n step %c1 iter_args(%p = %selected)
+        -> (!pto.tensor_view<?xi8>) {
+      %next = scf.if %take -> (!pto.tensor_view<?xi8>) {
+        scf.yield %bv : !pto.tensor_view<?xi8>
+      } else {
+        scf.yield %av : !pto.tensor_view<?xi8>
+      }
+      scf.yield %next : !pto.tensor_view<?xi8>
+    }
+    %cp = pto.partition_view %cv, offsets = [%c0], sizes = [%c64]
+      : !pto.tensor_view<?xi8> -> !pto.partition_tensor_view<64xi8>
+    %pp = pto.partition_view %carried, offsets = [%c0], sizes = [%c64]
+      : !pto.tensor_view<?xi8> -> !pto.partition_tensor_view<64xi8>
+    %source = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x64xi8>
+    %sink = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x64xi8>
+    pto.tstore ins(%source : !pto.tile_buf<vec, 1x64xi8>)
+      outs(%cp : !pto.partition_tensor_view<64xi8>)
+    pto.tload ins(%pp : !pto.partition_tensor_view<64xi8>)
+      outs(%sink : !pto.tile_buf<vec, 1x64xi8>)
+    return
+  }
+}

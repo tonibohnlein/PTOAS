@@ -261,11 +261,11 @@ LogicalResult PTOIRTranslator::Build() {
           space = attr.getAddressSpace();
       } else space = getPointerLikeAddressSpace(type);
       auto origins = traceInsertSyncMemoryOrigins(func_, value);
-      bool complete = origins.complete;
+      bool unknown = origins.hasUnknown;
       for (Value root : origins.values) {
         auto found = buffer2MemInfoMap_.find(root);
         if (found == buffer2MemInfoMap_.end()) {
-          complete = false;
+          unknown = true;
           continue;
         }
         for (const auto &info : found->second) {
@@ -275,7 +275,7 @@ LogicalResult PTOIRTranslator::Build() {
           appendUniqueMemInfo(buffer2MemInfoMap_[value], std::move(forwarded));
         }
       }
-      if (!complete)
+      if (unknown)
         buffer2MemInfoMap_[value].emplace_back(std::make_unique<BaseMemInfo>(
             value, value, space, SmallVector<uint64_t>{}, 0, false, true));
     };

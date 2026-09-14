@@ -515,15 +515,34 @@ struct Tree {
         }
         if (gmGeometryExhausted || roots.size() > c::MaxCells || roots.empty())
             return {{AddressSpace::GM, 0, 0, true, {}}};
+        SmallVector<std::pair<unsigned, unsigned>> aliasPairs;
+        for (unsigned i = 0; i < roots.size(); ++i)
+            for (unsigned j = i + 1; j < roots.size(); ++j) {
+                if (!charge(1)) return {{AddressSpace::GM, 0, 0, true, {}}};
+                unsigned a = cast<BlockArgument>(roots[i]).getArgNumber();
+                unsigned b = cast<BlockArgument>(roots[j]).getArgNumber();
+                bool disjoint = gm == InsertSyncGMAliasMode::DisjointArguments ||
+                                disjointPairs.count({std::min(a, b), std::max(a, b)});
+                if (!disjoint) aliasPairs.push_back({i, j});
+            }
+        // Reserve one cell for every known root, possible-alias group and the
+        // unknown-only remainder. Extra geometry is optional within its own
+        // group, so pressure coarsens that group without consuming a later
+        // group's required cell.
+        if (roots.size() + aliasPairs.size() + unsigned(unknown) > c::MaxCells)
+            return {{AddressSpace::GM, 0, 0, true, {}}};
+        const unsigned cellLimit = c::MaxCells - unsigned(unknown);
+        const unsigned rootLimit = cellLimit - aliasPairs.size();
         std::vector<Cell> result;
         llvm::DenseMap<Value, std::pair<unsigned, unsigned>> rootCells;
         // One cell per origin plus one per possible alias pair. Unlike a
         // transitive may-alias component, this does not make A and B overlap
         // just because a third origin can overlap either of them.
-        for (Value root : roots) {
+        for (auto [rootIndex, root] : llvm::enumerate(roots)) {
             if (!charge(1)) return {{AddressSpace::GM, 0, 0, true, {}}};
-            if (result.size() == c::MaxCells)
-                return {{AddressSpace::GM, 0, 0, true, {}}};
+            unsigned remainingRoots = roots.size() - rootIndex - 1;
+            unsigned groupLimit = rootLimit - remainingRoots;
+            assert(result.size() < groupLimit && "GM root cell capacity was not reserved");
             std::set<uint64_t> bounds;
             bool uncertain = false;
             bool coarsened = false;
@@ -535,14 +554,15 @@ struct Tree {
                 else {
                     bounds.insert(range->lower);
                     bounds.insert(range->upper);
-                    if (bounds.size() > c::MaxCells) {
+                    if (bounds.size() > groupLimit - result.size() + 1) {
                         coarsened = true;
                         break;
                     }
                 }
             }
             unsigned begin = result.size();
-            if (coarsened || bounds.empty() || result.size() + bounds.size() > c::MaxCells) {
+            uint64_t pieces = bounds.empty() ? 1 : bounds.size() - 1 + unsigned(uncertain);
+            if (coarsened || bounds.empty() || pieces > groupLimit - result.size()) {
                 result.push_back({AddressSpace::GM, 0, 0, true, {root}});
             } else {
                 for (auto it = bounds.begin(); std::next(it) != bounds.end(); ++it)
@@ -552,38 +572,31 @@ struct Tree {
             }
             rootCells[root] = {begin, result.size()};
         }
-        for (unsigned i = 0; i < roots.size(); ++i)
-            for (unsigned j = i + 1; j < roots.size(); ++j) {
-                if (!charge(1)) return {{AddressSpace::GM, 0, 0, true, {}}};
-                unsigned a = cast<BlockArgument>(roots[i]).getArgNumber();
-                unsigned b = cast<BlockArgument>(roots[j]).getArgNumber();
-                bool disjoint = gm == InsertSyncGMAliasMode::DisjointArguments ||
-                                disjointPairs.count({std::min(a, b), std::max(a, b)});
-                if (!disjoint) {
-                    if (result.size() == c::MaxCells)
-                        return {{AddressSpace::GM, 0, 0, true, {}}};
-                    auto [leftBegin, leftEnd] = rootCells.lookup(roots[i]);
-                    auto [rightBegin, rightEnd] = rootCells.lookup(roots[j]);
-                    uint64_t count = uint64_t(leftEnd - leftBegin) * (rightEnd - rightBegin);
-                    if (count > c::MaxCells - result.size()) {
-                        // Only this alias group loses geometry at the limit.
-                        result.push_back({AddressSpace::GM, 0, 0, true, {roots[i], roots[j]}});
-                        continue;
-                    }
-                    if (!charge(count)) return {{AddressSpace::GM, 0, 0, true, {}}};
-                    for (unsigned left = leftBegin; left < leftEnd; ++left)
-                        for (unsigned right = rightBegin; right < rightEnd; ++right) {
-                            Cell pair = result[left];
-                            const auto& peer = result[right];
-                            pair.gmRoots.push_back(roots[j]);
-                            pair.peerRange = Cell::PeerRange{peer.lower, peer.upper, peer.whole, peer.remainder};
-                            result.push_back(std::move(pair));
-                        }
-                }
+        for (auto [pairIndex, indices] : llvm::enumerate(aliasPairs)) {
+            auto [i, j] = indices;
+            unsigned remainingPairs = aliasPairs.size() - pairIndex - 1;
+            unsigned groupLimit = cellLimit - remainingPairs;
+            assert(result.size() < groupLimit && "GM alias cell capacity was not reserved");
+            auto [leftBegin, leftEnd] = rootCells.lookup(roots[i]);
+            auto [rightBegin, rightEnd] = rootCells.lookup(roots[j]);
+            uint64_t count = uint64_t(leftEnd - leftBegin) * (rightEnd - rightBegin);
+            if (count > groupLimit - result.size()) {
+                // Only this alias group loses geometry at the limit.
+                result.push_back({AddressSpace::GM, 0, 0, true, {roots[i], roots[j]}});
+                continue;
             }
+            if (!charge(count)) return {{AddressSpace::GM, 0, 0, true, {}}};
+            for (unsigned left = leftBegin; left < leftEnd; ++left)
+                for (unsigned right = rightBegin; right < rightEnd; ++right) {
+                    Cell pair = result[left];
+                    const auto& peer = result[right];
+                    pair.gmRoots.push_back(roots[j]);
+                    pair.peerRange = Cell::PeerRange{peer.lower, peer.upper, peer.whole, peer.remainder};
+                    result.push_back(std::move(pair));
+                }
+        }
         if (unknown) {
-            if (result.size() == c::MaxCells)
-                return {{AddressSpace::GM, 0, 0, true, {}}};
+            assert(result.size() < c::MaxCells && "unknown GM cell capacity was not reserved");
             result.push_back({AddressSpace::GM, 0, 0, true, {}, true});
         }
         return result;

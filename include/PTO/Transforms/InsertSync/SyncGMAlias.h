@@ -25,6 +25,9 @@ enum class InsertSyncGMAliasMode { MayAlias, DisjointArguments };
 // backedges; unknown/unsupported paths never certify disjointness.
 struct InsertSyncMemoryOrigins {
     llvm::SmallVector<Value, 2> values;
+    // At least one supported path has no finite origin description. This is
+    // independent of values: a result may retain {A, B} and also be unknown.
+    bool hasUnknown = true;
     bool complete = false;
     // False when an unqualified view/selector can shift a local access beyond
     // the backing allocation's recorded interval. Origins remain useful.
