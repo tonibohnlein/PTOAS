@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// Licensed under CANN Open Software License Agreement Version 2.0.
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=composition ownership-contract=a2a3-unitflag-paired-v1 ownership-credit=true' %s | FileCheck %s --check-prefix=CREDIT
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync='planner=composition ownership-contract=a2a3-unitflag-paired-v1 ownership-credit=false' %s | FileCheck %s --check-prefix=NO-CREDIT
+// CREDIT: pto.insert_sync.ownership_credit = true
+// CREDIT: pto.section.cube
+// CREDIT: pto.tmatmul
+// CREDIT: pto.tstore
+// CREDIT: pto.barrier <PIPE_ALL>
+// NO-CREDIT: pto.insert_sync.ownership_credit = false
+// NO-CREDIT: pto.section.cube
+// NO-CREDIT: pto.tmatmul
+// NO-CREDIT: pto.tstore
+// NO-CREDIT: pto.barrier <PIPE_ALL>
+
+!mat = !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!left = !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+!right = !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!acc = !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @unitflag_in_physical_scope(%out: !pto.ptr<f32>, %trips: index)
+      attributes {pto.unitflag_entry_writable = array<i64: 0, 1024>} {
+    pto.section.cube {
+      %z = arith.constant 0 : index
+      %one = arith.constant 1 : index
+      %n = arith.constant 16 : index
+      %a0 = arith.constant 0 : i64
+      %a512 = arith.constant 512 : i64
+      %source_l = pto.alloc_tile addr = %a0 : !mat
+      %source_r = pto.alloc_tile addr = %a512 : !mat
+      %l = pto.alloc_tile addr = %a0 : !left
+      %r = pto.alloc_tile addr = %a0 : !right
+      %c = pto.alloc_tile addr = %a0 : !acc
+      %view = pto.make_tensor_view %out, shape = [%n, %n], strides = [%n, %one] : !pto.tensor_view<?x?xf32>
+      %part = pto.partition_view %view, offsets = [%z, %z], sizes = [%n, %n] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+      scf.for %iv = %z to %trips step %one {
+        pto.textract ins(%source_l, %z, %z : !mat, index, index) outs(%l : !left)
+        pto.textract ins(%source_r, %z, %z : !mat, index, index) outs(%r : !right)
+        pto.tmatmul ins(%l, %r : !left, !right) outs(%c : !acc) {accPhase = #pto<acc_phase final>}
+        pto.tstore ins(%c : !acc) outs(%part : !pto.partition_tensor_view<16x16xf32>) {stPhase = #pto<st_phase final>}
+      }
+    }
+    return
+  }
+}

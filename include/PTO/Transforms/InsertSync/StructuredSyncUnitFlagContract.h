@@ -71,7 +71,9 @@ inline UnitFlagInfo unitFlagLoweringFacts(const CompoundInstanceElement& phase)
     auto valid = exactMatrixValid(store.getSrc());
     auto footprint = exactAccFootprint(store.getSrc(), phase, false);
     if (!src || !dst || !srcSpace || srcSpace.getAddressSpace() != AddressSpace::ACC ||
-        !src.getElementType().isF32() || !dst.getElementType().isF32() || dst.getRank() != 2 ||
+        !src.getElementType().isF32() || src.getBLayoutValueI32() != 1 ||
+        src.getSLayoutValueI32() != 1 || src.getSFractalSizeI32() != 1024 ||
+        !dst.getElementType().isF32() || dst.getRank() != 2 ||
         !valid || !footprint || dst.getShape()[0] != int64_t(valid->first) ||
         dst.getShape()[1] != int64_t(valid->second) || footprint->first % 1024 ||
         footprint->second != 4 * valid->first * valid->second)

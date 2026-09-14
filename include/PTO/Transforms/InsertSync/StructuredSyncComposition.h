@@ -9,18 +9,14 @@
 #define PTO_TRANSFORMS_INSERTSYNC_STRUCTUREDSYNCCOMPOSITION_H
 
 #include "PTO/Transforms/InsertSync/StructuredSyncCore.h"
+#include "PTO/Transforms/InsertSync/StructuredSyncLifetimeSummary.h"
+#include "PTO/Transforms/InsertSync/StructuredSyncStorageEffects.h"
 #include <array>
 #include <vector>
 
 namespace mlir::pto::structured_sync::composition {
-constexpr unsigned LaneCount = 7;
 constexpr unsigned MaxCells = 256;
-// Bits denote MAY outstanding accesses, never definite initialization. Each
-// observer has its own history: a wait on V does not stop MTE2 or the host.
-struct History {
-    uint8_t readers = 0, writers = 0;
-};
-using Effects = std::vector<History>;
+// Each observer has its own history: a wait on V does not stop MTE2 or the host.
 enum class VisibilityAction : uint8_t {
     FenceOnly,
     CleanSource,
@@ -128,6 +124,11 @@ struct Node {
     // Independently qualified positive trip count. Absence preserves the
     // original zero-trip successor.
     bool nonEmpty = false;
+    // Optional true byte access roles. `effects` retains all scheduling
+    // obligations, including read/read resource exclusion. This projection
+    // is used ONLY to discover producers/readers, never to validate a plan.
+    Effects byteEffects{};
+    const Effects& storageAccesses() const { return physicalByteEffects(effects, byteEffects); }
     std::optional<int64_t> firstActive() const
     {
         if (!periodicPeriod || periodicPeriod > 32 || !periodicResidues || periodicLower < 0)
@@ -175,25 +176,8 @@ struct CompletionDemand {
     unsigned source = 0, observer = 0;
     std::vector<unsigned> cells;
 };
-// A bounded physical-storage lifetime recovered from original structural
-// control.  Frontiers contain original insertion cuts; an empty/overflowed
-// frontier simply declines this optional precision.  Reader lanes remain
-// separate so reuse waits for every missing reader completion.
-struct AccessFrontier {
-    std::array<unsigned, 8> cuts{};
-    unsigned count = 0;
-    bool mayEmpty = true, valid = true;
-};
-struct StorageLifetimeSummary {
-    unsigned scope = ~0u, entry = ~0u, exit = ~0u;
-    std::vector<unsigned> cells;
-    unsigned producer = ~0u;
-    AccessFrontier firstWrite, lastWrite;
-    std::array<AccessFrontier, LaneCount> firstRead, lastRead;
-    uint8_t readers = 0;
-    bool maySkip = true;
-    bool wholeProgram = false;
-};
+// StorageLifetimeSummary is shared with the standalone bounded-index tests.
+// It is a construction hint, never a completion or event-lifetime certificate.
 struct Result {
     bool success = false;
     std::string reason;
@@ -262,6 +246,11 @@ struct Result {
     uint64_t lifetimeCandidates = 0, persistentLifetimes = 0;
     uint64_t persistentReaderFamilies = 0, rejectedPersistentLifetimes = 0;
     bool lifetimeBudgetExhausted = false;
+    // Attempted earlier-stage populations are not selected-plan populations.
+    uint64_t preLifetimeCutCycles = 0, preLifetimeProtocolKeys = 0;
+    uint64_t selectedSetSites = 0, selectedWaitSites = 0, selectedNamedBarriers = 0;
+    uint64_t selectedAccountingWork = 0;
+    bool selectedCountsValid = false, selectedCycleCountKnown = true;
     // Optional candidate diagnostics never replace the accepted baseline's
     // ordinary reason. They identify why deferred-wrap rollback occurred.
     std::string deferredRejectionStage, deferredRejectionReason;

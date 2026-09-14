@@ -200,6 +200,13 @@ def main():
     run('unitflag-missing-profile',
         [args.driver, unitflag, 'demands:expect-unsupported',
          args.output / 'unitflag-missing-profile.pto'], unitflag, 'mutation', True)
+    mismatched_geometry = fixtures / 'unitflag_mismatched_geometry.pto'
+    run('unitflag-mismatched-geometry',
+        [args.driver, mismatched_geometry, 'demands:expect-unsupported',
+         args.output / 'unitflag-mismatched-geometry.pto',
+         'conservative', 'assume-disjoint-arguments',
+         'a2a3-unitflag-paired-v1', 'true'],
+        mismatched_geometry, 'mutation', True)
     for label, old, new in (
             ('bad-entry-range', 'array<i64: 0, 1024>', 'array<i64: 512, 1024>'),
             ('partial-producer', '#pto<acc_phase final>', '#pto<acc_phase partial>'),

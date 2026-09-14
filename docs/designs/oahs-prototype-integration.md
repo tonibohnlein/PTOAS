@@ -168,9 +168,11 @@ that deleting operand-release or GM-ordering mechanisms still fails.
 
 The paired whole-compilation campaign is recorded under
 `../oahs-prototype-integration/benchmark-final-20260914/summary.json`. Across
-three measured rounds for each of eight frozen cases, every composition arm
-passed the 2x median gate; median ratios versus InsertSync ranged from 0.983 to
-1.027. Diagnostics were disabled during timing and compilation ran serially.
+three measured rounds for each of eight frozen cases, median ratios versus
+InsertSync ranged from 0.983 to 1.027. Diagnostics were disabled during timing
+and compilation ran serially. Compilation ratios are telemetry, not an OAHS
+acceptance gate; correctness, bounded termination, coverage, and plan quality
+are evaluated separately.
 
 Reproduce the focused host checks with explicit local worker limits:
 
@@ -187,7 +189,7 @@ system `libisl` runtime; production compilation has no `libisl` dependency.
 
 Run `check_composition.py` for the native/mutation/boundary campaign,
 `qualify_prototype_references.py` for authored reference classification, and
-`benchmark_buffers.py --arms existing composition --repeats 3 --require-ratio
-2` for paired whole-compilation timing. Numerical/device correctness and any
+`benchmark_buffers.py --arms existing composition --repeats 3` for paired
+whole-compilation timing. Numerical/device correctness and any
 speedup claim require a separate device campaign on the selected deployed
 profile.

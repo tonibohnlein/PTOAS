@@ -95,6 +95,10 @@ def main():
                         'recurring_episode_words', 'recurring_episode_pairs', 'recurring_choice_endpoints',
                         'recurring_repeated_directions', 'recurring_episode_work', 'rejected_recurring_episodes',
                         'recurring_episode_budget_exhausted', 'cut_cycles',
+                        'persistent_lifetimes', 'persistent_reader_families',
+                        'pre_lifetime_cut_cycles', 'pre_lifetime_protocol_keys',
+                        'selected_counts_valid', 'selected_set_sites', 'selected_wait_sites', 'selected_named_barriers',
+                        'selected_cycle_count_known', 'selected_accounting_work',
                         'deferred_ring_candidates', 'deferred_rings', 'rejected_deferred_rings', 'deferred_protocol_steps',
                         'periodic_deferred_rings', 'periodic_write_overlap_rejections', 'periodic_scalar_work',
                         'periodic_dag_visits', 'periodic_residue_evaluations', 'deferred_eligibility_work',
@@ -201,16 +205,27 @@ def main():
         for name, slots in (('one_buffer', 1), ('two_buffer', 2), ('three_buffer', 3)):
             row = next(c for c in cases if c['case'] == name)
             counters = row['native_counters']
+            selected_closed = (counters['selected_cycle_count_known'] and
+                               counters['cut_cycles'] == 2 * slots)
+            selected_persistent = (counters['selected_counts_valid'] and
+                                   counters['persistent_lifetimes'] > 0 and
+                                   counters['persistent_reader_families'] >= slots)
             if (counters['ring_candidates'] != 1 or counters['rejected_rings'] or
-                    counters['cut_cycles'] != 2 * slots or counters['ring_candidate_commands_removed'] < slots):
-                raise RuntimeError('native recurring handoff path not exercised: ' + name)
+                    not (selected_closed or selected_persistent) or
+                    counters['ring_candidate_commands_removed'] < slots):
+                raise RuntimeError('native recurring/persistent handoff path not exercised: ' + name)
             path_checks.append(dict(name=name + '-recurring-rings', counters=counters))
         shared = Path(__file__).parent / 'structured_inputs/demand_ring_shared.pto'
         shared_raw = args.output.resolve() / 'shared-rings.native.pto'
         verdict = json.loads(invoke('shared-rings', [args.driver, shared, 'demands:none', shared_raw]))
         counters = native_counters('shared-rings')
-        if (not verdict['accepted'] or not verdict['atomic'] or counters['cut_cycles'] != 2 or
-                counters['rejected_rings'] or not counters['ring_candidate_commands_removed']):
+        shared_closed = counters['selected_cycle_count_known'] and counters['cut_cycles'] == 2
+        shared_persistent = (counters['selected_counts_valid'] and
+                             counters['persistent_lifetimes'] > 0 and
+                             counters['persistent_reader_families'] >= 2)
+        if (not verdict['accepted'] or not verdict['atomic'] or
+                not (shared_closed or shared_persistent) or counters['rejected_rings'] or
+                not counters['ring_candidate_commands_removed']):
             raise RuntimeError('native multi-cell recurring handoff sharing not exercised')
         shared_normalized = args.output.resolve() / 'shared-rings.pto'
         invoke('shared-rings-normalize', compiler + [shared_raw, '-o', shared_normalized])

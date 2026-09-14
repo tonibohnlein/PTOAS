@@ -445,8 +445,10 @@ static void testRemoteSignals()
     std::vector<std::vector<c::Mechanism>> loopStale(loopCarried.nodes.size());
     require(!c::verifyDemands(loopCarried, loopStale).success);
 }
+#include "lifetime_revision_test.inc"
 int main()
 {
+    testLifetimeRevision();
     {
         // A release token stays live across sibling loops and skipped visits.
         c::Program p;

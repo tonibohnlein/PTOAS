@@ -172,6 +172,7 @@ bool validateUnitFlagOwnership(Inventory& inventory, ss::OwnershipContract contr
     }
 
     std::vector<std::pair<uint64_t, uint64_t>> domains;
+    std::map<std::pair<uint64_t, uint64_t>, std::pair<uint64_t, uint64_t>> domainGeometry;
     for (auto* phase : inventory.physical.phases) {
         bool enabled = false;
         if (auto attr = phase->elementOp->getAttrOfType<AccPhaseAttr>("accPhase"))
@@ -186,7 +187,13 @@ bool validateUnitFlagOwnership(Inventory& inventory, ss::OwnershipContract contr
             return false;
         }
         transitions[phase->elementOp] = info;
-        domains.emplace_back(info.base, info.base + info.bytes);
+        auto domain = std::make_pair(info.base, info.base + info.bytes);
+        auto [geometry, inserted] = domainGeometry.emplace(domain, std::make_pair(info.rows, info.cols));
+        if (!inserted && geometry->second != std::make_pair(info.rows, info.cols)) {
+            reason = "UnitFlag producer/store geometry does not match within its ownership domain";
+            return false;
+        }
+        domains.push_back(domain);
     }
     llvm::sort(domains);
     domains.erase(std::unique(domains.begin(), domains.end()), domains.end());
@@ -246,6 +253,15 @@ bool validateUnitFlagOwnership(Inventory& inventory, ss::OwnershipContract contr
     using State = std::vector<uint8_t>;
     std::function<bool(Region&, State&)> region;
     std::function<bool(Operation*, State&)> operation = [&](Operation* op, State& state) {
+        // This exact scope was already qualified by physical import. It
+        // executes once; it is not an arbitrary region-control exemption.
+        if (op == inventory.physical.lifetimeScope && op != inventory.function.getOperation()) {
+            if (op->getNumRegions() != 1) {
+                reason = "qualified UnitFlag lifetime scope must have one region";
+                return false;
+            }
+            return region(op->getRegion(0), state);
+        }
         auto found = transitions.find(op);
         if (found != transitions.end()) {
             auto domain = std::make_pair(found->second.base, found->second.base + found->second.bytes);
@@ -683,7 +699,8 @@ struct Tree {
         fixedOperations.insert(op);
         return true;
     }
-    bool addEffects(c::Effects& effects, unsigned source, const CompoundInstanceElement* phase)
+    bool addEffects(c::Effects& effects, unsigned source, const CompoundInstanceElement* phase,
+                    c::Effects* byteEffects = nullptr)
     {
         auto access = [&](const auto& entries, bool write) {
             for (auto* a : entries)
@@ -707,7 +724,14 @@ struct Tree {
                         effects[j].writers |= 1u << source;
                     else
                         effects[j].readers |= 1u << source;
-                    // ACC read/read resource exclusion is stronger than ordinary RAW.
+                    if (byteEffects) {
+                        if (write)
+                            (*byteEffects)[j].writers |= 1u << source;
+                        else
+                            (*byteEffects)[j].readers |= 1u << source;
+                    }
+                    // Keep the qualified exclusion in the proof obligations,
+                    // but do not tell lifetime discovery that FIX writes ACC.
                     if (a->scope == AddressSpace::ACC)
                         effects[j].writers |= 1u << source;
                 }
@@ -866,7 +890,8 @@ struct Tree {
                     }
                     current.kind = c::Node::Operation;
                     current.lane = *source;
-                    addEffects(current.effects, *source, phase);
+                    current.byteEffects.resize(program.cells);
+                    addEffects(current.effects, *source, phase, &current.byteEffects);
                     if (program.target.ownershipCredit && unitFlags) {
                         auto ownership = unitFlags->find(&op);
                         if (ownership != unitFlags->end())
@@ -879,6 +904,10 @@ struct Tree {
                                     // store's GM write remain in current.effects.
                                     current.effects[cell].readers &= ~(1u << *source);
                                     current.effects[cell].writers &= ~(1u << *source);
+                                    // Ownership already handles this exact cell;
+                                    // do not propose a redundant event lifetime.
+                                    current.byteEffects[cell].readers &= ~(1u << *source);
+                                    current.byteEffects[cell].writers &= ~(1u << *source);
                                 }
                     }
                     if (program.core == ss::Core::AIC) {
@@ -1263,9 +1292,19 @@ struct ParticipationGuards {
             return true;
         };
         auto nextOriginal = [&](Operation* from) {
-            while (from && !original.ids.count(from))
+            Operation* terminal = original.terminal == ~0u ? nullptr : original.anchors[original.terminal];
+            Operation* terminalFallback = nullptr;
+            while (from && !original.ids.count(from)) {
+                if (from == terminal)
+                    terminalFallback = from;
                 from = from->getNextNode();
-            return from;
+            }
+            return from ? from : terminalFallback;
+        };
+        auto targetCut = [&](Operation* target) {
+            if (original.terminal != ~0u && target == original.anchors[original.terminal])
+                return original.terminal;
+            return original.ids.lookup(target);
         };
         auto raw = [&](Operation* op, c::Mechanism& m) {
             auto decode = [&](auto event, c::Mechanism::Kind kind) {
@@ -1327,7 +1366,7 @@ struct ParticipationGuards {
                 // first consumers under original choices. Bind only the exact
                 // original owner predicate here; the core independently checks
                 // the complete actual wait population and path cardinality.
-                unsigned cut = original.ids.lookup(targets[branch]);
+                unsigned cut = targetCut(targets[branch]);
                 if (cmp.getRhs() != loop.getLowerBound() || original.program.nodes[cut].kind != c::Node::Operation)
                     return fail();
                 unsigned ancestor = parent[cut];
@@ -1343,7 +1382,7 @@ struct ParticipationGuards {
                 if (ancestor != body || !choice)
                     return fail();
             } else {
-                unsigned cut = original.ids.lookup(targets[branch]);
+                unsigned cut = targetCut(targets[branch]);
                 unsigned word = parent[cut];
                 if (!previous || word == ~0u || original.program.nodes[word].periodicOwner != found->second ||
                     !exactBoundary(cmp.getRhs(), word, cmp))
@@ -1372,7 +1411,7 @@ struct ParticipationGuards {
                     if (found == previousLoops.end())
                         return fail();
                     loopId = found->second;
-                    unsigned cut = original.ids.lookup(targets[branch]);
+                    unsigned cut = targetCut(targets[branch]);
                     if (parent[cut] == ~0u || !position[cut] ||
                         original.program.nodes[parent[cut]].children[position[cut] - 1] != loopId)
                         return fail();
@@ -1385,7 +1424,7 @@ struct ParticipationGuards {
                     list.size() == 2 && list[0].kind == c::Mechanism::Publish &&
                     list[1].kind == c::Mechanism::Acquire && list[0].first == list[1].first &&
                     list[0].second == list[1].second && list[0].forwardKey == list[1].forwardKey) {
-                    unsigned cut = original.ids.lookup(targets[branch]);
+                    unsigned cut = targetCut(targets[branch]);
                     if (parent[cut] == ~0u || !position[cut])
                         return fail();
                     loopId = original.program.nodes[parent[cut]].children[position[cut] - 1];
@@ -1532,12 +1571,17 @@ bool reconstruct(
                 while (cursor) {
                     auto guard = guards.commands.find(cursor);
                     if (guard != guards.commands.end()) {
-                        auto found = tree.ids.find(guards.targets.lookup(cursor));
-                        if (found == tree.ids.end()) {
+                        Operation* target = guards.targets.lookup(cursor);
+                        unsigned cut = ~0u;
+                        if (target == drain && tree.terminal != ~0u)
+                            cut = tree.terminal;
+                        else if (auto found = tree.ids.find(target); found != tree.ids.end())
+                            cut = found->second;
+                        if (cut == ~0u || cut >= actual.size()) {
                             valid = false;
                             break;
                         }
-                        auto& out = actual[found->second];
+                        auto& out = actual[cut];
                         out.insert(out.end(), guard->second.begin(), guard->second.end());
                         cursor = cursor->getNextNode();
                         continue;
@@ -1791,6 +1835,9 @@ Outcome ss::testing::constructCompositionalSync(
     else
         b.setInsertionPointToEnd(&last);
     auto retirement = b.create<BarrierOp>(working.getLoc(), PipeAttr::get(working.getContext(), PIPE::PIPE_ALL));
+    // The synthetic terminal is a real original-control cut even though its
+    // native anchor is generated. Participation-guard recovery must be able
+    // to bind loop-exit packets when the loop is the final payload operation.
     if (tree.terminal != ~0u)
         tree.anchors[tree.terminal] = retirement.getOperation();
     emit(tree, selected);
@@ -1809,8 +1856,13 @@ Outcome ss::testing::constructCompositionalSync(
         mutate(working);
     out.status = Outcome::InternalError;
     ParticipationGuards guards;
-    if (failed(mlir::verify(working)) || (useDemandPlacement && !guards.build(tree, generatedOperations, out.reason)) ||
-        !snapshot.preserved(working, [&](Operation* op) {
+    if (failed(mlir::verify(working))) {
+        out.reason = "compositional emission produced invalid IR";
+        return out;
+    }
+    if (useDemandPlacement && !guards.build(tree, generatedOperations, out.reason))
+        return out;
+    if (!snapshot.preserved(working, [&](Operation* op) {
             return generatedOperations.contains(op) && (sync(op) || guards.operations.contains(op));
         })) {
         out.reason = "compositional emission changed original payload or control";
@@ -1859,6 +1911,8 @@ Outcome ss::testing::constructCompositionalSync(
         out.reason = rebuilt.reason;
         return out;
     }
+    if (rebuilt.terminal != ~0u)
+        rebuilt.anchors[rebuilt.terminal] = drain;
     // Re-extract the original phase population after emission, including all
     // sibling and loop-carried effects. Never trust selected child requirements.
     if (fresh.physical.phases.size() != inventory.physical.phases.size()) {
@@ -1992,6 +2046,14 @@ Outcome ss::testing::constructCompositionalSync(
             << " lifetime_storage_units " << selected.lifetimeStorageUnits << " lifetime_candidates "
             << selected.lifetimeCandidates << " persistent_lifetimes " << selected.persistentLifetimes
             << " persistent_reader_families " << selected.persistentReaderFamilies
+            << " pre_lifetime_cut_cycles " << selected.preLifetimeCutCycles
+            << " pre_lifetime_protocol_keys " << selected.preLifetimeProtocolKeys
+            << " selected_counts_valid " << selected.selectedCountsValid
+            << " selected_set_sites " << selected.selectedSetSites
+            << " selected_wait_sites " << selected.selectedWaitSites
+            << " selected_named_barriers " << selected.selectedNamedBarriers
+            << " selected_cycle_count_known " << selected.selectedCycleCountKnown
+            << " selected_accounting_work " << selected.selectedAccountingWork
             << " rejected_persistent_lifetimes " << selected.rejectedPersistentLifetimes
             << " lifetime_budget_exhausted " << selected.lifetimeBudgetExhausted << " demand_fallbacks "
             << selected.demandFallbacks << " nodes " << tree.program.nodes.size() << " cells " << tree.program.cells

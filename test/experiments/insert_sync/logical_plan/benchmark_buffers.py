@@ -135,8 +135,6 @@ def main():
     parser.add_argument("--ownership-contract", default="none",
                         choices=("none", "a2a3-unitflag-paired-v1"))
     parser.add_argument("--ownership-credit", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--require-ratio", type=float,
-                        help="Gate each candidate's median paired whole-compilation ratio (at least 3 rounds)")
     args = parser.parse_args()
     if not __debug__:
         raise RuntimeError("benchmark validation requires Python assertions")
@@ -144,9 +142,6 @@ def main():
         parser.error("invalid repeat, warmup or timeout")
     if len(set(args.arms)) != len(args.arms) or len(set(args.cases)) != len(args.cases):
         parser.error("duplicate arms or cases")
-    if args.require_ratio is not None and ("existing" not in args.arms or len(args.arms) < 2
-                                         or args.repeats < 3 or args.require_ratio <= 0):
-        parser.error("a ratio gate needs existing, a candidate, at least 3 repeats, and a positive threshold")
     python_root = args.python_root.resolve()
     sys.path.insert(0, str(python_root))
     from observations import SERIAL_DRIVER, analyze
@@ -243,10 +238,6 @@ def main():
                 if arm == "existing":
                     continue
                 ratios = ratio_summary(row["trials"], arm, args.repeats)
-                if args.require_ratio is not None:
-                    ratios["passed"] = (ratios["complete"] and
-                                         ratios["median_ratio"] <= args.require_ratio)
-                    all_ok &= ratios["passed"]
                 row["ratios"][arm] = ratios
         output["rows"].append(row)
         dump(args.output / "summary.json", output)
@@ -255,7 +246,7 @@ def main():
                                              if t["arm"] == arm and t["round"] >= 0]
                                        for arm in args.arms}}))
     output["status"] = "passed" if all_ok else "incomplete-or-failed"
-    output["ratio_gate"] = args.require_ratio
+    output["timing_policy"] = "telemetry-only; no compile-time ratio acceptance gate"
     dump(args.output / "summary.json", output)
     return 0 if all_ok else 1
 

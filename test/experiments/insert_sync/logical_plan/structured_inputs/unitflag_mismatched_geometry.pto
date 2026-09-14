@@ -1,0 +1,38 @@
+// UnitFlag ownership requires the producer and store to describe the same ACC
+// tile geometry, not merely an equal base/byte interval.
+module attributes {pto.target_arch = "a3"} {
+  func.func @unitflag_mismatched_geometry(%out: !pto.ptr<f32>, %trips: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>,
+                  pto.unitflag_entry_writable = array<i64: 0, 2048>} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %n16 = arith.constant 16 : index
+    %n32 = arith.constant 32 : index
+    %addr = arith.constant 0 : i64
+    %addr512 = arith.constant 512 : i64
+    %addr1024 = arith.constant 1024 : i64
+    %view = pto.make_tensor_view %out, shape = [%n32, %n16], strides = [%n16, %one]
+        : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%z, %z], sizes = [%n32, %n16]
+        : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x16xf32>
+    %lhs_src = pto.alloc_tile addr = %addr
+        : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %rhs_src = pto.alloc_tile addr = %addr512
+        : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %lhs = pto.alloc_tile addr = %addr
+        : !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+    %rhs = pto.alloc_tile addr = %addr
+        : !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %producer_acc = pto.alloc_tile addr = %addr
+        : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %store_acc = pto.alloc_tile addr = %addr
+        : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=16, v_row=32, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    scf.for %iv = %z to %trips step %one {
+      pto.textract ins(%lhs_src, %z, %z : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>, index, index) outs(%lhs : !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>)
+      pto.textract ins(%rhs_src, %z, %z : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>, index, index) outs(%rhs : !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+      pto.tmatmul ins(%lhs, %rhs : !pto.tile_buf<loc=left, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%producer_acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%store_acc : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=16, v_row=32, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) outs(%part : !pto.partition_tensor_view<32x16xf32>) {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+}

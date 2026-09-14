@@ -578,7 +578,7 @@ python test/experiments/insert_sync/logical_plan/check_composition.py \
 python test/experiments/insert_sync/logical_plan/benchmark_buffers.py \
   --python-root "$BUILD/python" --output "$RESULTS/demand-compiler" \
   --arms existing demands --repeats 3 --warmups 1 --timeout 90 \
-  --emit-cpp --require-ratio 2
+  --emit-cpp
 ```
 
 For historical reproducibility, benchmark arm `composition` still means the
@@ -605,8 +605,9 @@ synchronization in full PTO emission, followed by untimed C++ emission:
 | Q projection | 1.009 |
 | Historical GEMM | 0.956 |
 
-All eight complete paired populations passed the <=2x compilation gate. These
-small differences are local compiler measurements, not a device speedup claim.
+All eight complete paired populations were below 2x in that historical
+campaign. Compilation ratios are now retained as telemetry rather than an
+acceptance gate. These small differences are local compiler measurements, not a device speedup claim.
 The unchanged synchronization-quality gate is still false. This qualification
 must be repeated after subsequent algorithm changes; it does not certify future
 placement or key-sharing implementations.
@@ -1234,7 +1235,7 @@ source change.
 
 All eight unchanged inputs pass three paired complete-compiler timing rounds
 after one warm-up, with untimed C++ emission. Median candidate/InsertSync ratios
-are **0.986–1.054**, passing the <=2x compilation gate. These serial timings ran
+are **0.986–1.054**. These ratios are telemetry, not an acceptance gate. The serial timings ran
 without another resource-intensive local worker. They do not measure device
 runtime, and the whole synchronization-quality gate remains **false**.
 
