@@ -8,10 +8,11 @@
 #include "PTO/Transforms/OAHS/Native.h"
 #include "PTO/Transforms/OAHS/Plan.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "PTO/Transforms/InsertSync/SyncOriginClosure.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
-#include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "mlir/IR/Verifier.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include <functional>
 #include <optional>
@@ -112,6 +113,8 @@ LogicalResult import(func::FuncOp function, Import &out) {
   Buffer2MemInfoMap buffers;
   PTOIRTranslator translator(translated, aliases, buffers, function, SyncAnalysisMode::NORMALSYNC);
   if (failed(translator.Build())) return failure();
+  if (failed(closeStructuredSyncOrigins(function, translated, buffers)))
+    return failure();
   DenseMap<mlir::Operation *, CompoundInstanceElement *> phases;
   for (const auto &entry : translated) {
     if (auto *phase = dyn_cast<CompoundInstanceElement>(entry.get())) {
@@ -203,6 +206,23 @@ LogicalResult import(func::FuncOp function, Import &out) {
     };
     if (failed(add(phase->defVec, true)) || failed(add(phase->useVec, false))) return failure();
   }
+  // An access exists independently of whether it has a distinct static
+  // conflict partner. Its own later occurrence can be the conflicting access.
+  // Keep this linear population even when the optional pair budget is exhausted.
+  for (const Effect &effect : physicalEffects) {
+    const BaseMemInfo *memory = effect.memory;
+    const unsigned cell = out.program.cells.size();
+    Cell witness;
+    witness.addressSpace = std::to_string(static_cast<unsigned>(memory->scope));
+    witness.provenance = "original access (including self recurrence)";
+    witness.unknownRange = memory->aliasesUnknownRange ||
+                           memory->baseAddresses.empty();
+    for (uint64_t base : memory->baseAddresses)
+      witness.ranges.push_back({base, memory->allocateSize});
+    out.program.cells.push_back(std::move(witness));
+    out.program.operations[effect.operation].accesses.push_back(
+        {cell, !effect.write, effect.write});
+  }
   // Pairwise witness cells preserve production's alias relation without taking
   // its transitive closure (an unknown view must not merge unrelated ranges).
   // Bound the quadratic compatibility query population. Large inputs retain
@@ -241,19 +261,34 @@ LogicalResult import(func::FuncOp function, Import &out) {
       out.program.operations[a.operation].accesses.push_back({cell, !a.write, a.write});
       out.program.operations[b.operation].accesses.push_back({cell, !b.write, b.write});
     }
-  auto &target = out.program.target;
-  target.contract =
-      "production-a3 fixed pipelines; production MemoryDependentAnalyzer alias compatibility";
-  target.barrierAll = true;
-  for (unsigned source = 0; source < PipeCount; ++source) {
-    target.supported[source] = true;
-    target.barriers[source] = source != unsigned(Pipe::S);
-    target.synchronous[source] = source == unsigned(Pipe::S);
-    for (unsigned observer = 0; observer < PipeCount; ++observer)
-      if (source != observer)
-        for (unsigned key = 0; key < kTotalEventIdNum; ++key)
-          target.keys[source][observer].push_back(key);
+  // Select the physical core, not a complete graph over unrelated pipelines.
+  bool vector = false, cube = false;
+  auto kind = function->getAttrOfType<FunctionKernelKindAttr>("pto.kernel_kind");
+  if (kind) {
+    vector = kind.getKernelKind() == FunctionKernelKind::Vector;
+    cube = kind.getKernelKind() == FunctionKernelKind::Cube;
   }
+  for (const auto &phase : out.program.operations) {
+    vector |= phase.pipe == Pipe::V;
+    cube |= phase.pipe == Pipe::M || phase.pipe == Pipe::MTE1 || phase.pipe == Pipe::FIX;
+  }
+  for (const auto &effect : physicalEffects) {
+    auto space = effect.memory->scope;
+    vector |= space == AddressSpace::VEC;
+    cube |= space == AddressSpace::MAT || space == AddressSpace::LEFT ||
+            space == AddressSpace::RIGHT || space == AddressSpace::ACC ||
+            space == AddressSpace::BIAS || space == AddressSpace::SCALING;
+    if (space == AddressSpace::Zero)
+      return function.emitError("handoff: unresolved storage address space");
+  }
+  if (vector && cube)
+    return function.emitError("handoff: mixed physical core context requires explicit sections");
+  // A payload-free function has no core-specific obligations. A pure DMA
+  // function derives its core from the actual local storage above.
+  out.program.target = a3SyncProfile(cube ? SyncCore::Cube : SyncCore::Vector);
+  for (const auto &phase : out.program.operations)
+    if (!out.program.target.supported[unsigned(phase.pipe)])
+      return function.emitError("handoff: operation outside selected core profile");
   out.program.invocation.retirement =
       Program::InvocationContract::DrainAllAtReturn;
   out.program.invocation.alias =
@@ -265,7 +300,8 @@ LogicalResult import(func::FuncOp function, Import &out) {
   return success();
 }
 
-LogicalResult execute(func::FuncOp function) {
+LogicalResult execute(func::FuncOp function,
+    llvm::function_ref<void(func::FuncOp)> mutate = {}) {
   Import input;
   if (failed(import(function, input))) return failure();
   // Snapshot every payload and storage declaration, including operands, types,
@@ -303,41 +339,54 @@ LogicalResult execute(func::FuncOp function) {
   SyncCodegen codegen(emission, function, SyncAnalysisMode::NORMALSYNC);
   codegen.Run();
 
+  // Test hook on the transactional working copy, before any acceptance check.
+  if (mutate) mutate(function);
+  if (failed(mlir::verify(function))) return failure();
   Commands actual(input.payload.size() + 1);
-  unsigned cut = 0;
+  llvm::SmallPtrSet<mlir::Operation *, 32> originalSet;
+  originalSet.insert(originalOperations.begin(), originalOperations.end());
+  DenseMap<mlir::Operation *, unsigned> anchorCuts;
+  for (unsigned i = 0; i < input.payload.size(); ++i) anchorCuts[input.payload[i]] = i;
+  anchorCuts[function.getBody().front().getTerminator()] = input.payload.size();
+  struct Position { mlir::Operation *operation; Block *block; mlir::Operation *nextOriginal; };
+  SmallVector<Position> positions;
   SmallVector<mlir::Operation *> generated;
   bool scanFailed = false;
   function.walk([&](mlir::Operation *op) {
-    if (scanFailed || op == function.getOperation()) return;
-    if (cut < input.payload.size() && op == input.payload[cut]) {
-      ++cut;
-      return;
+    if (scanFailed || op == function.getOperation() || originalSet.contains(op)) return;
+    if (!isa<SetFlagOp, WaitFlagOp, BarrierOp>(op)) {
+      op->emitError("handoff: unexpected generated operation");
+      scanFailed = true; return;
     }
+    // Actual block and next original instruction determine participation.
+    // A command in an empty arm, at a nested exit, or before a loop owner is
+    // not relabelled as the next depth-first payload phase.
+    mlir::Operation *next = op->getNextNode();
+    while (next && !originalSet.contains(next)) next = next->getNextNode();
+    auto found = anchorCuts.find(next);
+    if (found == anchorCuts.end() || next->getBlock() != op->getBlock()) {
+      op->emitError("handoff: command is outside an original physical cut");
+      scanFailed = true; return;
+    }
+    unsigned cut = found->second;
     auto event = [&](auto e, Command::Kind kind) -> LogicalResult {
       auto a = pipe(e.getSrcPipe().getPipe()), b = pipe(e.getDstPipe().getPipe());
-      if (!a || !b)
-        return op->emitError("handoff: emitted event has unsupported pipeline");
+      if (!a || !b) return op->emitError("handoff: emitted event has unsupported pipeline");
       actual[cut].push_back({kind, *a, *b, unsigned(e.getEventId().getEvent())});
       return success();
     };
-    if (auto e = dyn_cast<SetFlagOp>(op)) {
-      scanFailed = failed(event(e, Command::Publish));
-      generated.push_back(op);
-    } else if (auto e = dyn_cast<WaitFlagOp>(op)) {
-      scanFailed = failed(event(e, Command::Acquire));
-      generated.push_back(op);
-    } else if (auto b = dyn_cast<BarrierOp>(op)) {
-      if (b.getPipe().getPipe() == PIPE::PIPE_ALL) actual[cut].push_back({Command::BarrierAll});
-      else if (auto lane = pipe(b.getPipe().getPipe())) actual[cut].push_back({Command::Barrier, *lane});
-      else {
-        op->emitError("handoff: emitted barrier has unsupported pipeline");
-        scanFailed = true;
-      }
-      generated.push_back(op);
+    if (auto e = dyn_cast<SetFlagOp>(op)) scanFailed = failed(event(e, Command::Publish));
+    else if (auto e = dyn_cast<WaitFlagOp>(op)) scanFailed = failed(event(e, Command::Acquire));
+    else {
+      auto value = cast<BarrierOp>(op).getPipe().getPipe();
+      if (value == PIPE::PIPE_ALL) actual[cut].push_back({Command::BarrierAll});
+      else if (auto p = pipe(value)) actual[cut].push_back({Command::Barrier, *p});
+      else { op->emitError("handoff: emitted barrier has unsupported pipeline"); scanFailed = true; }
     }
+    generated.push_back(op);
+    positions.push_back({op, op->getBlock(), next});
   });
   if (scanFailed) return failure();
-  if (cut != input.payload.size()) return function.emitError("handoff: original payload order changed");
   // Detach generated commands to compare the actual remaining IR with the
   // original imported obligations. Checking a changed reimport against itself
   // would incorrectly accept payload/effect mutations.
@@ -352,15 +401,11 @@ LogicalResult execute(func::FuncOp function) {
   });
   bool unchanged = originalOperations == remainingOperations &&
                    originalIR == reconstructedIR;
-  // Commands no longer need native operation objects: commit uses the original
-  // emitted stream, so restore each command before its corresponding cut.
-  unsigned index = 0;
-  for (unsigned i = 0; i < actual.size(); ++i)
-    for (const auto &unused : actual[i]) {
-      (void)unused;
-      auto *anchor = i == input.payload.size() ? function.getBody().front().getTerminator() : input.payload[i];
-      anchor->getBlock()->getOperations().insert(anchor->getIterator(), generated[index++]);
-    }
+  // Restore the exact location recorded before detaching. Verification must
+  // never repair a wrong branch/loop position by moving to canonical anchors.
+  for (const Position &position : positions)
+    position.block->getOperations().insert(position.nextOriginal->getIterator(),
+                                           position.operation);
   if (!unchanged)
     return function.emitError("handoff: emission changed original payload or contract");
   auto checked = verify(input.program, actual);
@@ -369,7 +414,8 @@ LogicalResult execute(func::FuncOp function) {
 }
 } // namespace
 
-LogicalResult runHandoffSync(func::FuncOp function) {
+LogicalResult testing::runHandoffSyncWithMutation(func::FuncOp function,
+    llvm::function_ref<void(func::FuncOp)> mutate) {
   if (getTargetArch(function) != PTOArch::A3)
     return function.emitError("handoff: first native target is a3");
   auto parent = function->getParentOfType<ModuleOp>();
@@ -377,9 +423,13 @@ LogicalResult runHandoffSync(func::FuncOp function) {
   if (parent) sandbox->getOperation()->setAttrs(parent->getAttrs());
   auto working = cast<func::FuncOp>(function->clone());
   sandbox->push_back(working);
-  if (failed(execute(working))) return failure();
+  if (failed(execute(working, mutate))) return failure();
   function.getBody().takeBody(working.getBody());
   return success();
+}
+
+LogicalResult runHandoffSync(func::FuncOp function) {
+  return testing::runHandoffSyncWithMutation(function, {});
 }
 
 LogicalResult analyzeHandoffSync(func::FuncOp function) {

@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// SPDX-License-Identifier: LicenseRef-CANN-Open-Software-License-2.0
+
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
+// Source-level review fixture. NOT executed with native PTOAS in this review.
+// Run with: pto-test-opt native_loop_carried_slot.pto '-pto-insert-sync=algorithm=handoff'
+// Required: on iterations after the first, slot is B, so MTE2's write to B
+// must complete before the V-pipeline read of B. Initial-only provenance loses it.
+module attributes {pto.target_arch = "a3"} {
+  func.func @loop_carried_slot(%src: !pto.partition_tensor_view<1x32xf32>,
+                              %trips: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 128 : i64
+    %a2 = arith.constant 256 : i64
+    %a = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 1x32xf32>
+    %last = scf.for %i = %zero to %trips step %one
+        iter_args(%slot = %a) -> (!pto.tile_buf<vec, 1x32xf32>) {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>)
+        outs(%slot : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tadd ins(%b, %b : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>)
+        outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+      scf.yield %b : !pto.tile_buf<vec, 1x32xf32>
+    }
+    return
+  }
+}
+
+// CHECK: scf.for
+// CHECK: pto.{{(barrier|wait_flag)}}
+// CHECK: pto.tload
+// CHECK: pto.{{(barrier|wait_flag)}}
+// CHECK: pto.tadd

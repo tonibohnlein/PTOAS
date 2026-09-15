@@ -1,0 +1,5 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// SPDX-License-Identifier: LicenseRef-CANN-Open-Software-License-2.0
+
+// RUN: pto-oahs-native-test
+// Mutation checks run against cloned functions; original IR must remain unchanged.

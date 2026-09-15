@@ -29,9 +29,11 @@ module attributes {pto.target_arch = "a3"} {
 
 // CHECK-LABEL: func.func @repeated_loop
 // CHECK: scf.for
-// CHECK-NEXT: pto.barrier #pto.pipe<PIPE_ALL>
+// CHECK: pto.set_flag
+// CHECK-NEXT: pto.wait_flag
 // CHECK-NEXT: pto.tload
-// CHECK-NEXT: pto.barrier #pto.pipe<PIPE_ALL>
+// CHECK: pto.set_flag
+// CHECK-NEXT: pto.wait_flag
 // CHECK-NEXT: pto.tadd
-// CHECK: pto.barrier #pto.pipe<PIPE_ALL>
+// CHECK: pto.barrier <PIPE_ALL>
 // CHECK-NEXT: return
