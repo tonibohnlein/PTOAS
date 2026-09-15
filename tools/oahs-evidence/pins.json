@@ -1,0 +1,21 @@
+{
+  "production": {
+    "repository": "hw-native-sys/PTOAS",
+    "branch": "master",
+    "commit": "ad63e67a79d47e35a76692dd534df13bd4bd6b23",
+    "tree": "9a0b0ddb0654fa9d672f2c186ef8f7c80419444c",
+    "selected_on": "2026-09-15",
+    "qualification": "pinned upstream source, not a device-correctness certificate"
+  },
+  "reference_only": {
+    "repository": "tonibohnlein/PTOAS",
+    "branch": "codex/oahs-upstream",
+    "commit": "c73c04fb3b7a76d10ab55b48d4dcbe0270e36da2",
+    "reported_device_regression_revision": "f530ebbda9911ca76d5f4502e4451e3e5eb5853e",
+    "policy": "do not cherry-pick the experimental history into the new branch"
+  },
+  "suggested_branch": "codex/oahs-clean-m1",
+  "milestone": "1: baseline and evidence",
+  "compiler_changes": false,
+  "new_planner_modes": false
+}

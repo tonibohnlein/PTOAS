@@ -1,0 +1,39 @@
+{
+  "source_revision": "ad63e67a79d47e35a76692dd534df13bd4bd6b23",
+  "artifacts": {
+    "compiler": "/absolute/path/to/production/ptoas",
+    "compiler_library": "/absolute/path/to/libPTOASCompiler.so",
+    "mlir_library": "/absolute/path/to/libMLIR.so"
+  },
+  "environment": {
+    "PATH": "/usr/bin:/bin",
+    "LD_LIBRARY_PATH": "/absolute/build/lib:/absolute/llvm/lib",
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1"
+  },
+  "versions": {
+    "llvm_mlir": "RECORD EXACT BUILD",
+    "pto_isa": "RECORD EXACT COMMIT",
+    "cann": "RECORD VERSION",
+    "runtime": "RECORD VERSION",
+    "device_profile": "RECORD ARCHITECTURE/PROFILE"
+  },
+  "argv": {
+    "sync": [
+      "{compiler}",
+      "{flags}",
+      "--enable-insert-sync",
+      "--emit-pto-ir",
+      "{input}",
+      "-o",
+      "{output}"
+    ],
+    "lower": [
+      "{compiler}",
+      "{flags}",
+      "{input}",
+      "-o",
+      "{output}"
+    ]
+  }
+}
