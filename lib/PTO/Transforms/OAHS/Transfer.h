@@ -9,6 +9,7 @@
 #define PTO_OAHS_TRANSFER_H
 
 #include "PTO/Transforms/OAHS/Analysis.h"
+#include "Control.h"
 #include <algorithm>
 #include <array>
 #include <map>
@@ -221,66 +222,15 @@ class Transfer {
       for (std::size_t i = 0; i < p.operations.size(); ++i)
         if (unsigned(p.operations[i].pipe) == observer) s.pending[observer][i] = 0;
   }
-  struct Site {
-    // IDs [0,N) are physical phases; N is the original invocation exit.
-    // Remaining sites are ONLY original control edges, never occurrences.
-    std::vector<std::size_t> successors;
-  };
-  std::vector<Site> sites;
+  std::vector<ControlSite> sites;
   uint64_t evaluations = 0, merges = 0;
 
   std::size_t buildControl() {
-    const std::size_t exit = p.operations.size();
-    sites.clear(); sites.resize(exit + 1);
-    contexts = {AnalysisContext{}}; cutContexts.assign(exit + 1, 0);
-    auto entryFor = [&](const Region &r) {
-      if (r.kind == Region::Operation) return r.operation;
-      const std::size_t id = sites.size(); sites.emplace_back(); return id;
-    };
-    if (p.body.kind == Region::Sequence && p.body.children.empty()) {
-      for (std::size_t i = 0; i < exit; ++i) sites[i].successors = {i+1};
-      return std::size_t(0);
-    }
-    struct Task { const Region *region; std::size_t entry, next, context; };
-    const std::size_t root = entryFor(p.body);
-    std::vector<Task> tasks{{&p.body, root, exit, 0}};
-    auto contextFor = [&](AnalysisContext::Kind kind, const Task &task) {
-      const auto id = contexts.size();
-      contexts.push_back({kind, task.context, task.entry}); return id;
-    };
-    // Build once with an explicit stack. No recursive nested-loop solving.
-    while (!tasks.empty()) {
-      const auto task = tasks.back(); tasks.pop_back();
-      const auto &r = *task.region;
-      if (r.kind == Region::Operation) {
-        sites[task.entry].successors = {task.next};
-        cutContexts[task.entry] = task.context;
-      } else if (r.kind == Region::Sequence) {
-        std::vector<std::size_t> children;
-        for (const auto &child : r.children) children.push_back(entryFor(child));
-        sites[task.entry].successors = {children.empty() ? task.next : children.front()};
-        for (std::size_t i = 0; i < children.size(); ++i)
-          tasks.push_back({&r.children[i], children[i],
-                           i+1 < children.size() ? children[i+1] : task.next, task.context});
-      } else if (r.kind == Region::Choice) {
-        const auto yes = entryFor(r.children[0]), no = entryFor(r.children[1]);
-        sites[task.entry].successors = {yes, no};
-        tasks.push_back({&r.children[0], yes, task.next, contextFor(AnalysisContext::ThenArm, task)});
-        tasks.push_back({&r.children[1], no, task.next, contextFor(AnalysisContext::ElseArm, task)});
-      } else if (r.kind == Region::For) {
-        const auto body = entryFor(r.children[0]);
-        sites[task.entry].successors = {body, task.next}; // preserve zero trips
-        tasks.push_back({&r.children[0], body, task.entry, contextFor(AnalysisContext::ForBody, task)});
-      } else {
-        const auto before = entryFor(r.children[0]), after = entryFor(r.children[1]);
-        const auto decision = sites.size(); sites.emplace_back();
-        sites[task.entry].successors = {before}; // before ALWAYS executes
-        sites[decision].successors = {after, task.next};
-        tasks.push_back({&r.children[0], before, decision, contextFor(AnalysisContext::WhileBefore, task)});
-        tasks.push_back({&r.children[1], after, before, contextFor(AnalysisContext::WhileAfter, task)});
-      }
-    }
-    return root;
+    auto graph = buildControlGraph(p);
+    sites = std::move(graph.sites);
+    contexts = std::move(graph.contexts);
+    cutContexts = std::move(graph.cutContexts);
+    return graph.entry;
   }
 
   bool solve(std::size_t root) {
