@@ -314,7 +314,10 @@ int main() {
     p=base();
     for(unsigned i=0;i<5;++i) {
       const unsigned mode=rng()%3;
-      p.operations.push_back(op(rng()%3,rng()%3,mode!=0,mode!=1));
+      // Sequence draws explicitly: GCC and Clang must test the same population.
+      const unsigned cell=rng()%3;
+      const unsigned pipe=rng()%3;
+      p.operations.push_back(op(pipe,cell,mode!=0,mode!=1));
     }
     if(sample%4==0)p.body=loop(seq({leaf(0),{o::Region::Choice,{leaf(1),leaf(2)}},leaf(3),leaf(4)}));
     else if(sample%4==1)p.body={o::Region::While,{seq({leaf(0),leaf(1)}),seq({leaf(2),leaf(3),leaf(4)})}};
