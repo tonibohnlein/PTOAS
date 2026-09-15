@@ -385,6 +385,21 @@ LogicalResult execute(func::FuncOp function,
     positions.push_back({op, op->getBlock(), next});
   });
   if (scanFailed) return failure();
+  // Bundle credit was computed for these exact ordered command words. Shared
+  // code generation must not silently merge, reorder, or supplement them even
+  // when a modified word happens to satisfy the memory checker too.
+  if (actual.size() != result.commands.size())
+    return function.emitError("handoff: emitted command-cut population changed");
+  for (std::size_t cut = 0; cut < actual.size(); ++cut) {
+    if (actual[cut].size() != result.commands[cut].size())
+      return function.emitError("handoff: emitted command word changed at cut ") << cut;
+    for (std::size_t i = 0; i < actual[cut].size(); ++i) {
+      const auto &a = actual[cut][i], &b = result.commands[cut][i];
+      if (a.kind != b.kind || a.source != b.source ||
+          a.observer != b.observer || a.key != b.key)
+        return function.emitError("handoff: emitted command order/identity changed at cut ") << cut;
+    }
+  }
   // Detach generated commands to compare the actual remaining IR with the
   // original imported obligations. Checking a changed reimport against itself
   // would incorrectly accept payload/effect mutations.
