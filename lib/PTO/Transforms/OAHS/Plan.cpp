@@ -8,6 +8,7 @@
 #include "PTO/Transforms/OAHS/Plan.h"
 #include "Transfer.h"
 #include "PrefixQueries.h"
+#include "BundleQueries.h"
 #include <algorithm>
 #include <map>
 #include <optional>
@@ -184,25 +185,42 @@ Result conservative(const Program &p, bool scarcity = false) {
   result.success = checked.success; result.reason = checked.reason;
   return result;
 }
+// A leg may have several mutually exclusive original publication sites.
+// Matching is established by replay of the WHOLE packet population. Individual
+// PrefixQuery pairs remain strict and are not weakened for these alternatives.
 struct Packet {
   Handoff handoff;
   unsigned key = 0;
   std::optional<unsigned> acknowledgment;
+  std::vector<Cut> publications; // empty means the one handoff.publication
 };
-Commands render(const Program &p, const Commands &barriers, const std::vector<Packet> &packets) {
+struct PacketBundle {
+  std::vector<Packet> legs; // ordered at their common acquisition cut
+};
+std::vector<Cut> publicationCuts(const Packet &packet) {
+  return packet.publications.empty() ? std::vector<Cut>{packet.handoff.publication}
+                                     : packet.publications;
+}
+bool relocate(Packet &packet) {
+  const auto cuts = publicationCuts(packet);
+  if (cuts.size() == 1 && cuts[0] == packet.handoff.acquisition) return false;
+  packet.publications.clear(); packet.handoff.publication = packet.handoff.acquisition;
+  return true;
+}
+Commands render(const Program &p, const Commands &barriers, const std::vector<PacketBundle> &bundles) {
   Commands result = barriers;
-  // Early publications precede commands at the following source cut. They
-  // capture only knowledge actually established at that cut on reconstruction.
-  for (const auto &packet : packets) {
+  for (const auto &bundle : bundles) for (const auto &packet : bundle.legs) {
     const auto &h = packet.handoff;
-    if (h.publication != h.acquisition)
-      result[h.publication].insert(result[h.publication].begin(),
-          {Command::Publish, h.source, h.observer, packet.key});
+    for (const auto publication : publicationCuts(packet))
+      if (publication != h.acquisition)
+        result[publication].insert(result[publication].begin(),
+            {Command::Publish, h.source, h.observer, packet.key});
   }
-  for (const auto &packet : packets) {
+  for (const auto &bundle : bundles) for (const auto &packet : bundle.legs) {
     const auto &h = packet.handoff;
     auto &at = result[h.acquisition];
-    if (h.publication == h.acquisition)
+    const auto cuts = publicationCuts(packet);
+    if (std::find(cuts.begin(), cuts.end(), h.acquisition) != cuts.end())
       at.push_back({Command::Publish, h.source, h.observer, packet.key});
     at.push_back({Command::Acquire, h.source, h.observer, packet.key});
     if (packet.acknowledgment) {
@@ -214,14 +232,22 @@ Commands render(const Program &p, const Commands &barriers, const std::vector<Pa
     result.back().push_back({Command::BarrierAll});
   return result;
 }
-std::optional<unsigned> chooseKey(const Program &p, const std::vector<Packet> &packets,
-                                  Pipe source, Pipe observer) {
+std::vector<unsigned> eligibleKeys(const Program &p, Pipe source, Pipe observer) {
+  std::vector<unsigned> out;
+  if (source == observer || !p.target.supported[lane(source)] ||
+      !p.target.supported[lane(observer)]) return out;
+  for (unsigned k : p.target.keys[lane(source)][lane(observer)])
+    if (!reserved(p, {Command::Publish, source, observer, k}) &&
+        std::find(out.begin(),out.end(),k)==out.end()) out.push_back(k);
+  return out;
+}
+std::optional<unsigned> chooseKey(const Program &p, const std::vector<PacketBundle> &bundles,
+                                Pipe source, Pipe observer) {
   std::optional<unsigned> reused;
-  for (unsigned key : p.target.keys[lane(source)][lane(observer)]) {
-    if (reserved(p, {Command::Publish, source, observer, key})) continue;
+  for (unsigned key : eligibleKeys(p, source, observer)) {
     if (!reused) reused = key;
     bool used = false;
-    for (const auto &packet : packets) {
+    for (const auto &bundle : bundles) for (const auto &packet : bundle.legs) {
       const auto &h = packet.handoff;
       used |= h.source == source && h.observer == observer && packet.key == key;
       used |= packet.acknowledgment && h.observer == source && h.source == observer &&
@@ -229,9 +255,54 @@ std::optional<unsigned> chooseKey(const Program &p, const std::vector<Packet> &p
     }
     if (!used) return key;
   }
-  // Reuse is a proposal, not a fact. All keys, including these, are checked by
-  // the finite protocol transfer before any emitted program can be committed.
-  return reused;
+  return reused; // proposal only; never a fabricated consumption edge
+}
+// Retain all shortest topology routes, including lanes with no payload effects.
+// This is a finite placement policy, not completeness over all possible routes.
+std::vector<std::vector<Pipe>> routes(const Program &p, Pipe source, Pipe observer) {
+  std::array<unsigned, PipeCount> distance; distance.fill(PipeCount);
+  distance[lane(source)] = 0; std::vector<Pipe> queue{source};
+  for (std::size_t i=0;i<queue.size();++i) for (unsigned b=0;b<PipeCount;++b)
+    if (!eligibleKeys(p,queue[i],Pipe(b)).empty() && distance[b]==PipeCount) {
+      distance[b]=distance[lane(queue[i])]+1; queue.push_back(Pipe(b));
+    }
+  std::vector<std::vector<Pipe>> out;
+  if (distance[lane(observer)]==PipeCount) return out;
+  std::vector<std::vector<Pipe>> work{{source}};
+  while (!work.empty()) {
+    auto path=std::move(work.back()); work.pop_back(); const auto a=path.back();
+    if(a==observer) { out.push_back(std::move(path)); continue; }
+    for(unsigned b=PipeCount;b-->0;)
+      if(distance[b]==distance[lane(a)]+1 && distance[b]<=distance[lane(observer)] &&
+         !eligibleKeys(p,a,Pipe(b)).empty()) {
+        auto next=path; next.push_back(Pipe(b)); work.push_back(std::move(next));
+      }
+  }
+  return out;
+}
+// A general backward cut-frontier proposal: the immediately preceding physical
+// cuts along every predecessor arm. No matching or credit is assumed. Replay may
+// reject it (e.g. a branch's last write needs a not-yet-supported exit cut).
+std::vector<Cut> predecessorFrontier(const Program &p, Cut consumer) {
+  const auto g=detail::buildControlGraph(p); const auto n=p.operations.size();
+  std::vector<std::vector<std::pair<std::size_t,bool>>> pred(g.sites.size());
+  for(std::size_t a=0;a<g.sites.size();++a)
+    for(std::size_t k=0;k<g.sites[a].successors.size();++k)
+      pred[g.sites[a].successors[k]].push_back({a,g.sites[a].backedgeOwners[k]!=NoAnalysisId});
+  std::vector<std::size_t> work{consumer}; std::vector<bool> seen(g.sites.size());
+  std::set<Cut> out;
+  while(!work.empty()) {
+    auto at=work.back();work.pop_back(); if(seen[at]) continue;seen[at]=true;
+    if(at==g.entry) return {};
+    for(auto [previous,backedge]:pred[at]) {
+      if(backedge) return {}; // occurrence-dependent frontiers are M4, not guessed
+      if(previous<n && previous!=consumer) out.insert(previous);
+      else if(previous==consumer) return {};
+      else work.push_back(previous);
+    }
+  }
+  if(out.size()<2) return {};
+  return {out.begin(),out.end()};
 }
 } // namespace
 
@@ -291,6 +362,16 @@ Result verify(const Program &p, const Commands &commands) {
   Result result;
   result.success = analysis.verified(); result.reason = analysis.reason;
   return result;
+}
+
+BundleQuery::BundleQuery(Program p, Commands c, AnalysisOptions o)
+    : impl(std::make_unique<Impl>(std::move(p), std::move(c), o)) {}
+BundleQuery::~BundleQuery() = default;
+BundleQuery::BundleQuery(BundleQuery &&) noexcept = default;
+BundleQuery &BundleQuery::operator=(BundleQuery &&) noexcept = default;
+const AnalysisResult &BundleQuery::analysis() const { return impl->before; }
+BundleEvaluation BundleQuery::evaluate(Commands candidate) const {
+  return impl->evaluate(std::move(candidate));
 }
 
 PrefixQuery::PrefixQuery(Program p, Commands c) : impl(std::make_unique<Impl>(std::move(p), std::move(c))) {}
@@ -354,11 +435,13 @@ Result construct(const Program &p) {
   Result result;
   if (!valid(p, result.reason) || !supportedEffects(p, result.reason)) return result;
   Commands barriers(p.operations.size() + 1);
-  std::vector<Packet> packets;
+  std::vector<PacketBundle> packets;
   const bool oneVisit = flat(p);
+  const auto lexicalRanks = detail::buildControlGraph(p).cutRanks;
   // Each (consumer, source) has one finite repair slot: absent -> packet or
-  // barrier. A packet may move to its consumer once and gain one reply. Keys
-  // are fixed at creation. An unchanged/unsupported repair terminates below;
+  // barrier. A bundle has at most PipeCount-1 shortest-route legs. Each leg
+  // can relocate once and gain one reply. Keys are fixed at creation.
+  // An unchanged/unsupported repair terminates below;
   // no numerical attempt limit or repeated identical candidate is necessary.
   std::map<std::pair<Cut, Pipe>, std::size_t> packetSlots;
   std::set<std::pair<Cut, Pipe>> barrierSlots;
@@ -383,43 +466,101 @@ Result construct(const Program &p) {
       result.demands.insert(result.demands.end(), issue.missing.begin(), issue.missing.end());
       const auto slot = std::make_pair(consumer, source);
       if (auto found = packetSlots.find(slot); found != packetSlots.end()) {
-        auto &h = packets[found->second].handoff;
+        auto &packet = packets[found->second].legs.front();
         // A later discovered generation may not belong to the saved early
         // prefix. Relocate this one packet; never append duplicates forever.
-        if (h.publication != h.acquisition) h.publication = h.acquisition;
+        if (relocate(packet)) {}
         else return conservative(p, true);
       } else if (source == observer && p.target.barriers[lane(source)]) {
         if (!barrierSlots.insert(slot).second) return conservative(p, true);
         barriers[consumer].push_back({Command::Barrier, source});
       } else if (source != observer) {
-        // Query only established M1 facts for source-prefix proposals. The
-        // session owns this exact candidate and is discarded after every edit.
-        // Realization/reuse can still fail; no coverage record bypasses verify.
         PrefixQuery query(p, actual);
         const auto cover = query.coverByPrefixes(consumer);
-        const ProspectivePrefix *best = nullptr;
+        BundleQuery replay(p, actual);
+        const auto frontier = predecessorFrontier(p, consumer);
+        struct Proposal { Pipe publisher; Cut cut; std::vector<Cut> alternatives; };
+        std::vector<Proposal> proposals;
         for (const auto &candidate : cover.candidates) {
           if (!candidate.selectable() || candidate.source == observer) continue;
-          const bool suppliesSource = std::all_of(issue.missing.begin(), issue.missing.end(),
-            [&](const Demand &d) {
-              return p.operations[d.producer].pipe != source ||
-                     !candidate.uncoveredOperations[d.producer];
-            });
-          if (!suppliesSource) continue;
-          if (!best || candidate.coveredRequirements.size() > best->coveredRequirements.size()) best = &candidate;
+          bool suppliesSource = std::all_of(issue.missing.begin(),issue.missing.end(),[&](const Demand &d) {
+            return p.operations[d.producer].pipe!=source || !candidate.uncoveredOperations[d.producer];
+          });
+          if (suppliesSource) proposals.push_back({candidate.source,candidate.publication,{}});
         }
-        const Pipe publisher = best ? best->source : source;
-        auto key = chooseKey(p, packets, publisher, observer);
-        if (key) {
-          // A missing precise query does not remove the ordinary source cut.
-          // The co-located source/target packet is checked like every other plan.
-          const Cut publication = best ? best->publication : consumer;
-          packetSlots.emplace(slot, packets.size());
-          packets.push_back({{publisher, observer, publication, consumer}, *key, {}});
-        } else if (p.target.barrierAll) {
-          if (!barrierSlots.insert(slot).second) return conservative(p, true);
+        // A whole alternative-publication bundle can be valid even though none
+        // of its individual source/target pairs passes the M2 balance monitor.
+        if (!frontier.empty()) proposals.insert(proposals.begin(), {source,frontier.front(),frontier});
+        proposals.push_back({source,consumer,{}}); // ordinary co-located packet
+        std::optional<PacketBundle> best;
+        std::size_t bestCredit=0, bestCollateral=0, bestCost=0;
+        // Actual all-source replay is authoritative. Provisional memory progress
+        // is only a construction step when recurrence certificates remain open;
+        // it is never exported as BundleEvaluation::discharged.
+        std::optional<PacketBundle> pending;
+        for (const auto &proposal : proposals) {
+          for (const auto &path : routes(p,proposal.publisher,observer)) {
+            PacketBundle bundle; auto population=packets;
+            for(std::size_t j=0;j+1<path.size();++j) {
+              auto key=chooseKey(p,population,path[j],path[j+1]);
+              if(!key) { bundle.legs.clear(); break; }
+              Packet leg{{path[j],path[j+1],j?consumer:proposal.cut,consumer},*key,{},
+                         j?std::vector<Cut>{}:proposal.alternatives};
+              bundle.legs.push_back(leg);
+              // Include helper keys immediately in subsequent resource queries.
+              population.push_back({{leg}});
+            }
+            if(bundle.legs.empty()) continue;
+            auto trial=packets;trial.push_back(bundle);
+            auto commands=render(p,barriers,trial);
+            const auto speculative=detail::Transfer(p,commands).run(true,false);
+            bool advances=speculative.kind==detail::Failure::None;
+            if(speculative.kind==detail::Failure::Hazard) {
+              if(speculative.cut==consumer) {
+                advances=speculative.missing.size()<issue.missing.size();
+                // The motivating source must really be addressed, not just
+                // another source whose component happened to be counted first.
+                for(const auto &d:speculative.missing)
+                  if(p.operations[d.producer].pipe==source) advances=false;
+              } else advances=lexicalRanks[speculative.cut]>lexicalRanks[consumer];
+            }
+            if(!advances) continue;
+            auto evaluated=replay.evaluate(std::move(commands)); ++result.bundleTrials;
+            if(!evaluated.complete || !evaluated.introduced.empty()) continue;
+            std::size_t credit=0;
+            for(const auto &d:evaluated.discharged) credit+=d.demand.consumer==consumer;
+            const auto cost=evaluated.resources.publications+evaluated.resources.acquisitions;
+            std::size_t collateral=0;
+            const auto &before=replay.analysis().cuts[consumer].beforeIssue;
+            const auto &after=evaluated.analysis.cuts[consumer].beforeIssue;
+            if(before && after) for(std::size_t a=0;a<p.operations.size();++a) {
+              const bool needed=std::any_of(issue.missing.begin(),issue.missing.end(),
+                  [&](const Demand &d) { return d.producer==a; });
+              collateral+=!needed && before->pending[lane(observer)][a] &&
+                           !after->pending[lane(observer)][a];
+            }
+            // Distinct goals: all-source coverage, collateral completion at this
+            // consumer, then static commands. This is an explicit local heuristic,
+            // NOT a whole-program order-dominance or latency certificate.
+            if(evaluated.analysis.protocol.empty() && credit) {
+              if(!best || credit>bestCredit || (credit==bestCredit &&
+                  std::make_pair(collateral,cost)<std::make_pair(bestCollateral,bestCost))) {
+                best=bundle;bestCredit=credit;bestCollateral=collateral;bestCost=cost;
+              }
+            } else if(!pending && proposal.alternatives.empty()) pending=bundle;
+          }
+        }
+        if(!best) best=std::move(pending);
+        if(best) {
+          packetSlots.emplace(slot,packets.size()); packets.push_back(std::move(*best));
+          ++result.bundleSelections;
+        } else if(p.target.barrierAll) {
+          if(!barrierSlots.insert(slot).second) return conservative(p,true);
           barriers[consumer].push_back({Command::BarrierAll});
-        } else { result.reason = "no eligible completion route"; return result; }
+        } else {
+          result.reason="construction policy found no verified completion bundle; not a target infeasibility proof";
+          return result;
+        }
       } else if (p.target.barrierAll) {
         if (!barrierSlots.insert(slot).second) return conservative(p, true);
         barriers[consumer].push_back({Command::BarrierAll});
@@ -434,8 +575,10 @@ Result construct(const Program &p) {
       auto checked = verify(p, actual);
       result.success = checked.success; result.reason = checked.reason;
       result.commands = std::move(actual);
-      for (const auto &packet : packets) {
-        result.handoffs.push_back(packet.handoff);
+      for (const auto &bundle : packets) for (const auto &packet : bundle.legs) {
+        for(Cut publication : publicationCuts(packet)) {
+          auto h=packet.handoff;h.publication=publication;result.handoffs.push_back(h);
+        }
         if (packet.acknowledgment) {
           const auto &h = packet.handoff;
           result.handoffs.push_back({h.observer, h.source, h.acquisition, h.acquisition});
@@ -450,28 +593,35 @@ Result construct(const Program &p) {
     if (issue.kind == detail::Failure::Occupancy) {
       // An early publication can overlap a previous logical generation. Do not
       // repair that by simply assigning more acknowledgment state to the key.
-      for (auto &packet : packets) {
+      for (auto &bundle : packets) for (auto &packet : bundle.legs) {
         auto &h = packet.handoff;
         if (h.source == issue.endpoint.source && h.observer == issue.endpoint.observer &&
-            packet.key == issue.endpoint.key && h.publication != h.acquisition) {
-          h.publication = h.acquisition; repaired = true;
+            packet.key == issue.endpoint.key) {
+          repaired |= relocate(packet);
         }
       }
     } else if (issue.kind == detail::Failure::Rearm) {
       // Add replies only after the full memory plan fails a consumption proof.
       // Existing storage-release handoffs are already present in that proof.
-      for (std::size_t i = 0; i < packets.size(); ++i) {
-        const auto h = packets[i].handoff;
+      for (auto &bundle : packets) for (auto &packet : bundle.legs) {
+        const auto h = packet.handoff;
         if (h.source != issue.endpoint.source || h.observer != issue.endpoint.observer ||
-            packets[i].key != issue.endpoint.key || packets[i].acknowledgment) continue;
+            packet.key != issue.endpoint.key || packet.acknowledgment) continue;
         // On a one-visit word only an earlier consumption can require this
         // return. Do not append an unnecessary final-use acknowledgment.
         if (oneVisit && h.acquisition >= issue.cut) continue;
         auto key = chooseKey(p, packets, h.observer, h.source);
-        if (key) { packets[i].acknowledgment = key; repaired = true; }
+        if (key) { packet.acknowledgment = key; repaired = true; }
       }
     }
     if (!repaired) return conservative(p, true);
+    // Helpers are evaluated as actual commands, including zero-memory-credit
+    // acknowledgments. Other open recurrence obligations may remain; only final
+    // verify accepts. This replay also exposes all-source effects of repairs.
+    BundleQuery repairReplay(p, actual, {false});
+    const auto repairedState = repairReplay.evaluate(render(p, barriers, packets));
+    ++result.bundleTrials;
+    if (!repairedState.complete) { result.reason = repairedState.reason; return result; }
     ++result.protocolRepairs;
   }
 }
