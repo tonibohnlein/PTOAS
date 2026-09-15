@@ -45,7 +45,8 @@ public:
   };
  
   // 核心入口：执行 IR 分析和转换
-  void Build();
+  // On failure, both output collections are empty; callers must stop.
+  LogicalResult Build();
  
   // 获取生成的 SyncIR (指令序列)
   SyncIRs &getSyncIR() { return syncIR_; }
@@ -67,7 +68,7 @@ private:
   SyncAnalysisMode mode_;
  
   // --- 递归遍历逻辑 ---
-  void RecursionIR(Region *region);
+  LogicalResult RecursionIR(Region *region);
   // RecursionIR 的按类别分发器：返回 nullopt 表示 op 不属于该类别，
   // 需继续尝试后续类别；返回 WalkResult 表示已匹配处理完毕。
   std::optional<WalkResult> dispatchAllocOp(Operation *op);
@@ -91,9 +92,9 @@ private:
                                          Value slot);
  
   // --- 控制流处理 (SCF) ---
-  void UpdateForOpInfo(scf::ForOp forOp);
-  void UpdateWhileOpInfo(scf::WhileOp whileOp);
-  void UpdateIfOpInfo(scf::IfOp ifOp);
+  LogicalResult UpdateForOpInfo(scf::ForOp forOp);
+  LogicalResult UpdateWhileOpInfo(scf::WhileOp whileOp);
+  LogicalResult UpdateIfOpInfo(scf::IfOp ifOp);
   void UpdateYieldOpInfo(scf::YieldOp yieldOp);
 
   // --- 核心：处理计算/搬运指令 (生成 Compound 节点) ---

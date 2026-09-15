@@ -144,6 +144,18 @@ static void addEffect(
 }
 
 // === TLoadOp ===
+bool TLoadOp::hasCompleteSinglePhaseSyncEffects() {
+  // Plain DMA only. Padding/initialization and alternative cache paths need
+  // their own complete lowering declaration before receiving this contract.
+  return getPipe() == PIPE::PIPE_MTE2 && !getPadModeAttr() && !getPadValue() &&
+         !getLeftPaddingNum() && !getRightPaddingNum() && !getInitOutBuffer() &&
+         !getInitCondition() && !getCachePolicyAttr() && !getResult();
+}
+
+bool TAddOp::hasCompleteSinglePhaseSyncEffects() {
+  return getPipe() == PIPE::PIPE_V;
+}
+
 // Read: src, Write: dst
 // 针对 OpOperand* 的重载
 void TLoadOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {

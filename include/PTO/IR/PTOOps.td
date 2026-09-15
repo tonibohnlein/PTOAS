@@ -229,7 +229,7 @@ def GetTensorViewStrideOp : PTO_Op<"get_tensor_view_stride", [Pure]> {
   }];
 }
 
-def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
+def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments, SyncStorageOpInterface]> {
   let summary = "Allocates a tile buffer (logical buffer).";
 
   let arguments = (ins
@@ -266,7 +266,8 @@ def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
 // may be a constant or any SSA `index` value; PTOAS does not synthesize
 // `iv mod N` automatically -- the user expression IS the slot selector.
 //
-def AllocMultiTileOp : PTO_Op<"alloc_multi_tile", [AttrSizedOperandSegments]> {
+def AllocMultiTileOp : PTO_Op<"alloc_multi_tile", [AttrSizedOperandSegments,
+                                                    SyncStorageOpInterface]> {
   let summary = "Allocate an N-slot multi-buffer tile";
   let description = [{
     Produces a `!pto.multi_tile_buf<S, count=N>` value owning N physical
@@ -497,6 +498,7 @@ def BitcastOp : PTO_Op<"bitcast", [
 // DPS versions in tile world
 // -------------------------
 def TLoadOp  : PTO_TOp<"tload", [
+  DeclareOpInterfaceMethods<SinglePhaseSyncOpInterface>,
   PTO_DpsInitOpInterface,
   AttrSizedOperandSegments,
   OpPipeInterface,
@@ -1436,7 +1438,7 @@ def GetL2CacheOffsetOp : PTO_Op<"get_l2_cache_offset", [
 
 def PTO_PipeEventTypeLikeAttr : AnyAttrOf<[PTO_PipeEventTypeAttr, PTO_SyncOpTypeAttr]>;
 
-def RecordEventOp : PTO_Op<"record_event"> {
+def RecordEventOp : PTO_Op<"record_event", [AuthoredSyncOpInterface]> {
   let summary = "Record an event for synchronization (High Level)";
   let description = [{
     Records an event from a source operation type to a destination operation type.
@@ -1453,7 +1455,7 @@ def RecordEventOp : PTO_Op<"record_event"> {
   }];
 }
 
-def WaitEventOp : PTO_Op<"wait_event"> {
+def WaitEventOp : PTO_Op<"wait_event", [AuthoredSyncOpInterface]> {
   let summary = "Wait for an event (High Level)";
   let description = [{
     Waits for an event from a source operation type to a destination operation type.
@@ -1471,7 +1473,7 @@ def WaitEventOp : PTO_Op<"wait_event"> {
 }
 
 // High-Level Barrier (single pipe) with op type mapping
-def BarrierSyncOp : PTO_Op<"barrier_sync"> {
+def BarrierSyncOp : PTO_Op<"barrier_sync", [AuthoredSyncOpInterface]> {
   let summary = "High-level barrier mapped from SyncOpType to PIPE";
   let description = [{
     A convenience barrier that specifies a SyncOpType instead of PIPE. The lowering
@@ -1985,6 +1987,7 @@ def TestAsyncEventOp : PTO_Op<"comm.test_async_event", [
 }
 
 def TPutOp : PTO_Op<"comm.tput", [
+    MacroSyncOpInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Synchronous remote write from local GM to remote GM";
@@ -2005,6 +2008,7 @@ def TPutOp : PTO_Op<"comm.tput", [
 }
 
 def TGetOp : PTO_Op<"comm.tget", [
+    MacroSyncOpInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Synchronous remote read from remote GM to local GM";
@@ -2075,6 +2079,7 @@ def TTestOp : PTO_Op<"comm.ttest", [
 }
 
 def TBroadcastOp : PTO_Op<"comm.tbroadcast", [
+    MacroSyncOpInterface,
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
@@ -2092,6 +2097,7 @@ def TBroadcastOp : PTO_Op<"comm.tbroadcast", [
 }
 
 def CommTGatherOp : PTO_Op<"comm.tgather", [
+    MacroSyncOpInterface,
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
@@ -2109,6 +2115,7 @@ def CommTGatherOp : PTO_Op<"comm.tgather", [
 }
 
 def CommTScatterOp : PTO_Op<"comm.tscatter", [
+    MacroSyncOpInterface,
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
@@ -2126,6 +2133,7 @@ def CommTScatterOp : PTO_Op<"comm.tscatter", [
 }
 
 def TReduceOp : PTO_Op<"comm.treduce", [
+    MacroSyncOpInterface,
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
@@ -2260,7 +2268,7 @@ def TPushOp : PTO_TOp<"tpush", [
   }];
 }
 
-def DeclareTileOp : PTO_Op<"declare_tile"> {
+def DeclareTileOp : PTO_Op<"declare_tile", [SyncStorageOpInterface]> {
   let summary = "Declare a tile value whose address will be assigned later";
 
   let results = (outs PTODpsType:$tile);
@@ -2270,7 +2278,7 @@ def DeclareTileOp : PTO_Op<"declare_tile"> {
   }];
 }
 
-def DeclareGlobalOp : PTO_Op<"declare_global"> {
+def DeclareGlobalOp : PTO_Op<"declare_global", [SyncStorageOpInterface]> {
   let summary = "Declare a GlobalTensor descriptor whose address is assigned later";
 
   let results = (outs TensorViewType:$entry);
@@ -2644,7 +2652,7 @@ def TFreeOp : PTO_TOp<"tfree", [
 // Synchronization Ops
 //===----------------------------------------------------------------------===//
 
-def SetFlagOp : PTO_Op<"set_flag"> {
+def SetFlagOp : PTO_Op<"set_flag", [AuthoredSyncOpInterface]> {
   let summary = "Set synchronization flag between pipes";
   let arguments = (ins
     PTO_PipeAttr:$src_pipe,
@@ -2659,7 +2667,7 @@ def SetFlagOp : PTO_Op<"set_flag"> {
   }];
 }
 
-def WaitFlagOp : PTO_Op<"wait_flag"> {
+def WaitFlagOp : PTO_Op<"wait_flag", [AuthoredSyncOpInterface]> {
   let summary = "Wait for synchronization flag";
   let arguments = (ins
     PTO_PipeAttr:$src_pipe,
@@ -2674,7 +2682,7 @@ def WaitFlagOp : PTO_Op<"wait_flag"> {
   }];
 }
 
-def SetFlagDynOp : PTO_Op<"set_flag_dyn"> {
+def SetFlagDynOp : PTO_Op<"set_flag_dyn", [AuthoredSyncOpInterface]> {
   let summary = "Set synchronization flag between pipes (dynamic event id)";
   let arguments = (ins
     PTO_PipeAttr:$src_pipe,
@@ -2687,7 +2695,7 @@ def SetFlagDynOp : PTO_Op<"set_flag_dyn"> {
   }];
 }
 
-def WaitFlagDynOp : PTO_Op<"wait_flag_dyn"> {
+def WaitFlagDynOp : PTO_Op<"wait_flag_dyn", [AuthoredSyncOpInterface]> {
   let summary = "Wait for synchronization flag (dynamic event id)";
   let arguments = (ins
     PTO_PipeAttr:$src_pipe,
@@ -2805,7 +2813,7 @@ def RlsBufDynOp : PTO_Op<"rls_buf_dyn"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def SyncSetOp : PTO_Op<"sync.set"> {
+def SyncSetOp : PTO_Op<"sync.set", [AuthoredSyncOpInterface]> {
   let summary = "Set a synchronization signal (trigger) between cube and vector.";
   let description = [{
     Sets a synchronization signal on the specified pipeline stage.
@@ -2825,7 +2833,7 @@ def SyncSetOp : PTO_Op<"sync.set"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def SyncWaitOp : PTO_Op<"sync.wait"> {
+def SyncWaitOp : PTO_Op<"sync.wait", [AuthoredSyncOpInterface]> {
   let summary = "Wait for a synchronization signal (barrier) between cube and vector.";
   let description = [{
     Waits for a synchronization signal on the specified pipeline stage.
@@ -2851,7 +2859,7 @@ def PTO_SyncEventIdType : Type<
   CPred<"::mlir::isa<::mlir::IntegerType>($_self)">,
   "integer event id">;
 
-def SetCrossBlockOp : PTO_Op<"set_cross_block"> {
+def SetCrossBlockOp : PTO_Op<"set_cross_block", [AuthoredSyncOpInterface]> {
   let summary = "Signal a cross-block synchronization flag";
   let description = [{
     Canonicalizes to `pto.sync.set` with FFTS mode 0.
@@ -2863,7 +2871,7 @@ def SetCrossBlockOp : PTO_Op<"set_cross_block"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def WaitCrossBlockOp : PTO_Op<"wait_cross_block"> {
+def WaitCrossBlockOp : PTO_Op<"wait_cross_block", [AuthoredSyncOpInterface]> {
   let summary = "Wait for a cross-block synchronization flag";
   let description = [{ Canonicalizes to `pto.sync.wait` with FFTS mode 0. }];
   let arguments = (ins PTO_PipeAttr:$pipe, OptionalAttr<I32Attr>:$event_id,
@@ -2872,7 +2880,7 @@ def WaitCrossBlockOp : PTO_Op<"wait_cross_block"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def SetIntraBlockOp : PTO_Op<"set_intra_block"> {
+def SetIntraBlockOp : PTO_Op<"set_intra_block", [AuthoredSyncOpInterface]> {
   let summary = "Signal an intra-block synchronization flag";
   let description = [{
     Signals the event on the specified pipeline within the block. EmitC uses
@@ -2884,7 +2892,7 @@ def SetIntraBlockOp : PTO_Op<"set_intra_block"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def WaitIntraBlockOp : PTO_Op<"wait_intra_block"> {
+def WaitIntraBlockOp : PTO_Op<"wait_intra_block", [AuthoredSyncOpInterface]> {
   let summary = "Wait for an intra-block synchronization flag";
   let description = [{
     Waits for the event on the specified pipeline within the block. EmitC uses
@@ -2896,13 +2904,13 @@ def WaitIntraBlockOp : PTO_Op<"wait_intra_block"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def BarrierOp : PTO_Op<"barrier"> {
+def BarrierOp : PTO_Op<"barrier", [AuthoredSyncOpInterface]> {
   let summary = "Intra-pipeline memory barrier";
   let arguments = (ins PTO_PipeAttr:$pipe);
   let assemblyFormat = "$pipe attr-dict";
 }
 
-def CmoCacheInvalidOp : PTO_Op<"cmo.cacheinvalid"> {
+def CmoCacheInvalidOp : PTO_Op<"cmo.cacheinvalid", [VisibilitySyncOpInterface]> {
   let summary = "Perform cache maintenance for a memory space";
   let description = [{
     Cache maintenance operation for the specified memory space.
@@ -2929,7 +2937,7 @@ def CmoCacheInvalidOp : PTO_Op<"cmo.cacheinvalid"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def FenceBarrierAllOp : PTO_Op<"fence.barrier_all"> {
+def FenceBarrierAllOp : PTO_Op<"fence.barrier_all", [VisibilitySyncOpInterface]> {
   let summary = "All-direction memory fence for a visibility scope";
   let description = [{
     Memory fence for a visibility scope. Around signal/payload communication it
@@ -3072,6 +3080,7 @@ def TrapOp : PTO_Op<"trap", [MicroOpInterface, SimtOpInterface]> {
 // ---- tile-world TOp version (with 't') ----
 // pto.tmgather ins(%mem, %idx) outs(%dst) [ ...] -> tensor?
 def MGatherOp : PTO_TOp<"mgather", [
+  MacroSyncOpInterface,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
   MteOpInterface,
@@ -3376,6 +3385,7 @@ def TAbsOp : PTO_TOp<"tabs", [
 }
 
 def TAddOp : PTO_TOp<"tadd", [
+  DeclareOpInterfaceMethods<SinglePhaseSyncOpInterface>,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
@@ -4755,6 +4765,7 @@ def TFillPadOp : PTO_TOp<"tfillpad", [
 }
 
 def TGatherOp : PTO_TOp<"tgather", [
+  MacroSyncOpInterface,
   AttrSizedOperandSegments,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
@@ -6280,6 +6291,7 @@ def TRsqrtOp: PTO_TOp<"trsqrt", [
 //===----------------------------------------------------------------------===//
 
 def TScatterOp: PTO_TOp<"tscatter", [
+  MacroSyncOpInterface,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
