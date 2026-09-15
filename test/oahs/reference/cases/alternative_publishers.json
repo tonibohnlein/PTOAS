@@ -1,0 +1,170 @@
+{
+  "schema": "oahs.reference-case.v1",
+  "name": "alternative_publishers",
+  "cells": 3,
+  "supported": [
+    0,
+    1,
+    2
+  ],
+  "barriers": [
+    0,
+    1,
+    2
+  ],
+  "keys": [
+    [
+      0,
+      1,
+      0
+    ],
+    [
+      0,
+      1,
+      1
+    ],
+    [
+      0,
+      2,
+      0
+    ],
+    [
+      0,
+      2,
+      1
+    ],
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      1,
+      0,
+      1
+    ],
+    [
+      1,
+      2,
+      0
+    ],
+    [
+      1,
+      2,
+      1
+    ],
+    [
+      2,
+      0,
+      0
+    ],
+    [
+      2,
+      0,
+      1
+    ],
+    [
+      2,
+      1,
+      0
+    ],
+    [
+      2,
+      1,
+      1
+    ]
+  ],
+  "operations": [
+    {
+      "pipe": 0,
+      "accesses": [
+        [
+          0,
+          0,
+          1
+        ]
+      ]
+    },
+    {
+      "pipe": 0,
+      "accesses": [
+        [
+          1,
+          0,
+          1
+        ]
+      ]
+    },
+    {
+      "pipe": 0,
+      "accesses": [
+        [
+          0,
+          0,
+          1
+        ]
+      ]
+    },
+    {
+      "pipe": 0,
+      "accesses": [
+        [
+          2,
+          0,
+          1
+        ]
+      ]
+    },
+    {
+      "pipe": 1,
+      "accesses": [
+        [
+          0,
+          1,
+          0
+        ]
+      ]
+    }
+  ],
+  "construct": true,
+  "body": {
+    "kind": "sequence",
+    "children": [
+      {
+        "kind": "choice",
+        "children": [
+          {
+            "kind": "sequence",
+            "children": [
+              {
+                "kind": "operation",
+                "operation": 0
+              },
+              {
+                "kind": "operation",
+                "operation": 1
+              }
+            ]
+          },
+          {
+            "kind": "sequence",
+            "children": [
+              {
+                "kind": "operation",
+                "operation": 2
+              },
+              {
+                "kind": "operation",
+                "operation": 3
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "operation",
+        "operation": 4
+      }
+    ]
+  }
+}

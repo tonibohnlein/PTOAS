@@ -75,7 +75,7 @@ module attributes {pto.target_arch = "a3"} {
     const auto plan = oahs::construct(report.program);
     require(plan.success && oahs::analyze(report.program, plan.commands).verified());
   }
-  for (unsigned mutation = 0; mutation < 3; ++mutation) {
+  for (unsigned mutation = 0; mutation < 4; ++mutation) {
     auto module = parseSourceString<ModuleOp>(source, &context);
     require(bool(module));
     auto function = module->lookupSymbol<func::FuncOp>("test");
@@ -84,6 +84,16 @@ module attributes {pto.target_arch = "a3"} {
     auto result = oahs::testing::runHandoffSyncWithMutation(function,
       [&](func::FuncOp working) {
         if (!mutation) return;
+        if (mutation == 3) {
+          // An extra global fence can remain memory-safe but is not the selected
+          // packet word. Exact emission identity must reject it transactionally.
+          auto *ret = working.getBody().front().getTerminator();
+          OpBuilder builder(ret);
+          builder.create<BarrierOp>(ret->getLoc(),
+              PipeAttr::get(working.getContext(), PIPE::PIPE_ALL));
+          changed = true;
+          return;
+        }
         scf::IfOp choice;
         working.walk([&](scf::IfOp op) { choice = op; });
         mlir::Operation *victim = nullptr;
