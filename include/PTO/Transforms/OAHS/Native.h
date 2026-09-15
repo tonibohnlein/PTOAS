@@ -7,10 +7,21 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #ifndef PTO_TRANSFORMS_OAHS_NATIVE_H
 #define PTO_TRANSFORMS_OAHS_NATIVE_H
+#include "PTO/Transforms/OAHS/Analysis.h"
+#include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 namespace mlir::pto::oahs {
-// Imports and validates complete shared semantics without changing the IR.
+struct NativeAnalysis {
+  Program program;
+  AnalysisResult analysis;
+  // Original operation mapping, valid while the caller keeps the IR unchanged.
+  llvm::SmallVector<mlir::Operation *> phases;
+};
+// Import and analyze the unsynchronized native program without changing its IR.
+// Success means analysis completed, not that residual synchronization is absent.
+LogicalResult analyzeHandoffSync(func::FuncOp function, NativeAnalysis &result);
+// Compatibility entry point: performs the same analysis and discards its report.
 LogicalResult analyzeHandoffSync(func::FuncOp function);
 // Runs through production translation/alias analysis and SyncCodegen. Failure
 // leaves the original function unchanged; no backend fallback is performed.
