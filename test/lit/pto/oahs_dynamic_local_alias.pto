@@ -5,27 +5,26 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-
 // RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
-// A lone repeated physical phase must retain its self-recurrence obligation.
-// Under the adapter's declared asynchronous model, repeated writes must be
-// represented. A terminal drain cannot establish in-loop write-before-write.
+// The two allocation roots are distinct, but use the SAME dynamic address.
+// Losing that possible overlap used to remove every MTE2->V obligation.
 module attributes {pto.target_arch = "a3"} {
-  func.func @single_operation_loop(%src: !pto.partition_tensor_view<1x32xf32>,
-                                   %trips: index)
+  func.func @dynamic_local_alias(%src: !pto.partition_tensor_view<1x32xf32>,
+                                %address: i64)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
-    %zero = arith.constant 0 : index
-    %one = arith.constant 1 : index
-    %address = arith.constant 0 : i64
+    %outAddress = arith.constant 1024 : i64
     %a = pto.alloc_tile addr = %address : !pto.tile_buf<vec, 1x32xf32>
-    scf.for %i = %zero to %trips step %one {
-      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>)
-        outs(%a : !pto.tile_buf<vec, 1x32xf32>)
-    }
+    %b = pto.alloc_tile addr = %address : !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %outAddress : !pto.tile_buf<vec, 1x32xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>)
+      outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tadd ins(%b, %b : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>)
+      outs(%c : !pto.tile_buf<vec, 1x32xf32>)
     return
   }
 }
-
-// CHECK: scf.for
-// CHECK: pto.{{(barrier|wait_flag)}}
+// CHECK-LABEL: func.func @dynamic_local_alias
 // CHECK: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK: pto.tadd

@@ -181,31 +181,16 @@ int main() {
   oracle(whileProgram, whilePlan.commands);
   check(!whilePlan.commands[0].empty() && !whilePlan.commands[1].empty());
 
-  // Analysis-budget exhaustion remains inside the same constructor and is
-  // independently reconstructed as a conservative all-pipeline realization.
-  auto bounded = program();
-  bounded.operations = {op(0, 0, true), op(1, 1, true), op(2, 2, false)};
-  bounded.conservativeCompletion = true;
-  bounded.conservativeReason = "test analysis budget";
-  bounded.invocation.retirement =
-      o::Program::InvocationContract::DrainAllAtReturn;
-  auto boundedPlan = run(bounded);
-  check(boundedPlan.conservativeBarriers == bounded.operations.size() + 1);
-  auto missingBounded = boundedPlan.commands;
-  missingBounded[1].clear();
-  check(!o::verify(bounded, missingBounded).success);
-
-  // The first static phase is visited again: budget widening must not omit it.
+  // A fully serialized reference must cover the FIRST repeated phase too.
+  // There is no work-budget flag that can hide a missing original obligation.
   for (o::Program cyclic : {loop, whileProgram}) {
-    cyclic.conservativeCompletion = true;
-    cyclic.conservativeReason = "forced cyclic budget regression";
-    auto conservative = o::construct(cyclic);
-    check(conservative.success);
-    oracle(cyclic, conservative.commands);
-    check(!conservative.commands[0].empty());
-    auto missingFirst = conservative.commands;
-    missingFirst[0].clear();
-    check(!o::verify(cyclic, missingFirst).success);
+    o::Commands serialized(cyclic.operations.size()+1);
+    for (unsigned i=0;i<cyclic.operations.size();++i)
+      serialized[i].push_back({o::Command::BarrierAll});
+    check(o::verify(cyclic,serialized).success);
+    oracle(cyclic,serialized);
+    serialized[0].clear();
+    check(!o::verify(cyclic,serialized).success);
   }
 
   std::mt19937 rng(7321);
