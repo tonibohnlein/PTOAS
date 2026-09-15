@@ -1,0 +1,260 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/OAHS/Plan.h"
+#include <cstdlib>
+#include <iostream>
+#include <map>
+#include <random>
+#include <tuple>
+
+namespace o = mlir::pto::oahs;
+static unsigned checks = 0;
+static void checkAt(bool value, unsigned line) {
+  ++checks;
+  if (!value) {
+    std::cerr << "failed assertion " << checks << " at line " << line << '\n';
+    std::abort();
+  }
+}
+#define check(value) checkAt((value), __LINE__)
+static o::Program program(unsigned keys = 6) {
+  o::Program p;
+  p.cells.resize(3);
+  p.target.contract = "test-only asynchronous three-pipeline target";
+  p.target.barrierAll = true;
+  for (unsigned a = 0; a < 3; ++a) {
+    p.target.supported[a] = p.target.barriers[a] = true;
+    for (unsigned b = 0; b < 3; ++b)
+      if (a != b)
+        for (unsigned k = 0; k < keys; ++k) p.target.keys[a][b].push_back(k);
+  }
+  return p;
+}
+static o::Operation op(unsigned pipe, unsigned cell, bool write) {
+  o::Operation result;
+  result.pipe = o::Pipe(pipe);
+  result.accesses.push_back({cell, !write, write});
+  result.complete = true;
+  return result;
+}
+
+// Independent issue/completion graph. SET captures preceding completions and
+// source control, but cannot gate later source issue. No production transfer
+// function or constructor demand annotation is used by this oracle.
+static void oracle(const o::Program &p, const o::Commands &commands,
+                   std::vector<std::pair<unsigned, unsigned>> forbidden = {}) {
+  std::vector<std::vector<unsigned>> edges;
+  auto vertex = [&]() { edges.emplace_back(); return unsigned(edges.size() - 1); };
+  auto edge = [&](unsigned a, unsigned b) { edges[a].push_back(b); };
+  std::array<unsigned, o::PipeCount> control{};
+  for (auto &c : control) c = vertex();
+  std::array<std::vector<unsigned>, o::PipeCount> completions;
+  std::vector<unsigned> starts, finishes;
+  std::map<std::tuple<o::Pipe, o::Pipe, unsigned>, unsigned> tokens;
+  for (unsigned cut = 0; cut < commands.size(); ++cut) {
+    for (const auto &c : commands[cut]) {
+      auto v = vertex();
+      auto source = unsigned(c.source), observer = unsigned(c.observer);
+      auto key = std::make_tuple(c.source, c.observer, c.key);
+      if (c.kind == o::Command::Publish) {
+        edge(control[source], v);
+        for (auto done : completions[source]) edge(done, v);
+        check(!tokens.count(key)); tokens[key] = v;
+      } else if (c.kind == o::Command::Acquire) {
+        check(tokens.count(key)); edge(tokens.at(key), v); tokens.erase(key);
+        edge(control[observer], v); control[observer] = v;
+      } else if (c.kind == o::Command::Barrier) {
+        edge(control[source], v);
+        for (auto done : completions[source]) edge(done, v);
+        control[source] = v;
+      } else {
+        for (unsigned lane = 0; lane < o::PipeCount; ++lane) {
+          edge(control[lane], v);
+          for (auto done : completions[lane]) edge(done, v);
+          control[lane] = v;
+        }
+      }
+    }
+    if (cut == p.operations.size()) break;
+    auto lane = unsigned(p.operations[cut].pipe);
+    auto start = vertex(), done = vertex();
+    edge(control[lane], start); edge(start, done);
+    if (p.target.synchronous[lane]) control[lane] = done;
+    starts.push_back(start); finishes.push_back(done);
+    completions[lane].push_back(done);
+  }
+  auto reaches = [&](unsigned a, unsigned b) {
+    std::vector<bool> seen(edges.size());
+    std::vector<unsigned> todo{a};
+    while (!todo.empty()) {
+      auto current = todo.back(); todo.pop_back();
+      if (current == b) return true;
+      if (seen[current]) continue;
+      seen[current] = true;
+      for (auto next : edges[current]) todo.push_back(next);
+    }
+    return false;
+  };
+  for (unsigned i = 0; i < starts.size(); ++i)
+    for (unsigned j = i + 1; j < starts.size(); ++j)
+      for (const auto &a : p.operations[i].accesses)
+        for (const auto &b : p.operations[j].accesses)
+          if (a.cell == b.cell && (a.write || b.write || p.cells[a.cell].exclusive))
+            check(reaches(finishes[i], starts[j]));
+  check(tokens.empty());
+  for (const auto &pair : forbidden)
+    check(!reaches(finishes[pair.first], starts[pair.second]));
+}
+static o::Result run(const o::Program &p) {
+  auto result = o::construct(p);
+  if (!result.success) std::cerr << result.reason << '\n';
+  check(result.success);
+  check(o::verify(p, result.commands).success);
+  oracle(p, result.commands);
+  return result;
+}
+int main() {
+  auto p = program();
+  p.operations = {op(0, 0, true), op(0, 1, true), op(1, 1, false), op(1, 0, false)};
+  auto shared = run(p);
+  check(shared.handoffs.size() == 1);
+  check(shared.handoffs[0].publication == 2 && shared.handoffs[0].acquisition == 2);
+  auto deleted = shared.commands;
+  deleted[2].pop_back();
+  check(!o::verify(p, deleted).success);
+  auto early = shared.commands;
+  auto publication = early[2].front(); early[2].erase(early[2].begin());
+  early[0].push_back(publication);
+  check(!o::verify(p, early).success);
+
+  // A's first consumer must not acquire B's later production on the same lane.
+  p.operations = {op(0, 0, true), op(0, 1, true), op(1, 0, false)};
+  auto independent = run(p);
+  check(independent.handoffs.size() == 1 && independent.handoffs[0].publication == 1);
+  check(independent.commands.back().empty()); // No unrequested retirement/reply.
+  oracle(p, independent.commands, {{1, 2}});
+
+  // A release follows the actual last reader, before unrelated downstream work.
+  p.operations = {op(1, 0, false), op(1, 1, true), op(0, 0, true)};
+  auto release = run(p);
+  check(release.handoffs[0].publication == 1);
+  oracle(p, release.commands, {{1, 2}});
+
+  // The second transfer carries the first lane's previously acquired prefix.
+  p.operations = {op(0, 0, true), op(1, 0, false), op(1, 1, true),
+                  op(2, 1, false), op(2, 0, false)};
+  auto transitive = run(p);
+  check(transitive.handoffs.size() == 2);
+
+  p.operations = {op(0, 0, true), op(1, 0, false), op(0, 0, true), op(1, 0, false)};
+  auto fresh = run(p);
+  check(fresh.handoffs.size() == 3); // readiness, release, new readiness
+  auto reused = fresh.commands;
+  for (auto &cut : reused)
+    for (auto &c : cut)
+      if (c.kind == o::Command::Publish || c.kind == o::Command::Acquire) c.key = 0;
+  // The real return handoff acknowledges consumption: no extra reply required.
+  check(o::verify(p, reused).success);
+  auto unsafe = program();
+  unsafe.operations = {op(0, 0, true), op(1, 0, false), op(0, 1, true), op(1, 1, false)};
+  auto unsafePlan = run(unsafe);
+  for (auto &cut : unsafePlan.commands)
+    for (auto &c : cut) c.key = 0;
+  check(!o::verify(unsafe, unsafePlan.commands).success);
+
+  auto scarce = program(1); scarce.operations = unsafe.operations;
+  check(run(scarce).scarcityBarriers == 1);
+  scarce.target.barrierAll = false;
+  check(!o::construct(scarce).success);
+  p.operations = {op(0, 0, false), op(1, 0, false)};
+  check(run(p).handoffs.empty());
+  p.cells[0].exclusive = true;
+  check(run(p).handoffs.size() == 1);
+  check(!p.operations[0].accesses[0].write); // Exclusion did not change roles.
+  p.invocation.retirement =
+      o::Program::InvocationContract::DrainAllAtReturn;
+  run(p);
+  auto retired = o::construct(p).commands; retired.back().clear();
+  check(!o::verify(p, retired).success);
+  p.operations[0].complete = false;
+  check(!o::construct(p).success);
+  p.operations[0].complete = true;
+  p.operations[0].resources.push_back({"private queue", true, false});
+  check(o::analyze(p).success);
+  check(!o::construct(p).success);
+  p.operations[0].resources.clear();
+
+  // Analysis retains actual structured control and reports synthesis coverage
+  // separately. Every physical phase must occur in the region tree.
+  auto structured = program();
+  structured.operations = {op(0, 0, true), op(1, 0, true),
+                           op(2, 0, false)};
+  o::Region thenRegion{o::Region::Sequence,
+                       {{o::Region::Operation, {}, 0}}};
+  o::Region elseRegion{o::Region::Sequence,
+                       {{o::Region::Operation, {}, 1}}};
+  o::Region choice{o::Region::Choice, {thenRegion, elseRegion}};
+  structured.body = {o::Region::Sequence,
+                     {choice, {o::Region::Operation, {}, 2}}};
+  check(o::analyze(structured).success);
+  auto structuredPlan = o::construct(structured);
+  check(structuredPlan.success);
+  auto missingStructured = structuredPlan.commands;
+  missingStructured[2].clear();
+  check(!o::verify(structured, missingStructured).success);
+  structured.body.children[0].children[1].children.clear();
+  check(!o::analyze(structured).success);
+
+  auto loop = program();
+  loop.operations = {op(0, 0, true)};
+  o::Region loopBody{o::Region::Sequence,
+                     {{o::Region::Operation, {}, 0}}};
+  loop.body = {o::Region::For, {loopBody}, 0, true};
+  check(o::analyze(loop).success);
+  auto loopPlan = o::construct(loop);
+  check(loopPlan.success);
+  check(!loopPlan.commands[0].empty()); // repeated write generation
+
+  auto whileProgram = program();
+  whileProgram.operations = {op(0, 0, true), op(1, 0, false)};
+  o::Region before{o::Region::Sequence,
+                   {{o::Region::Operation, {}, 0}}};
+  o::Region after{o::Region::Sequence,
+                  {{o::Region::Operation, {}, 1}}};
+  whileProgram.body = {o::Region::While, {before, after}};
+  auto whilePlan = o::construct(whileProgram);
+  check(whilePlan.success);
+  check(!whilePlan.commands[0].empty() && !whilePlan.commands[1].empty());
+
+  // Analysis-budget exhaustion remains inside the same constructor and is
+  // independently reconstructed as a conservative all-pipeline realization.
+  auto bounded = program();
+  bounded.operations = {op(0, 0, true), op(1, 1, true), op(2, 2, false)};
+  bounded.conservativeCompletion = true;
+  bounded.conservativeReason = "test analysis budget";
+  bounded.invocation.retirement =
+      o::Program::InvocationContract::DrainAllAtReturn;
+  auto boundedPlan = run(bounded);
+  check(boundedPlan.conservativeBarriers == bounded.operations.size());
+  auto missingBounded = boundedPlan.commands;
+  missingBounded[1].clear();
+  check(!o::verify(bounded, missingBounded).success);
+
+  std::mt19937 rng(7321);
+  for (unsigned sample = 0; sample < 200; ++sample) {
+    auto random = program(1 + rng() % 3);
+    random.invocation.retirement = sample % 2
+        ? o::Program::InvocationContract::DrainAllAtReturn
+        : o::Program::InvocationContract::NoRetirement;
+    random.cells[0].exclusive = sample % 3 == 0;
+    for (unsigned i = 0; i < 16; ++i)
+      random.operations.push_back(op(rng() % 3, rng() % 3, rng() % 2));
+    run(random);
+  }
+  std::cout << checks << " OAHS assertions passed (including 200 independent graph checks)\n";
+}
