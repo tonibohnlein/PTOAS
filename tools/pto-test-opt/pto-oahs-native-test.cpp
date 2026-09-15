@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/Native.h"
+#include "PTO/Transforms/OAHS/Prefixes.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/SyncOrdinaryExternalModels.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -62,6 +63,14 @@ module attributes {pto.target_arch = "a3"} {
     require(text(function) == before);
     require(succeeded(oahs::analyzeHandoffSync(function)));
     require(text(function) == before);
+    // M2 queries own the imported state and never change native IR. The load's
+    // enclosing unconditional cut cannot pair with an optional branch consumer.
+    oahs::PrefixQuery prefixes(report.program);
+    const auto cover = prefixes.coverByPrefixes(1);
+    require(cover.coversAll() && !cover.selected.empty());
+    require(cover.candidates[cover.selected.front()].publication == 1);
+    require(!prefixes.inspectPrefix(oahs::Pipe::MTE2, 0, 1).matchingEstablished);
+    require(text(function) == before);
     // The same imported program/analysis explains and verifies the candidate.
     const auto plan = oahs::construct(report.program);
     require(plan.success && oahs::analyze(report.program, plan.commands).verified());
@@ -91,6 +100,47 @@ module attributes {pto.target_arch = "a3"} {
       });
     if (!mutation) require(succeeded(result) && succeeded(verify(function)));
     else require(changed && failed(result) && text(function) == before);
+  }
+  {
+    const char *earlySource = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @early_prefix(%src: !pto.partition_tensor_view<1x32xf32>, %b: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %x = arith.constant 0 : i64
+    %y = arith.constant 128 : i64
+    %z = arith.constant 256 : i64
+    %a = pto.alloc_tile addr = %x : !pto.tile_buf<vec, 1x32xf32>
+    %other = pto.alloc_tile addr = %y : !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %z : !pto.tile_buf<vec, 1x32xf32>
+    scf.if %b {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%other : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    }
+    return
+  }
+})mlir";
+    auto module = parseSourceString<ModuleOp>(earlySource, &context);
+    require(bool(module));
+    auto function = module->lookupSymbol<func::FuncOp>("early_prefix");
+    const auto before = text(function);
+    oahs::NativeAnalysis imported;
+    require(succeeded(oahs::analyzeHandoffSync(function, imported)));
+    oahs::PrefixQuery query(imported.program);
+    const auto cover = query.coverByPrefixes(2);
+    require(cover.coversAll() && cover.selected.size() == 1);
+    const auto &prefix = cover.candidates[cover.selected.front()];
+    require(prefix.publication == 1 && prefix.acquisition == 2);
+    require(prefix.sourceContext == prefix.targetContext);
+    require(text(function) == before);
+    require(succeeded(oahs::runHandoffSync(function)));
+    // The analysis report's old phase pointers are invalid after replacement.
+    llvm::SmallVector<TLoadOp> loads;
+    function.walk([&](TLoadOp load) { loads.push_back(load); });
+    require(loads.size() == 2);
+    require(loads[1]->getPrevNode() && isa<SetFlagOp>(loads[1]->getPrevNode()));
+    require(loads[1]->getNextNode() && isa<WaitFlagOp>(loads[1]->getNextNode()));
+    require(succeeded(verify(function)));
   }
   // Repeated identical footprints must not cross a compiler-work threshold
   // and switch to ALL. This population exceeded the old million-pair cutoff.
@@ -122,5 +172,5 @@ module attributes {pto.target_arch = "a3"} {
   unsigned drains = 0;
   manyFunction.walk([&](BarrierOp barrier) { drains += barrier.getPipe().getPipe() == PIPE::PIPE_ALL; });
   require(drains == 1); // original invocation retirement, not a budget fallback
-  llvm::outs() << "OAHS native placement/atomicity/grouped-footprint checks passed\n";
+  llvm::outs() << "OAHS native placement/atomicity/grouped-footprint/prefix checks passed\n";
 }

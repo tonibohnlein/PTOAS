@@ -11,12 +11,22 @@
 #include <algorithm>
 #include <map>
 #include <numeric>
+#include <limits>
 #include <stdexcept>
 #include <tuple>
 namespace oahs_oracle {
 namespace o = mlir::pto::oahs;
 struct UncoveredConflict {
   unsigned producerVisit, consumerVisit, cell;
+};
+// Test-only immutable-prefix probe. Observation vertices have incoming edges
+// from actual source finishes and NO outgoing edges: they cannot repair any
+// missing memory order or improve a later source receipt.
+struct PrefixProbe {
+  o::Pipe source = o::Pipe::S;
+  o::Cut publication = 0, acquisition = 0;
+  std::vector<o::Demand> claims;
+  bool matching = true, coverage = true;
 };
 struct Verdict { bool hazards=true, rearm=true, balanced=true, acyclic=true;
   explicit operator bool() const { return hazards && rearm && balanced && acyclic; } };
@@ -26,7 +36,8 @@ struct Verdict { bool hazards=true, rearm=true, balanced=true, acyclic=true;
 inline Verdict graph(const o::Program &truth, const o::Commands &commands,
               const std::vector<unsigned> &visits,
               const std::vector<std::pair<unsigned,unsigned>> &forbidden = {},
-              std::vector<UncoveredConflict> *uncovered = nullptr) {
+              std::vector<UncoveredConflict> *uncovered = nullptr,
+              PrefixProbe *prefix = nullptr) {
   using K=std::tuple<o::Pipe,o::Pipe,unsigned>;
   std::vector<std::vector<unsigned>> edges;
   auto vertex=[&]() { edges.emplace_back(); return unsigned(edges.size()-1); };
@@ -36,7 +47,10 @@ inline Verdict graph(const o::Program &truth, const o::Commands &commands,
   for(unsigned a=0;a<o::PipeCount;++a) launch[a]=gate[a]=vertex();
   std::map<K,unsigned> live,lastWait;
   std::vector<std::pair<unsigned,unsigned>> rearms;
-  std::vector<unsigned> starts,dones;
+  std::vector<unsigned> starts,dones, observedPrefixes;
+  const unsigned noPrefix = std::numeric_limits<unsigned>::max();
+  unsigned livePrefix = noPrefix;
+  if (prefix) { prefix->matching = true; prefix->coverage = true; }
   Verdict v;
   auto sync=[&](const o::Command &c) {
     auto i=vertex(),f=vertex(); edge(i,f);
@@ -68,7 +82,18 @@ inline Verdict graph(const o::Program &truth, const o::Commands &commands,
     finishes[engine].push_back(f);
   };
   for(unsigned id:visits) {
+    if (prefix && id == prefix->publication) {
+      prefix->matching &= livePrefix == noPrefix;
+      livePrefix = vertex();
+      for (auto f : finishes[unsigned(prefix->source)]) edge(f, livePrefix);
+    }
     for(const auto &c:commands.at(id)) sync(c);
+    unsigned observed = noPrefix;
+    if (prefix && id == prefix->acquisition) {
+      prefix->matching &= livePrefix != noPrefix;
+      observed = livePrefix; livePrefix = noPrefix;
+    }
+    observedPrefixes.push_back(observed);
     unsigned p=unsigned(truth.operations[id].pipe);
     auto i=vertex(),f=vertex(); edge(launch[p],i); edge(gate[p],i); edge(i,f);
     launch[p]=i; if(truth.target.synchronous[p]) gate[p]=f;
@@ -76,6 +101,7 @@ inline Verdict graph(const o::Program &truth, const o::Commands &commands,
   }
   for(const auto &c:commands.back()) sync(c);
   v.balanced &= live.empty();
+  if (prefix) prefix->matching &= livePrefix == noPrefix;
   auto reaches=[&](unsigned a,unsigned b) {
     std::vector<unsigned> work{a}; std::vector<bool> seen(edges.size());
     while(!work.empty()) {
@@ -101,6 +127,16 @@ inline Verdict graph(const o::Program &truth, const o::Commands &commands,
           v.hazards &= covered;
           if (!covered && uncovered) uncovered->push_back({i,j,a.cell});
         }
+  if (prefix) {
+    for (unsigned j = 0; j < visits.size(); ++j) {
+      if (visits[j] != prefix->acquisition) continue;
+      if (observedPrefixes[j] == noPrefix) { prefix->coverage = false; continue; }
+      for (unsigned i = 0; i < j; ++i)
+        for (const auto &claim : prefix->claims)
+          if (claim.producer == visits[i] && claim.consumer == visits[j])
+            prefix->coverage &= reaches(dones[i], observedPrefixes[j]);
+    }
+  }
   for(auto [a,b]:rearms) v.rearm &= reaches(a,b);
   for(auto [a,b]:forbidden) v.hazards &= !reaches(dones.at(a), starts.at(b));
   return v;
