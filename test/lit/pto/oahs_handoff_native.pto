@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-insert-sync > %t.default
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=existing' > %t.existing
+// RUN: diff %t.default %t.existing
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @shared_prefix(%src: !pto.ptr<f32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %n = arith.constant 32 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 128 : i64
+    %a2 = arith.constant 256 : i64
+    %a = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 1x32xf32>
+    %view = pto.make_tensor_view %src, shape = [%one, %n], strides = [%n, %one]
+      : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%z, %z], sizes = [%one, %n]
+      : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x32xf32>
+    pto.tload ins(%part : !pto.partition_tensor_view<1x32xf32>)
+      outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tload ins(%part : !pto.partition_tensor_view<1x32xf32>)
+      outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tadd ins(%a, %b : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>)
+      outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @shared_prefix
+// CHECK: pto.tload
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, #pto.event<EVENT_ID0>]
+// CHECK-NEXT: pto.wait_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, #pto.event<EVENT_ID0>]
+// CHECK-NEXT: pto.tadd
+// CHECK: pto.barrier #pto.pipe<PIPE_ALL>
+// CHECK-NEXT: return
