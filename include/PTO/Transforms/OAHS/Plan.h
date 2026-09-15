@@ -85,13 +85,8 @@ struct Program {
   Region body;
   std::vector<EventIdentity> reservations;
   Target target;
-  // A bounded analysis may require a target-supported conservative result.
-  // The reason is retained as part of the imported contract and this still
-  // flows through the same constructor and reconstructed verifier.
-  uint64_t verificationWorkLimit = 1u << 26;
-  uint64_t constructionStepLimit = 1u << 16;
-  bool conservativeCompletion = false;
-  std::string conservativeReason;
+  // Essential analyses run to their finite fixed points. Resource limits are
+  // target/ABI facts; no compiler-work allowance changes these obligations.
   struct InvocationContract {
     enum Retirement { NoRetirement, DrainAllAtReturn } retirement = NoRetirement;
     std::string alias;
