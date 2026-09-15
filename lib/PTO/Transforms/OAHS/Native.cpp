@@ -430,14 +430,21 @@ LogicalResult runHandoffSync(func::FuncOp function) {
   return testing::runHandoffSyncWithMutation(function, {});
 }
 
-LogicalResult analyzeHandoffSync(func::FuncOp function) {
+LogicalResult analyzeHandoffSync(func::FuncOp function, NativeAnalysis &result) {
+  result = NativeAnalysis{};
   if (getTargetArch(function) != PTOArch::A3)
     return function.emitError("handoff: native analysis target is a3");
   Import input;
   if (failed(import(function, input))) return failure();
-  Result result = analyze(input.program);
-  if (!result.success)
-    return function.emitError("handoff analysis: ") << result.reason;
+  result.analysis = analyze(input.program);
+  result.program = std::move(input.program);
+  result.phases = std::move(input.payload);
+  if (!result.analysis.complete)
+    return function.emitError("handoff analysis: ") << result.analysis.reason;
   return success();
+}
+LogicalResult analyzeHandoffSync(func::FuncOp function) {
+  NativeAnalysis result;
+  return analyzeHandoffSync(function, result);
 }
 } // namespace mlir::pto::oahs
