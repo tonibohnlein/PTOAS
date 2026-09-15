@@ -240,13 +240,9 @@ def main():
     unqualified = args.output / 'gm-forwarded-origins-may-alias.pto'
     unqualified.write_text(forwarded.read_text().replace(
         ',\n      pto.noalias_pairs = array<i64: 0, 1, 0, 2, 1, 2>', ''))
-    row = compile_precision('gm-forwarded-origins-may-alias', unqualified, expected=False)
-    if PUBLICATION not in row.get('first_refusal', ''):
-        raise RuntimeError('unqualified forwarded GM roots lost conservative publication refusal')
+    row = compile_precision('gm-forwarded-origins-may-alias', unqualified)
     unknown_source = fixtures / 'gm_unknown_isolation.pto'
-    row = compile_precision('gm-unknown-isolation', unknown_source, expected=False)
-    if PUBLICATION not in row.get('first_refusal', ''):
-        raise RuntimeError('unknown GM access lost conservative publication refusal')
+    row = compile_precision('gm-unknown-isolation', unknown_source)
     report = next(json.loads(line.removeprefix('OAHS_WITNESS '))
                   for line in (args.output / (row['log'] + '.stderr')).read_text().splitlines()
                   if line.startswith('OAHS_WITNESS '))
@@ -261,7 +257,7 @@ def main():
         raise RuntimeError('unknown GM access collapsed or failed to cover known disjoint roots')
     budget_source = args.output / 'gm-origin-budget.pto'
     write_origin_budget_case(budget_source)
-    row = compile_precision('gm-origin-budget', budget_source, expected=False)
+    row = compile_precision('gm-origin-budget', budget_source)
     report = next(json.loads(line.removeprefix('OAHS_WITNESS '))
                   for line in (args.output / (row['log'] + '.stderr')).read_text().splitlines()
                   if line.startswith('OAHS_WITNESS '))
@@ -271,7 +267,7 @@ def main():
         raise RuntimeError('bounded origin exhaustion discarded a discovered finite root')
     capacity_source = args.output / 'gm-cell-capacity.pto'
     write_cell_capacity_case(capacity_source)
-    row = compile_precision('gm-cell-capacity', capacity_source, expected=False)
+    row = compile_precision('gm-cell-capacity', capacity_source)
     report = next(json.loads(line.removeprefix('OAHS_WITNESS '))
                   for line in (args.output / (row['log'] + '.stderr')).read_text().splitlines()
                   if line.startswith('OAHS_WITNESS '))
@@ -288,6 +284,7 @@ def main():
         raise RuntimeError('bounded GM coarsening collapsed independent known-root groups')
     ranges = fixtures / 'gm_same_root_ranges.pto'
     row = compile_precision('gm-same-root-disjoint-ranges', ranges)
+    disjoint_output = (args.output / (row['log'] + '.stdout')).read_text()
     report = next(json.loads(line.removeprefix('OAHS_WITNESS '))
                   for line in (args.output / (row['log'] + '.stderr')).read_text().splitlines()
                   if line.startswith('OAHS_WITNESS '))
@@ -299,9 +296,26 @@ def main():
     overlap = args.output / 'gm-same-root-overlap.pto'
     overlap.write_text(ranges.read_text().replace(
         'offsets = [%c64], sizes = [%c64]', 'offsets = [%c32], sizes = [%c64]'))
-    row = compile_precision('gm-same-root-overlap', overlap, expected=False)
-    if PUBLICATION not in row.get('first_refusal', ''):
-        raise RuntimeError('overlapping same-root GM intervals lost publication refusal')
+    row = compile_precision('gm-same-root-overlap', overlap)
+    overlap_output = (args.output / (row['log'] + '.stdout')).read_text()
+    if overlap_output.count('pto.set_flag') <= disjoint_output.count('pto.set_flag'):
+        raise RuntimeError('overlapping ordinary GM accesses lost their completion handoff')
+    # The ordinary DMA contract does not silently cover other access modes.
+    for name, text in (
+        ('gm-atomic-overlap', overlap.read_text().replace('i8', 'f32').replace(
+            'outs(%written : !pto.partition_tensor_view<64xf32>)',
+            'outs(%written : !pto.partition_tensor_view<64xf32>) '
+            '{atomicType = #pto<atomic_type atomic_add>}')),
+        ('gm-cache-policy-overlap', overlap.read_text().replace(
+            'outs(%sink : !pto.tile_buf<vec, 1x64xi8>)',
+            'outs(%sink : !pto.tile_buf<vec, 1x64xi8>) '
+            '{cache_policy = #pto.load_cache_policy<l2_bypass>}')),
+    ):
+        source = args.output / (name + '.pto')
+        source.write_text(text)
+        row = compile_precision(name, source, expected=False)
+        if PUBLICATION not in row.get('first_refusal', ''):
+            raise RuntimeError(name + ': did not exercise the separate publication contract')
     # The emitted entry predicate is signed. An unsigned comparison attribute
     # must not acquire the signed First/NonEmpty contract by accident.
     entry_text = (fixtures / 'demand_entry.pto').read_text()
@@ -541,7 +555,7 @@ def main():
     if 'authored remote notify requires the qualified AIV contract' not in row.get('first_refusal', ''):
         raise RuntimeError('remote notification did not remain fail-closed on AIC')
     compile_case('same-address-gm-visibility', fixtures / 'nested_mixed_sequence.pto',
-                 gm='may-alias', expected=False)
+                 gm='may-alias')
     source = fixtures / 'composition_while_forwarding.pto'
     for mutation in ('none', 'drop-wait', 'drop-set', 'duplicate-set', 'wrong-key',
                      'drop-packet', 'late-packet', 'wrong-reply-key', 'drop-retirement',

@@ -151,6 +151,11 @@ struct Program {
     Target target;
     unsigned cells = 0;
     std::vector<bool> globalMemory;
+    // Production ordinary same-core DMA contract: completion of a GM write
+    // suffices for a later DMA read. Native import derives this per cell from
+    // ordinary TLOAD/TSTORE effects; macro/other DMA paths receive no credit.
+    // Empty retains strict publication qualification for portable callers.
+    std::vector<bool> ordinaryGmDmaCompletion;
     std::vector<Node> nodes;
     // Original synchronization is immutable input, not a generated
     // Mechanism. Each list executes immediately before its node.

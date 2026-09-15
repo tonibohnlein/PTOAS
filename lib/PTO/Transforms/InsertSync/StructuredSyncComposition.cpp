@@ -205,6 +205,10 @@ bool summarize(const c::Program& p, std::vector<c::Effects>& summaries, std::str
         reason = "invalid visibility cell population";
         return false;
     }
+    if (!p.ordinaryGmDmaCompletion.empty() && p.ordinaryGmDmaCompletion.size() != p.cells) {
+        reason = "invalid ordinary DMA contract population";
+        return false;
+    }
     if (!p.fixedBefore.empty() && p.fixedBefore.size() != p.nodes.size()) {
         reason = "invalid authored synchronization population";
         return false;
@@ -373,13 +377,19 @@ VisibilityNeed visibilityNeed(const c::Program& p, const c::Node& n, const c::St
         for (unsigned source = 0; source < c::LaneCount; ++source) {
             if (!(state.written[observer][i] & (uint8_t(1u) << source)) || source == observer)
                 continue;
-            // The qualified hardware model requires an explicit cache/fence
-            // recipe only when a GM value crosses the scalar data cache.  It
-            // separately keeps MTE3->MTE2 same-address publication fail-closed.
-            // Other non-scalar pairs still need completion, which is tracked
-            // independently by State::pending and a directed handoff.
+            // Scalar-cache crossings retain explicit cache/fence requirements.
+            // Non-scalar completion is tracked independently by State::pending.
+            // DMA paths outside the imported ordinary contract retain the
+            // separate publication requirement.
             bool scalarCrossing = (source == unsigned(Pipe::S)) != (observer == unsigned(Pipe::S));
-            unsupportedMte3ToMte2 |= targetReads && source == unsigned(Pipe::MTE3) && observer == unsigned(Pipe::MTE2);
+            // Ordinary DMA uses the production completion contract. All RAW,
+            // WAR and WAW obligations remain in pending; an already acquired
+            // prefix can satisfy them without moving or adding endpoints.
+            // written is visibility history, so it must not recreate an
+            // ordinary DMA demand after pending completion was acquired.
+            const bool ordinaryDma = !p.ordinaryGmDmaCompletion.empty() && p.ordinaryGmDmaCompletion[i];
+            unsupportedMte3ToMte2 |= !ordinaryDma && targetReads &&
+                source == unsigned(Pipe::MTE3) && observer == unsigned(Pipe::MTE2);
             cleanSource |= scalarCrossing && observer != unsigned(Pipe::S);
             invalidateTarget |= scalarCrossing && observer == unsigned(Pipe::S) && targetReads;
             fenceOnly |= scalarCrossing && observer == unsigned(Pipe::S) && targetWrites && !targetReads &&

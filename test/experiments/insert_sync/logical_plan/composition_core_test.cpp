@@ -4154,6 +4154,78 @@ int main()
     gm.globalMemory = {true};
     require(!c::construct(gm).success);
     require(!c::verify(gm, complete.before).success);
+    // Production DMA completion uses the same pending obligations as local
+    // storage. No event gets visibility credit for scalar or macro paths.
+    gm.ordinaryGmDmaCompletion = {true};
+    require(c::construct(gm).success);
+    require(c::verify(gm, complete.before).success);
+    complete.before[load].clear();
+    require(!c::verify(gm, complete.before).success);
+    {
+        c::Program reuse;
+        reuse.cells = 2;
+        reuse.globalMemory = {false, true};
+        reuse.ordinaryGmDmaCompletion = {false, true};
+        auto write = op(reuse, unsigned(Pipe::MTE3), 1, true);
+        reuse.nodes[write].effects[0].readers = 1u << unsigned(Pipe::MTE3);
+        auto overwrite = op(reuse, unsigned(Pipe::MTE2), 0, true);
+        auto read = op(reuse, unsigned(Pipe::MTE2), 1, false);
+        sequence(reuse, {write, overwrite, read});
+        auto reused = c::construct(reuse);
+        require(reused.success);
+        require(!reused.before[overwrite].empty());
+        require(reused.before[read].empty());
+        require(c::verify(reuse, reused.before).success);
+        auto missing = reused.before;
+        missing[overwrite].clear();
+        require(!c::verify(reuse, missing).success);
+        // A fresh write after the acquisition is not covered by its receipt.
+        // Keep the tree in lexical postorder while inserting the new write.
+        reuse.nodes.resize(2);
+        unsigned fresh = op(reuse, unsigned(Pipe::MTE3), 1, true);
+        read = op(reuse, unsigned(Pipe::MTE2), 1, false);
+        sequence(reuse, {write, overwrite, fresh, read});
+        missing = reused.before;
+        missing.resize(reuse.nodes.size());
+        require(!c::verify(reuse, missing).success);
+        auto repaired = c::construct(reuse);
+        require(repaired.success && !repaired.before[read].empty());
+        require(c::verify(reuse, repaired.before).success);
+    }
+    {
+        // A transitive MTE3 -> V -> MTE2 path also supplies GM readiness.
+        c::Program reuse;
+        reuse.cells = 3;
+        reuse.globalMemory = {false, false, true};
+        reuse.ordinaryGmDmaCompletion = {false, false, true};
+        auto write = op(reuse, unsigned(Pipe::MTE3), 2, true);
+        reuse.nodes[write].effects[0].writers = 1u << unsigned(Pipe::MTE3);
+        auto transform = op(reuse, unsigned(Pipe::V), 0, false);
+        reuse.nodes[transform].effects[1].writers = 1u << unsigned(Pipe::V);
+        auto consume = op(reuse, unsigned(Pipe::MTE2), 1, false);
+        auto read = op(reuse, unsigned(Pipe::MTE2), 2, false);
+        sequence(reuse, {write, transform, consume, read});
+        auto plan = c::construct(reuse);
+        require(plan.success && plan.before[read].empty());
+        require(c::verify(reuse, plan.before).success);
+        auto precise = c::constructDemands(reuse);
+        require(precise.success && c::verifyDemands(reuse, precise.before).success);
+        require(precise.before[read].empty());
+        // With the same hazards represented as local storage, construction
+        // selects exactly the same command sites: no GM-specific motion.
+        reuse.globalMemory[2] = false;
+        auto local = c::constructDemands(reuse);
+        require(local.success);
+        for (unsigned site = 0; site < local.before.size(); ++site) {
+            require(local.before[site].size() == precise.before[site].size());
+            for (unsigned i = 0; i < local.before[site].size(); ++i) {
+                const auto& a = local.before[site][i];
+                const auto& b = precise.before[site][i];
+                require(a.kind == b.kind && a.first == b.first && a.second == b.second &&
+                        a.forwardKey == b.forwardKey && a.reverseKey == b.reverseKey);
+            }
+        }
+    }
     p.target.compilerKeys.clear();
     require(!c::construct(p).success);
     p.cells = c::MaxCells + 1;

@@ -974,6 +974,7 @@ struct Tree {
         program.cells = cells.size();
         for (const auto& cell : cells)
             program.globalMemory.push_back(cell.space == AddressSpace::GM);
+        program.ordinaryGmDmaCompletion = program.globalMemory;
     }
     unsigned add(c::Node n, Operation* anchor = nullptr)
     {
@@ -1083,7 +1084,7 @@ struct Tree {
         return overlaps;
     }
     bool addEffects(c::Effects& effects, unsigned source, const CompoundInstanceElement* phase,
-                    c::Effects* byteEffects = nullptr)
+                    c::Effects* byteEffects = nullptr, bool ordinaryDma = false)
     {
         auto access = [&](const auto& entries, bool write) {
             for (auto* a : entries)
@@ -1094,6 +1095,9 @@ struct Tree {
                     bool overlaps = accessOverlaps(cell, a);
                     if (!overlaps)
                         continue;
+                    if (cell.space == AddressSpace::GM &&
+                        (source == unsigned(ss::Pipe::MTE2) || source == unsigned(ss::Pipe::MTE3)) && !ordinaryDma)
+                        program.ordinaryGmDmaCompletion[j] = false;
                     if (write)
                         effects[j].writers |= 1u << source;
                     else
@@ -1266,7 +1270,13 @@ struct Tree {
                     current.kind = c::Node::Operation;
                     current.lane = *source;
                     current.byteEffects.resize(program.cells);
-                    addEffects(current.effects, *source, phase, &current.byteEffects);
+                    bool ordinaryDma = isa<TLoadOp>(&op) && !op.hasAttr("cache_policy");
+                    if (auto store = dyn_cast<TStoreOp>(&op))
+                        ordinaryDma = store.getAtomicType() == AtomicType::AtomicNone &&
+                            !store.getFp() && !store.getPreQuantScalar() &&
+                            store.getStPhase() == STPhase::Unspecified;
+                    addEffects(current.effects, *source, phase, &current.byteEffects,
+                               ordinaryDma);
                     if (program.target.ownershipCredit && unitFlags) {
                         auto ownership = unitFlags->find(&op);
                         if (ownership != unitFlags->end())
