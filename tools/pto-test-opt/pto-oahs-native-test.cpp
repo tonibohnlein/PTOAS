@@ -46,8 +46,25 @@ module attributes {pto.target_arch = "a3"} {
     require(bool(module));
     auto function = module->lookupSymbol<func::FuncOp>("test");
     const std::string before = text(function);
+    oahs::NativeAnalysis report;
+    require(succeeded(oahs::analyzeHandoffSync(function, report)));
+    require(report.analysis.complete && !report.analysis.verified());
+    require(report.phases.size() == 2 && report.program.operations.size() == 2);
+    require(isa<TLoadOp>(report.phases[0]) && isa<TAddOp>(report.phases[1]));
+    bool raw = false;
+    for (const auto &r : report.analysis.residuals)
+      raw |= r.kind == oahs::CompletionRequirement::RAW &&
+             r.demand.producer == 0 && r.demand.consumer == 1;
+    require(raw && report.analysis.protocol.empty());
+    const auto contextId = report.analysis.cuts[1].context;
+    require(report.analysis.contexts[contextId].kind == oahs::AnalysisContext::ThenArm);
+    require(!report.analysis.retirement.empty());
+    require(text(function) == before);
     require(succeeded(oahs::analyzeHandoffSync(function)));
     require(text(function) == before);
+    // The same imported program/analysis explains and verifies the candidate.
+    const auto plan = oahs::construct(report.program);
+    require(plan.success && oahs::analyze(report.program, plan.commands).verified());
   }
   for (unsigned mutation = 0; mutation < 3; ++mutation) {
     auto module = parseSourceString<ModuleOp>(source, &context);
