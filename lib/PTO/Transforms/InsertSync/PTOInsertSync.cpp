@@ -19,6 +19,7 @@
 #include "PTO/Transforms/InsertSync/RemoveRedundantSync.h"
 #include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
+#include "PTO/Transforms/OAHS/Native.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h" // [FIX] 确保 FuncOp 定义可见
 
@@ -69,6 +70,15 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     if (func.isDeclaration()) {
       return;
     }
+    if (algorithm == "handoff") {
+      if (failed(oahs::runHandoffSync(func))) signalPassFailure();
+      return;
+    }
+    if (algorithm != "existing") {
+      func.emitError("unknown synchronization algorithm; expected existing or handoff");
+      signalPassFailure();
+      return;
+    }
 
     // If the function already contains explicit synchronization ops (either
     // low-level pipe flags or the higher-level record/wait events), do not run
@@ -97,7 +107,10 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
 
     // 1. Translator: 构建 SyncIR
     PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, func, SyncAnalysisMode::NORMALSYNC);
-    translator.Build();
+    if (failed(translator.Build())) {
+      signalPassFailure();
+      return;
+    }
 
     // 如果 IR 太简单，直接跳过
     if (syncIR.size() <= 1) {
