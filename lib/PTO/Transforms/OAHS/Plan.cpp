@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/Plan.h"
 #include "Transfer.h"
+#include "PrefixQueries.h"
 #include <algorithm>
 #include <map>
 #include <optional>
@@ -194,7 +195,7 @@ Commands render(const Program &p, const Commands &barriers, const std::vector<Pa
   // capture only knowledge actually established at that cut on reconstruction.
   for (const auto &packet : packets) {
     const auto &h = packet.handoff;
-    if (h.publication < h.acquisition)
+    if (h.publication != h.acquisition)
       result[h.publication].insert(result[h.publication].begin(),
           {Command::Publish, h.source, h.observer, packet.key});
   }
@@ -292,6 +293,63 @@ Result verify(const Program &p, const Commands &commands) {
   return result;
 }
 
+PrefixQuery::PrefixQuery(Program p, Commands c) : impl(std::make_unique<Impl>(std::move(p), std::move(c))) {}
+PrefixQuery::PrefixQuery(Program p) {
+  Commands empty(p.operations.size() + 1);
+  impl = std::make_unique<Impl>(std::move(p), std::move(empty));
+}
+PrefixQuery::~PrefixQuery() = default;
+PrefixQuery::PrefixQuery(PrefixQuery &&) noexcept = default;
+PrefixQuery &PrefixQuery::operator=(PrefixQuery &&) noexcept = default;
+const AnalysisResult &PrefixQuery::analysis() const { return impl->report; }
+std::vector<CompletionRequirement> PrefixQuery::consumerRequirements(Cut consumer) const {
+  return impl->requirements(consumer);
+}
+BackwardCutResult PrefixQuery::backwardCuts(Cut consumer) const { return impl->backward(consumer); }
+ProspectivePrefix PrefixQuery::inspectPrefix(Pipe source, Cut publication, Cut consumer) const {
+  return impl->inspect(source, publication, consumer, impl->backward(consumer));
+}
+PrefixCover PrefixQuery::coverByPrefixes(Cut consumer) const {
+  PrefixCover out; out.consumer = consumer; out.backward = impl->backward(consumer);
+  if (!out.backward.complete) { out.reason = out.backward.reason; return out; }
+  out.requirements = impl->requirements(consumer);
+  out.jointUncoveredOperations.assign(impl->program.operations.size(), 1);
+  out.complete = true;
+  if (out.requirements.empty()) return out;
+  for (const auto &cut : out.backward.cuts)
+    for (unsigned source = 0; source < PipeCount; ++source) {
+      if (!impl->program.target.supported[source]) continue;
+      if (Pipe(source) == impl->program.operations[consumer].pipe && cut.cut != consumer) continue;
+      // A prospective remainder only GROWS between captures. If its seed leaves
+      // every required class outstanding it cannot discharge a component here.
+      const auto seed = impl->sourceRemainder(Pipe(source), cut.cut);
+      const bool useful = std::any_of(out.requirements.begin(), out.requirements.end(),
+                           [&](const CompletionRequirement &r) { return !seed[r.demand.producer]; });
+      if (useful) out.candidates.push_back(impl->inspect(Pipe(source), cut.cut, consumer, out.backward));
+    }
+  std::vector<bool> remaining(out.requirements.size(), true);
+  while (true) {
+    std::size_t best = NoAnalysisId, bestGain = 0;
+    for (std::size_t i = 0; i < out.candidates.size(); ++i) {
+      const auto &candidate = out.candidates[i];
+      if (!candidate.selectable()) continue;
+      std::size_t gain = 0;
+      for (auto component : candidate.coveredRequirements) gain += remaining[component];
+      // Candidates are generated in source-cut/lane order. Equal gain keeps the
+      // earlier cut. This is a tie-break, not a structured order-dominance proof.
+      if (gain > bestGain) { best = i; bestGain = gain; }
+    }
+    if (!bestGain) break;
+    out.selected.push_back(best);
+    for (std::size_t op = 0; op < out.jointUncoveredOperations.size(); ++op)
+      out.jointUncoveredOperations[op] &= out.candidates[best].uncoveredOperations[op];
+    for (auto component : out.candidates[best].coveredRequirements) remaining[component] = false;
+  }
+  for (std::size_t i = 0; i < remaining.size(); ++i) if (remaining[i]) out.remaining.push_back(i);
+  if (!out.remaining.empty()) out.reason = "no established prospective cover for every residual component";
+  return out;
+}
+
 Result construct(const Program &p) {
   Result result;
   if (!valid(p, result.reason) || !supportedEffects(p, result.reason)) return result;
@@ -334,11 +392,30 @@ Result construct(const Program &p) {
         if (!barrierSlots.insert(slot).second) return conservative(p, true);
         barriers[consumer].push_back({Command::Barrier, source});
       } else if (source != observer) {
-        auto key = chooseKey(p, packets, source, observer);
+        // Query only established M1 facts for source-prefix proposals. The
+        // session owns this exact candidate and is discarded after every edit.
+        // Realization/reuse can still fail; no coverage record bypasses verify.
+        PrefixQuery query(p, actual);
+        const auto cover = query.coverByPrefixes(consumer);
+        const ProspectivePrefix *best = nullptr;
+        for (const auto &candidate : cover.candidates) {
+          if (!candidate.selectable() || candidate.source == observer) continue;
+          const bool suppliesSource = std::all_of(issue.missing.begin(), issue.missing.end(),
+            [&](const Demand &d) {
+              return p.operations[d.producer].pipe != source ||
+                     !candidate.uncoveredOperations[d.producer];
+            });
+          if (!suppliesSource) continue;
+          if (!best || candidate.coveredRequirements.size() > best->coveredRequirements.size()) best = &candidate;
+        }
+        const Pipe publisher = best ? best->source : source;
+        auto key = chooseKey(p, packets, publisher, observer);
         if (key) {
-          Cut publication = oneVisit && chosen.producer < consumer ? chosen.producer + 1 : consumer;
+          // A missing precise query does not remove the ordinary source cut.
+          // The co-located source/target packet is checked like every other plan.
+          const Cut publication = best ? best->publication : consumer;
           packetSlots.emplace(slot, packets.size());
-          packets.push_back({{source, observer, publication, consumer}, *key, {}});
+          packets.push_back({{publisher, observer, publication, consumer}, *key, {}});
         } else if (p.target.barrierAll) {
           if (!barrierSlots.insert(slot).second) return conservative(p, true);
           barriers[consumer].push_back({Command::BarrierAll});
