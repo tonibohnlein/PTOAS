@@ -54,10 +54,6 @@ bool valid(const Program &p, std::string &reason) {
     reason = "missing target contract";
     return false;
   }
-  if (p.conservativeCompletion && p.conservativeReason.empty()) {
-    reason = "conservative completion requires an explicit analysis reason";
-    return false;
-  }
   for (const auto &op : p.operations) {
     if (!op.complete || lane(op.pipe) >= PipeCount ||
         !p.target.supported[lane(op.pipe)]) {
@@ -248,24 +244,6 @@ Result verify(const Program &p, const Commands &commands) {
   Result result;
   if (!valid(p, result.reason) || !supportedEffects(p, result.reason) ||
       !commandsValid(p, commands, result.reason)) return result;
-  if (p.conservativeCompletion) {
-    // Alias widening removed pair detail. This stronger explicit certificate
-    // covers every phase and every recurrence without relying on that detail.
-    for (const auto &at : commands)
-      for (const auto &c : at)
-        if (c.kind != Command::BarrierAll) {
-          result.reason = "nonconservative command after alias-budget widening"; return result;
-        }
-    for (Cut cut = 0; cut < p.operations.size(); ++cut)
-      if (commands[cut].empty()) {
-        result.reason = "missing conservative completion before original phase"; return result;
-      }
-    if (p.invocation.retirement == Program::InvocationContract::DrainAllAtReturn &&
-        commands.back().empty()) {
-      result.reason = "missing required retirement"; return result;
-    }
-    result.success = true; return result;
-  }
   auto issue = detail::Transfer(p, commands).run();
   result.success = issue.kind == detail::Failure::None;
   result.reason = issue.reason;
@@ -275,11 +253,16 @@ Result verify(const Program &p, const Commands &commands) {
 Result construct(const Program &p) {
   Result result;
   if (!valid(p, result.reason) || !supportedEffects(p, result.reason)) return result;
-  if (p.conservativeCompletion) return conservative(p);
   Commands barriers(p.operations.size() + 1);
   std::vector<Packet> packets;
   const bool oneVisit = flat(p);
-  for (uint64_t step = 0; step < p.constructionStepLimit; ++step) {
+  // Each (consumer, source) has one finite repair slot: absent -> packet or
+  // barrier. A packet may move to its consumer once and gain one reply. Keys
+  // are fixed at creation. An unchanged/unsupported repair terminates below;
+  // no numerical attempt limit or repeated identical candidate is necessary.
+  std::map<std::pair<Cut, Pipe>, std::size_t> packetSlots;
+  std::set<std::pair<Cut, Pipe>> barrierSlots;
+  while (true) {
     Commands actual = render(p, barriers, packets);
     // Construction may temporarily speculate about protocol preconditions.
     // The very same transfer is rerun strictly before acceptance.
@@ -297,21 +280,33 @@ Result construct(const Program &p) {
       for (const auto &d : issue.missing)
         if (p.operations[d.producer].pipe == source && d.producer > chosen.producer) chosen = d;
       result.demands.insert(result.demands.end(), issue.missing.begin(), issue.missing.end());
-      if (source == observer && p.target.barriers[lane(source)]) {
+      const auto slot = std::make_pair(consumer, source);
+      if (auto found = packetSlots.find(slot); found != packetSlots.end()) {
+        auto &h = packets[found->second].handoff;
+        // A later discovered generation may not belong to the saved early
+        // prefix. Relocate this one packet; never append duplicates forever.
+        if (h.publication != h.acquisition) h.publication = h.acquisition;
+        else return conservative(p, true);
+      } else if (source == observer && p.target.barriers[lane(source)]) {
+        if (!barrierSlots.insert(slot).second) return conservative(p, true);
         barriers[consumer].push_back({Command::Barrier, source});
       } else if (source != observer) {
         auto key = chooseKey(p, packets, source, observer);
         if (key) {
           Cut publication = oneVisit && chosen.producer < consumer ? chosen.producer + 1 : consumer;
+          packetSlots.emplace(slot, packets.size());
           packets.push_back({{source, observer, publication, consumer}, *key, {}});
-        } else if (p.target.barrierAll) barriers[consumer].push_back({Command::BarrierAll});
-        else { result.reason = "no eligible completion route"; return result; }
-      } else if (p.target.barrierAll) barriers[consumer].push_back({Command::BarrierAll});
-      else { result.reason = "no same-pipeline completion mechanism"; return result; }
+        } else if (p.target.barrierAll) {
+          if (!barrierSlots.insert(slot).second) return conservative(p, true);
+          barriers[consumer].push_back({Command::BarrierAll});
+        } else { result.reason = "no eligible completion route"; return result; }
+      } else if (p.target.barrierAll) {
+        if (!barrierSlots.insert(slot).second) return conservative(p, true);
+        barriers[consumer].push_back({Command::BarrierAll});
+      } else { result.reason = "no same-pipeline completion mechanism"; return result; }
       continue;
     }
     if (issue.kind != detail::Failure::None) {
-      if (issue.kind == detail::Failure::Budget) return conservative(p);
       result.reason = issue.reason; return result;
     }
     issue = detail::Transfer(p, actual).run(true, true);
@@ -328,7 +323,9 @@ Result construct(const Program &p) {
       }
       return result;
     }
-    if (issue.kind == detail::Failure::Hazard) continue;
+    // Payload transfer is identical in speculative and strict runs. A strict
+    // hazard cannot justify retrying the identical candidate without an edit.
+    if (issue.kind == detail::Failure::Hazard) return conservative(p, true);
     bool repaired = false;
     if (issue.kind == detail::Failure::Occupancy) {
       // An early publication can overlap a previous logical generation. Do not
@@ -357,6 +354,5 @@ Result construct(const Program &p) {
     if (!repaired) return conservative(p, true);
     ++result.protocolRepairs;
   }
-  return conservative(p);
 }
 } // namespace mlir::pto::oahs
