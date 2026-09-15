@@ -73,3 +73,13 @@ target_link_libraries(pto-vfsimt-size-patcher-test PRIVATE
   LLVMSupport
   MLIRSupport
 )
+
+add_llvm_executable(pto-oahs-native-test
+  pto-oahs-native-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-oahs-native-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect
+)
+add_dependencies(pto-oahs-native-test PTOOpsIncGen PTOPassesIncGen)

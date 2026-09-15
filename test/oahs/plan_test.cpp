@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/Plan.h"
+#include "GraphOracle.h"
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -43,72 +44,14 @@ static o::Operation op(unsigned pipe, unsigned cell, bool write) {
   return result;
 }
 
-// Independent issue/completion graph. SET captures preceding completions and
-// source control, but cannot gate later source issue. No production transfer
-// function or constructor demand annotation is used by this oracle.
+// Independent command graph, including causal rearming and original issue order.
 static void oracle(const o::Program &p, const o::Commands &commands,
                    std::vector<std::pair<unsigned, unsigned>> forbidden = {}) {
-  std::vector<std::vector<unsigned>> edges;
-  auto vertex = [&]() { edges.emplace_back(); return unsigned(edges.size() - 1); };
-  auto edge = [&](unsigned a, unsigned b) { edges[a].push_back(b); };
-  std::array<unsigned, o::PipeCount> control{};
-  for (auto &c : control) c = vertex();
-  std::array<std::vector<unsigned>, o::PipeCount> completions;
-  std::vector<unsigned> starts, finishes;
-  std::map<std::tuple<o::Pipe, o::Pipe, unsigned>, unsigned> tokens;
-  for (unsigned cut = 0; cut < commands.size(); ++cut) {
-    for (const auto &c : commands[cut]) {
-      auto v = vertex();
-      auto source = unsigned(c.source), observer = unsigned(c.observer);
-      auto key = std::make_tuple(c.source, c.observer, c.key);
-      if (c.kind == o::Command::Publish) {
-        edge(control[source], v);
-        for (auto done : completions[source]) edge(done, v);
-        check(!tokens.count(key)); tokens[key] = v;
-      } else if (c.kind == o::Command::Acquire) {
-        check(tokens.count(key)); edge(tokens.at(key), v); tokens.erase(key);
-        edge(control[observer], v); control[observer] = v;
-      } else if (c.kind == o::Command::Barrier) {
-        edge(control[source], v);
-        for (auto done : completions[source]) edge(done, v);
-        control[source] = v;
-      } else {
-        for (unsigned lane = 0; lane < o::PipeCount; ++lane) {
-          edge(control[lane], v);
-          for (auto done : completions[lane]) edge(done, v);
-          control[lane] = v;
-        }
-      }
-    }
-    if (cut == p.operations.size()) break;
-    auto lane = unsigned(p.operations[cut].pipe);
-    auto start = vertex(), done = vertex();
-    edge(control[lane], start); edge(start, done);
-    if (p.target.synchronous[lane]) control[lane] = done;
-    starts.push_back(start); finishes.push_back(done);
-    completions[lane].push_back(done);
+  for (const auto &trace : oahs_oracle::traces(p)) {
+    auto result = oahs_oracle::graph(p, commands, trace, forbidden);
+    check(result.hazards); check(result.rearm);
+    check(result.balanced); check(result.acyclic);
   }
-  auto reaches = [&](unsigned a, unsigned b) {
-    std::vector<bool> seen(edges.size());
-    std::vector<unsigned> todo{a};
-    while (!todo.empty()) {
-      auto current = todo.back(); todo.pop_back();
-      if (current == b) return true;
-      if (seen[current]) continue;
-      seen[current] = true;
-      for (auto next : edges[current]) todo.push_back(next);
-    }
-    return false;
-  };
-  for (unsigned i = 0; i < starts.size(); ++i)
-    for (unsigned j = i + 1; j < starts.size(); ++j)
-      for (const auto &a : p.operations[i].accesses)
-        for (const auto &b : p.operations[j].accesses)
-          if (a.cell == b.cell && (a.write || b.write || p.cells[a.cell].exclusive))
-            check(reaches(finishes[i], starts[j]));
-  check(tokens.empty());
-  for (const auto &pair : forbidden)
-    check(!reaches(finishes[pair.first], starts[pair.second]));
 }
 static o::Result run(const o::Program &p) {
   auto result = o::construct(p);
@@ -166,10 +109,14 @@ int main() {
   for (auto &cut : unsafePlan.commands)
     for (auto &c : cut) c.key = 0;
   check(!o::verify(unsafe, unsafePlan.commands).success);
+  check(!oahs_oracle::graph(unsafe, unsafePlan.commands, {0,1,2,3}).rearm);
 
   auto scarce = program(1); scarce.operations = unsafe.operations;
-  check(run(scarce).scarcityBarriers == 1);
+  auto scarcePlan = run(scarce);
+  check(scarcePlan.protocolRepairs > 0 && scarcePlan.scarcityBarriers == 0);
   scarce.target.barrierAll = false;
+  run(scarce); // Causally checked reuse must not require ALL to be available.
+  scarce.target.keys[1][0].clear();
   check(!o::construct(scarce).success);
   p.operations = {op(0, 0, false), op(1, 0, false)};
   check(run(p).handoffs.empty());
@@ -204,6 +151,7 @@ int main() {
   check(o::analyze(structured).success);
   auto structuredPlan = o::construct(structured);
   check(structuredPlan.success);
+  oracle(structured, structuredPlan.commands);
   auto missingStructured = structuredPlan.commands;
   missingStructured[2].clear();
   check(!o::verify(structured, missingStructured).success);
@@ -218,6 +166,7 @@ int main() {
   check(o::analyze(loop).success);
   auto loopPlan = o::construct(loop);
   check(loopPlan.success);
+  oracle(loop, loopPlan.commands);
   check(!loopPlan.commands[0].empty()); // repeated write generation
 
   auto whileProgram = program();
@@ -229,6 +178,7 @@ int main() {
   whileProgram.body = {o::Region::While, {before, after}};
   auto whilePlan = o::construct(whileProgram);
   check(whilePlan.success);
+  oracle(whileProgram, whilePlan.commands);
   check(!whilePlan.commands[0].empty() && !whilePlan.commands[1].empty());
 
   // Analysis-budget exhaustion remains inside the same constructor and is
@@ -240,10 +190,23 @@ int main() {
   bounded.invocation.retirement =
       o::Program::InvocationContract::DrainAllAtReturn;
   auto boundedPlan = run(bounded);
-  check(boundedPlan.conservativeBarriers == bounded.operations.size());
+  check(boundedPlan.conservativeBarriers == bounded.operations.size() + 1);
   auto missingBounded = boundedPlan.commands;
   missingBounded[1].clear();
   check(!o::verify(bounded, missingBounded).success);
+
+  // The first static phase is visited again: budget widening must not omit it.
+  for (o::Program cyclic : {loop, whileProgram}) {
+    cyclic.conservativeCompletion = true;
+    cyclic.conservativeReason = "forced cyclic budget regression";
+    auto conservative = o::construct(cyclic);
+    check(conservative.success);
+    oracle(cyclic, conservative.commands);
+    check(!conservative.commands[0].empty());
+    auto missingFirst = conservative.commands;
+    missingFirst[0].clear();
+    check(!o::verify(cyclic, missingFirst).success);
+  }
 
   std::mt19937 rng(7321);
   for (unsigned sample = 0; sample < 200; ++sample) {
