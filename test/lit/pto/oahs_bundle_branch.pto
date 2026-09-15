@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
+// Both publications belong to original arms. One dynamic acquisition matches
+// whichever arm actually ran. No new guard, payload, or branch-exit cut is added.
+module attributes {pto.target_arch = "a3"} {
+  func.func @branch_publications(%src: !pto.partition_tensor_view<1x32xf32>, %b: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %x = arith.constant 0 : i64
+    %y = arith.constant 128 : i64
+    %z = arith.constant 256 : i64
+    %w = arith.constant 384 : i64
+    %a = pto.alloc_tile addr = %x : !pto.tile_buf<vec, 1x32xf32>
+    %left = pto.alloc_tile addr = %y : !pto.tile_buf<vec, 1x32xf32>
+    %right = pto.alloc_tile addr = %z : !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %w : !pto.tile_buf<vec, 1x32xf32>
+    scf.if %b {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%left : !pto.tile_buf<vec, 1x32xf32>)
+    } else {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%right : !pto.tile_buf<vec, 1x32xf32>)
+    }
+    pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+}
+// CHECK-LABEL: func.func @branch_publications
+// CHECK: scf.if
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK-NEXT: pto.tload
+// CHECK: } else {
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK-NEXT: pto.tload
+// CHECK: }
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK-NEXT: pto.tadd
+// CHECK: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: return
