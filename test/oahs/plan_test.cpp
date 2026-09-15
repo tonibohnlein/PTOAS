@@ -132,7 +132,7 @@ int main() {
   check(!o::construct(p).success);
   p.operations[0].complete = true;
   p.operations[0].resources.push_back({"private queue", true, false});
-  check(o::analyze(p).success);
+  check(o::validateProgram(p).success);
   check(!o::construct(p).success);
   p.operations[0].resources.clear();
 
@@ -148,7 +148,7 @@ int main() {
   o::Region choice{o::Region::Choice, {thenRegion, elseRegion}};
   structured.body = {o::Region::Sequence,
                      {choice, {o::Region::Operation, {}, 2}}};
-  check(o::analyze(structured).success);
+  check(o::validateProgram(structured).success);
   auto structuredPlan = o::construct(structured);
   check(structuredPlan.success);
   oracle(structured, structuredPlan.commands);
@@ -156,14 +156,14 @@ int main() {
   missingStructured[2].clear();
   check(!o::verify(structured, missingStructured).success);
   structured.body.children[0].children[1].children.clear();
-  check(!o::analyze(structured).success);
+  check(!o::validateProgram(structured).success);
 
   auto loop = program();
   loop.operations = {op(0, 0, true)};
   o::Region loopBody{o::Region::Sequence,
                      {{o::Region::Operation, {}, 0}}};
   loop.body = {o::Region::For, {loopBody}, 0, true};
-  check(o::analyze(loop).success);
+  check(o::validateProgram(loop).success);
   auto loopPlan = o::construct(loop);
   check(loopPlan.success);
   oracle(loop, loopPlan.commands);
