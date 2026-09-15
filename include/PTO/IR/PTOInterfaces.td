@@ -37,6 +37,58 @@ def OpPipeInterface : OpInterface<"OpPipeInterface"> {
   ];
 }
 
+// An explicit lowering-owned declaration, independent of autosync algorithms.
+// False means that a richer phase/resource contract is still required.
+def SyncStorageOpInterface : OpInterface<"SyncStorageOpInterface"> {
+  let cppNamespace = "::mlir::pto";
+  let description = [{
+    Declares physical storage identity/geometry without issuing asynchronous
+    payload work or accessing a private synchronization resource.
+  }];
+}
+
+def SinglePhaseSyncOpInterface : OpInterface<"SinglePhaseSyncOpInterface"> {
+  let cppNamespace = "::mlir::pto";
+  let description = [{
+    Declares that this exact operation variant has one physical pipeline phase,
+    with all synchronization-relevant effects represented by its memory-effect
+    interface and no private events or additional implicit resource state.
+    Algorithms must also validate the translated effects and target support.
+  }];
+  let methods = [InterfaceMethod<
+    "Whether this variant supplies complete ordinary single-phase effects.",
+    "bool", "hasCompleteSinglePhaseSyncEffects"
+  >];
+}
+
+def MacroSyncOpInterface : OpInterface<"MacroSyncOpInterface"> {
+  let cppNamespace = "::mlir::pto";
+  let description = [{
+    Declares that the lowering-owned SyncMacroModel is the complete physical
+    phase, storage-effect, and private-event description for this exact
+    operation variant. Presence of a model without this interface is not a
+    completeness claim.
+  }];
+}
+
+def AuthoredSyncOpInterface : OpInterface<"AuthoredSyncOpInterface"> {
+  let cppNamespace = "::mlir::pto";
+  let description = [{
+    Declares an authored synchronization or event-resource boundary. Automatic
+    construction must preserve the operation and reserve any event identity it
+    names; it may only take ordering credit justified by the operation's exact
+    lowering contract.
+  }];
+}
+
+def VisibilitySyncOpInterface : OpInterface<"VisibilitySyncOpInterface"> {
+  let cppNamespace = "::mlir::pto";
+  let description = [{
+    Declares an authored cache-maintenance or fence boundary whose visibility
+    effect is distinct from ordinary byte completion and resource exclusion.
+  }];
+}
+
 // Instruction-class marker interfaces. These categories are independent from
 // OpPipeInterface: a pipe describes where an operation executes, while these
 // markers describe the operation's abstraction level and instruction family.

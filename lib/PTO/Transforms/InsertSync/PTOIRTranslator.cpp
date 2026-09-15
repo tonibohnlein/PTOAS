@@ -293,10 +293,17 @@ static pto::TCoreType getSyncHelperCoreType(pto::PipelineType pipe) {
 // ============================================================================
 // 1. 构建入口
 // ============================================================================
-void PTOIRTranslator::Build() {
+LogicalResult PTOIRTranslator::Build() {
   Region &funcRegion = func_.getBody();
   UpdateKernelArgMemInfo();
-  RecursionIR(&funcRegion);
+  if (failed(RecursionIR(&funcRegion))) {
+    syncIR_.clear();
+    buffer2MemInfoMap_.clear();
+    index = 0;
+    func_.emitError("failed to translate PTO synchronization semantics");
+    return failure();
+  }
+  return success();
 }
 
 // ============================================================================
@@ -418,16 +425,16 @@ PTOIRTranslator::dispatchAliasViewOp(Operation *op) {
 std::optional<WalkResult>
 PTOIRTranslator::dispatchControlAndComputeOp(Operation *op) {
   if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-    UpdateForOpInfo(forOp);
-    return WalkResult::skip();
+    return failed(UpdateForOpInfo(forOp)) ? WalkResult::interrupt()
+                                          : WalkResult::skip();
   }
   if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
-    UpdateWhileOpInfo(whileOp);
-    return WalkResult::skip();
+    return failed(UpdateWhileOpInfo(whileOp)) ? WalkResult::interrupt()
+                                              : WalkResult::skip();
   }
   if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
-    UpdateIfOpInfo(ifOp);
-    return WalkResult::skip();
+    return failed(UpdateIfOpInfo(ifOp)) ? WalkResult::interrupt()
+                                        : WalkResult::skip();
   }
   if (auto yieldOp = dyn_cast<scf::YieldOp>(op)) {
     UpdateYieldOpInfo(yieldOp);
@@ -450,7 +457,7 @@ PTOIRTranslator::dispatchControlAndComputeOp(Operation *op) {
   return WalkResult::advance();
 }
 
-void PTOIRTranslator::RecursionIR(Region *region) {
+LogicalResult PTOIRTranslator::RecursionIR(Region *region) {
   auto result = region->walk<WalkOrder::PreOrder>([this](Operation *op) {
     // 保持原有 if/else-if 链的互斥匹配顺序：A 内存分配 → B 别名/视图 →
     // C/D 控制流与计算指令，任一类别命中后不再尝试后续类别。
@@ -465,9 +472,8 @@ void PTOIRTranslator::RecursionIR(Region *region) {
     }
     return WalkResult::advance();
   });
-  if (result == WalkResult::interrupt()) {
-    llvm_unreachable("PTO InjectSync Traverse IR Failed!");
-  }
+  if (result.wasInterrupted()) return failure();
+  return success();
 }
 
 // ============================================================================
@@ -493,7 +499,7 @@ LogicalResult PTOIRTranslator::UpdateAllocTileOpMemInfo(pto::AllocTileOp op) {
   if (tileType) {
     sizeInBytes = getTileBufferFootprintBytes(tileType);
     if (sizeInBytes == 0) {
-      return failure();
+      return op.emitError("cannot derive a nonzero tile footprint for sync analysis");
     }
   }
 
@@ -527,7 +533,7 @@ PTOIRTranslator::UpdateAllocMultiTileOpMemInfo(pto::AllocMultiTileOp op) {
 
   uint64_t slotBytes = getTileBufferFootprintBytes(slotType);
   if (slotBytes == 0) {
-    return failure();
+    return op.emitError("cannot derive a nonzero slot footprint for sync analysis");
   }
 
   pto::AddressSpace space = pto::AddressSpace::MAT;
@@ -578,7 +584,7 @@ PTOIRTranslator::UpdateDeclareTileOpMemInfo(pto::DeclareTileOp op) {
 
   uint64_t sizeInBytes = getTileBufferFootprintBytes(tileType);
   if (sizeInBytes == 0) {
-    return failure();
+    return op.emitError("cannot derive a nonzero declared-tile footprint for sync analysis");
   }
 
   pto::AddressSpace space = pto::AddressSpace::MAT;
@@ -598,7 +604,7 @@ PTOIRTranslator::UpdateDeclareGlobalOpMemInfo(pto::DeclareGlobalOp op) {
   Value res = op.getEntry();
   auto tensorViewType = dyn_cast<pto::TensorViewType>(res.getType());
   if (!tensorViewType) {
-    return failure();
+    return op.emitError("requires a tensor_view result for sync analysis");
   }
 
   uint64_t sizeInBytes = 0;
@@ -610,7 +616,7 @@ PTOIRTranslator::UpdateDeclareGlobalOpMemInfo(pto::DeclareGlobalOp op) {
     int64_t elemSize = static_cast<int64_t>(
         pto::getPTOStorageElemByteSize(tensorViewType.getElementType()));
     if (elemSize == 0) {
-      return failure();
+      return op.emitError("cannot derive the global element size for sync analysis");
     }
     int64_t numElements = 1;
     for (int64_t dim : shape) {
@@ -795,7 +801,7 @@ pto::PipelineType PTOIRTranslator::getOpPipeline(Operation *op) const {
 // 7. 控制流处理 (SCF Support)
 // ============================================================================
 
-void PTOIRTranslator::UpdateForOpInfo(scf::ForOp forOp) {
+LogicalResult PTOIRTranslator::UpdateForOpInfo(scf::ForOp forOp) {
   auto forBeginElement = std::make_unique<LoopInstanceElement>(index, index, index);
   forBeginElement->elementOp = forOp.getOperation();
   syncIR_.emplace_back(std::move(forBeginElement));
@@ -813,16 +819,17 @@ void PTOIRTranslator::UpdateForOpInfo(scf::ForOp forOp) {
     }
   }
 
-  RecursionIR(&forOp.getRegion());
+  if (failed(RecursionIR(&forOp.getRegion()))) return failure();
 
   forBeginPtr->endId = index;
   auto forEnd = forBeginPtr->CloneFor(KindOfLoop::LOOP_END);
   forEnd->elementOp = forOp.getOperation();
   syncIR_.emplace_back(std::move(forEnd));
   index++;
+  return success();
 }
 
-void PTOIRTranslator::UpdateWhileOpInfo(scf::WhileOp whileOp) {
+LogicalResult PTOIRTranslator::UpdateWhileOpInfo(scf::WhileOp whileOp) {
   auto loopBeginElement = std::make_unique<LoopInstanceElement>(index, index, index);
   loopBeginElement->elementOp = whileOp.getOperation();
   syncIR_.emplace_back(std::move(loopBeginElement));
@@ -840,17 +847,18 @@ void PTOIRTranslator::UpdateWhileOpInfo(scf::WhileOp whileOp) {
     }
   }
 
-  RecursionIR(&whileOp.getBefore());
-  RecursionIR(&whileOp.getAfter());
+  if (failed(RecursionIR(&whileOp.getBefore()))) return failure();
+  if (failed(RecursionIR(&whileOp.getAfter()))) return failure();
 
   loopBeginPtr->endId = index;
   auto forEnd = loopBeginPtr->CloneFor(KindOfLoop::LOOP_END);
   forEnd->elementOp = whileOp.getOperation();
   syncIR_.emplace_back(std::move(forEnd));
   index++;
+  return success();
 }
 
-void PTOIRTranslator::UpdateIfOpInfo(scf::IfOp ifOp) {
+LogicalResult PTOIRTranslator::UpdateIfOpInfo(scf::IfOp ifOp) {
   auto ifBeginElement = std::make_unique<BranchInstanceElement>(index, index, KindOfBranch::IF_BEGIN);
   ifBeginElement->elementOp = ifOp.getOperation();
   auto *ifPtr = ifBeginElement.get();
@@ -859,7 +867,7 @@ void PTOIRTranslator::UpdateIfOpInfo(scf::IfOp ifOp) {
   index++;
 
   // 1. 处理 Then 区域
-  RecursionIR(&ifOp.getThenRegion());
+  if (failed(RecursionIR(&ifOp.getThenRegion()))) return failure();
 
   // Then 的结束占位符
   auto placeHolder = std::make_unique<PlaceHolderInstanceElement>(index, ifPtr->GetIndex());
@@ -881,7 +889,7 @@ void PTOIRTranslator::UpdateIfOpInfo(scf::IfOp ifOp) {
   index++;
 
   if (ifOp.elseBlock()) {
-    RecursionIR(&ifOp.getElseRegion());
+    if (failed(RecursionIR(&ifOp.getElseRegion()))) return failure();
   }
 
   // Else 的结束占位符
@@ -909,6 +917,7 @@ void PTOIRTranslator::UpdateIfOpInfo(scf::IfOp ifOp) {
   ifEndElement->elementOp = ifOp.getOperation();
   syncIR_.emplace_back(std::move(ifEndElement));
   index++;
+  return success();
 }
 
 void PTOIRTranslator::UpdateYieldOpInfo(scf::YieldOp yieldOp) {
@@ -948,7 +957,7 @@ void PTOIRTranslator::UpdateConservativeAliasBufferInfo(Value result,
 LogicalResult PTOIRTranslator::UpdateIntToPtrOpMemInfo(pto::IntToPtrOp op) {
   Value result = op.getResult();
   if (!result) {
-    return failure();
+    return op.emitError("requires a pointer result for sync analysis");
   }
 
   // Preserve provenance across the explicit byte-address round trip:
