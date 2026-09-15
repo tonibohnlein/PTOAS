@@ -40,8 +40,8 @@ module attributes {pto.target_arch = "a3"} {
 // CHECK-LABEL: func.func @shared_prefix
 // CHECK: pto.tload
 // CHECK: pto.tload
-// CHECK-NEXT: pto.set_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, #pto.event<EVENT_ID0>]
-// CHECK-NEXT: pto.wait_flag [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, #pto.event<EVENT_ID0>]
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 // CHECK-NEXT: pto.tadd
-// CHECK: pto.barrier #pto.pipe<PIPE_ALL>
+// CHECK: pto.barrier <PIPE_ALL>
 // CHECK-NEXT: return

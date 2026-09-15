@@ -78,6 +78,7 @@ tool_dirs = [config.ptoir_tools_dir, config.ptoir_test_tools_dir,
 tools = [
     'ptoas',
     'pto-test-opt',
+    'pto-oahs-native-test',
     'pto-vpto-scheduler-tracker-test',
 ]
 
