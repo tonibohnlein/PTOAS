@@ -115,9 +115,9 @@ struct Result {
   unsigned protocolRepairs = 0;
 };
 
-// Validates semantic completeness and structural integrity without constructing
-// or emitting synchronization. This is the analysis-coverage boundary.
-Result analyze(const Program &program);
+// Declaration/structural validation only; not residual analysis or a proof of
+// synchronization. Use Analysis.h::analyze for the fixed-plan analysis service.
+Result validateProgram(const Program &program);
 // One constructor entry for all represented programs. Unsupported synthesis is
 // diagnosed after complete analysis import; it is never flattened or delegated
 // to the legacy constructor.

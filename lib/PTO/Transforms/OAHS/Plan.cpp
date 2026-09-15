@@ -234,19 +234,61 @@ std::optional<unsigned> chooseKey(const Program &p, const std::vector<Packet> &p
 }
 } // namespace
 
-Result analyze(const Program &p) {
+Result validateProgram(const Program &p) {
   Result result;
   result.success = valid(p, result.reason);
   return result;
 }
 
+AnalysisResult analyze(const Program &p, const Commands &commands, AnalysisOptions options) {
+  AnalysisResult out;
+  if (!valid(p, out.reason)) {
+    for (std::size_t i = 0; i < p.operations.size(); ++i) {
+      const auto &op = p.operations[i];
+      if (!op.complete)
+        out.diagnostics.push_back({AnalysisDiagnostic::UnsupportedSemantics, i,
+                                   "missing operation completeness contract"});
+      else if (lane(op.pipe) >= PipeCount || !p.target.supported[lane(op.pipe)])
+        out.diagnostics.push_back({AnalysisDiagnostic::UnsupportedSemantics, i,
+                                   "operation pipeline outside target contract"});
+    }
+    if (out.diagnostics.empty())
+      out.diagnostics.push_back({AnalysisDiagnostic::InvalidInput, NoAnalysisId, out.reason});
+    return out;
+  }
+  if (!supportedEffects(p, out.reason)) {
+    for (std::size_t i = 0; i < p.operations.size(); ++i) {
+      const auto &op = p.operations[i];
+      for (const auto &resource : op.resources)
+        out.diagnostics.push_back({AnalysisDiagnostic::UnsupportedSemantics, i,
+            "resource transfer not implemented: " + resource.resource});
+      for (const auto &visibility : op.visibility)
+        out.diagnostics.push_back({AnalysisDiagnostic::UnsupportedSemantics, i,
+            "visibility transfer not implemented for cell " + std::to_string(visibility.cell)});
+      if (!op.authoredEvents.empty())
+        out.diagnostics.push_back({AnalysisDiagnostic::UnsupportedSemantics, i,
+                                  "authored event contract not implemented"});
+      if (!op.internalTransfers.empty())
+        out.diagnostics.push_back({AnalysisDiagnostic::UnsupportedSemantics, i,
+                                  "internal phase transfer contract not implemented"});
+    }
+    if (out.diagnostics.empty())
+      out.diagnostics.push_back({AnalysisDiagnostic::UnsupportedSemantics, NoAnalysisId, out.reason});
+    return out;
+  }
+  if (!commandsValid(p, commands, out.reason)) {
+    out.diagnostics.push_back({AnalysisDiagnostic::InvalidCommands, NoAnalysisId, out.reason});
+    return out;
+  }
+  return detail::Transfer(p, commands).inspect(options);
+}
+AnalysisResult analyze(const Program &p) {
+  return analyze(p, Commands(p.operations.size() + 1));
+}
 Result verify(const Program &p, const Commands &commands) {
+  const auto analysis = analyze(p, commands, {false});
   Result result;
-  if (!valid(p, result.reason) || !supportedEffects(p, result.reason) ||
-      !commandsValid(p, commands, result.reason)) return result;
-  auto issue = detail::Transfer(p, commands).run();
-  result.success = issue.kind == detail::Failure::None;
-  result.reason = issue.reason;
+  result.success = analysis.verified(); result.reason = analysis.reason;
   return result;
 }
 
@@ -265,7 +307,8 @@ Result construct(const Program &p) {
   while (true) {
     Commands actual = render(p, barriers, packets);
     // Construction may temporarily speculate about protocol preconditions.
-    // The very same transfer is rerun strictly before acceptance.
+    // This is private proposal information, never AnalysisResult completion.
+    // The public certified analysis is mandatory before final acceptance.
     auto issue = detail::Transfer(p, actual).run(true, false);
     if (issue.kind == detail::Failure::Hazard) {
       const auto consumer = issue.cut;
