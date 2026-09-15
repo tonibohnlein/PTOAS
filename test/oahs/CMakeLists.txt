@@ -13,9 +13,18 @@ add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp)
 target_include_directories(oahs-core-under-test PUBLIC ../../include)
 target_compile_features(oahs-core-under-test PUBLIC cxx_std_17)
 target_compile_options(oahs-core-under-test PRIVATE -Wall -Wextra -Werror -pedantic)
-foreach(suite plan structured scaling analysis prefix)
+foreach(suite plan structured scaling analysis prefix bundle)
   add_executable(oahs-${suite}-test ${suite}_test.cpp)
   target_link_libraries(oahs-${suite}-test PRIVATE oahs-core-under-test)
   target_compile_options(oahs-${suite}-test PRIVATE -Wall -Wextra -Werror -pedantic)
   add_test(NAME oahs_${suite} COMMAND oahs-${suite}-test)
 endforeach()
+
+# Test-only executable: no reference collector or Python dependency in the pass.
+add_executable(oahs-reference-driver reference_driver.cpp)
+target_link_libraries(oahs-reference-driver PRIVATE oahs-core-under-test)
+target_compile_options(oahs-reference-driver PRIVATE -Wall -Wextra -Werror -pedantic)
+find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+add_test(NAME oahs_reference_bridge
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/reference/bridge.py
+    --driver $<TARGET_FILE:oahs-reference-driver> --self-test)
