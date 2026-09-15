@@ -113,6 +113,7 @@ struct Result {
   unsigned scarcityBarriers = 0;
   unsigned conservativeBarriers = 0;
   unsigned protocolRepairs = 0;
+  std::size_t bundleTrials = 0, bundleSelections = 0;
 };
 
 // Declaration/structural validation only; not residual analysis or a proof of
