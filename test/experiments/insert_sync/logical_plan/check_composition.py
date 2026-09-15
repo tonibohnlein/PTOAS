@@ -534,8 +534,30 @@ def main():
                         args.output / (name + '.output.pto')], prepared, 'mutation', True)
         if not row['verdict']['atomic'] or not row['verdict']['expected']:
             raise RuntimeError('staged helper lookup/contract regression: ' + name)
+    compile_case('generic-single-phase-contract',
+                 fixtures / 'missing_positive_contract.pto')
+    row = compile_precision('treduce-accumulator-overwrite',
+                            fixtures / 'composition_treduce_acc_macro.pto',
+                            gm='assume-disjoint-arguments')
+    rendered = (args.output / (row['log'] + '.stdout')).read_text()
+    between = rendered.split('pto.tmov', 1)[1].split('pto.comm.treduce', 1)[0]
+    if ('pto.set_flag[<PIPE_V>, <PIPE_MTE2>' not in between or
+            'pto.wait_flag[<PIPE_V>, <PIPE_MTE2>' not in between):
+        raise RuntimeError('TREDUCE accumulator overwrite did not acquire the preceding V reader')
+    source = fixtures / 'composition_mgather_single_phase_macro.pto'
+    for precision in ('false', 'true'):
+        row = run('mgather-single-phase-private-events-' + precision,
+                  [args.opt, '--mlir-disable-threading',
+                   '--pto-insert-sync=planner=composition structured-precision=' + precision +
+                   ' logical-work-budget=0 gm-alias=assume-disjoint-arguments', source],
+                  source, 'native', True)
+        rendered = (args.output / (row['log'] + '.stdout')).read_text()
+        generated_events = [line for line in rendered.splitlines()
+                            if 'pto.set_flag[' in line or 'pto.wait_flag[' in line]
+        if not generated_events or any('<EVENT_ID0>' in line for line in generated_events):
+            raise RuntimeError('single-phase MGather reused a private EVENT_ID0 direction')
     for name in ('section_outside_config', 'section_outside_async_descriptor',
-                 'section_outside_physical', 'missing_positive_contract',
+                 'section_outside_physical',
                  'composition_tmrgsort_observed'):
         compile_case(name, fixtures / (name + '.pto'), expected=False)
     row = compile_case('composition_authored_remote_notify_unreleased',

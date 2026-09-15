@@ -54,6 +54,10 @@ struct State {
     // Acquire one source prefix on one observer. This is completion only: it
     // neither publishes GM visibility nor releases a remote protocol.
     void acquire(unsigned source, unsigned observer);
+    // Transfer the source's complete prefix knowledge to the observer. Unlike
+    // acquire(), this includes completion that the source previously acquired
+    // from other lanes, as required by lowering-owned chained handoffs.
+    void transferPrefix(unsigned source, unsigned observer);
     void rendezvous(unsigned first, unsigned second);
     void visibility(VisibilityAction action, uint8_t drainedSources,
                     bool scalarCacheVisibility);

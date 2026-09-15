@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @composition_mgather_single_phase_macro(
+      %mem_ptr: !pto.ptr<f32>, %idx_ptr: !pto.ptr<i32>,
+      %out_ptr: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %n = arith.constant 32 : index
+    %idx_addr = arith.constant 0 : i64
+    %dst_addr = arith.constant 512 : i64
+    %mem_view = pto.make_tensor_view %mem_ptr, shape = [%n], strides = [%one]
+      : !pto.tensor_view<?xf32>
+    %idx_view = pto.make_tensor_view %idx_ptr, shape = [%one, %n],
+      strides = [%n, %one] : !pto.tensor_view<?x?xi32>
+    %out_view = pto.make_tensor_view %out_ptr, shape = [%one, %n],
+      strides = [%n, %one] : !pto.tensor_view<?x?xf32>
+    %idx = pto.alloc_tile addr = %idx_addr : !pto.tile_buf<vec, 1x32xi32>
+    %dst = pto.alloc_tile addr = %dst_addr : !pto.tile_buf<vec, 1x32xf32>
+    %idx_part = pto.partition_view %idx_view, offsets = [%z, %z], sizes = [%one, %n]
+      : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x32xi32>
+    %mem_part = pto.partition_view %mem_view, offsets = [%z], sizes = [%n]
+      : !pto.tensor_view<?xf32> -> !pto.partition_tensor_view<32xf32>
+    %out_part = pto.partition_view %out_view, offsets = [%z, %z], sizes = [%one, %n]
+      : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x32xf32>
+    pto.tload ins(%idx_part : !pto.partition_tensor_view<1x32xi32>)
+      outs(%idx : !pto.tile_buf<vec, 1x32xi32>)
+    pto.mgather ins(%mem_part, %idx : !pto.partition_tensor_view<32xf32>,
+      !pto.tile_buf<vec, 1x32xi32>) outs(%dst : !pto.tile_buf<vec, 1x32xf32>)
+      {coalesce = #pto<coalesce elem>}
+    pto.tstore ins(%dst : !pto.tile_buf<vec, 1x32xf32>)
+      outs(%out_part : !pto.partition_tensor_view<1x32xf32>)
+    return
+  }
+}

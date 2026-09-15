@@ -34,32 +34,15 @@ inline bool memoryType(Type type) {
 }
 
 inline bool supportedLane(PIPE pipe, bool cube) {
-  // Do not admit arbitrary PIPE_S payloads: A2/A3 documentation does not
-  // establish a generic scalar-completes-at-issue rule, and PIPE_S has no
-  // same-pipe barrier. Descriptor/control operations are handled explicitly.
-  if (pipe == PIPE::PIPE_MTE2 || pipe == PIPE::PIPE_MTE3)
+  // PIPE_S is synchronous on both modeled targets; target modeling, rather
+  // than an operation-name list, supplies that property.
+  if (pipe == PIPE::PIPE_S || pipe == PIPE::PIPE_MTE2 ||
+      pipe == PIPE::PIPE_MTE3)
     return true;
   if (cube)
     return pipe == PIPE::PIPE_MTE1 || pipe == PIPE::PIPE_M ||
            pipe == PIPE::PIPE_FIX;
   return pipe == PIPE::PIPE_V;
-}
-
-inline bool supportedOperationLane(Operation *op, PIPE pipe, bool cube) {
-  if (supportedLane(pipe, cube))
-    return true;
-  // These operations have lowering-owned PIPE_S models and complete declared
-  // memory effects. Admit the exact operations without turning PIPE_S into a
-  // generic physical-operation contract.
-  if (pipe != PIPE::PIPE_S)
-    return false;
-  return llvm::StringSwitch<bool>(op->getName().getStringRef())
-      .Case("pto.load_scalar", true)
-      .Case("pto.store_scalar", true)
-      .Case("pto.tci", true)
-      .Case("pto.tgetval", true)
-      .Case("pto.tsetval", true)
-      .Default(false);
 }
 
 inline std::string diagnostic(StringRef kind, Operation *op, StringRef detail = {}) {
@@ -119,78 +102,6 @@ inline bool mappedPayloadEffects(Operation *op,
       return false;
   }
   return true;
-}
-
-inline bool implicitResourceOperation(Operation *op) {
-  StringRef name = op->getName().getStringRef();
-  if (name.starts_with("pto.comm.") || name.starts_with("pto.sync.") ||
-      name.starts_with("pto.cmo.") || name.starts_with("pto.fence.") ||
-      name == "pto.syncall" || name == "pto.tsync" ||
-      name == "pto.tprefetch_async" || name == "pto.make_prefetch_async_context" ||
-      name == "pto.get_prefetch_async_session" ||
-      name == "pto.aic_initialize_pipe" || name == "pto.aiv_initialize_pipe" ||
-      name == "pto.initialize_l2g2l_pipe" || name == "pto.initialize_l2l_pipe" ||
-      name == "pto.talloc" || name == "pto.tpush" || name == "pto.tpop" ||
-      name == "pto.tfree" || name == "pto.set_quant_scalar" ||
-      name == "pto.set_quant_vector" || name == "pto.tprint" ||
-      name == "pto.print" || name == "pto.set_ffts")
-    return true;
-  return false;
-}
-
-// Positive, lowering-owned admission boundary for operations whose complete
-// synchronization-relevant behavior is represented by one translated phase
-// and their declared memory effects.  New physical operations remain
-// unsupported until their exact variant is audited and added here; absence
-// from the implicit-resource denylist is never evidence of completeness.
-inline bool singlePhaseMemoryOnlyOperation(Operation *op) {
-  return llvm::StringSwitch<bool>(op->getName().getStringRef())
-      .Case("pto.load_scalar", true)
-      .Case("pto.store_scalar", true)
-      .Case("pto.tload", true)
-      .Case("pto.tstore", true)
-      .Case("pto.tabs", true)
-      .Case("pto.tadd", true)
-      .Case("pto.tadds", true)
-      .Case("pto.tcolexpand", true)
-      .Case("pto.tcolexpandmul", true)
-      .Case("pto.tconcat", true)
-      .Case("pto.tci", true)
-      .Case("pto.tcvt", true)
-      .Case("pto.tdiv", true)
-      .Case("pto.tdivs", true)
-      .Case("pto.texp", true)
-      .Case("pto.texpands", true)
-      .Case("pto.textract", true)
-      .Case("pto.tfillpad", true)
-      .Case("pto.tgather", true)
-      .Case("pto.tgetval", true)
-      .Case("pto.tmatmul", true)
-      .Case("pto.tmatmul.acc", true)
-      .Case("pto.tmatmul.bias", true)
-      .Case("pto.tmax", true)
-      .Case("pto.tmaxs", true)
-      .Case("pto.tmins", true)
-      .Case("pto.tmov", true)
-      .Case("pto.tmrgsort", true)
-      .Case("pto.tmul", true)
-      .Case("pto.tmuls", true)
-      .Case("pto.tneg", true)
-      .Case("pto.trecip", true)
-      .Case("pto.trowexpanddiv", true)
-      .Case("pto.trowexpand", true)
-      .Case("pto.trowexpandmul", true)
-      .Case("pto.trowexpandsub", true)
-      .Case("pto.trowmax", true)
-      .Case("pto.trowsum", true)
-      .Case("pto.trsqrt", true)
-      .Case("pto.tsort32", true)
-      .Case("pto.tsqrt", true)
-      .Case("pto.tsub", true)
-      .Case("pto.tsubs", true)
-      .Case("pto.tsetval", true)
-      .Case("pto.ttrans", true)
-      .Default(false);
 }
 
 inline std::optional<PipelineType> helperPipe(func::FuncOp callee) {
@@ -375,8 +286,11 @@ class Importer {
         fail("explicit-synchronization-outside-physical-section", op);
         return WalkResult::interrupt();
       }
+      const auto semantics = getSyncOperationSemantics(op);
       const bool unsupportedResource =
-          getSyncMacroModel(op) || implicitResourceOperation(op);
+          semantics.kind == SyncOperationSemanticKind::Macro ||
+          semantics.kind == SyncOperationSemanticKind::ImplicitResource ||
+          semantics.kind == SyncOperationSemanticKind::TypedEffect;
       if (unsupportedResource) {
         fail("unsupported-resource-outside-physical-section", op);
         return WalkResult::interrupt();
@@ -450,19 +364,13 @@ class Importer {
   }
 
   bool macro(Operation *op, const SyncMacroModel &model) {
-    // The first compositional macro contract is intentionally the exact P2P
-    // library call already modeled by PTOIRTranslator. Other macro models may
-    // have different endpoint/visibility semantics and remain fail-closed.
-    if (!compositional || result.cube || !isa<TPutOp, TGetOp>(op) || model.phases.size() != 2 ||
-        model.hiddenEvents.size() != 2 || model.completionTransfers.size() != 1 ||
-        model.completionTransfers[0].sourcePhaseId != 0 ||
-        model.completionTransfers[0].targetPhaseId != 1)
+    // Composition keeps a macro atomic but imports every lowering-owned phase
+    // and explicit internal completion transfer. No internal insertion point
+    // or completion fact is inferred from the operation name or hidden keys.
+    TCoreType core = result.cube ? TCoreType::CUBE : TCoreType::VECTOR;
+    if (!compositional || model.phases.empty() ||
+        !supportsSyncMacroCore(model, core))
       return fail("multi-phase-needs-endpoints", op);
-    const auto &first = model.phases[0], &second = model.phases[1];
-    if (first.phaseId != 0 || second.phaseId != 1 ||
-        first.pipe != PipelineType::PIPE_MTE2 ||
-        second.pipe != PipelineType::PIPE_MTE3)
-      return fail("unsupported-macro-contract", op, "unexpected-p2p-phases");
     auto found = compounds.find(op);
     if (found == compounds.end() || found->second.size() != model.phases.size())
       return fail("missing-translated-phase", op);
@@ -471,10 +379,20 @@ class Importer {
     llvm::sort(translated, [](const auto *a, const auto *b) {
       return a->macroOpInstanceId < b->macroOpInstanceId;
     });
-    for (unsigned i = 0; i < model.phases.size(); ++i)
-      if (translated[i]->macroOpInstanceId != int(model.phases[i].phaseId) ||
+    for (unsigned i = 0; i < model.phases.size(); ++i) {
+      if (model.phases[i].phaseId != i ||
+          !supportedLane(static_cast<PIPE>(model.phases[i].pipe),
+                         result.cube) ||
+          translated[i]->macroOpInstanceId != int(i) ||
           !addPhase(op, model.phases[i].pipe, translated[i], false))
         return false;
+    }
+    for (const auto &transfer : model.completionTransfers)
+      if (transfer.sourcePhaseId >= model.phases.size() ||
+          transfer.targetPhaseId >= model.phases.size() ||
+          transfer.sourcePhaseId >= transfer.targetPhaseId)
+        return fail("unsupported-macro-contract", op,
+                    "invalid-ordered-completion-transfer");
     return true;
   }
 
@@ -506,8 +424,9 @@ class Importer {
         continue; // independently parsed and verified from the actual IR
       if (isa<SetFlagOp, WaitFlagOp, BarrierOp, RecordEventOp, WaitEventOp>(op))
         return fail("explicit-synchronization-input", &op);
-      if (auto model = getSyncMacroModel(&op)) {
-        if (!macro(&op, *model))
+      auto semantics = getSyncOperationSemantics(&op);
+      if (semantics.kind == SyncOperationSemanticKind::Macro) {
+        if (!macro(&op, *semantics.macro))
           return false;
         continue;
       }
@@ -551,13 +470,16 @@ class Importer {
         continue;
       if (auto physical = dyn_cast<OpPipeInterface>(op)) {
         PIPE p = physical.getPipe();
-        if (!supportedOperationLane(&op, p, result.cube))
+        if (!supportedLane(p, result.cube))
           return fail("unsupported-lane", &op);
-        if (implicitResourceOperation(&op))
+        if (semantics.kind == SyncOperationSemanticKind::ImplicitResource ||
+            semantics.kind == SyncOperationSemanticKind::TypedEffect)
           return fail("unsupported-implicit-resource", &op);
-        if (!singlePhaseMemoryOnlyOperation(&op)) {
+        if (semantics.kind != SyncOperationSemanticKind::SinglePhaseOrdinary) {
           return fail("missing-positive-single-phase-contract", &op);
         }
+        if (semantics.pipe != static_cast<PipelineType>(p))
+          return fail("translated-pipeline-mismatch", &op);
         const bool unsupportedFillPad =
             isa<TFillPadOp>(op) && p != PIPE::PIPE_V;
         if (unsupportedFillPad) {

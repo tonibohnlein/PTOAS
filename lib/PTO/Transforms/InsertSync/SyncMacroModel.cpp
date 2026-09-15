@@ -82,6 +82,7 @@ std::optional<SyncMacroModel> getP2PCommSyncMacroModel(Operation *op) {
   }
 
   SyncMacroModel model;
+  model.coreType = TCoreType::VECTOR;
   SmallVector<Value> staging = getPingPongValues(ping, pong);
   // P2P comm library calls first read the source GM through MTE2, then write
   // the destination GM through MTE3, using ping/pong as staging tiles.
@@ -136,14 +137,16 @@ static std::optional<unsigned> buildCollectiveCommPhases(Operation *op,
     return tbroadcast.getPong() ? 2U : 1U;
   }
   if (auto treduce = dyn_cast<pto::TReduceOp>(op)) {
-    // TREDUCE_IMPL reads group sources through MTE2, reduces into acc on the
-    // vector pipe, and stores the final result into dst through MTE3, using
-    // recvPing/recvPong as receive staging tiles.
+    // TREDUCE_IMPL first loads the root group member into acc through MTE2,
+    // then loads remote members into recvPing/recvPong, reduces into acc on
+    // the vector pipe, and stores acc into dst through MTE3.
     SmallVector<Value> recvStaging =
         getPingPongValues(treduce.getRecvPing(), treduce.getRecvPong());
+    SmallVector<Value> loadDefs{treduce.getAcc()};
+    loadDefs.append(recvStaging.begin(), recvStaging.end());
     SmallVector<Value> reduceUses{treduce.getAcc()};
     reduceUses.append(recvStaging.begin(), recvStaging.end());
-    addPhase(model, PipelineType::PIPE_MTE2, recvStaging, treduce.getGroup());
+    addPhase(model, PipelineType::PIPE_MTE2, loadDefs, treduce.getGroup());
     addPhase(model, PipelineType::PIPE_V, ValueRange{treduce.getAcc()},
              reduceUses);
     addPhase(model, PipelineType::PIPE_MTE3, ValueRange{treduce.getDst()},
@@ -155,6 +158,7 @@ static std::optional<unsigned> buildCollectiveCommPhases(Operation *op,
 
 std::optional<SyncMacroModel> getCollectiveCommSyncMacroModel(Operation *op) {
   SyncMacroModel model;
+  model.coreType = TCoreType::VECTOR;
   auto laneCount = buildCollectiveCommPhases(op, model);
   if (!laneCount) {
     return std::nullopt;
@@ -170,6 +174,10 @@ std::optional<SyncMacroModel> getCollectiveCommSyncMacroModel(Operation *op) {
                    eventIds);
     addHiddenEvent(model, PipelineType::PIPE_V, PipelineType::PIPE_MTE3,
                    eventIds);
+    model.completionTransfers.push_back({0, 1});
+    model.completionTransfers.push_back({1, 2});
+  } else {
+    model.completionTransfers.push_back({0, 1});
   }
 
   return model;
@@ -188,6 +196,7 @@ std::optional<SyncMacroModel> getTScatterSyncMacroModel(pto::TScatterOp op) {
            ValueRange{op.getSrc(), op.getIndexes()});
   addHiddenEvent(model, PipelineType::PIPE_V, PipelineType::PIPE_S,
                  ArrayRef<unsigned>{0});
+  model.completionTransfers.push_back({0, 1});
   return model;
 }
 
@@ -332,6 +341,7 @@ static SyncMacroModel buildMGatherGm2L1Model(pto::MGatherOp op,
   }
   addHiddenEvent(model, PipelineType::PIPE_S, PipelineType::PIPE_MTE2,
                  ArrayRef<unsigned>{0});
+  model.completionTransfers.push_back({0, 1});
   return model;
 }
 
@@ -353,6 +363,7 @@ static SyncMacroModel buildMGatherA5Gm2UbModel(pto::MGatherOp op,
     addBidirectionalHiddenEvent(model, PipelineType::PIPE_V,
                                 PipelineType::PIPE_S,
                                 ArrayRef<unsigned>{0});
+    model.completionTransfers.push_back({0, 1});
   } else {
     addPhase(model, PipelineType::PIPE_V, ValueRange{op.getDst()},
              ValueRange{op.getMem(), op.getIdx()});
@@ -385,6 +396,7 @@ static SyncMacroModel buildMGatherA2A3Gm2UbModel(pto::MGatherOp op,
                    ArrayRef<unsigned>{0});
     addHiddenEvent(model, PipelineType::PIPE_S, PipelineType::PIPE_MTE3,
                    ArrayRef<unsigned>{0});
+    model.completionTransfers.push_back({0, 1});
   } else {
     SmallVector<Value> sUses;
     sUses.push_back(op.getIdx());
@@ -451,4 +463,72 @@ std::optional<SyncMacroModel> mlir::pto::getSyncMacroModel(Operation *op) {
     return getMGatherSyncMacroModel(mgather);
   }
   return std::nullopt;
+}
+
+namespace {
+
+// These operation families have synchronization-relevant state beyond one
+// ordinary memory phase. Keeping this exceptional population here makes the
+// generic admission rule independent of operation names. Each family remains
+// fail-closed until its lowering supplies a typed or macro transfer model.
+bool hasUnmodeledImplicitSyncResource(Operation *op) {
+  StringRef name = op->getName().getStringRef();
+  return name.starts_with("pto.comm.") || name.starts_with("pto.sync.") ||
+         name.starts_with("pto.cmo.") || name.starts_with("pto.fence.") ||
+         name == "pto.syncall" || name == "pto.tsync" ||
+         name == "pto.tprefetch_async" ||
+         name == "pto.make_prefetch_async_context" ||
+         name == "pto.get_prefetch_async_session" ||
+         name == "pto.aic_initialize_pipe" ||
+         name == "pto.aiv_initialize_pipe" ||
+         name == "pto.initialize_l2g2l_pipe" ||
+         name == "pto.initialize_l2l_pipe" || name == "pto.talloc" ||
+         name == "pto.tpush" || name == "pto.tpop" ||
+         name == "pto.tfree" || name == "pto.set_quant_scalar" ||
+         name == "pto.set_quant_vector" || name == "pto.tprint" ||
+         name == "pto.print" || name == "pto.set_ffts";
+}
+
+} // namespace
+
+SyncOperationSemantics mlir::pto::getSyncOperationSemantics(Operation *op) {
+  SyncOperationSemantics result;
+  if (!op)
+    return result;
+
+  if (auto macro = getSyncMacroModel(op)) {
+    result.kind = SyncOperationSemanticKind::Macro;
+    result.macro = std::move(macro);
+    return result;
+  }
+  if (hasUnmodeledImplicitSyncResource(op)) {
+    result.kind = SyncOperationSemanticKind::ImplicitResource;
+    return result;
+  }
+
+  auto pipe = dyn_cast<OpPipeInterface>(op);
+  if (!pipe || !isa<MemoryEffectOpInterface>(op))
+    return result;
+
+  // Reuse the lowering-owned normalized semantic layer to keep atomics,
+  // volatile accesses, post-update state, and other typed effects out of the
+  // ordinary-memory path. High-level tile ops do not all carry the VPTO op
+  // interface yet, so its default implementation is the common fallback.
+  VPTOSchedulingSemantics normalized =
+      isa<VPTOSchedulingOpInterface>(op)
+          ? getVPTOSchedulingSemantics(op)
+          : getDefaultVPTOSchedulingSemantics(op);
+  if (!normalized.effects.empty()) {
+    result.kind = SyncOperationSemanticKind::TypedEffect;
+    return result;
+  }
+  // The high-level PTO tile dialect deliberately exposes its ordinary memory
+  // contract through MemoryEffectOpInterface rather than the VPTO-specific
+  // address normalizer. Its exact phase and every effect are independently
+  // checked by the importer. Do not require VPTO classification here: that
+  // would turn an implementation detail of the downstream scheduler into a
+  // second operation-name admission list.
+  result.kind = SyncOperationSemanticKind::SinglePhaseOrdinary;
+  result.pipe = static_cast<PipelineType>(pipe.getPipe());
+  return result;
 }

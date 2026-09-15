@@ -11,11 +11,13 @@ module attributes {pto.target_arch = "a3"} {
     %a2 = arith.constant 512 : i64
     %a3 = arith.constant 1024 : i64
     %a4 = arith.constant 1280 : i64
+    %a5 = arith.constant 1536 : i64
     %left = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 8x8xf32>
     %right = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 8x8xf32>
     %joined = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 8x16xf32>
     %left_idx = pto.alloc_tile addr = %a3 : !pto.tile_buf<vec, 8x8xi32>
     %right_idx = pto.alloc_tile addr = %a4 : !pto.tile_buf<vec, 8x8xi32>
+    %reduced = pto.alloc_tile addr = %a5 : !pto.tile_buf<vec, 1x16xf32>
     scf.for %i = %c0 to %c2 step %c1 {
       pto.tconcatidx
           ins(%left, %right, %left_idx, %right_idx :
@@ -23,6 +25,12 @@ module attributes {pto.target_arch = "a3"} {
               !pto.tile_buf<vec, 8x8xi32>, !pto.tile_buf<vec, 8x8xi32>)
           outs(%joined : !pto.tile_buf<vec, 8x16xf32>)
     }
+    // Both operations were intentionally absent from the former name
+    // allowlist. TCOLSUM also represents the ordinary reduction population
+    // seen in PyPTO coverage. Their shared pipe/effect contract, not either
+    // spelling, is now the admission boundary.
+    pto.tcolsum ins(%joined : !pto.tile_buf<vec, 8x16xf32>)
+                  outs(%reduced : !pto.tile_buf<vec, 1x16xf32>)
     return
   }
 }

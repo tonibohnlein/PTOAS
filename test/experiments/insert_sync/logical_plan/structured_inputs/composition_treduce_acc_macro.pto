@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @composition_treduce_acc_macro(
+      %peer_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<f32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %n = arith.constant 32 : index
+    %a = arith.constant 0 : i64
+    %b = arith.constant 128 : i64
+    %c = arith.constant 256 : i64
+    %acc = pto.alloc_tile addr = %a : !pto.tile_buf<vec, 1x32xf32>
+    %ping = pto.alloc_tile addr = %b : !pto.tile_buf<vec, 1x32xf32>
+    %copy = pto.alloc_tile addr = %c : !pto.tile_buf<vec, 1x32xf32>
+    %pv = pto.make_tensor_view %peer_ptr, shape = [%one, %n],
+      strides = [%n, %one] : !pto.tensor_view<?x?xf32>
+    %dv = pto.make_tensor_view %dst_ptr, shape = [%one, %n],
+      strides = [%n, %one] : !pto.tensor_view<?x?xf32>
+    %peer = pto.partition_view %pv, offsets = [%z, %z], sizes = [%one, %n]
+      : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x32xf32>
+    %dst = pto.partition_view %dv, offsets = [%z, %z], sizes = [%one, %n]
+      : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x32xf32>
+    pto.tload ins(%peer : !pto.partition_tensor_view<1x32xf32>)
+      outs(%copy : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tmov ins(%copy : !pto.tile_buf<vec, 1x32xf32>)
+      outs(%acc : !pto.tile_buf<vec, 1x32xf32>)
+    pto.comm.treduce(%dst, %acc, recv(%ping), group(%peer) :
+      !pto.partition_tensor_view<1x32xf32>, !pto.tile_buf<vec, 1x32xf32>,
+      !pto.tile_buf<vec, 1x32xf32>, !pto.partition_tensor_view<1x32xf32>)
+      {reduceOp = #pto<reduce_op sum>, root = 0 : i32}
+    return
+  }
+}

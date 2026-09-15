@@ -215,6 +215,24 @@ static unsigned p2pMacro(c::Program& p, unsigned sourceCell, unsigned stagingCel
     n.macroTransfers.push_back({0, unsigned(Pipe::MTE2), unsigned(Pipe::MTE3)});
     return id;
 }
+static unsigned chainedMacro(c::Program& p, unsigned cell)
+{
+    auto id = add(p, c::Node::Macro);
+    auto& n = p.nodes[id];
+    c::MacroPhase load{unsigned(Pipe::MTE2), c::Effects(p.cells)};
+    load.effects[cell].writers = 1u << load.lane;
+    c::MacroPhase update{unsigned(Pipe::V), c::Effects(p.cells)};
+    update.effects[cell].readers = 1u << update.lane;
+    update.effects[cell].writers = 1u << update.lane;
+    c::MacroPhase store{unsigned(Pipe::MTE3), c::Effects(p.cells)};
+    store.effects[cell].readers = 1u << store.lane;
+    n.macroPhases = {std::move(load), std::move(update), std::move(store)};
+    n.macroTransfers = {
+        {0, unsigned(Pipe::MTE2), unsigned(Pipe::V)},
+        {1, unsigned(Pipe::V), unsigned(Pipe::MTE3)},
+    };
+    return id;
+}
 static unsigned sequence(c::Program& p, std::vector<unsigned> children)
 {
     children.push_back(add(p, c::Node::Sequence));
@@ -4032,6 +4050,17 @@ int main()
         require(oneKey.success && oneKey.residualLifetimes == 1 && oneKey.persistentReaderFamilies == 2);
         require(c::verifyDemands(scarce, oneKey.before).success);
     }
+
+    // A chained internal transfer carries completion that its source acquired
+    // from an earlier phase; the final reader needs no external prerequisite.
+    c::Program chainedMacroProgram;
+    chainedMacroProgram.cells = 1;
+    auto chained = chainedMacro(chainedMacroProgram, 0);
+    add(chainedMacroProgram, c::Node::Sequence, {chained});
+    auto chainedPlan = c::construct(chainedMacroProgram);
+    require(chainedPlan.success);
+    require(chainedPlan.before[chained].empty());
+    require(c::verify(chainedMacroProgram, chainedPlan.before).success);
 
     // Atomic P2P macros expose ordered phase effects without exposing internal
     // event cuts. The forward hidden transfer covers staging; final MTE3 work

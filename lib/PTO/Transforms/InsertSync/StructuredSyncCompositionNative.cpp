@@ -1122,9 +1122,12 @@ struct Tree {
                SmallVector<const CompoundInstanceElement*, 2> translated)
     {
         auto model = getSyncMacroModel(op);
-        if (program.core != ss::Core::AIV || !model || !isa<TPutOp, TGetOp>(op) || model->phases.size() != 2 ||
-            model->hiddenEvents.size() != 2 ||
-            model->completionTransfers.size() != 1) {
+        TCoreType core = program.core == ss::Core::AIC
+                             ? TCoreType::CUBE
+                             : TCoreType::VECTOR;
+        if (!model || model->phases.empty() ||
+            !supportsSyncMacroCore(*model, core) ||
+            translated.size() != model->phases.size()) {
             reason = "unsupported compositional macro contract";
             return false;
         }
@@ -1144,19 +1147,20 @@ struct Tree {
             addEffects(phase.effects, *source, translated[i]);
             current.macroPhases.push_back(std::move(phase));
         }
-        const auto& transfer = model->completionTransfers.front();
-        if (transfer.sourcePhaseId >= current.macroPhases.size() ||
-            transfer.targetPhaseId >= current.macroPhases.size() ||
-            transfer.sourcePhaseId >= transfer.targetPhaseId) {
-            reason = "invalid ordered macro completion contract";
-            return false;
+        for (const auto& transfer : model->completionTransfers) {
+            if (transfer.sourcePhaseId >= current.macroPhases.size() ||
+                transfer.targetPhaseId >= current.macroPhases.size() ||
+                transfer.sourcePhaseId >= transfer.targetPhaseId) {
+                reason = "invalid ordered macro completion contract";
+                return false;
+            }
+            current.macroTransfers.push_back(
+                {transfer.sourcePhaseId,
+                 current.macroPhases[transfer.sourcePhaseId].lane,
+                 current.macroPhases[transfer.targetPhaseId].lane});
         }
-        current.macroTransfers.push_back(
-            {transfer.sourcePhaseId, current.macroPhases[transfer.sourcePhaseId].lane,
-             current.macroPhases[transfer.targetPhaseId].lane});
         // Hidden events reserve private resources. They do not themselves
         // establish a phase edge; that fact is explicit above.
-        std::set<std::pair<unsigned, unsigned>> directions;
         for (const auto& hidden : model->hiddenEvents) {
             auto source = lane(static_cast<PIPE>(hidden.srcPipe));
             auto observer = lane(static_cast<PIPE>(hidden.dstPipe));
@@ -1164,12 +1168,6 @@ struct Tree {
                 !program.target.event({program.core, static_cast<ss::Pipe>(*source)},
                                       {program.core, static_cast<ss::Pipe>(*observer)})) {
                 reason = "unsupported hidden macro event contract";
-                return false;
-            }
-            unsigned after = *source == current.macroPhases[0].lane ? 0 :
-                             *source == current.macroPhases[1].lane ? 1 : ~0u;
-            if (after == ~0u || !directions.insert({*source, *observer}).second) {
-                reason = "ambiguous hidden macro event contract";
                 return false;
             }
             for (unsigned eventKey : hidden.eventIds) {
@@ -1186,11 +1184,6 @@ struct Tree {
                                  }) == program.target.reservations.end())
                     program.target.reservations.push_back(reservation);
             }
-        }
-        if (!directions.count({current.macroPhases[0].lane, current.macroPhases[1].lane}) ||
-            !directions.count({current.macroPhases[1].lane, current.macroPhases[0].lane})) {
-            reason = "P2P macro requires a bidirectional hidden event contract";
-            return false;
         }
         return true;
     }
@@ -1257,7 +1250,11 @@ struct Tree {
             }
             auto found = phases.find(&op);
             if (found != phases.end()) {
-                if (found->second.size() > 1) {
+                // Semantic macro identity, rather than phase count, owns
+                // atomic transfer and private-event reservation. Some
+                // qualified lowerings (for example A2/A3 element MGather)
+                // contain one physical phase but still use private events.
+                if (found->second.size() > 1 || getSyncMacroModel(&op)) {
                     if (!macro(current, &op, found->second))
                         return false;
                 } else {

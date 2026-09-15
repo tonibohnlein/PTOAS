@@ -576,13 +576,14 @@ bool executeMacro(const c::Program& p, const c::Node& macro, StateT& state, std:
             return false;
         }
         if (validate && state.demands(phase.lane, phase.effects)) {
-            reason = "atomic macro has an uncovered physical completion requirement";
+            reason = "atomic macro phase " + std::to_string(index) +
+                     " has an uncovered physical completion requirement";
             return false;
         }
         state.seed(phase.effects);
         for (const auto& transfer : macro.macroTransfers)
             if (transfer.afterPhase == index)
-                state.acquire(transfer.source, transfer.observer);
+                state.transferPrefix(transfer.source, transfer.observer);
     }
     return true;
 }
@@ -615,7 +616,7 @@ bool constructMacro(const c::Program& p, const c::Node& macro, StateT& state,
         trial.seed(phase.effects);
         for (const auto& transfer : macro.macroTransfers)
             if (transfer.afterPhase == index)
-                trial.acquire(transfer.source, transfer.observer);
+                trial.transferPrefix(transfer.source, transfer.observer);
     }
 
     StateT actual = state;
@@ -712,6 +713,16 @@ void c::State::acquire(unsigned source, unsigned observer)
     for (auto& e : pending[observer]) {
         e.readers &= ~bit;
         e.writers &= ~bit;
+    }
+}
+void c::State::transferPrefix(unsigned source, unsigned observer)
+{
+    const uint8_t sourceBit = uint8_t(1u) << source;
+    for (unsigned cell = 0; cell < pending[observer].size(); ++cell) {
+        pending[observer][cell].readers &= pending[source][cell].readers;
+        pending[observer][cell].writers &= pending[source][cell].writers;
+        pending[observer][cell].readers &= ~sourceBit;
+        pending[observer][cell].writers &= ~sourceBit;
     }
 }
 void c::State::rendezvous(unsigned a, unsigned b)
