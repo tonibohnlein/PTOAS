@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// SPDX-License-Identifier: LicenseRef-CANN-Open-Software-License-2.0
+
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
+module attributes {pto.target_arch = "a3"} {
+  func.func @while_origins(%src: !pto.partition_tensor_view<1x32xf32>, %keep: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 128 : i64
+    %a2 = arith.constant 256 : i64
+    %a = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 1x32xf32>
+    %last = scf.while (%slot = %a) : (!pto.tile_buf<vec, 1x32xf32>) -> (!pto.tile_buf<vec, 1x32xf32>) {
+      scf.condition(%keep) %slot : !pto.tile_buf<vec, 1x32xf32>
+    } do {
+    ^bb0(%current: !pto.tile_buf<vec, 1x32xf32>):
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%current : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tadd ins(%b, %b : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+      scf.yield %b : !pto.tile_buf<vec, 1x32xf32>
+    }
+    pto.tadd ins(%last, %last : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+}
+// CHECK: scf.while
+// CHECK: pto.{{(wait_flag|barrier)}}
+// CHECK: pto.tload
+// CHECK: pto.{{(wait_flag|barrier)}}
+// CHECK: pto.tadd
+// CHECK: scf.yield
+// CHECK: pto.tadd

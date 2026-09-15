@@ -11,7 +11,7 @@
 module attributes {pto.target_arch = "a3"} {
   func.func @incomplete(%src: !pto.tile_buf<vec, 1x32xf32>,
                         %dst: !pto.tile_buf<vec, 1x32xf32>) {
-    pto.tabs ins(%src : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tsqrt ins(%src : !pto.tile_buf<vec, 1x32xf32>)
       outs(%dst : !pto.tile_buf<vec, 1x32xf32>)
     return
   }

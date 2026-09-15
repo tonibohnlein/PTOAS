@@ -8,11 +8,17 @@
 #ifndef PTO_TRANSFORMS_OAHS_NATIVE_H
 #define PTO_TRANSFORMS_OAHS_NATIVE_H
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 namespace mlir::pto::oahs {
 // Imports and validates complete shared semantics without changing the IR.
 LogicalResult analyzeHandoffSync(func::FuncOp function);
 // Runs through production translation/alias analysis and SyncCodegen. Failure
 // leaves the original function unchanged; no backend fallback is performed.
 LogicalResult runHandoffSync(func::FuncOp function);
+namespace testing {
+// Mutation occurs only on the private working copy, before reconstruction.
+LogicalResult runHandoffSyncWithMutation(func::FuncOp function,
+    llvm::function_ref<void(func::FuncOp)> mutate);
+}
 }
 #endif

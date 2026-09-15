@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// SPDX-License-Identifier: LicenseRef-CANN-Open-Software-License-2.0
+
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
+// Source-level review fixture. NOT executed with native PTOAS in this review.
+// Run with: pto-test-opt native_single_operation_loop.pto '-pto-insert-sync=algorithm=handoff'
+// Under the adapter's declared asynchronous model, repeated writes must be
+// represented. A terminal drain cannot establish in-loop write-before-write.
+module attributes {pto.target_arch = "a3"} {
+  func.func @single_operation_loop(%src: !pto.partition_tensor_view<1x32xf32>,
+                                   %trips: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %address = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %address : !pto.tile_buf<vec, 1x32xf32>
+    scf.for %i = %zero to %trips step %one {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>)
+        outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+    }
+    return
+  }
+}
+
+// CHECK: scf.for
+// CHECK: pto.{{(barrier|wait_flag)}}
+// CHECK: pto.tload

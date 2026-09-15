@@ -8,6 +8,7 @@
 #ifndef PTO_TRANSFORMS_OAHS_PLAN_H
 #define PTO_TRANSFORMS_OAHS_PLAN_H
 
+#include "PTO/IR/SyncTargetProfile.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -18,7 +19,7 @@
 namespace mlir::pto::oahs {
 
 // Ported from StructuredSyncCore: pipelines are facts, never search variables.
-enum class Pipe : unsigned { S, V, M, MTE1, MTE2, MTE3, FIX, Count };
+using Pipe = ::mlir::pto::SyncPipe;
 constexpr unsigned PipeCount = unsigned(Pipe::Count);
 using Cut = std::size_t; // Before operation i; size() is the lifetime exit.
 struct Access {
@@ -76,14 +77,8 @@ struct Demand {
   unsigned cell = 0;
   Property property = Property::ByteCompletion;
 };
-struct Target {
-  // Supplied by the shared lowering/target layer. There is no implicit event
-  // topology, key range, visibility rule or scalar completion assumption.
-  std::string contract;
-  std::array<bool, PipeCount> supported{}, barriers{}, synchronous{};
-  std::array<std::array<std::vector<unsigned>, PipeCount>, PipeCount> keys;
-  bool barrierAll = false;
-};
+using Target = ::mlir::pto::SyncTargetProfile;
+
 struct Program {
   std::vector<Cell> cells;
   std::vector<Operation> operations;
@@ -93,6 +88,8 @@ struct Program {
   // A bounded analysis may require a target-supported conservative result.
   // The reason is retained as part of the imported contract and this still
   // flows through the same constructor and reconstructed verifier.
+  uint64_t verificationWorkLimit = 1u << 26;
+  uint64_t constructionStepLimit = 1u << 16;
   bool conservativeCompletion = false;
   std::string conservativeReason;
   struct InvocationContract {
@@ -120,6 +117,7 @@ struct Result {
   Commands commands;
   unsigned scarcityBarriers = 0;
   unsigned conservativeBarriers = 0;
+  unsigned protocolRepairs = 0;
 };
 
 // Validates semantic completeness and structural integrity without constructing
