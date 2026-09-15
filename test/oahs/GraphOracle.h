@@ -15,6 +15,9 @@
 #include <tuple>
 namespace oahs_oracle {
 namespace o = mlir::pto::oahs;
+struct UncoveredConflict {
+  unsigned producerVisit, consumerVisit, cell;
+};
 struct Verdict { bool hazards=true, rearm=true, balanced=true, acyclic=true;
   explicit operator bool() const { return hazards && rearm && balanced && acyclic; } };
 // Independent finite graph: all command launches are ordered per engine;
@@ -22,7 +25,8 @@ struct Verdict { bool hazards=true, rearm=true, balanced=true, acyclic=true;
 // Edges never include the memory demands or physical-key reuse obligations.
 inline Verdict graph(const o::Program &truth, const o::Commands &commands,
               const std::vector<unsigned> &visits,
-              const std::vector<std::pair<unsigned,unsigned>> &forbidden = {}) {
+              const std::vector<std::pair<unsigned,unsigned>> &forbidden = {},
+              std::vector<UncoveredConflict> *uncovered = nullptr) {
   using K=std::tuple<o::Pipe,o::Pipe,unsigned>;
   std::vector<std::vector<unsigned>> edges;
   auto vertex=[&]() { edges.emplace_back(); return unsigned(edges.size()-1); };
@@ -92,8 +96,11 @@ inline Verdict graph(const o::Program &truth, const o::Commands &commands,
   for(unsigned i=0;i<visits.size();++i) for(unsigned j=i+1;j<visits.size();++j)
     for(const auto &a:truth.operations[visits[i]].accesses)
       for(const auto &b:truth.operations[visits[j]].accesses)
-        if(a.cell==b.cell && (a.write||b.write||truth.cells[a.cell].exclusive))
-          v.hazards &= reaches(dones[i],starts[j]);
+        if(a.cell==b.cell && (a.write||b.write||truth.cells[a.cell].exclusive)) {
+          const bool covered = reaches(dones[i],starts[j]);
+          v.hazards &= covered;
+          if (!covered && uncovered) uncovered->push_back({i,j,a.cell});
+        }
   for(auto [a,b]:rearms) v.rearm &= reaches(a,b);
   for(auto [a,b]:forbidden) v.hazards &= !reaches(dones.at(a), starts.at(b));
   return v;
