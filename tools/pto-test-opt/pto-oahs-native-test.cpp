@@ -1,5 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// SPDX-License-Identifier: LicenseRef-CANN-Open-Software-License-2.0
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/Native.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/SyncOrdinaryExternalModels.h"
@@ -36,6 +41,14 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
+  {
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    require(bool(module));
+    auto function = module->lookupSymbol<func::FuncOp>("test");
+    const std::string before = text(function);
+    require(succeeded(oahs::analyzeHandoffSync(function)));
+    require(text(function) == before);
+  }
   for (unsigned mutation = 0; mutation < 3; ++mutation) {
     auto module = parseSourceString<ModuleOp>(source, &context);
     require(bool(module));
@@ -62,10 +75,10 @@ module attributes {pto.target_arch = "a3"} {
     if (!mutation) require(succeeded(result) && succeeded(verify(function)));
     else require(changed && failed(result) && text(function) == before);
   }
-  // Exercise the real native alias-query widening threshold, not a trusted
-  // user attribute. 730 two-effect loads exceed one million effect pairs.
+  // Repeated identical footprints must not cross a compiler-work threshold
+  // and switch to ALL. This population exceeded the old million-pair cutoff.
   std::string many = R"mlir(module attributes {pto.target_arch = "a3"} {
-    func.func @budget(%src: !pto.partition_tensor_view<1x32xf32>)
+    func.func @repeated_footprint(%src: !pto.partition_tensor_view<1x32xf32>)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
       %address = arith.constant 0 : i64
       %zero = arith.constant 0 : index
@@ -79,15 +92,18 @@ module attributes {pto.target_arch = "a3"} {
   many += "} return } }";
   auto module = parseSourceString<ModuleOp>(many, &context);
   require(bool(module));
-  auto budgetFunction = module->lookupSymbol<func::FuncOp>("budget");
-  require(succeeded(oahs::runHandoffSync(budgetFunction)));
+  auto manyFunction = module->lookupSymbol<func::FuncOp>("repeated_footprint");
+  require(succeeded(oahs::runHandoffSync(manyFunction)));
   unsigned loads = 0;
-  budgetFunction.walk([&](TLoadOp load) {
+  manyFunction.walk([&](TLoadOp load) {
     auto *previous = load->getPrevNode();
     require(previous && isa<BarrierOp>(previous) &&
-            cast<BarrierOp>(previous).getPipe().getPipe() == PIPE::PIPE_ALL);
+            cast<BarrierOp>(previous).getPipe().getPipe() == PIPE::PIPE_MTE2);
     ++loads;
   });
   require(loads == 730);
-  llvm::outs() << "OAHS native placement/atomicity/budget checks passed\n";
+  unsigned drains = 0;
+  manyFunction.walk([&](BarrierOp barrier) { drains += barrier.getPipe().getPipe() == PIPE::PIPE_ALL; });
+  require(drains == 1); // original invocation retirement, not a budget fallback
+  llvm::outs() << "OAHS native placement/atomicity/grouped-footprint checks passed\n";
 }

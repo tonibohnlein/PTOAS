@@ -1,5 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// SPDX-License-Identifier: LicenseRef-CANN-Open-Software-License-2.0
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/Plan.h"
 #include "GraphOracle.h"
 #include <cstdlib>
@@ -136,11 +141,9 @@ int main() {
   CHECK(cube.keys[unsigned(o::Pipe::M)][unsigned(o::Pipe::FIX)].size() == 6);
   CHECK(cube.keys[unsigned(o::Pipe::S)][unsigned(o::Pipe::M)].empty());
 
-  // Exhaust optional construction work; retain a checked conservative result.
-  auto bounded = ring; bounded.constructionStepLimit = 0;
-  CHECK(allCount(build(bounded).commands) == bounded.operations.size());
-  bounded = ring; bounded.verificationWorkLimit = 0;
-  CHECK(!o::verify(bounded, ringPlan.commands).success);
+  // Essential verification has no work cutoff. Real key limits still apply.
+  auto noAll = ring; noAll.target.barrierAll = false;
+  CHECK(build(noAll,8).success);
 
   std::mt19937 random(20260915);
   for (unsigned sample = 0; sample < 180; ++sample) {

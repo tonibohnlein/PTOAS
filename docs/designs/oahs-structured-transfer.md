@@ -1,6 +1,7 @@
 # OAHS: obligation repair and finite structured transfer
 
-Patch base: `b0c241f12fbb3d9532746bc47e966d3978ccc9f9`.
+Initial hardening base: `b0c241f12fbb3d9532746bc47e966d3978ccc9f9`.
+Budget-independent revision base: `2c072d1a11b2e400f615ca104c42708e52aec71c`.
 This series keeps `algorithm=existing|handoff`. It does not port the old planner
 stack or add a persistent-lifetime recognizer.
 
@@ -12,16 +13,22 @@ origins over for initial/backedge/result edges, while initial/condition/backedge
 result edges, and forwarding operations. A loop-derived view covers its reaching
 whole roots: this is deliberate widening, not an exact offset recurrence solver.
 The records are append-only and original phase effects are then refreshed.
-Unknown origins or exhausted root propagation gain unknown-range coverage.
+Unknown origins gain unknown-range coverage. Root propagation uses a delta
+worklist to completion: each new node/root fact crosses each forwarding edge
+once. No computational cutoff changes the origin result.
 This hook is not enabled for the legacy planner by this series.
 
-Each native physical effect receives an access record even when it has no other
-static conflict partner. Pairwise alias witnesses supplement these records; they
-are not their sole source. This preserves a lone operation's dynamic recurrence.
-Pairwise witness construction remains potentially quadratic. Its existing bound
-selects a stronger realization: ALL before every phase, INCLUDING phase zero,
-and retirement if required. The corresponding checker demands this placement;
-an absent first-phase barrier cannot pass by suppressing its missing demands.
+Each native physical effect is retained even when it has no other static conflict
+partner. Repeated uses of the identical immutable footprint record share an own
+cell; distinct records retain separate identities. Pairwise overlap cells supplement
+these records without taking a transitive alias closure. This preserves both self
+recurrence and non-transitive may-alias relations. Missing absolute local addresses,
+zero-size or overflowing local geometry are unknown, not distinct-root noalias.
+
+Alias queries now depend on distinct footprint groups rather than repeated effect
+pairs. There is no million-pair threshold or flag that removes overlap obligations.
+Worst-case distinct-footprint overlap remains quadratic; grouping is not a claim
+of a universally linear alias algorithm.
 
 ## Actual placement
 
@@ -49,9 +56,11 @@ that remainder. A new consumption replaces the old consumption knowledge and
 invalidates that key in every saved acknowledgment. Barriers do not consume flags.
 
 Sequences pass state. Choices union possible histories/balances and intersect
-must facts. Loops compute an ascending finite invariant containing entry and
-backedge state. Preconditions are checked in the stabilized invariant, not in an
-optimistic discovery iteration. For includes the zero-trip edge; while exits from
+must facts. One worklist on the static control graph computes ascending finite
+invariants containing entry and backedge state. A site is re-enqueued only when
+its incoming facts change. Unreachable input is distinct from fresh quiescent
+input. Preconditions are checked once at the stabilized site states, not in an
+optimistic discovery iteration or by recursively resolving every nested loop. For includes the zero-trip edge; while exits from
 the before-region. A live publication can cross a child region when the original
 control and receipt preconditions justify it; no region-entry reset is inserted.
 The full proof is relative to the documented prefix/event contract, not a claim
@@ -71,9 +80,14 @@ acceptance fact. The complete memory plan is present before recurrence is tested
 so real storage-release handoffs can acknowledge readiness without extra replies.
 Only a failed causal-consumption check can introduce a reply. Overlapping logical
 balances can force an earlier publication to its consumer cut. Unresolved repair
-or an optional construction limit selects a fully checked ALL realization when
-available; essential final-check exhaustion still rejects. There is no legacy
-fallback and no claim of minimum command count or globally optimal placement.
+selects a fully checked ALL realization when available. A repair slot indexed by
+(consumer, source) can be created once; its packet can be moved to the consumer
+once and acquire at most one acknowledgment. Every continuing repair strictly
+advances these finite states. An unchanged candidate is not retried. There is no
+arbitrary construction-step allowance and no verification-work allowance. Actual
+target scarcity and a failed finite protocol repair can still require conservative
+synchronization. There is no legacy fallback, minimum-command claim, or global
+optimality claim.
 
 ## Shared target and operation contracts
 
@@ -109,7 +123,9 @@ additional operation variants, mixed physical sections, and additional targets
 remain unsupported and are rejected. Reservations and resource-exclusion cells
 are handled; generic resource/visibility fields are structurally validated but
 are not silently treated as byte completion. No 100% corpus claim follows.
-The pairwise alias-witness representation also remains a scalability task.
+Distinct-footprint pair materialization and full candidate reanalysis remain
+scalability tasks. Budget independence does not imply cheap analysis on all input
+families. Ordinary allocation failure/cancellation must not be treated as a proof.
 
 ## Tests and required native gate
 
@@ -120,7 +136,32 @@ consume-before-republication by reachability WITHOUT inserting those edges as
 assumptions. It expands bounded for/while/choice traces only in tests.
 
 The native tests cover carried roots, self-recurrence, while forwarding, actual
-endpoint placement, atomic rollback, ordinary external models, and real alias
-budget widening (730 loads). They must be built with the repository's configured
+endpoint placement, atomic rollback, ordinary external models, dynamic local
+address aliasing, and 730 repeated loads without budget-induced ALL insertion. They must be built with the repository's configured
 MLIR/PTOAS toolchain. Adding their source does not mean they were executed.
 See the patch package validation record for commands actually run.
+
+
+## Termination and scaling obligations
+
+For a fixed candidate, incoming site states grow by join in a finite product:
+pending/remainder and occupancy facts grow, while must-valid and consumption
+knowledge can only be lost at a join. Primitive transfer may establish facts, but
+the stored incoming states still change monotonically. Work continues until the
+queue is empty, then all original preconditions are checked on those states.
+This eliminates exponential re-traversal caused solely by recursive nesting.
+It does not complete the domain's hardware simulation proof.
+
+Construction has at most N*P memory-repair slots, where N is the static physical
+phase count and P is the fixed lane count. Each is created at most once, and each
+packet can be relocated and acknowledged once. All branches that cannot change
+one of those states terminate in a checked fallback or failure. Thus successful
+edits have a structural bound (at most 3*N*P), not an empirical attempt budget.
+Each candidate still invokes complete analysis; no near-linear whole-constructor
+complexity is asserted. A future incremental analyzer must invalidate affected
+receipt facts after edits rather than silently reusing old candidate state.
+
+The test-only concrete trace enumerator retains its own enumeration limit. It is
+not used by production analysis and cannot select a production synchronization
+plan. Intrinsic container/identity size checks remain, with no claim of infinite
+memory availability.
