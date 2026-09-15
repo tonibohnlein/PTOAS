@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/Native.h"
 #include "PTO/Transforms/OAHS/Plan.h"
+#include "PTO/Transforms/OAHS/StorageWitnesses.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncOriginClosure.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
@@ -16,6 +17,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include <functional>
 #include <optional>
+#include <limits>
 
 namespace mlir::pto::oahs {
 namespace {
@@ -169,6 +171,31 @@ LogicalResult import(func::FuncOp function, Import &out) {
 
   struct Effect { unsigned operation; const BaseMemInfo *memory; bool write; };
   SmallVector<Effect> physicalEffects;
+  // A missing absolute local address is not a distinct-allocation proof. Keep
+  // legacy alias behavior unchanged; normalize the handoff import's private
+  // records instead. Stable copies also preserve the original SSA effect names.
+  SmallVector<std::unique_ptr<BaseMemInfo>> widenedMemory;
+  DenseMap<const BaseMemInfo *, const BaseMemInfo *> normalizedMemory;
+  auto qualifyMemory = [&](const BaseMemInfo *memory) -> const BaseMemInfo * {
+    auto found = normalizedMemory.find(memory);
+    if (found != normalizedMemory.end()) return found->second;
+    const bool local = memory->scope != AddressSpace::GM &&
+                       memory->scope != AddressSpace::Zero;
+    const bool overflowing = llvm::any_of(memory->baseAddresses, [&](uint64_t base) {
+      return memory->allocateSize > std::numeric_limits<uint64_t>::max() - base;
+    });
+    if (local && (!memory->hasKnownPhysicalAddresses || !memory->allocateSize ||
+                  memory->baseAddresses.empty() || overflowing)) {
+      auto copy = memory->clone();
+      copy->aliasesUnknownRange = true;
+      copy->hasKnownPhysicalAddresses = false;
+      widenedMemory.push_back(std::move(copy));
+      normalizedMemory[memory] = widenedMemory.back().get();
+    } else {
+      normalizedMemory[memory] = memory;
+    }
+    return normalizedMemory.lookup(memory);
+  };
   for (unsigned i = 0; i < out.payload.size(); ++i) {
     auto *op = out.payload[i];
     auto *phase = phases.lookup(op);
@@ -200,67 +227,38 @@ LogicalResult import(func::FuncOp function, Import &out) {
         // Admit the same translated storage scopes as production autosync.
         // Visibility remains a separate contract below; ordinary GM byte
         // completion is intentionally governed by production alias behavior.
-        physicalEffects.push_back({i, memory, write});
+        physicalEffects.push_back({i, qualifyMemory(memory), write});
       }
       return success();
     };
     if (failed(add(phase->defVec, true)) || failed(add(phase->useVec, false))) return failure();
   }
-  // An access exists independently of whether it has a distinct static
-  // conflict partner. Its own later occurrence can be the conflicting access.
-  // Keep this linear population even when the optional pair budget is exhausted.
+  // Group only repeated uses of the identical immutable imported record.
+  // This is not a may-alias equivalence closure. Origin alternatives and views
+  // with distinct records retain separate groups and pairwise overlap tests.
+  DenseMap<const BaseMemInfo *, unsigned> groupIds;
+  std::vector<const BaseMemInfo *> memories;
+  std::vector<FootprintGroup> groups;
   for (const Effect &effect : physicalEffects) {
-    const BaseMemInfo *memory = effect.memory;
-    const unsigned cell = out.program.cells.size();
-    Cell witness;
-    witness.addressSpace = std::to_string(static_cast<unsigned>(memory->scope));
-    witness.provenance = "original access (including self recurrence)";
-    witness.unknownRange = memory->aliasesUnknownRange ||
-                           memory->baseAddresses.empty();
-    for (uint64_t base : memory->baseAddresses)
-      witness.ranges.push_back({base, memory->allocateSize});
-    out.program.cells.push_back(std::move(witness));
-    out.program.operations[effect.operation].accesses.push_back(
-        {cell, !effect.write, effect.write});
+    auto found = groupIds.find(effect.memory);
+    unsigned group;
+    if (found == groupIds.end()) {
+      group = groups.size(); groupIds[effect.memory] = group;
+      memories.push_back(effect.memory);
+      const auto *memory = effect.memory;
+      FootprintGroup entry;
+      entry.description.addressSpace = std::to_string(static_cast<unsigned>(memory->scope));
+      entry.description.provenance = "original footprint (including self recurrence)";
+      entry.description.unknownRange = memory->aliasesUnknownRange || memory->baseAddresses.empty();
+      for (uint64_t base : memory->baseAddresses)
+        entry.description.ranges.push_back({base, memory->allocateSize});
+      groups.push_back(std::move(entry));
+    } else group = found->second;
+    groups[group].uses.push_back({effect.operation, !effect.write, effect.write});
   }
-  // Pairwise witness cells preserve production's alias relation without taking
-  // its transitive closure (an unknown view must not merge unrelated ranges).
-  // Bound the quadratic compatibility query population. Large inputs retain
-  // coverage through a verified conservative realization in this constructor.
-  constexpr std::size_t maxAliasChecks = 1U << 20;
-  const bool aliasBudgetExceeded = physicalEffects.size() > 1 &&
-      physicalEffects.size() >
-          (2 * maxAliasChecks) / (physicalEffects.size() - 1);
-  if (aliasBudgetExceeded) {
-    out.program.conservativeCompletion = true;
-    out.program.conservativeReason =
-        "production alias-query budget exceeded one million effect pairs";
-  }
-  for (std::size_t i = 0; !aliasBudgetExceeded && i < physicalEffects.size(); ++i)
-    for (std::size_t j = i + 1; j < physicalEffects.size(); ++j) {
-      const auto &a = physicalEffects[i], &b = physicalEffects[j];
-      if (a.operation == b.operation || (!a.write && !b.write) ||
-          !aliases.MemAlias(a.memory, b.memory))
-        continue;
-      unsigned cell = out.program.cells.size();
-      Cell witness;
-      witness.addressSpace =
-          std::to_string(static_cast<unsigned>(a.memory->scope));
-      witness.provenance = a.memory->rootBuffer == b.memory->rootBuffer
-          ? "shared translated root"
-          : "production compatibility alias witness";
-      witness.unknownRange = a.memory->aliasesUnknownRange ||
-                             b.memory->aliasesUnknownRange ||
-                             a.memory->baseAddresses.empty() ||
-                             b.memory->baseAddresses.empty();
-      for (uint64_t base : a.memory->baseAddresses)
-        witness.ranges.push_back({base, a.memory->allocateSize});
-      for (uint64_t base : b.memory->baseAddresses)
-        witness.ranges.push_back({base, b.memory->allocateSize});
-      out.program.cells.push_back(std::move(witness));
-      out.program.operations[a.operation].accesses.push_back({cell, !a.write, a.write});
-      out.program.operations[b.operation].accesses.push_back({cell, !b.write, b.write});
-    }
+  appendStorageWitnesses(out.program, groups, [&](std::size_t a, std::size_t b) {
+    return aliases.MemAlias(memories[a], memories[b]);
+  });
   // Select the physical core, not a complete graph over unrelated pipelines.
   bool vector = false, cube = false;
   auto kind = function->getAttrOfType<FunctionKernelKindAttr>("pto.kernel_kind");

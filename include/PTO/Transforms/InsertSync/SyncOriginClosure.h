@@ -1,9 +1,15 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// SPDX-License-Identifier: LicenseRef-CANN-Open-Software-License-2.0
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 #ifndef PTO_TRANSFORMS_INSERTSYNC_SYNCORIGINCLOSURE_H
 #define PTO_TRANSFORMS_INSERTSYNC_SYNCORIGINCLOSURE_H
 
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncOriginPropagation.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -53,8 +59,7 @@ struct Node {
 // The final phase refresh also imports effects absent during the first traversal
 // (notably while condition/result forwarding).
 inline LogicalResult closeStructuredSyncOrigins(
-    func::FuncOp function, SyncIRs &phases, Buffer2MemInfoMap &buffers,
-    uint64_t workLimit = 1u << 20) {
+    func::FuncOp function, SyncIRs &phases, Buffer2MemInfoMap &buffers) {
   using namespace sync_origin_detail;
   DenseMap<Value, unsigned> ids;
   std::vector<Node> nodes;
@@ -153,25 +158,8 @@ inline LogicalResult closeStructuredSyncOrigins(
       auto found = buffers.find(nodes[i].value);
       nodes[i].unknown = found == buffers.end() || found->second.empty();
     }
-    queue.push_back(i);
   }
-  uint64_t work = 0;
-  bool exhausted = false;
-  while (!queue.empty() && !exhausted) {
-    unsigned i = queue.front(); queue.pop_front();
-    for (unsigned user : nodes[i].users) {
-      if (work >= workLimit || 1 + nodes[i].roots.size() > workLimit - work) {
-        exhausted = true; break;
-      }
-      work += 1 + nodes[i].roots.size();
-      auto oldSize = nodes[user].roots.size();
-      bool oldUnknown = nodes[user].unknown;
-      nodes[user].roots.insert(nodes[i].roots.begin(), nodes[i].roots.end());
-      nodes[user].unknown |= nodes[i].unknown;
-      if (oldSize != nodes[user].roots.size() || oldUnknown != nodes[user].unknown)
-        queue.push_back(user);
-    }
-  }
+  (void)propagateSyncOrigins(nodes);
   auto append = [&](Value value, std::unique_ptr<BaseMemInfo> info) {
     auto &entries = buffers[value];
     for (const auto &old : entries)
@@ -182,7 +170,7 @@ inline LogicalResult closeStructuredSyncOrigins(
   std::vector<std::pair<Value, std::unique_ptr<BaseMemInfo>>> additions;
   for (const Node &node : nodes) {
     if (!node.affected) continue;
-    bool unknown = exhausted || node.unknown || node.roots.empty();
+    bool unknown = node.unknown || node.roots.empty();
     for (unsigned root : node.roots) {
       auto found = buffers.find(nodes[root].value);
       if (found == buffers.end() || found->second.empty()) {
