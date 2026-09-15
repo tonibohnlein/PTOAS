@@ -1,0 +1,59 @@
+{
+  "schema": "oahs.evidence.v1",
+  "source_revisions": {
+    "PTOAS": "ad63e67a79d47e35a76692dd534df13bd4bd6b23"
+  },
+  "cohorts": {
+    "ptoas": {
+      "collected": false,
+      "collection_argv": [],
+      "enumeration_log": null,
+      "note": "Not captured. Include all expected tests, including failures before compiler invocation."
+    },
+    "pypto_ops": {
+      "collected": false,
+      "collection_argv": [],
+      "enumeration_log": null,
+      "note": "Not captured. Include all expected tests, including failures before compiler invocation."
+    },
+    "pypto_lib": {
+      "collected": false,
+      "collection_argv": [],
+      "enumeration_log": null,
+      "note": "Not captured. Include all expected tests, including failures before compiler invocation."
+    },
+    "model_kernels": {
+      "collected": false,
+      "collection_argv": [],
+      "enumeration_log": null,
+      "note": "Not captured. Include all expected tests, including failures before compiler invocation."
+    },
+    "device_regressions": {
+      "collected": false,
+      "collection_argv": [],
+      "enumeration_log": null,
+      "note": "Not captured. Include all expected tests, including failures before compiler invocation."
+    }
+  },
+  "regressions": {
+    "small_gemm": {
+      "minimum_cases": 1,
+      "case_ids": [],
+      "evidence": null,
+      "note": "Capture the reported three-reverse-handoff regression; do not replace it with historical GEMM."
+    },
+    "attention_refusals": {
+      "minimum_cases": 6,
+      "case_ids": [],
+      "evidence": null,
+      "note": "Six reported refused kernels; exact identities and source artifacts remain to be captured."
+    },
+    "prefill": {
+      "minimum_cases": 44,
+      "case_ids": [],
+      "evidence": null,
+      "note": "At least the 44 reported OAHS-run kernels plus every refused/fallback kernel and full model evidence. This is not a cap on model inventory."
+    }
+  },
+  "inputs": []
+}
