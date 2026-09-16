@@ -10,12 +10,14 @@
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncOriginClosure.h"
 #include "PTO/Transforms/OAHS/Prefixes.h"
+#include "PTO/Transforms/OAHS/StorageFrontiers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
+#include <limits>
 using namespace mlir;
 using namespace mlir::pto;
 namespace {
@@ -98,6 +100,23 @@ module attributes {pto.target_arch = "a3"} {
   auto function = module->lookupSymbol<func::FuncOp>("ordinary");
   const auto before = text(function);
   MemoryDependentAnalyzer aliases;
+  {
+      BaseMemInfo memory(function.getArgument(0), function.getArgument(0), AddressSpace::VEC, {32}, 128, true, false);
+      auto coordinates = MemoryDependentAnalyzer::storageCoordinates(memory);
+      require(coordinates && coordinates->absolute && coordinates->begin == 32 && coordinates->size == 128);
+      memory.hasKnownPhysicalAddresses = false;
+      require(!MemoryDependentAnalyzer::storageCoordinates(memory));
+      memory.scope = AddressSpace::GM;
+      coordinates = MemoryDependentAnalyzer::storageCoordinates(memory);
+      require(coordinates && !coordinates->absolute && coordinates->root == function.getArgument(0));
+      memory.aliasesUnknownRange = true;
+      require(!MemoryDependentAnalyzer::storageCoordinates(memory));
+      memory.aliasesUnknownRange = false;
+      memory.baseAddresses.push_back(160);
+      require(!MemoryDependentAnalyzer::storageCoordinates(memory));
+      memory.baseAddresses = {std::numeric_limits<uint64_t>::max() - 1};
+      require(!MemoryDependentAnalyzer::storageCoordinates(memory));
+  }
   SyncIRs phases;
   Buffer2MemInfoMap buffers;
   PTOIRTranslator translator(phases, aliases, buffers, function,
@@ -583,16 +602,38 @@ module attributes {pto.target_arch = "a3"} {
       raw |= r.kind == oahs::CompletionRequirement::RAW &&
              r.demand.producer == 0 && r.demand.consumer == 1;
     require(raw && report.analysis.protocol.empty());
+    require(!report.storageRoots.empty());
+    for (const auto& cell : report.program.cells)
+        for (auto origin : cell.storageOrigins)
+            require(origin < report.storageRoots.size() && report.storageRoots[origin]);
+    require(llvm::any_of(report.program.cells, [](const auto& cell) {
+        return cell.storage == oahs::Cell::Storage::CanonicalInterval && !cell.coordinateSpace.empty() &&
+               cell.ranges.size() == 1;
+    }));
+    oahs::StorageFrontierAnalysis storage(report.program);
+    require(storage.complete());
+    bool importedWriter = false;
+    for (const auto& relation : storage.relationshipsAt(report.phaseCuts[1])) {
+        if (relation.source.operation == 0 && relation.target.operation == 1) {
+            importedWriter = true;
+            auto provenance = storage.describeRequirement(relation);
+            require(provenance.reasons & oahs::AdditionalOverlap);
+            require(!(provenance.reasons & oahs::KnownReadiness));
+            auto lifecycle = storage.lifecycleAt(report.phaseCuts[1], relation.cell);
+            require(lifecycle.reachable && !lifecycle.previousWriters.empty());
+        }
+    }
+    require(importedWriter);
     for (const auto &phase : report.program.operations)
       for (const auto &access : phase.accesses)
-        require(!access.definiteWrite); // native may-overlap witnesses are not
-                                        // exact atoms
+          // A known bounding interval is not proof of a full instruction write.
+          require(!access.definiteWrite);
     require(report.cuts.size() == report.analysis.cuts.size());
     require(report.cuts.size() > report.phases.size());
     for (unsigned i = 0; i < report.phases.size(); ++i)
       require(report.cuts[report.phaseCuts[i]] == report.phases[i]);
-    // Import has not invented definite-whole-overwrite evidence from may-alias
-    // witness cells. Reference strong updates remain opt-in frontend facts.
+    // Canonical storage does not invent definite-whole-overwrite evidence.
+    // Reference strong updates remain opt-in frontend facts.
     for (const auto &phase : report.program.operations)
       for (const auto &access : phase.accesses)
         require(!access.definiteWrite);
