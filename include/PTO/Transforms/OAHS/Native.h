@@ -9,8 +9,10 @@
 #define PTO_TRANSFORMS_OAHS_NATIVE_H
 #include "PTO/Transforms/OAHS/Analysis.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include <utility>
 namespace mlir::pto::oahs {
 struct NativeAnalysis {
   Program program;
@@ -36,6 +38,13 @@ LogicalResult analyzeHandoffSync(func::FuncOp function);
 // leaves the original function unchanged; no backend fallback is performed.
 LogicalResult runHandoffSync(func::FuncOp function);
 namespace testing {
+// Exercise arithmetic read-back directly, without the earlier whole-IR identity
+// gate masking decoder failures. This test hook grants no observation/target
+// qualification and is never used for production acceptance.
+LogicalResult checkHandoffObservationPredicate(
+    const OriginalObservation &observation, mlir::Operation *anchor,
+    llvm::ArrayRef<std::pair<std::size_t, mlir::Operation *>> originalLoopOwners,
+    Value condition);
 // Mutation occurs only on the private working copy, before reconstruction.
 LogicalResult
 runHandoffSyncWithMutation(func::FuncOp function,

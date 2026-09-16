@@ -250,6 +250,102 @@ module attributes {pto.target_arch = "a3"} {
       }
     }
   }
+  {
+    // Direct predicate read-back: the normal mutation hook's whole-IR identity
+    // check intentionally runs before the decoder, so it cannot test these
+    // arithmetic rejection paths by itself. All expressions here are valid IR.
+    const char *decoderSource = R"mlir(
+module {
+  func.func @decoder(%n: index, %other: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    scf.for %i = %zero to %n step %one {
+    }
+    scf.for %j = %zero to %n step %one {
+    }
+    return
+  }
+})mlir";
+    auto decoderModule = parseSourceString<ModuleOp>(decoderSource, &context);
+    require(bool(decoderModule));
+    auto function = decoderModule->lookupSymbol<func::FuncOp>("decoder");
+    llvm::SmallVector<scf::ForOp> loops;
+    function.walk([&](scf::ForOp loop) { loops.push_back(loop); });
+    require(loops.size() == 2);
+    auto loop = loops.front();
+    auto *anchor = loop.getRegion().front().getTerminator();
+    llvm::SmallVector<std::pair<std::size_t, mlir::Operation *>> owners{
+        {42, loop.getOperation()}};
+    oahs::OriginalObservation observation{
+        0,
+        {{oahs::ObservationAtom::LoopResidue, 42, 2, 1},
+         {oahs::ObservationAtom::LoopHasPrevious, 42, 2, 1},
+         {oahs::ObservationAtom::LoopHasNext, 42, 2, 1}},
+        true};
+    for (unsigned mutation = 0; mutation < 12; ++mutation) {
+      OpBuilder builder(anchor);
+      const auto loc = anchor->getLoc();
+      auto constant = [&](int64_t value) -> Value {
+        return builder.create<arith::ConstantIndexOp>(loc, value);
+      };
+      Value iv = loop.getInductionVar();
+      Value residueInput = mutation == 1 ? function.getArgument(1) : iv;
+      Value residue = builder.create<arith::RemUIOp>(
+          loc, residueInput, constant(mutation == 2 ? 3 : 2));
+      Value residueTest = builder.create<arith::CmpIOp>(
+          loc, mutation == 3 ? arith::CmpIPredicate::ne
+                             : arith::CmpIPredicate::eq,
+          residue, constant(1));
+      const bool falseObservations = mutation == 11;
+      Value previous = builder.create<arith::CmpIOp>(
+          loc, mutation == 4 ? arith::CmpIPredicate::uge
+               : falseObservations ? arith::CmpIPredicate::slt
+                                   : arith::CmpIPredicate::sge,
+          iv, constant(2));
+      Value bound = mutation == 5 ? function.getArgument(1)
+                                 : loop.getUpperBound();
+      Value remaining = mutation == 6
+                            ? Value(builder.create<arith::SubIOp>(loc, iv, bound))
+                            : Value(builder.create<arith::SubIOp>(loc, bound, iv));
+      Value next = builder.create<arith::CmpIOp>(
+          loc, mutation == 7 ? arith::CmpIPredicate::sge
+               : falseObservations ? arith::CmpIPredicate::sle
+                                   : arith::CmpIPredicate::sgt,
+          remaining, constant(mutation == 8 ? 3 : 2));
+      // Commuting conjuncts is allowed; changing their meaning is not.
+      Value pair = builder.create<arith::AndIOp>(
+          loc, mutation == 9 ? next : residueTest,
+          mutation == 9 ? residueTest : previous);
+      Value condition = builder.create<arith::AndIOp>(
+          loc, pair, mutation == 9 ? previous : next);
+      if (mutation == 10)
+        condition = builder.create<arith::ConstantIntOp>(loc, 1, 1);
+      auto expected = observation;
+      if (falseObservations) {
+        expected.atoms[1].value = 0;
+        expected.atoms[2].value = 0;
+      }
+      const auto before = text(function);
+      const auto status = oahs::testing::checkHandoffObservationPredicate(
+          expected, anchor, owners, condition);
+      require(succeeded(status) ==
+              (mutation == 0 || mutation == 9 || falseObservations));
+      require(text(function) == before && succeeded(verify(function)));
+      if (mutation == 0) {
+        auto wrongOwner = owners;
+        wrongOwner[0].second = loops.back().getOperation();
+        require(failed(oahs::testing::checkHandoffObservationPredicate(
+            expected, anchor, wrongOwner, condition)));
+        wrongOwner[0].first = 43;
+        require(failed(oahs::testing::checkHandoffObservationPredicate(
+            expected, anchor, wrongOwner, condition)));
+        wrongOwner = owners;
+        wrongOwner.push_back(owners.front());
+        require(failed(oahs::testing::checkHandoffObservationPredicate(
+            expected, anchor, wrongOwner, condition)));
+      }
+    }
+  }
   // Repeated identical footprints must not cross a compiler-work threshold
   // and switch to ALL. This population exceeded the old million-pair cutoff.
   std::string many = R"mlir(module attributes {pto.target_arch = "a3"} {
@@ -284,5 +380,5 @@ module attributes {pto.target_arch = "a3"} {
   });
   require(drains == 1); // original invocation retirement, not a budget fallback
   llvm::outs() << "OAHS native placement/atomicity/grouped-footprint/prefix "
-                  "checks passed\n";
+                  "and direct predicate-decoder checks passed\n";
 }

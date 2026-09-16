@@ -965,6 +965,21 @@ LogicalResult execute(func::FuncOp function,
 }
 } // namespace
 
+LogicalResult testing::checkHandoffObservationPredicate(
+    const OriginalObservation &observation, mlir::Operation *anchor,
+    llvm::ArrayRef<std::pair<std::size_t, mlir::Operation *>> originalLoopOwners,
+    Value condition) {
+  if (!anchor || !condition)
+    return failure();
+  Import input;
+  for (const auto &[id, operation] : originalLoopOwners) {
+    auto loop = dyn_cast_or_null<scf::ForOp>(operation);
+    if (!loop || !input.loopOwners.try_emplace(id, loop).second)
+      return failure();
+  }
+  return checkObservationPredicate(observation, anchor, input, condition);
+}
+
 LogicalResult testing::runHandoffSyncWithMutation(
     func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate) {
   if (getTargetArch(function) != PTOArch::A3)
