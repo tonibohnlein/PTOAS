@@ -28,6 +28,7 @@ struct BundleEvaluation {
   // and failure kind (with multiplicity), not unstable command offsets.
   std::vector<ProtocolObligation> resolvedProtocol, introducedProtocol;
   std::vector<RetirementRequirement> retired, introducedRetirement;
+  std::vector<PhaseResourceObligation> resolvedResources, introducedResources;
   std::vector<Cut> changedCuts;
   BundleResources resources;
   bool memoryProgressAt(Cut cut) const {
@@ -36,7 +37,7 @@ struct BundleEvaluation {
         return true;
     return false;
   }
-  bool protocolProgress() const { return !resolvedProtocol.empty(); }
+  bool protocolProgress() const { return !resolvedProtocol.empty() || !resolvedResources.empty(); }
 };
 // A read-only transaction evaluator pinned to original effects AND the current
 // actual command population. The caller supplies the complete trial commands,

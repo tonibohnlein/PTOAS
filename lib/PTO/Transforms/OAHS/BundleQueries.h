@@ -16,11 +16,14 @@ namespace detail {
 inline auto requirementKey(const CompletionRequirement &r) {
   return std::make_tuple(r.demand.producer, r.demand.consumer, r.demand.cell,
                          r.kind, r.demand.property, r.consumerCut,
-                         r.consumerContext);
+                         r.consumerContext, r.producerEndpoint, r.consumerEndpoint);
 }
 inline auto protocolKey(const ProtocolObligation &r) {
   return std::make_tuple(r.cut, r.event.source, r.event.observer, r.event.key,
                          r.kind);
+}
+inline auto resourceKey(const PhaseResourceObligation &r) {
+  return std::make_tuple(r.cut, r.operation, r.cell, r.kind);
 }
 inline auto retirementKey(const RetirementRequirement &r) {
   return std::make_pair(r.operation, r.observer);
@@ -85,6 +88,8 @@ struct BundleQuery::Impl {
                                      detail::retirementKey);
     out.introducedRetirement = detail::difference(
         out.analysis.retirement, before.retirement, detail::retirementKey);
+    out.resolvedResources = detail::difference(before.phaseResources, out.analysis.phaseResources, detail::resourceKey);
+    out.introducedResources = detail::difference(out.analysis.phaseResources, before.phaseResources, detail::resourceKey);
     out.resources.keys = out.analysis.keys;
     for (Cut cut = 0; cut < out.commands.size(); ++cut) {
       if (!detail::sameCommands(commands[cut], out.commands[cut]))
