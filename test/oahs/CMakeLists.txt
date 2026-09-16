@@ -9,7 +9,8 @@ cmake_minimum_required(VERSION 3.16)
 project(OAHSCoreTests LANGUAGES CXX)
 enable_testing()
 # Compile the same production core once for every standalone test executable.
-add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp)
+add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp
+  ../../lib/PTO/Transforms/OAHS/CausalFrontier.cpp)
 target_include_directories(oahs-core-under-test PUBLIC ../../include)
 target_compile_features(oahs-core-under-test PUBLIC cxx_std_17)
 target_compile_options(oahs-core-under-test PRIVATE -Wall -Wextra -Werror -pedantic)
