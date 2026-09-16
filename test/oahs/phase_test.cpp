@@ -35,9 +35,6 @@ int main() {
     // block ready is not full M completion
     auto q=o::checkPhaseOrder(p,o::Commands(3));
     CHECK(q.safe&&q.exact);
-    auto plan=o::construct(p);
-    CHECK(plan.success);
-    for(const auto &word:plan.commands)CHECK(word.empty());
     auto c=o::Commands(3);
     c[1]=handoff(M,F);
     q=o::checkPhaseOrder(p,c);
@@ -63,8 +60,6 @@ int main() {
     c[1]=handoff(L,M);
     CHECK(o::analyze(p,c).verified());
     CHECK(o::checkPhaseOrder(p,c).exact);
-    auto plan=o::construct(p);
-    CHECK(plan.success&&o::verify(p,plan.commands).success);
   }
   {
     auto p=program();
@@ -135,9 +130,6 @@ int main() {
       }
     };
     CHECK(o::verify(p,c).success);
-    auto plan=o::construct(p);
-    CHECK(plan.success);
-    CHECK(o::verify(p,plan.commands).success);
   }
   {
     auto p=program();
@@ -360,5 +352,5 @@ int main() {
     };
     CHECK(o::verify(p,c).success);
   }
-  std::cout<<assertions<<" phase contract/causality/constructor assertions\n";
+  std::cout<<assertions<<" phase contract/causality assertions\n";
 }

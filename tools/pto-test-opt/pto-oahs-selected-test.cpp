@@ -108,6 +108,11 @@ bool positive(MLIRContext &context, const char *source, StringRef name) {
     llvm::errs() << "case=" << name << " reason=" << report.reason << "\n";
     return false;
   }
+  auto liveModule = parseSourceString<ModuleOp>(source, &context);
+  if (!check(bool(liveModule), "parse live comparison input")) { return false; }
+  auto live = liveModule->lookupSymbol<func::FuncOp>(name);
+  if (!check(succeeded(oahs::runHandoffSync(live)) && text(live) == text(function),
+             "live handoff must emit the selected constructor's exact word")) { return false; }
   unsigned waits = 0, retirements = 0;
   function.walk([&](WaitFlagOp) { ++waits; });
   function.walk([&](BarrierOp barrier) { retirements += barrier.getPipe().getPipe() == PIPE::PIPE_ALL; });

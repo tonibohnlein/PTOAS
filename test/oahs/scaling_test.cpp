@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include "PTO/Transforms/OAHS/Plan.h"
 #include "PTO/Transforms/OAHS/StorageWitnesses.h"
 #include "PTO/Transforms/InsertSync/SyncOriginPropagation.h"
@@ -117,7 +118,7 @@ int main() {
   for(unsigned i=0;i<p.operations.size();++i) serial[i]={{o::Command::Barrier,o::Pipe(0)}};
   CHECK(o::verify(p,serial).success);
   serial[0].clear();CHECK(!o::verify(p,serial).success);
-  const auto constructed = o::construct(p);
+  const auto constructed = o::constructSelectedPlan(p);
   CHECK(constructed.success);
   unsigned named=0, all=0;
   for(const auto &at:constructed.commands) for(const auto &c:at) {

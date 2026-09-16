@@ -6,8 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
-// Both publications belong to original arms. One dynamic acquisition matches
-// whichever arm actually ran. No new guard, payload, or branch-exit cut is added.
+// The selected constructor uses the original common continuation for this
+// joined writer. The closed exchange is safe but acquires unrelated branch
+// work too; this explicitly records the coarser placement after cutover.
 module attributes {pto.target_arch = "a3"} {
   func.func @branch_publications(%src: !pto.partition_tensor_view<1x32xf32>, %b: i1)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -32,15 +33,16 @@ module attributes {pto.target_arch = "a3"} {
 }
 // CHECK-LABEL: func.func @branch_publications
 // CHECK: scf.if
-// CHECK: pto.tload
-// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 // CHECK-NEXT: pto.tload
-// CHECK: } else {
-// CHECK: pto.tload
-// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 // CHECK-NEXT: pto.tload
-// CHECK: }
+// CHECK-NEXT: } else {
+// CHECK-NEXT: pto.tload
+// CHECK-NEXT: pto.tload
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 // CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
 // CHECK-NEXT: pto.tadd
-// CHECK: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
 // CHECK-NEXT: return
