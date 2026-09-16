@@ -14,7 +14,7 @@ add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp
 target_include_directories(oahs-core-under-test PUBLIC ../../include)
 target_compile_features(oahs-core-under-test PUBLIC cxx_std_17)
 target_compile_options(oahs-core-under-test PRIVATE -Wall -Wextra -Werror -pedantic)
-foreach(suite plan structured scaling analysis prefix bundle storage_frontier guidance observed phase replay resource_choices lifecycle)
+foreach(suite plan structured scaling analysis prefix bundle storage_frontier guidance observed phase replay resource_choices lifecycle causal_frontier)
   add_executable(oahs-${suite}-test ${suite}_test.cpp)
   target_link_libraries(oahs-${suite}-test PRIVATE oahs-core-under-test)
   target_compile_options(oahs-${suite}-test PRIVATE -Wall -Wextra -Werror -pedantic)
@@ -44,6 +44,13 @@ add_executable(oahs-phase-driver phase_driver.cpp)
 target_link_libraries(oahs-phase-driver PRIVATE oahs-core-under-test)
 target_compile_options(oahs-phase-driver PRIVATE -Wall -Wextra -Werror -pedantic)
 add_test(NAME oahs_phase_reference COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/reference/phase_bridge.py --driver $<TARGET_FILE:oahs-phase-driver>)
+
+add_executable(oahs-causal-frontier-driver causal_frontier_driver.cpp)
+target_link_libraries(oahs-causal-frontier-driver PRIVATE oahs-core-under-test)
+target_compile_options(oahs-causal-frontier-driver PRIVATE -Wall -Wextra -Werror -pedantic)
+add_test(NAME oahs_causal_frontier_reference
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/reference/causal_frontier_bridge.py
+    --driver $<TARGET_FILE:oahs-causal-frontier-driver>)
 
 # Reproducible host microbenchmarks; timings are not asserted by CTest.
 add_executable(oahs-m6-benchmark m6_benchmark.cpp)
