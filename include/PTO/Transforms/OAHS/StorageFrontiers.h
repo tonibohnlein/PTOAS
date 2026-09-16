@@ -26,6 +26,34 @@ struct StoragePath {
   bool definiteWriteFree = false;
   std::vector<std::size_t> sites, crossedLoopOwners;
 };
+struct OccurrenceQualification {
+    // SingleVisit is proved only for acyclic, dominating original sites. A
+    // positive-length loop witness is NOT a distance or matching certificate.
+    enum Kind { Unknown, SingleVisit } kind = Unknown;
+    std::size_t sourceObservation = NoAnalysisId;
+    std::size_t targetObservation = NoAnalysisId;
+    std::vector<std::size_t> crossedLoopOwners;
+};
+struct RequirementProvenance {
+    unsigned reasons = AdditionalOverlap;
+    OccurrenceQualification occurrence;
+};
+struct StorageLifecycle {
+    bool reachable = false;
+    unsigned cell = 0;
+    StorageOrigin access;
+    // These are marginal origins, not a complete causal obligation list. A
+    // definite overwrite may kill provenance but never outstanding completion.
+    std::vector<StorageOrigin> previousWriters, previousReaders;
+    std::vector<StorageOrigin> nextWriters, nextReaders;
+    std::vector<std::size_t> enclosingLoops;
+    unsigned participantEngines = 0;
+    // Unknown/partial writes cannot establish initialization of the whole cell.
+    bool mayHaveNoPriorFullWrite = false;
+    // Starting AFTER this access, some path reaches the invocation exit without
+    // another access to the cell. Region boundaries themselves do not drain it.
+    bool mayExitWithoutFurtherAccess = false;
+};
 struct ReaderBoundary {
   bool boundary = false;
   std::vector<StorageOrigin> readers;
@@ -69,6 +97,8 @@ public:
   std::vector<StorageOrigin> nextWriters(std::size_t site, unsigned cell) const;
   std::vector<StorageOrigin> nextReaders(std::size_t site, unsigned cell) const;
   std::vector<StorageRelationship> relationshipsAt(std::size_t site) const;
+  StorageLifecycle lifecycleAt(std::size_t site, unsigned cell) const;
+  RequirementProvenance describeRequirement(const StorageRelationship&) const;
   // Positive length, including source==target through recurrence. Weak writes
   // retain incoming origins; definiteWriteFree records that loss of precision.
   StoragePath witness(std::size_t source, std::size_t target,

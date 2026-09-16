@@ -22,6 +22,9 @@ struct NativeAnalysis {
   AnalysisResult analysis;
   // Original operation mapping, valid while the caller keeps the IR unchanged.
   llvm::SmallVector<mlir::Operation *> phases;
+  // Original SSA roots indexed by Cell::storageOrigins. Equal numeric local
+  // addresses may have several roots; root identity alone is not disjointness.
+  llvm::SmallVector<Value> storageRoots;
   // Original command anchors. Null entries are unavailable synthetic decisions.
   llvm::SmallVector<mlir::Operation *> cuts;
   // Representative reachable cut per phase (NoControlId if unreachable);

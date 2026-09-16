@@ -452,6 +452,8 @@ class Transfer {
                p.observed ? NoAnalysisId : cutContexts[other.first],
                cutContexts[at],
                at});
+          if (property == Property::ResourceExclusion)
+              out.residuals.back().reasons = TypedOrControl;
         };
         if (other.second.write && access.read)
           add(CompletionRequirement::RAW, Property::ByteCompletion);

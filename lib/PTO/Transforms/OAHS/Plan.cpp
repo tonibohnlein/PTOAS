@@ -167,6 +167,19 @@ bool valid(const Program &p, std::string &reason) {
     reason = "missing target contract";
     return false;
   }
+  for (const auto& cell : p.cells) {
+      if (cell.storage != Cell::Storage::Abstract && cell.storage != Cell::Storage::CanonicalInterval &&
+          cell.storage != Cell::Storage::OverlapWitness) {
+          reason = "invalid storage identity kind";
+          return false;
+      }
+      if (cell.storage == Cell::Storage::CanonicalInterval &&
+          (cell.unknownRange || cell.coordinateSpace.empty() || cell.ranges.size() != 1 || !cell.ranges[0].second ||
+           cell.ranges[0].second > std::numeric_limits<uint64_t>::max() - cell.ranges[0].first)) {
+          reason = "unqualified canonical storage interval";
+          return false;
+      }
+  }
   for (const auto &op : p.operations) {
     if (!op.complete || lane(op.pipe) >= PipeCount ||
         !p.target.supported[lane(op.pipe)]) {
@@ -174,11 +187,11 @@ bool valid(const Program &p, std::string &reason) {
       return false;
     }
     for (const auto &a : op.accesses)
-      if (a.cell >= p.cells.size() || (!a.read && !a.write) ||
-          (a.definiteWrite && !a.write)) {
-        reason = "invalid physical effect";
-        return false;
-      }
+        if (a.cell >= p.cells.size() || (!a.read && !a.write) ||
+            (a.definiteWrite && (!a.write || p.cells[a.cell].storage == Cell::Storage::OverlapWitness))) {
+            reason = "invalid physical effect";
+            return false;
+        }
     for (const auto &r : op.resources)
       if (r.resource.empty() || (!r.acquire && !r.release) ||
           (r.timing != EffectTiming::Issue &&
@@ -1573,6 +1586,11 @@ StorageFrontierAnalysis::nextReaders(std::size_t s, unsigned c) const {
 StoragePath StorageFrontierAnalysis::witness(std::size_t s, std::size_t t,
                                              unsigned c) const {
   return impl->path(s, t, c);
+}
+StorageLifecycle StorageFrontierAnalysis::lifecycleAt(std::size_t s, unsigned c) const { return impl->lifecycle(s, c); }
+RequirementProvenance StorageFrontierAnalysis::describeRequirement(const StorageRelationship& r) const
+{
+    return impl->describe(r);
 }
 std::vector<StorageRelationship>
 StorageFrontierAnalysis::relationshipsAt(std::size_t s) const {

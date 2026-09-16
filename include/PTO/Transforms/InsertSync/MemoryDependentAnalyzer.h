@@ -15,10 +15,21 @@
 #define MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_MEMORYDEPENDENTANALYZER_H
  
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
- 
+#include <optional>
+
 namespace mlir {
 namespace pto {
- 
+
+// Coordinates of a translated footprint under the shared alias contract.
+// This describes its bounding interval, not proof that an instruction writes
+// every byte. Local physical addresses share a coordinate space across SSA
+// allocations; GM offsets are relative to the named root.
+struct SyncStorageCoordinates {
+    bool absolute = false;
+    Value root;
+    uint64_t begin = 0, size = 0;
+};
+
 class MemoryDependentAnalyzer {
 public:
   MemoryDependentAnalyzer() = default;
@@ -31,7 +42,9 @@ public:
  
   // 检查两个具体的 MemInfo 是否别名
   bool MemAlias(const BaseMemInfo *a, const BaseMemInfo *b) const;
- 
+
+  static std::optional<SyncStorageCoordinates> storageCoordinates(const BaseMemInfo& memory);
+
 private:
   bool isGMBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b) const;
   
