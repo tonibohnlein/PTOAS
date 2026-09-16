@@ -71,15 +71,16 @@ struct CausalFrontierModel {
             reason = validation.reason;
             return;
         }
-        if (program.finalBlocks || program.invocation.retirement != Program::InvocationContract::NoRetirement) {
-            reason = "causal frontier phase/retirement adapter is not qualified";
+        if (program.finalBlocks) {
+            reason = "causal frontier phase adapter is not qualified";
             return;
         }
-        for (unsigned q = 0; q < PipeCount; ++q)
-            if (program.target.supported[q] && program.target.synchronous[q]) {
-                reason = "causal frontier synchronous-lane adapter is not qualified";
-                return;
-            }
+        if (program.invocation.retirement != Program::InvocationContract::NoRetirement &&
+            (program.invocation.retirement != Program::InvocationContract::DrainAllAtReturn ||
+             !program.target.barrierAll)) {
+            reason = "unavailable invocation retirement contract";
+            return;
+        }
         for (const auto& c : program.cells)
             if (c.exclusive) {
                 reason = "causal frontier exclusive-resource adapter is not qualified";
@@ -195,6 +196,8 @@ FrontierStep CausalFrontier::join(const FrontierState& a, const FrontierState& b
     auto data = std::make_shared<detail::CausalFrontierState>(*a.data);
     auto& f = data->facts;
     const auto& other = b.data->facts;
+    f.terminalRetired = f.terminalRetired && other.terminalRetired;
+    f.mayBeRetired = f.mayBeRetired || other.mayBeRetired;
     // Each predecessor is already transitively closed. Intersecting closed
     // relations preserves shared consequences without splicing branch paths.
     for (std::size_t i = 0; i < f.reach.size(); ++i)
@@ -227,7 +230,7 @@ FrontierStep CausalFrontier::join(const FrontierState& a, const FrontierState& b
     out.data = std::move(data);
     return accepted(out);
 }
-FrontierStep CausalFrontier::issue(const FrontierState& s, std::size_t operation) const
+FrontierStep CausalFrontier::inspect(const FrontierState& s, std::size_t operation) const
 {
     auto checked = checkState(s);
     if (!checked.applied)
@@ -236,6 +239,9 @@ FrontierStep CausalFrontier::issue(const FrontierState& s, std::size_t operation
         return reject(s, FrontierFailure::InvalidInput, "invalid original physical phase");
     if (!s.reachable())
         return accepted(s);
+    if (s.data->facts.mayBeRetired) {
+        return reject(s, FrontierFailure::InvalidInput, "payload follows terminal retirement");
+    }
     const auto& op = model->program.operations[operation];
     auto failed = reject(s, FrontierFailure::Payload, "unresolved original byte completion");
     // Merge duplicate effects before querying so every RMW role participates
@@ -258,7 +264,62 @@ FrontierStep CausalFrontier::issue(const FrontierState& s, std::size_t operation
     }
     if (!failed.residuals.empty())
         return failed;
-    return extend(s, op.pipe, nullptr, operation, NoAnalysisId, {});
+    return accepted(s);
+}
+FrontierStep CausalFrontier::issue(const FrontierState& s, std::size_t operation) const
+{
+    auto checked = inspect(s, operation);
+    if (!checked.applied || !s.reachable()) {
+        return checked;
+    }
+    return extend(s, model->program.operations[operation].pipe, nullptr, operation, NoAnalysisId, {});
+}
+FrontierStep CausalFrontier::assumePreviousAccesses(
+    const FrontierState& s, const std::vector<std::size_t>& operations) const
+{
+    auto checked = checkState(s);
+    if (!checked.applied) {
+        return checked;
+    }
+    for (auto operation : operations) {
+        if (operation >= model->program.operations.size()) {
+            return reject(s, FrontierFailure::InvalidInput, "invalid loop access hypothesis");
+        }
+    }
+    if (!s.reachable()) {
+        return accepted(s);
+    }
+    if (s.data->facts.mayBeRetired) {
+        return reject(s, FrontierFailure::InvalidInput, "loop follows terminal retirement");
+    }
+    auto data = std::make_shared<detail::CausalFrontierState>(*s.data);
+    for (auto operation : operations) {
+        const auto& op = model->program.operations[operation];
+        const auto sourcePrefix = PipeCount + unsigned(op.pipe);
+        // A first-entry prefix can alias the fresh launch root. That equality
+        // is not evidence that a possible previous body access has completed.
+        // Forget its outgoing consequences before adding the may-history;
+        // otherwise a later unrelated SET would transport invented credit.
+        data->facts.reach[sourcePrefix] = bits(model->ports());
+        set(data->facts.reach[sourcePrefix], sourcePrefix);
+        auto history = bits(model->ports());
+        set(history, sourcePrefix);
+        if (model->program.target.synchronous[unsigned(op.pipe)]) {
+            set(history, unsigned(op.pipe));
+        }
+        for (const auto& access : op.accesses) {
+            const auto index = (std::size_t(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
+            if (access.read) {
+                data->facts.history[index] = history;
+            }
+            if (access.write) {
+                data->facts.history[index + 1] = history;
+            }
+        }
+    }
+    FrontierState out;
+    out.data = std::move(data);
+    return accepted(out);
 }
 FrontierStep CausalFrontier::command(const FrontierState& s, const Command& c, FrontierBinding binding) const
 {
@@ -267,8 +328,25 @@ FrontierStep CausalFrontier::command(const FrontierState& s, const Command& c, F
         return checked;
     if (!legalCommandCut(model->program, binding.cut) || binding.command == NoAnalysisId)
         return reject(s, FrontierFailure::InvalidInput, "command requires an original legal cut and endpoint identity");
-    if (c.kind == Command::BarrierAll)
-        return reject(s, FrontierFailure::UnsupportedContract, "causal frontier ALL adapter is not qualified");
+    if (s.reachable() && s.data->facts.mayBeRetired) {
+        return reject(s, FrontierFailure::InvalidInput, "command follows terminal retirement");
+    }
+    if (c.kind == Command::BarrierAll) {
+        if (!model->program.target.barrierAll || binding.cut != invocationExitCut(model->program)) {
+            return reject(s, FrontierFailure::UnsupportedContract, "only declared terminal ALL is supported");
+        }
+        if (!s.reachable()) {
+            return accepted(s);
+        }
+        auto data = std::make_shared<detail::CausalFrontierState>(*s.data);
+        data->facts.terminalRetired = true;
+        data->facts.mayBeRetired = true;
+        // This marker is checked only at the root exit. It neither consumes a
+        // token nor grants interior memory or rearming credit.
+        FrontierState out;
+        out.data = std::move(data);
+        return accepted(out);
+    }
     if (c.kind != Command::Barrier && c.kind != Command::Publish && c.kind != Command::Acquire)
         return reject(s, FrontierFailure::InvalidInput, "invalid causal frontier command");
     std::size_t key = NoAnalysisId;
@@ -300,6 +378,10 @@ FrontierStep CausalFrontier::exit(const FrontierState& s) const
     for (const auto& event : s.data->facts.events)
         if (event.occupancy != 1)
             return reject(s, FrontierFailure::UnconsumedAtExit, "invocation may leave an unconsumed publication");
+    if (model->program.invocation.retirement == Program::InvocationContract::DrainAllAtReturn &&
+        !s.data->facts.terminalRetired) {
+        return reject(s, FrontierFailure::MissingRetirement, "missing declared invocation retirement");
+    }
     return accepted(s);
 }
 
@@ -339,7 +421,8 @@ FrontierStep CausalFrontier::extend(
     std::vector<std::size_t> mapping(n);
     for (std::size_t i = 0; i < n; ++i)
         mapping[i] = i;
-    mapping[gate] = acquire || fence ? finish : issue;
+    const bool synchronousPayload = !command && model->program.target.synchronous[unsigned(pipe)];
+    mapping[gate] = acquire || fence || synchronousPayload ? finish : issue;
     mapping[prefix] = aggregate;
     if (publish) {
         mapping[model->publication(key)] = finish;
@@ -374,6 +457,9 @@ FrontierStep CausalFrontier::extend(
     if (!command) {
         auto latest = bits(n);
         set(latest, prefix);
+        if (synchronousPayload) {
+            set(latest, gate);
+        }
         for (const auto& a : model->program.operations[operation].accesses) {
             const auto index = (std::size_t(a.cell) * PipeCount + unsigned(pipe)) * 2;
             if (a.read)

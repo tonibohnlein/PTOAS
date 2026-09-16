@@ -146,6 +146,19 @@ static bool isLocalBufferOverlapCrossRoot(const BaseMemInfo *a,
   uint64_t rootBaseA = getRootBaseAddress(a->rootBuffer);
   uint64_t rootBaseB = getRootBaseAddress(b->rootBuffer);
 
+  // MemAlias checked the relative intervals. This legacy path adds an integer
+  // root address as well: both that addition and the absolute end must fit.
+  for (const BaseMemInfo *memory : {a, b}) {
+    const uint64_t root = getRootBaseAddress(memory->rootBuffer);
+    const auto maximum = std::numeric_limits<uint64_t>::max();
+    for (uint64_t offset : memory->baseAddresses) {
+      if (offset > maximum - root ||
+          memory->allocateSize > maximum - (root + offset)) {
+        return true;
+      }
+    }
+  }
+
   for (uint64_t addrA : a->baseAddresses) {
     for (uint64_t addrB : b->baseAddresses) {
       uint64_t aStart = rootBaseA + addrA;
@@ -204,6 +217,18 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
       llvm::errs() << "    -> Scope Mismatch. False.\n";
     }
     return false;
+  }
+
+  // An unrepresentable bounding interval is unknown, not disjoint. In
+  // particular GM records can reach this fallback after storageCoordinates()
+  // correctly refused their geometry. Check before root-relative disjointness
+  // and before any unchecked endpoint addition in the legacy range helpers.
+  for (const BaseMemInfo *memory : {a, b}) {
+    for (uint64_t begin : memory->baseAddresses) {
+      if (memory->allocateSize > std::numeric_limits<uint64_t>::max() - begin) {
+        return true;
+      }
+    }
   }
 
   if (a->aliasesUnknownRange || b->aliasesUnknownRange) {

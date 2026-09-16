@@ -133,6 +133,13 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/PTOInsertSync.cpp
   OAHS/Plan.cpp
   OAHS/CausalFrontier.cpp
+  OAHS/SelectedLedger.cpp
+  OAHS/SelectedControl.cpp
+  OAHS/SelectedReplay.cpp
+  OAHS/SelectedGroups.cpp
+  OAHS/SelectedAllocation.cpp
+  OAHS/SelectedPlan.cpp
+  OAHS/CyclicFrontiers.cpp
   OAHS/Native.cpp
   Passes/PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
