@@ -76,6 +76,10 @@ struct Replay {
     std::string reason;
     std::vector<Checkpoint> cuts;
     std::map<Id, State> afterEndpoint;
+    // Leading components whose cuts hold their actual fixed point rather than
+    // the construction-only hypothesis traversal of the active component. Only
+    // those may be reused by a later replay; everything else is recomputed.
+    std::size_t fixedComponents = 0, reusedComponents = 0;
 };
 struct RecurringRequirement {
     unsigned cell = 0;
@@ -95,6 +99,7 @@ struct Group {
 };
 
 class Constructor {
+    friend struct ReplayTestAccess;
 public:
     explicit Constructor(const Program&);
     SelectedPlan run(const Commands&);

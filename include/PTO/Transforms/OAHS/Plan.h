@@ -145,83 +145,26 @@ inline Cut canonicalCommandCut(const Program &p, Cut c) {
       return i;
   return c;
 }
-struct Handoff {
-  Pipe source = Pipe::S, observer = Pipe::S;
-  Cut publication = 0, acquisition = 0;
-};
 struct Command {
   enum Kind { Publish, Acquire, Barrier, BarrierAll } kind = BarrierAll;
   Pipe source = Pipe::S, observer = Pipe::S;
   unsigned key = 0;
 };
 using Commands = std::vector<std::vector<Command>>;
-enum class CandidateStage { Nearest, Corridors, Relays, Original };
-struct ConstructionOptions {
-  // A proposal-policy ablation, not another semantic planner or work budget.
-  bool storageGuidance = true;
-  // Developer differential-test policies, not extra pass/planner modes.
-  bool incrementalReplay = true;
-  bool resourceAlternatives = true;
-};
-struct ConstructionWork {
-  // Public candidate replay and private proposal transfer are counted separately.
-  // Neither includes final cold verify, prefix-query construction or import.
-  uint64_t replaySiteEvaluations = 0, replayReusedSites = 0;
-  uint64_t provisionalSiteEvaluations = 0, provisionalReusedSites = 0;
-  std::size_t provisionalCalls = 0;
-  std::size_t replayCalls = 0, incrementalCalls = 0, unchangedCalls = 0;
-  std::size_t routeKeyTrials = 0, longerRouteTrials = 0;
-  std::size_t rekeyTrials = 0, rekeys = 0, routedReplies = 0;
-  ConstructionWork &operator+=(const ConstructionWork &b) {
-    replaySiteEvaluations += b.replaySiteEvaluations;
-    replayReusedSites += b.replayReusedSites;
-    provisionalSiteEvaluations += b.provisionalSiteEvaluations;
-    provisionalReusedSites += b.provisionalReusedSites; provisionalCalls += b.provisionalCalls;
-    replayCalls += b.replayCalls; incrementalCalls += b.incrementalCalls;
-    unchangedCalls += b.unchangedCalls; routeKeyTrials += b.routeKeyTrials;
-    longerRouteTrials += b.longerRouteTrials; rekeyTrials += b.rekeyTrials;
-    rekeys += b.rekeys; routedReplies += b.routedReplies; return *this;
-  }
-};
-enum class ResourcePass { Preferred, Expanded, BaselineRecovery };
-struct StageReport {
-  CandidateStage stage = CandidateStage::Original;
-  bool success = false;
-  std::string reason;
-  std::size_t bundleTrials = 0, bundleSelections = 0, protocolRepairs = 0;
-  uint64_t elapsedMicroseconds = 0;
-  ConstructionWork work;
-  ResourcePass resourcePass = ResourcePass::Preferred;
-};
+// Common status for structural validation, fixed-plan verification and native
+// emission. Selected construction diagnostics live in SelectedPlan.
 struct Result {
   bool success = false;
   std::string reason;
   std::vector<Demand> demands;
-  // Legacy static endpoint diagnostics; for guarded many-to-many families this
-  // is not a dynamic matching certificate. ObservedSchema carries that
-  // relation.
-  std::vector<Handoff> handoffs;
   Commands commands;
-  unsigned scarcityBarriers = 0;
-  unsigned conservativeBarriers = 0;
-  // Cumulative construction work, including partial plans discarded by
-  // fallback.
-  unsigned protocolRepairs = 0;
-  std::size_t bundleTrials = 0, bundleSelections = 0;
-  std::vector<StageReport> stages;
-  ConstructionWork work;
 };
 
 // Declaration/structural validation only; not residual analysis or a proof of
 // synchronization. Use Analysis.h::analyze for the fixed-plan analysis service.
 Result validateProgram(const Program &program);
-// One constructor entry for all represented programs. Unsupported synthesis is
-// diagnosed after complete analysis import; it is never flattened or delegated
-// to the legacy constructor.
-Result construct(const Program &program);
-Result construct(const Program &program, ConstructionOptions options);
 // Read-only: reconstructs receipts and hazards from original operations and the
-// actual command stream, never from Result::demands/handoffs annotations.
+// actual command stream, never from Result::demands annotations.
 Result verify(const Program &program, const Commands &commands);
 
 } // namespace mlir::pto::oahs

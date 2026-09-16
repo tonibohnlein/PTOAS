@@ -25,13 +25,6 @@ void intersect(FrontierBits& a, const FrontierBits& b)
     for (std::size_t i = 0; i < a.size(); ++i)
         a[i] &= b[i];
 }
-void close(std::vector<FrontierBits>& rows)
-{
-    for (std::size_t k = 0; k < rows.size(); ++k)
-        for (auto& row : rows)
-            if (frontierContains(row, k))
-                unite(row, rows[k]);
-}
 bool sameKey(const EventIdentity& a, const EventIdentity& b)
 {
     return a.source == b.source && a.observer == b.observer && a.key == b.key;
@@ -398,17 +391,29 @@ FrontierStep CausalFrontier::extend(
     rows.resize(n + 3);
     for (auto& row : rows)
         row.resize(bits(n + 3).size());
+    // The retained relation is already transitively closed and the fresh
+    // vertices have no edge back into it, so closure only adds, to each old
+    // row, the fresh vertices it reaches through gate, prefix, or publication:
+    // gate -> issue -> finish -> aggregate, prefix -> aggregate, and the
+    // command-specific prefix -> finish (SET, fence) or S[e] -> finish (WAIT).
     for (auto v : {issue, finish, aggregate})
         set(rows[v], v);
-    set(rows[gate], issue);
     set(rows[issue], finish);
-    set(rows[prefix], aggregate);
+    set(rows[issue], aggregate);
     set(rows[finish], aggregate);
-    if (publish || fence)
-        set(rows[prefix], finish);
-    if (acquire)
-        set(rows[model->publication(key)], finish);
-    close(rows);
+    const bool prefixFinish = publish || fence;
+    for (std::size_t r = 0; r < n; ++r) {
+        auto& row = rows[r];
+        const bool toIssue = frontierContains(row, gate);
+        const bool toFinish = toIssue || (prefixFinish && frontierContains(row, prefix)) ||
+                              (acquire && frontierContains(row, model->publication(key)));
+        if (toIssue)
+            set(row, issue);
+        if (toFinish)
+            set(row, finish);
+        if (toFinish || frontierContains(row, prefix))
+            set(row, aggregate);
+    }
     // Test the path that REALLY exists. Adding a desired rearm edge here would
     // turn the checker into its own oracle and acknowledge stale generations.
     if (publish && !frontierContains(rows[model->consumption(key)], finish))

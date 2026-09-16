@@ -41,14 +41,15 @@ LogicalResult analyzeHandoffSync(func::FuncOp function, NativeAnalysis &result);
 // Compatibility entry point: performs the same analysis and discards its
 // report.
 LogicalResult analyzeHandoffSync(func::FuncOp function);
-// Runs through production translation/alias analysis and SyncCodegen. Failure
+// Uses selected-plan construction with the causal frontier, shared production
+// translation/alias analysis, and SyncCodegen. Failure
 // leaves the original function unchanged; no backend fallback is performed.
 LogicalResult runHandoffSync(func::FuncOp function);
 namespace testing {
-// Gated integration entry: same import, transaction, emission and reconstruction
-// as runHandoffSync, but the selected constructor/checker only, never fallback.
+// Test/report entry for the same selected constructor and checker as
+// runHandoffSync, including import, transaction, emission and reconstruction.
 // The optional report describes construction; LogicalResult additionally covers
-// emission/reconstruction. This does not switch any public pass algorithm.
+// emission/reconstruction. No alternative constructor or fallback is used.
 LogicalResult runSelectedHandoffSyncWithMutation(
     func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate = {},
     SelectedPlan *report = nullptr);
