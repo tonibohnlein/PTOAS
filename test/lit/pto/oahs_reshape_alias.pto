@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=existing' | FileCheck %s
+// RUN: pto-test-opt %s -pto-insert-sync > %t.default
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=existing' > %t.existing
+// RUN: diff %t.default %t.existing
+// A descriptor-only view must preserve RAW and WAR through its source, even
+// with dynamic valid shape and a chain of views. It issues no byte access.
+module attributes {pto.target_arch = "a3"} {
+  func.func @reshape_alias(%src: !pto.partition_tensor_view<1x32xf32>, %valid: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1 : index
+    %outAddress = arith.constant 1024 : i64
+    %a = pto.alloc_tile addr = %zero valid_row = %one valid_col = %valid : !pto.tile_buf<vec, 1x32xf32, valid=?x?>
+    %b = pto.treshape %a : !pto.tile_buf<vec, 1x32xf32, valid=?x?> -> !pto.tile_buf<vec, 1x32xf32>
+    %view = pto.treshape %b : !pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %outAddress : !pto.tile_buf<vec, 1x32xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32, valid=?x?>)
+    pto.tadd ins(%view, %view : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32, valid=?x?>)
+    return
+  }
+  func.func @write_through_reshape(%src: !pto.partition_tensor_view<1x32xf32>, %valid: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %one = arith.constant 1 : index
+    %outAddress = arith.constant 1024 : i64
+    %a = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.treshape %a : !pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 1x32xf32>
+    %view = pto.treshape %b : !pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %outAddress : !pto.tile_buf<vec, 1x32xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%view : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%view : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+}
+// CHECK-LABEL: func.func @reshape_alias
+// CHECK: pto.treshape
+// CHECK: pto.treshape
+// CHECK: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, {{.*}}]
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, {{.*}}]
+// CHECK: pto.tadd
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, {{.*}}]
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, {{.*}}]
+// CHECK: pto.tload
+
+// CHECK-LABEL: func.func @write_through_reshape
+// CHECK: pto.treshape
+// CHECK: pto.treshape
+// CHECK: pto.tload
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, {{.*}}]
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, {{.*}}]
+// CHECK: pto.tadd
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, {{.*}}]
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, {{.*}}]
+// CHECK: pto.tload
