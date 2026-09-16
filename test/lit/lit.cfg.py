@@ -78,6 +78,8 @@ tools = [
     'ptoas',
     'pto-test-opt',
     'pto-oahs-native-test',
+    'pto-oahs-selected-test',
+    'pto-oahs-alias-overflow-test',
     'pto-vpto-scheduler-tracker-test',
 ]
 

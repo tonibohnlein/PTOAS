@@ -27,6 +27,9 @@ configure_lit_site_cfg(
 set(PTOIR_TEST_DEPENDS
   ptoas_runtime_deps
   pto-test-opt
+  pto-oahs-native-test
+  pto-oahs-selected-test
+  pto-oahs-alias-overflow-test
   pto-vpto-scheduler-tracker-test
 )
 
