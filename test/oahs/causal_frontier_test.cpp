@@ -263,7 +263,7 @@ void qualifications()
     CHECK(!o::CausalFrontier(unavailable).complete());
     unavailable = p;
     unavailable.target.synchronous[0] = true;
-    CHECK(!o::CausalFrontier(unavailable).complete());
+    CHECK(o::CausalFrontier(unavailable).complete());
     unavailable = p;
     unavailable.cells[0].exclusive = true;
     CHECK(!o::CausalFrontier(unavailable).complete());

@@ -35,6 +35,15 @@ add_dependencies(pto-test-opt
   PTOPassesIncGen
 )
 
+add_llvm_executable(pto-oahs-alias-overflow-test
+  pto-oahs-alias-overflow-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-oahs-alias-overflow-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRSupport MLIRFuncDialect MLIRArithDialect MLIRSCFDialect
+)
+add_dependencies(pto-oahs-alias-overflow-test PTOOpsIncGen PTOPassesIncGen)
+
 add_llvm_executable(pto-vpto-scheduler-tracker-test
   pto-vpto-scheduler-tracker-test.cpp
   PARTIAL_SOURCES_INTENDED
@@ -81,3 +90,13 @@ target_link_libraries(pto-oahs-native-test PRIVATE
   MLIRFuncDialect MLIRArithDialect MLIRSCFDialect
 )
 add_dependencies(pto-oahs-native-test PTOOpsIncGen PTOPassesIncGen)
+
+add_llvm_executable(pto-oahs-selected-test
+  pto-oahs-selected-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-oahs-selected-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect
+)
+add_dependencies(pto-oahs-selected-test PTOOpsIncGen PTOPassesIncGen)

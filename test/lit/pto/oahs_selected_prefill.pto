@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Replay original model-generated kernels; provenance is recorded in the sample README.
+// The supplied selected constructor refused both after expanding unrelated leaf
+// loops into first/tail observations. Original SCF must preserve all requirements
+// and pass selected construction, exact native reconstruction, and C++ lowering.
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --emit-pto-ir %S/../../samples/Qwen3_14BPrefillA3/kernels/aiv/rmsnorm.pto -o %t.rms.pto
+// RUN: pto-oahs-selected-test --construct %t.rms.pto > %t.rms.sync.pto
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 %t.rms.sync.pto -o %t.rms.cpp
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 --emit-pto-ir %S/../../samples/Qwen3_14BPrefillA3/kernels/aiv/post_rmsnorm.pto -o %t.post.pto
+// RUN: pto-oahs-selected-test --construct %t.post.pto > %t.post.sync.pto
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 %t.post.sync.pto -o %t.post.cpp
