@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/OAHS/Native.h"
+#include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "PTO/Transforms/InsertSync/SyncOriginClosure.h"
 #include "PTO/Transforms/OAHS/Prefixes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -16,6 +18,56 @@
 #include <cstdlib>
 using namespace mlir;
 using namespace mlir::pto;
+namespace {
+// Test-only opcodes unknown to the translator and both constructors. Their
+// interfaces, including deliberately incomplete declarations, are the test.
+class OrdinaryProbeOp
+    : public Op<OrdinaryProbeOp, OpTrait::OneOperand, OpTrait::ZeroResults,
+                OpPipeInterface::Trait, MemoryEffectOpInterface::Trait> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(OrdinaryProbeOp)
+  using Op::Op;
+  static StringRef getOperationName() { return "sync_probe.ordinary"; }
+  static ArrayRef<StringRef> getAttributeNames() { return {}; }
+  PIPE getPipe() { return PIPE::PIPE_V; }
+  void getEffects(SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+    auto mode = (*this)->getAttrOfType<IntegerAttr>("mode");
+    if (mode && mode.getInt() == 1) {
+      effects.emplace_back(MemoryEffects::Read::get());
+    } else if (mode && mode.getInt() == 2) {
+      effects.emplace_back(MemoryEffects::Allocate::get(),
+                           &getOperation()->getOpOperand(0));
+    } else if (mode && mode.getInt() == 3) {
+      effects.emplace_back(MemoryEffects::Read::get(),
+                           &getOperation()->getOpOperand(0),
+                           SideEffects::AutomaticAllocationScopeResource::get());
+    } else {
+      effects.emplace_back(MemoryEffects::Read::get(),
+                           &getOperation()->getOpOperand(0));
+    }
+  }
+};
+class PipeOnlyProbeOp
+    : public Op<PipeOnlyProbeOp, OpTrait::OneOperand, OpTrait::ZeroResults,
+                OpPipeInterface::Trait> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PipeOnlyProbeOp)
+  using Op::Op;
+  static StringRef getOperationName() { return "sync_probe.pipe_only"; }
+  static ArrayRef<StringRef> getAttributeNames() { return {}; }
+  PIPE getPipe() { return PIPE::PIPE_V; }
+};
+class SyncProbeDialect : public Dialect {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SyncProbeDialect)
+  static StringRef getDialectNamespace() { return "sync_probe"; }
+  explicit SyncProbeDialect(MLIRContext *context)
+      : Dialect(getDialectNamespace(), context, TypeID::get<SyncProbeDialect>()) {
+    addOperations<OrdinaryProbeOp, PipeOnlyProbeOp>();
+  }
+};
+} // namespace
+
 static void require(bool condition) {
   if (!condition)
     std::abort();
@@ -27,11 +79,383 @@ static std::string text(func::FuncOp function) {
   out.flush();
   return result;
 }
-int main() {
+static void testSharedSemantics(MLIRContext &context) {
+  // These operations have no OAHS registration or single-phase marker. Their
+  // ordinary production interfaces are sufficient for either constructor.
+  const char *source = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @ordinary(%src: !pto.tile_buf<vec, 1x32xf32>,
+                      %dst: !pto.tile_buf<vec, 1x32xf32>) {
+    pto.tsqrt ins(%src : !pto.tile_buf<vec, 1x32xf32>)
+      outs(%dst : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tdiv ins(%dst, %src : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>)
+      outs(%dst : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+})mlir";
+  auto module = parseSourceString<ModuleOp>(source, &context);
+  require(bool(module));
+  auto function = module->lookupSymbol<func::FuncOp>("ordinary");
+  const auto before = text(function);
+  MemoryDependentAnalyzer aliases;
+  SyncIRs phases;
+  Buffer2MemInfoMap buffers;
+  PTOIRTranslator translator(phases, aliases, buffers, function,
+                             SyncAnalysisMode::NORMALSYNC);
+  require(!translator.describeSemantics().complete());
+  require(succeeded(translator.Build()));
+  auto report = translator.describeSemantics();
+  require(report.complete());
+  unsigned ordinary = 0;
+  for (const auto &record : report.operations)
+    ordinary += record.kind == SyncSemanticRecord::Ordinary;
+  require(ordinary == 2 && text(function) == before);
+  auto *first = report.operations.front().phases.front();
+  // A successfully built node with an empty effect list is not completeness.
+  const auto reads = first->useVec;
+  first->useVec.clear();
+  require(!translator.describeSemantics().complete());
+  first->useVec = reads;
+  const auto pipeline = first->kPipeValue;
+  first->kPipeValue = PipelineType::PIPE_M;
+  require(!translator.describeSemantics().complete());
+  first->kPipeValue = pipeline;
+  require(translator.describeSemantics().complete());
+  oahs::NativeAnalysis analysis;
+  require(succeeded(oahs::analyzeHandoffSync(function, analysis)));
+  require(analysis.phases.size() == 2 && text(function) == before);
+  require(succeeded(oahs::runHandoffSync(function)));
+
+  const char *probe = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @probe(%src: !pto.tile_buf<vec, 1x32xf32>) {
+    "sync_probe.ordinary"(%src) : (!pto.tile_buf<vec, 1x32xf32>) -> ()
+    return
+  }
+})mlir";
+  auto probeModule = parseSourceString<ModuleOp>(probe, &context);
+  require(bool(probeModule));
+  auto probeFunction = probeModule->lookupSymbol<func::FuncOp>("probe");
+  require(succeeded(oahs::runHandoffSync(probeFunction)));
+
+  const char *gaps = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @gaps(%src: !pto.tile_buf<vec, 1x32xf32>, %unmapped: f32) {
+    "sync_probe.ordinary"(%src) {mode = 1 : i32} : (!pto.tile_buf<vec, 1x32xf32>) -> ()
+    "sync_probe.ordinary"(%src) {mode = 2 : i32} : (!pto.tile_buf<vec, 1x32xf32>) -> ()
+    "sync_probe.ordinary"(%src) {mode = 3 : i32} : (!pto.tile_buf<vec, 1x32xf32>) -> ()
+    "sync_probe.ordinary"(%unmapped) : (f32) -> ()
+    "sync_probe.pipe_only"(%src) : (!pto.tile_buf<vec, 1x32xf32>) -> ()
+    return
+  }
+})mlir";
+  auto gapModule = parseSourceString<ModuleOp>(gaps, &context);
+  require(bool(gapModule));
+  auto gapFunction = gapModule->lookupSymbol<func::FuncOp>("gaps");
+  const auto gapBefore = text(gapFunction);
+  SyncIRs gapPhases;
+  Buffer2MemInfoMap gapBuffers;
+  PTOIRTranslator gapTranslator(gapPhases, aliases, gapBuffers, gapFunction,
+                                SyncAnalysisMode::NORMALSYNC);
+  require(succeeded(gapTranslator.Build()));
+  auto gapReport = gapTranslator.describeSemantics();
+  require(!gapReport.complete());
+  unsigned gapCount = 0;
+  for (const auto &record : gapReport.operations)
+    gapCount += !record.gap.empty();
+  require(gapCount == 5 && text(gapFunction) == gapBefore);
+  {
+    ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic &) {
+      return success();
+    });
+    require(failed(oahs::runHandoffSync(gapFunction)));
+    require(text(gapFunction) == gapBefore);
+  }
+
+  const char *unsupported = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @variant(%src: !pto.partition_tensor_view<1x32xf32>,
+                    %dst: !pto.tile_buf<vec, 1x32xf32>) {
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>)
+      outs(%dst : !pto.tile_buf<vec, 1x32xf32>) init_out_buffer = true
+    return
+  }
+})mlir";
+  auto rejected = parseSourceString<ModuleOp>(unsupported, &context);
+  require(bool(rejected));
+  auto variant = rejected->lookupSymbol<func::FuncOp>("variant");
+  const auto original = text(variant);
+  ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic &) {
+    return success();
+  });
+  require(failed(oahs::runHandoffSync(variant)));
+  require(text(variant) == original);
+}
+
+static void testPreservedProtocols(MLIRContext &context) {
+  const char *source = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @queue(%gm: !pto.ptr<f32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %base = arith.constant 0 : i32
+    %outaddr = arith.constant 1024 : i64
+    %pipe = pto.initialize_l2g2l_pipe{dir_mask = 3, slot_size = 128,
+      slot_num = 2, local_slot_num = 1, flag_base = 0, nosplit = true}
+      (%gm : !pto.ptr<f32, gm>, %base : i32, %base : i32) -> !pto.pipe
+    %a = pto.declare_tile -> !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.declare_tile -> !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %outaddr : !pto.tile_buf<vec, 1x32xf32>
+    pto.tpop(%a, %pipe : !pto.tile_buf<vec, 1x32xf32>, !pto.pipe) {split = 0}
+    pto.tabs ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tfree(%pipe : !pto.pipe) {split = 0}
+    pto.tpop(%b, %pipe : !pto.tile_buf<vec, 1x32xf32>, !pto.pipe) {split = 0}
+    pto.tpush(%out, %pipe : !pto.tile_buf<vec, 1x32xf32>, !pto.pipe) {split = 0}
+    pto.tfree(%pipe : !pto.pipe) {split = 0}
+    return
+  }
+})mlir";
+  for (bool mutate : {false, true}) {
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    require(bool(module));
+    auto function = module->lookupSymbol<func::FuncOp>("queue");
+    const auto original = text(function);
+    oahs::NativeAnalysis report;
+    require(succeeded(oahs::analyzeHandoffSync(function, report)));
+    require(text(function) == original && report.phases.size() == 4 &&
+            report.protocols.size() == 6);
+    bool aliasRelease = false, popReady = false, pushReady = false;
+    for (const auto &residual : report.analysis.residuals) {
+      const auto &d = residual.demand;
+      aliasRelease |= d.producer == 1 && d.consumer == 2 &&
+                      residual.kind == oahs::CompletionRequirement::WAR;
+      popReady |= d.producer == 0 && d.consumer == 1;
+      pushReady |= d.producer == 1 && d.consumer == 3;
+    }
+    require(aliasRelease && popReady && pushReady);
+    for (const auto &protocol : report.protocols)
+      require(protocol.complete() && protocol.crossCoreFlagCount == 4 &&
+              protocol.crossCoreFlagBase == 0);
+    bool changed = false;
+    const auto status = oahs::testing::runHandoffSyncWithMutation(
+        function, [&](func::FuncOp working) {
+          if (!mutate) return;
+          working.walk([&](InitializeL2G2LPipeOp init) {
+            init->setAttr("flag_base", IntegerAttr::get(
+                IntegerType::get(&context, 32), 4));
+            changed = true;
+          });
+        });
+    if (mutate)
+      require(changed && failed(status) && text(function) == original);
+    else {
+      require(succeeded(status) && succeeded(verify(function)));
+      unsigned pops = 0, frees = 0, pushes = 0;
+      function.walk([&](TPopOp) { ++pops; });
+      function.walk([&](TFreeOp) { ++frees; });
+      function.walk([&](TPushOp) { ++pushes; });
+      require(pops == 2 && frees == 2 && pushes == 1);
+    }
+  }
+  // A runtime base and a descriptor rebound from an allocated handle must
+  // retain the same hazard. No declaration-only admission shortcut is used.
+  for (bool allocated : {false, true}) {
+    std::string variant(source);
+    if (allocated) {
+      const std::string declaration = "pto.declare_tile ->";
+      for (size_t pos = 0; (pos = variant.find(declaration, pos)) != std::string::npos; ) {
+        variant.replace(pos, declaration.size(), "pto.alloc_tile addr = %outaddr :");
+        ++pos;
+      }
+    } else {
+      variant.replace(variant.find("%gm: !pto.ptr<f32, gm>"),
+                      std::string("%gm: !pto.ptr<f32, gm>").size(),
+                      "%gm: !pto.ptr<f32, gm>, %base: i32");
+      variant.erase(variant.find("%base = arith.constant 0 : i32"),
+                    std::string("%base = arith.constant 0 : i32").size());
+    }
+    auto module = parseSourceString<ModuleOp>(variant, &context);
+    require(bool(module));
+    auto function = module->lookupSymbol<func::FuncOp>("queue");
+    oahs::NativeAnalysis report;
+    require(succeeded(oahs::analyzeHandoffSync(function, report)));
+    require(llvm::any_of(report.analysis.residuals, [](const auto &r) {
+      return r.demand.producer == 1 && r.demand.consumer == 2 &&
+             r.kind == oahs::CompletionRequirement::WAR;
+    }));
+  }
+  {
+    // Known disjoint local slots must stay disjoint; sharing a GM ring root
+    // does not merge the local byte cells transitively.
+    std::string disjoint(source);
+    const auto position = disjoint.find("%a = pto.declare_tile");
+    disjoint.insert(position, R"mlir(
+    %far = arith.constant 2048 : i32
+    %otherpipe = pto.initialize_l2g2l_pipe{dir_mask = 1, slot_size = 128,
+      slot_num = 2, local_slot_num = 1, flag_base = 4, nosplit = true}
+      (%gm : !pto.ptr<f32, gm>, %far : i32) -> !pto.pipe
+    )mlir");
+    disjoint.replace(disjoint.find("pto.tpop(%b, %pipe"),
+                     std::string("pto.tpop(%b, %pipe").size(),
+                     "pto.tpop(%b, %otherpipe");
+    auto module = parseSourceString<ModuleOp>(disjoint, &context);
+    require(bool(module));
+    auto function = module->lookupSymbol<func::FuncOp>("queue");
+    oahs::NativeAnalysis report;
+    require(succeeded(oahs::analyzeHandoffSync(function, report)));
+    require(llvm::none_of(report.analysis.residuals, [](const auto &r) {
+      return r.demand.producer == 1 && r.demand.consumer == 2;
+    }));
+  }
+  {
+    // Bidirectional MAT receives bind the peer operand, not the VEC base.
+    const char *peer = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+ func.func @peer(%gm: !pto.ptr<f32, gm>, %vec: i32, %mat: i32)
+     attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  %p = pto.initialize_l2g2l_pipe{dir_mask = 3, slot_size = 1024,
+    slot_num = 2, local_slot_num = 2, flag_base = 0, nosplit = true}
+    (%gm : !pto.ptr<f32, gm>, %vec : i32, %mat : i32) -> !pto.pipe
+  %a = pto.declare_tile -> !pto.tile_buf<mat, 16x16xf32>
+  pto.tpop(%a, %p : !pto.tile_buf<mat, 16x16xf32>, !pto.pipe) {split = 0}
+  pto.tfree(%p : !pto.pipe) {split = 0}
+  return
+ }
+})mlir";
+    auto module = parseSourceString<ModuleOp>(peer, &context);
+    require(bool(module));
+    auto function = module->lookupSymbol<func::FuncOp>("peer");
+    function.walk([&](TPopOp pop) {
+      auto model = getSyncProtocolModel(pop);
+      require(model && model->complete() &&
+              model->localBase == function.getArgument(2));
+    });
+  }
+  {
+    // A view of a popped tile must still cover later local ring slots.
+    const char *viewSource = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+ func.func @slots(%gm: !pto.ptr<f32, gm>)
+     attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %zero = arith.constant 0 : index
+  %base = arith.constant 0 : i32
+  %last = arith.constant 128 : i64
+  %p = pto.initialize_l2g2l_pipe{dir_mask = 1, slot_size = 128,
+    slot_num = 2, local_slot_num = 2, flag_base = 0, nosplit = true}
+    (%gm : !pto.ptr<f32, gm>, %base : i32) -> !pto.pipe
+  %a = pto.declare_tile -> !pto.tile_buf<vec, 1x32xf32>
+  pto.tpop(%a, %p : !pto.tile_buf<vec, 1x32xf32>, !pto.pipe) {split = 0}
+  %view = pto.subview %a[%zero, %zero] sizes [1, 16] :
+    !pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 1x16xf32>
+  %b = pto.alloc_tile addr = %last : !pto.tile_buf<vec, 1x16xf32>
+  pto.tabs ins(%view : !pto.tile_buf<vec, 1x16xf32>)
+    outs(%b : !pto.tile_buf<vec, 1x16xf32>)
+  pto.tfree(%p : !pto.pipe) {split = 0}
+  return
+ }
+})mlir";
+    auto module = parseSourceString<ModuleOp>(viewSource, &context);
+    require(bool(module));
+    auto function = module->lookupSymbol<func::FuncOp>("slots");
+    MemoryDependentAnalyzer aliases;
+    SyncIRs phases;
+    Buffer2MemInfoMap buffers;
+    PTOIRTranslator translator(phases, aliases, buffers, function,
+                               SyncAnalysisMode::NORMALSYNC);
+    require(succeeded(translator.Build()) && translator.describeSemantics().complete());
+    Value view, last;
+    function.walk([&](SubViewOp op) { view = op.getResult(); });
+    function.walk([&](AllocTileOp op) { last = op.getResult(); });
+    require(view && last && !buffers[view].empty() && !buffers[last].empty());
+    require(aliases.MemAlias(buffers[view].front().get(), buffers[last].front().get()));
+  }
+  const char *atomic = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @atomic(%tile: !pto.tile_buf<vec, 1x32xf32>,
+                    %dst: !pto.partition_tensor_view<1x32xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 1x32xf32>)
+      outs(%dst : !pto.partition_tensor_view<1x32xf32>)
+      {atomicType = #pto<atomic_type atomic_add>}
+    return
+  }
+})mlir";
+  auto module = parseSourceString<ModuleOp>(atomic, &context);
+  require(bool(module));
+  auto function = module->lookupSymbol<func::FuncOp>("atomic");
+  function.walk([&](TStoreOp store) {
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    store.getEffects(effects);
+    bool read = false, write = false;
+    for (const auto &effect : effects) {
+      if (effect.getValue() != store.getDst()) continue;
+      read |= isa<MemoryEffects::Read>(effect.getEffect());
+      write |= isa<MemoryEffects::Write>(effect.getEffect());
+    }
+    require(read && write);
+  });
+  require(succeeded(oahs::runHandoffSync(function)));
+}
+
+int main(int argc, char **argv) {
   DialectRegistry registry;
   MLIRContext context(registry);
-  context.loadDialect<PTODialect, arith::ArithDialect, scf::SCFDialect,
+  context.loadDialect<SyncProbeDialect, PTODialect, arith::ArithDialect, scf::SCFDialect,
                       func::FuncDialect>();
+  if (argc == 3 && StringRef(argv[1]) == "--analyze") {
+    auto module = parseSourceFile<ModuleOp>(argv[2], &context);
+    if (!module)
+      return 1;
+    bool complete = true;
+    module->walk([&](func::FuncOp function) {
+      if (function.isDeclaration())
+        return;
+      const auto before = text(function);
+      MemoryDependentAnalyzer aliases;
+      SyncIRs phases;
+      Buffer2MemInfoMap buffers;
+      PTOIRTranslator translator(phases, aliases, buffers, function,
+                                 SyncAnalysisMode::NORMALSYNC);
+      if (failed(translator.Build()) ||
+          failed(closeStructuredSyncOrigins(function, phases, buffers))) {
+        complete = false;
+        return;
+      }
+      auto report = translator.describeSemantics();
+      unsigned ordinary = 0, protocols = 0, gaps = 0;
+      for (const auto &record : report.operations) {
+        ordinary += record.kind == SyncSemanticRecord::Ordinary;
+        protocols += record.kind == SyncSemanticRecord::Protocol;
+        if (!record.gap.empty()) {
+          ++gaps;
+          llvm::outs() << "gap " << record.operation->getName() << ": "
+                       << record.gap << "\n";
+        }
+      }
+      llvm::outs() << "function=" << function.getSymName()
+                   << " shared_complete=" << report.complete()
+                   << " ordinary_phases=" << ordinary
+                   << " preserved_protocol_ops=" << protocols << " gaps=" << gaps
+                   << "\n";
+      if (report.complete()) {
+        oahs::NativeAnalysis analysis;
+        const bool analyzed = succeeded(oahs::analyzeHandoffSync(function, analysis));
+        llvm::outs() << "native_analysis=" << analyzed
+                     << " residuals=" << analysis.analysis.residuals.size()
+                     << "\n";
+        complete &= analyzed;
+      } else {
+        complete = false;
+      }
+      require(text(function) == before);
+    });
+    return complete ? 0 : 1;
+  }
+  if (argc != 1) {
+    llvm::errs() << "usage: pto-oahs-native-test [--analyze INPUT]\n";
+    return 2;
+  }
+  testSharedSemantics(context);
+  testPreservedProtocols(context);
   const char *source = R"mlir(
 module attributes {pto.target_arch = "a3"} {
   func.func @test(%src: !pto.partition_tensor_view<1x32xf32>, %b: i1)
@@ -378,5 +802,5 @@ module {
   });
   require(drains == 1); // original invocation retirement, not a budget fallback
   llvm::outs() << "OAHS native placement/atomicity/grouped-footprint/prefix "
-                  "and direct predicate-decoder checks passed\n";
+                  "and shared-semantics/direct predicate-decoder checks passed\n";
 }

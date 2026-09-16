@@ -8,15 +8,16 @@
 
 // RUN: not pto-test-opt %s '-pto-insert-sync=algorithm=handoff' 2>&1 | FileCheck %s
 
+!left = !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+!right = !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!acc = !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
 module attributes {pto.target_arch = "a3"} {
-  func.func @incomplete(%src: !pto.partition_tensor_view<1x32xf32>,
-                        %dst: !pto.tile_buf<vec, 1x32xf32>) {
-    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>)
-      outs(%dst : !pto.tile_buf<vec, 1x32xf32>) init_out_buffer = true
+  func.func @resource_variant(%lhs: !left, %rhs: !right, %dst: !acc)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%dst : !acc)
+      {accPhase = #pto<acc_phase final>}
     return
   }
 }
-
-// CHECK: error: handoff: shared sync semantics: operation variant requires additional lowering semantics
+// CHECK: error: handoff: shared sync semantics: phase/resource contract incomplete
 // CHECK-NOT: pto.set_flag
-// CHECK-NOT: pto.wait_flag

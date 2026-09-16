@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=existing' -o %t.existing
+// RUN: pto-test-opt %s -pto-insert-sync -o %t.default
+// RUN: diff %t.existing %t.default
+// RUN: FileCheck %s < %t.existing
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @queue(%gm: !pto.ptr<f32, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %base = arith.constant 0 : i32
+    %outaddr = arith.constant 1024 : i64
+    %pipe = pto.initialize_l2g2l_pipe{dir_mask = 3, slot_size = 128,
+      slot_num = 2, local_slot_num = 1, flag_base = 0, nosplit = true}
+      (%gm : !pto.ptr<f32, gm>, %base : i32, %base : i32) -> !pto.pipe
+    %a = pto.declare_tile -> !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.declare_tile -> !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %outaddr : !pto.tile_buf<vec, 1x32xf32>
+    pto.tpop(%a, %pipe : !pto.tile_buf<vec, 1x32xf32>, !pto.pipe) {split = 0}
+    pto.tabs ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tfree(%pipe : !pto.pipe) {split = 0}
+    pto.tpop(%b, %pipe : !pto.tile_buf<vec, 1x32xf32>, !pto.pipe) {split = 0}
+    pto.tpush(%out, %pipe : !pto.tile_buf<vec, 1x32xf32>, !pto.pipe) {split = 0}
+    pto.tfree(%pipe : !pto.pipe) {split = 0}
+    return
+  }
+}
+// CHECK: pto.initialize_l2g2l_pipe
+// CHECK: pto.tpop
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK: pto.tabs
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>,
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>,
+// CHECK: pto.tpop
+// CHECK: pto.tpush
+// CHECK: pto.tfree
+// CHECK: pto.barrier <PIPE_ALL>
