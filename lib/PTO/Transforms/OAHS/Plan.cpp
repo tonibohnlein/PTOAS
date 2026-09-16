@@ -688,13 +688,15 @@ FrontierCheck checkCausalFrontier(const Program& p, const Commands& commands)
         out.failure = FrontierFailure::InvalidInput;
         return out;
     }
-    for (const auto& word : commands)
-        for (const auto& c : word)
-            if (c.kind == Command::BarrierAll) {
+    for (Cut cut = 0; cut < commands.size(); ++cut) {
+        for (const auto& c : commands[cut]) {
+            if (c.kind == Command::BarrierAll && cut != invocationExitCut(p)) {
                 out.failure = FrontierFailure::UnsupportedContract;
-                out.reason = "causal frontier ALL adapter is not qualified";
+                out.reason = "causal frontier ALL is confined to invocation retirement";
                 return out;
             }
+        }
+    }
     out.complete = true;
     out.keys = frontier.keys();
     const auto graph = detail::buildControlGraph(p);

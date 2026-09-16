@@ -1,5 +1,11 @@
 # OAHS migration to the v0.17 forward constructor
 
+The selected-plan follow-on is described in `oahs-selected-plan.md`. It adds
+actual F1--F8 construction, cold selected updates and a gated native test entry
+against v0.18. The increment/evidence descriptions below are retained historical
+records; their "remaining" sequence is not a claim that these later services
+are absent. The live driver still has not been switched.
+
 Specification: synchronization draft v0.17, source revision
 `7cce28193b7220ae91d16b130dcff339d15220fa`, sections 7–10 and policies F1–F8.
 The target is one selected-plan forward constructor through the existing
