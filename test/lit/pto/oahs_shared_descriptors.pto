@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-oahs-native-test --analyze %s | FileCheck %s
+// RUN: pto-test-opt %s -pto-insert-sync > %t.default
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=existing' > %t.existing
+// RUN: diff %t.default %t.existing
+
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @descriptor(%r: index, %c: index) -> (index, index) {
+    %addr = arith.constant 0 : i64
+    %tile = pto.alloc_tile addr = %addr valid_row = %r valid_col = %c : !tile
+    pto.set_validshape %tile, %r, %c : !tile
+    %vr, %vc = pto.get_validshape %tile : !tile
+    return %vr, %vc : index, index
+  }
+}
+// CHECK: function=descriptor shared_complete=1 ordinary_phases=0 preserved_protocol_ops=0 gaps=0
+// CHECK: native_analysis=1 residuals=0
