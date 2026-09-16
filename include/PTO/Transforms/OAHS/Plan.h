@@ -150,13 +150,39 @@ enum class CandidateStage { Nearest, Corridors, Relays, Original };
 struct ConstructionOptions {
   // A proposal-policy ablation, not another semantic planner or work budget.
   bool storageGuidance = true;
+  // Developer differential-test policies, not extra pass/planner modes.
+  bool incrementalReplay = true;
+  bool resourceAlternatives = true;
 };
+struct ConstructionWork {
+  // Public candidate replay and private proposal transfer are counted separately.
+  // Neither includes final cold verify, prefix-query construction or import.
+  uint64_t replaySiteEvaluations = 0, replayReusedSites = 0;
+  uint64_t provisionalSiteEvaluations = 0, provisionalReusedSites = 0;
+  std::size_t provisionalCalls = 0;
+  std::size_t replayCalls = 0, incrementalCalls = 0, unchangedCalls = 0;
+  std::size_t routeKeyTrials = 0, longerRouteTrials = 0;
+  std::size_t rekeyTrials = 0, rekeys = 0, routedReplies = 0;
+  ConstructionWork &operator+=(const ConstructionWork &b) {
+    replaySiteEvaluations += b.replaySiteEvaluations;
+    replayReusedSites += b.replayReusedSites;
+    provisionalSiteEvaluations += b.provisionalSiteEvaluations;
+    provisionalReusedSites += b.provisionalReusedSites; provisionalCalls += b.provisionalCalls;
+    replayCalls += b.replayCalls; incrementalCalls += b.incrementalCalls;
+    unchangedCalls += b.unchangedCalls; routeKeyTrials += b.routeKeyTrials;
+    longerRouteTrials += b.longerRouteTrials; rekeyTrials += b.rekeyTrials;
+    rekeys += b.rekeys; routedReplies += b.routedReplies; return *this;
+  }
+};
+enum class ResourcePass { Preferred, Expanded, BaselineRecovery };
 struct StageReport {
   CandidateStage stage = CandidateStage::Original;
   bool success = false;
   std::string reason;
   std::size_t bundleTrials = 0, bundleSelections = 0, protocolRepairs = 0;
   uint64_t elapsedMicroseconds = 0;
+  ConstructionWork work;
+  ResourcePass resourcePass = ResourcePass::Preferred;
 };
 struct Result {
   bool success = false;
@@ -174,6 +200,7 @@ struct Result {
   unsigned protocolRepairs = 0;
   std::size_t bundleTrials = 0, bundleSelections = 0;
   std::vector<StageReport> stages;
+  ConstructionWork work;
 };
 
 // Declaration/structural validation only; not residual analysis or a proof of

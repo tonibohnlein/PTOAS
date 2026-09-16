@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <deque>
 #include <set>
+#include <map>
 #include <tuple>
 
 namespace mlir::pto::oahs {
@@ -25,15 +26,42 @@ struct PrefixQuery::Impl {
   };
   std::vector<std::vector<Predecessor>> predecessors;
   std::vector<std::vector<std::size_t>> requirementsAt;
+  std::vector<Cut> canonical;
+  std::vector<std::vector<Cut>> members;
+  mutable PrefixQueryStats stats;
+  mutable std::map<Cut, BackwardCutResult> backwardCache;
+  mutable std::map<std::pair<Pipe, Cut>, AnalysisBits> sourceCache;
+  struct PairInfo {
+    bool reachable = false, repeated = false, available = false, liveExit = false;
+    AnalysisBits intervening;
+    std::size_t evaluations = 0;
+  };
+  mutable std::map<std::pair<Cut, Cut>, PairInfo> pairCache;
   Impl(Program p, Commands c)
       : program(std::move(p)), commands(std::move(c)),
         report(analyze(program, commands)) {
     if (!report.complete)
       return;
     graph = detail::buildControlGraph(program);
-    requirementsAt.resize(commandCutCount(program));
+    const auto count = commandCutCount(program);
+    requirementsAt.resize(count); canonical.resize(count); members.resize(count);
+    std::map<std::size_t, Cut> leaders;
+    for (Cut c = 0; c < count; ++c) {
+      canonical[c] = c;
+      if (program.observed && legalCommandCut(program, c)) {
+        const auto observation = program.observed->sites[c].observation;
+        canonical[c] = leaders.emplace(observation, c).first->second;
+      }
+      members[canonical[c]].push_back(c);
+    }
+    std::vector<std::vector<std::size_t>> perSite(count);
     for (std::size_t i = 0; i < report.residuals.size(); ++i)
-      requirementsAt[report.residuals[i].consumerCut].push_back(i);
+      perSite[report.residuals[i].consumerCut].push_back(i);
+    // Preserve the original per-cut ordering, including collecting phase reports
+    // whose residuals may have been discovered in a different worklist order.
+    for (Cut c = 0; c < count; ++c)
+      requirementsAt[canonical[c]].insert(requirementsAt[canonical[c]].end(),
+                                         perSite[c].begin(), perSite[c].end());
     predecessors.resize(graph.sites.size());
     for (std::size_t from = 0; from < graph.sites.size(); ++from) {
       const auto &site = graph.sites[from];
@@ -44,16 +72,14 @@ struct PrefixQuery::Impl {
   }
   bool physicalCut(Cut cut) const { return legalCommandCut(program, cut); }
   bool sameObservation(Cut a, Cut b) const {
-    return a < commandCutCount(program) && b < commandCutCount(program) &&
-           canonicalCommandCut(program, a) == canonicalCommandCut(program, b);
+    return a < canonical.size() && b < canonical.size() &&
+           canonical[a] == canonical[b];
   }
   std::vector<CompletionRequirement> requirements(Cut consumer) const {
     std::vector<CompletionRequirement> result;
     if (consumer < requirementsAt.size())
-      for (Cut c = 0; c < requirementsAt.size(); ++c)
-        if (sameObservation(c, consumer))
-          for (auto i : requirementsAt[c])
-            result.push_back(report.residuals[i]);
+      for (auto i : requirementsAt[canonical[consumer]])
+        result.push_back(report.residuals[i]);
     return result;
   }
   BackwardCutResult backward(Cut consumer) const {
@@ -68,13 +94,17 @@ struct PrefixQuery::Impl {
       out.reason = "consumer is not an original physical cut";
       return out;
     }
+    const auto cached = backwardCache.find(canonical[consumer]);
+    if (cached != backwardCache.end()) {
+      ++stats.backwardHits;
+      out = cached->second; out.consumer = consumer; return out;
+    }
+    ++stats.backwardTraversals;
     std::vector<std::array<bool, 2>> seen(graph.sites.size());
     std::deque<std::pair<std::size_t, bool>> work;
-    for (Cut c = 0; c < commandCutCount(program); ++c)
-      if (sameObservation(c, consumer)) {
-        work.push_back({c, false});
-        seen[c][0] = true;
-      }
+    for (Cut c : members[canonical[consumer]]) {
+      work.push_back({c, false}); seen[c][0] = true;
+    }
     std::set<std::size_t> loops;
     while (!work.empty()) {
       const auto [site, across] = work.front();
@@ -91,11 +121,11 @@ struct PrefixQuery::Impl {
       }
     }
     for (Cut cut = 0; cut < commandCutCount(program); ++cut) {
-      if (!physicalCut(cut) || canonicalCommandCut(program, cut) != cut)
+      if (!physicalCut(cut) || canonical[cut] != cut)
         continue;
       bool without = false, through = false;
-      for (Cut member = 0; member < commandCutCount(program); ++member)
-        if (sameObservation(cut, member) && report.cuts[member].reachable) {
+      for (Cut member : members[cut])
+        if (report.cuts[member].reachable) {
           without |= seen[member][0];
           through |= seen[member][1];
         }
@@ -108,17 +138,23 @@ struct PrefixQuery::Impl {
               });
     out.crossedLoopOwners.assign(loops.begin(), loops.end());
     out.complete = true;
+    backwardCache.emplace(canonical[consumer], out);
     return out;
   }
   AnalysisBits sourceRemainder(Pipe source, Cut at) const {
+    const auto key = std::make_pair(source, canonical[at]);
+    auto cached = sourceCache.find(key);
+    if (cached != sourceCache.end()) { ++stats.sourceHits; return cached->second; }
+    ++stats.sourceSnapshots;
     AnalysisBits bits(program.operations.size());
-    for (Cut c = 0; c < commandCutCount(program); ++c)
-      if (sameObservation(c, at) && report.cuts[c].incoming)
+    for (Cut c : members[canonical[at]])
+      if (report.cuts[c].incoming)
         for (std::size_t i = 0; i < bits.size(); ++i)
           bits[i] |= report.cuts[c].incoming->pending[unsigned(source)][i];
     for (std::size_t i = 0; i < bits.size(); ++i)
       if (program.operations[i].pipe == source)
         bits[i] = 0;
+    sourceCache.emplace(key, bits);
     return bits;
   }
   bool eligible(Pipe source, Pipe observer, Cut publication,
@@ -136,6 +172,55 @@ struct PrefixQuery::Impl {
         return true;
     }
     return false;
+  }
+  const PairInfo &correspondence(Cut publication, Cut consumer) const {
+    const auto key = std::make_pair(canonical[publication], canonical[consumer]);
+    const auto cached = pairCache.find(key);
+    if (cached != pairCache.end()) { ++stats.correspondenceHits; return cached->second; }
+    ++stats.correspondenceTraversals;
+    PairInfo info;
+    info.intervening.resize(program.operations.size());
+    std::vector<uint8_t> incoming(graph.sites.size());
+    incoming[graph.entry] = 1;
+    std::deque<std::size_t> queue{graph.entry};
+    std::vector<bool> queued(graph.sites.size()); queued[graph.entry] = true;
+    while (!queue.empty()) {
+      const auto id = queue.front(); queue.pop_front(); queued[id] = false;
+      auto next = incoming[id]; ++info.evaluations;
+      if (sameObservation(id, publication)) next = 2;
+      if (sameObservation(id, consumer)) next = 1;
+      for (auto successor : graph.sites[id].successors) {
+        const auto joined = uint8_t(incoming[successor] | next);
+        if (joined != incoming[successor]) {
+          incoming[successor] = joined;
+          if (!queued[successor]) { queued[successor] = true; queue.push_back(successor); }
+        }
+      }
+    }
+    bool sourceReachable = false, targetReachable = false;
+    info.available = true;
+    for (Cut c : members[key.first]) if (incoming[c]) {
+      sourceReachable = true; info.repeated |= incoming[c] != 1;
+    }
+    for (Cut c : members[key.second]) if (incoming[c]) {
+      targetReachable = true;
+      info.available &= (sameObservation(c, publication) ? 2 : incoming[c]) == 2;
+    }
+    info.reachable = sourceReachable && targetReachable && incoming[graph.exit];
+    info.liveExit = incoming[graph.exit] != 1;
+    if (info.reachable && info.available) {
+      std::vector<bool> seen(graph.sites.size());
+      std::vector<std::size_t> todo;
+      for (Cut c : members[key.first]) if (incoming[c]) todo.push_back(c);
+      while (!todo.empty()) {
+        const auto id = todo.back(); todo.pop_back();
+        if (sameObservation(id, consumer) || seen[id]) continue;
+        seen[id] = true; ++info.evaluations;
+        if (graph.operations[id] != NoAnalysisId) info.intervening[graph.operations[id]] = 1;
+        for (auto next : graph.sites[id].successors) todo.push_back(next);
+      }
+    }
+    return pairCache.emplace(key, std::move(info)).first->second;
   }
   // Reference alternation is a two-bit finite monitor, independent of the
   // receipt's payload bit set. Freshness is then a may-access reachability
@@ -175,81 +260,20 @@ struct PrefixQuery::Impl {
     }
     out.crossesBackedge = where->throughBackedge;
     const auto seed = sourceRemainder(source, publication);
-    const auto n = graph.exit;
-    // 0 unreachable, 1 empty, 2 full; join is union. Every site can gain each
-    // balance bit at most once. This proves reference matching, not safe rearm.
-    std::vector<uint8_t> incoming(graph.sites.size());
-    incoming[graph.entry] = 1;
-    std::deque<std::size_t> work{graph.entry};
-    std::vector<bool> queued(graph.sites.size());
-    queued[graph.entry] = true;
-    while (!work.empty()) {
-      const auto id = work.front();
-      work.pop_front();
-      queued[id] = false;
-      auto next = incoming[id];
-      ++out.siteEvaluations;
-      if (sameObservation(id, publication))
-        next = 2;
-      if (sameObservation(id, consumer))
-        next = 1;
-      for (auto successor : graph.sites[id].successors) {
-        const auto joined = uint8_t(incoming[successor] | next);
-        if (joined != incoming[successor]) {
-          incoming[successor] = joined;
-          if (!queued[successor]) {
-            queued[successor] = true;
-            work.push_back(successor);
-          }
-        }
-      }
-    }
-    bool sourceReachable = false, targetReachable = false;
-    for (Cut at = 0; at < commandCutCount(program); ++at)
-      if (incoming[at]) {
-        sourceReachable |= sameObservation(at, publication);
-        targetReachable |= sameObservation(at, consumer);
-      }
-    if (!sourceReachable || !targetReachable || !incoming[n]) {
+    const auto &info = correspondence(publication, consumer);
+    out.siteEvaluations = info.evaluations;
+    if (!info.reachable) {
       out.reason = "prospective endpoint or invocation exit is unreachable";
       return out;
     }
-    out.availableAtEveryAcquisition = true;
-    for (Cut c = 0; c < commandCutCount(program); ++c)
-      if (incoming[c]) {
-        if (sameObservation(c, publication))
-          out.repeatedPublication |= incoming[c] != 1;
-        if (sameObservation(c, consumer))
-          out.availableAtEveryAcquisition &=
-              (sameObservation(c, publication) ? 2 : incoming[c]) == 2;
-      }
-    out.unconsumedAtExit = incoming[n] != 1;
-    out.matchingEstablished = !out.repeatedPublication &&
-                              out.availableAtEveryAcquisition &&
-                              !out.unconsumedAtExit;
-    if (out.availableAtEveryAcquisition) {
+    out.availableAtEveryAcquisition = info.available;
+    out.repeatedPublication = info.repeated;
+    out.unconsumedAtExit = info.liveExit;
+    out.matchingEstablished = !info.repeated && info.available && !info.liveExit;
+    if (info.available) {
       out.uncoveredOperations = seed;
-      // Every original effect issued after capture and before the acquisition
-      // enters the remainder, even a new visit of the same static source phase.
-      // Stop BEFORE the consumer payload. Existing events/fences cannot enlarge
-      // this immutable receipt retroactively. Revisited cuts need no unrolling.
-      std::vector<bool> seen(graph.sites.size());
-      std::vector<std::size_t> todo;
-      for (Cut c = 0; c < commandCutCount(program); ++c)
-        if (sameObservation(c, publication) && incoming[c])
-          todo.push_back(c);
-      while (!todo.empty()) {
-        const auto id = todo.back();
-        todo.pop_back();
-        if (sameObservation(id, consumer) || seen[id])
-          continue;
-        seen[id] = true;
-        ++out.siteEvaluations;
-        if (graph.operations[id] != NoAnalysisId)
-          out.uncoveredOperations[graph.operations[id]] = 1;
-        for (auto next : graph.sites[id].successors)
-          todo.push_back(next);
-      }
+      for (std::size_t i = 0; i < seed.size(); ++i)
+        out.uncoveredOperations[i] |= info.intervening[i];
     }
     if (out.matchingEstablished) {
       const auto required = requirements(consumer);

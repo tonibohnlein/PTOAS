@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #ifndef PTO_TRANSFORMS_OAHS_BUNDLES_H
 #define PTO_TRANSFORMS_OAHS_BUNDLES_H
-#include "PTO/Transforms/OAHS/Analysis.h"
+#include "PTO/Transforms/OAHS/Replay.h"
 #include <memory>
 
 namespace mlir::pto::oahs {
@@ -23,6 +23,7 @@ struct BundleEvaluation {
   std::string reason;
   Commands commands;
   AnalysisResult analysis;
+  ReplayStats replay;
   std::vector<CompletionRequirement> discharged, introduced;
   // Endpoint indices can shift after an edit. These differences use cut, key,
   // and failure kind (with multiplicity), not unstable command offsets.
@@ -43,9 +44,10 @@ struct BundleEvaluation {
 // actual command population. The caller supplies the complete trial commands,
 // including helpers and key assignments; there is no claimed-credit input.
 // This API does not infer guard availability or permit new cut kinds.
+// The owned replay cache is mutable scratch; instances are not thread-safe.
 class BundleQuery {
 public:
-  BundleQuery(Program, Commands, AnalysisOptions = {});
+  BundleQuery(Program, Commands, AnalysisOptions = {}, bool incremental = true);
   ~BundleQuery();
   BundleQuery(BundleQuery &&) noexcept;
   BundleQuery &operator=(BundleQuery &&) noexcept;
