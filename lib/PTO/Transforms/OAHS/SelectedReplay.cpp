@@ -288,8 +288,82 @@ bool Constructor::replay()
     fresh.version = ledger.version();
     fresh.cuts.resize(control.graph.sites.size());
     std::vector<State> boundary(control.graph.sites.size());
-    boundary[control.graph.entry] = initial();
-    for (Id index = 0; index < activeComponent; ++index) {
+    // The component order is a topological order of the condensation, so a
+    // component before the earliest changed word has unchanged equations and
+    // unchanged inputs: its previous least solution is the same and is reused
+    // verbatim. No changed or cyclic region is seeded with old facts, and a
+    // cyclic component is reused only from its actual fixed point, never from
+    // the hypothesis-seeded construction traversal of the active component.
+    Id resume = 0;
+    if (cache.success && cache.cuts.size() == control.graph.sites.size()) {
+        resume = activeComponent;
+        // Ledger changes name canonical words, not every original occurrence.
+        // Numeric canonical-cut order need not agree with component order.
+        for (auto cut : ledger.changes()) {
+            for (Cut site = 0; site < control.component.size(); ++site) {
+                if (control.component[site] != NoAnalysisId && canonicalCommandCut(program, site) == cut) {
+                    resume = std::min(resume, control.component[site]);
+                }
+            }
+        }
+        for (Id index = 0; index < resume; ++index) {
+            if (control.components[index].cyclic && index >= cache.fixedComponents) {
+                resume = index;
+                break;
+            }
+        }
+        // afterEndpoint joins all occurrences of an endpoint. Do not reuse an
+        // aggregate containing contributions from the region being recomputed.
+        // Keep each shared nonempty word wholly on one side of the boundary.
+        bool widened;
+        do {
+            widened = false;
+            std::map<Cut, std::pair<Id, Id>> spans;
+            for (Cut site = 0; site < control.component.size(); ++site) {
+                const auto component = control.component[site];
+                if (component == NoAnalysisId || ledger.word(site).empty()) {
+                    continue;
+                }
+                const auto word = canonicalCommandCut(program, site);
+                auto found = spans.emplace(word, std::make_pair(component, component)).first;
+                found->second.first = std::min(found->second.first, component);
+                found->second.second = std::max(found->second.second, component);
+            }
+            for (const auto& span : spans) {
+                if (span.second.first < resume && span.second.second >= resume) {
+                    resume = span.second.first;
+                    widened = true;
+                }
+            }
+        } while (widened);
+    }
+    if (control.component[control.graph.entry] >= resume) {
+        boundary[control.graph.entry] = initial();
+    }
+    for (Id index = 0; fresh.success && index < resume; ++index) {
+        for (auto site : control.components[index].sites) {
+            fresh.cuts[site] = cache.cuts[site];
+            for (auto id : ledger.word(site)) {
+                const auto found = cache.afterEndpoint.find(id);
+                if (found != cache.afterEndpoint.end()) {
+                    fresh.afterEndpoint.emplace(id, found->second);
+                }
+            }
+            for (auto next : control.graph.sites[site].successors) {
+                if (!control.reachable[next] || control.component[next] < resume) {
+                    continue;
+                }
+                if (!join(boundary[next], fresh.cuts[site].outgoing)) {
+                    fresh.success = false;
+                    fresh.reason = "incompatible reused predecessor state";
+                    fresh.failureCut = next;
+                    break;
+                }
+            }
+        }
+    }
+    fresh.reusedComponents = resume;
+    for (Id index = resume; fresh.success && index < activeComponent; ++index) {
         if (!fixedComponent(index, boundary, fresh, boundary)) {
             fresh.success = false;
             break;
@@ -298,6 +372,7 @@ bool Constructor::replay()
     if (fresh.success && activeComponent < control.components.size()) {
         fresh.success = partialComponent(activeComponent, boundary, fresh);
     }
+    fresh.fixedComponents = activeComponent;
     result.work.replaySiteEvaluations += fresh.evaluations;
     cache = std::move(fresh);
     if (!cache.success) {
@@ -347,8 +422,8 @@ bool Constructor::advance()
 }
 bool Constructor::update()
 {
-    // Deliberately cold dependency-complete baseline. No old-plan facts seed a
-    // changed prefix or loop. All finalized queries and key neighbors are read.
+    // Recompute the affected suffix from bottom. Reuse only predecessor-closed
+    // unchanged components; no old facts seed a changed prefix or loop.
     const auto before = result.work.replaySiteEvaluations;
     if (!replay()) {
         return false;

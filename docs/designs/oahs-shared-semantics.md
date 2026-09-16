@@ -60,9 +60,11 @@ Shared extraction also repairs missing atomic destination reads and queue
 payload/storage effects for `existing`. These corrections can change its
 synchronization where it previously missed a hazard. Default and explicit
 `existing` remain equivalent. Unsupported protocol descriptions leave the
-legacy translator behavior intact; handoff refuses incomplete descriptions. Handoff requires a complete report, then uses the existing constructor,
-allocation, emission, and reconstructed verification. Origin closure and local
-unknown-address widening retain their previously established handoff behavior.
+legacy translator behavior intact; handoff refuses incomplete descriptions.
+Handoff requires a complete report, then uses the
+[selected constructor](oahs-selected-plan.md), shared emission, and causal-frontier
+reconstruction. [Storage import](oahs-analysis.md) closes loop-carried origins
+and conservatively represents unknown local addresses.
 
 ## Inspection and regression gate
 

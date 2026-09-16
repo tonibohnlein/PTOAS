@@ -958,14 +958,8 @@ LogicalResult testing::checkHandoffObservationPredicate(
   return checkObservationPredicate(observation, anchor, input, condition);
 }
 
-LogicalResult testing::runHandoffSyncWithMutation(
-    func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate) {
-  return executeTransaction(function,
-      [](const Program &program) { return construct(program); },
-      [](const Program &program, const Commands &commands) { return verify(program, commands); }, mutate);
-}
-
-LogicalResult testing::runSelectedHandoffSyncWithMutation(
+namespace {
+LogicalResult executeSelectedHandoffSync(
     func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate, SelectedPlan *report) {
   if (report) {
     *report = SelectedPlan{};
@@ -998,8 +992,20 @@ LogicalResult testing::runSelectedHandoffSyncWithMutation(
       }, mutate, ObservationPolicy::OriginalControl);
 }
 
+} // namespace
+
+LogicalResult testing::runHandoffSyncWithMutation(
+    func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate) {
+  return executeSelectedHandoffSync(function, mutate, nullptr);
+}
+
+LogicalResult testing::runSelectedHandoffSyncWithMutation(
+    func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate, SelectedPlan *report) {
+  return executeSelectedHandoffSync(function, mutate, report);
+}
+
 LogicalResult runHandoffSync(func::FuncOp function) {
-  return testing::runHandoffSyncWithMutation(function, {});
+  return executeSelectedHandoffSync(function, {}, nullptr);
 }
 
 LogicalResult analyzeHandoffSync(func::FuncOp function,
