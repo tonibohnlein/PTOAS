@@ -121,13 +121,10 @@ def main():
         if row["prepare"]["status"] == 0:
             row["prepared_sha256"] = digest(prepared)
             row["analysis"] = run(directory, "analysis", [tools["analysis"], "--analyze", prepared])
-            for arm in ("existing", "default", "selected"):
+            for arm in ("existing", "default", "handoff"):
                 synchronized = directory / (arm + ".pto")
-                if arm == "selected":
-                    command = [tools["selected"], "--construct", prepared]
-                else:
-                    option = "--pto-insert-sync" + ("=algorithm=existing" if arm == "existing" else "")
-                    command = [tools["opt"], "--mlir-disable-threading", option, prepared]
+                option = "--pto-insert-sync" + ("=algorithm=" + arm if arm != "default" else "")
+                command = [tools["opt"], "--mlir-disable-threading", option, prepared]
                 row[arm] = run(directory, arm, command, synchronized)
                 if row[arm]["status"] == 0:
                     row[arm]["inventory"] = inventory(synchronized)
@@ -144,7 +141,7 @@ def main():
                             if isinstance(v, dict) and "status" in v}, flush=True)
     # A partial cohort stays available for diagnosis, but is not a passing gate.
     return 0 if report["rows"] and all(
-        row.get("selected_lowering", {}).get("status") == 0 and
+        row.get("handoff_lowering", {}).get("status") == 0 and
         row.get("analysis", {}).get("status") == 0 and
         row.get("existing_lowering", {}).get("status") == 0 and
         row.get("default_equal_existing") for row in report["rows"]) else 1

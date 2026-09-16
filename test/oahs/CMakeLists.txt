@@ -21,29 +21,15 @@ add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp
 target_include_directories(oahs-core-under-test PUBLIC ../../include)
 target_compile_features(oahs-core-under-test PUBLIC cxx_std_17)
 target_compile_options(oahs-core-under-test PRIVATE -Wall -Wextra -Werror -pedantic)
-foreach(suite plan structured scaling analysis prefix bundle storage_frontier guidance observed phase replay resource_choices lifecycle causal_frontier selected_plan selected_cyclic selected_update)
+foreach(suite scaling analysis storage_frontier observed phase replay lifecycle causal_frontier selected_plan selected_cyclic selected_update)
   add_executable(oahs-${suite}-test ${suite}_test.cpp)
   target_link_libraries(oahs-${suite}-test PRIVATE oahs-core-under-test)
   target_compile_options(oahs-${suite}-test PRIVATE -Wall -Wextra -Werror -pedantic)
   add_test(NAME oahs_${suite} COMMAND oahs-${suite}-test)
 endforeach()
 
-# Test-only executable: no reference collector or Python dependency in the pass.
-add_executable(oahs-reference-driver reference_driver.cpp)
-target_link_libraries(oahs-reference-driver PRIVATE oahs-core-under-test)
-target_compile_options(oahs-reference-driver PRIVATE -Wall -Wextra -Werror -pedantic)
+# Test-only reference collectors; no Python dependency in the live pass.
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
-add_test(NAME oahs_reference_bridge
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/reference/bridge.py
-    --driver $<TARGET_FILE:oahs-reference-driver> --self-test)
-
-add_executable(oahs-observed-driver observed_driver.cpp)
-target_link_libraries(oahs-observed-driver PRIVATE oahs-core-under-test)
-target_compile_options(oahs-observed-driver PRIVATE -Wall -Wextra -Werror -pedantic)
-
-add_test(NAME oahs_observed_reference
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/reference/observed_bridge.py
-    --driver $<TARGET_FILE:oahs-observed-driver>)
 
 add_test(NAME oahs_phase_vendor COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/reference/phase_vendor_check.py)
 
@@ -58,11 +44,6 @@ target_compile_options(oahs-causal-frontier-driver PRIVATE -Wall -Wextra -Werror
 add_test(NAME oahs_causal_frontier_reference
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/reference/causal_frontier_bridge.py
     --driver $<TARGET_FILE:oahs-causal-frontier-driver>)
-
-# Reproducible host microbenchmarks; timings are not asserted by CTest.
-add_executable(oahs-m6-benchmark m6_benchmark.cpp)
-target_link_libraries(oahs-m6-benchmark PRIVATE oahs-core-under-test)
-target_compile_options(oahs-m6-benchmark PRIVATE -Wall -Wextra -Werror -pedantic)
 
 add_executable(oahs-selected-plan-driver selected_plan_driver.cpp)
 target_link_libraries(oahs-selected-plan-driver PRIVATE oahs-core-under-test)

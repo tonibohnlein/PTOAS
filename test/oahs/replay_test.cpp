@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include "PTO/Transforms/OAHS/Replay.h"
 #include "PTO/Transforms/OAHS/Bundles.h"
 #include "PTO/Transforms/OAHS/Prefixes.h"
@@ -119,7 +120,7 @@ int main() {
     if(program%3==2) p.body=observed_fixtures::seq({{o::Region::While,{
       observed_fixtures::seq({observed_fixtures::leaf(0),observed_fixtures::leaf(1)}),
       observed_fixtures::seq({observed_fixtures::leaf(2),{o::Region::For,{observed_fixtures::seq({observed_fixtures::leaf(3),observed_fixtures::leaf(4)})},0,true},observed_fixtures::leaf(5)})}},observed_fixtures::leaf(6)});
-    auto plan=o::construct(p); CHECK(plan.success);
+    auto plan=o::constructSelectedPlan(p); CHECK(plan.success);
     auto c=plan.commands; o::ReplaySession hot(p); same(hot,p,c);
     for(unsigned edit=0;edit<30;++edit) {
       const auto at=rng()%c.size(); const auto mutation=rng()%6;
@@ -134,7 +135,7 @@ int main() {
   }
   { // Qualified observations share one word: invalidate ALL matching members.
     auto input=observed_fixtures::ring(2); CHECK(input.success);
-    auto p=input.program; auto plan=o::construct(p); CHECK(plan.success);
+    auto p=input.program; auto plan=o::constructSelectedPlan(p); CHECK(plan.success);
     o::ReplaySession session(p); auto c=plan.commands; same(session,p,c);
     for (unsigned i=0;i<50;++i) {
       o::Cut at=rng()%c.size(); if(!o::legalCommandCut(p,at))continue;

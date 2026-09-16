@@ -13,6 +13,15 @@ namespace o = mlir::pto::oahs;
 inline o::Program target(unsigned lanes, unsigned cells, unsigned keys = 4) {
   o::Program p;
   p.cells.resize(cells);
+  // These portable fixtures declare exact, disjoint cells, unlike native
+  // bounding intervals. Make that existing test premise explicit for the
+  // selected constructor's qualified cyclic-slot path.
+  for (unsigned i = 0; i < cells; ++i) {
+    p.cells[i].storage = o::Cell::Storage::CanonicalInterval;
+    p.cells[i].addressSpace = "test";
+    p.cells[i].coordinateSpace = "physical";
+    p.cells[i].ranges = {{uint64_t(i) * 16, 16}};
+  }
   p.target.contract = "test-only exact issue-ordered core";
   for (unsigned a = 0; a < lanes; ++a) {
     p.target.supported[a] = p.target.barriers[a] = true;

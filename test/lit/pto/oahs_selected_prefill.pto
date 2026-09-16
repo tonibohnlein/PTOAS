@@ -11,8 +11,8 @@
 // loops into first/tail observations. Original SCF must preserve all requirements
 // and pass selected construction, exact native reconstruction, and C++ lowering.
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 --emit-pto-ir %S/../../samples/Qwen3_14BPrefillA3/kernels/aiv/rmsnorm.pto -o %t.rms.pto
-// RUN: pto-oahs-selected-test --construct %t.rms.pto > %t.rms.sync.pto
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync=algorithm=handoff %t.rms.pto > %t.rms.sync.pto
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 %t.rms.sync.pto -o %t.rms.cpp
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 --emit-pto-ir %S/../../samples/Qwen3_14BPrefillA3/kernels/aiv/post_rmsnorm.pto -o %t.post.pto
-// RUN: pto-oahs-selected-test --construct %t.post.pto > %t.post.sync.pto
+// RUN: pto-test-opt --mlir-disable-threading --pto-insert-sync=algorithm=handoff %t.post.pto > %t.post.sync.pto
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 %t.post.sync.pto -o %t.post.cpp

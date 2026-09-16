@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/OAHS/Native.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
@@ -656,7 +657,7 @@ module attributes {pto.target_arch = "a3"} {
              .matchingEstablished);
     require(text(function) == before);
     // The same imported program/analysis explains and verifies the candidate.
-    const auto plan = oahs::construct(report.program);
+    const auto plan = oahs::constructSelectedPlan(report.program);
     require(plan.success &&
             oahs::analyze(report.program, plan.commands).verified());
   }
@@ -748,8 +749,8 @@ module attributes {pto.target_arch = "a3"} {
     require(succeeded(verify(function)));
   }
   {
-    // Native normalized first/tail observations use only the original IV and
-    // upper bound. They introduce guarded synchronization, not payload copies.
+    // Analysis may expose normalized observations. Live selected construction
+    // retains original SCF and verifies its control without synthesized guards.
     const char *loopSource = R"mlir(
 module attributes {pto.target_arch = "a3"} {
   func.func @observed_loop(%src: !pto.partition_tensor_view<1x32xf32>, %n: index)
@@ -784,16 +785,14 @@ module attributes {pto.target_arch = "a3"} {
           function, [&](func::FuncOp working) {
             if (!mutation)
               return;
-            scf::IfOp guard;
-            working.walk([&](scf::IfOp op) {
-              if (!guard)
-                guard = op;
+            scf::ForOp loop;
+            working.walk([&](scf::ForOp op) {
+              if (!loop)
+                loop = op;
             });
-            require(bool(guard));
-            OpBuilder builder(guard);
-            auto always =
-                builder.create<arith::ConstantIntOp>(guard.getLoc(), 1, 1);
-            guard->setOperand(0, always.getResult());
+            require(bool(loop));
+            // A changed original trip bound must reject transactionally.
+            loop.getUpperBoundMutable().assign(loop.getLowerBound());
             changed = true;
           });
       if (mutation)
@@ -805,7 +804,7 @@ module attributes {pto.target_arch = "a3"} {
         function.walk([&](TAddOp) { ++adds; });
         function.walk([&](scf::ForOp) { ++loops; });
         function.walk([&](scf::IfOp) { ++guards; });
-        require(loads == 1 && adds == 1 && loops == 1 && guards > 0);
+        require(loads == 1 && adds == 1 && loops == 1 && guards == 0);
       }
     }
   }
