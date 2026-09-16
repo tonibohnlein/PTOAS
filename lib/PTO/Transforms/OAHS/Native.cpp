@@ -12,6 +12,7 @@
 #include "PTO/Transforms/InsertSync/SyncOriginClosure.h"
 #include "PTO/Transforms/OAHS/ObservedPrograms.h"
 #include "PTO/Transforms/OAHS/Plan.h"
+#include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include "PTO/Transforms/OAHS/StorageWitnesses.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -78,10 +79,12 @@ struct Import {
   DenseMap<std::size_t, scf::ForOp> loopOwners;
   std::vector<std::string> observationNotes;
 };
+enum class ObservationPolicy { RefineLeafLoops, OriginalControl };
 // Every actual original instruction is an anchor, including scalar/control
 // instructions and region terminators. Synthetic branch/loop decisions have no
 // anchor and cannot acquire emitted commands. Payload phases remain unchanged.
-LogicalResult importObservedCuts(func::FuncOp function, Import &out) {
+LogicalResult importObservedCuts(func::FuncOp function, Import &out,
+                                 ObservationPolicy policy) {
   ObservedControl q;
   q.qualification = "MLIR-SCF-original-anchor-control-v1";
   q.scopes.push_back({0, NoControlId, NoControlId});
@@ -193,7 +196,8 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out) {
     return attr.getInt();
   };
   SmallVector<scf::ForOp> loops;
-  function.walk([&](scf::ForOp loop) { loops.push_back(loop); });
+  if (policy == ObservationPolicy::RefineLeafLoops)
+    function.walk([&](scf::ForOp loop) { loops.push_back(loop); });
   for (auto loop : loops) {
     bool nested = false;
     loop.getRegion().walk([&](mlir::Operation *op) {
@@ -315,7 +319,8 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out) {
   }
   return success();
 }
-LogicalResult import(func::FuncOp function, Import &out) {
+LogicalResult import(func::FuncOp function, Import &out,
+                     ObservationPolicy policy = ObservationPolicy::RefineLeafLoops) {
   if (!function.getBody().hasOneBlock())
     return function.emitError("handoff: function requires one CFG entry block");
   MemoryDependentAnalyzer aliases;
@@ -539,7 +544,7 @@ LogicalResult import(func::FuncOp function, Import &out) {
         "cross-core flags remain owned by the original protocol in their "
         "separate namespace; no local completion credit from peer events or "
         "preserved intrinsic drains";
-  return importObservedCuts(function, out);
+  return importObservedCuts(function, out, policy);
 }
 
 // Emit only total predicates over the original normalized induction variable
@@ -669,10 +674,15 @@ LogicalResult checkObservationPredicate(const OriginalObservation &observation,
   return success();
 }
 
-LogicalResult execute(func::FuncOp function,
+using NativeConstructor = llvm::function_ref<Result(const Program &)>;
+using NativeChecker = llvm::function_ref<Result(const Program &, const Commands &)>;
+
+LogicalResult execute(func::FuncOp function, NativeConstructor constructor,
+                      NativeChecker checker,
+                      ObservationPolicy policy,
                       llvm::function_ref<void(func::FuncOp)> mutate = {}) {
   Import input;
-  if (failed(import(function, input)))
+  if (failed(import(function, input, policy)))
     return failure();
   // Snapshot every payload and storage declaration, including operands, types,
   // attributes and ordering. Reconstruction must retain the imported contract.
@@ -685,9 +695,10 @@ LogicalResult execute(func::FuncOp function,
     if (op != function.getOperation())
       originalOperations.push_back(op);
   });
-  auto result = construct(input.program);
-  if (!result.success)
+  auto result = constructor(input.program);
+  if (!result.success) {
     return function.emitError("handoff: ") << result.reason;
+  }
   // Use production emission directly. Do not run legacy planning, motion,
   // redundancy removal or allocation on the new constructor's chosen plan.
   SyncIRs emission;
@@ -902,11 +913,33 @@ LogicalResult execute(func::FuncOp function,
   if (!unchanged)
     return function.emitError(
         "handoff: emission changed original payload or contract");
-  auto checked = verify(input.program, actual);
-  if (!checked.success)
+  auto checked = checker(input.program, actual);
+  if (!checked.success) {
     return function.emitError("handoff emitted verification: ")
            << checked.reason;
+  }
   return mlir::verify(function);
+}
+
+LogicalResult executeTransaction(func::FuncOp function, NativeConstructor constructor,
+                                 NativeChecker checker,
+                                 llvm::function_ref<void(func::FuncOp)> mutate,
+                                 ObservationPolicy policy = ObservationPolicy::RefineLeafLoops) {
+  if (getTargetArch(function) != PTOArch::A3) {
+    return function.emitError("handoff: first native target is a3");
+  }
+  auto parent = function->getParentOfType<ModuleOp>();
+  OwningOpRef<ModuleOp> sandbox = ModuleOp::create(function.getLoc());
+  if (parent) {
+    sandbox->getOperation()->setAttrs(parent->getAttrs());
+  }
+  auto working = cast<func::FuncOp>(function->clone());
+  sandbox->push_back(working);
+  if (failed(execute(working, constructor, checker, policy, mutate))) {
+    return failure();
+  }
+  function.getBody().takeBody(working.getBody());
+  return success();
 }
 } // namespace
 
@@ -927,18 +960,42 @@ LogicalResult testing::checkHandoffObservationPredicate(
 
 LogicalResult testing::runHandoffSyncWithMutation(
     func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate) {
-  if (getTargetArch(function) != PTOArch::A3)
-    return function.emitError("handoff: first native target is a3");
-  auto parent = function->getParentOfType<ModuleOp>();
-  OwningOpRef<ModuleOp> sandbox = ModuleOp::create(function.getLoc());
-  if (parent)
-    sandbox->getOperation()->setAttrs(parent->getAttrs());
-  auto working = cast<func::FuncOp>(function->clone());
-  sandbox->push_back(working);
-  if (failed(execute(working, mutate)))
-    return failure();
-  function.getBody().takeBody(working.getBody());
-  return success();
+  return executeTransaction(function,
+      [](const Program &program) { return construct(program); },
+      [](const Program &program, const Commands &commands) { return verify(program, commands); }, mutate);
+}
+
+LogicalResult testing::runSelectedHandoffSyncWithMutation(
+    func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate, SelectedPlan *report) {
+  if (report) {
+    *report = SelectedPlan{};
+  }
+  // Select the original SCF representation before construction. Native import
+  // does not yet certify exact slot contents/occurrences for the selected cyclic
+  // qualifier. Expanding unrelated leaf loops into first/tail observations adds
+  // histories its conservative body hypotheses cannot distinguish (for example
+  // the two reduction loops in the real Qwen3 RMSNorm kernels). Original SCF
+  // retains all payload, zero-trip and backedge paths; final checking uses that
+  // same graph. This is a representation choice, never a retry after refusal.
+  return executeTransaction(function,
+      [report](const Program &program) {
+        auto selected = constructSelectedPlan(program);
+        Result result;
+        result.success = selected.success;
+        result.reason = selected.reason;
+        result.commands = selected.commands;
+        if (report) {
+          *report = std::move(selected);
+        }
+        return result;
+      },
+      [](const Program &program, const Commands &commands) {
+        const auto checked = checkCausalFrontier(program, commands);
+        Result result;
+        result.success = checked.accepted;
+        result.reason = checked.reason;
+        return result;
+      }, mutate, ObservationPolicy::OriginalControl);
 }
 
 LogicalResult runHandoffSync(func::FuncOp function) {

@@ -15,6 +15,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include <utility>
 namespace mlir::pto::oahs {
+struct SelectedPlan;
 struct NativeAnalysis {
   Program program;
   // Preserved lowering-owned protocols; handles refer to unchanged original IR.
@@ -44,6 +45,14 @@ LogicalResult analyzeHandoffSync(func::FuncOp function);
 // leaves the original function unchanged; no backend fallback is performed.
 LogicalResult runHandoffSync(func::FuncOp function);
 namespace testing {
+// Gated integration entry: same import, transaction, emission and reconstruction
+// as runHandoffSync, but the selected constructor/checker only, never fallback.
+// The optional report describes construction; LogicalResult additionally covers
+// emission/reconstruction. This does not switch any public pass algorithm.
+LogicalResult runSelectedHandoffSyncWithMutation(
+    func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate = {},
+    SelectedPlan *report = nullptr);
+
 // Exercise arithmetic read-back directly, without the earlier whole-IR identity
 // gate masking decoder failures. This test hook grants no observation/target
 // qualification and is never used for production acceptance.

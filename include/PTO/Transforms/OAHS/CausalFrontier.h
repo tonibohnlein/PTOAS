@@ -41,9 +41,12 @@ struct FrontierFacts {
     // nullopt is absence; a present empty bitset is unresolved history.
     std::vector<std::optional<FrontierBits>> history;
     std::vector<FrontierEvent> events;
+    // Terminal retirement is not a reusable completion or event-reset receipt.
+    bool terminalRetired = false, mayBeRetired = false;
     bool operator==(const FrontierFacts& b) const
     {
-        return reach == b.reach && history == b.history && events == b.events;
+        return reach == b.reach && history == b.history && events == b.events &&
+               terminalRetired == b.terminalRetired && mayBeRetired == b.mayBeRetired;
     }
 };
 
@@ -85,7 +88,8 @@ enum class FrontierFailure {
     PublicationNotEmpty,
     AcquisitionNotFull,
     ConsumptionNotEstablished,
-    UnconsumedAtExit
+    UnconsumedAtExit,
+    MissingRetirement
 };
 
 struct FrontierStep {
@@ -97,9 +101,9 @@ struct FrontierStep {
     std::vector<FrontierRequirement> residuals;
 };
 
-// Ordinary issue-ordered asynchronous core only. This increment deliberately
-// does not reinterpret synchronous lanes, ALL/retirement, phase/resource or
-// visibility contracts. It does not replace the current native checker yet.
+// Ordinary prefix core, including the shared synchronous-payload contract and
+// terminal-only retirement. Resource, phase, visibility and implicit transfers
+// still require their own adapters. This does not select a native pass driver.
 class CausalFrontier {
 public:
     explicit CausalFrontier(Program);
@@ -108,7 +112,13 @@ public:
     const std::vector<EventIdentity>& keys() const;
     FrontierState initial() const;
     FrontierStep join(const FrontierState&, const FrontierState&) const;
+    // A query never advances payload or installs prospective credit.
+    FrontierStep inspect(const FrontierState&, std::size_t operation) const;
     FrontierStep issue(const FrontierState&, std::size_t operation) const;
+    // Conservative loop hypothesis: add possible earlier body classes, retaining
+    // only their source-prefix successor. The constructor must separately check
+    // the selected body's inductive closure from its actual incoming interface.
+    FrontierStep assumePreviousAccesses(const FrontierState&, const std::vector<std::size_t>&) const;
     FrontierStep command(const FrontierState&, const Command&, FrontierBinding) const;
     FrontierStep exit(const FrontierState&) const;
 
