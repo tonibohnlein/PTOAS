@@ -310,6 +310,116 @@ int main() {
     p.observed->qualification.clear();
     CHECK(!o::validateProgram(p).success);
   }
+  { // A checked initializer must dominate every entry to the replaced loop.
+    auto p = observed_fixtures::target(2, 1);
+    p.operations = {observed_fixtures::op(0, 0, 2),
+                    observed_fixtures::op(1, 0, 1)};
+    p.body = {o::Region::For,
+              {observed_fixtures::seq({observed_fixtures::leaf(0),
+                                       observed_fixtures::leaf(1)})}};
+    auto original = o::addStructuredBoundaryCuts(p);
+    CHECK(original.success);
+    const auto &q = *original.program.observed;
+    o::CountedLoopRegion spec;
+    spec.owner = q.entry;
+    spec.header = q.sites[spec.owner].successors.front();
+    spec.bodyEntry = q.sites[spec.header].successors.front();
+    spec.continuation = q.sites[spec.header].successors.back();
+    std::vector<bool> seen(q.sites.size());
+    std::vector<std::size_t> pending{spec.bodyEntry};
+    while (!pending.empty()) {
+      const auto at = pending.back();
+      pending.pop_back();
+      if (at == spec.header || seen[at])
+        continue;
+      seen[at] = true;
+      spec.bodySites.push_back(at);
+      for (auto next : q.sites[at].successors)
+        pending.push_back(next);
+    }
+    CHECK(o::refineCountedLoop(original.program, spec).success);
+    for (unsigned variant = 0; variant < 3; ++variant) {
+      auto bad = original.program;
+      if (variant == 0)
+        bad.observed->entry = spec.header;
+      else if (variant == 1)
+        bad.observed->entry = spec.bodyEntry;
+      else {
+        const auto incoming = bad.observed->sites.size();
+        bad.observed->sites.emplace_back();
+        bad.observed->sites.back().successors = {spec.owner, spec.header};
+        bad.observed->entry = incoming;
+      }
+      CHECK(o::validateProgram(bad).success); // valid CFG, not a normalized loop
+      const auto before = o::analyze(bad);
+      CHECK(before.complete && !before.residuals.empty());
+      const auto refinement = o::refineCountedLoop(bad, spec);
+      CHECK(!refinement.success && !refinement.reason.empty());
+      CHECK(o::analyze(bad).residuals.size() == before.residuals.size());
+    }
+    // A legitimate external entry through the initializer remains supported.
+    auto wrapper = original.program;
+    const auto incoming = wrapper.observed->sites.size();
+    wrapper.observed->sites.emplace_back();
+    wrapper.observed->sites.back().successors = {spec.owner};
+    wrapper.observed->entry = incoming;
+    CHECK(o::refineCountedLoop(wrapper, spec).success);
+  }
+  { // Refining an outer loop must not erase an inner loop's edge owners.
+    auto p = observed_fixtures::target(2, 1);
+    p.operations = {observed_fixtures::op(0, 0, 2),
+                    observed_fixtures::op(1, 0, 1),
+                    observed_fixtures::op(0, 0, 2)};
+    p.operations[0].accesses[0].definiteWrite = true;
+    p.operations[2].accesses[0].definiteWrite = true;
+    p.body = {o::Region::For,
+              {observed_fixtures::seq({
+                  observed_fixtures::leaf(0),
+                  {o::Region::For,
+                   {observed_fixtures::seq({observed_fixtures::leaf(1)})}},
+                  observed_fixtures::leaf(2)})}};
+    auto original = o::addStructuredBoundaryCuts(p);
+    CHECK(original.success);
+    const auto &q = *original.program.observed;
+    o::CountedLoopRegion spec;
+    spec.owner = q.entry;
+    spec.header = q.sites[spec.owner].successors.front();
+    spec.bodyEntry = q.sites[spec.header].successors.front();
+    spec.continuation = q.sites[spec.header].successors.back();
+    std::set<std::size_t> seen;
+    std::vector<std::size_t> pending{spec.bodyEntry};
+    while (!pending.empty()) {
+      const auto at = pending.back();
+      pending.pop_back();
+      if (at == spec.header || !seen.insert(at).second)
+        continue;
+      spec.bodySites.push_back(at);
+      for (auto next : q.sites[at].successors)
+        pending.push_back(next);
+    }
+    o::StorageFrontierAnalysis before(original.program);
+    const auto source = before.sitesForOperation(1).front();
+    const auto oldWitness = before.witness(source, source, 0);
+    CHECK(oldWitness.exists && oldWitness.crossedLoopOwners.size() == 1);
+    const auto innerOwner = oldWitness.crossedLoopOwners.front();
+    CHECK(innerOwner != spec.owner);
+    const auto refined = o::refineCountedLoop(original.program, spec);
+    CHECK(refined.success);
+    o::StorageFrontierAnalysis after(refined.program);
+    o::PrefixQuery prefixes(refined.program);
+    const auto readers = after.sitesForOperation(1);
+    CHECK(!readers.empty());
+    for (auto reader : readers) {
+      const auto witness = after.witness(reader, reader, 0);
+      CHECK(witness.exists && witness.definiteWriteFree);
+      CHECK(witness.crossedLoopOwners == oldWitness.crossedLoopOwners);
+      const auto cuts = prefixes.backwardCuts(reader);
+      CHECK(cuts.complete);
+      CHECK(std::find(cuts.crossedLoopOwners.begin(),
+                      cuts.crossedLoopOwners.end(), innerOwner) !=
+            cuts.crossedLoopOwners.end());
+    }
+  }
   std::cout << checks << " observation assertions; " << frontEndPaths
             << " independent normalized frontend paths; " << concrete
             << " full-history graph traces\n";
