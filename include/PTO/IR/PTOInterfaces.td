@@ -22,8 +22,11 @@ include "mlir/IR/OpBase.td"
 def OpPipeInterface : OpInterface<"OpPipeInterface"> {
   let description = [{
     Interface for operations to expose their execution pipeline (Pipe) on Ascend architecture.
-    This is used by the InjectSync pass to insert synchronization barriers between
-    different hardware units (e.g., MTE2 -> Vector).
+    Together with MemoryEffectOpInterface this is the production ordinary
+    synchronization contract: one physical pipeline and the declared byte
+    reads/writes. Shared translation validates that every effect is retained.
+    Macro models and explicit protocol/resource semantics take precedence.
+    This compatibility contract does not qualify new hardware behavior.
   }];
   
   let cppNamespace = "::mlir::pto";
@@ -50,10 +53,11 @@ def SyncStorageOpInterface : OpInterface<"SyncStorageOpInterface"> {
 def SinglePhaseSyncOpInterface : OpInterface<"SinglePhaseSyncOpInterface"> {
   let cppNamespace = "::mlir::pto";
   let description = [{
-    Declares that this exact operation variant has one physical pipeline phase,
-    with all synchronization-relevant effects represented by its memory-effect
-    interface and no private events or additional implicit resource state.
-    Algorithms must also validate the translated effects and target support.
+    Optional refinement of the ordinary OpPipeInterface/MemoryEffect contract
+    for operations with special lowering variants. False requires additional
+    semantics; ordinary operations need not implement this interface. Shared
+    translation, rather than a constructor opcode list, applies the restriction.
+    Algorithms must also validate translated effects and target support.
   }];
   let methods = [InterfaceMethod<
     "Whether this variant supplies complete ordinary single-phase effects.",

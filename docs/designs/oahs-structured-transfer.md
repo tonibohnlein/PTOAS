@@ -106,13 +106,13 @@ pipeline/local-storage facts and rejects contradictory mixed contexts. It keeps
 the pre-existing production alias/ordinary-GM compatibility premise; it does not
 claim a new general visibility theorem.
 
-`SyncOrdinaryExternalModels.h` adds explicit, IR-owned interface models for A3
-TAbs, TMul, TSub, and plain MTE3 TStore. A dialect extension registers them before
-parallel pass execution; the planner does not infer completeness from absence in
-an opcode exception list. The store model excludes atomic, phased, quantized,
-ReLU-preprocessing and tensor-result variants. Plain TLoad/TAdd retain their
-existing declarations. Direct users of the native API must register the same
-extension, as the native test driver does.
+Ordinary operation admission now uses the shared translator's production
+pipe/memory-effect contract and semantic accounting report. There is no
+external-model registration list for vector arithmetic. Optional restrictions
+for special load/store variants live with those operations; ordinary FIX stores
+use the existing source-dependent pipeline declaration. See
+[shared semantic extraction](oahs-shared-semantics.md) for completeness checks,
+compatibility assumptions, and remaining protocol gaps.
 
 ## Remaining coverage work (not claimed complete)
 
@@ -136,7 +136,7 @@ consume-before-republication by reachability WITHOUT inserting those edges as
 assumptions. It expands bounded for/while/choice traces only in tests.
 
 The native tests cover carried roots, self-recurrence, while forwarding, actual
-endpoint placement, atomic rollback, ordinary external models, dynamic local
+endpoint placement, atomic rollback, generic ordinary interfaces, dynamic local
 address aliasing, and 730 repeated loads without budget-induced ALL insertion. They must be built with the repository's configured
 MLIR/PTOAS toolchain. Adding their source does not mean they were executed.
 See the patch package validation record for commands actually run.

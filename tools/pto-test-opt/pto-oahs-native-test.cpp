@@ -6,7 +6,6 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/IR/PTO.h"
-#include "PTO/IR/SyncOrdinaryExternalModels.h"
 #include "PTO/Transforms/OAHS/Native.h"
 #include "PTO/Transforms/OAHS/Prefixes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -30,7 +29,6 @@ static std::string text(func::FuncOp function) {
 }
 int main() {
   DialectRegistry registry;
-  registerSyncOrdinaryExternalModels(registry);
   MLIRContext context(registry);
   context.loadDialect<PTODialect, arith::ArithDialect, scf::SCFDialect,
                       func::FuncDialect>();

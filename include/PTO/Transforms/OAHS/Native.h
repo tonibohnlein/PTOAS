@@ -8,6 +8,7 @@
 #ifndef PTO_TRANSFORMS_OAHS_NATIVE_H
 #define PTO_TRANSFORMS_OAHS_NATIVE_H
 #include "PTO/Transforms/OAHS/Analysis.h"
+#include "PTO/IR/SyncProtocolModel.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -16,6 +17,8 @@
 namespace mlir::pto::oahs {
 struct NativeAnalysis {
   Program program;
+  // Preserved lowering-owned protocols; handles refer to unchanged original IR.
+  llvm::SmallVector<SyncProtocolModel, 0> protocols;
   AnalysisResult analysis;
   // Original operation mapping, valid while the caller keeps the IR unchanged.
   llvm::SmallVector<mlir::Operation *> phases;

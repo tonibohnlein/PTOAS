@@ -10,7 +10,6 @@
 //===----------------------------------------------------------------------===//
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
-#include "PTO/IR/SyncOrdinaryExternalModels.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
@@ -64,7 +63,6 @@ static bool hasGatherScatterLikeOps(func::FuncOp func) {
 struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSyncPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<PTODialect>();
-    registerSyncOrdinaryExternalModels(registry);
   }
   void runOnOperation() override {
     func::FuncOp func = getOperation();

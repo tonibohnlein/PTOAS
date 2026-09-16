@@ -10,6 +10,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOLayoutUtils.h"
+#include "PTO/IR/PTOMultiBuffer.h"
+#include "PTO/IR/PTOSyncUtils.h"
+#include "PTO/IR/SyncResources.h"
+#include "PTO/IR/SyncProtocolModel.h"
+#include "PTO/IR/PTOTypeUtils.h"
 
 #include "mlir/Interfaces/InferIntRangeInterface.h"
 
@@ -115,6 +121,7 @@
 #include "PTOPipeline/PTOInternalPipelineOps.cpp"
 #include "PTOPipeline/PTOSimtVerificationAndAsyncEffects.cpp"
 #include "PTOPipeline/PTOCollectivePipelineEffectsAndConvertAssembly.cpp"
+#include "PTOPipeline/PTOSyncProtocolModel.cpp"
 
 // Remaining custom assembly hooks and generated operation definitions.
 #include "PTOPipeline/PTOCachePolicyAssemblyAndGeneratedOps.cpp"
