@@ -73,12 +73,12 @@ establish it, not trust an arbitrary IR attribute supplied by a caller.
 
 ## Next native integration
 
-Complete the lowering-owned declarations for the captured operation population.
-`SinglePhaseSyncOpInterface` owns ordinary one-phase completeness and
-`MacroSyncOpInterface` makes completeness of a lowering-owned macro model
-explicit. The current declarations cover plain TLOAD, TADD, and the existing
-macro families; macro import is deliberately still rejected until its phases,
-private events, and boundary effects are all connected.
+Ordinary native admission now uses shared production pipe/memory-effect
+extraction, with `SinglePhaseSyncOpInterface` providing optional restrictions
+for special variants. It no longer requires a separate ordinary-op registration
+list. See [shared semantic extraction](oahs-shared-semantics.md) for the current
+contract. Macro import remains rejected until its phases, private events, and
+boundary effects are all connected; a macro marker alone is insufficient.
 
 Extend the current structural transfer beyond its conservative byte-effect
 realization to authored/internal events, explicit visibility and resource

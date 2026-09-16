@@ -152,8 +152,13 @@ bool TLoadOp::hasCompleteSinglePhaseSyncEffects() {
          !getInitCondition() && !getCachePolicyAttr() && !getResult();
 }
 
-bool TAddOp::hasCompleteSinglePhaseSyncEffects() {
-  return getPipe() == PIPE::PIPE_V;
+bool TStoreOp::hasCompleteSinglePhaseSyncEffects() {
+  // Both ordinary store pipelines are described by getPipe/getEffects. Special
+  // phase and conversion forms need additional lowering contracts. Atomic add
+  // is an ordinary RMW; TSTORE scopes its mode setup/reset around the issue.
+  return !getFp() && !getPreQuantScalar() && !getResult() &&
+         getStPhase() == STPhase::Unspecified &&
+         getReluPreMode() == ReluPreMode::NoRelu;
 }
 
 // Read: src, Write: dst
@@ -183,6 +188,8 @@ void TAbsOp::getEffects(
 void TStoreOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   addStoreLikeEffects(effects, getSrcMutable(), getFpMutable(),
                       getPreQuantScalarMutable(), getDstMutable());
+  if (getAtomicType() == AtomicType::AtomicAdd)
+    addEffect(effects, &getDstMutable(), MemoryEffects::Read::get());
 }
 
 // === TMovOp ===

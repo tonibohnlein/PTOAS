@@ -15,18 +15,47 @@
 #define MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_PTOIRTRANSLATOR_H
  
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/SyncProtocolModel.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/STLExtras.h"
 
 #include <optional>
  
 namespace mlir {
 namespace pto {
  
+// Shared semantic accounting, independent of the synchronization constructor.
+// Phase pointers borrow the translator output and expire with that output.
+// Ordinary phases use production's OpPipeInterface + MemoryEffectOpInterface
+// contract. Other mechanisms are represented explicitly rather than silently
+// treated as ordinary memory accesses.
+struct SyncSemanticRecord {
+  enum Kind {
+    Ordinary, Storage, Descriptor, Control, Pure, Macro, Authored, Visibility, Protocol,
+    Unmodeled
+  };
+  Operation *operation = nullptr;
+  Kind kind = Unmodeled;
+  SmallVector<CompoundInstanceElement *> phases;
+  std::string gap;
+  std::optional<SyncMacroModel> macro;
+  std::optional<SyncProtocolModel> protocol;
+};
+struct SyncSemanticReport {
+  SmallVector<SyncSemanticRecord, 0> operations;
+  bool complete() const {
+    return llvm::all_of(operations, [](const auto &record) {
+      return record.gap.empty();
+    });
+  }
+};
+
 class PTOIRTranslator {
 public:
   PTOIRTranslator(SyncIRs &syncIR,
@@ -47,6 +76,10 @@ public:
   // 核心入口：执行 IR 分析和转换
   // On failure, both output collections are empty; callers must stop.
   LogicalResult Build();
+
+  // Recompute after an analysis (such as structured-origin closure) refreshes
+  // physical effects. This is read-only and never inserts synchronization.
+  SyncSemanticReport describeSemantics() const;
  
   // 获取生成的 SyncIR (指令序列)
   SyncIRs &getSyncIR() { return syncIR_; }
@@ -59,6 +92,7 @@ public:
  
 private:
   func::FuncOp func_;
+  bool translated_ = false;
   unsigned index; // 当前 SyncIR 节点的索引计数器
   
   // 核心数据结构 (定义在 SyncCommon.h 中)

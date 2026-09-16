@@ -801,6 +801,7 @@ def TPrefetchAsyncOp : PTO_Op<"tprefetch_async"> {
 }
 
 def TStoreOp: PTO_TOp<"tstore", [
+  DeclareOpInterfaceMethods<SinglePhaseSyncOpInterface>,
   AttrSizedOperandSegments,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
@@ -3439,7 +3440,6 @@ def TAbsOp : PTO_TOp<"tabs", [
 }
 
 def TAddOp : PTO_TOp<"tadd", [
-  DeclareOpInterfaceMethods<SinglePhaseSyncOpInterface>,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>

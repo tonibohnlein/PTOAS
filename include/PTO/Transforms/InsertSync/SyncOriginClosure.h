@@ -12,6 +12,7 @@
 #include "PTO/Transforms/InsertSync/SyncOriginPropagation.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/SyncProtocolModel.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -191,7 +192,12 @@ inline LogicalResult closeStructuredSyncOrigins(
     auto *phase = dyn_cast<CompoundInstanceElement>(entry.get());
     if (!phase) continue;
     SmallVector<Value> reads, writes;
-    if (auto macro = getSyncMacroModel(phase->elementOp)) {
+    if (auto protocol = getSyncProtocolModel(phase->elementOp)) {
+      if (!protocol->complete())
+        return phase->elementOp->emitError("incomplete protocol during origin closure");
+      reads = protocol->reads;
+      writes = protocol->writes;
+    } else if (auto macro = getSyncMacroModel(phase->elementOp)) {
       if (phase->macroOpInstanceId < 0 ||
           unsigned(phase->macroOpInstanceId) >= macro->phases.size())
         return phase->elementOp->emitError("invalid phase during origin closure");
