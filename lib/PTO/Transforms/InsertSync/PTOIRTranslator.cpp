@@ -25,6 +25,7 @@
 // [P0 新增] 引入副作用接口和 PTO 接口
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 
 #include <optional>
 #include <limits>
@@ -412,6 +413,22 @@ SyncSemanticReport PTOIRTranslator::describeSemantics() const {
       return finish(SyncSemanticRecord::Unmodeled,
                     "call boundary contract incomplete");
 
+    // A pure storage view can declare a descriptor pipeline without issuing
+    // physical byte accesses (e.g. TRESHAPE). Require the shared translator's
+    // provenance, rather than interpreting that pipeline as a missing phase.
+    if (auto view = dyn_cast<ViewLikeOpInterface>(op)) {
+      if (record.phases.empty() && isMemoryEffectFree(op)) {
+        auto mapped = [&](Value value) {
+          auto it = buffer2MemInfoMap_.find(value);
+          return it != buffer2MemInfoMap_.end() && !it->second.empty();
+        };
+        if (!mapped(view.getViewSource()) || op->getNumResults() != 1 ||
+            !mapped(op->getResult(0)))
+          return finish(SyncSemanticRecord::Storage,
+                        "storage view lacks translated alias provenance");
+        return finish(SyncSemanticRecord::Storage);
+      }
+    }
     if (isa<OpPipeInterface>(op) || !record.phases.empty()) {
       if (record.phases.size() != 1)
         return finish(SyncSemanticRecord::Ordinary,

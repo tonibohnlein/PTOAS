@@ -36,6 +36,14 @@ macro/resource description; absence of a constructor opcode case is expected.
 
 ## Descriptor effects
 
+Pure `ViewLikeOpInterface` operations such as `pto.treshape` use the shared
+translator's storage provenance and create no physical byte-access phase.
+Their source and result must both have translated storage records. A descriptor
+pipeline declaration does not turn such a view into an asynchronous payload
+operation. Reads and writes through either handle retain alias dependencies;
+the view itself establishes no completion. This matches existing InsertSync's
+alias translation.
+
 The `tileDescriptorEffect` annotation distinguishes synchronous tile-handle
 metadata from payload storage. `set_validshape` and `get_validshape` supply it
 from their effect implementations, not from a caller-controlled IR attribute.
