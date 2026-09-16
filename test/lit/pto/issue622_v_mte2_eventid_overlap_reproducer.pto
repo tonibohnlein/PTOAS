@@ -1,8 +1,11 @@
-// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: %python %S/Inputs/check_static_event_word.py %t.cpp vector_kernel
+// RUN: not %python %S/Inputs/check_static_event_word.py %t.cpp vector_kernel --remove-first-wait
 //
 // Reproducer for issue #622:
 // a mixed 256-wide / 128-wide DIR_C2V pipeline with local_slot_num = 2 can
-// currently reused the same PIPE_V -> PIPE_MTE2 event id across multiple
+// previously reused the same PIPE_V -> PIPE_MTE2 event id across multiple
 // outstanding sync pairs. The loop-tail synthetic wait must be emitted before
 // the post-loop local set so the same-key order stays serialized:
 //
@@ -16,27 +19,34 @@
 // This file is intentionally kept small and readable so we can debug event-id
 // lifetime reuse in isolation.
 //
+// Shared queue modeling follows the slots to which TPOP rebinds the allocated
+// handles. This changes the dependency word and key assignment. Check the
+// actual directional key lifetimes independently instead of equating ids in
+// MTE2->V, MTE3->V, and V->MTE2. The single-trip loops are folded in EmitC.
+//
 // CHECK-LABEL: AICORE void vector_kernel(
-// CHECK: TPOP<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
-// CHECK-NEXT: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[OUTER_CARRY:[0-9]+]]);
-// CHECK-NEXT: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[OUTER_CARRY]]);
-// CHECK-NEXT: TNEG(
-// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[OUTER_TAIL:[0-9]+]]);
-// CHECK-NEXT: TFREE<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
-// CHECK-NEXT: wait_flag(PIPE_MTE3, PIPE_V, EVENT_ID[[OUTER_CARRY]]);
-// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[OUTER_TAIL]]);
-// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[OUTER_CARRY]]);
+// CHECK: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[OUTER:[0-9]+]]);
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[INNER:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[OUTER]]);
 // CHECK-NEXT: TPOP<TPipe<2, Direction::DIR_C2V, 32768, 8, 2, false>,
-// CHECK: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[INNER_TAIL:[0-9]+]]);
-// CHECK-NEXT: TPOP<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
-// CHECK: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[INNER_TAIL]]);
+// CHECK: TPOP<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
+// CHECK-NEXT: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[READY:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[READY]]);
+// CHECK-NEXT: TNEG(
+// CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[RELEASE:[0-9]+]]);
 // CHECK-NEXT: TFREE<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
-// CHECK-NEXT: set_flag(PIPE_MTE3, PIPE_V, EVENT_ID[[TAIL_HEAD:[0-9]+]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[RELEASE]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[INNER]]);
+// CHECK-NEXT: TPOP<TPipe<2, Direction::DIR_C2V, 32768, 8, 2, false>,
+// CHECK: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[INNER]]);
+// CHECK-NEXT: TFREE<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
 // CHECK-NEXT: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[POST_LOOP:[0-9]+]]);
 // CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[POST_LOOP]]);
 // CHECK-NEXT: TPOP<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
-// CHECK: wait_flag(PIPE_MTE3, PIPE_V, EVENT_ID[[TAIL_HEAD]]);
-// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[OUTER_CARRY]]);
+// CHECK: set_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[OUTER]]);
+// CHECK-NEXT: TFREE<TPipe<4, Direction::DIR_C2V, 16384, 8, 2, false>,
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[OUTER]]);
+// CHECK-NEXT: wait_flag(PIPE_V, PIPE_MTE2, EVENT_ID[[INNER]]);
 
 module {
   func.func @cube_kernel(%gm0: !pto.ptr<f32>, %gm1: !pto.ptr<f32>, %gm2: !pto.ptr<f32>)

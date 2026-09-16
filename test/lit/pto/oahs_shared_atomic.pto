@@ -6,17 +6,19 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not pto-test-opt %s '-pto-insert-sync=algorithm=handoff' 2>&1 | FileCheck %s
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
 
+// Atomic mode is scoped by lowering; the shared effect contract includes
+// both a read and a write of the destination.
+!acc = !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
 module attributes {pto.target_arch = "a3"} {
-  func.func @incomplete(%src: !pto.partition_tensor_view<1x32xf32>,
-                        %dst: !pto.tile_buf<vec, 1x32xf32>) {
-    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>)
-      outs(%dst : !pto.tile_buf<vec, 1x32xf32>) init_out_buffer = true
+  func.func @atomic_store(%src: !acc, %dst: !pto.partition_tensor_view<32x32xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    pto.tstore ins(%src : !acc) outs(%dst : !pto.partition_tensor_view<32x32xf32>)
+      {atomicType = #pto<atomic_type atomic_add>}
     return
   }
 }
-
-// CHECK: error: handoff: shared sync semantics: operation variant requires additional lowering semantics
-// CHECK-NOT: pto.set_flag
-// CHECK-NOT: pto.wait_flag
+// CHECK: pto.tstore
+// CHECK-SAME: atomic_add
+// CHECK: pto.barrier <PIPE_ALL>
