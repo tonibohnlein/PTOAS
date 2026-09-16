@@ -322,12 +322,22 @@ ObservedImport refineCountedLoop(const Program &input,
         if (atom.owner == loop.owner)
           return fail("duplicate refinement of one original loop scope");
   }
-  // No external entry may bypass the induction initialization/guard.
-  for (std::size_t site = 0; site < size; ++site)
-    if (!members.count(site) && site != loop.header)
-      for (auto next : old.sites[site].successors)
-        if (members.count(next))
-          return fail("unqualified external entry to loop body");
+  // Refinement redirects the initializer and tombstones the old body. Every
+  // external entry must therefore execute that initializer. The graph's entry
+  // has no predecessor edge, so check it separately from ordinary incoming
+  // edges. Otherwise the unrefined header can still reach a tombstoned body.
+  if (old.entry == loop.header || members.count(old.entry))
+    return fail("original entry bypasses normalized loop initialization");
+  for (std::size_t site = 0; site < size; ++site) {
+    if (members.count(site))
+      continue;
+    for (auto next : old.sites[site].successors) {
+      if (site != loop.header && members.count(next))
+        return fail("unqualified external entry to loop body");
+      if (site != loop.owner && next == loop.header)
+        return fail("unqualified external entry to loop header");
+    }
+  }
   std::map<std::size_t, ResidueDecision> decisions;
   for (const auto &d : loop.decisions) {
     if (!members.count(d.site) || !d.modulus || d.residue >= d.modulus ||
@@ -406,14 +416,23 @@ ObservedImport refineCountedLoop(const Program &input,
       back.push_back(header({nextResidue, nextElapsed, loop.period + 1}));
     for (auto site : members) {
       const auto id = clone.at(site);
-      auto next = old.sites[site].successors;
+      // Retain the original owner of an internal backedge. A nested loop
+      // keeps its own recurrence within each outer mode; only edges to the
+      // refined header acquire the new outer-mode destinations below.
+      std::vector<std::pair<std::size_t, std::size_t>> next;
+      const auto &original = old.sites[site];
+      for (std::size_t edge = 0; edge < original.successors.size(); ++edge)
+        next.emplace_back(original.successors[edge],
+                          original.backedgeOwners.empty()
+                              ? NoControlId
+                              : original.backedgeOwners[edge]);
       auto decision = decisions.find(site);
       if (decision != decisions.end()) {
         const auto &d = decision->second;
         const bool yes = ((residue % d.modulus) == d.residue) == d.equal;
         next = {next[yes ? 0 : 1]};
       }
-      for (auto target : next) {
+      for (const auto &[target, owner] : next) {
         if (target == loop.header) {
           q.sites[id].successors.insert(q.sites[id].successors.end(),
                                         back.begin(), back.end());
@@ -421,7 +440,7 @@ ObservedImport refineCountedLoop(const Program &input,
                                             back.size(), loop.owner);
         } else {
           q.sites[id].successors.push_back(clone.at(target));
-          q.sites[id].backedgeOwners.push_back(NoControlId);
+          q.sites[id].backedgeOwners.push_back(owner);
         }
       }
     }
