@@ -65,7 +65,6 @@ def main():
         "ptoas": build / "tools/ptoas/ptoas",
         "opt": build / "tools/pto-test-opt/pto-test-opt",
         "analysis": build / "tools/pto-test-opt/pto-oahs-native-test",
-        "selected": build / "tools/pto-test-opt/pto-oahs-selected-test",
     }
     # LLVM derives its default pool size from Linux affinity. Restrict child
     # compilers as well as explicit test-driver/opt threading to one worker.

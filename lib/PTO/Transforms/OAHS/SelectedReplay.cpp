@@ -101,13 +101,13 @@ bool Constructor::word(State& state, Cut site, Replay& replay)
     }
     return true;
 }
-bool Constructor::payload(State& state, Cut site, Replay& replay)
+bool Constructor::payload(State& state, Cut site, Replay& replay, bool pending)
 {
     const auto operation = control.graph.operations[site];
     if (operation == NoAnalysisId) {
         return true;
     }
-    const auto step = frontier.issue(state.causal, operation);
+    const auto step = pending ? frontier.pendingIssue(state.causal, operation) : frontier.issue(state.causal, operation);
     if (!step.applied) {
         return refused(replay, site, step);
     }
@@ -282,8 +282,62 @@ bool Constructor::partialComponent(Id index, const std::vector<State>& boundary,
     }
     return true;
 }
+bool Constructor::contextualReplay()
+{
+    // Solve the actual selected word on every original edge. Unfinished payloads
+    // contribute pending effects, never their desired conflict edges. In
+    // particular a child region does not reset events or erase incoming work.
+    Replay fresh;
+    fresh.version = ledger.version();
+    fresh.cuts.resize(control.graph.sites.size());
+    std::vector<State> incoming(control.graph.sites.size());
+    incoming[control.graph.entry] = initial();
+    std::deque<Id> queue{control.graph.entry};
+    std::vector<bool> queued(incoming.size());
+    queued[control.graph.entry] = true;
+    while (!queue.empty() && fresh.success) {
+        const auto site = queue.front();
+        queue.pop_front();
+        queued[site] = false;
+        auto state = incoming[site];
+        ++fresh.evaluations;
+        fresh.cuts[site].incoming = state;
+        if (!word(state, site, fresh)) break;
+        fresh.cuts[site].before = state;
+        if (!payload(state, site, fresh, true)) break;
+        fresh.cuts[site].outgoing = state;
+        for (auto next : control.graph.sites[site].successors) {
+            const auto old = incoming[next];
+            if (!join(incoming[next], state)) {
+                fresh.success = false;
+                fresh.reason = "incompatible contextual loop state";
+                fresh.failureCut = next;
+                break;
+            }
+            if (!same(old, incoming[next]) && !queued[next]) {
+                queue.push_back(next);
+                queued[next] = true;
+            }
+        }
+    }
+    // Earlier selected requirements must still hold after every ledger edit.
+    // Test the stabilized states, not an intermediate worklist approximation.
+    for (Cut site = 0; fresh.success && site < finalized.size(); ++site) {
+        const auto operation = control.graph.operations[site];
+        if (!finalized[site] || operation == NoAnalysisId ||
+            !fresh.cuts[site].before.causal.reachable()) continue;
+        const auto checked = frontier.inspect(fresh.cuts[site].before.causal, operation);
+        if (!checked.applied) refused(fresh, site, checked);
+    }
+    result.work.replaySiteEvaluations += fresh.evaluations;
+    cache = std::move(fresh);
+    if (!cache.success) return fail(SelectedFailure::SelectedUpdate, cache.reason, cache.failureCut);
+    refreshSources();
+    return true;
+}
 bool Constructor::replay()
 {
+    if (!recurringKeys.empty()) return contextualReplay();
     Replay fresh;
     fresh.version = ledger.version();
     fresh.cuts.resize(control.graph.sites.size());
@@ -392,6 +446,10 @@ void Constructor::refreshSources()
 }
 bool Constructor::advance()
 {
+    if (!recurringKeys.empty()) {
+        if (cache.version == ledger.version() && !cache.cuts.empty()) return true;
+        return contextualReplay();
+    }
     bool reusablePrefix = cache.version == ledger.version() && cache.cuts.size() == control.graph.sites.size() &&
                           !control.components[activeComponent].cyclic;
     for (auto predecessor : control.predecessors[current]) {

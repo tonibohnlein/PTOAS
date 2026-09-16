@@ -188,7 +188,8 @@ def main():
         result['fragment_checks']+=fragments(x,actual);result['cases']+=1
         if construct:
             result['construction_attempts']+=1;result['constructed']+=bool(actual['constructed'])
-            if actual['constructed']:assert safe
+            assert not actual['constructed'], 'native phase construction must remain unqualified'
+            assert actual['reason'], 'refusal must explain the missing phase adapter'
         result['records'].append(dict(name=name,accepted=safe,exact=exact,kind=kind,constructed=bool(actual['constructed']),states=actual['states']))
         return x,actual
     profile=ex.profile(2);P,C=ex.producer(profile),ex.consumer(profile)

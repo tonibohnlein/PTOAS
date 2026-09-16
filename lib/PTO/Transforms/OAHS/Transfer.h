@@ -111,21 +111,10 @@ inline bool identicalCommands(const Commands &a, const Commands &b) {
     if (!identicalWord(a[i], b[i])) return false;
   return true;
 }
-struct Failure {
-  enum Kind { None, Hazard, Rearm, Occupancy, Invalid, Retirement } kind = None;
-  Cut cut = 0;
-  std::size_t command = 0;
-  Command endpoint;
-  std::vector<Demand> missing;
-  std::string reason;
-};
-
 // One finite transfer semantics for both candidate analysis and final checking.
 // Static operation classes represent all their dynamic visits. New visits add
 // the class to every live remainder, so an old receipt cannot complete them.
-// Private construction queries may assume protocol preconditions while
-// proposing repairs. They never expose authoritative completion. The public
-// inspection service removes failed primitive certificates, invalidates their
+// The public inspection service removes failed primitive certificates, invalidates their
 // dependent facts, and exports only recomputed conservative snapshots. Final
 // checking uses that service, with no unresolved obligations permitted.
 class Transfer {
@@ -134,9 +123,7 @@ class Transfer {
   std::map<Key, unsigned> keyIds;
   std::vector<std::vector<std::pair<std::size_t, Access>>> byCell;
   uint64_t work = 0;
-  Failure failure;
-  bool balanceOnly = false;
-  // Empty in speculative construction queries. Inspection monotonically removes
+  // Inspection monotonically removes
   // primitive certificates that fail at stabilized invariants, then recomputes
   // all dependent receipts. These masks never escape as a valid emitted plan.
   std::vector<std::vector<bool>> suppressed;
@@ -158,7 +145,7 @@ class Transfer {
   void charge(uint64_t amount) {
     work += std::min(amount, std::numeric_limits<uint64_t>::max() - work);
   }
-  bool command(State &s, Cut cut, std::size_t index, bool checkProtocol) {
+  void command(State &s, Cut cut, std::size_t index) {
     const auto &c = commands[cut][index];
     charge(1 + p.operations.size() + keyIds.size());
     if (c.kind == Command::BarrierAll) {
@@ -166,14 +153,14 @@ class Transfer {
         std::fill(q.begin(), q.end(), 0);
       // Completion of prior commands is not consumption of a full event.
       // No extra consumption-knowledge credit is needed by this contract.
-      return true;
+      return;
     }
     const auto source = unsigned(c.source), observer = unsigned(c.observer);
     if (c.kind == Command::Barrier) {
       for (std::size_t i = 0; i < p.operations.size(); ++i)
         if (unsigned(p.operations[i].pipe) == source)
           s.pending[source][i] = 0;
-      return true;
+      return;
     }
     unsigned e = keyIds.at({c.source, c.observer, c.key});
     auto &token = s.tokens[e];
@@ -184,35 +171,7 @@ class Transfer {
       // independent primitives can still be analyzed, with all original
       // obligations retained.
       havocKey(s, e);
-      return true;
-    }
-    auto fail = [&](Failure::Kind kind, const char *reason) {
-      failure.kind = kind;
-      failure.cut = cut;
-      failure.command = index;
-      failure.endpoint = c;
-      failure.reason = reason;
-      return false;
-    };
-    if (checkProtocol) {
-      auto problems = preconditions(s, cut, index);
-      if (balanceOnly)
-        problems.erase(
-            std::remove_if(
-                problems.begin(), problems.end(),
-                [](const auto &x) {
-                  return x.kind ==
-                         ProtocolObligation::ConsumptionNotEstablished;
-                }),
-            problems.end());
-      if (!problems.empty()) {
-        const auto &problem = problems.front();
-        return fail(problem.kind ==
-                            ProtocolObligation::ConsumptionNotEstablished
-                        ? Failure::Rearm
-                        : Failure::Occupancy,
-                    problem.reason.c_str());
-      }
+      return;
     }
     if (c.kind == Command::Publish) {
       token.remainder = s.pending[source];
@@ -243,48 +202,16 @@ class Transfer {
       std::fill(token.remainder.begin(), token.remainder.end(), 1);
       std::fill(token.acknowledgments.begin(), token.acknowledgments.end(), 0);
     }
-    return true;
+    return;
   }
-  bool cut(State &s, Cut id, bool checkProtocol) {
-    for (std::size_t i = 0; i < commands[id].size(); ++i)
-      if (!command(s, id, i, checkProtocol))
-        return false;
-    return true;
-  }
-  bool operation(State &s, std::size_t at, bool checkPayload,
-                 bool checkProtocol) {
-    if (!cut(s, at, checkProtocol))
-      return false;
+  void operation(State &s, std::size_t at) {
+    for (std::size_t i = 0; i < commands[at].size(); ++i)
+      command(s, at, i);
     const auto id = siteOperations[at];
-    if (id == NoAnalysisId)
-      return true;
-    unsigned observer = unsigned(p.operations[id].pipe);
-    charge(1 + keyIds.size() + p.operations[id].accesses.size());
-    if (checkPayload) {
-      std::vector<Demand> missing;
-      for (const auto &a : p.operations[id].accesses)
-        for (const auto &other : byCell[a.cell]) {
-          charge(1);
-          if (!s.pending[observer][other.first])
-            continue;
-          if (a.write || other.second.write)
-            missing.push_back(
-                {other.first, id, a.cell, Property::ByteCompletion});
-          else if (p.cells[a.cell].exclusive)
-            missing.push_back(
-                {other.first, id, a.cell, Property::ResourceExclusion});
-        }
-      if (!missing.empty()) {
-        failure.kind = Failure::Hazard;
-        failure.cut = at;
-        failure.missing = std::move(missing);
-        failure.reason =
-            "uncovered original access at operation " + std::to_string(id);
-        return false;
-      }
+    if (id != NoAnalysisId) {
+      charge(1 + keyIds.size() + p.operations[id].accesses.size());
+      issue(s, id);
     }
-    issue(s, id);
-    return true;
   }
   void issue(State &s, std::size_t id) {
     const auto observer = unsigned(p.operations[id].pipe);
@@ -311,7 +238,7 @@ class Transfer {
     return graph.entry;
   }
 
-  bool solve(std::size_t root, const TransferCheckpoint *checkpoint = nullptr,
+  void solve(std::size_t root, const TransferCheckpoint *checkpoint = nullptr,
              ReplayStats *replay = nullptr) {
     // A null state is unreachable bottom, not fresh quiescent input.
     std::vector<bool> dirty(sites.size(), true);
@@ -378,7 +305,7 @@ class Transfer {
         State next = *incoming[i];
         ++evaluations; charge(1);
         if (replay) ++replay->boundaryEvaluations;
-        if (i < commands.size() && !operation(next, i, false, false)) return false;
+        if (i < commands.size()) operation(next, i);
         for (auto target : sites[i].successors)
           if (dirty[target]) merge(target, next);
       }
@@ -387,10 +314,9 @@ class Transfer {
       const auto id = queue.front(); queue.pop_front(); queued[id] = false;
       State next = *incoming[id];
       ++evaluations; charge(1);
-      if (id < commands.size() && !operation(next, id, false, false)) return false;
+      if (id < commands.size()) operation(next, id);
       for (auto target : sites[id].successors) merge(target, next);
     }
-    return true;
   }
   BoundaryFacts snapshot(const State &s) const {
     BoundaryFacts out;
@@ -492,7 +418,6 @@ public:
                          ReplayStats *replay = nullptr) {
     if (p.finalBlocks) return phase::collect(p, commands, options).analysis;
     AnalysisResult out;
-    failure = {};
     work = evaluations = merges = 0;
     const auto root = buildControl();
     const auto count = commands.size();
@@ -509,11 +434,8 @@ public:
     while (true) {
       ++out.stats.certificationPasses;
       const bool firstPass = out.stats.certificationPasses == 1;
-      if (!solve(root, firstPass ? checkpoint : nullptr,
-                 firstPass ? replay : nullptr)) {
-        out.reason = failure.reason;
-        return out;
-      }
+      solve(root, firstPass ? checkpoint : nullptr,
+            firstPass ? replay : nullptr);
       if (firstPass && save) {
         save->keyIds = keyIds;
         save->commands = commands;
@@ -534,7 +456,7 @@ public:
               ++out.stats.suppressedCommands;
             }
           }
-          (void)command(state, at, i, false);
+          command(state, at, i);
         }
       }
       if (!changed)
@@ -569,7 +491,7 @@ public:
           out.protocol.insert(out.protocol.end(), problems.begin(),
                               problems.end());
         }
-        (void)command(state, at, i, false);
+        command(state, at, i);
       }
       if (options.captureStates)
         facts.beforeIssue = snapshot(state);
@@ -610,88 +532,7 @@ public:
     return out;
   }
 
-  // skipRearm is a construction-only reference-matching query. It cannot
-  // export AnalysisResult or be used by verify().
-  Failure run(bool checkPayload = true, bool checkProtocol = true,
-              bool skipRearm = false,
-              const TransferCheckpoint *checkpoint = nullptr,
-              TransferCheckpoint *save = nullptr, ReplayStats *replay = nullptr) {
-    if (p.finalBlocks) {
-      auto report = phase::collect(p, commands, {false}, false, !checkProtocol, skipRearm).analysis;
-      failure = {}; work = report.stats.work; evaluations = report.stats.siteEvaluations; merges = report.stats.merges;
-      if (!report.phaseResources.empty()) {
-        failure.kind = Failure::Invalid; failure.cut = report.phaseResources.front().cut;
-        failure.reason = report.phaseResources.front().reason; return failure;
-      }
-      const auto graph = buildControlGraph(p);
-      auto earlier = [&](Cut a, Cut b) { return graph.cutRanks[a] < graph.cutRanks[b]; };
-      Cut chosen = NoAnalysisId;
-      if (checkPayload) for (const auto &r : report.residuals)
-        if (chosen == NoAnalysisId || earlier(r.consumerCut, chosen)) chosen = r.consumerCut;
-      const ProtocolObligation *protocol = nullptr;
-      if (checkProtocol) for (const auto &q : report.protocol)
-        if ((!skipRearm || q.kind != ProtocolObligation::ConsumptionNotEstablished) &&
-            (!protocol || earlier(q.cut, protocol->cut))) protocol = &q;
-      if (protocol && (chosen == NoAnalysisId || !earlier(chosen, protocol->cut))) {
-        failure.kind = protocol->kind == ProtocolObligation::ConsumptionNotEstablished ? Failure::Rearm : Failure::Occupancy;
-        failure.cut = protocol->cut; failure.command = protocol->command; failure.reason = protocol->reason;
-        failure.endpoint = {Command::Publish, protocol->event.source, protocol->event.observer, protocol->event.key};
-        if (protocol->command < commands[protocol->cut].size()) failure.endpoint = commands[protocol->cut][protocol->command];
-      } else if (chosen != NoAnalysisId) {
-        failure.kind = Failure::Hazard; failure.cut = chosen; failure.reason = "uncovered original phase access";
-        for (const auto &r : report.residuals) if (r.consumerCut == chosen) failure.missing.push_back(r.demand);
-      }
-      return failure;
-    }
-    balanceOnly = skipRearm;
-    suppressed.clear();
-    failure = {};
-    work = evaluations = merges = 0;
-    const std::size_t root = buildControl();
-    const auto exit = exitSite;
-    if (!solve(root, checkpoint, replay))
-      return failure;
-    if (save) {
-      save->keyIds = keyIds; save->commands = commands; save->incoming = incoming;
-    }
-    // Each original phase is checked once at its invariant. Checking is not a
-    // second recursive solve, and no optimistic discovery result is accepted.
-    for (std::size_t id = 0; id < commands.size(); ++id) {
-      if (!incoming[id] || id == exit)
-        continue;
-      State state = *incoming[id];
-      if (!operation(state, id, checkPayload, checkProtocol))
-        return failure;
-    }
-    if (!incoming[exit]) {
-      failure.kind = Failure::Invalid;
-      failure.reason =
-          "original invocation exit is unreachable in structural control";
-      return failure;
-    }
-    State state = *incoming[exit];
-    if (!cut(state, exit, checkProtocol))
-      return failure;
-    if (checkProtocol)
-      for (const auto &t : state.tokens)
-        if (t.occupancy != 1) {
-          failure.kind = Failure::Occupancy;
-          failure.cut = exit;
-          failure.reason = "unconsumed event at invocation exit";
-          return failure;
-        }
-    if (!balanceOnly && p.invocation.retirement ==
-                            Program::InvocationContract::DrainAllAtReturn)
-      for (unsigned q = 0; q < PipeCount; ++q)
-        for (std::size_t i = 0; i < p.operations.size(); ++i)
-          if (unsigned(p.operations[i].pipe) == q && state.pending[q][i]) {
-            failure.kind = Failure::Retirement;
-            failure.cut = exit;
-            failure.reason = "outstanding payload at required retirement";
-            return failure;
-          }
-    return failure;
-  }
+
 };
 } // namespace mlir::pto::oahs::detail
 #endif

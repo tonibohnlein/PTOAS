@@ -22,6 +22,7 @@ bool Constructor::fail(SelectedFailure failure, std::string reason, Cut cut)
     result.success = false;
     result.commands.clear();
     result.certificate = {};
+    result.loops.clear();
     return false;
 }
 bool Constructor::finish()
@@ -43,6 +44,27 @@ bool Constructor::finish()
         if (source.cut < result.certificate.cuts.size()) {
             source.snapshot = result.certificate.cuts[source.cut].beforeIssue;
             source.version = ledger.version();
+        }
+    }
+    if (program.observed && !recurringKeys.empty()) {
+        for (const auto& region : program.observed->loops) {
+            if (std::none_of(result.channels.begin(), result.channels.end(),
+                            [&](const auto& channel) { return channel.owner == region.owner; })) continue;
+            SelectedLoopInterface loop;
+            loop.owner = region.owner;
+            loop.entry = region.entry;
+            loop.exit = region.exit;
+            loop.version = ledger.version();
+            loop.incoming = result.certificate.cuts[loop.entry].incoming;
+            loop.outgoing = result.certificate.cuts[loop.exit].incoming;
+            for (auto site : region.sites) {
+                const auto observation = program.observed->sites[site].observation;
+                const auto& snapshot = result.certificate.cuts[site];
+                if (observation != NoAnalysisId && snapshot.incoming.reachable())
+                    loop.clauses.push_back({site, observation, loop.version,
+                        snapshot.incoming, snapshot.beforeIssue, snapshot.outgoing});
+            }
+            result.loops.push_back(std::move(loop));
         }
     }
     result.commands = std::move(commands);
@@ -73,19 +95,13 @@ SelectedPlan Constructor::run(const Commands& fixed)
         fail(SelectedFailure::InvalidInput, reason);
         return complete();
     }
-    const auto channels = fixed.empty() ?
-        qualifyCyclicFrontiers(program, control) : std::vector<RecurringRequirement>{};
-    if (!channels.empty()) {
-        if (recurring(channels)) {
-            finish();
-        }
-        return complete();
-    }
+    const auto channels = qualifyCyclicFrontiers(program, control);
+    if (!channels.empty() && !recurring(channels)) return complete();
     for (activeComponent = 0; activeComponent < control.components.size(); ++activeComponent) {
         // End compiler role reservations, not physical event state. Actual D/S
         // facts and balances continue through the selected-body fixed point.
         closedBindings.clear();
-        closedKeys.clear();
+        closedKeys = recurringKeys;
         const auto& block = control.components[activeComponent];
         for (activeOffset = 0; activeOffset < block.order.size(); ++activeOffset) {
             current = block.order[activeOffset];
@@ -114,6 +130,11 @@ SelectedPlan Constructor::run(const Commands& fixed)
 } // namespace mlir::pto::oahs::selected
 
 namespace mlir::pto::oahs {
+bool hasQualifiedRecurringAccesses(const Program& program)
+{
+    selected::Control control(program);
+    return control.complete && !selected::qualifyCyclicFrontiers(program, control).empty();
+}
 SelectedPlan constructSelectedPlan(const Program& program, const Commands& fixed)
 {
     const auto start = std::chrono::steady_clock::now();

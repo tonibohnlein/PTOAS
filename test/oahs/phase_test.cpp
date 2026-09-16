@@ -278,7 +278,7 @@ int main() {
     CHECK(x.order.empty());
     x= {
     };
-    (void)m.step(s,1,1,nullptr,o::NoAnalysisId,x,false,false, {
+    (void)m.step(s,1,1,nullptr,o::NoAnalysisId,x, {
       {
         m.T(M),1
       }
@@ -290,7 +290,7 @@ int main() {
     CHECK(x.order.empty());
     x= {
     };
-    (void)m.step(s,3,3,nullptr,o::NoAnalysisId,x,false,false, {
+    (void)m.step(s,3,3,nullptr,o::NoAnalysisId,x, {
     }, {
       {
         3,6
@@ -303,7 +303,7 @@ int main() {
     s = m.step(s, 2, 2, nullptr, o::NoAnalysisId, x);
     CHECK(x.order.empty());
     x = {};
-    (void)m.step(s, 3, 3, nullptr, o::NoAnalysisId, x, false, false,
+    (void)m.step(s, 3, 3, nullptr, o::NoAnalysisId, x,
                  {{m.T(M), 2}});
     CHECK(std::any_of(x.order.begin(), x.order.end(), [](const auto &w) {
       return w.target == "b0";

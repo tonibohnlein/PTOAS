@@ -13,6 +13,8 @@
 
 namespace mlir::pto::oahs {
 
+namespace selected { class Constructor; }
+
 using FrontierBits = std::vector<uint64_t>;
 bool frontierContains(const FrontierBits&, std::size_t);
 
@@ -123,6 +125,10 @@ public:
     FrontierStep exit(const FrontierState&) const;
 
 private:
+    friend class selected::Constructor;
+    // Construction-only transfer of actual effects. Adds no required-conflict
+    // edges and grants no missing completion. Final acceptance always uses issue().
+    FrontierStep pendingIssue(const FrontierState&, std::size_t operation) const;
     std::shared_ptr<const detail::CausalFrontierModel> model;
     FrontierStep checkState(const FrontierState&) const;
     FrontierStep extend(

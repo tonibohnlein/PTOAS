@@ -267,6 +267,14 @@ FrontierStep CausalFrontier::issue(const FrontierState& s, std::size_t operation
     }
     return extend(s, model->program.operations[operation].pipe, nullptr, operation, NoAnalysisId, {});
 }
+FrontierStep CausalFrontier::pendingIssue(const FrontierState& s, std::size_t operation) const
+{
+    auto checked = inspect(s, operation);
+    if ((!checked.applied && checked.failure != FrontierFailure::Payload) || !s.reachable()) {
+        return checked;
+    }
+    return extend(s, model->program.operations[operation].pipe, nullptr, operation, NoAnalysisId, {});
+}
 FrontierStep CausalFrontier::assumePreviousAccesses(
     const FrontierState& s, const std::vector<std::size_t>& operations) const
 {
