@@ -1,8 +1,23 @@
-# OAHS clean-port M1 evidence tools
+# OAHS coverage and measurement tools
 
 Python 3.10+ standard library; Linux/POSIX for the transparent compiler shim.
 No compiler modifications or dependencies on any old OAHS implementation.
-Start with `docs/designs/oahs-clean-m1.md` and `pins.json`.
+Start with `pins.json` and the inventory/toolchain templates. The live pass is
+described in [selected-plan construction](../../docs/designs/oahs-selected-plan.md).
+
+## Coverage denominator
+
+Enumerate PTOAS regressions, PyPTO operations, pypto-lib, model-generated kernels,
+and device cases at exact revisions under their original target, alias, and ABI
+contracts. Reconcile frontend collection logs with captured compiler invocations;
+failures before compiler invocation remain missing-input rows. Keep authored
+protocols, intentional invalids, refusals, and timeouts explicit. Repeated source
+bytes under different runtime contracts remain separate cases.
+
+Report analysis admission, automatic synthesis, authored-protocol preservation,
+and device correctness separately. Compilation does not establish numerical
+correctness; command counts do not establish speedup. A partially enumerated
+cohort cannot support a complete-coverage claim.
 
 ## 1. Test the infrastructure
 
@@ -114,7 +129,7 @@ Actual native binary construction, device launch, warmup and timing remain with 
 existing deployment harness; do not infer them from successful host compilation.
 Compiler times here are per-stage wall-clock telemetry, not device latency.
 
-## 5. Attach device results and future OAHS receipts
+## 5. Attach device results and candidate receipts
 
 `device` expects a `device_measurements` JSON bound to `run_id`, with a raw log
 reference `{path,sha256}`, exact device/protocol description, `expected_cases`,
@@ -130,14 +145,14 @@ python3 tools/oahs-evidence/evidence.py device \
   --metrics /absolute/work/device-measurements.json --out /absolute/work/device-summary.json
 ```
 
-For later milestones, `compare` consumes `candidate_receipts` with the same
+`compare` consumes `candidate_receipts` with the same
 `capture_id`, a pinned source/toolchain ID, and one explicit handling record per
 case. Allowed handling: `generated`, `authored_preserved`, `noop_verified`,
 `fallback`, `refused`, `unclassified`. Successful records require hashed output
 and verifier evidence plus a verifier status. Contract and prepared-input hashes
 must match the baseline. Fallback never counts as OAHS coverage. Deliberate invalids
-need a hashed diagnostic with the expected error. This receipt format is only an
-integration boundary; M1 does not implement the future verifier or constructor.
+need a hashed diagnostic with the expected error. These receipts bind external compiler and verifier evidence; the evidence tools
+do not synthesize synchronization or establish correctness themselves.
 
 ```sh
 python3 tools/oahs-evidence/evidence.py compare \

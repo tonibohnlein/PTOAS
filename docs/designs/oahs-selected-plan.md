@@ -1,8 +1,10 @@
 # Selected-plan construction: v0.18 handoff implementation
 
-Base: PTOAS `42428352acde3f6e26afe55c4227d5568201eaf4`.
-Specification: the supplied v0.18 draft and `OAHS_HANDOFF_42428352a.md`.
-No public pass option or live-driver cutover is included.
+Specification: the synchronization draft v0.18, policies F1–F8.
+See [shared semantic extraction](oahs-shared-semantics.md) and
+[storage and fixed-plan analysis](oahs-analysis.md) for the input contracts.
+`algorithm=handoff` uses this constructor. `algorithm=existing` remains the default
+and comparison path; no additional pass mode or legacy fallback is introduced.
 
 ## Entry points and state
 
@@ -43,16 +45,36 @@ that table. Neither table supplies completion to the checker.
 
 ## Selected updates
 
-This is a dependency-complete **cold-update baseline**, not an incremental
-invalidation implementation. Each materialized endpoint invalidates the saved
-selected map and recomputes every finalized predecessor from original entry.
-It rechecks affected payloads and both sides of each selected key use. No old
+Updates reuse a predecessor-closed unchanged prefix. Each materialized endpoint
+invalidates the saved
+selected map from the component of its earliest changed word onward and
+recomputes every finalized site from there to the consumer from bottom. It
+rechecks affected payloads and both sides of each selected key use. No old
 ledger-version fact seeds a changed traversal. A failed update stops construction;
 there is no alternative-plan scoring, recoloring, retry search or legacy fallback.
 
+Components before the earliest changed word are reused verbatim. The
+construction order is a topological order of the strongly connected components,
+so those components have unchanged equations and unchanged inputs and therefore
+the same least solution. A cyclic component is reused only from a completed fixed
+point, never from the hypothesis-seeded traversal of the active component, and
+the active component is always recomputed. Invalidation includes every reachable
+site sharing an edited observation word, even when its canonical site is later
+in control order or unreachable. A reused endpoint aggregate must have all its
+occurrences in the reused prefix; otherwise the boundary moves earlier.
+Reused endpoint snapshots are copied
+with their cuts. `replaySiteEvaluations` therefore counts only recomputed sites;
+`selected_update_test.cpp` checks that each update evaluates at most the sites
+from its earliest changed word to the consumer.
+
+The frontier's per-primitive closure is incremental for the same reason: the
+retained relation is already transitively closed and a primitive adds three
+fresh vertices with no edge back into it, so each old row gains only the fresh
+vertices it reaches through its gate, prefix, or matched publication. The
+differential bridges compare the resulting facts with the exact reference.
+
 Acyclic forward advancement reuses an unchanged predecessor map only when its
-ledger version is unchanged. This optimization is not advertised as incremental
-selected-edit propagation. `selectedUpdates`, `replaySiteEvaluations`, normal
+ledger version is unchanged. `selectedUpdates`, `replaySiteEvaluations`, normal
 `forwardSiteEvaluations`, finalized-query counts and changed cuts distinguish the
 work. `elapsedMicroseconds` includes portable model/control/storage preparation,
 policy construction and final compact validation. `preparationMicroseconds` is a
@@ -97,21 +119,18 @@ The must join deliberately loses some disjunctions. The update test contains a
 safe pair of concrete branch continuations that the joined state refuses; exact
 collection is a development reference, not a production fallback.
 
-## Native adapter and gated integration
+## Live native adapter
 
 The selected native entry uses the original SCF graph, including all original
-instruction cuts, choices, zero-trip alternatives and loop backedges. It does
-not expand leaf loops into the historical backend's first/tail observation
-quotient. This representation is selected before construction, without retry:
+instruction cuts, choices, zero-trip alternatives and loop backedges. It retains leaf loops directly in original control. This representation is selected before construction, without retry:
 native import does not yet supply the occurrence/full-write certificates needed
 by the selected cyclic specialization. The portable qualified-observation API
-remains available. Shared semantic extraction and the live historical driver's
-representation are unchanged.
+remains available. The analysis-only
+report can expose a normalized first/tail observation representation.
 
-This choice was tested on the actual Qwen3 prefill captures: the initially
-supplied native path refused RMSNorm and post-RMSNorm during selected updates
-after leaf-loop expansion. Keep these original kernels in regression coverage;
-do not substitute simplified bodies or claim precise native slot recurrence.
+The original Qwen3 RMSNorm and post-RMSNorm kernels exercise this representation
+in native regression coverage. Their unrelated reduction loops require
+conservative body hypotheses without inferred first/tail correspondence.
 
 The frontier now represents the existing synchronous-payload contract by putting
 the next launch gate after that payload's completion. It does not turn SET into
@@ -120,12 +139,13 @@ exit and records retirement without consuming notifications or granting interior
 completion/rearming credit. Mixed retired/nonretired inputs retain both a may
 continuation restriction and a must exit requirement.
 
-`testing::runSelectedHandoffSyncWithMutation` uses the same shared importer,
-private-copy transaction, SyncCodegen and exact command/guard/payload read-back as
-the live driver, with the new constructor and compact checker as callbacks.
-`runHandoffSync` continues to call the historical constructor and checker. The
-new hook never falls back to them. The optional report describes construction;
-the returned LogicalResult additionally includes native reconstruction.
+`runHandoffSync`, used by `algorithm=handoff`, invokes `constructSelectedPlan`
+and validates reconstructed commands with `checkCausalFrontier`. Both mutation
+hooks share this exact implementation, including import, private-copy transaction,
+SyncCodegen, and exact command/guard/payload read-back. The optional selected
+report describes construction; LogicalResult also includes reconstruction.
+Shared fixed-plan diagnostic services remain available independently of
+construction.
 
 Preserved queue, atomic-store and hard-collective operations continue through
 lowering-owned shared extraction and unchanged original IR. No peer, UnitFlag,
@@ -141,7 +161,7 @@ Its `--construct INPUT` path writes synchronized IR only after success and repor
 construction/reconstruction and work counters separately. It is a developer test
 entry, not another production pass mode.
 
-## Validation and remaining cutover gates
+## Validation and remaining qualification
 
 The accompanying portable tests construct from unsynchronized input. The exact
 reference bridge checks 108 selected programs, including 100 deterministic
@@ -152,9 +172,8 @@ straight-line examples additionally use an independent full-history graph.
 Cyclic endpoint-deletion tests cover 120 original-observation endpoint mutations.
 The reference files remain byte-identical to the pinned repository versions.
 
-The package's original validation used a reduced portable build. Full-checkout
-integration additionally builds the entire standalone production library and
-the native selected/overflow drivers. The native drivers are registered in
+Standalone tests build the production library. Native integration builds the
+selected and overflow regression drivers. The native drivers are registered in
 `check-pto`. Real-kernel replay is reproducible with:
 
 ```sh
@@ -164,14 +183,13 @@ python test/oahs/replay_prefill.py --build /path/to/native-build \
 
 Run with the Python version configured for the native build. This captures all
 21 pinned prefill families (23 functions), preserves module-level failures and
-timeouts, compares default/explicit `existing`, and lowers successful selected
+timeouts, compares default/explicit `existing`, and lowers successful live handoff
 output without a second synchronization insertion. Static inventories and host
 timings are diagnostics, not device correctness or performance evidence. This
 cohort does not enumerate all PyPTO/pypto-lib kernels.
 
-Before live cutover: run those native gates, compare the entire admitted
-population with import/construction/reconstruction/refusal rows, qualify missing
-native occurrence and typed adapters without weakening their contracts, and
-review whole-pass time/memory. Only then remove the historical constructor and
-its unused ordinary backend. Neither that removal nor reference cleanup is part
-of this patch.
+The live switch preserves shared contracts and conservative F8 control handling.
+Precise native occurrence certificates, additional typed adapters, full population
+coverage, and device qualification remain separate work. Report all refusals/timeouts and
+whole-pass cost rather than treating this switch as production replacement
+qualification.
