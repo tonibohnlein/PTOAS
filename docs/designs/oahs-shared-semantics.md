@@ -124,3 +124,36 @@ pipe-init validation, and reserved-buffer resolution precede InsertSync.
 Running InsertSync directly on raw frontend queue syntax measures a different
 stage. Report analysis admission separately from constructed plans and device
 execution; neither implies full PyPTO/pypto-lib population coverage.
+
+## Preserved A3 hard collectives
+
+The lowering-owned protocol model also describes hard `pto.syncall` for A3.
+The source contract is `a3-hard-collective-v1/pto-isa-0c112d61`, from the same
+pinned source's `npu/a2a3/SyncAll.hpp::SYNCALL_IMPL`, `common/type.hpp`, and
+PTOAS's `PTOToEmitC/SyncComm/Sync.cpp`. This is the normal explicit-instruction
+lowering; the source's `__PTO_AUTO__` build mode suppresses the intrinsic and
+is not a qualified cross-core protocol implementation here.
+
+Hard collectives contain a local ALL drain followed by the original device
+handshake. They access no payload or scratch bytes and use no directional
+local keys. AIV-only uses cross-core flag 14, AIC-only uses 11, and mixed uses
+11 through 13. The report retains the participant group, flag range, and
+local-drain behavior. No synthetic payload phase is introduced.
+
+Both constructors preserve the collective. Handoff reconstruction checks its
+original position, attributes, and control along with the other original IR.
+The current analysis deliberately grants no completion credit from its drain
+or peer handshake. Local residuals and generated event occupancy continue
+across it; an intrinsic ALL does not consume a local notification. This can
+retain redundant local synchronization, and is not an optimality claim.
+
+The original program/runtime must provide matching participating cores,
+compatible control, progress, and noninterfering cross-core flag ownership.
+The local analysis neither proves those global properties nor introduces a
+new GM visibility guarantee. The reserved cross-core flags do not reduce the
+unrelated directional local-key pool.
+
+Soft collectives remain explicit gaps: their scratch accesses, cache/visibility
+operations, and private local-event lifetimes need a different complete model.
+A5 collectives also need a separate source qualification. Neither borrows the
+hard A3 collective's empty payload-effect population.
