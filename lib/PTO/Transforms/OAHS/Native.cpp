@@ -72,6 +72,7 @@ struct Import {
   Program program;
   SmallVector<SyncProtocolModel, 0> protocols;
   SmallVector<mlir::Operation *> payload;
+  SmallVector<Value> storageRoots;
   SmallVector<mlir::Operation *> anchors;
   SmallVector<Cut> phaseCuts;
   DenseMap<std::size_t, scf::ForOp> loopOwners;
@@ -447,6 +448,7 @@ LogicalResult import(func::FuncOp function, Import &out) {
   // This is not a may-alias equivalence closure. Origin alternatives and views
   // with distinct records retain separate groups and pairwise overlap tests.
   DenseMap<const BaseMemInfo *, unsigned> groupIds;
+  DenseMap<Value, unsigned> storageRoots;
   std::vector<const BaseMemInfo *> memories;
   std::vector<FootprintGroup> groups;
   for (const Effect &effect : physicalEffects) {
@@ -464,18 +466,30 @@ LogicalResult import(func::FuncOp function, Import &out) {
           "original footprint (including self recurrence)";
       entry.description.unknownRange =
           memory->aliasesUnknownRange || memory->baseAddresses.empty();
+      if (memory->rootBuffer) {
+          auto inserted = storageRoots.try_emplace(memory->rootBuffer, storageRoots.size());
+          if (inserted.second)
+              out.storageRoots.push_back(memory->rootBuffer);
+          entry.description.storageOrigins.push_back(inserted.first->second);
+      }
       for (uint64_t base : memory->baseAddresses)
         entry.description.ranges.push_back({base, memory->allocateSize});
+      if (auto coordinates = aliases.storageCoordinates(*memory)) {
+          if (coordinates->absolute) {
+              entry.description.coordinateSpace = "physical-local";
+          } else {
+              entry.description.coordinateSpace = "root:" + std::to_string(storageRoots.lookup(coordinates->root));
+          }
+          entry.description.ranges = {{coordinates->begin, coordinates->size}};
+      }
       groups.push_back(std::move(entry));
     } else
       group = found->second;
     groups[group].uses.push_back(
         {effect.operation, !effect.write, effect.write});
   }
-  appendStorageWitnesses(out.program, groups,
-                         [&](std::size_t a, std::size_t b) {
-                           return aliases.MemAlias(memories[a], memories[b]);
-                         });
+  appendCanonicalStorage(
+      out.program, groups, [&](std::size_t a, std::size_t b) { return aliases.MemAlias(memories[a], memories[b]); });
   // Select the physical core, not a complete graph over unrelated pipelines.
   bool vector = false, cube = false;
   auto kind =
@@ -943,6 +957,7 @@ LogicalResult analyzeHandoffSync(func::FuncOp function,
   result.program = std::move(input.program);
   result.protocols = std::move(input.protocols);
   result.phases = std::move(input.payload);
+  result.storageRoots = std::move(input.storageRoots);
   result.cuts = std::move(input.anchors);
   result.phaseCuts = std::move(input.phaseCuts);
   result.observationNotes = std::move(input.observationNotes);

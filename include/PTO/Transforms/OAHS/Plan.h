@@ -58,6 +58,15 @@ struct Cell {
   std::string provenance;
   std::vector<std::pair<uint64_t, uint64_t>> ranges;
   bool unknownRange = false;
+  // A canonical interval is one atom in a qualified coordinate space. A
+  // conservative overlap witness is NOT a physical atom and cannot justify
+  // strong updates or produced-content identity.
+  enum class Storage : unsigned { Abstract, CanonicalInterval, OverlapWitness };
+  Storage storage = Storage::Abstract;
+  std::string coordinateSpace;
+  // Function-local translated root identities, retained even when geometry is
+  // unknown or several SSA roots name one physical atom. Not disjointness facts.
+  std::vector<std::size_t> storageOrigins;
 };
 struct Operation {
   Pipe pipe = Pipe::S;

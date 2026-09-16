@@ -244,6 +244,94 @@ struct StorageFrontierAnalysis::Impl {
     out.crossedLoopOwners.assign(loops.begin(), loops.end());
     return out;
   }
+  // Graph queries deliberately distinguish zero-length reachability from a
+  // repeated visit. They traverse original control, including enclosing edges.
+  template <typename Stop>
+  bool reaches(std::vector<std::size_t> starts, std::size_t target, Stop stop) const
+  {
+      std::vector<bool> seen(graph.sites.size());
+      while (!starts.empty()) {
+          const auto s = starts.back();
+          starts.pop_back();
+          if (seen[s] || !reachable[s] || stop(s))
+              continue;
+          seen[s] = true;
+          if (s == target)
+              return true;
+          for (auto next : graph.sites[s].successors)
+              starts.push_back(next);
+      }
+      return false;
+  }
+  bool repeated(std::size_t s) const
+  {
+      return reaches(graph.sites[s].successors, s, [](std::size_t) { return false; });
+  }
+  StorageLifecycle lifecycle(std::size_t s, unsigned cell) const
+  {
+      StorageLifecycle out;
+      out.cell = cell;
+      if (!ok || s >= reachable.size() || cell >= cells.size() || !reachable[s])
+          return out;
+      out.reachable = true;
+      out.access = origin(s);
+      out.previousWriters = query(s, cell, 0);
+      out.previousReaders = query(s, cell, 1);
+      out.nextWriters = query(s, cell, 2);
+      out.nextReaders = query(s, cell, 3);
+      auto context = out.access.context;
+      while (context != NoAnalysisId && context < graph.contexts.size()) {
+          const auto& scope = graph.contexts[context];
+          if (scope.kind == AnalysisContext::ForBody || scope.kind == AnalysisContext::WhileBefore ||
+              scope.kind == AnalysisContext::WhileAfter)
+              out.enclosingLoops.push_back(scope.ownerSite);
+          if (context == 0 || scope.parent == context)
+              break;
+          context = scope.parent;
+      }
+      for (const auto& o : cells[cell].origins)
+          out.participantEngines |= 1u << unsigned(program.operations[o.operation].pipe);
+      out.mayHaveNoPriorFullWrite =
+          reaches({graph.entry}, s, [&](std::size_t at) { return at != s && cells[cell].accessAt[at].definiteWrite; });
+      out.mayExitWithoutFurtherAccess = reaches(graph.sites[s].successors, graph.exit, [&](std::size_t at) {
+          const auto& a = cells[cell].accessAt[at];
+          return a.read || a.write;
+      });
+      return out;
+  }
+  RequirementProvenance describe(const StorageRelationship& r) const
+  {
+      RequirementProvenance out;
+      const auto s = r.source.site, t = r.target.site;
+      if (!ok || s >= reachable.size() || t >= reachable.size() || r.cell >= cells.size() || !reachable[s] ||
+          !reachable[t])
+          return out;
+      const auto witness = path(s, t, r.cell);
+      if (!witness.exists)
+          return out;
+      out.occurrence.crossedLoopOwners = witness.crossedLoopOwners;
+      if (program.observed) {
+          out.occurrence.sourceObservation = program.observed->sites[s].observation;
+          out.occurrence.targetObservation = program.observed->sites[t].observation;
+      }
+      const bool dominates = !reaches({graph.entry}, t, [&](std::size_t at) { return at == s; });
+      if (s != t && dominates && !repeated(s) && !repeated(t))
+          out.occurrence.kind = OccurrenceQualification::SingleVisit;
+      const auto& source = cells[r.cell].accessAt[s];
+      const auto& target = cells[r.cell].accessAt[t];
+      const bool raw = r.kind == StorageRelationship::RAW && source.write && target.read;
+      const bool reuse = target.write && ((r.kind == StorageRelationship::WAR && source.read) ||
+                                          (r.kind == StorageRelationship::WAW && source.write));
+      if (reuse && program.cells[r.cell].storage == Cell::Storage::CanonicalInterval)
+          out.reasons |= KnownReuse;
+      // A full writer dominates this single visit, and no alternative/partial
+      // writer intervenes. Mutable SSA identity is deliberately not consulted.
+      const auto writers = query(t, r.cell, 0);
+      if (raw && source.definiteWrite && writers.size() == 1 && writers.front().site == s &&
+          out.occurrence.kind == OccurrenceQualification::SingleVisit)
+          out.reasons |= KnownReadiness;
+      return out;
+  }
 };
 } // namespace mlir::pto::oahs
 #endif

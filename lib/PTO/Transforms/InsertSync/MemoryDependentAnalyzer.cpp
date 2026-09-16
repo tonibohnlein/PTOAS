@@ -14,9 +14,24 @@
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
+
+std::optional<SyncStorageCoordinates> MemoryDependentAnalyzer::storageCoordinates(const BaseMemInfo& memory)
+{
+    if (memory.aliasesUnknownRange || memory.baseAddresses.size() != 1 || !memory.allocateSize ||
+        memory.scope == AddressSpace::Zero)
+        return std::nullopt;
+    const bool absolute = memory.scope != AddressSpace::GM;
+    if ((absolute && !memory.hasKnownPhysicalAddresses) || (!absolute && !memory.rootBuffer))
+        return std::nullopt;
+    const auto begin = memory.baseAddresses.front();
+    if (memory.allocateSize > std::numeric_limits<uint64_t>::max() - begin)
+        return std::nullopt;
+    return SyncStorageCoordinates{absolute, memory.rootBuffer, begin, memory.allocateSize};
+}
 
 static bool isTraceEnabled() {
   return isInsertSyncDebugEnabled(InsertSyncDebugLevel::Trace);

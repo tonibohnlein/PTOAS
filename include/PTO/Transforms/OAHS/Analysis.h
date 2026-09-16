@@ -55,6 +55,14 @@ struct CutFacts {
   // for THIS candidate, not reusable certificates after an edit.
   std::optional<BoundaryFacts> incoming, beforeIssue, outgoing;
 };
+// Priority metadata, orthogonal to RAW/WAR/WAW. A reason never grants credit
+// or removes an original physical/typed requirement.
+enum RequirementReason : unsigned {
+    AdditionalOverlap = 1u << 0,
+    KnownReadiness = 1u << 1,
+    KnownReuse = 1u << 2,
+    TypedOrControl = 1u << 3
+};
 struct CompletionRequirement {
   enum Kind { RAW, WAR, WAW, ExclusiveResource } kind = RAW;
   Demand demand;
@@ -66,6 +74,7 @@ struct CompletionRequirement {
   // Analytical access endpoints, not legal command cuts. Whole-operation
   // backends leave these unspecified; phase-aware replay retains them.
   std::size_t producerEndpoint = NoAnalysisId, consumerEndpoint = NoAnalysisId;
+  unsigned reasons = AdditionalOverlap;
   // The source is an earlier represented occurrence. producer==consumer can
   // denote self recurrence; no iteration distance is inferred from static IDs.
 };
