@@ -6,12 +6,14 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/Plan.h"
+#include "PTO/Transforms/OAHS/CausalFrontier.h"
 #include "BundleQueries.h"
 #include "PrefixQueries.h"
 #include "StorageFrontierAnalysis.h"
 #include "Transfer.h"
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <functional>
 #include <map>
 #include <optional>
@@ -671,6 +673,95 @@ Result validateProgram(const Program &p) {
   Result result;
   result.success = valid(p, result.reason);
   return result;
+}
+
+FrontierCheck checkCausalFrontier(const Program& p, const Commands& commands)
+{
+    FrontierCheck out;
+    const CausalFrontier frontier(p);
+    if (!frontier.complete()) {
+        out.failure = FrontierFailure::UnsupportedContract;
+        out.reason = frontier.reason();
+        return out;
+    }
+    if (!commandsValid(p, commands, out.reason)) {
+        out.failure = FrontierFailure::InvalidInput;
+        return out;
+    }
+    for (const auto& word : commands)
+        for (const auto& c : word)
+            if (c.kind == Command::BarrierAll) {
+                out.failure = FrontierFailure::UnsupportedContract;
+                out.reason = "causal frontier ALL adapter is not qualified";
+                return out;
+            }
+    out.complete = true;
+    out.keys = frontier.keys();
+    const auto graph = detail::buildControlGraph(p);
+    std::vector<FrontierCut> states(graph.sites.size());
+    states[graph.entry].incoming = frontier.initial();
+    std::deque<std::size_t> queue{graph.entry};
+    std::vector<bool> queued(graph.sites.size());
+    queued[graph.entry] = true;
+    auto fail = [&](const FrontierStep& step, Cut cut, std::size_t command) {
+        out.failure = step.failure;
+        out.reason = step.reason;
+        out.residuals = step.residuals;
+        out.cut = cut;
+        out.command = command;
+    };
+    while (!queue.empty()) {
+        const auto at = queue.front();
+        queue.pop_front();
+        queued[at] = false;
+        ++out.siteEvaluations;
+        auto state = states[at].incoming;
+        if (at < commands.size())
+            for (std::size_t i = 0; i < commands[at].size(); ++i) {
+                auto next = frontier.command(state, commands[at][i], {at, i});
+                if (!next.applied) {
+                    fail(next, at, i);
+                    return out;
+                }
+                state = std::move(next.state);
+            }
+        states[at].beforeIssue = state;
+        if (graph.operations[at] != NoAnalysisId) {
+            auto next = frontier.issue(state, graph.operations[at]);
+            if (!next.applied) {
+                fail(next, at, NoAnalysisId);
+                return out;
+            }
+            state = std::move(next.state);
+        }
+        if (at == graph.exit) {
+            auto next = frontier.exit(state);
+            if (!next.applied) {
+                fail(next, at, NoAnalysisId);
+                return out;
+            }
+        }
+        states[at].outgoing = state;
+        for (const auto successor : graph.sites[at].successors) {
+            auto merged = frontier.join(states[successor].incoming, state);
+            if (!merged.applied) {
+                fail(merged, successor, NoAnalysisId);
+                return out;
+            }
+            if (merged.state == states[successor].incoming)
+                continue;
+            states[successor].incoming = std::move(merged.state);
+            if (!queued[successor]) {
+                queue.push_back(successor);
+                queued[successor] = true;
+            }
+        }
+    }
+    out.accepted = true;
+    out.cuts.resize(commands.size());
+    for (Cut cut = 0; cut < commands.size(); ++cut)
+        out.cuts[cut] = std::move(states[cut]);
+    return out;
 }
 
 namespace {

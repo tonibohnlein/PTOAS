@@ -48,20 +48,71 @@ No region exit clears outstanding work or events. Marginal provenance is not a
 complete completion-obligation list: strong overwrites may kill origins, while
 all outstanding causal obligations remain independently tracked.
 
-The current constructor's selection policy and ordinary transfer domain are
-unchanged in this increment. Canonical storage is used by real native import;
-the new lifecycle/provenance queries are preparation for the replacement driver.
+The current constructor's selection policy and ordinary transfer domain remain
+unchanged. Canonical storage is used by real native import; the new
+lifecycle/provenance queries are preparation for the replacement driver.
 No new planner mode, native resource credit, or operation whitelist is added.
+
+## Must-causal frontier implemented in the second increment
+
+`CausalFrontier.h` supplies the new ordinary state and its primitive operations
+in the production C++ library. It owns an immutable copy of the imported
+program; snapshots cannot be mixed between different programs. State contains:
+
+- One shared closed causal relation over next-issue gates `A`, earlier-finish
+  aggregates `T`, current publications `S`, and latest consumptions `D`.
+- An optional successor bitset for each `(cell, source engine, read/write)`
+  class. Absence and present history remain distinct. A payload queries all
+  conflicting classes before replacing its touched signatures with `{T}`.
+- May-empty/full key balance and alternatives for current static publication
+  endpoints. These bindings do not invent a dynamic visit correspondence.
+
+SET captures its actual source prefix without fencing later source issue. WAIT
+gates its destination and replaces the consumption anchor. SET requires a real
+path from the current consumption to its finish; the checker never inserts the
+desired rearm edge. A named fence advances its engine's gate without consuming
+keys. Failed primitives return the unchanged input snapshot and no credit.
+
+Joins intersect already-closed relations, intersect histories only over paths
+where each class is present, and union possible balances and publication
+bindings. Non-must-live publication ports are removed from both relations and
+histories. Unreachable input is separate from fresh invocation entry.
+
+`checkCausalFrontier()` reuses original-control construction and command-word
+validation. A finite worklist carries state through choices, counted loops,
+mandatory while-before regions, and qualified observed control. It injects fresh
+entry only at invocation entry. This is a strict fixed-plan check: it returns
+the first unresolved payload/protocol prerequisite, and exports cut invariants
+only after successful convergence. It does not replace M1's all-residual
+diagnostic analysis or run construction/repair during verification.
+
+The implemented contract is the ordinary issue-ordered asynchronous core with
+consuming directed events and named prefix fences. Synchronous lanes, executed
+ALL, invocation retirement, exclusive resources, selective phases, visibility,
+and implicit/authored effect transfers require matching adapters. Unsupported
+contracts are explicitly refused by this new service. Existing native import,
+analysis, construction, and their supported contracts continue through the
+current backend; the pass does not yet select this frontier. The new library
+service is the foundation for F1–F7, not a completed replacement pass.
+
+The differential bridge uses the **existing** pinned `v08/causal_interface.py`:
+it is byte-identical to the v0.17 draft's `checks/compact/causal_interface.py`
+(SHA-256 `543a7c796acf602d068d3b374c287b224104ddbc5d1d71a785224cc8db5162d1`).
+No additional vendor sources or certificates are added. The bridge checks
+primitive and join facts against every represented exact state, then checks
+accepted structured plans against collecting fixed points without trip-count
+unrolling. This is finite evidence under the matched contract, not the general
+joined-domain or structured-qualification proof.
 
 ## Remaining implementation sequence
 
 1. Extend occurrence qualification with the draft's checked local slot/visit and
    first/last-use certificates as their constructor consumers are introduced.
    Keep uncertain relationships as physical requirements.
-2. Implement the storage-indexed must-causal frontier: A/T/S/D ports, guaranteed
-   reachability, optional access-class histories, may occupancy, and binding
-   alternatives. Validate transfers and joins against matched exact reference
-   semantics. The old operation-indexed domain is not this representation.
+2. Connect the new frontier to lifecycle reason/occurrence records and add
+   qualified adapters for the native contracts before switching production
+   acceptance. Preserve the distinction between static binding alternatives
+   and qualified recurring correspondence.
 3. Implement F1–F7: all effects of a consumer together; known readiness/reuse
    before remaining physical overlap; provider-containment priority; saved early
    prefixes; source-position allocation; and one selected endpoint ledger with
@@ -85,6 +136,14 @@ by an unknown access; different coordinate roots; overflow; retained provenance;
 readiness rejection; and continuation across branches, loops, and while exits.
 The native driver checks shared coordinate qualification, native root mappings,
 canonical import, conservative readiness labels, and unchanged original IR.
+
+`causal_frontier_test.cpp` tests prefix freshness, SET versus source fencing,
+shared movement/relay credit, independent readers, consumption versus release,
+stale acknowledgments, closed joins, optional publication ports, reservations,
+original observation uniformity, and structured fixed points. The test-only
+`causal_frontier_driver.cpp` links the actual production implementation.
+`reference/causal_frontier_bridge.py` checks serialized states and fixed plans
+against the unchanged exact reference, including endpoint-deletion mutations.
 
 Run the full standalone suite and the native driver/lit gate after rebuilding
 all dependents of the changed public structures. Replay the 21 local prefill
