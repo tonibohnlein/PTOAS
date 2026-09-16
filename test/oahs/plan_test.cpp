@@ -117,7 +117,10 @@ int main() {
   scarce.target.barrierAll = false;
   run(scarce); // Causally checked reuse must not require ALL to be available.
   scarce.target.keys[1][0].clear();
-  check(!o::construct(scarce).success);
+  // The old direct-reply policy fails; a payload-free relay is a real route.
+  check(!o::construct(scarce, {true, true, false}).success);
+  auto relayed = run(scarce);
+  check(relayed.work.routedReplies || relayed.work.longerRouteTrials);
   p.operations = {op(0, 0, false), op(1, 0, false)};
   check(run(p).handoffs.empty());
   p.cells[0].exclusive = true;
