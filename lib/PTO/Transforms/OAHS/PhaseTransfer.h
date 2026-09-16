@@ -240,7 +240,7 @@ namespace mlir::pto::oahs::detail::phase {
     }
     // Internal test hooks are not accepted by Program or serialized commands.
     // Each pair adds an actual OLD port -> fresh endpoint, or a within-fragment edge.
-    State step(const State &s,Cut cut,std::size_t operation,const Command *cmd,std::size_t commandIndex, Issues &issues,bool provisional=false, bool skipRearm=false, const std::vector<std::pair<std::size_t,std::size_t>>& oldEdges= {
+    State step(const State &s,Cut cut,std::size_t operation,const Command *cmd,std::size_t commandIndex, Issues &issues, const std::vector<std::pair<std::size_t,std::size_t>>& oldEdges= {
     }, const std::vector<std::pair<std::size_t,std::size_t>>& freshEdges= {
     })const {
       PhaseFragment f;
@@ -290,7 +290,7 @@ namespace mlir::pto::oahs::detail::phase {
           e=keyIds.at( {
             cmd->source,cmd->observer,cmd->key
           });
-          if(!provisional) {
+          {
             if(cmd->kind==Command::Publish && s.live[e]!=0)problem(ProtocolObligation::PublicationNotEmpty,"publication has no empty-key proof");
             if(cmd->kind==Command::Acquire && s.live[e]!=1)problem(ProtocolObligation::AcquisitionNotFull,"acquisition has no live matching publication");
           }
@@ -330,7 +330,7 @@ namespace mlir::pto::oahs::detail::phase {
       for(const auto &[a,b]:oldEdges)put(r.at(a),fresh+b);
       for(const auto &[a,b]:freshEdges)put(r.at(fresh+a),fresh+b);
       close(r);
-      if(cmd && e!=NoAnalysisId && cmd->kind==Command::Publish && !provisional && !skipRearm && !invalid && !has(r[D(e)],finish)) problem(ProtocolObligation::ConsumptionNotEstablished,"latest consumption does not causally precede republication");
+      if(cmd && e!=NoAnalysisId && cmd->kind==Command::Publish && !invalid && !has(r[D(e)],finish)) problem(ProtocolObligation::ConsumptionNotEstablished,"latest consumption does not causally precede republication");
       if(invalid) {
         // Rebuild with no completion-transfer edge from this unproved primitive.
         // An independent fresh D forgets old acknowledgment knowledge. Poison is
@@ -451,7 +451,7 @@ namespace mlir::pto::oahs::detail::phase {
     std::vector<PhaseOrderWitness> excess;
   };
   inline Collected collect(const Program &p,const Commands &commands,AnalysisOptions options= {
-  },bool order=false,bool provisional=false,bool skipRearm=false) {
+  },bool order=false) {
     Collected result;
     auto &out=result.analysis;
     Machine m(p,commands,order);
@@ -517,7 +517,7 @@ namespace mlir::pto::oahs::detail::phase {
         if(options.captureStates)Machine::mergeSnapshot(facts.incoming,m.snapshot(s));
         for(std::size_t c=0;c<commands[at].size();++c) {
           Issues x;
-          s=m.step(s,at,NoAnalysisId,&commands[at][c],c,x,provisional,skipRearm);
+          s=m.step(s,at,NoAnalysisId,&commands[at][c],c,x);
           if(!x.protocol.empty())commandOK[at][c]=false;
           append(x,at);
         }
@@ -526,7 +526,7 @@ namespace mlir::pto::oahs::detail::phase {
       const auto op=graph.operations[at];
       if(op!=NoAnalysisId) {
         Issues x;
-        s=m.step(s,at,op,nullptr,NoAnalysisId,x,provisional,skipRearm);
+        s=m.step(s,at,op,nullptr,NoAnalysisId,x);
         append(x,at);
       }
       if(at==graph.exit) {

@@ -79,7 +79,7 @@ struct Import {
   DenseMap<std::size_t, scf::ForOp> loopOwners;
   std::vector<std::string> observationNotes;
 };
-enum class ObservationPolicy { RefineLeafLoops, OriginalControl };
+enum class ObservationPolicy { RefineLeafLoops, QualifiedAccessRoles };
 // Every actual original instruction is an anchor, including scalar/control
 // instructions and region terminators. Synthetic branch/loop decisions have no
 // anchor and cannot acquire emitted commands. Payload phases remain unchanged.
@@ -196,8 +196,7 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     return attr.getInt();
   };
   SmallVector<scf::ForOp> loops;
-  if (policy == ObservationPolicy::RefineLeafLoops)
-    function.walk([&](scf::ForOp loop) { loops.push_back(loop); });
+  function.walk([&](scf::ForOp loop) { loops.push_back(loop); });
   for (auto loop : loops) {
     bool nested = false;
     loop.getRegion().walk([&](mlir::Operation *op) {
@@ -285,6 +284,13 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
       out.observationNotes.push_back("kept original SCF control: " +
                                      refined.reason);
       continue;
+    }
+    if (policy == ObservationPolicy::QualifiedAccessRoles) {
+      // Qualify this region from shared physical effects, not operation names.
+      // Do not refine unrelated loops merely because a prior loop qualified.
+      auto local = refined.program;
+      local.observed->loops = {local.observed->loops.back()};
+      if (!hasQualifiedRecurringAccesses(local)) continue;
     }
     out.program = std::move(refined.program);
     out.loopOwners[model.owner] = loop;
@@ -964,13 +970,10 @@ LogicalResult executeSelectedHandoffSync(
   if (report) {
     *report = SelectedPlan{};
   }
-  // Select the original SCF representation before construction. Native import
-  // does not yet certify exact slot contents/occurrences for the selected cyclic
-  // qualifier. Expanding unrelated leaf loops into first/tail observations adds
-  // histories its conservative body hypotheses cannot distinguish (for example
-  // the two reduction loops in the real Qwen3 RMSNorm kernels). Original SCF
-  // retains all payload, zero-trip and backedge paths; final checking uses that
-  // same graph. This is a representation choice, never a retry after refusal.
+  // Choose observations before construction from shared physical access roles.
+  // Qualified normalized loops use original first/next-use guards; unrelated
+  // loops retain their original SCF graph. Bounding geometry never becomes a
+  // full-write certificate, and a construction refusal does not trigger retry.
   return executeTransaction(function,
       [report](const Program &program) {
         auto selected = constructSelectedPlan(program);
@@ -989,7 +992,7 @@ LogicalResult executeSelectedHandoffSync(
         result.success = checked.accepted;
         result.reason = checked.reason;
         return result;
-      }, mutate, ObservationPolicy::OriginalControl);
+      }, mutate, ObservationPolicy::QualifiedAccessRoles);
 }
 
 } // namespace

@@ -1,6 +1,6 @@
-# Selected-plan construction: v0.18 handoff implementation
+# Selected-plan construction: draft F1–F8 implementation
 
-Specification: the synchronization draft v0.18, policies F1–F8.
+Specification: the synchronization draft v0.19, policies F1–F8.
 See [shared semantic extraction](oahs-shared-semantics.md) and
 [storage and fixed-plan analysis](oahs-analysis.md) for the input contracts.
 `algorithm=handoff` uses this constructor. `algorithm=existing` remains the default
@@ -39,9 +39,9 @@ a later access cannot inherit an older receipt merely by sharing its class.
 | F7 | `SelectedAllocation.cpp`: source-time key checks, ledger intervals, nonrecursive consumption acknowledgment and one shortest eligible route. |
 | F8 | `SelectedControl/SelectedReplay`: open choice/loop interfaces and actual fixed-point validation; `CyclicFrontiers.cpp`: qualified recurring requirement frontiers and deterministic role allocation. |
 
-Ordinary endpoint `request` IDs index `decisions`. For a qualified cyclic result,
-`channels` instead contains the role requests and endpoint `request` IDs index
-that table. Neither table supplies completion to the checker.
+Ordinary completion endpoint `request` IDs index `decisions`. Endpoints with
+purpose `RecurringCompletion` index `channels`. Both kinds coexist in the same
+ledger; `channels` contains qualified physical access-role requests. Neither table supplies completion to the checker.
 
 ## Selected updates
 
@@ -102,18 +102,45 @@ component, but physical consumption/occupancy state is not reset. These
 conservative protocols can require more keys and add more order than a qualified
 readiness/release recurrence.
 
-The cyclic qualifier admits only the draft's isolated two-role exact-slot case:
-one pure full write and one read per visit, disjoint slots, one original period,
-available original first/steady/final observations, no other payload effects,
-no surrounding reuse and no retirement demand. It verifies role alternation,
-prior-reader and next-writer facts on the original finite graph. It returns
-**requirements and original endpoint sets**, not event commands or key numbers.
-The constructor binds those requests in stable cell/role order to the lowest
-unreserved eligible keys and validates the selected ledger from fresh entry to
-all original exits. There is no dynamic trip-count enumeration or kernel-name
-dispatch. The native importer does not yet supply the full-write/slot certificate
-required to use this precise specialization; native loops use the generic path
-or a classified refusal. A different loop cannot borrow this qualifier's proof.
+The recurrence qualifier projects each physical cell's access roles through a
+qualified normalized region. It checks original first/reused/next/final cases,
+write/read alternation, and unambiguous first/last reader boundaries on the finite
+graph. Multiple same-engine readers, alternative control paths, unrelated effects,
+surrounding accesses, and invocation retirement are retained. An ambiguous role
+uses ordinary construction instead. Different cells with identical endpoint sets
+share one physical prefix; independent loops do not require a product of their
+observation vocabularies.
+
+This qualifies **physical access ordering**, not produced-content identity. A
+partial or may-overlap write is not promoted to `definiteWrite`. Whole-operation
+completion can order conservative byte witnesses without proving a complete
+value overwrite. The exact-slot order-quality claims still require the matched
+exact-cell/full-write model used by the reference tests.
+
+The qualifier returns requirements and original endpoint sets, not commands or
+key numbers. The constructor reserves the lowest eligible keys in one global
+ledger, respecting fixed words and reservations. It then processes surrounding
+and remaining effects through ordinary F1–F7. There is no whole-program cyclic
+shortcut. If an enclosing path can re-enter the initializer, the last local
+return must also establish readiness-consumption knowledge at the publisher;
+that return is an explicit rearm obligation, not an unconditional region drain.
+
+While a qualified body is under construction, contextual replay solves the
+selected commands over all original edges. Unfinished payload contributes its
+actual pending effects and native ordering only: it does not insert the desired
+memory-conflict edges. Event preconditions remain strict. Each edit starts that
+replay from the original entry and checks all previously finalized requirements
+at convergence. No stale completion or provisional receipt escapes the selected
+ledger. This correctness-first contextual replay is not incremental, and its
+whole-pass cost must be measured.
+
+Final cold checking discharges entry, body, backedge and exit obligations from
+the actual invocation state. `SelectedLoopInterface` exports the incoming and
+outgoing states and original-observation clauses at the final ledger version.
+These are derived proof snapshots, never extra assumptions supplied to the
+checker. Fixed cell/key names are retained; an actual acquisition creates each
+new consumption generation. Child exits preserve surrounding pending effects
+and live events; only invocation exit requires global cleanup and retirement.
 
 The must join deliberately loses some disjunctions. The update test contains a
 safe pair of concrete branch continuations that the joined state refuses; exact
@@ -121,12 +148,19 @@ collection is a development reference, not a production fallback.
 
 ## Live native adapter
 
-The selected native entry uses the original SCF graph, including all original
-instruction cuts, choices, zero-trip alternatives and loop backedges. It retains leaf loops directly in original control. This representation is selected before construction, without retry:
-native import does not yet supply the occurrence/full-write certificates needed
-by the selected cyclic specialization. The portable qualified-observation API
-remains available. The analysis-only
-report can expose a normalized first/tail observation representation.
+The selected native entry retains the original SCF graph, instruction anchors,
+choices, zero-trip alternatives and backedges. Before construction it refines a
+normalized leaf `scf.for` only when shared imported byte effects qualify a
+physical ready/release role. The supported normalization uses index induction,
+zero lower bound, unit step, no iter_args, signed comparisons, and compatible
+original residue predicates. No operation-name table or full-write inference is
+introduced. Other loops retain ordinary conservative control; there is no retry
+with another constructor. The analysis-only report can still expose normalized
+first/tail observations independently.
+The current emitter materializes a separate guarded word for each observation;
+it does not yet merge identical words across first/tail cases. Guard arithmetic
+can therefore be substantial even when fewer event operations execute. Native
+order quality and device latency still need calibration.
 
 The original Qwen3 RMSNorm and post-RMSNorm kernels exercise this representation
 in native regression coverage. Their unrelated reduction loops require
@@ -164,8 +198,9 @@ entry, not another production pass mode.
 ## Validation and remaining qualification
 
 The accompanying portable tests construct from unsynchronized input. The exact
-reference bridge checks 108 selected programs, including 100 deterministic
-straight-line/choice/loop/nested inputs and four cyclic slot populations. Every
+reference bridge checks 110 selected programs, including 100 deterministic
+straight-line/choice/loop/nested inputs, four cyclic slot populations, and two
+open/re-entered recurrence cases. Every
 exported causal fact is checked against every reached exact state. Eight selected
 examples are also checked by the unchanged paired-order collector; four
 straight-line examples additionally use an independent full-history graph.
@@ -188,8 +223,24 @@ output without a second synchronization insertion. Static inventories and host
 timings are diagnostics, not device correctness or performance evidence. This
 cohort does not enumerate all PyPTO/pypto-lib kernels.
 
-The live switch preserves shared contracts and conservative F8 control handling.
-Precise native occurrence certificates, additional typed adapters, full population
-coverage, and device qualification remain separate work. Report all refusals/timeouts and
+The live constructor now integrates qualified region-local recurrence and
+conservative F8 control handling. Arbitrary first-active predicates, general
+affine slot inference, additional typed adapters, full population coverage, and
+device qualification remain separate work. Report all refusals/timeouts and
 whole-pass cost rather than treating this switch as production replacement
 qualification.
+
+## Retained calibration code
+
+The small, unchanged `reference/vendor/v08/causal_interface.py` and
+`order_interface.py` check actual constructed plans and exported facts. Their
+historical directory name does not imply stale semantics: these modules match
+the draft v0.19 counterparts. Unused JSON cases, stored ordinary schema and
+certificate archives, and their unused reader/generator modules were removed.
+The phase-reference campaign remains a separate model test; its constructor
+cases explicitly require refusal while that adapter is unavailable.
+
+The diagnostic all-residual interpreter remains because analysis-only native
+reports use it. Its obsolete provisional/first-failure construction mode is
+removed. `PrefixQuery`, `BundleQuery`, and `ReplaySession` still have diagnostic
+and calibration callers; they are not live alternative constructors.

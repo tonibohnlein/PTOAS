@@ -67,6 +67,25 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
+const char *recurrence = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @recurrence(%src: !pto.partition_tensor_view<1x32xf32>, %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %x = arith.constant 0 : i64
+    %y = arith.constant 128 : i64
+    %a = pto.alloc_tile addr = %x : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %y : !pto.tile_buf<vec, 1x32xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+    scf.for %i = %zero to %n step %one {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tabs ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+    }
+    pto.tabs ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+})mlir";
 const char *collective = R"mlir(
 module attributes {pto.target_arch = "a3"} {
   func.func @collective(%src: !pto.partition_tensor_view<1x32xf32>,
@@ -113,6 +132,12 @@ bool positive(MLIRContext &context, const char *source, StringRef name) {
   auto live = liveModule->lookupSymbol<func::FuncOp>(name);
   if (!check(succeeded(oahs::runHandoffSync(live)) && text(live) == text(function),
              "live handoff must emit the selected constructor's exact word")) { return false; }
+  if (name == "recurrence") {
+    unsigned guards = 0;
+    function.walk([&](scf::IfOp) { ++guards; });
+    if (!check(report.channels.size() == 2 && guards != 0,
+               "live normalized loop must use guarded ready/release roles")) return false;
+  }
   unsigned waits = 0, retirements = 0;
   function.walk([&](WaitFlagOp) { ++waits; });
   function.walk([&](BarrierOp barrier) { retirements += barrier.getPipe().getPipe() == PIPE::PIPE_ALL; });
@@ -180,6 +205,7 @@ int main(int argc, char **argv) {
     return 2;
   }
   const bool passed = positive(context, ordinary, "ordinary") && positive(context, loop, "loop") &&
+                      positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context);
   return passed ? 0 : 1;

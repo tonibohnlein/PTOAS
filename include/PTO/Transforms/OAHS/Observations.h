@@ -46,10 +46,17 @@ struct ObservedScope {
   unsigned kind = 0; // AnalysisContext kind, validated by the adapter
   std::size_t parent = NoControlId, ownerSite = NoControlId;
 };
+// Original normalized region boundaries, used only to qualify local roles.
+// They confer no completion or event credit; construction replays the full graph.
+struct ObservedLoop {
+  std::size_t owner = NoControlId, entry = NoControlId, exit = NoControlId;
+  std::vector<std::size_t> sites;
+};
 struct ObservedControl {
   std::vector<ObservedSite> sites;
   std::vector<OriginalObservation> observations;
   std::vector<ObservedScope> scopes;
+  std::vector<ObservedLoop> loops;
   std::size_t entry = 0, exit = 0;
   // Named input/frontend proof boundary, not a causal-completion assertion.
   std::string qualification;

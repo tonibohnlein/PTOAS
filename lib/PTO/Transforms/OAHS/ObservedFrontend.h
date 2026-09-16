@@ -172,6 +172,10 @@ ObservedImport makePeriodicLoop(const Program &body, unsigned period,
       q.sites[chain.back()].backedgeOwners.push_back(1);
     }
   }
+  ObservedLoop loop{0, q.entry, q.exit, {}};
+  for (std::size_t site = 2; site < q.sites.size(); ++site)
+    loop.sites.push_back(site);
+  q.loops.push_back(std::move(loop));
   out.program.observed = std::move(q);
   const auto valid = validateProgram(out.program);
   out.success = valid.success;
@@ -453,6 +457,10 @@ ObservedImport refineCountedLoop(const Program &input,
     q.sites[site].operation = NoControlId;
     q.sites[site].observation = NoControlId;
   }
+  ObservedLoop refinedLoop{loop.owner, loop.owner, loop.continuation, {}};
+  for (std::size_t site = size; site < q.sites.size(); ++site)
+    refinedLoop.sites.push_back(site);
+  q.loops.push_back(std::move(refinedLoop));
   q.qualification += "; normalized-counted-first-tail-v1";
   for (std::size_t i = 0; i < input.operations.size(); ++i)
     out.originalPhases.push_back(i);
