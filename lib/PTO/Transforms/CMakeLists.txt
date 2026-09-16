@@ -374,3 +374,12 @@ if(TARGET vfsim::ir_planner)
     target_compile_definitions(obj.PTOTransforms PRIVATE PTO_ENABLE_VFSIM_IR_PLANNER=1)
   endif()
 endif()
+
+# Optimize OAHS analysis and construction while retaining the build's assertion
+# settings and leaving other translation units' optimization settings unchanged.
+set_source_files_properties(
+  OAHS/Plan.cpp OAHS/CausalFrontier.cpp OAHS/SelectedLedger.cpp
+  OAHS/SelectedControl.cpp OAHS/SelectedReplay.cpp OAHS/SelectedGroups.cpp
+  OAHS/SelectedAllocation.cpp OAHS/SelectedPlan.cpp OAHS/CyclicFrontiers.cpp
+  OAHS/Native.cpp
+  PROPERTIES COMPILE_OPTIONS "-O2")
