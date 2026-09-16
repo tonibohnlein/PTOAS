@@ -85,6 +85,7 @@ struct RecurringRequirement {
     unsigned cell = 0;
     Pipe source = Pipe::S, observer = Pipe::S;
     std::vector<Cut> publications, acquisitions;
+    Id owner = NoAnalysisId;
 };
 // A storage/control qualifier: it returns requirements and original frontiers,
 // not commands or physical key choices. Empty means ordinary F1--F8 applies.
@@ -118,13 +119,14 @@ private:
     // Roles are stable within a selected loop component. A reverse acknowledgment
     // key must not be borrowed as another recurring channel's forward key.
     std::map<std::pair<Pipe, Pipe>, std::pair<Id, Id>> closedBindings;
-    std::set<Id> closedKeys;
+    std::set<Id> closedKeys, recurringKeys;
 
     bool fail(SelectedFailure, std::string, Cut = NoAnalysisId);
     State initial() const;
     bool join(State&, const State&);
     bool word(State&, Cut, Replay&);
-    bool payload(State&, Cut, Replay&);
+    bool payload(State&, Cut, Replay&, bool pending = false);
+    bool contextualReplay();
     bool fixedComponent(Id, const std::vector<State>&, Replay&, std::vector<State>&);
     bool partialComponent(Id, const std::vector<State>&, Replay&);
     bool replay();

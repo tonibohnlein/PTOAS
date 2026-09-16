@@ -180,4 +180,36 @@ int main()
         require(input.success, input.reason);
         emit("cyclic-" + std::to_string(slots), input.program);
     }
+    // Open first/steady/final roles, with surrounding accesses on a third engine.
+    // The reference sees the entire original graph and all payload effects.
+    p = small(1, 3);
+    p.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}}),
+                    op(Q, {{0, true, false}})};
+    auto open = o::makePeriodicLoop(p, 1, {});
+    require(open.success, open.reason);
+    auto& q = *open.program.observed;
+    const auto preOp = open.program.operations.size();
+    open.program.operations.push_back(op(R, {{0, false, true}}));
+    const auto postOp = open.program.operations.size();
+    open.program.operations.push_back(op(R, {{0, false, true}}));
+    auto node = [&](std::size_t operation) {
+        auto site = q.sites.size(), observation = q.observations.size();
+        q.observations.push_back({1000 + site, {}, true});
+        q.sites.push_back({operation, observation, {}, {}, 0});
+        return site;
+    };
+    auto entry = q.entry, exit = q.exit;
+    q.entry = node(preOp);
+    auto post = node(postOp);
+    q.exit = node(o::NoControlId);
+    q.sites[q.entry].successors = {entry};
+    q.sites[exit].successors = {post};
+    q.sites[post].successors = {q.exit};
+    emit("F8-open-multiple-readers", open.program);
+    // An enclosing zero-or-more loop re-enters the qualified initializer. Its
+    // final role return must prove rearming, including across an empty visit.
+    q.sites[post].successors = {q.entry, q.exit};
+    q.sites[post].backedgeOwners = {q.entry, o::NoControlId};
+    emit("F8-reentered-open-region", open.program);
+
 }

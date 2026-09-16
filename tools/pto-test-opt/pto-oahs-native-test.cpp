@@ -749,8 +749,8 @@ module attributes {pto.target_arch = "a3"} {
     require(succeeded(verify(function)));
   }
   {
-    // Analysis may expose normalized observations. Live selected construction
-    // retains original SCF and verifies its control without synthesized guards.
+    // Shared physical roles qualify this normalized loop in both analysis and
+    // live construction. Guards contain synchronization only; payload stays put.
     const char *loopSource = R"mlir(
 module attributes {pto.target_arch = "a3"} {
   func.func @observed_loop(%src: !pto.partition_tensor_view<1x32xf32>, %n: index)
@@ -804,7 +804,7 @@ module attributes {pto.target_arch = "a3"} {
         function.walk([&](TAddOp) { ++adds; });
         function.walk([&](scf::ForOp) { ++loops; });
         function.walk([&](scf::IfOp) { ++guards; });
-        require(loads == 1 && adds == 1 && loops == 1 && guards == 0);
+        require(loads == 1 && adds == 1 && loops == 1 && guards != 0);
       }
     }
   }

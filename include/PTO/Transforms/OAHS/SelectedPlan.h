@@ -17,7 +17,7 @@ enum class SelectedFailure {
     None, InvalidInput, UnsupportedContract, UnqualifiedControl,
     MissingParticipation, EventResource, SelectedUpdate, LoopInvariant, FinalValidation
 };
-enum class EndpointPurpose { Fixed, Completion, ConsumptionAcknowledgment, LocalFence, Retirement };
+enum class EndpointPurpose { Fixed, Completion, ConsumptionAcknowledgment, LocalFence, Retirement, RecurringCompletion };
 enum class RequirementStage { Known, Overlap };
 
 // IDs survive insertion into an earlier word. cut/word positions are reconstructed
@@ -27,7 +27,7 @@ struct SelectedEndpoint {
     Cut cut = NoAnalysisId;
     Command command;
     EndpointPurpose purpose = EndpointPurpose::Completion;
-    // Index into decisions, or into channels for a qualified cyclic result.
+    // RecurringCompletion indexes channels; ordinary completion indexes decisions.
     std::size_t request = NoAnalysisId;
     std::size_t acknowledges = NoAnalysisId;
 };
@@ -55,6 +55,23 @@ struct SelectedChannel {
     unsigned cell = 0, key = 0;
     Pipe source = Pipe::S, observer = Pipe::S;
     std::vector<Cut> publications, acquisitions;
+    std::size_t owner = NoAnalysisId;
+};
+// A clause is conditional on the original observation at its exact cut. Its
+// snapshot is established by the selected ledger at version, never assumed by
+// the checker. Fixed physical cell/key names are not dynamic generation ranks.
+struct SelectedRoleClause {
+    Cut cut = NoAnalysisId;
+    std::size_t observation = NoAnalysisId;
+    uint64_t version = 0;
+    FrontierState incoming, beforeIssue, outgoing;
+};
+struct SelectedLoopInterface {
+    std::size_t owner = NoAnalysisId;
+    Cut entry = NoAnalysisId, exit = NoAnalysisId;
+    uint64_t version = 0;
+    FrontierState incoming, outgoing;
+    std::vector<SelectedRoleClause> clauses;
 };
 struct SelectedWork {
     uint64_t frontierVisits = 0, selectedUpdates = 0, replaySiteEvaluations = 0;
@@ -79,13 +96,19 @@ struct SelectedPlan {
     std::vector<SelectedDecision> decisions;
     std::vector<SelectedChannel> channels;
     std::vector<SelectedUpdate> updates;
+    // Populated only from the final, entry-containing original-graph proof.
+    std::vector<SelectedLoopInterface> loops;
     FrontierCheck certificate;
     SelectedWork work;
 };
 
-// F1--F8 service, not a new pass mode. The live handoff driver remains gated.
+// F1--F8 construction service used by the live handoff pass.
 // Fixed words are preserved in order. Unsupported typed effects are refused,
-// never erased or sent to the historical constructor on failure.
+// never erased or delegated to another constructor on failure.
+// Read-only physical-role qualification. This grants neither completion nor
+// event credit and does not imply that construction or allocation will succeed.
+bool hasQualifiedRecurringAccesses(const Program&);
+
 SelectedPlan constructSelectedPlan(const Program&, const Commands& fixed = {});
 
 } // namespace mlir::pto::oahs

@@ -175,14 +175,27 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     const auto wait = ledger.append(current,
         {Command::Acquire, source, observer, number}, EndpointPurpose::Completion, request);
     decision.endpoints.push_back(wait);
-    if (!update()) {
-        return false;
-    }
     if (!closed) {
-        return true;
+        return update();
     }
-    const auto reverse = retained ? binding->second.second : reusable(observer, source, currentState());
-    if (reverse == NoAnalysisId || !canPublish(currentState(), reverse)) {
+    // A recurring closed word is one selected edit. Replaying its forward half
+    // over a backedge before adding its acknowledgment would reject a protocol
+    // that is deliberately not complete yet. Select the reply from the actual
+    // local forward transfers, then check the complete word on the full graph.
+    if (publication != current) {
+        return fail(SelectedFailure::MissingParticipation, "closed word requires one common cut", current);
+    }
+    auto afterForward = currentState();
+    const auto offset = ledger.word(current).size() - 2;
+    auto sent = frontier.command(afterForward.causal,
+        {Command::Publish, source, observer, number}, {current, offset});
+    if (!sent.applied) return fail(SelectedFailure::SelectedUpdate, sent.reason, current);
+    auto acquired = frontier.command(sent.state,
+        {Command::Acquire, source, observer, number}, {current, offset + 1});
+    if (!acquired.applied) return fail(SelectedFailure::SelectedUpdate, acquired.reason, current);
+    afterForward.causal = std::move(acquired.state);
+    const auto reverse = retained ? binding->second.second : reusable(observer, source, afterForward);
+    if (reverse == NoAnalysisId || !canPublish(afterForward, reverse)) {
         return fail(SelectedFailure::EventResource,
             "common-cut acknowledgment has no independently reusable reverse key", current);
     }

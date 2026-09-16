@@ -275,7 +275,7 @@ def main() -> None:
     run = subprocess.run([str(driver)], capture_output=True, text=True, timeout=180, check=False)
     require(run.returncode == 0, ("C++ driver failed", run.returncode, run.stderr))
     cases = [json.loads(line) for line in run.stdout.splitlines() if line.strip()]
-    require(len(cases) == 108, ("changed acceptance denominator", len(cases)))
+    require(len(cases) == 110, ("changed acceptance denominator", len(cases)))
     ref = reference_module()
     paired = paired_module()
     counts = {"constructed": 0, "exact_reference_states": 0, "fact_implications": 0,

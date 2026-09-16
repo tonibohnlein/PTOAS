@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s --implicit-check-not=EVENT_ID1 --implicit-check-not="pto.barrier <PIPE_MTE2>"
 
 module attributes {pto.target_arch = "a3"} {
   func.func @repeated_loop(%src: !pto.partition_tensor_view<1x32xf32>,
@@ -27,21 +27,35 @@ module attributes {pto.target_arch = "a3"} {
   }
 }
 
-// The generic selected F8 protocol keeps both directions balanced inside the
-// body. Zero trips execute no event commands; only return performs retirement.
+// Qualified F8 roles distinguish first/reused and next/final visits. Only a
+// reused visit waits for the preceding reader; only a visit with a successor
+// publishes its release. The single ready key is shared by all four cases.
+// Payload remains outside generated guards. Zero trips execute no events.
 // CHECK-LABEL: func.func @repeated_loop
-// CHECK: scf.for
-// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// CHECK: scf.for [[IV:%[a-zA-Z0-9_]+]] = {{.*}} to [[N:%[a-zA-Z0-9_]+]] step
+// CHECK: arith.cmpi sge, [[IV]],
+// CHECK: scf.if
 // CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
-// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
-// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
-// CHECK-NEXT: pto.barrier <PIPE_MTE2>
+// CHECK-NEXT: }
+// CHECK: arith.cmpi sge, [[IV]],
+// CHECK: scf.if
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// CHECK-NEXT: }
 // CHECK-NEXT: pto.tload
-// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
-// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
-// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
-// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID1>]
+// CHECK-COUNT-4: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK-NEXT: }
 // CHECK-NEXT: pto.tadd
+// CHECK: arith.subi [[N]], [[IV]]
+// CHECK: arith.cmpi sgt,
+// CHECK: scf.if
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// CHECK-NEXT: }
+// CHECK: arith.subi [[N]], [[IV]]
+// CHECK: arith.cmpi sgt,
+// CHECK: scf.if
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
+// CHECK-NEXT: }
 // CHECK-NEXT: }
 // CHECK-NEXT: pto.barrier <PIPE_ALL>
 // CHECK-NEXT: return

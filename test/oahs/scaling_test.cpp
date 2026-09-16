@@ -48,7 +48,7 @@ int main() {
     for(unsigned i=0;i<depth;++i) r={o::Region::For,{std::move(r)},0,true};
     p.body=std::move(r); o::Commands commands(1);
     o::detail::Transfer transfer(p,commands);
-    CHECK(transfer.run().kind==o::detail::Failure::None);
+    CHECK(transfer.inspect({false}).verified());
     CHECK(transfer.evaluationCount()<=2*depth+3);
     std::cout << "empty depth=" << depth << " sites=" << transfer.siteCount()
               << " evaluations=" << transfer.evaluationCount() << '\n';
@@ -63,7 +63,7 @@ int main() {
     p.body=std::move(r);o::Commands commands(2);
     commands[0]={{o::Command::Barrier,o::Pipe(0)}};
     o::detail::Transfer transfer(p,commands);
-    CHECK(transfer.run().kind==o::detail::Failure::None);
+    CHECK(transfer.inspect({false}).verified());
     CHECK(transfer.evaluationCount()<=10*(depth+2));
     commands[0].clear();CHECK(!o::verify(p,commands).success);
     std::cout<<"payload depth="<<depth<<" evaluations="<<transfer.evaluationCount()<<'\n';
