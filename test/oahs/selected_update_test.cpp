@@ -6,7 +6,41 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedTestSupport.h"
+#include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
 using namespace selected_test;
+namespace mlir::pto::oahs::selected {
+// Inspect intermediate construction checkpoints, not the already-cold final
+// certificate. Keep the production API free of a second replay/planner mode.
+struct ReplayTestAccess {
+    static void compare(const Program& program, Cut edit, Pipe pipe) {
+        Constructor c(program);
+        auto plan = c.run({});
+        require(plan.success, plan.reason);
+        c.current = c.control.graph.exit;
+        c.activeComponent = c.control.component[c.current];
+        c.activeOffset = 0;
+        c.ledger.append(edit, {Command::Barrier, pipe, pipe, 0}, EndpointPurpose::Fixed);
+        require(c.replay(), c.cache.reason);
+        auto reused = c.cache;
+        c.cache = {};
+        require(c.replay(), c.cache.reason);
+        auto sameState = [](const State& a, const State& b) {
+            require(a.causal == b.causal && a.latest == b.latest && a.consumptions == b.consumptions,
+                    "incremental selected checkpoint differs from cold replay");
+        };
+        require(reused.cuts.size() == c.cache.cuts.size(), "checkpoint population");
+        for (Cut site = 0; site < reused.cuts.size(); ++site) {
+            sameState(reused.cuts[site].incoming, c.cache.cuts[site].incoming);
+            sameState(reused.cuts[site].before, c.cache.cuts[site].before);
+            sameState(reused.cuts[site].outgoing, c.cache.cuts[site].outgoing);
+        }
+        require(reused.afterEndpoint.size() == c.cache.afterEndpoint.size(), "endpoint population");
+        for (const auto& entry : reused.afterEndpoint) {
+            sameState(entry.second, c.cache.afterEndpoint.at(entry.first));
+        }
+    }
+};
+} // namespace mlir::pto::oahs::selected
 namespace {
 const auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE3;
 o::Command post(o::Pipe a, o::Pipe b, unsigned key = 0) { return {o::Command::Publish, a, b, key}; }
@@ -88,6 +122,55 @@ void joinedPrecisionBoundary()
     require(joined.applied && !f.issue(transfer(joined.state, R, Q), 1).applied,
             "must-join may lose a disjunction resolved by a later transfer");
 }
+void replayReusesUnchangedPrefix()
+{
+    // Five unrelated writes precede the first consumer. Every selected update
+    // must recompute only the sites from its earliest changed word to the
+    // consumer; the unchanged prefix components keep their previous solution.
+    auto p = base(6);
+    p.operations = {op(P, {{0, false, true, true}}), op(P, {{1, false, true, true}}),
+                    op(P, {{2, false, true, true}}), op(P, {{3, false, true, true}}),
+                    op(P, {{4, false, true, true}}), op(Q, {{4, true, false}}),
+                    op(Q, {{3, true, false}}), op(R, {{2, true, false}})};
+    const auto result = accepted(p);
+    require(result.work.selectedUpdates >= 2 && result.updates.size() == result.work.selectedUpdates,
+            "two independent transfers are selected");
+    for (const auto& update : result.updates) {
+        require(!update.changedCuts.empty(), "an update records its changed words");
+        const auto first = *std::min_element(update.changedCuts.begin(), update.changedCuts.end());
+        const auto last = *std::max_element(update.changedCuts.begin(), update.changedCuts.end());
+        require(update.siteEvaluations <= last - first + 1,
+                "replay recomputes only from the earliest changed word to the consumer");
+    }
+    require(result.work.replaySiteEvaluations < result.commands.size() * result.work.selectedUpdates,
+            "reused prefix components are not re-evaluated");
+}
+void sharedObservationReplay()
+{
+    auto p = base(1, 1);
+    p.operations = {op(P, {{0, false, true, true}})};
+    o::ObservedControl graph;
+    graph.qualification = "original shared boundary observations";
+    graph.sites.resize(4);
+    graph.observations = {{10, {}, true}, {11, {}, true}, {12, {}, true}};
+    // Execution order differs from numeric order. One emitted word is visible
+    // at both sites 1 and 0, including the earlier noncanonical occurrence.
+    graph.entry = 2;
+    graph.exit = 3;
+    graph.sites[2] = {0, 0, {1}, {}, 0};
+    graph.sites[1] = {o::NoControlId, 1, {0}, {}, 0};
+    graph.sites[0] = {o::NoControlId, 1, {3}, {}, 0};
+    graph.sites[3] = {o::NoControlId, 2, {}, {}, 0};
+    p.observed = graph;
+    o::selected::ReplayTestAccess::compare(p, 0, P);
+    // A canonical member can be unreachable while another member is live.
+    p.observed->sites[1].successors = {3};
+    o::selected::ReplayTestAccess::compare(p, 0, P);
+    p = base(1, 1);
+    p.operations = {op(P, {{0, true, false}}), op(P, {{0, true, false}})};
+    p.body = seq({{o::Region::For, {leaf(0)}, 0, true}, leaf(1)});
+    o::selected::ReplayTestAccess::compare(p, 0, P);
+}
 void recurringRoleIsolation()
 {
     auto p = base(2, 2);
@@ -106,6 +189,8 @@ int main()
     sourceTimeAndNeighbors();
     retirementAlternatives();
     joinedPrecisionBoundary();
+    replayReusesUnchangedPrefix();
+    sharedObservationReplay();
     recurringRoleIsolation();
     std::cout << "selected-ledger update, boundary and refusal tests passed\n";
 }

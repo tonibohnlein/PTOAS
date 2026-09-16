@@ -5,6 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
+#include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include "PTO/Transforms/OAHS/Analysis.h"
 #include "GraphOracle.h"
 #include "../../lib/PTO/Transforms/OAHS/Transfer.h"
@@ -117,7 +118,7 @@ int main() {
   CHECK(!has(empty,1,3,o::CompletionRequirement::RAW));
   CHECK(empty.cuts[3].beforeIssue->pending[1][0]);
   CHECK(empty.cuts[3].beforeIssue->pending[1][1]);
-  auto plan=o::construct(p); CHECK(plan.success); accepted(p,plan.commands);
+  auto plan=o::constructSelectedPlan(p); CHECK(plan.success); accepted(p,plan.commands);
 
   // v0.5 section 7.5, with NO episode, rank or guard refinement prerequisites.
   p.body={o::Region::For,{seq({leaf(0),{o::Region::Choice,{seq({leaf(1)}),seq({leaf(2)})}},leaf(3)})},0,true};
@@ -135,7 +136,7 @@ int main() {
   CHECK(multiple.contexts[otherwise].kind==o::AnalysisContext::ElseArm);
   CHECK(multiple.contexts[then].ownerSite==multiple.contexts[otherwise].ownerSite);
   CHECK(multiple.contexts[multiple.contexts[then].parent].kind==o::AnalysisContext::ForBody);
-  plan=o::construct(p); CHECK(plan.success); accepted(p,plan.commands,5);
+  plan=o::constructSelectedPlan(p); CHECK(plan.success); accepted(p,plan.commands,5);
   const auto reduced=o::analyze(p,plan.commands,{false}); CHECK(reduced.verified());
 
   // While before executes even when after does not; contexts must not be folded.
@@ -145,7 +146,7 @@ int main() {
   CHECK(has(wr,0,2,o::CompletionRequirement::RAW));
   CHECK(wr.contexts[wr.cuts[0].context].kind==o::AnalysisContext::WhileBefore);
   CHECK(wr.contexts[wr.cuts[1].context].kind==o::AnalysisContext::WhileAfter);
-  plan=o::construct(w); CHECK(plan.success); accepted(w,plan.commands,4);
+  plan=o::constructSelectedPlan(w); CHECK(plan.success); accepted(w,plan.commands,4);
 
   // Independent fan-in and multiple readers remain separate components.
   auto fan=base(); fan.operations={op(0,0,false,true),op(1,1,false,true),op(2,0,true,false)};
@@ -293,7 +294,7 @@ int main() {
     else
       q.body=seq({leaf(0),{o::Region::While,{seq({leaf(1)}),
           seq({{o::Region::Choice,{seq({leaf(2)}),seq({leaf(3)})}}})}},leaf(4)});
-    auto result=o::construct(q); CHECK(result.success);
+    auto result=o::constructSelectedPlan(q); CHECK(result.success);
     accepted(q,result.commands,2);
     compare(q,o::Commands(q.operations.size()+1));
     for(unsigned trial=0;trial<8;++trial) {

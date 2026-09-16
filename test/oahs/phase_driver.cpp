@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Test-only interchange driver. Links the actual production implementation.
+#include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include "PTO/Transforms/OAHS/Phases.h"
 #include <iostream>
 #include <iomanip>
@@ -173,7 +174,7 @@ int main() {
     bool constructed=false;
     std::string reason;
     if(construction) {
-      auto plan=o::construct(p);
+      auto plan=o::constructSelectedPlan(p);
       constructed=plan.success;
       reason=plan.reason;
       if(plan.success)c=plan.commands;
