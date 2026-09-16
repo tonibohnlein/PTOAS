@@ -70,6 +70,7 @@ PipelineType nativePipe(Pipe value) {
 }
 struct Import {
   Program program;
+  SmallVector<SyncProtocolModel, 0> protocols;
   SmallVector<mlir::Operation *> payload;
   SmallVector<mlir::Operation *> anchors;
   SmallVector<Cut> phaseCuts;
@@ -316,66 +317,6 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out) {
 LogicalResult import(func::FuncOp function, Import &out) {
   if (!function.getBody().hasOneBlock())
     return function.emitError("handoff: function requires one CFG entry block");
-  // Audit before production translation, which may otherwise skip an unknown
-  // operation. Completeness comes from the operation declaration, never a name.
-  WalkResult audited = function.walk([&](mlir::Operation *op) {
-    if (op == function.getOperation() ||
-        isa<func::ReturnOp, scf::YieldOp, scf::ConditionOp>(op) ||
-        isa<scf::ForOp, scf::WhileOp, scf::IfOp>(op))
-      return WalkResult::advance();
-    if (op->getNumRegions()) {
-      op->emitError("handoff: unrepresented structured operation");
-      return WalkResult::interrupt();
-    }
-    if (getSyncMacroModel(op)) {
-      if (!isa<MacroSyncOpInterface>(op)) {
-        op->emitError("handoff: macro model lacks a completeness declaration");
-        return WalkResult::interrupt();
-      }
-      op->emitError("handoff: complete macro analysis import is not connected");
-      return WalkResult::interrupt();
-    }
-    if (isa<AuthoredSyncOpInterface>(op)) {
-      op->emitError("handoff: authored protocol import is not connected");
-      return WalkResult::interrupt();
-    }
-    if (isa<VisibilitySyncOpInterface>(op)) {
-      op->emitError("handoff: visibility boundary import is not connected");
-      return WalkResult::interrupt();
-    }
-    if (auto physical = dyn_cast<OpPipeInterface>(op)) {
-      auto contract = dyn_cast<SinglePhaseSyncOpInterface>(op);
-      if (!contract || !contract.hasCompleteSinglePhaseSyncEffects())
-        return op->emitError(
-                   "handoff: incomplete single-phase semantic declaration"),
-               WalkResult::interrupt();
-      if (!pipe(physical.getPipe()))
-        return op->emitError(
-                   "handoff: pipeline outside native target contract"),
-               WalkResult::interrupt();
-      out.payload.push_back(op);
-      return WalkResult::advance();
-    }
-    if (isa<SyncStorageOpInterface>(op) || isMemoryEffectFree(op))
-      return WalkResult::advance();
-    auto effects = dyn_cast<MemoryEffectOpInterface>(op);
-    SmallVector<MemoryEffects::EffectInstance> entries;
-    if (effects)
-      effects.getEffects(entries);
-    // Allocation declares storage, not an asynchronous payload phase.
-    if (!effects || entries.empty() ||
-        llvm::any_of(entries, [&](const auto &e) {
-          return !isa<MemoryEffects::Allocate>(e.getEffect()) ||
-                 !e.getValue() || e.getValue().getDefiningOp() != op;
-        })) {
-      op->emitError("handoff: unrepresented operation effects");
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
-  if (audited.wasInterrupted())
-    return failure();
-
   MemoryDependentAnalyzer aliases;
   SyncIRs translated;
   Buffer2MemInfoMap buffers;
@@ -385,20 +326,28 @@ LogicalResult import(func::FuncOp function, Import &out) {
     return failure();
   if (failed(closeStructuredSyncOrigins(function, translated, buffers)))
     return failure();
+  // The shared translator owns semantic qualification. Import the translated
+  // phases; do not maintain a second opcode admission/effect extraction path.
+  auto semantics = translator.describeSemantics();
   DenseMap<mlir::Operation *, CompoundInstanceElement *> phases;
-  for (const auto &entry : translated) {
-    if (auto *phase = dyn_cast<CompoundInstanceElement>(entry.get())) {
-      if (phase->macroOpInstanceId >= 0 || phases.count(phase->elementOp))
-        return function.emitError(
-            "handoff: translated phase population mismatch");
-      phases[phase->elementOp] = phase;
-    } else if (!isa<PlaceHolderInstanceElement, LoopInstanceElement,
-                    BranchInstanceElement>(entry.get()))
-      return function.emitError("handoff: unexpected translated control");
+  for (const auto &record : semantics.operations) {
+    if (!record.gap.empty())
+      return record.operation->emitError("handoff: shared sync semantics: ")
+             << record.gap;
+    if (record.kind != SyncSemanticRecord::Ordinary &&
+        record.kind != SyncSemanticRecord::Protocol)
+      continue;
+    if (record.protocol)
+      out.protocols.push_back(*record.protocol);
+    if (record.phases.empty())
+      continue;
+    auto *phase = record.phases.front();
+    if (!pipe(static_cast<PIPE>(phase->kPipeValue)))
+      return record.operation->emitError(
+          "handoff: pipeline outside native target contract");
+    out.payload.push_back(record.operation);
+    phases[record.operation] = phase;
   }
-  if (phases.size() != out.payload.size())
-    return function.emitError(
-        "handoff: payload population differs from translation");
 
   DenseMap<mlir::Operation *, unsigned> operationIds;
   for (auto [i, op] : llvm::enumerate(out.payload))
@@ -477,39 +426,13 @@ LogicalResult import(func::FuncOp function, Import &out) {
   for (unsigned i = 0; i < out.payload.size(); ++i) {
     auto *op = out.payload[i];
     auto *phase = phases.lookup(op);
-    auto declared = dyn_cast<MemoryEffectOpInterface>(op);
-    if (!phase || !declared ||
-        phase->kPipeValue !=
-            static_cast<PipelineType>(cast<OpPipeInterface>(op).getPipe()))
-      return op->emitError("handoff: translated pipeline or effects mismatch");
-    SmallVector<MemoryEffects::EffectInstance> effects;
-    declared.getEffects(effects);
-    for (const auto &e : effects) {
-      if (!e.getValue() || (!isa<MemoryEffects::Read>(e.getEffect()) &&
-                            !isa<MemoryEffects::Write>(e.getEffect())))
-        return op->emitError("handoff: nonordinary declared memory effect");
-      const auto &mapped = isa<MemoryEffects::Write>(e.getEffect())
-                               ? phase->defVec
-                               : phase->useVec;
-      if (llvm::none_of(mapped, [&](const BaseMemInfo *m) {
-            return m->baseBuffer == e.getValue();
-          }))
-        return op->emitError(
-            "handoff: declared effect missing from translation");
-    }
     Operation imported;
-    imported.pipe = *pipe(cast<OpPipeInterface>(op).getPipe());
+    imported.pipe = *pipe(static_cast<PIPE>(phase->kPipeValue));
     imported.original = i;
     imported.complete = true;
     out.program.operations.push_back(std::move(imported));
     auto add = [&](const auto &memories, bool write) -> LogicalResult {
       for (const BaseMemInfo *memory : memories) {
-        if (llvm::none_of(effects, [&](const auto &e) {
-              return e.getValue() == memory->baseBuffer &&
-                     (write ? isa<MemoryEffects::Write>(e.getEffect())
-                            : isa<MemoryEffects::Read>(e.getEffect()));
-            }))
-          return op->emitError("handoff: undeclared translated effect");
         // Admit the same translated storage scopes as production autosync.
         // Visibility remains a separate contract below; ordinary GM byte
         // completion is intentionally governed by production alias behavior.
@@ -594,6 +517,13 @@ LogicalResult import(func::FuncOp function, Import &out) {
       "hardware guarantee";
   out.program.invocation.boundary =
       "kernel return requires completion of asynchronous physical phases";
+  if (llvm::any_of(semantics.operations, [](const auto &record) {
+        return record.kind == SyncSemanticRecord::Protocol;
+      }))
+    out.program.invocation.boundary +=
+        "; preserved A3 GM tile FIFO peer matching/progress contract; "
+        "cross-core flags remain owned by the original protocol in their "
+        "separate namespace; no local completion credit from peer events";
   return importObservedCuts(function, out);
 }
 
@@ -1010,6 +940,7 @@ LogicalResult analyzeHandoffSync(func::FuncOp function,
     return failure();
   result.analysis = analyze(input.program);
   result.program = std::move(input.program);
+  result.protocols = std::move(input.protocols);
   result.phases = std::move(input.payload);
   result.cuts = std::move(input.anchors);
   result.phaseCuts = std::move(input.phaseCuts);

@@ -13,6 +13,7 @@
 
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/IR/PTOMultiBuffer.h"
+#include "PTO/IR/SyncResources.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -23,8 +24,10 @@
 #include "llvm/Support/FormatVariadic.h"
 // [P0 新增] 引入副作用接口和 PTO 接口
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include <optional>
+#include <limits>
 
 #define DEBUG_TYPE "pto-ir-translator"
 
@@ -294,6 +297,7 @@ static pto::TCoreType getSyncHelperCoreType(pto::PipelineType pipe) {
 // 1. 构建入口
 // ============================================================================
 LogicalResult PTOIRTranslator::Build() {
+  translated_ = false;
   Region &funcRegion = func_.getBody();
   UpdateKernelArgMemInfo();
   if (failed(RecursionIR(&funcRegion))) {
@@ -303,7 +307,196 @@ LogicalResult PTOIRTranslator::Build() {
     func_.emitError("failed to translate PTO synchronization semantics");
     return failure();
   }
+  // TPOP rebinds its tile descriptor. Declarations get exact slot envelopes
+  // at creation. Other original handles (arguments, views, carried values)
+  // may have aliases formed before rebinding: conservatively retain unknown
+  // coverage in that local space rather than using their old allocation.
+  func_.walk([&](Operation *op) {
+    auto model = getSyncProtocolModel(op);
+    if (!model || !model->complete() ||
+        model->kind != SyncProtocolModel::Receive ||
+        model->tile.getDefiningOp<DeclareTileOp>())
+      return;
+    auto space = getTileAddressSpace(cast<TileBufType>(model->tile.getType()));
+    for (auto &entry : buffer2MemInfoMap_)
+      for (auto &info : entry.second)
+        if (info->scope == space) info->aliasesUnknownRange = true;
+  });
+  translated_ = true;
   return success();
+}
+
+SyncSemanticReport PTOIRTranslator::describeSemantics() const {
+  SyncSemanticReport report;
+  if (!translated_) {
+    auto function = func_;
+    report.operations.push_back({function.getOperation(),
+        SyncSemanticRecord::Unmodeled, {}, "physical translation did not succeed", std::nullopt, std::nullopt});
+    return report;
+  }
+  DenseMap<Operation *, SmallVector<CompoundInstanceElement *>> phases;
+  for (const auto &entry : syncIR_)
+    if (auto *phase = dyn_cast<CompoundInstanceElement>(entry.get()))
+      phases[phase->elementOp].push_back(phase);
+
+  auto function = func_;
+  if (!function.getBody().hasOneBlock())
+    report.operations.push_back({function.getOperation(),
+        SyncSemanticRecord::Control, {},
+        "function requires structured single-entry-block semantics", std::nullopt, std::nullopt});
+  function.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (op == function.getOperation())
+      return;
+    SyncSemanticRecord record;
+    record.operation = op;
+    record.phases = phases.lookup(op);
+    auto finish = [&](SyncSemanticRecord::Kind kind, StringRef gap = {}) {
+      record.kind = kind;
+      record.gap = gap.str();
+      report.operations.push_back(std::move(record));
+    };
+    if (isa<scf::ForOp, scf::WhileOp, scf::IfOp, scf::YieldOp,
+            scf::ConditionOp, func::ReturnOp>(op)) {
+      for (auto &region : op->getRegions())
+        if (!region.empty() && !region.hasOneBlock())
+          return finish(SyncSemanticRecord::Control,
+                        "multiple control blocks require CFG semantics");
+      return finish(SyncSemanticRecord::Control);
+    }
+    if (op->getNumRegions() || isa<BranchOpInterface>(op))
+      return finish(SyncSemanticRecord::Unmodeled,
+                    "unrepresented structured operation");
+    if (auto model = getSyncProtocolModel(op)) {
+      record.protocol = *model;
+      if (!model->complete())
+        return finish(SyncSemanticRecord::Protocol, model->gap);
+      const bool physical = model->pipeline != PIPE::PIPE_UNASSIGNED;
+      if (record.phases.size() != unsigned(physical))
+        return finish(SyncSemanticRecord::Protocol,
+                      "protocol physical phase population differs from its lowering");
+      if (physical) {
+        auto *phase = record.phases.front();
+        if (phase->kPipeValue != static_cast<PipelineType>(model->pipeline))
+          return finish(SyncSemanticRecord::Protocol,
+                        "protocol physical pipeline differs from its lowering");
+        auto matches = [](const auto &memories, const auto &values) {
+          return llvm::all_of(values, [&](Value value) {
+            return llvm::any_of(memories, [&](const BaseMemInfo *m) {
+              return m->baseBuffer == value;
+            });
+          }) && llvm::all_of(memories, [&](const BaseMemInfo *m) {
+            return llvm::is_contained(values, m->baseBuffer);
+          });
+        };
+        if (!matches(phase->useVec, model->reads) ||
+            !matches(phase->defVec, model->writes))
+          return finish(SyncSemanticRecord::Protocol,
+                        "protocol byte effects missing from physical translation");
+      }
+      return finish(SyncSemanticRecord::Protocol);
+    }
+    if (auto model = getSyncMacroModel(op)) {
+      // Keep the existing physical phases. Internal completion and hidden key
+      // lifetimes are not yet a complete composable contract in SyncMacroModel.
+      record.macro = std::move(model);
+      return finish(SyncSemanticRecord::Macro,
+                    "macro internal ordering/private-resource contract incomplete");
+    }
+    if (isa<AuthoredSyncOpInterface>(op))
+      return finish(SyncSemanticRecord::Authored,
+                    "authored protocol contract incomplete");
+    if (isa<VisibilitySyncOpInterface>(op))
+      return finish(SyncSemanticRecord::Visibility,
+                    "visibility contract incomplete");
+    if (isa<func::CallOp>(op))
+      return finish(SyncSemanticRecord::Unmodeled,
+                    "call boundary contract incomplete");
+
+    if (isa<OpPipeInterface>(op) || !record.phases.empty()) {
+      if (record.phases.size() != 1)
+        return finish(SyncSemanticRecord::Ordinary,
+                      "ordinary operation requires one translated physical phase");
+      auto *phase = record.phases.front();
+      if (auto pipeline = dyn_cast<OpPipeInterface>(op))
+        if (phase->kPipeValue != static_cast<PipelineType>(pipeline.getPipe()))
+          return finish(SyncSemanticRecord::Ordinary,
+                        "declared pipeline differs from translated phase");
+      // Optional variant restrictions live with the operation, not in either
+      // constructor. Ordinary operations need no additional registration.
+      if (auto variant = dyn_cast<SinglePhaseSyncOpInterface>(op))
+        if (!variant.hasCompleteSinglePhaseSyncEffects())
+          return finish(SyncSemanticRecord::Ordinary,
+                        "operation variant requires additional lowering semantics");
+      // Phase permissions are not ordinary byte completion. This applies to
+      // every operation carrying these typed lowering attributes.
+      for (auto attr : op->getAttrs()) {
+        if (auto acc = dyn_cast<AccPhaseAttr>(attr.getValue()))
+          if (acc.getValue() != AccPhase::Unspecified)
+            return finish(SyncSemanticRecord::Ordinary,
+                          "phase/resource contract incomplete");
+        if (auto store = dyn_cast<STPhaseAttr>(attr.getValue()))
+          if (store.getValue() != STPhase::Unspecified)
+            return finish(SyncSemanticRecord::Ordinary,
+                          "phase/resource contract incomplete");
+      }
+      auto memory = dyn_cast<MemoryEffectOpInterface>(op);
+      if (!memory)
+        return finish(SyncSemanticRecord::Ordinary,
+                      "pipeline operation lacks memory-effect declaration");
+      SmallVector<MemoryEffects::EffectInstance> effects;
+      memory.getEffects(effects);
+      for (const auto &effect : effects) {
+        if (!effect.getValue() ||
+            effect.getResource() != SideEffects::DefaultResource::get() ||
+            !isa<MemoryEffects::Read, MemoryEffects::Write>(effect.getEffect()))
+          return finish(SyncSemanticRecord::Ordinary,
+                        "nonordinary memory/resource effect requires a contract");
+        const auto &mapped = isa<MemoryEffects::Write>(effect.getEffect())
+                                 ? phase->defVec : phase->useVec;
+        if (llvm::none_of(mapped, [&](const BaseMemInfo *m) {
+              return m->baseBuffer == effect.getValue();
+            }))
+          return finish(SyncSemanticRecord::Ordinary,
+                        "declared effect missing from physical translation");
+      }
+      auto declared = [&](const auto &memories, bool write) {
+        return llvm::all_of(memories, [&](const BaseMemInfo *m) {
+          return llvm::any_of(effects, [&](const auto &effect) {
+            return effect.getResource() == SideEffects::DefaultResource::get() &&
+                   effect.getValue() == m->baseBuffer &&
+                   (write ? isa<MemoryEffects::Write>(effect.getEffect())
+                          : isa<MemoryEffects::Read>(effect.getEffect()));
+          });
+        });
+      };
+      if (!declared(phase->defVec, true) || !declared(phase->useVec, false))
+        return finish(SyncSemanticRecord::Ordinary,
+                      "physical translation contains an undeclared effect");
+      return finish(SyncSemanticRecord::Ordinary);
+    }
+    if (isa<SyncStorageOpInterface>(op))
+      return finish(SyncSemanticRecord::Storage);
+    if (isMemoryEffectFree(op))
+      return finish(SyncSemanticRecord::Pure);
+    auto memory = dyn_cast<MemoryEffectOpInterface>(op);
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    if (memory)
+      memory.getEffects(effects);
+    if (memory && !effects.empty() && llvm::all_of(effects, [](const auto &e) {
+          return isTileDescriptorEffect(e) &&
+                 e.getValue() &&
+                 isa<MemoryEffects::Read, MemoryEffects::Write>(e.getEffect());
+        }))
+      return finish(SyncSemanticRecord::Descriptor);
+    if (memory && !effects.empty() && llvm::all_of(effects, [&](const auto &e) {
+          return isa<MemoryEffects::Allocate>(e.getEffect()) && e.getValue() &&
+                 e.getValue().getDefiningOp() == op &&
+                 buffer2MemInfoMap_.contains(e.getValue());
+        }))
+      return finish(SyncSemanticRecord::Storage);
+    finish(SyncSemanticRecord::Unmodeled, "unrepresented operation effects");
+  });
+  return report;
 }
 
 // ============================================================================
@@ -439,6 +632,20 @@ PTOIRTranslator::dispatchControlAndComputeOp(Operation *op) {
   }
   if (auto yieldOp = dyn_cast<scf::YieldOp>(op)) {
     UpdateYieldOpInfo(yieldOp);
+  } else if (auto protocol = getSyncProtocolModel(op);
+             protocol && protocol->complete()) {
+    // The lowering-owned model partitions conservative MLIR side effects into
+    // payload bytes and preserved external protocol state. Neither constructor
+    // needs to interpret queue opcodes or peer flags.
+    if (protocol->kind == SyncProtocolModel::Initialize) {
+      // FIFO indices address the whole GM root, not just its first element.
+      for (auto &info : buffer2MemInfoMap_[protocol->globalStorage])
+        info->allocateSize = 0;
+    }
+    if (protocol->pipeline != PIPE::PIPE_UNASSIGNED) {
+      MakeMacroCompound(op, static_cast<PipelineType>(protocol->pipeline),
+                        protocol->writes, protocol->reads, -1);
+    }
   } else if (getSyncMacroModel(op)) {
     UpdateMacroOpInfo(op);
   } else if (auto callOp = dyn_cast<func::CallOp>(op)) {
@@ -588,9 +795,30 @@ PTOIRTranslator::UpdateDeclareTileOpMemInfo(pto::DeclareTileOp op) {
     space = attr.getAddressSpace();
   }
 
-  auto info = std::make_unique<BaseMemInfo>(
-      result, result, space, SmallVector<uint64_t>{0}, sizeInBytes);
-  buffer2MemInfoMap_[result].emplace_back(info->clone());
+  bool bound = false;
+  for (Operation *user : result.getUsers()) {
+    auto protocol = getSyncProtocolModel(user);
+    if (!protocol || !protocol->complete() ||
+        protocol->kind != SyncProtocolModel::Receive || protocol->tile != result)
+      continue;
+    const auto base = protocol->localBase
+        ? getKnownPhysicalAddress(protocol->localBase) : std::optional<uint64_t>(0);
+    const bool fits = protocol->localSlots &&
+        sizeInBytes <= std::numeric_limits<uint64_t>::max() / protocol->localSlots;
+    const uint64_t span = fits ? sizeInBytes * protocol->localSlots : 0;
+    const bool known = base && fits &&
+        *base <= std::numeric_limits<uint64_t>::max() - span;
+    // Include every slot that this original pop may bind, including reuse by
+    // different SSA declarations. Do not pretend an unbound tile lives at 0.
+    buffer2MemInfoMap_[result].emplace_back(std::make_unique<BaseMemInfo>(
+        result, result, space, SmallVector<uint64_t>{known ? *base : 0},
+        span, known, !known));
+    bound = true;
+  }
+  if (!bound)
+    buffer2MemInfoMap_[result].emplace_back(std::make_unique<BaseMemInfo>(
+        result, result, space, SmallVector<uint64_t>{0}, sizeInBytes,
+        false, true));
   return success();
 }
 
@@ -1077,7 +1305,14 @@ void PTOIRTranslator::UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op) {
 
   uint64_t segmentSize = getSubViewSegmentSize(op, sourceType, elemBytes);
 
-  if (!hasSingleBaseAllocatedParents(buffer2MemInfoMap_[source])) {
+  // An envelope larger than the source tile represents multiple possible
+  // bindings (for example FIFO slots). A subview offset cannot narrow that
+  // envelope to the first binding; retain every possible root byte range.
+  const uint64_t sourceBytes = getTileBufferFootprintBytes(sourceType);
+  if (!hasSingleBaseAllocatedParents(buffer2MemInfoMap_[source]) ||
+      llvm::any_of(buffer2MemInfoMap_[source], [&](const auto &parent) {
+        return !sourceBytes || parent->allocateSize > sourceBytes;
+      })) {
     UpdateConservativeAliasBufferInfo(result, source);
     return;
   }
