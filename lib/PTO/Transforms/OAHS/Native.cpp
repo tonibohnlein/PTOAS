@@ -521,9 +521,10 @@ LogicalResult import(func::FuncOp function, Import &out) {
         return record.kind == SyncSemanticRecord::Protocol;
       }))
     out.program.invocation.boundary +=
-        "; preserved A3 GM tile FIFO peer matching/progress contract; "
+        "; preserved lowering-owned peer matching/participation/progress contracts; "
         "cross-core flags remain owned by the original protocol in their "
-        "separate namespace; no local completion credit from peer events";
+        "separate namespace; no local completion credit from peer events or "
+        "preserved intrinsic drains";
   return importObservedCuts(function, out);
 }
 

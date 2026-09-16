@@ -13,6 +13,43 @@
 std::optional<mlir::pto::SyncProtocolModel>
 mlir::pto::getSyncProtocolModel(Operation *op) {
   SyncProtocolModel model;
+  if (auto collective = dyn_cast<SyncAllOp>(op)) {
+    model.kind = SyncProtocolModel::Collective;
+    model.participants = collective.getCoreType().getValue();
+    if (getTargetArch(op) != PTOArch::A3) {
+      model.gap = "collective requires the qualified A3 lowering";
+      return model;
+    }
+    if (collective.getMode().getValue() != SyncAllMode::Hard) {
+      model.gap = "soft collective requires scratch, visibility, and private-event contracts";
+      return model;
+    }
+    if (collective.getGmWorkspace() || collective.getUsedCores()) {
+      model.gap = "hard collective must not have workspace or participant-count operands";
+      return model;
+    }
+    // pto-isa 0c112d61, a2a3/SyncAll.hpp::SYNCALL_IMPL and
+    // common/type.hpp. Hard SYNCALL has no payload/scratch byte accesses or
+    // directional local keys. Preserve the intrinsic's ALL and cross-core
+    // handshake; do not turn its device flags into local event reservations.
+    model.contract = "a3-hard-collective-v1/pto-isa-0c112d61";
+    model.localDrainBefore = true;
+    switch (*model.participants) {
+    case SyncCoreType::AIVOnly:
+      model.crossCoreFlagBase = 14;
+      model.crossCoreFlagCount = 1;
+      break;
+    case SyncCoreType::AICOnly:
+      model.crossCoreFlagBase = 11;
+      model.crossCoreFlagCount = 1;
+      break;
+    case SyncCoreType::Mix:
+      model.crossCoreFlagBase = 11;
+      model.crossCoreFlagCount = 3;
+      break;
+    }
+    return model;
+  }
   InitializeL2G2LPipeOp init;
   if (auto value = dyn_cast<InitializeL2G2LPipeOp>(op)) {
     init = value;
