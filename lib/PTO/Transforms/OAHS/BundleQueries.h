@@ -60,10 +60,11 @@ struct BundleQuery::Impl {
   const Program program;
   const Commands commands;
   const AnalysisOptions options;
+  mutable ReplaySession replay;
   const AnalysisResult before;
-  Impl(Program p, Commands c, AnalysisOptions o)
+  Impl(Program p, Commands c, AnalysisOptions o, bool incremental)
       : program(std::move(p)), commands(std::move(c)), options(o),
-        before(analyze(program, commands, options)) {}
+        replay(program, incremental), before(replay.analyze(commands, options)) {}
   BundleEvaluation evaluate(Commands candidate) const {
     BundleEvaluation out;
     out.commands = std::move(candidate);
@@ -71,7 +72,8 @@ struct BundleQuery::Impl {
       out.reason = "invalid base plan: " + before.reason;
       return out;
     }
-    out.analysis = analyze(program, out.commands, options);
+    out.analysis = replay.analyze(out.commands, options);
+    out.replay = replay.lastReplay();
     out.complete = out.analysis.complete;
     out.reason = out.analysis.reason;
     if (!out.complete)

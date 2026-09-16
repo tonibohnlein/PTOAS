@@ -12,6 +12,7 @@
 #include "Transfer.h"
 #include <algorithm>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -396,6 +397,9 @@ struct Packet {
   std::optional<unsigned> acknowledgment;
   std::vector<Cut> publications; // empty means the one handoff.publication
   std::vector<Cut> acquisitions; // observed alternatives, same dynamic channel
+  // A real multi-hop reply at each acquisition; mutually exclusive with the
+  // legacy direct acknowledgment. Added only for a reported rearm obligation.
+  std::vector<EventIdentity> routedAcknowledgment = {};
 };
 struct PacketBundle {
   std::vector<Packet> legs; // ordered at their common acquisition cut
@@ -452,6 +456,10 @@ Commands render(const Program &p, const Commands &barriers,
           at.push_back(
               {Command::Acquire, h.observer, h.source, *packet.acknowledgment});
         }
+        for (const auto &leg : packet.routedAcknowledgment) {
+          at.push_back({Command::Publish, leg.source, leg.observer, leg.key});
+          at.push_back({Command::Acquire, leg.source, leg.observer, leg.key});
+        }
       }
     }
   if (p.invocation.retirement == Program::InvocationContract::DrainAllAtReturn)
@@ -491,6 +499,8 @@ std::optional<unsigned> chooseKey(const Program &p,
             h.source == source && h.observer == observer && packet.key == key;
         used |= packet.acknowledgment && h.observer == source &&
                 h.source == observer && *packet.acknowledgment == key;
+        for (const auto &reply : packet.routedAcknowledgment)
+          used |= reply.source == source && reply.observer == observer && reply.key == key;
       }
     if (!used)
       return key;
@@ -500,7 +510,23 @@ std::optional<unsigned> chooseKey(const Program &p,
 // Retain all shortest topology routes, including lanes with no payload effects.
 // This is a finite placement policy, not completeness over all possible routes.
 std::vector<std::vector<Pipe>> routes(const Program &p, Pipe source,
-                                      Pipe observer) {
+                                      Pipe observer, bool simpleAlternatives = false) {
+  if (simpleAlternatives) {
+    std::vector<std::vector<Pipe>> out, todo{{source}};
+    while (!todo.empty()) {
+      auto path = std::move(todo.back()); todo.pop_back();
+      if (path.back() == observer) { out.push_back(std::move(path)); continue; }
+      for (unsigned b = PipeCount; b-- > 0;)
+        if (std::find(path.begin(), path.end(), Pipe(b)) == path.end() &&
+            !eligibleKeys(p, path.back(), Pipe(b)).empty()) {
+          auto next = path; next.push_back(Pipe(b)); todo.push_back(std::move(next));
+        }
+    }
+    std::stable_sort(out.begin(), out.end(), [](const auto &a, const auto &b) {
+      return a.size() != b.size() ? a.size() < b.size() : a < b;
+    });
+    return out;
+  }
   std::array<unsigned, PipeCount> distance;
   distance.fill(PipeCount);
   distance[lane(source)] = 0;
@@ -534,6 +560,59 @@ std::vector<std::vector<Pipe>> routes(const Program &p, Pipe source,
       }
   }
   return out;
+}
+// Enumerate every already-used eligible identity and one unused representative
+// in each direction. The remaining unused names are permutation-equivalent in
+// the current direction-only contract: reservations and all existing uses have
+// been considered. Keys have no hidden ordering semantics. Route paths are
+// simple, so a direction occurs only once within a new path. No key is assumed
+// safe merely because it was chosen. Every resulting word is replayed.
+std::vector<unsigned> keyChoices(const Program &p,
+                                 const std::vector<PacketBundle> &bundles,
+                                 Pipe source, Pipe observer, bool alternatives) {
+  const auto first = chooseKey(p, bundles, source, observer);
+  if (!first) return {};
+  std::vector<unsigned> out{*first};
+  if (!alternatives) return out;
+  for (auto k : eligibleKeys(p, source, observer)) {
+    if (k == *first) continue;
+    bool used = false;
+    for (const auto &b : bundles) for (const auto &packet : b.legs) {
+      used |= packet.handoff.source == source && packet.handoff.observer == observer && packet.key == k;
+      used |= packet.acknowledgment && packet.handoff.observer == source &&
+              packet.handoff.source == observer && *packet.acknowledgment == k;
+      for (const auto &reply : packet.routedAcknowledgment)
+        used |= reply.source == source && reply.observer == observer && reply.key == k;
+    }
+    if (used) out.push_back(k);
+  }
+  return out;
+}
+// Lazy Cartesian traversal; no all-assignment population is materialized.
+// Returning true from visit selects one protocol-correct assignment for this
+// route. This policy is finite but is not global allocation completeness.
+bool visitKeys(const Program &p, const std::vector<PacketBundle> &bundles,
+               const std::vector<Pipe> &path, bool alternatives,
+               const std::function<bool(const std::vector<unsigned> &)> &visit) {
+  std::vector<std::vector<unsigned>> pools;
+  for (std::size_t i = 1; i < path.size(); ++i) {
+    pools.push_back(keyChoices(p, bundles, path[i-1], path[i], alternatives));
+    if (pools.back().empty()) return false;
+  }
+  std::vector<unsigned> selected(pools.size());
+  std::function<bool(std::size_t)> step = [&](std::size_t i) {
+    if (i == pools.size()) return visit(selected);
+    for (auto k : pools[i]) { selected[i] = k; if (step(i+1)) return true; }
+    return false;
+  };
+  return step(0);
+}
+void countReplay(Result &result, const BundleEvaluation &trial) {
+  ++result.work.replayCalls;
+  result.work.replaySiteEvaluations += trial.analysis.stats.siteEvaluations;
+  result.work.replayReusedSites += trial.replay.reusedSites;
+  result.work.incrementalCalls += trial.replay.kind == ReplayStats::Incremental;
+  result.work.unchangedCalls += trial.replay.kind == ReplayStats::Unchanged;
 }
 // A general backward cut-frontier proposal: the immediately preceding physical
 // cuts along every predecessor arm. No matching or credit is assumed. Replay
@@ -581,9 +660,8 @@ Result validateProgram(const Program &p) {
   return result;
 }
 
-AnalysisResult analyze(const Program &p, const Commands &commands,
-                       AnalysisOptions options) {
-  AnalysisResult out;
+namespace {
+bool prepareAnalysisProgram(const Program &p, AnalysisResult &out) {
   if (!valid(p, out.reason)) {
     for (std::size_t i = 0; i < p.operations.size(); ++i) {
       const auto &op = p.operations[i];
@@ -598,7 +676,7 @@ AnalysisResult analyze(const Program &p, const Commands &commands,
     if (out.diagnostics.empty())
       out.diagnostics.push_back(
           {AnalysisDiagnostic::InvalidInput, NoAnalysisId, out.reason});
-    return out;
+    return false;
   }
   if (!supportedEffects(p, out.reason)) {
     for (std::size_t i = 0; i < p.operations.size(); ++i) {
@@ -623,20 +701,95 @@ AnalysisResult analyze(const Program &p, const Commands &commands,
     if (out.diagnostics.empty())
       out.diagnostics.push_back(
           {AnalysisDiagnostic::UnsupportedSemantics, NoAnalysisId, out.reason});
-    return out;
+    return false;
   }
+  return true;
+}
+bool prepareAnalysisCommands(const Program &p, const Commands &commands,
+                             AnalysisResult &out) {
   if (!commandsValid(p, commands, out.reason)) {
     out.diagnostics.push_back(
         {AnalysisDiagnostic::InvalidCommands, NoAnalysisId, out.reason});
-    return out;
+    return false;
   }
   if (p.finalBlocks) for (const auto &word : commands) for (const auto &c : word)
     if (c.kind == Command::BarrierAll) {
       out.reason = "phase ALL/retirement adapter is not qualified";
       out.diagnostics.push_back({AnalysisDiagnostic::UnsupportedSemantics, NoAnalysisId, out.reason});
-      return out;
+      return false;
     }
+  return true;
+}
+bool prepareAnalysis(const Program &p, const Commands &commands, AnalysisResult &out) {
+  return prepareAnalysisProgram(p, out) && prepareAnalysisCommands(p, commands, out);
+}
+} // namespace
+AnalysisResult analyze(const Program &p, const Commands &commands,
+                       AnalysisOptions options) {
+  AnalysisResult out;
+  if (!prepareAnalysis(p, commands, out)) return out;
   return detail::Transfer(p, commands).inspect(options);
+}
+
+struct ReplaySession::Impl {
+  const Program program;
+  const bool enabled;
+  std::optional<detail::TransferCheckpoint> checkpoint;
+  Commands previous;
+  std::optional<AnalysisResult> previousReport;
+  AnalysisOptions previousOptions;
+  ReplayStats stats;
+  AnalysisResult declarations;
+  const bool validProgram;
+  Impl(Program p, bool e) : program(std::move(p)), enabled(e),
+      validProgram(prepareAnalysisProgram(program, declarations)) {}
+};
+ReplaySession::ReplaySession(Program p, bool enabled)
+    : impl(std::make_unique<Impl>(std::move(p), enabled)) {}
+ReplaySession::~ReplaySession() = default;
+ReplaySession::ReplaySession(ReplaySession &&) noexcept = default;
+ReplaySession &ReplaySession::operator=(ReplaySession &&) noexcept = default;
+ReplayStats ReplaySession::lastReplay() const { return impl->stats; }
+void ReplaySession::clear() {
+  impl->checkpoint.reset(); impl->previousReport.reset();
+  impl->previous.clear(); impl->stats = {};
+}
+AnalysisResult ReplaySession::analyze(const Commands &commands, AnalysisOptions options) {
+  auto &self = *impl;
+  self.stats = {};
+  AnalysisResult out = self.declarations;
+  // Program/target/observations are an owned immutable value. Their complete
+  // declaration checks run once; actual candidate commands are always checked.
+  if (!self.validProgram || !prepareAnalysisCommands(self.program, commands, out)) {
+    self.stats.kind = ReplayStats::Invalid;
+    return out;
+  }
+  if (self.enabled && self.previousReport &&
+      self.previousOptions.captureStates == options.captureStates &&
+      detail::identicalCommands(commands, self.previous)) {
+    self.stats.kind = ReplayStats::Unchanged;
+    self.stats.reusedSites = self.previousReport->stats.staticSites;
+    out = *self.previousReport;
+    // Counters describe this invocation, not the original cached computation.
+    out.stats.siteEvaluations = out.stats.merges = out.stats.work = 0;
+    out.stats.certificationPasses = 0;
+    return out;
+  }
+  if (self.program.finalBlocks || !self.enabled) {
+    self.stats.kind = self.enabled ? ReplayStats::PhaseFull : ReplayStats::Disabled;
+    out = detail::Transfer(self.program, commands).inspect(options);
+    self.checkpoint.reset();
+  } else {
+    detail::TransferCheckpoint next;
+    out = detail::Transfer(self.program, commands).inspect(options,
+             self.checkpoint ? &*self.checkpoint : nullptr, &next, &self.stats);
+    if (out.complete) self.checkpoint = std::move(next);
+  }
+  if (out.complete && self.enabled) {
+    self.previous = commands; self.previousReport = out;
+    self.previousOptions = options;
+  }
+  return out;
 }
 AnalysisResult analyze(const Program &p) {
   return analyze(p, Commands(commandCutCount(p)));
@@ -679,8 +832,8 @@ Result verify(const Program &p, const Commands &commands) {
   return result;
 }
 
-BundleQuery::BundleQuery(Program p, Commands c, AnalysisOptions o)
-    : impl(std::make_unique<Impl>(std::move(p), std::move(c), o)) {}
+BundleQuery::BundleQuery(Program p, Commands c, AnalysisOptions o, bool incremental)
+    : impl(std::make_unique<Impl>(std::move(p), std::move(c), o, incremental)) {}
 BundleQuery::~BundleQuery() = default;
 BundleQuery::BundleQuery(BundleQuery &&) noexcept = default;
 BundleQuery &BundleQuery::operator=(BundleQuery &&) noexcept = default;
@@ -699,6 +852,7 @@ PrefixQuery::~PrefixQuery() = default;
 PrefixQuery::PrefixQuery(PrefixQuery &&) noexcept = default;
 PrefixQuery &PrefixQuery::operator=(PrefixQuery &&) noexcept = default;
 const AnalysisResult &PrefixQuery::analysis() const { return impl->report; }
+PrefixQueryStats PrefixQuery::statistics() const { return impl->stats; }
 std::vector<CompletionRequirement>
 PrefixQuery::consumerRequirements(Cut consumer) const {
   return impl->requirements(consumer);
@@ -793,21 +947,50 @@ PrefixQuery::coverByPrefixes(Cut consumer,
 }
 
 namespace {
+// Construction-only reuse of unsuppressed transfer invariants. This object
+// cannot export AnalysisResult or accept a program. Its state never crosses the
+// public certified replay boundary, and final verification is always cold.
+class ProposalReplay {
+  const Program &program;
+  Result &result;
+  bool enabled;
+  std::optional<detail::TransferCheckpoint> previous;
+public:
+  ProposalReplay(const Program &p, Result &r, bool use) : program(p), result(r), enabled(use) {}
+  detail::Failure run(const Commands &commands, bool payload = true,
+                      bool protocol = true, bool balance = false) {
+    detail::Transfer transfer(program, commands);
+    detail::TransferCheckpoint next;
+    ReplayStats stats;
+    auto failure = transfer.run(payload, protocol, balance,
+        enabled && previous ? &*previous : nullptr,
+        enabled && !program.finalBlocks ? &next : nullptr, &stats);
+    if (enabled && !program.finalBlocks) previous = std::move(next);
+    ++result.work.provisionalCalls;
+    result.work.provisionalSiteEvaluations += transfer.evaluationCount();
+    result.work.provisionalReusedSites += stats.reusedSites;
+    return failure;
+  }
+};
 Result constructAttempt(const Program &p,
                         const StorageFrontierAnalysis *storage,
-                        CandidateStage stage) {
+                        CandidateStage stage, ConstructionOptions options,
+                        bool expandedResources = false,
+                        bool allowConservative = true) {
   Result result;
+  ProposalReplay proposalsReplay(p, result, options.incrementalReplay);
   // These counters describe cumulative construction work, not the packets in
   // the final plan. Keep failed-search cost visible when switching to ALL.
   auto fallback = [&]() {
     Result checked;
-    if (stage == CandidateStage::Original)
+    if (stage == CandidateStage::Original && allowConservative)
       checked = conservative(p, true);
     else
       checked.reason = "restricted candidate stage requires widening";
     checked.bundleTrials += result.bundleTrials;
     checked.bundleSelections += result.bundleSelections;
     checked.protocolRepairs += result.protocolRepairs;
+    checked.work += result.work;
     return checked;
   };
   if (!valid(p, result.reason) || !supportedEffects(p, result.reason))
@@ -828,7 +1011,7 @@ Result constructAttempt(const Program &p,
     // Construction may temporarily speculate about protocol preconditions.
     // This is private proposal information, never AnalysisResult completion.
     // The public certified analysis is mandatory before final acceptance.
-    auto issue = detail::Transfer(p, actual).run(true, false);
+    auto issue = proposalsReplay.run(actual, true, false);
     if (issue.kind == detail::Failure::Hazard) {
       const auto consumer = canonicalCommandCut(p, issue.cut);
       const auto consumerOperation = operationAtCut(p, issue.cut);
@@ -881,7 +1064,7 @@ Result constructAttempt(const Program &p,
                         allowed.end());
         }
         const auto cover = query.coverByPrefixes(consumer, allowed);
-        BundleQuery replay(p, actual);
+        BundleQuery replay(p, actual, {}, options.incrementalReplay);
         const auto frontier = predecessorFrontier(p, consumer);
         struct Proposal {
           Pipe publisher;
@@ -985,22 +1168,30 @@ Result constructAttempt(const Program &p,
         std::optional<PacketBundle> pending, groupedPending;
         std::size_t groupedTargets = 0;
         for (const auto &proposal : proposals) {
-          for (const auto &path : routes(p, proposal.publisher, observer)) {
+          const bool expandResources = options.resourceAlternatives && expandedResources &&
+              (stage == CandidateStage::Relays || stage == CandidateStage::Original);
+          const auto paths = routes(p, proposal.publisher, observer, expandResources);
+          std::size_t certifiedLength = 0;
+          for (const auto &path : paths) {
+            // Preserve shortest-first behavior. Longer paths are needed only
+            // when shorter ones cannot produce certified progress (a pending
+            // recurrence is not a certificate). Numeric-name selection alone
+            // never makes a route feasible.
+            if (certifiedLength && path.size() > certifiedLength) break;
             if ((stage == CandidateStage::Nearest ||
                  stage == CandidateStage::Corridors) &&
                 path.size() != 2)
               continue;
+            visitKeys(p, packets, path, options.resourceAlternatives,
+                      [&](const std::vector<unsigned> &assignment) {
+            ++result.work.routeKeyTrials;
+            result.work.longerRouteTrials += !paths.empty() && path.size() > paths.front().size();
             PacketBundle bundle;
-            auto population = packets;
             for (std::size_t j = 0; j + 1 < path.size(); ++j) {
-              auto key = chooseKey(p, population, path[j], path[j + 1]);
-              if (!key) {
-                bundle.legs.clear();
-                break;
-              }
+              const auto key = assignment[j];
               Packet leg{
                   {path[j], path[j + 1], j ? consumer : proposal.cut, consumer},
-                  *key,
+                  key,
                   {},
                   j ? std::vector<Cut>{} : proposal.alternatives,
                   {}};
@@ -1013,16 +1204,14 @@ Result constructAttempt(const Program &p,
                 }
               }
               bundle.legs.push_back(leg);
-              // Include helper keys immediately in subsequent resource queries.
-              population.push_back({{leg}});
             }
             if (bundle.legs.empty())
-              continue;
+              return false;
             auto trial = packets;
             trial.push_back(bundle);
             auto commands = render(p, barriers, trial);
             const auto speculative =
-                detail::Transfer(p, commands).run(true, false);
+                proposalsReplay.run(commands, true, false);
             bool advances = speculative.kind == detail::Failure::None;
             if (speculative.kind == detail::Failure::Hazard) {
               if (canonicalCommandCut(p, speculative.cut) == consumer) {
@@ -1037,11 +1226,11 @@ Result constructAttempt(const Program &p,
                     lexicalRanks[speculative.cut] > lexicalRanks[consumer];
             }
             if (!advances && !p.observed)
-              continue;
+              return false;
             if (p.observed && advances &&
                 proposal.targets.size() > groupedTargets &&
                 proposal.targets.size() > 1 &&
-                detail::Transfer(p, commands).run(false, true, true).kind ==
+                proposalsReplay.run(commands, false, true, true).kind ==
                     detail::Failure::None) {
               // Matching is established; rearming can depend on not-yet-built
               // genuine storage returns. Keep this as a finite pending repair,
@@ -1051,8 +1240,9 @@ Result constructAttempt(const Program &p,
             }
             auto evaluated = replay.evaluate(std::move(commands));
             ++result.bundleTrials;
+            countReplay(result, evaluated);
             if (!evaluated.complete || !evaluated.introduced.empty())
-              continue;
+              return false;
             std::size_t credit = 0;
             for (const auto &d : evaluated.discharged)
               credit += canonicalCommandCut(p, d.consumerCut) == consumer;
@@ -1073,7 +1263,8 @@ Result constructAttempt(const Program &p,
             // this consumer, then static commands. This is an explicit local
             // heuristic, NOT a whole-program order-dominance or latency
             // certificate.
-            if (evaluated.analysis.protocol.empty() && credit) {
+            if (evaluated.analysis.protocol.empty() && evaluated.analysis.phaseResources.empty() && credit) {
+              certifiedLength = path.size();
               if (!best || credit > bestCredit ||
                   (credit == bestCredit &&
                    std::make_pair(collateral, cost) <
@@ -1086,6 +1277,8 @@ Result constructAttempt(const Program &p,
             } else if (!pending && advances &&
                        (proposal.alternatives.empty() || p.observed))
               pending = bundle;
+            return evaluated.analysis.protocol.empty() && evaluated.analysis.phaseResources.empty() && credit;
+            });
           }
         }
         if (groupedPending)
@@ -1096,7 +1289,7 @@ Result constructAttempt(const Program &p,
           packetSlots.emplace(slot, packets.size());
           packets.push_back(std::move(*best));
           ++result.bundleSelections;
-        } else if (p.target.barrierAll && stage == CandidateStage::Original) {
+        } else if (p.target.barrierAll && stage == CandidateStage::Original && allowConservative) {
           if (!barrierSlots.insert(slot).second)
             return fallback();
           barriers[consumer].push_back({Command::BarrierAll});
@@ -1105,7 +1298,7 @@ Result constructAttempt(const Program &p,
                           "bundle; not a target infeasibility proof";
           return result;
         }
-      } else if (p.target.barrierAll && stage == CandidateStage::Original) {
+      } else if (p.target.barrierAll && stage == CandidateStage::Original && allowConservative) {
         if (!barrierSlots.insert(slot).second)
           return fallback();
         barriers[consumer].push_back({Command::BarrierAll});
@@ -1119,7 +1312,7 @@ Result constructAttempt(const Program &p,
       result.reason = issue.reason;
       return result;
     }
-    issue = detail::Transfer(p, actual).run(true, true);
+    issue = proposalsReplay.run(actual, true, true);
     if (issue.kind == detail::Failure::None) {
       auto checked = verify(p, actual);
       result.success = checked.success;
@@ -1139,6 +1332,9 @@ Result constructAttempt(const Program &p,
             result.handoffs.push_back(
                 {h.observer, h.source, h.acquisition, h.acquisition});
           }
+          for (const auto &reply : packet.routedAcknowledgment)
+            for (Cut acquisition : acquisitionCuts(packet))
+              result.handoffs.push_back({reply.source, reply.observer, acquisition, acquisition});
         }
       return result;
     }
@@ -1147,6 +1343,27 @@ Result constructAttempt(const Program &p,
     if (issue.kind == detail::Failure::Hazard)
       return fallback();
     bool repaired = false;
+    if (options.resourceAlternatives && issue.kind == detail::Failure::Rearm) {
+      BundleQuery repair(p, actual, {false}, options.incrementalReplay);
+      // Rekey only when COMPLETE replay already proves the resulting program.
+      // A successful change therefore cannot start a key-oscillation repair loop.
+      for (std::size_t bi = 0; bi < packets.size() && !repaired; ++bi)
+        for (std::size_t li = 0; li < packets[bi].legs.size() && !repaired; ++li) {
+          const auto &leg = packets[bi].legs[li];
+          if (leg.handoff.source != issue.endpoint.source ||
+              leg.handoff.observer != issue.endpoint.observer || leg.key != issue.endpoint.key) continue;
+          for (auto key : eligibleKeys(p, leg.handoff.source, leg.handoff.observer)) {
+            if (key == leg.key) continue;
+            auto trial = packets; trial[bi].legs[li].key = key;
+            auto checked = repair.evaluate(render(p, barriers, trial));
+            ++result.bundleTrials; ++result.work.rekeyTrials; countReplay(result, checked);
+            if (checked.analysis.verified()) {
+              packets = std::move(trial); ++result.work.rekeys; repaired = true; break;
+            }
+          }
+        }
+    }
+    if (repaired) { ++result.protocolRepairs; continue; }
     if (issue.kind == detail::Failure::Occupancy) {
       // An early publication can overlap a previous logical generation. Do not
       // repair that by simply assigning more acknowledgment state to the key.
@@ -1160,6 +1377,36 @@ Result constructAttempt(const Program &p,
           }
         }
     } else if (issue.kind == detail::Failure::Rearm) {
+      if (options.resourceAlternatives) {
+        BundleQuery repair(p, actual, {false}, options.incrementalReplay);
+        for (std::size_t bi = 0; bi < packets.size() && !repaired; ++bi)
+          for (std::size_t li = 0; li < packets[bi].legs.size() && !repaired; ++li) {
+            const auto leg = packets[bi].legs[li];
+            const auto h = leg.handoff;
+            if (h.source != issue.endpoint.source || h.observer != issue.endpoint.observer ||
+                leg.key != issue.endpoint.key || leg.acknowledgment || !leg.routedAcknowledgment.empty()) continue;
+            if (oneVisit && h.acquisition >= issue.cut) continue;
+            for (const auto &path : routes(p, h.observer, h.source, expandedResources)) {
+              if ((stage == CandidateStage::Nearest || stage == CandidateStage::Corridors) && path.size() != 2) continue;
+              if (visitKeys(p, packets, path, true, [&](const std::vector<unsigned> &keys) {
+                auto trial = packets;
+                auto &reply = trial[bi].legs[li];
+                for (std::size_t j = 0; j < keys.size(); ++j)
+                  reply.routedAcknowledgment.push_back({path[j], path[j+1], keys[j], false});
+                auto checked = repair.evaluate(render(p, barriers, trial));
+                ++result.bundleTrials; ++result.work.routeKeyTrials; countReplay(result, checked);
+                bool fixesRearm = false;
+                for (const auto &q : checked.resolvedProtocol)
+                  fixesRearm |= q.kind == ProtocolObligation::ConsumptionNotEstablished &&
+                      q.event.source == h.source && q.event.observer == h.observer && q.event.key == leg.key;
+                if (!checked.complete || !fixesRearm || !checked.introduced.empty() ||
+                    !checked.introducedProtocol.empty() || !checked.introducedResources.empty()) return false;
+                packets = std::move(trial); repaired = true;
+                ++result.work.routedReplies; return true;
+              })) break;
+            }
+          }
+      } else {
       // Add replies only after the full memory plan fails a consumption proof.
       // Existing storage-release handoffs are already present in that proof.
       for (auto &bundle : packets)
@@ -1179,16 +1426,18 @@ Result constructAttempt(const Program &p,
             repaired = true;
           }
         }
+      }
     }
     if (!repaired)
       return fallback();
     // Helpers are evaluated as actual commands, including zero-memory-credit
     // acknowledgments. Other open recurrence obligations may remain; only final
     // verify accepts. This replay also exposes all-source effects of repairs.
-    BundleQuery repairReplay(p, actual, {false});
+    BundleQuery repairReplay(p, actual, {false}, options.incrementalReplay);
     const auto repairedState =
         repairReplay.evaluate(render(p, barriers, packets));
     ++result.bundleTrials;
+    countReplay(result, repairedState);
     if (!repairedState.complete) {
       result.reason = repairedState.reason;
       return result;
@@ -1203,35 +1452,53 @@ Result construct(const Program &p) {
 }
 Result construct(const Program &p, ConstructionOptions options) {
   std::optional<StorageFrontierAnalysis> storage;
-  if (options.storageGuidance)
-    storage.emplace(p);
+  if (options.storageGuidance) storage.emplace(p);
   std::vector<CandidateStage> stages;
   if (storage && storage->complete())
-    stages = {CandidateStage::Nearest, CandidateStage::Corridors,
-              CandidateStage::Relays};
+    stages = {CandidateStage::Nearest, CandidateStage::Corridors, CandidateStage::Relays};
   stages.push_back(CandidateStage::Original);
   std::vector<StageReport> reports;
   std::size_t trials = 0, selections = 0, repairs = 0;
-  for (auto stage : stages) {
-    // Fresh candidate state: no key or endpoint commitment leaks from a failed
-    // tier.
+  ConstructionWork totalWork;
+  auto attempt = [&](CandidateStage stage, ConstructionOptions policy,
+                     ResourcePass pass, bool coarse) {
+    // Every widened/recovery attempt starts with no endpoint/key commitments.
     const auto start = std::chrono::steady_clock::now();
-    auto result = constructAttempt(p, storage ? &*storage : nullptr, stage);
+    auto result = constructAttempt(p, storage ? &*storage : nullptr, stage,
+                                  policy, pass == ResourcePass::Expanded, coarse);
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-                             std::chrono::steady_clock::now() - start)
-                             .count();
-    reports.push_back({stage, result.success, result.reason,
-                       result.bundleTrials, result.bundleSelections,
-                       result.protocolRepairs, uint64_t(elapsed)});
-    trials += result.bundleTrials;
-    selections += result.bundleSelections;
-    repairs += result.protocolRepairs;
-    if (result.success || stage == CandidateStage::Original) {
-      result.bundleTrials = trials;
-      result.bundleSelections = selections;
-      result.protocolRepairs = static_cast<unsigned>(repairs);
-      result.stages = std::move(reports);
-      return result;
+        std::chrono::steady_clock::now() - start).count();
+    reports.push_back({stage, result.success, result.reason, result.bundleTrials,
+                       result.bundleSelections, result.protocolRepairs,
+                       uint64_t(elapsed), result.work, pass});
+    trials += result.bundleTrials; selections += result.bundleSelections;
+    repairs += result.protocolRepairs; totalWork += result.work;
+    return result;
+  };
+  auto finish = [&](Result result) {
+    result.bundleTrials = trials; result.bundleSelections = selections;
+    result.protocolRepairs = static_cast<unsigned>(repairs);
+    result.stages = std::move(reports); result.work = totalWork;
+    return result;
+  };
+  for (auto stage : stages) {
+    auto result = attempt(stage, options, ResourcePass::Preferred,
+                          !options.resourceAlternatives);
+    if (result.success) return finish(std::move(result));
+    if (options.resourceAlternatives &&
+        (stage == CandidateStage::Relays || stage == CandidateStage::Original)) {
+      result = attempt(stage, options, ResourcePass::Expanded, false);
+      if (result.success) return finish(std::move(result));
+    }
+    if (stage == CandidateStage::Original) {
+      if (options.resourceAlternatives) {
+        auto baseline = options; baseline.resourceAlternatives = false;
+        // Restore the pre-M6 policy, not just its vocabulary with speculative
+        // commitments still installed. This keeps its constructive acceptance
+        // available and is the only recovery pass allowed to choose coarse ALL.
+        result = attempt(stage, baseline, ResourcePass::BaselineRecovery, true);
+      }
+      return finish(std::move(result));
     }
   }
   std::abort();

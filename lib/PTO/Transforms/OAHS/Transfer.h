@@ -11,6 +11,7 @@
 #include "Control.h"
 #include "PhaseTransfer.h"
 #include "PTO/Transforms/OAHS/Analysis.h"
+#include "PTO/Transforms/OAHS/Replay.h"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -88,6 +89,28 @@ struct State {
     return changed;
   }
 };
+// Private checkpoint: these are unsuppressed discovery states, not certified
+// completion facts. Only a ReplaySession tied to the same immutable Program
+// may reuse them. A changed key numbering forces a full solve.
+struct TransferCheckpoint {
+  std::map<Key, unsigned> keyIds;
+  Commands commands;
+  std::vector<std::shared_ptr<State>> incoming;
+};
+inline bool identicalWord(const std::vector<Command> &a,
+                          const std::vector<Command> &b) {
+  if (a.size() != b.size()) return false;
+  for (std::size_t i = 0; i < a.size(); ++i)
+    if (std::tie(a[i].kind, a[i].source, a[i].observer, a[i].key) !=
+        std::tie(b[i].kind, b[i].source, b[i].observer, b[i].key)) return false;
+  return true;
+}
+inline bool identicalCommands(const Commands &a, const Commands &b) {
+  if (a.size() != b.size()) return false;
+  for (std::size_t i = 0; i < a.size(); ++i)
+    if (!identicalWord(a[i], b[i])) return false;
+  return true;
+}
 struct Failure {
   enum Kind { None, Hazard, Rearm, Occupancy, Invalid, Retirement } kind = None;
   Cut cut = 0;
@@ -117,7 +140,7 @@ class Transfer {
   // primitive certificates that fail at stabilized invariants, then recomputes
   // all dependent receipts. These masks never escape as a valid emitted plan.
   std::vector<std::vector<bool>> suppressed;
-  std::vector<std::optional<State>> incoming;
+  std::vector<std::shared_ptr<State>> incoming;
   std::vector<AnalysisContext> contexts;
   std::vector<std::size_t> cutContexts, siteOperations;
   std::size_t exitSite = 0;
@@ -288,40 +311,84 @@ class Transfer {
     return graph.entry;
   }
 
-  bool solve(std::size_t root) {
-    // nullopt is unreachable bottom; it is NOT fresh quiescent input.
-    incoming.clear();
-    incoming.resize(sites.size());
-    incoming[root].emplace(p.operations.size(), keyIds.size());
-    std::deque<std::size_t> queue{root};
-    std::vector<bool> queued(sites.size());
-    queued[root] = true;
-    while (!queue.empty()) {
-      const auto id = queue.front();
-      queue.pop_front();
-      queued[id] = false;
-      State next = *incoming[id];
-      ++evaluations;
-      charge(1);
-      // Discovery computes the total conservative transfer. Acceptance checks
-      // run only after the entire static worklist has stabilized.
-      if (id < commands.size()) {
-        if (!operation(next, id, false, false))
-          return false;
-      }
-      for (auto target : sites[id].successors) {
-        ++merges;
-        bool changed;
-        if (!incoming[target]) {
-          incoming[target] = next;
-          changed = true;
-        } else
-          changed = incoming[target]->join(next);
-        if (changed && !queued[target]) {
-          queue.push_back(target);
-          queued[target] = true;
+  bool solve(std::size_t root, const TransferCheckpoint *checkpoint = nullptr,
+             ReplayStats *replay = nullptr) {
+    // A null state is unreachable bottom, not fresh quiescent input.
+    std::vector<bool> dirty(sites.size(), true);
+    const bool compatible = checkpoint && checkpoint->keyIds == keyIds &&
+        checkpoint->commands.size() == commands.size() &&
+        checkpoint->incoming.size() == sites.size();
+    if (compatible) {
+      incoming = checkpoint->incoming;
+      std::fill(dirty.begin(), dirty.end(), false);
+      std::deque<std::size_t> affected;
+      for (Cut c = 0; c < commands.size(); ++c)
+        if (!identicalWord(commands[c], checkpoint->commands[c])) {
+          dirty[c] = true;
+          affected.push_back(c);
+          if (replay) ++replay->changedCuts;
+        }
+      // Includes loop headers and earlier lexical cuts reached by backedges.
+      // No old receipt, return or consumption fact survives inside this cone.
+      while (!affected.empty()) {
+        const auto c = affected.front(); affected.pop_front();
+        for (auto next : sites[c].successors) if (!dirty[next]) {
+          dirty[next] = true; affected.push_back(next);
         }
       }
+      for (std::size_t i = 0; i < incoming.size(); ++i)
+        if (dirty[i]) incoming[i].reset();
+      if (replay) replay->kind = ReplayStats::Incremental;
+    } else {
+      incoming.assign(sites.size(), nullptr);
+      if (replay && checkpoint) replay->kind = ReplayStats::KeyLayoutChanged;
+    }
+    if (replay) for (std::size_t i = 0; i < sites.size(); ++i) {
+      replay->invalidatedSites += dirty[i];
+      replay->reusedSites += !dirty[i] && bool(incoming[i]);
+    }
+    std::deque<std::size_t> queue;
+    std::vector<bool> queued(sites.size());
+    auto merge = [&](std::size_t target, const State &next) {
+      ++merges;
+      bool changed;
+      if (!incoming[target]) {
+        incoming[target] = std::make_shared<State>(next); changed = true;
+      } else {
+        // Checkpoints share only immutable states. Any destination that is
+        // changed obtains its own copy before a join; unchanged prefixes are
+        // not deep-copied merely to analyze another candidate.
+        if (!incoming[target].unique())
+          incoming[target] = std::make_shared<State>(*incoming[target]);
+        changed = incoming[target]->join(next);
+      }
+      if (changed && !queued[target]) {
+        queue.push_back(target); queued[target] = true;
+      }
+    };
+    if (dirty[root]) merge(root, State(p.operations.size(), keyIds.size()));
+    if (compatible) {
+      // Unchanged predecessor states remain exact. Recompute their outgoing
+      // contribution to the dirty cone; never seed dirty states with the OLD
+      // joined state (which could retain a removed edge's completion credit).
+      for (std::size_t i = 0; i < sites.size(); ++i) {
+        if (dirty[i] || !incoming[i] ||
+            std::none_of(sites[i].successors.begin(), sites[i].successors.end(),
+                         [&](std::size_t next) { return dirty[next]; })) continue;
+        State next = *incoming[i];
+        ++evaluations; charge(1);
+        if (replay) ++replay->boundaryEvaluations;
+        if (i < commands.size() && !operation(next, i, false, false)) return false;
+        for (auto target : sites[i].successors)
+          if (dirty[target]) merge(target, next);
+      }
+    }
+    while (!queue.empty()) {
+      const auto id = queue.front(); queue.pop_front(); queued[id] = false;
+      State next = *incoming[id];
+      ++evaluations; charge(1);
+      if (id < commands.size() && !operation(next, id, false, false)) return false;
+      for (auto target : sites[id].successors) merge(target, next);
     }
     return true;
   }
@@ -417,7 +484,10 @@ public:
   uint64_t mergeCount() const { return merges; }
   uint64_t workCount() const { return work; }
 
-  AnalysisResult inspect(AnalysisOptions options) {
+  AnalysisResult inspect(AnalysisOptions options,
+                         const TransferCheckpoint *checkpoint = nullptr,
+                         TransferCheckpoint *save = nullptr,
+                         ReplayStats *replay = nullptr) {
     if (p.finalBlocks) return phase::collect(p, commands, options).analysis;
     AnalysisResult out;
     failure = {};
@@ -436,9 +506,16 @@ public:
     // allowance.
     while (true) {
       ++out.stats.certificationPasses;
-      if (!solve(root)) {
+      const bool firstPass = out.stats.certificationPasses == 1;
+      if (!solve(root, firstPass ? checkpoint : nullptr,
+                 firstPass ? replay : nullptr)) {
         out.reason = failure.reason;
         return out;
+      }
+      if (firstPass && save) {
+        save->keyIds = keyIds;
+        save->commands = commands;
+        save->incoming = incoming;
       }
       bool changed = false;
       for (Cut at = 0; at < count; ++at) {
@@ -534,7 +611,9 @@ public:
   // skipRearm is a construction-only reference-matching query. It cannot
   // export AnalysisResult or be used by verify().
   Failure run(bool checkPayload = true, bool checkProtocol = true,
-              bool skipRearm = false) {
+              bool skipRearm = false,
+              const TransferCheckpoint *checkpoint = nullptr,
+              TransferCheckpoint *save = nullptr, ReplayStats *replay = nullptr) {
     if (p.finalBlocks) {
       auto report = phase::collect(p, commands, {false}, false, !checkProtocol, skipRearm).analysis;
       failure = {}; work = report.stats.work; evaluations = report.stats.siteEvaluations; merges = report.stats.merges;
@@ -568,8 +647,11 @@ public:
     work = evaluations = merges = 0;
     const std::size_t root = buildControl();
     const auto exit = exitSite;
-    if (!solve(root))
+    if (!solve(root, checkpoint, replay))
       return failure;
+    if (save) {
+      save->keyIds = keyIds; save->commands = commands; save->incoming = incoming;
+    }
     // Each original phase is checked once at its invariant. Checking is not a
     // second recursive solve, and no optimistic discovery result is accepted.
     for (std::size_t id = 0; id < commands.size(); ++id) {

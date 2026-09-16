@@ -11,6 +11,11 @@
 #include <memory>
 
 namespace mlir::pto::oahs {
+struct PrefixQueryStats {
+  std::size_t backwardTraversals = 0, backwardHits = 0;
+  std::size_t sourceSnapshots = 0, sourceHits = 0;
+  std::size_t correspondenceTraversals = 0, correspondenceHits = 0;
+};
 struct BackwardCut {
   Cut cut = 0;
   std::size_t context = 0;
@@ -80,6 +85,7 @@ public:
   PrefixQuery(const PrefixQuery &) = delete;
   PrefixQuery &operator=(const PrefixQuery &) = delete;
   const AnalysisResult &analysis() const;
+  PrefixQueryStats statistics() const;
   std::vector<CompletionRequirement> consumerRequirements(Cut) const;
   BackwardCutResult backwardCuts(Cut consumer) const;
   ProspectivePrefix inspectPrefix(Pipe source, Cut publication,
