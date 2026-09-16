@@ -17,7 +17,8 @@ struct BundleResources {
 };
 struct BundleEvaluation {
   // A completed replay is not acceptance of the candidate. The full original
-  // obligation population remains in analysis; only analysis.verified() accepts.
+  // obligation population remains in analysis; only analysis.verified()
+  // accepts.
   bool complete = false;
   std::string reason;
   Commands commands;
@@ -30,7 +31,9 @@ struct BundleEvaluation {
   std::vector<Cut> changedCuts;
   BundleResources resources;
   bool memoryProgressAt(Cut cut) const {
-    for (const auto &r : discharged) if (r.demand.consumer == cut) return true;
+    for (const auto &r : discharged)
+      if (r.consumerCut == cut)
+        return true;
     return false;
   }
   bool protocolProgress() const { return !resolvedProtocol.empty(); }
@@ -49,6 +52,7 @@ public:
   BundleQuery &operator=(const BundleQuery &) = delete;
   const AnalysisResult &analysis() const;
   BundleEvaluation evaluate(Commands) const;
+
 private:
   struct Impl;
   std::unique_ptr<Impl> impl;

@@ -8,28 +8,38 @@
 #ifndef PTO_TRANSFORMS_OAHS_NATIVE_H
 #define PTO_TRANSFORMS_OAHS_NATIVE_H
 #include "PTO/Transforms/OAHS/Analysis.h"
-#include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/SmallVector.h"
 namespace mlir::pto::oahs {
 struct NativeAnalysis {
   Program program;
   AnalysisResult analysis;
   // Original operation mapping, valid while the caller keeps the IR unchanged.
   llvm::SmallVector<mlir::Operation *> phases;
+  // Original command anchors. Null entries are unavailable synthetic decisions.
+  llvm::SmallVector<mlir::Operation *> cuts;
+  // Representative reachable cut per phase (NoControlId if unreachable);
+  // refined observations can have
+  // additional sites. Inspect program.observed for all qualified occurrences.
+  llvm::SmallVector<Cut> phaseCuts;
+  std::vector<std::string> observationNotes;
 };
 // Import and analyze the unsynchronized native program without changing its IR.
-// Success means analysis completed, not that residual synchronization is absent.
+// Success means analysis completed, not that residual synchronization is
+// absent.
 LogicalResult analyzeHandoffSync(func::FuncOp function, NativeAnalysis &result);
-// Compatibility entry point: performs the same analysis and discards its report.
+// Compatibility entry point: performs the same analysis and discards its
+// report.
 LogicalResult analyzeHandoffSync(func::FuncOp function);
 // Runs through production translation/alias analysis and SyncCodegen. Failure
 // leaves the original function unchanged; no backend fallback is performed.
 LogicalResult runHandoffSync(func::FuncOp function);
 namespace testing {
 // Mutation occurs only on the private working copy, before reconstruction.
-LogicalResult runHandoffSyncWithMutation(func::FuncOp function,
-    llvm::function_ref<void(func::FuncOp)> mutate);
-}
-}
+LogicalResult
+runHandoffSyncWithMutation(func::FuncOp function,
+                           llvm::function_ref<void(func::FuncOp)> mutate);
+} // namespace testing
+} // namespace mlir::pto::oahs
 #endif

@@ -19,7 +19,14 @@ using AnalysisBits = std::vector<uint8_t>;
 // partition, or a dynamic epoch. Different loop visits remain conservatively
 // merged at base precision. The parent chain retains the owning scope.
 struct AnalysisContext {
-  enum Kind { Function, ThenArm, ElseArm, ForBody, WhileBefore, WhileAfter } kind = Function;
+  enum Kind {
+    Function,
+    ThenArm,
+    ElseArm,
+    ForBody,
+    WhileBefore,
+    WhileAfter
+  } kind = Function;
   std::size_t parent = NoAnalysisId;
   std::size_t ownerSite = NoAnalysisId;
 };
@@ -30,7 +37,7 @@ struct EventFacts {
   AnalysisBits carriedConsumptions; // indices in AnalysisResult::keys
   // Initial empty keys satisfy this vacuously: no earlier consumption needs
   // acknowledging. A set bit is not an assertion that a consumption occurred.
-  uint8_t consumptionKnownAt = 0;   // bit q: knowledge at engine q
+  uint8_t consumptionKnownAt = 0; // bit q: knowledge at engine q
 };
 struct BoundaryFacts {
   // Bits name original physical phases (all their represented dynamic visits).
@@ -52,12 +59,19 @@ struct CompletionRequirement {
   Demand demand;
   Access producerAccess, consumerAccess;
   std::size_t producerContext = 0, consumerContext = 0;
+  Cut consumerCut =
+      NoAnalysisId; // distinct when a phase has several observed contexts
   // The source is an earlier represented occurrence. producer==consumer can
   // denote self recurrence; no iteration distance is inferred from static IDs.
 };
 struct ProtocolObligation {
-  enum Kind { PublicationNotEmpty, AcquisitionNotFull, ReceiptNotEstablished,
-              ConsumptionNotEstablished, UnconsumedAtExit } kind = PublicationNotEmpty;
+  enum Kind {
+    PublicationNotEmpty,
+    AcquisitionNotFull,
+    ReceiptNotEstablished,
+    ConsumptionNotEstablished,
+    UnconsumedAtExit
+  } kind = PublicationNotEmpty;
   Cut cut = 0;
   std::size_t command = NoAnalysisId;
   std::size_t context = 0;
@@ -78,7 +92,11 @@ struct RetirementRequirement {
   Pipe observer = Pipe::S;
 };
 struct AnalysisDiagnostic {
-  enum Kind { InvalidInput, UnsupportedSemantics, InvalidCommands } kind = InvalidInput;
+  enum Kind {
+    InvalidInput,
+    UnsupportedSemantics,
+    InvalidCommands
+  } kind = InvalidInput;
   std::size_t operation = NoAnalysisId;
   std::string reason;
 };
