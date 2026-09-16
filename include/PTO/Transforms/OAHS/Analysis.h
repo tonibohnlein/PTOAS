@@ -45,6 +45,7 @@ struct BoundaryFacts {
   // occurrence is represented at this observer under the current contracts.
   std::array<AnalysisBits, PipeCount> pending;
   std::vector<EventFacts> events;
+  std::vector<PhaseResourceFacts> phaseResources;
 };
 struct CutFacts {
   Cut cut = 0;
@@ -58,9 +59,13 @@ struct CompletionRequirement {
   enum Kind { RAW, WAR, WAW, ExclusiveResource } kind = RAW;
   Demand demand;
   Access producerAccess, consumerAccess;
+  // NoAnalysisId when no single original source context is established.
   std::size_t producerContext = 0, consumerContext = 0;
   Cut consumerCut =
       NoAnalysisId; // distinct when a phase has several observed contexts
+  // Analytical access endpoints, not legal command cuts. Whole-operation
+  // backends leave these unspecified; phase-aware replay retains them.
+  std::size_t producerEndpoint = NoAnalysisId, consumerEndpoint = NoAnalysisId;
   // The source is an earlier represented occurrence. producer==consumer can
   // denote self recurrence; no iteration distance is inferred from static IDs.
 };
@@ -106,6 +111,7 @@ struct AnalysisOptions {
 };
 struct AnalysisStats {
   uint64_t siteEvaluations = 0, merges = 0, work = 0;
+  std::size_t phaseStateCount = 0, maxPhaseStatesPerSite = 0;
   std::size_t staticSites = 0, certificationPasses = 0, suppressedCommands = 0;
 };
 struct AnalysisResult {
@@ -121,10 +127,11 @@ struct AnalysisResult {
   std::vector<CompletionRequirement> residuals;
   std::vector<ProtocolObligation> protocol;
   std::vector<RetirementRequirement> retirement;
+  std::vector<PhaseResourceObligation> phaseResources;
   AnalysisStats stats;
   bool verified() const {
     return complete && diagnostics.empty() && residuals.empty() &&
-           protocol.empty() && retirement.empty();
+           protocol.empty() && retirement.empty() && phaseResources.empty();
   }
 };
 
