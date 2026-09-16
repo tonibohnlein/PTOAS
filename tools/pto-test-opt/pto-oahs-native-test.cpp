@@ -396,6 +396,101 @@ module attributes {pto.target_arch = "a3"} {
   require(succeeded(oahs::runHandoffSync(function)));
 }
 
+static void testPreservedCollectives(MLIRContext &context) {
+  const char *source = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @collective(%src: !pto.partition_tensor_view<1x32xf32>,
+                       %tile: !pto.tile_buf<vec, 1x32xf32>,
+                       %out: !pto.tile_buf<vec, 1x32xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>)
+      outs(%tile : !pto.tile_buf<vec, 1x32xf32>)
+    pto.syncall() mode = #pto.sync_all_mode<hard>, core_type = #pto.sync_core_type<mix>
+    pto.tabs ins(%tile : !pto.tile_buf<vec, 1x32xf32>)
+      outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+})mlir";
+  for (bool mutate : {false, true}) {
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    require(bool(module));
+    auto function = module->lookupSymbol<func::FuncOp>("collective");
+    const auto original = text(function);
+    oahs::NativeAnalysis report;
+    require(succeeded(oahs::analyzeHandoffSync(function, report)));
+    require(text(function) == original && report.phases.size() == 2 &&
+            report.protocols.size() == 1);
+    const auto &protocol = report.protocols.front();
+    require(protocol.complete() && protocol.kind == SyncProtocolModel::Collective &&
+            protocol.localDrainBefore && protocol.participants == SyncCoreType::Mix &&
+            protocol.crossCoreFlagBase == 11 && protocol.crossCoreFlagCount == 3 &&
+            protocol.pipeline == PIPE::PIPE_UNASSIGNED && protocol.reads.empty() &&
+            protocol.writes.empty() && report.program.reservations.empty());
+    // Preservation supplies no invented peer/visibility or local drain credit.
+    // In particular the original collective cannot clear local event occupancy.
+    require(llvm::any_of(report.analysis.residuals, [](const auto &r) {
+      return r.demand.producer == 0 && r.demand.consumer == 1 &&
+             r.kind == oahs::CompletionRequirement::RAW;
+    }));
+    bool changed = false;
+    auto status = oahs::testing::runHandoffSyncWithMutation(
+        function, [&](func::FuncOp working) {
+          if (!mutate) return;
+          working.walk([&](SyncAllOp op) {
+            op->setAttr("core_type", SyncCoreTypeAttr::get(&context, SyncCoreType::AIVOnly));
+            changed = true;
+          });
+        });
+    if (mutate) {
+      require(changed && failed(status) && text(function) == original);
+    } else {
+      require(succeeded(status));
+      unsigned count = 0;
+      function.walk([&](SyncAllOp op) {
+        ++count;
+        require(op.getCoreType().getValue() == SyncCoreType::Mix &&
+                op.getMode().getValue() == SyncAllMode::Hard);
+      });
+      require(count == 1);
+    }
+  }
+  const char *profiles = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @profiles(%workspace: !pto.ptr<i32, gm>) {
+    pto.syncall() mode = #pto.sync_all_mode<hard>, core_type = #pto.sync_core_type<aiv_only>
+    pto.syncall() mode = #pto.sync_all_mode<hard>, core_type = #pto.sync_core_type<aic_only>
+    pto.syncall(%workspace : !pto.ptr<i32, gm>) mode = #pto.sync_all_mode<soft>, core_type = #pto.sync_core_type<mix>
+    return
+  }
+})mlir";
+  auto module = parseSourceString<ModuleOp>(profiles, &context);
+  require(bool(module));
+  unsigned index = 0;
+  module->walk([&](SyncAllOp op) {
+    auto model = getSyncProtocolModel(op);
+    require(bool(model));
+    if (index < 2)
+      require(model->complete() && model->localDrainBefore &&
+              model->crossCoreFlagBase == (index == 0 ? 14u : 11u) &&
+              model->crossCoreFlagCount == 1);
+    else
+      require(!model->complete() && !model->localDrainBefore);
+    ++index;
+  });
+  require(index == 3);
+  auto function = module->lookupSymbol<func::FuncOp>("profiles");
+  const auto original = text(function);
+  {
+    ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic &) { return success(); });
+    require(failed(oahs::runHandoffSync(function)) && text(function) == original);
+  }
+  module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, "a5"));
+  module->walk([&](SyncAllOp op) {
+    auto model = getSyncProtocolModel(op);
+    require(model && !model->complete());
+  });
+}
+
 int main(int argc, char **argv) {
   DialectRegistry registry;
   MLIRContext context(registry);
@@ -456,6 +551,7 @@ int main(int argc, char **argv) {
   }
   testSharedSemantics(context);
   testPreservedProtocols(context);
+  testPreservedCollectives(context);
   const char *source = R"mlir(
 module attributes {pto.target_arch = "a3"} {
   func.func @test(%src: !pto.partition_tensor_view<1x32xf32>, %b: i1)
