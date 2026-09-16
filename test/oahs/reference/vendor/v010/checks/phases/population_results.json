@@ -1,0 +1,99 @@
+{
+  "block_population": [
+    {
+      "blocks": 1,
+      "exact_single_pair": {
+        "accepted": true,
+        "states": 3,
+        "sites": 3,
+        "successor_checks": 2,
+        "max_states_per_site": 1,
+        "exact_order": true,
+        "trip_count_bound": null
+      },
+      "safety_loop": {
+        "accepted": true,
+        "states": 10,
+        "sites": 6,
+        "successor_checks": 10,
+        "max_states_per_site": 2,
+        "exact_order": false,
+        "trip_count_bound": null
+      }
+    },
+    {
+      "blocks": 2,
+      "exact_single_pair": {
+        "accepted": true,
+        "states": 3,
+        "sites": 3,
+        "successor_checks": 2,
+        "max_states_per_site": 1,
+        "exact_order": true,
+        "trip_count_bound": null
+      },
+      "safety_loop": {
+        "accepted": true,
+        "states": 10,
+        "sites": 6,
+        "successor_checks": 10,
+        "max_states_per_site": 2,
+        "exact_order": false,
+        "trip_count_bound": null
+      }
+    },
+    {
+      "blocks": 4,
+      "exact_single_pair": {
+        "accepted": true,
+        "states": 3,
+        "sites": 3,
+        "successor_checks": 2,
+        "max_states_per_site": 1,
+        "exact_order": true,
+        "trip_count_bound": null
+      },
+      "safety_loop": {
+        "accepted": true,
+        "states": 10,
+        "sites": 6,
+        "successor_checks": 10,
+        "max_states_per_site": 2,
+        "exact_order": false,
+        "trip_count_bound": null
+      }
+    },
+    {
+      "blocks": 8,
+      "exact_single_pair": {
+        "accepted": true,
+        "states": 3,
+        "sites": 3,
+        "successor_checks": 2,
+        "max_states_per_site": 1,
+        "exact_order": true,
+        "trip_count_bound": null
+      },
+      "safety_loop": {
+        "accepted": true,
+        "states": 10,
+        "sites": 6,
+        "successor_checks": 10,
+        "max_states_per_site": 2,
+        "exact_order": false,
+        "trip_count_bound": null
+      }
+    }
+  ],
+  "independent_resource_negative": {
+    "accepted": false,
+    "kind": "resource_balance",
+    "detail": "output: unexpected read on v0",
+    "witness_sites": [
+      0,
+      1
+    ],
+    "processed": 2,
+    "states": 2
+  }
+}

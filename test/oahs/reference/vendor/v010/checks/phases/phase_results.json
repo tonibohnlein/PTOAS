@@ -1,0 +1,595 @@
+{
+  "revision": "0.9",
+  "profile": "final-block-pair-v1",
+  "scope": "reference-contract qualification and supplied-schema checking; not native UnitFlag validation or mode synthesis",
+  "named_cases": [
+    {
+      "name": "block_overlap_without_software_M_F_event",
+      "expected": "ok",
+      "exact_order_requested": true,
+      "accepted": true,
+      "command_count": 2,
+      "pair_queries": 180
+    },
+    {
+      "name": "ordinary_input_ready_plus_block_interlock",
+      "expected": "ok",
+      "exact_order_requested": true,
+      "accepted": true,
+      "command_count": 5,
+      "pair_queries": 214
+    },
+    {
+      "name": "missing_input_readiness",
+      "expected": "payload",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "payload",
+      "index": 1
+    },
+    {
+      "name": "ordinary_output_completion_handoff",
+      "expected": "ok",
+      "exact_order_requested": false,
+      "accepted": true,
+      "command_count": 5,
+      "pair_queries": 0
+    },
+    {
+      "name": "block_read_does_not_complete_output",
+      "expected": "payload",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "payload",
+      "index": 2
+    },
+    {
+      "name": "coarse_full_operation_handshake_is_safe",
+      "expected": "ok",
+      "exact_order_requested": false,
+      "accepted": true,
+      "command_count": 4,
+      "pair_queries": 0
+    },
+    {
+      "name": "coarse_full_operation_handshake_loses_order",
+      "expected": "extra_order",
+      "exact_order_requested": true,
+      "accepted": false,
+      "kind": "extra_order",
+      "index": 3
+    },
+    {
+      "name": "operand_return_after_full_producer_completion",
+      "expected": "ok",
+      "exact_order_requested": false,
+      "accepted": true,
+      "command_count": 8,
+      "pair_queries": 0
+    },
+    {
+      "name": "block_path_is_not_operand_release",
+      "expected": "payload",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "payload",
+      "index": 4
+    },
+    {
+      "name": "block_return_does_not_cover_later_source_work",
+      "expected": "payload",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "payload",
+      "index": 5
+    },
+    {
+      "name": "consumption_relay_alone_does_not_order_next_output",
+      "expected": "payload",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "payload",
+      "index": 9
+    },
+    {
+      "name": "resource_path_carries_consumption_to_return",
+      "expected": "ok",
+      "exact_order_requested": false,
+      "accepted": true,
+      "command_count": 14,
+      "pair_queries": 0
+    },
+    {
+      "name": "balanced_listing_without_return_is_not_rearm",
+      "expected": "rearm",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "rearm",
+      "index": 4
+    },
+    {
+      "name": "old_snapshot_does_not_acknowledge_new_consumption",
+      "expected": "rearm",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "rearm",
+      "index": 10
+    },
+    {
+      "name": "two_final_producers_without_consumer",
+      "expected": "resource_balance",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "resource_balance",
+      "index": 1
+    },
+    {
+      "name": "two_final_consumers_without_producer",
+      "expected": "resource_balance",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "resource_balance",
+      "index": 2
+    },
+    {
+      "name": "fence_does_not_reset_readable_blocks",
+      "expected": "resource_balance",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "resource_balance",
+      "index": 2
+    },
+    {
+      "name": "live_ready_blocks_rejected_at_exit",
+      "expected": "exit_resource",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "exit_resource",
+      "index": 1
+    },
+    {
+      "name": "reader_before_its_forward_producer",
+      "expected": "resource_balance",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "resource_balance",
+      "index": 0
+    },
+    {
+      "name": "block_reuse_without_full_output_completion",
+      "expected": "ok",
+      "exact_order_requested": false,
+      "accepted": true,
+      "command_count": 3,
+      "pair_queries": 0
+    },
+    {
+      "name": "next_output_write_still_needs_order",
+      "expected": "payload",
+      "exact_order_requested": false,
+      "accepted": false,
+      "kind": "payload",
+      "index": 3
+    },
+    {
+      "name": "local_fence_protects_repeated_output_writes",
+      "expected": "ok",
+      "exact_order_requested": false,
+      "accepted": true,
+      "command_count": 5,
+      "pair_queries": 0
+    },
+    {
+      "name": "local_fence_may_strengthen_phase_order",
+      "expected": "extra_order",
+      "exact_order_requested": true,
+      "accepted": false,
+      "kind": "extra_order",
+      "index": 4
+    }
+  ],
+  "import_rejections": [
+    {
+      "name": "keep_producer",
+      "rejected": true,
+      "reason": "KEEP/reset/unknown layout or mode is outside the profile"
+    },
+    {
+      "name": "keep_consumer",
+      "rejected": true,
+      "reason": "KEEP/reset/unknown layout or mode is outside the profile"
+    },
+    {
+      "name": "unknown_mode",
+      "rejected": true,
+      "reason": "KEEP/reset/unknown layout or mode is outside the profile"
+    },
+    {
+      "name": "unproved_layout",
+      "rejected": true,
+      "reason": "KEEP/reset/unknown layout or mode is outside the profile"
+    },
+    {
+      "name": "partial_consumer",
+      "rejected": true,
+      "reason": "partial, permuted, or mismatched block coverage"
+    },
+    {
+      "name": "permuted_map",
+      "rejected": true,
+      "reason": "partial, permuted, or mismatched block coverage"
+    },
+    {
+      "name": "wrong_engine",
+      "rejected": true,
+      "reason": "wrong resource-role engine"
+    },
+    {
+      "name": "missing_operand",
+      "rejected": true,
+      "reason": "producer requires complete LEFT/RIGHT inputs and no extra output"
+    },
+    {
+      "name": "hidden_protected_reader",
+      "rejected": true,
+      "reason": "ordinary/unscoped access to a protected block"
+    },
+    {
+      "name": "missing_output",
+      "rejected": true,
+      "reason": "consumer requires one complete GM-output cell per block"
+    },
+    {
+      "name": "wrong_event_endpoint",
+      "rejected": true,
+      "reason": "wrong event endpoint"
+    },
+    {
+      "name": "unexpected_event_effect",
+      "rejected": true,
+      "reason": "synchronization command has unexpected payload effects"
+    },
+    {
+      "name": "unaligned_block",
+      "rejected": true,
+      "reason": "unpartitioned aliases or overlapping physical cells"
+    },
+    {
+      "name": "partial_block",
+      "rejected": true,
+      "reason": "protected blocks must be exact aligned 512-byte ACC cells"
+    },
+    {
+      "name": "alias_into_protected_domain",
+      "rejected": true,
+      "reason": "unpartitioned aliases or overlapping physical cells"
+    },
+    {
+      "name": "wrong_initial_permission",
+      "rejected": true,
+      "reason": "this profile requires an explicitly writable incoming interface"
+    },
+    {
+      "name": "partial_destination",
+      "rejected": true,
+      "reason": "consumer requires one complete GM-output cell per block"
+    }
+  ],
+  "generalized_monitor_adversaries": [
+    {
+      "name": "completion_only_edge",
+      "compact": "extra_order",
+      "full_history": "extra_order"
+    },
+    {
+      "name": "access_begin_only_edge",
+      "compact": "extra_order",
+      "full_history": "extra_order"
+    },
+    {
+      "name": "within_operation_block_serialization",
+      "compact": "extra_order",
+      "full_history": "extra_order"
+    }
+  ],
+  "certificates": [
+    {
+      "name": "one_pair_exact",
+      "accepted": true,
+      "states": 3,
+      "sites": 3,
+      "successor_checks": 2,
+      "max_states_per_site": 1,
+      "exact_order": true,
+      "trip_count_bound": null,
+      "recheck": {
+        "accepted": true,
+        "states": 3,
+        "successor_checks": 2,
+        "fixed_point_discovery": false
+      }
+    },
+    {
+      "name": "input_handoff_exact",
+      "accepted": true,
+      "states": 6,
+      "sites": 6,
+      "successor_checks": 5,
+      "max_states_per_site": 1,
+      "exact_order": true,
+      "trip_count_bound": null,
+      "recheck": {
+        "accepted": true,
+        "states": 6,
+        "successor_checks": 5,
+        "fixed_point_discovery": false
+      }
+    },
+    {
+      "name": "resource_and_local_fence_loop",
+      "accepted": true,
+      "states": 10,
+      "sites": 6,
+      "successor_checks": 10,
+      "max_states_per_site": 2,
+      "exact_order": false,
+      "trip_count_bound": null,
+      "recheck": {
+        "accepted": true,
+        "states": 10,
+        "successor_checks": 10,
+        "fixed_point_discovery": false
+      }
+    },
+    {
+      "name": "mixed_ordinary_handoff_loop",
+      "accepted": true,
+      "states": 20,
+      "sites": 11,
+      "successor_checks": 20,
+      "max_states_per_site": 2,
+      "exact_order": false,
+      "trip_count_bound": null,
+      "recheck": {
+        "accepted": true,
+        "states": 20,
+        "successor_checks": 20,
+        "fixed_point_discovery": false
+      }
+    },
+    {
+      "name": "resource_consumption_relay_loop",
+      "accepted": true,
+      "states": 18,
+      "sites": 10,
+      "successor_checks": 18,
+      "max_states_per_site": 2,
+      "exact_order": false,
+      "trip_count_bound": null,
+      "recheck": {
+        "accepted": true,
+        "states": 18,
+        "successor_checks": 18,
+        "fixed_point_discovery": false
+      }
+    },
+    {
+      "name": "branch_loop",
+      "accepted": true,
+      "states": 25,
+      "sites": 11,
+      "successor_checks": 28,
+      "max_states_per_site": 3,
+      "exact_order": false,
+      "trip_count_bound": null,
+      "recheck": {
+        "accepted": true,
+        "states": 25,
+        "successor_checks": 28,
+        "fixed_point_discovery": false
+      }
+    },
+    {
+      "name": "output_visibility_completion_loop",
+      "accepted": true,
+      "states": 19,
+      "sites": 10,
+      "successor_checks": 19,
+      "max_states_per_site": 2,
+      "exact_order": false,
+      "trip_count_bound": null,
+      "recheck": {
+        "accepted": true,
+        "states": 19,
+        "successor_checks": 19,
+        "fixed_point_discovery": false
+      }
+    }
+  ],
+  "bad_branch": {
+    "accepted": false,
+    "kind": "resource_balance",
+    "detail": "output: unexpected read on u0",
+    "witness_sites": [
+      0,
+      2
+    ],
+    "processed": 3,
+    "states": 4
+  },
+  "endpoint_mutations": [
+    {
+      "case": "input_handoff_exact",
+      "site": 1,
+      "removed": "set",
+      "accepted": false,
+      "kind": "matching"
+    },
+    {
+      "case": "input_handoff_exact",
+      "site": 2,
+      "removed": "wait",
+      "accepted": false,
+      "kind": "payload"
+    },
+    {
+      "case": "resource_and_local_fence_loop",
+      "site": 3,
+      "removed": "fence",
+      "accepted": false,
+      "kind": "payload"
+    },
+    {
+      "case": "mixed_ordinary_handoff_loop",
+      "site": 2,
+      "removed": "set",
+      "accepted": false,
+      "kind": "matching"
+    },
+    {
+      "case": "mixed_ordinary_handoff_loop",
+      "site": 3,
+      "removed": "wait",
+      "accepted": false,
+      "kind": "payload"
+    },
+    {
+      "case": "mixed_ordinary_handoff_loop",
+      "site": 6,
+      "removed": "set",
+      "accepted": false,
+      "kind": "matching"
+    },
+    {
+      "case": "mixed_ordinary_handoff_loop",
+      "site": 7,
+      "removed": "wait",
+      "accepted": false,
+      "kind": "payload"
+    },
+    {
+      "case": "mixed_ordinary_handoff_loop",
+      "site": 8,
+      "removed": "fence",
+      "accepted": false,
+      "kind": "payload"
+    },
+    {
+      "case": "resource_consumption_relay_loop",
+      "site": 1,
+      "removed": "set",
+      "accepted": false,
+      "kind": "matching"
+    },
+    {
+      "case": "resource_consumption_relay_loop",
+      "site": 2,
+      "removed": "wait",
+      "accepted": false,
+      "kind": "occupancy"
+    },
+    {
+      "case": "resource_consumption_relay_loop",
+      "site": 5,
+      "removed": "set",
+      "accepted": false,
+      "kind": "matching"
+    },
+    {
+      "case": "resource_consumption_relay_loop",
+      "site": 6,
+      "removed": "wait",
+      "accepted": false,
+      "kind": "rearm"
+    },
+    {
+      "case": "resource_consumption_relay_loop",
+      "site": 7,
+      "removed": "fence",
+      "accepted": false,
+      "kind": "payload"
+    },
+    {
+      "case": "branch_loop",
+      "site": 3,
+      "removed": "fence",
+      "accepted": false,
+      "kind": "payload"
+    },
+    {
+      "case": "branch_loop",
+      "site": 8,
+      "removed": "fence",
+      "accepted": false,
+      "kind": "payload"
+    },
+    {
+      "case": "output_visibility_completion_loop",
+      "site": 3,
+      "removed": "set",
+      "accepted": false,
+      "kind": "matching"
+    },
+    {
+      "case": "output_visibility_completion_loop",
+      "site": 4,
+      "removed": "wait",
+      "accepted": false,
+      "kind": "payload"
+    },
+    {
+      "case": "output_visibility_completion_loop",
+      "site": 6,
+      "removed": "set",
+      "accepted": false,
+      "kind": "matching"
+    },
+    {
+      "case": "output_visibility_completion_loop",
+      "site": 7,
+      "removed": "wait",
+      "accepted": false,
+      "kind": "exit_event"
+    }
+  ],
+  "boundary_queries": {
+    "producer_finish_does_not_gate_consumer_issue": true,
+    "block1_write_does_not_gate_block0_read": true,
+    "matching_block_ready_does_gate_read": true,
+    "block_read_releases_next_same_block_write": true,
+    "consumer_finish_does_not_gate_next_producer_issue": true,
+    "GM_write_not_required_before_ACC_reuse": true
+  },
+  "random_seed": 20260915,
+  "random_trials": 240,
+  "random_commands": 12000,
+  "random_verdict_counts": {
+    "exact:accepted": 2422,
+    "exact:matching": 339,
+    "exact:payload": 2049,
+    "exact:resource_balance": 271,
+    "exact:occupancy": 140,
+    "exact:rearm": 237,
+    "safety:accepted": 2734,
+    "safety:payload": 2244,
+    "safety:matching": 334,
+    "safety:resource_balance": 268,
+    "safety:rearm": 282,
+    "safety:occupancy": 138,
+    "exact:extra_order": 542
+  },
+  "accepted_full_history_pair_queries": 24248,
+  "certificate_total_states": 101,
+  "certificate_successor_checks": 102,
+  "negative_endpoint_mutations": 19,
+  "redundant_deletions_accepted": 0,
+  "runtime_seconds": 5.370903655999996,
+  "source_sha256": {
+    "examples.py": "d776a7eeba3cdacb4457a9f05b0008aee6a8503a8e5de1ee9566b2aff7bd288b",
+    "full_history.py": "38c74424fe5259c25d47538153d5a693e7bff418313b0e4b5b9c127bd9b37225",
+    "operational_checks.py": "1873eb5a17c33d5da26a5aef99113f0133665a78d07fd4d0061fb8c7dafba754",
+    "phase_interface.py": "54d3ec7fc3ca700ca725501236ea78ed1e7035235797b1cee9e1ad183d1093fa",
+    "population_checks.py": "1979cb218fbb55b7732e0c1a68fc01c772520036665920e4c675c5a63f18fdbf",
+    "run_checks.py": "b0d10b2b30799dec14d3f6b5a70c2c78d3a0a45db6561373bff2a411bfbada73"
+  }
+}
