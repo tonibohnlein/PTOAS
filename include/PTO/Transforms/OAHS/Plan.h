@@ -10,6 +10,7 @@
 
 #include "PTO/IR/SyncTargetProfile.h"
 #include "PTO/Transforms/OAHS/Observations.h"
+#include "PTO/Transforms/OAHS/PhaseContracts.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -70,6 +71,7 @@ struct Operation {
   // The lowering/importer must establish completeness explicitly. No opcode
   // name or absence of a typed effect can turn this default into true.
   bool complete = false;
+  std::optional<FinalBlockOperation> finalBlock;
 };
 struct Region {
   enum Kind { Sequence, Choice, For, While, Operation } kind = Sequence;
@@ -96,6 +98,9 @@ struct Program {
   std::optional<ObservedControl> observed;
   std::vector<EventIdentity> reservations;
   Target target;
+  // No native frontend populates this until its lowering/service premises are
+  // qualified. Model clients can explicitly supply the reference contract.
+  std::optional<FinalBlockProfile> finalBlocks;
   // Essential analyses run to their finite fixed points. Resource limits are
   // target/ABI facts; no compiler-work allowance changes these obligations.
   struct InvocationContract {

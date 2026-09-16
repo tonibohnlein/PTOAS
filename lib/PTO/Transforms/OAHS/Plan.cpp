@@ -161,6 +161,7 @@ bool validObserved(const Program &p, std::string &reason) {
   return true;
 }
 bool valid(const Program &p, std::string &reason) {
+  if (!detail::phaseModelValid(p, reason)) return false;
   if (p.target.contract.empty()) {
     reason = "missing target contract";
     return false;
@@ -236,6 +237,10 @@ bool reserved(const Program &p, const Command &c) {
                      });
 }
 bool supportedEffects(const Program &p, std::string &reason) {
+  if (p.finalBlocks && p.target.barrierAll) {
+    reason = "phase ALL adapter is not qualified; supply the supported named-prefix vocabulary";
+    return false;
+  }
   for (const auto &op : p.operations) {
     if (!op.resources.empty() || !op.visibility.empty() ||
         !op.authoredEvents.empty() || !op.internalTransfers.empty()) {
@@ -625,11 +630,47 @@ AnalysisResult analyze(const Program &p, const Commands &commands,
         {AnalysisDiagnostic::InvalidCommands, NoAnalysisId, out.reason});
     return out;
   }
+  if (p.finalBlocks) for (const auto &word : commands) for (const auto &c : word)
+    if (c.kind == Command::BarrierAll) {
+      out.reason = "phase ALL/retirement adapter is not qualified";
+      out.diagnostics.push_back({AnalysisDiagnostic::UnsupportedSemantics, NoAnalysisId, out.reason});
+      return out;
+    }
   return detail::Transfer(p, commands).inspect(options);
 }
 AnalysisResult analyze(const Program &p) {
   return analyze(p, Commands(commandCutCount(p)));
 }
+
+bool validatePhaseContract(const Program &p, std::string &reason) {
+  if (!p.finalBlocks) { reason = "no supplied phase contract"; return false; }
+  return valid(p, reason) && supportedEffects(p, reason);
+}
+bool phaseFragment(const Program &p, std::size_t operation, PhaseFragment &out, std::string &reason) {
+  if (!validatePhaseContract(p, reason)) return false;
+  if (operation >= p.operations.size()) { reason = "invalid physical operation"; return false; }
+  out = detail::buildPhaseFragment(p, operation); return true;
+}
+PhaseOrderResult checkPhaseOrder(const Program &p, const Commands &commands) {
+  PhaseOrderResult out;
+  if (!p.finalBlocks) { out.reason = "phase order query requires a supplied profile"; return out; }
+  auto checked = analyze(p, commands, {false});
+  if (!checked.complete) { out.reason = checked.reason; return out; }
+  auto result = detail::phase::collect(p, commands, {false}, true);
+  out.complete = result.analysis.complete; out.safe = result.analysis.verified();
+  out.stats = result.analysis.stats; out.excess = std::move(result.excess);
+  out.exact = out.safe && out.excess.empty(); out.reason = result.analysis.reason;
+  if (out.safe && !out.exact) out.reason = "safe with extra original endpoint order";
+  return out;
+}
+PhaseNativeQualification phaseNativeQualification() {
+  return {false, {"release-pinned native operation/SDK lowering refinement",
+                 "ordered same-role per-block service evidence",
+                 "initial writable entry and native progress/queue contract",
+                 "complete physical maps/layouts/private events and output visibility",
+                 "native phase import/emission reconstruction and device tests"}};
+}
+
 Result verify(const Program &p, const Commands &commands) {
   const auto analysis = analyze(p, commands, {false});
   Result result;

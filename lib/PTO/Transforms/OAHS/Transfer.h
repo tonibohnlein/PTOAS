@@ -9,6 +9,7 @@
 #define PTO_OAHS_TRANSFER_H
 
 #include "Control.h"
+#include "PhaseTransfer.h"
 #include "PTO/Transforms/OAHS/Analysis.h"
 #include <algorithm>
 #include <array>
@@ -417,6 +418,7 @@ public:
   uint64_t workCount() const { return work; }
 
   AnalysisResult inspect(AnalysisOptions options) {
+    if (p.finalBlocks) return phase::collect(p, commands, options).analysis;
     AnalysisResult out;
     failure = {};
     work = evaluations = merges = 0;
@@ -533,6 +535,33 @@ public:
   // export AnalysisResult or be used by verify().
   Failure run(bool checkPayload = true, bool checkProtocol = true,
               bool skipRearm = false) {
+    if (p.finalBlocks) {
+      auto report = phase::collect(p, commands, {false}, false, !checkProtocol, skipRearm).analysis;
+      failure = {}; work = report.stats.work; evaluations = report.stats.siteEvaluations; merges = report.stats.merges;
+      if (!report.phaseResources.empty()) {
+        failure.kind = Failure::Invalid; failure.cut = report.phaseResources.front().cut;
+        failure.reason = report.phaseResources.front().reason; return failure;
+      }
+      const auto graph = buildControlGraph(p);
+      auto earlier = [&](Cut a, Cut b) { return graph.cutRanks[a] < graph.cutRanks[b]; };
+      Cut chosen = NoAnalysisId;
+      if (checkPayload) for (const auto &r : report.residuals)
+        if (chosen == NoAnalysisId || earlier(r.consumerCut, chosen)) chosen = r.consumerCut;
+      const ProtocolObligation *protocol = nullptr;
+      if (checkProtocol) for (const auto &q : report.protocol)
+        if ((!skipRearm || q.kind != ProtocolObligation::ConsumptionNotEstablished) &&
+            (!protocol || earlier(q.cut, protocol->cut))) protocol = &q;
+      if (protocol && (chosen == NoAnalysisId || !earlier(chosen, protocol->cut))) {
+        failure.kind = protocol->kind == ProtocolObligation::ConsumptionNotEstablished ? Failure::Rearm : Failure::Occupancy;
+        failure.cut = protocol->cut; failure.command = protocol->command; failure.reason = protocol->reason;
+        failure.endpoint = {Command::Publish, protocol->event.source, protocol->event.observer, protocol->event.key};
+        if (protocol->command < commands[protocol->cut].size()) failure.endpoint = commands[protocol->cut][protocol->command];
+      } else if (chosen != NoAnalysisId) {
+        failure.kind = Failure::Hazard; failure.cut = chosen; failure.reason = "uncovered original phase access";
+        for (const auto &r : report.residuals) if (r.consumerCut == chosen) failure.missing.push_back(r.demand);
+      }
+      return failure;
+    }
     balanceOnly = skipRearm;
     suppressed.clear();
     failure = {};
