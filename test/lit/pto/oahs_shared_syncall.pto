@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-oahs-native-test --analyze %s | FileCheck %s --check-prefix=ANALYSIS
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' -o %t.pto
+// RUN: FileCheck %s < %t.pto
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 %t.pto | FileCheck %s --check-prefix=CPP
+// RUN: pto-test-opt %s -pto-insert-sync -o %t.default
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=existing' -o %t.existing
+// RUN: diff %t.default %t.existing
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @hard_collective(%src: !pto.partition_tensor_view<1x32xf32>, %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 1024 : i64
+    %tile = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xf32>
+    scf.for %i = %z to %n step %one {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%tile : !pto.tile_buf<vec, 1x32xf32>)
+      pto.syncall() mode = #pto.sync_all_mode<hard>, core_type = #pto.sync_core_type<mix>
+      pto.tabs ins(%tile : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    }
+    pto.syncall() mode = #pto.sync_all_mode<hard>, core_type = #pto.sync_core_type<aiv_only>
+    return
+  }
+}
+// ANALYSIS: function=hard_collective shared_complete=1 ordinary_phases=2 preserved_protocol_ops=2 gaps=0
+// ANALYSIS: native_analysis=1
+// CHECK: scf.for
+// CHECK: pto.tload
+// CHECK: pto.syncall() mode = #pto.sync_all_mode<hard>, core_type = #pto.sync_core_type<mix>
+// CHECK: pto.tabs
+// CHECK: pto.syncall() mode = #pto.sync_all_mode<hard>, core_type = #pto.sync_core_type<aiv_only>
+// CHECK: return
+// CPP-LABEL: AICORE void hard_collective(
+// CPP: SYNCALL<SyncCoreType::Mix>();
+// CPP: SYNCALL<SyncCoreType::AIVOnly>();
