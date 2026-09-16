@@ -37,7 +37,8 @@ struct ProspectivePrefix {
   bool availableAtEveryAcquisition = false;
   bool matchingEstablished = false; // reference alternation, NOT causal rearm
   bool routeAvailable = false;      // eligible mechanism exists, NOT allocated
-  bool crossesBackedge = false; // some backward path; NOT a selected epoch/distance
+  bool crossesBackedge =
+      false; // some backward path; NOT a selected epoch/distance
   bool repeatedPublication = false, unconsumedAtExit = false;
   AnalysisBits uncoveredOperations;
   // Positions in this query's consumerRequirements(acquisition), not operation
@@ -56,17 +57,19 @@ struct PrefixCover {
   std::vector<CompletionRequirement> requirements;
   BackwardCutResult backward;
   std::vector<ProspectivePrefix> candidates;
-  std::vector<std::size_t> selected; // indices into candidates
+  std::vector<std::size_t> selected;  // indices into candidates
   std::vector<std::size_t> remaining; // indices into requirements
-  AnalysisBits jointUncoveredOperations; // intersection of the selected remainders
+  AnalysisBits
+      jointUncoveredOperations; // intersection of the selected remainders
   bool coversAll() const { return complete && remaining.empty(); }
 };
 
 // Read-only queries bound to an OWNED immutable copy of one program and actual
-// plan. No externally supplied/stale AnalysisResult is accepted as a certificate.
-// A caller editing its plan creates a new query. Returned records are proposals:
-// event matching, generation reuse, progress and ALL original demands are still
-// checked on the complete realized candidate. No keys are reserved by this API.
+// plan. No externally supplied/stale AnalysisResult is accepted as a
+// certificate. A caller editing its plan creates a new query. Returned records
+// are proposals: event matching, generation reuse, progress and ALL original
+// demands are still checked on the complete realized candidate. No keys are
+// reserved by this API.
 class PrefixQuery {
 public:
   PrefixQuery(Program, Commands);
@@ -79,10 +82,16 @@ public:
   const AnalysisResult &analysis() const;
   std::vector<CompletionRequirement> consumerRequirements(Cut) const;
   BackwardCutResult backwardCuts(Cut consumer) const;
-  ProspectivePrefix inspectPrefix(Pipe source, Cut publication, Cut consumer) const;
+  ProspectivePrefix inspectPrefix(Pipe source, Cut publication,
+                                  Cut consumer) const;
   // Deterministic set-cover heuristic: greatest newly covered residual count,
   // then original lexical source cut, then lane. No global optimality claim.
   PrefixCover coverByPrefixes(Cut consumer) const;
+  // Proposal restriction only; required effects and certified analysis
+  // unchanged.
+  PrefixCover coverByPrefixes(Cut consumer,
+                              const std::vector<Cut> &allowed) const;
+
 private:
   struct Impl;
   std::unique_ptr<Impl> impl;

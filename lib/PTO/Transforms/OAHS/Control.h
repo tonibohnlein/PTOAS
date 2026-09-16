@@ -21,26 +21,83 @@ struct ControlGraph {
   std::vector<ControlSite> sites;
   std::vector<AnalysisContext> contexts;
   std::vector<std::size_t> cutContexts, cutRanks;
-  std::size_t entry = 0;
+  std::size_t entry = 0, exit = 0;
+  std::vector<std::size_t> operations;
+  std::vector<bool> legalCuts;
 };
+inline std::vector<bool> reachableSites(const ControlGraph &g) {
+  std::vector<bool> reached(g.sites.size());
+  std::vector<std::size_t> todo{g.entry};
+  reached[g.entry] = true;
+  while (!todo.empty()) {
+    const auto at = todo.back();
+    todo.pop_back();
+    for (auto next : g.sites[at].successors)
+      if (!reached[next]) {
+        reached[next] = true;
+        todo.push_back(next);
+      }
+  }
+  return reached;
+}
 // Shared by completion solving and source-cut queries. Caller has validated the
 // original tree. No duplicated occurrence graph or new program predicates.
 inline ControlGraph buildControlGraph(const Program &p) {
   ControlGraph g;
   const auto exit = p.operations.size();
+  if (p.observed) {
+    const auto &q = *p.observed;
+    g.entry = q.entry;
+    g.exit = q.exit;
+    g.sites.resize(q.sites.size());
+    g.cutContexts.resize(q.sites.size());
+    g.cutRanks.resize(q.sites.size());
+    g.operations.resize(q.sites.size(), NoAnalysisId);
+    g.legalCuts.resize(q.sites.size());
+    for (const auto &scope : q.scopes)
+      g.contexts.push_back(
+          {AnalysisContext::Kind(scope.kind), scope.parent, scope.ownerSite});
+    if (g.contexts.empty())
+      g.contexts.push_back({});
+    for (std::size_t i = 0; i < q.sites.size(); ++i) {
+      const auto &s = q.sites[i];
+      g.sites[i] = {s.successors, s.backedgeOwners};
+      if (g.sites[i].backedgeOwners.empty())
+        g.sites[i].backedgeOwners.assign(s.successors.size(), NoAnalysisId);
+      g.cutContexts[i] = s.context;
+      g.cutRanks[i] = i;
+      g.operations[i] = s.operation;
+      g.legalCuts[i] = s.observation != NoControlId;
+    }
+    return g;
+  }
+  g.exit = exit;
   g.sites.resize(exit + 1);
-  g.contexts = {AnalysisContext{}}; g.cutContexts.assign(exit + 1, 0);
-  g.cutRanks.resize(exit + 1); g.cutRanks[exit] = exit;
-  auto edge = [&](std::size_t from, std::size_t to, std::size_t loop = NoAnalysisId) {
+  g.contexts = {AnalysisContext{}};
+  g.cutContexts.assign(exit + 1, 0);
+  g.cutRanks.resize(exit + 1);
+  g.cutRanks[exit] = exit;
+  auto edge = [&](std::size_t from, std::size_t to,
+                  std::size_t loop = NoAnalysisId) {
     g.sites[from].successors.push_back(to);
     g.sites[from].backedgeOwners.push_back(loop);
   };
   auto entryFor = [&](const Region &r) {
-    if (r.kind == Region::Operation) return r.operation;
-    const auto id = g.sites.size(); g.sites.emplace_back(); return id;
+    if (r.kind == Region::Operation)
+      return r.operation;
+    const auto id = g.sites.size();
+    g.sites.emplace_back();
+    return id;
   };
   if (p.body.kind == Region::Sequence && p.body.children.empty()) {
-    for (std::size_t i = 0; i < exit; ++i) { edge(i, i+1); g.cutRanks[i] = i; }
+    for (std::size_t i = 0; i < exit; ++i) {
+      edge(i, i + 1);
+      g.cutRanks[i] = i;
+    }
+    g.operations.resize(g.sites.size(), NoAnalysisId);
+    g.legalCuts.assign(g.sites.size(), true);
+    for (std::size_t i = 0; i < exit; ++i)
+      g.operations[i] = i;
     return g;
   }
   struct Task {
@@ -51,52 +108,77 @@ inline ControlGraph buildControlGraph(const Program &p) {
   std::vector<Task> tasks{{&p.body, g.entry, exit, 0, NoAnalysisId}};
   auto contextFor = [&](AnalysisContext::Kind kind, const Task &task) {
     const auto id = g.contexts.size();
-    g.contexts.push_back({kind, task.context, task.entry}); return id;
+    g.contexts.push_back({kind, task.context, task.entry});
+    return id;
   };
   while (!tasks.empty()) {
-    const auto task = tasks.back(); tasks.pop_back();
+    const auto task = tasks.back();
+    tasks.pop_back();
     const auto &r = *task.region;
     if (r.kind == Region::Operation) {
       edge(task.entry, task.next, task.nextBackedge);
       g.cutContexts[task.entry] = task.context;
     } else if (r.kind == Region::Sequence) {
       std::vector<std::size_t> children;
-      for (const auto &child : r.children) children.push_back(entryFor(child));
+      for (const auto &child : r.children)
+        children.push_back(entryFor(child));
       edge(task.entry, children.empty() ? task.next : children.front(),
            children.empty() ? task.nextBackedge : NoAnalysisId);
       for (std::size_t i = 0; i < children.size(); ++i)
-        tasks.push_back({&r.children[i], children[i],
-                         i+1 < children.size() ? children[i+1] : task.next,
-                         task.context, i+1 < children.size() ? NoAnalysisId : task.nextBackedge});
+        tasks.push_back(
+            {&r.children[i], children[i],
+             i + 1 < children.size() ? children[i + 1] : task.next,
+             task.context,
+             i + 1 < children.size() ? NoAnalysisId : task.nextBackedge});
     } else if (r.kind == Region::Choice) {
       const auto yes = entryFor(r.children[0]), no = entryFor(r.children[1]);
-      edge(task.entry, yes); edge(task.entry, no);
+      edge(task.entry, yes);
+      edge(task.entry, no);
       tasks.push_back({&r.children[0], yes, task.next,
-                      contextFor(AnalysisContext::ThenArm, task), task.nextBackedge});
+                       contextFor(AnalysisContext::ThenArm, task),
+                       task.nextBackedge});
       tasks.push_back({&r.children[1], no, task.next,
-                      contextFor(AnalysisContext::ElseArm, task), task.nextBackedge});
+                       contextFor(AnalysisContext::ElseArm, task),
+                       task.nextBackedge});
     } else if (r.kind == Region::For) {
       const auto body = entryFor(r.children[0]);
-      edge(task.entry, body); edge(task.entry, task.next, task.nextBackedge);
+      edge(task.entry, body);
+      edge(task.entry, task.next, task.nextBackedge);
       tasks.push_back({&r.children[0], body, task.entry,
-                      contextFor(AnalysisContext::ForBody, task), task.entry});
+                       contextFor(AnalysisContext::ForBody, task), task.entry});
     } else {
-      const auto before = entryFor(r.children[0]), after = entryFor(r.children[1]);
-      const auto decision = g.sites.size(); g.sites.emplace_back();
-      edge(task.entry, before); edge(decision, after);
+      const auto before = entryFor(r.children[0]),
+                 after = entryFor(r.children[1]);
+      const auto decision = g.sites.size();
+      g.sites.emplace_back();
+      edge(task.entry, before);
+      edge(decision, after);
       edge(decision, task.next, task.nextBackedge);
       tasks.push_back({&r.children[0], before, decision,
-                      contextFor(AnalysisContext::WhileBefore, task), NoAnalysisId});
+                       contextFor(AnalysisContext::WhileBefore, task),
+                       NoAnalysisId});
       tasks.push_back({&r.children[1], after, before,
-                      contextFor(AnalysisContext::WhileAfter, task), task.entry});
+                       contextFor(AnalysisContext::WhileAfter, task),
+                       task.entry});
     }
   }
   std::vector<const Region *> order{&p.body};
   std::size_t rank = 0;
   while (!order.empty()) {
-    const auto *r = order.back(); order.pop_back();
-    if (r->kind == Region::Operation) g.cutRanks[r->operation] = rank++;
-    else for (auto i = r->children.rbegin(); i != r->children.rend(); ++i) order.push_back(&*i);
+    const auto *r = order.back();
+    order.pop_back();
+    if (r->kind == Region::Operation)
+      g.cutRanks[r->operation] = rank++;
+    else
+      for (auto i = r->children.rbegin(); i != r->children.rend(); ++i)
+        order.push_back(&*i);
+  }
+  g.operations.resize(g.sites.size(), NoAnalysisId);
+  g.legalCuts.assign(g.sites.size(), false);
+  for (std::size_t i = 0; i <= exit; ++i) {
+    g.legalCuts[i] = true;
+    if (i < exit)
+      g.operations[i] = i;
   }
   return g;
 }
