@@ -1,0 +1,47 @@
+{
+  "cases": [
+    {
+      "blocks": 1,
+      "generations": 1,
+      "observable_vertices": 10,
+      "native_and_profile_graph_prefixes": 27,
+      "operational_states": 27,
+      "prefix_sets_equal": true,
+      "output_WAW_fixed_for_isolation": false
+    },
+    {
+      "blocks": 2,
+      "generations": 1,
+      "observable_vertices": 16,
+      "native_and_profile_graph_prefixes": 187,
+      "operational_states": 187,
+      "prefix_sets_equal": true,
+      "output_WAW_fixed_for_isolation": false
+    },
+    {
+      "blocks": 1,
+      "generations": 2,
+      "observable_vertices": 20,
+      "native_and_profile_graph_prefixes": 225,
+      "operational_states": 225,
+      "prefix_sets_equal": true,
+      "output_WAW_fixed_for_isolation": true
+    }
+  ],
+  "necessity": {
+    "flag_only_schedule_legal": true,
+    "consumers_and_observed_generations": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "ordered_service_rejects_first_write": true,
+    "is_hardware_counterexample": false,
+    "purpose": "shows the ordered-service premise cannot be inferred from permission bits alone"
+  }
+}

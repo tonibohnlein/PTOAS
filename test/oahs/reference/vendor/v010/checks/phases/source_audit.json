@@ -1,0 +1,45 @@
+{
+  "date": "2026-09-15",
+  "revision": "0.9",
+  "profile": "final-block-pair-v1",
+  "qualification_level": "reference-qualified; native hardware refinement not established",
+  "sources": [
+    {
+      "key": "ascunitflag2026",
+      "url": "https://asc.gitcode.com/api/SIMD-API/basic_api/cube_compute_ISASI/mmad_compute_key_features/UnitFlag.html",
+      "read_status": "substantive primary documentation read",
+      "revision_label": "master ac856984c266; contains uncommitted changes",
+      "supports": [
+        "512-byte result-block permission",
+        "final producer toggles writable to readable",
+        "final consumer toggles readable to writable",
+        "both participants enabled",
+        "coverage and traversal qualifications"
+      ],
+      "not_established": [
+        "native per-block same-role generation service order",
+        "exact arbitrary operation phase maps",
+        "operand release from result-block readiness",
+        "software-event consumption from a permission bit alone",
+        "full native queue progress"
+      ]
+    },
+    {
+      "key": "cannunitflag83",
+      "url": "https://www.hiascend.com/document/detail/zh/canncommercial/83RC1/opdevg/ascendcbestP/atlas_ascendc_best_practices_10_10003.html",
+      "read_status": "prior revision evidence retained; current direct retrieval lacked substantive body"
+    },
+    {
+      "key": "cannfixpipe82",
+      "url": "https://www.hiascend.com/document/detail/zh/canncommercial/82RC1/API/ascendcopapi/atlasascendc_api_07_0251.html",
+      "read_status": "search excerpt only; full direct retrieval timed out"
+    },
+    {
+      "key": "cannfixpipe85",
+      "url": "https://www.hiascend.com/document/detail/en/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_0251.html",
+      "read_status": "search excerpt only; full direct retrieval timed out"
+    }
+  ],
+  "new_results": "Our declared-profile graph/sequencer equivalence and finite interface instantiation; not theorems attributed to the sources.",
+  "review_use": "Endpoint completeness and preservation of the core; review is not executable or device evidence."
+}

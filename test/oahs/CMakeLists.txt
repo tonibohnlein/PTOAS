@@ -13,7 +13,7 @@ add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp)
 target_include_directories(oahs-core-under-test PUBLIC ../../include)
 target_compile_features(oahs-core-under-test PUBLIC cxx_std_17)
 target_compile_options(oahs-core-under-test PRIVATE -Wall -Wextra -Werror -pedantic)
-foreach(suite plan structured scaling analysis prefix bundle storage_frontier guidance observed)
+foreach(suite plan structured scaling analysis prefix bundle storage_frontier guidance observed phase)
   add_executable(oahs-${suite}-test ${suite}_test.cpp)
   target_link_libraries(oahs-${suite}-test PRIVATE oahs-core-under-test)
   target_compile_options(oahs-${suite}-test PRIVATE -Wall -Wextra -Werror -pedantic)
@@ -36,3 +36,10 @@ target_compile_options(oahs-observed-driver PRIVATE -Wall -Wextra -Werror -pedan
 add_test(NAME oahs_observed_reference
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/reference/observed_bridge.py
     --driver $<TARGET_FILE:oahs-observed-driver>)
+
+add_test(NAME oahs_phase_vendor COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/reference/phase_vendor_check.py)
+
+add_executable(oahs-phase-driver phase_driver.cpp)
+target_link_libraries(oahs-phase-driver PRIVATE oahs-core-under-test)
+target_compile_options(oahs-phase-driver PRIVATE -Wall -Wextra -Werror -pedantic)
+add_test(NAME oahs_phase_reference COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/reference/phase_bridge.py --driver $<TARGET_FILE:oahs-phase-driver>)

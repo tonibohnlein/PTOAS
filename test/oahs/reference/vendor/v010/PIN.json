@@ -1,0 +1,29 @@
+{
+  "source_archive": "synchronization_theory_acm_v0_10.zip",
+  "archive_sha256": "b8811346a4595422a39131888220627f0266575cdff7726d95742fed1ace4aed",
+  "pdf_sha256": "09d0d2b014ebfd6d53942b06966538f21ee54972cf7f970467ca70fc6cb4d210",
+  "scope": "Unchanged supplied final-block reference; phase implementation identifies itself as 0.9, retained in archive 0.10. Not hardware qualification.",
+  "files": {
+    "checks/phases/source_audit.json": "e81f8cfdf4a18a55adf17536ad70cde07f71d9730b7ce2b9ac681434d70883df",
+    "checks/phases/phase_results.json": "41d4df348262fdce79c98f7101ddfc41065ba07c560a7da1393419bffb1d1dec",
+    "checks/phases/README.md": "9f37847e2fc22d692e5a75fcd7e395b0b72cc055e1855593e2f83fa3422ffb51",
+    "checks/phases/full_history.py": "38c74424fe5259c25d47538153d5a693e7bff418313b0e4b5b9c127bd9b37225",
+    "checks/phases/population_results.json": "e5ea8daf6e7669f6446d78078d198cf0be3a8d6e027362234c80747d6b2abe17",
+    "checks/phases/run_checks.py": "b0d10b2b30799dec14d3f6b5a70c2c78d3a0a45db6561373bff2a411bfbada73",
+    "checks/phases/examples.py": "d776a7eeba3cdacb4457a9f05b0008aee6a8503a8e5de1ee9566b2aff7bd288b",
+    "checks/phases/operational_results.json": "849199e60d3007c11434b4a6ae241333bebfd3787cc66dbc7f6ba1dd333fa7de",
+    "checks/phases/operational_checks.py": "1873eb5a17c33d5da26a5aef99113f0133665a78d07fd4d0061fb8c7dafba754",
+    "checks/phases/QUALIFICATION.md": "690e92c6415108dd42751b0cc35f6aa9a15f428830421c726299487760ad9d9f",
+    "checks/phases/population_checks.py": "1979cb218fbb55b7732e0c1a68fc01c772520036665920e4c675c5a63f18fdbf",
+    "checks/phases/phase_interface.py": "54d3ec7fc3ca700ca725501236ea78ed1e7035235797b1cee9e1ad183d1093fa",
+    "checks/phases/certificates/branch_loop.json": "6953411ea105fa4b0b525a44d9ee34832fb2af7cfa93b93379118307d7b97213",
+    "checks/phases/certificates/resource_and_local_fence_loop.json": "c32eac67b3555c1b2a312fe80660effa5df9fdb1d456b032add06f79dcb8750c",
+    "checks/phases/certificates/resource_consumption_relay_loop.json": "e038a3211d4a04d7f9e7e0fed83cfdc5723b4da6c88b65ee0d3d24bf367db5cc",
+    "checks/phases/certificates/mixed_ordinary_handoff_loop.json": "fc7e80cc92dbaff07244f5b3c7dd9cdccb8bf452e2cde562c2fad61e9d9be770",
+    "checks/phases/certificates/input_handoff_exact.json": "6e0f42cfe2c25e3f20256b68916c5f6986c87e68b39e904bf2546fa09f5172ce",
+    "checks/phases/certificates/output_visibility_completion_loop.json": "4ddd42ad623a1d22d2807398527691cba0edf8ee1d547671ec090b000c8226c1",
+    "checks/phases/certificates/one_pair_exact.json": "929983cac0d6d40436e1cecbc1d2531e282c2ad849c8d342010db5455280ad7d",
+    "checks/automatic/causal_interface.py": "543a7c796acf602d068d3b374c287b224104ddbc5d1d71a785224cc8db5162d1",
+    "checks/automatic/order_interface.py": "49db607fa19919aec2a12c1a7e81fbee91501de59b26d984019219126520053f"
+  }
+}
