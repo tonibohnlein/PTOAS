@@ -8,6 +8,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/OAHS/Native.h"
 #include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
+#include "PTO/Transforms/InsertSync/SyncAccumulatorOrdering.h"
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -203,6 +204,66 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
+const char *matrixInput = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @matrix(%unknown: index) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %m = arith.constant 128 : index
+    %n = arith.constant 256 : index
+    %k = arith.constant 64 : index
+    %a = pto.alloc_tile addr = %zero valid_row = %m valid_col = %k : !pto.tile_buf<left, 128x64xf16, valid=?x?, slayout=row_major>
+    %b = pto.alloc_tile addr = %zero valid_row = %k valid_col = %n : !pto.tile_buf<right, 64x256xf16, valid=?x?, slayout=col_major>
+    %c = pto.alloc_tile addr = %zero valid_row = %m valid_col = %n : !pto.tile_buf<acc, 128x256xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>
+    pto.tmatmul ins(%a, %b : !pto.tile_buf<left, 128x64xf16, valid=?x?, slayout=row_major>, !pto.tile_buf<right, 64x256xf16, valid=?x?, slayout=col_major>) outs(%c : !pto.tile_buf<acc, 128x256xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>)
+    pto.tmatmul.acc ins(%c, %a, %b : !pto.tile_buf<acc, 128x256xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>, !pto.tile_buf<left, 128x64xf16, valid=?x?, slayout=row_major>, !pto.tile_buf<right, 64x256xf16, valid=?x?, slayout=col_major>) outs(%c : !pto.tile_buf<acc, 128x256xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>)
+    return
+  }
+})mlir";
+bool accumulatorOrdering(MLIRContext &context) {
+  for (unsigned mutation = 0; mutation < 5; ++mutation) {
+    std::string source = matrixInput;
+    if (mutation == 1) {
+      for (const std::string size : {"128", "256"}) {
+        std::size_t at = 0;
+        while ((at = source.find(size, at)) != std::string::npos) {
+          source.replace(at, size.size(), "16"); at += 2;
+        }
+      }
+    }
+    if (mutation == 2) {
+      auto at = source.find("valid_row = %m");
+      source.replace(at, std::string("valid_row = %m").size(), "valid_row = %unknown");
+    }
+    if (mutation == 3) {
+      const auto at = source.find("    pto.tmatmul ins");
+      source.insert(at, "    pto.set_validshape %a, %m, %k : !pto.tile_buf<left, 128x64xf16, valid=?x?, slayout=row_major>\n");
+    }
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module), "parse ACC contract fixture")) return false;
+    auto function = module->lookupSymbol<func::FuncOp>("matrix");
+    if (mutation == 4) function.walk([&](TMatmulAccOp op) {
+      op->setAttr("accPhase", AccPhaseAttr::get(&context, AccPhase::Final));
+    });
+    oahs::NativeAnalysis imported;
+    if (mutation == 4) {
+      bool rejected = true;
+      function.walk([&](TMatmulAccOp op) { rejected &= !syncAccumulatorOrder(op); });
+      if (!check(rejected && failed(oahs::analyzeHandoffSync(function, imported)),
+                 "phase mode borrowed ordinary ACC credit")) return false;
+      continue;
+    }
+    if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)), "ACC import")) return false;
+    const bool qualified = llvm::any_of(imported.program.cells, [](const auto &c) { return c.nativeMmadAccOrder; });
+    if (!check(qualified == (mutation == 0), "native ACC qualification scope")) return false;
+    oahs::SelectedPlan plan;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)), "construct ACC fixture")) return false;
+    const auto barriers = std::count_if(plan.ledger.begin(), plan.ledger.end(), [](const auto &e) {
+      return e.command.kind == oahs::Command::Barrier && e.command.source == oahs::Pipe::M;
+    });
+    if (!check((barriers == 0) == (mutation == 0), "ACC fence required outside qualified contract")) return false;
+  }
+  return true;
+}
 bool slotMappings(MLIRContext &context) {
   auto module = parseSourceString<ModuleOp>(slotInput, &context);
   if (!check(bool(module), "parse carried-slot fixture")) return false;
@@ -235,6 +296,20 @@ bool slotMappings(MLIRContext &context) {
   if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)) &&
              plan.work.recurringChannels == 6, "generic three-bank native recurrence")) return false;
 
+  std::string nestedSource = slotInput;
+  const auto insertion = nestedSource.find("      scf.yield %next");
+  nestedSource.insert(insertion, "      scf.for %child = %zero to %n step %one {\n      }\n");
+  auto nestedModule = parseSourceString<ModuleOp>(nestedSource, &context);
+  if (!check(bool(nestedModule), "parse outer finite footprint fixture")) return false;
+  oahs::NativeAnalysis nested;
+  auto nestedFunction = nestedModule->lookupSymbol<func::FuncOp>("slots");
+  if (!check(succeeded(oahs::analyzeHandoffSync(nestedFunction, nested)), "outer footprint import")) return false;
+  for (unsigned bankId = 0; bankId < 3; ++bankId) {
+    if (!check(llvm::any_of(nested.program.cells, [&](const auto &c) {
+      return !c.unknownRange && std::find(c.ranges.begin(), c.ranges.end(),
+                 std::make_pair(uint64_t(256 + 128 * bankId), uint64_t(128))) != c.ranges.end();
+    }), "non-leaf scalar orbit lost finite physical bank footprint")) return false;
+  }
   // Bounds, initialization, arithmetic and narrowing must be proved, not guessed.
   for (unsigned mutation = 0; mutation < 6; ++mutation) {
     auto test = parseSourceString<ModuleOp>(slotInput, &context);
@@ -345,6 +420,6 @@ int main(int argc, char **argv) {
   const bool passed = positive(context, ordinary, "ordinary") && positive(context, loop, "loop") &&
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
-                      positive(context, queue, "queue") && mutations(context) && slotMappings(context);
+                      positive(context, queue, "queue") && mutations(context) && slotMappings(context) && accumulatorOrdering(context);
   return passed ? 0 : 1;
 }

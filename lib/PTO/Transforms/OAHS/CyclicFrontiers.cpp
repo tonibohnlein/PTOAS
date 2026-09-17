@@ -97,6 +97,7 @@ Cut after(const Program& p, const Control& c, Id site, const Mode& expected)
 }
 // Project one physical cell's access roles, without making storage succession
 // imply completion. All other payload remains in the selected full-graph replay.
+bool balanced(const Control&, const std::vector<Cut>&, const std::vector<Cut>&);
 std::vector<RecurringRequirement> qualifyCell(
     const Program& p, const Control& c, const ObservedLoop& loop, unsigned cell)
 {
@@ -247,6 +248,31 @@ std::vector<RecurringRequirement> qualifyCell(
         }
     }
     release.acquisitions.insert(release.acquisitions.end(), finalAcquisitions.begin(), finalAcquisitions.end());
+    // A child exit is not a storage reuse deadline. For a re-entered bank
+    // protocol, try carrying the release token through the parent continuation.
+    // Prime once at the owning invocation entry, acquire at EVERY bank write
+    // (including first use after re-entry), and consume the final token at the
+    // invocation exit. Zero-trip paths retain the prime unchanged. The original
+    // graph must prove alternation; an intervening/conditional bank use cannot
+    // be justified by a reset local iteration counter.
+    if (reentered && period > 1 && c.graph.legalCuts[c.graph.entry] &&
+        c.graph.legalCuts[c.graph.exit]) {
+        auto open = release;
+        open.publications = {canonicalCommandCut(p, c.graph.entry)};
+        open.acquisitions = {canonicalCommandCut(p, c.graph.exit)};
+        for (auto site : members) {
+            if (roles[site] == 2)
+                open.acquisitions.push_back(canonicalCommandCut(p, site));
+            else if (roles[site] == 1) {
+                const auto next = nextAccess(c.graph.sites[site].successors);
+                if (std::none_of(next.begin(), next.end(), [&](Id target) {
+                        return target != loop.exit && roles[target] == 1;
+                    }))
+                    open.publications.push_back(after(p, c, site, modes[site]));
+            }
+        }
+        if (balanced(c, open.publications, open.acquisitions)) release = std::move(open);
+    }
     for (auto* request : {&ready, &release}) {
         for (auto* cuts : {&request->publications, &request->acquisitions}) {
             std::sort(cuts->begin(), cuts->end());
@@ -267,6 +293,7 @@ bool balanced(const Control& c, const std::vector<Cut>& publications,
     std::deque<Id> queue;
     std::vector<bool> queued(c.graph.sites.size());
     bool invalid = false;
+    uint8_t exitState = 0;
     incoming[c.graph.entry] = 1; // bit 0: empty; bit 1: full; bit 2: invalid
     queue.push_back(c.graph.entry);
     queued[c.graph.entry] = true;
@@ -294,6 +321,7 @@ bool balanced(const Control& c, const std::vector<Cut>& publications,
             }
             state = next;
         }
+        if (site == c.graph.exit) exitState = state;
         for (auto successor : c.graph.sites[site].successors) {
             const auto joined = uint8_t(incoming[successor] | state);
             if (joined != incoming[successor]) {
@@ -305,7 +333,7 @@ bool balanced(const Control& c, const std::vector<Cut>& publications,
             }
         }
     }
-    return !invalid && incoming[c.graph.exit] == 1;
+    return !invalid && exitState == 1;
 }
 
 std::vector<RecurringRequirement> qualifyRelationships(

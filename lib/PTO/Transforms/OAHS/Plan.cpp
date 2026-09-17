@@ -182,6 +182,12 @@ bool valid(const Program &p, std::string &reason) {
     return false;
   }
   for (const auto& cell : p.cells) {
+      if (cell.nativeMmadAccOrder &&
+          (cell.storage != Cell::Storage::CanonicalInterval || cell.exclusive ||
+           p.finalBlocks || p.target.contract != "a3-aic-prefix-static-safe-v1")) {
+          reason = "unqualified native accumulator ordering contract";
+          return false;
+      }
       if (cell.storage != Cell::Storage::Abstract && cell.storage != Cell::Storage::CanonicalInterval &&
           cell.storage != Cell::Storage::OverlapWitness) {
           reason = "invalid storage identity kind";
@@ -195,6 +201,11 @@ bool valid(const Program &p, std::string &reason) {
       }
   }
   for (const auto &op : p.operations) {
+    if (op.nativeMmadAccumulate && (op.pipe != Pipe::M || p.finalBlocks ||
+        p.target.contract != "a3-aic-prefix-static-safe-v1")) {
+      reason = "unqualified native accumulating operation";
+      return false;
+    }
     if (!op.complete || lane(op.pipe) >= PipeCount ||
         !p.target.supported[lane(op.pipe)]) {
       reason = "incomplete operation semantics or unsupported pipeline";

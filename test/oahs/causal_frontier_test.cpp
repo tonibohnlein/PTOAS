@@ -6,6 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/CausalFrontier.h"
+#include "PTO/Transforms/OAHS/Analysis.h"
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 
@@ -253,6 +255,50 @@ void structured()
     p.observed->sites[2].observation = 1;
     CHECK(!o::checkCausalFrontier(p, commands).complete); // original word uniformity
 }
+void nativeAccumulatorOrdering()
+{
+    auto p = base(4);
+    p.target = mlir::pto::a3SyncProfile(mlir::pto::SyncCore::Cube);
+    auto &acc = p.cells[0];
+    acc.storage = o::Cell::Storage::CanonicalInterval;
+    acc.coordinateSpace = "physical-local";
+    acc.ranges = {{0, 131072}};
+    acc.nativeMmadAccOrder = true;
+    p.operations[0].pipe = p.operations[1].pipe = o::Pipe::M;
+    p.operations[0].accesses = {{0, false, true}, {1, true, false}};
+    p.operations[1].accesses = {{0, true, true}, {1, true, false}};
+    p.operations[1].nativeMmadAccumulate = true;
+    p.operations[2].pipe = o::Pipe::FIX;
+    p.operations[2].accesses = {{0, true, false}};
+    p.operations[3].pipe = o::Pipe::MTE1;
+    p.operations[3].accesses = {{1, false, true}};
+    o::CausalFrontier f(p);
+    auto first = issue(f, f.initial(), 0);
+    auto second = issue(f, first, 1);
+    CHECK(!f.inspect(second, 2).applied); // ACC is not globally complete.
+    CHECK(!f.inspect(second, 3).applied); // Operand readers are still pending.
+    auto moved = apply(f, second, pub(o::Pipe::M, o::Pipe::FIX));
+    moved = apply(f, moved, wait(o::Pipe::M, o::Pipe::FIX));
+    CHECK(f.inspect(moved, 2).applied);
+    CHECK(!f.inspect(moved, 3).applied);
+    o::Commands commands(5);
+    const auto report = o::analyze(p, commands);
+    CHECK(report.complete);
+    CHECK(std::none_of(report.residuals.begin(), report.residuals.end(), [](const auto &r) {
+        return r.demand.consumer == 1;
+    }));
+    CHECK(!report.verified());
+    auto initializing = p;
+    initializing.operations[1].nativeMmadAccumulate = false;
+    o::CausalFrontier fresh(initializing);
+    CHECK(!fresh.inspect(issue(fresh, fresh.initial(), 0), 1).applied);
+    p.cells[0].nativeMmadAccOrder = false;
+    o::CausalFrontier conservative(p);
+    CHECK(!conservative.inspect(issue(conservative, conservative.initial(), 0), 1).applied);
+    p.cells[0].nativeMmadAccOrder = true;
+    p.cells[0].storage = o::Cell::Storage::OverlapWitness;
+    CHECK(!o::CausalFrontier(p).complete());
+}
 void qualifications()
 {
     auto p = base(1);
@@ -295,5 +341,6 @@ int main()
     closedJoins();
     structured();
     qualifications();
+    nativeAccumulatorOrdering();
     std::cout << "causal frontier: " << checks << " assertions passed\n";
 }

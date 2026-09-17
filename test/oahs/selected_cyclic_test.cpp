@@ -299,7 +299,7 @@ void transitiveRecurringCoverage()
 // ACC reuse remains a compute obligation and cannot gate the next bank fill.
 void carriedBankEffects(bool reentered, unsigned banks)
 {
-    auto p = base(banks + 1, 8);
+    auto p = base(banks + 1, banks);
     const auto P = o::Pipe::MTE1, Q = o::Pipe::M;
     p.operations = {op(P, {}), op(Q, {{banks, true, true}})};
     for (unsigned cell = 0; cell < banks; ++cell) {
@@ -342,6 +342,32 @@ void carriedBankEffects(bool reentered, unsigned banks)
         require(std::find(channel.cells.begin(), channel.cells.end(), banks) == channel.cells.end(),
                 "ACC reuse merged into operand-bank release");
     const auto &control = *program.observed;
+    if (reentered) {
+        for (const auto &channel : plan.channels) {
+            if (channel.source != Q) continue;
+            require(std::find(channel.publications.begin(), channel.publications.end(), control.entry) !=
+                        channel.publications.end(), "open release lacks one invocation prime");
+            require(std::find(channel.acquisitions.begin(), channel.acquisitions.end(), control.exit) !=
+                        channel.acquisitions.end(), "open release lacks final invocation consumption");
+            const auto key = std::find_if(plan.certificate.keys.begin(), plan.certificate.keys.end(),
+                [&](const auto &k) { return k.source == Q && k.observer == P && k.key == channel.key; });
+            require(key != plan.certificate.keys.end(), "open release key missing");
+            const auto index = key - plan.certificate.keys.begin();
+            const auto interface = std::find_if(plan.loops.begin(), plan.loops.end(),
+                [&](const auto &l) { return l.owner == loop.owner; });
+            require(interface != plan.loops.end() &&
+                        interface->outgoing.facts()->events[index].occupancy == 2,
+                    "child exit consumed or forgot its outstanding bank release");
+            auto broken = plan.commands;
+            auto &word = broken[control.exit];
+            word.erase(std::remove_if(word.begin(), word.end(), [&](const auto &cmd) {
+                return cmd.kind == o::Command::Acquire && cmd.source == Q &&
+                       cmd.observer == P && cmd.key == channel.key;
+            }), word.end());
+            require(!o::checkCausalFrontier(program, broken).accepted,
+                    "final invocation consumption deletion accepted");
+        }
+    }
     for (unsigned iterations = 0; iterations <= 2 * banks + 3; ++iterations) {
         std::vector<o::Cut> path;
         std::vector<unsigned> visits(control.sites.size());
