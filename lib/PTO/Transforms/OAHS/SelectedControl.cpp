@@ -246,15 +246,41 @@ Control::Control(const Program& program)
         }
         for (auto site : block.order) {
             position[site] = ordinal++;
-            if (block.cyclic) {
+            frame[site] = site;
+            if (!block.cyclic) {
+                if (predecessors[site].size() == 1) {
+                    const auto before = predecessors[site].front();
+                    if (frame[before] != NoAnalysisId && graph.sites[before].successors.size() == 1)
+                        frame[site] = frame[before];
+                }
                 continue;
             }
-            frame[site] = site;
-            if (predecessors[site].size() == 1) {
-                const auto before = predecessors[site].front();
-                if (frame[before] != NoAnalysisId && graph.sites[before].successors.size() == 1) {
-                    frame[site] = frame[before];
+            // Crossing a repeated component needs the occurrence vocabulary
+            // carried by observed control. Raw structured loops retain the
+            // conservative common-cut path; treating their static body order
+            // as a generation certificate can create an unrearmable event.
+            if (!program.observed) continue;
+            std::vector<Id> forwardPredecessors;
+            for (auto before : predecessors[site]) {
+                const auto& successors = graph.sites[before].successors;
+                const auto owners = graph.sites[before].backedgeOwners;
+                bool hasForward = false;
+                for (std::size_t edge = 0; edge < successors.size(); ++edge) {
+                    if (successors[edge] != site) continue;
+                    hasForward |= owners.empty() || owners[edge] == NoAnalysisId;
                 }
+                if (hasForward && membership[before] == group)
+                    forwardPredecessors.push_back(before);
+            }
+            if (forwardPredecessors.size() == 1) {
+                const auto before = forwardPredecessors.front();
+                unsigned forwardSuccessors = 0;
+                for (std::size_t edge = 0; edge < graph.sites[before].successors.size(); ++edge) {
+                    const auto owner = graph.sites[before].backedgeOwners.empty()
+                        ? NoAnalysisId : graph.sites[before].backedgeOwners[edge];
+                    forwardSuccessors += owner == NoAnalysisId;
+                }
+                if (frame[before] != NoAnalysisId && forwardSuccessors == 1) frame[site] = frame[before];
             }
         }
         components.push_back(std::move(block));

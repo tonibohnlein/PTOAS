@@ -45,6 +45,12 @@ struct SelectedDecision {
     std::vector<FrontierRequirement> required;
     std::vector<std::size_t> endpoints;
     bool commonCut = false, enlargedPrefix = false;
+    // Present only when F7 repaired consumption-before-republication. These
+    // are physical key numbers and actual ledger endpoint IDs, not a claim of
+    // storage completion by the helper.
+    std::size_t repairedAcquisition = NoAnalysisId;
+    unsigned repairedForwardKey = 0, repairReverseKey = 0;
+    uint64_t repairInputVersion = 0, repairOutputVersion = 0;
 };
 struct SelectedUpdate {
     uint64_t version = 0, siteEvaluations = 0;
@@ -57,6 +63,9 @@ struct SelectedUpdate {
 };
 struct SelectedChannel {
     unsigned cell = 0, key = 0;
+    // One recurring prefix can serve several compatible cells. `cell` remains
+    // the stable first cell for source compatibility and diagnostics.
+    std::vector<unsigned> cells;
     Pipe source = Pipe::S, observer = Pipe::S;
     std::vector<Cut> publications, acquisitions;
     std::size_t owner = NoAnalysisId;
