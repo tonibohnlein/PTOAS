@@ -167,3 +167,33 @@ Soft collectives remain explicit gaps: their scratch accesses, cache/visibility
 operations, and private local-event lifetimes need a different complete model.
 A5 collectives also need a separate source qualification. Neither borrows the
 hard A3 collective's empty payload-effect population.
+
+## Qualified local accumulator access ordering
+
+`SyncAccumulatorOrdering.h` describes an access-order exception for ordinary
+A3 `TMATMUL` / `TMATMUL_ACC` lowering to `mad`, using actual valid M/N/K
+sizes. The [A2/A3-supported Mmad documentation](https://asc.gitcode.com/api/SIMD-API/basic_api/cube_compute_ISASI/mmad_compute/Mmad.html)
+states that consecutive K-axis accumulations need PIPE_M below
+`(m / 16) * (n / 16) == 10`, while sufficiently large shapes have native
+write/read ordering. This is a development documentation source, checked on
+2026-09-17; the lowering correspondence is the A2/A3 `TMatmul.hpp` path in
+PTO ISA revision `0c112d61f41342bd0867ce1080c29f1590d72484`, also used by the
+shared source-qualified contracts above. This is not new device qualification.
+
+Admission is deliberately narrower: ordinary unspecified AccPhase, FP16 inputs
+and FP32 ACC, positive full valid dimensions divisible by 16 and at most 4095,
+matching K and result dimensions, a constant destination address, and an exact
+canonical ACC atom. All M accesses to that atom must have the same qualified
+physical destination, dimensions and layout. Unknown/mixed accesses keep their
+normal requirements. A function containing mutable valid-shape updates does not
+receive this exception. Small/dynamic sizes, partial valid shapes, mixed layouts,
+other matrix variants and UnitFlag/phase modes retain conservative behavior.
+
+Only an **accumulating consumer** may use this rule. A subsequent fresh matrix
+initialization still needs its ordinary prerequisite. The rule suppresses the
+local ACC access requirement in both the causal frontier and cold compact
+analysis; it does not modify pending operations, launch/completion reachability,
+publication contents or operand effects. Consequently neither operand release
+nor M-to-FIX readiness follows from this exception. Existing actual transfers
+can still establish completion and remove requirements through the normal path.
+The `existing` comparison algorithm is unchanged.

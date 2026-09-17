@@ -12,6 +12,7 @@
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/Transforms/InsertSync/SyncOriginClosure.h"
 #include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
+#include "PTO/Transforms/InsertSync/SyncAccumulatorOrdering.h"
 #include "PTO/Transforms/OAHS/ObservedPrograms.h"
 #include "PTO/Transforms/OAHS/Plan.h"
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
@@ -466,6 +467,10 @@ LogicalResult import(func::FuncOp function, Import &out,
   };
   std::vector<SlotCandidate> slotCandidates;
   SmallVector<std::unique_ptr<BaseMemInfo>> slotMemory;
+  // May-footprints do not assert which visit uses a bank. In particular, an
+  // outer loop containing children can have a finite address orbit without
+  // having a qualified recurring synchronization interface.
+  DenseMap<const BaseMemInfo *, const BaseMemInfo *> finiteMemory;
   const auto slotTarget = a3SyncProfile(SyncCore::Cube);
   std::size_t maximumPeriod = 1;
   for (const auto &row : slotTarget.keys)
@@ -473,7 +478,6 @@ LogicalResult import(func::FuncOp function, Import &out,
   function.walk([&](scf::ForOp loop) {
     bool nested = false;
     loop.getRegion().walk([&](mlir::Operation *op) { nested |= isa<scf::ForOp, scf::WhileOp>(op); });
-    if (nested) return;
     auto mapping = SyncSlotMapping::derive(loop, unsigned(maximumPeriod));
     if (!mapping) return;
     SlotCandidate candidate;
@@ -506,12 +510,18 @@ LogicalResult import(func::FuncOp function, Import &out,
             variants.push_back(copy.get());
             slotMemory.push_back(std::move(copy));
           }
+          auto possible = memory->clone();
+          possible->baseAddresses.assign(addresses.begin(), addresses.end());
+          possible->hasKnownPhysicalAddresses = true;
+          possible->aliasesUnknownRange = false;
+          finiteMemory[memory] = possible.get();
+          slotMemory.push_back(std::move(possible));
         }
       };
       qualify(phase->defVec);
       qualify(phase->useVec);
     }
-    if (!candidate.memories.empty()) slotCandidates.push_back(std::move(candidate));
+    if (!nested && !candidate.memories.empty()) slotCandidates.push_back(std::move(candidate));
   });
   // A missing absolute local address is not a distinct-allocation proof. Keep
   // legacy alias behavior unchanged; normalize the handoff import's private
@@ -519,6 +529,8 @@ LogicalResult import(func::FuncOp function, Import &out,
   SmallVector<std::unique_ptr<BaseMemInfo>> widenedMemory;
   DenseMap<const BaseMemInfo *, const BaseMemInfo *> normalizedMemory;
   auto qualifyMemory = [&](const BaseMemInfo *memory) -> const BaseMemInfo * {
+    if (auto finite = finiteMemory.find(memory); finite != finiteMemory.end())
+      return finite->second;
     auto found = normalizedMemory.find(memory);
     if (found != normalizedMemory.end())
       return found->second;
@@ -671,6 +683,35 @@ LogicalResult import(func::FuncOp function, Import &out,
   // A payload-free function has no core-specific obligations. A pure DMA
   // function derives its core from the actual local storage above.
   out.program.target = a3SyncProfile(cube ? SyncCore::Cube : SyncCore::Vector);
+  // Require the entire M-access population of an exact ACC atom to obey one
+  // native accumulation contract. Unknown aliases, other M instructions,
+  // mixed layouts/shapes, mutable valid dimensions and UnitFlag retain the
+  // ordinary completion requirement. The actual effects remain unchanged.
+  bool mutableDimensions = false;
+  function.walk([&](SetValidShapeOp) { mutableDimensions = true; });
+  if (cube && !mutableDimensions) {
+    std::vector<std::optional<SyncAccumulatorOrder>> common(out.program.cells.size());
+    std::vector<bool> invalid(out.program.cells.size());
+    // Sparse effect incidences, rather than another cells-by-operations scan.
+    for (unsigned i = 0; i < out.program.operations.size(); ++i) {
+      const auto &op = out.program.operations[i];
+      if (op.pipe != Pipe::M) continue;
+      const auto order = syncAccumulatorOrder(out.payload[i]);
+      out.program.operations[i].nativeMmadAccumulate = order && isa<TMatmulAccOp>(out.payload[i]);
+      for (const auto &access : op.accesses) {
+        const auto cell = access.cell;
+        const auto &atom = out.program.cells[cell];
+        if (invalid[cell] || atom.storage != Cell::Storage::CanonicalInterval || atom.unknownRange ||
+            atom.addressSpace != std::to_string(unsigned(AddressSpace::ACC))) continue;
+        if (!order || (common[cell] && (common[cell]->signature != order->signature ||
+                                       common[cell]->destinationType != order->destinationType)))
+          invalid[cell] = true;
+        else common[cell] = order;
+      }
+    }
+    for (unsigned cell = 0; cell < out.program.cells.size(); ++cell)
+      out.program.cells[cell].nativeMmadAccOrder = !invalid[cell] && common[cell].has_value();
+  }
   for (const auto &phase : out.program.operations)
     if (!out.program.target.supported[unsigned(phase.pipe)])
       return function.emitError(

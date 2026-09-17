@@ -365,6 +365,10 @@ class Transfer {
         seen;
     for (const auto &access : p.operations[id].accesses)
       for (const auto &other : byCell[access.cell]) {
+        if (p.cells[access.cell].nativeMmadAccOrder &&
+            p.operations[id].nativeMmadAccumulate &&
+            p.operations[id].pipe == Pipe::M && p.operations[other.first].pipe == Pipe::M)
+          continue;
         if (!s.pending[observer][other.first])
           continue;
         auto add = [&](CompletionRequirement::Kind kind, Property property) {

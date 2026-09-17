@@ -300,7 +300,12 @@ are evaluated over that period, not over runtime trip counts. Unknown initial
 values, unsupported arithmetic, narrowing/overflow and periods outside the
 selected observation vocabulary keep conservative storage coverage.
 
-Native import currently connects this to **leaf loops**. It specializes shared
+Native import derives finite possible physical footprints for non-leaf loops
+too. An outer A-bank pool can be disjoint from a B-bank pool without qualifying
+which visit accesses each bank. Unknown expressions retain conservative aliases;
+this does not form a Cartesian product of enclosing-loop periods.
+
+Occurrence specialization still requires **leaf loops**. It specializes shared
 direct-allocation footprint records and runs the existing physical interval
 partition, including witnesses to all unqualified accesses. No payload opcode
 recognizer, definite-write assumption, new target contract or payload rewrite
@@ -310,22 +315,34 @@ original anchors, addresses and payload/control order remain unchanged.
 The existing recurrence qualifier then derives bank-specific readiness and
 reader-release channels. Their selected words are replayed through entry,
 backedges and exit; ACC and other invariant storage retain their separate
-ordinary obligations. For re-entered regions, final release publications stay
-after the corresponding bank reader, while final consumption can wait until
-the original last body exit. A last-iteration feature is exposed only at that
-exit anchor. Consuming each final release immediately after its reader would
-unnecessarily gate preparation of another bank.
+ordinary obligations. For re-entered multi-bank regions, construction first
+tries an open release protocol: prime once at invocation entry, acquire before
+every corresponding bank write, publish after its last reader, and drain at
+invocation exit. The original-control balance monitor must prove participation
+including zero-trip paths, partial bank use and repeated entry. Otherwise the
+closed interface is retained. The combined ledger must still establish every
+consumption-before-republication requirement; priming supplies no memory credit.
+
+Child interfaces export the actual causal/event snapshots, including full
+release tokens. Parent continuation does not reset them. MAT reader publications
+can stay before the next operand-release acquisition, avoiding unrelated compute
+completion in the DMA prerequisite. The admitted acquisition deadline is the
+next bank write. General earlier event deadlines and arbitrary open channels
+remain outside this extension. Recurring keys remain reserved for that protocol.
 
 The exact stripped Shenggan step4 payload is a native regression, accompanied by
 an independent concrete local-memory/event-order check. It checks one and two
 enclosing entries and forbids current-bank compute completion from gating the
-next inner-iteration bank fill. An injected ALL drain fails that quality check.
+next inner-iteration bank fill, the last child computation from gating the next
+parent DMA, and serialization between disjoint A/B MAT loads. An injected ALL
+drain fails that quality check. Qualified native ACC access ordering is checked
+separately from the graph's whole-operation completion edges.
 Portable tests additionally cover zero through seven trips and repeated entry;
 native scalar tests include a three-bank stride-two orbit.
 
 This qualifies Shenggan's inner LEFT/RIGHT slot cycle. Its outer MAT slot loop
-contains a nested loop and remains conservative. Composing bank-use interfaces
-through nested regions, runtime initial slots, arbitrary conditional bank skips,
+has finite may-footprints but no exact per-visit MAT-bank correspondence.
+Runtime initial slots, arbitrary conditional bank skips,
 and non-unit-step carried-slot loops remains separate work. This is not a claim
 that the entire manual protocol or its device performance has been reproduced.
 

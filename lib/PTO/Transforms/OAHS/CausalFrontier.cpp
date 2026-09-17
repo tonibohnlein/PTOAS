@@ -301,6 +301,8 @@ FrontierStep CausalFrontier::inspect(const FrontierState& s, std::size_t operati
             continue;
         for (unsigned source = 0; source < PipeCount; ++source)
             for (unsigned mode = 0; mode < 2; ++mode) {
+                if (model->program.cells[cell].nativeMmadAccOrder &&
+                    op.nativeMmadAccumulate && op.pipe == Pipe::M && source == unsigned(Pipe::M)) continue;
                 const auto* h = s.data->facts.history.find((cell * PipeCount + source) * 2 + mode);
                 if ((write || (read && mode)) && h && !frontierContains(*h, unsigned(op.pipe)))
                     failed.residuals.push_back({cell, Pipe(source), bool(mode), operation, read, write});
