@@ -63,8 +63,8 @@ void facts(const o::FrontierState& s)
     for (std::size_t i = 0; i < f.history.size(); ++i) {
         if (i)
             std::cout << ',';
-        if (f.history[i])
-            bitset(*f.history[i]);
+        if (const auto* reached = f.history.find(i))
+            bitset(*reached);
         else
             std::cout << "null";
     }

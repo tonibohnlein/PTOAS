@@ -189,6 +189,7 @@ std::vector<RecurringRequirement> qualifyCell(
     }
     RecurringRequirement ready{cell, producer, consumer, {}, {}}, release{cell, consumer, producer, {}, {}};
     ready.owner = release.owner = loop.owner;
+    ready.period = release.period = period;
     for (auto site : members) {
         if (!roles[site]) continue;
         const auto cut = canonicalCommandCut(p, site);
@@ -279,7 +280,8 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
                 EndpointPurpose::RecurringCompletion, id);
         }
         result.channels.push_back({request.cell, number, request.source, request.observer,
-                                   request.publications, request.acquisitions, request.owner});
+                                   request.publications, request.acquisitions, request.owner,
+                                   request.period});
     }
     result.work.recurringChannels = result.channels.size();
     // These are physical access roles, not definite-write/content certificates.

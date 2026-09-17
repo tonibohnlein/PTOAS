@@ -266,6 +266,31 @@ Control::Control(const Program& program)
         }
     }
     complete = components.size() == groups.size();
+    // One pass over the sites fixes the canonical word of each site, the sites
+    // sharing it, and the range of components it spans. canonicalCommandCut
+    // names the EARLIEST site carrying an observation, so the first occurrence
+    // encountered in site order is that canonical site. Unreachable and
+    // later-canonical occurrences are retained deliberately: an endpoint
+    // aggregate over a shared word must not straddle a reuse boundary.
+    canonicalCut.resize(graph.sites.size());
+    wordOccurrences.assign(graph.sites.size(), {});
+    wordSpan.assign(graph.sites.size(), {NoAnalysisId, 0});
+    std::map<Id, Cut> earliest;
+    for (Id site = 0; site < graph.sites.size(); ++site) {
+        canonicalCut[site] = site;
+        if (program.observed && legalCommandCut(program, site)) {
+            canonicalCut[site] =
+                earliest.emplace(program.observed->sites[site].observation, site).first->second;
+        }
+        wordOccurrences[canonicalCut[site]].push_back(site);
+        const auto block = component[site];
+        if (block == NoAnalysisId) {
+            continue;
+        }
+        auto& span = wordSpan[canonicalCut[site]];
+        span.first = span.first == NoAnalysisId ? block : std::min(span.first, block);
+        span.second = std::max(span.second, block);
+    }
 }
 bool Control::straight(Id a, Id b) const
 {

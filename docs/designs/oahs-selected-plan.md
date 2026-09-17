@@ -67,6 +67,19 @@ with their cuts. `replaySiteEvaluations` therefore counts only recomputed sites;
 `selected_update_test.cpp` checks that each update evaluates at most the sites
 from its earliest changed word to the consumer.
 
+The canonical word of a site, the sites sharing it, and the component span of
+each word are facts about the immutable program and control alone, so `Control`
+builds them once. The boundary computation reads that index instead of rescanning
+every site per query, and `Ledger` resolves a word through the same memo. This
+work is deliberately outside `replaySiteEvaluations`; moving work out of a counter
+is not an improvement, so it is reported as wall time.
+
+`selected_update_test.cpp::ReplayTestAccess` compares the incremental and cold
+replays of one edit on the complete semantic checkpoint at every cut, plus every
+endpoint aggregate, and requires an inadmissible edit to be refused identically
+with the same reason and cut. `compareEveryCut` sweeps every legal original cut
+as the edit position on both replay paths.
+
 The frontier's per-primitive closure is incremental for the same reason: the
 retained relation is already transitively closed and a primitive adds three
 fresh vertices with no edge back into it, so each old row gains only the fresh
@@ -128,11 +141,30 @@ that return is an explicit rearm obligation, not an unconditional region drain.
 While a qualified body is under construction, contextual replay solves the
 selected commands over all original edges. Unfinished payload contributes its
 actual pending effects and native ordering only: it does not insert the desired
-memory-conflict edges. Event preconditions remain strict. Each edit starts that
-replay from the original entry and checks all previously finalized requirements
-at convergence. No stale completion or provisional receipt escapes the selected
-ledger. This correctness-first contextual replay is not incremental, and its
-whole-pass cost must be measured.
+memory-conflict edges. Event preconditions remain strict. Each edit checks all
+previously finalized requirements at convergence. No stale completion or
+provisional receipt escapes the selected ledger.
+
+Contextual replay reuses the same predecessor-closed component prefix as the
+acyclic path, under the same boundary rule: the earliest changed word is taken
+over every original occurrence of the edited observation, and a shared nonempty
+word is kept wholly on one side, so no reused endpoint aggregate holds a
+contribution from a recomputed region. Two properties of this path make the
+reuse admissible. Every site applies the pending transfer regardless of whether
+its payload is finalized, so a component's equations depend only on its words
+and its incoming interface. And every component is solved to its actual fixed
+point over the original edges, never from a hypothesis-seeded traversal, so a
+cyclic component before the boundary may also be kept. The recomputed region is
+still solved over the whole remaining graph rather than truncated at the active
+component, which is what keeps aggregates over shared words complete. Nothing is
+seeded with old facts: an invalidated site restarts from bottom.
+
+The cost that remains is the fixed point of the ACTIVE cyclic component, which is
+re-solved per edit. Inside a strongly connected component every site is reachable
+from every other, so invalidating a dependency cone recovers nothing there, and
+seeding the previous solution is unsound because a command edit can both add
+completion and reset event occupancy. Whole-pass cost must therefore still be
+measured, and it scales with the edit count times the active component.
 
 Final cold checking discharges entry, body, backedge and exit obligations from
 the actual invocation state. `SelectedLoopInterface` exports the incoming and
