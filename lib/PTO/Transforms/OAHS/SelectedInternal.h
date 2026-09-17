@@ -39,6 +39,10 @@ struct Control {
         // A unique first observer payload on every exiting entry path, or no
         // qualified deadline. These are original-program facts, not receipts.
         std::array<Cut, PipeCount> firstConsumer;
+        // Original word positions crossed by moving an acquisition to entry,
+        // including the deadline's pre-payload word, excluding entry itself.
+        // Their commands are selected-plan facts and must be queried afresh.
+        std::array<std::vector<Cut>, PipeCount> crossedWords;
         std::set<Id> issuedClasses;
     };
     std::vector<LoopEntryFacts> loopEntries;
@@ -171,6 +175,7 @@ struct Group {
     uint64_t version = 0;
     Cut entryAcquisition = NoAnalysisId;
     Id entryReturnKey = NoAnalysisId;
+    bool entryRepeats = false;
 };
 
 class Constructor {
@@ -194,6 +199,9 @@ private:
     // key must not be borrowed as another recurring channel's forward key.
     std::map<std::pair<Pipe, Pipe>, std::pair<Id, Id>> closedBindings;
     std::set<Id> closedKeys, recurringKeys;
+    // Contextual state propagation is also needed for one-shot loop-entry
+    // receipts. It does not reserve a physical key or establish rearming.
+    bool needsContextualReplay = false;
 
     bool fail(SelectedFailure, std::string, Cut = NoAnalysisId);
     State initial() const;

@@ -632,6 +632,7 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
         if (!retained[index]) continue;
         const auto& request = requests[index];
         reserved.insert(keys[index]);
+        needsContextualReplay = true;
         const auto number = frontier.keys()[keys[index]].key;
         const auto id = result.channels.size();
         for (auto cut : request.publications) {

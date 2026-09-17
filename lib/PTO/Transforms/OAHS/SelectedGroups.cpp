@@ -153,6 +153,21 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
     for (const auto& loop : control.loopEntries) {
         if (loop.firstConsumer[unsigned(observer)] != current ||
             control.canonicalCut[loop.entry] != loop.entry) continue;
+        // Moving a wait ahead of Q's first payload can still order another
+        // engine through an earlier Q publication. Consult actual selected
+        // words, not just payload order. Existing entry commands precede the
+        // appended acquisition; existing deadline commands follow it only if
+        // we hoist, so the latter must also be checked.
+        const bool communicates = std::any_of(
+            loop.crossedWords[unsigned(observer)].begin(),
+            loop.crossedWords[unsigned(observer)].end(), [&](Cut cut) {
+                return std::any_of(ledger.word(cut).begin(), ledger.word(cut).end(), [&](Id id) {
+                    const auto& command = ledger.endpoint(id).command;
+                    return command.kind == Command::BarrierAll ||
+                        (command.kind == Command::Publish && command.source == observer);
+                });
+            });
+        if (communicates) continue;
         // No relevant source-class occurrence may be refreshed inside the
         // region. Readiness/release belongs to this bank, not to a maximum
         // operation number or to every operation on its source engine.
@@ -218,6 +233,7 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
         group.publications = {selected->cut};
         group.entryAcquisition = loop.entry;
         group.entryReturnKey = reverse;
+        group.entryRepeats = repeats;
         group.forwardKey = forward;
         group.version = ledger.version();
         group.coverage = needed;

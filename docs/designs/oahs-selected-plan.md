@@ -255,8 +255,18 @@ non-unit-step loops. A source prefix outside such a loop can be acquired once
 at entry when its required access classes are invariant inside the loop, the
 consumer cannot be bypassed on an exiting body path, no earlier payload on its
 observing engine is crossed, and whole-graph endpoint participation is balanced.
+The first phase also indexes the original word positions between entry and
+that deadline. Admission checks their current selected commands: an observer
+publication or ALL fence can transmit the newly acquired dependency to another
+engine, even without an earlier observer payload, so such a crossing is refused.
+The deadline's existing word is included; entry commands preceding the appended
+acquisition and commands after the consumer do not block this placement.
 Repeated surrounding entries reuse existing causal consumption knowledge first;
 a return is proposed only for a reported missing rearm certificate on that key.
+Contextual replay is an explicit construction property, separate from physical
+key reservations. One-shot entry handoffs do not permanently reserve their
+keys: later uses still need actual emptiness, consumption knowledge and a clear
+endpoint interval. Repeated entry protocols retain their recurring reservations.
 Unknown and zero-trip bounds keep conservative
 placement. This is an invariant-entry mechanism, not general correspondence
 between successive uses of alternating banks across guarded loop bodies.
