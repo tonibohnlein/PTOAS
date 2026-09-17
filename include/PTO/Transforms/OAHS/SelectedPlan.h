@@ -101,6 +101,11 @@ struct SelectedWork {
     uint64_t elapsedMicroseconds = 0, preparationMicroseconds = 0;
     std::size_t sourceHandles = 0, acknowledgments = 0, commonCutTransfers = 0;
     std::size_t recurringChannels = 0;
+    std::size_t recurringTrials = 0, redundantRecurringChannels = 0;
+    uint64_t recurringAnalysisSites = 0;
+    std::size_t loopEntryTransfers = 0;
+    uint64_t loopEntryAnalysisSites = 0;
+    uint64_t loopEntryPreparationSites = 0;
     // Dimensions of the graph actually constructed over, recorded once. They
     // separate refinement expansion from repeated visits and state-copy cost;
     // they are not work allowances and never affect a decision.

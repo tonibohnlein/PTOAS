@@ -12,6 +12,7 @@
 #include "SelectedLookahead.h"
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include <algorithm>
+#include <array>
 #include <map>
 #include <set>
 #include <utility>
@@ -33,6 +34,15 @@ struct Control {
     std::vector<Id> component, position, frame;
     std::vector<bool> reachable;
     LookaheadIndex lookahead;
+    struct LoopEntryFacts {
+        Cut entry;
+        // A unique first observer payload on every exiting entry path, or no
+        // qualified deadline. These are original-program facts, not receipts.
+        std::array<Cut, PipeCount> firstConsumer;
+        std::set<Id> issuedClasses;
+    };
+    std::vector<LoopEntryFacts> loopEntries;
+    uint64_t loopEntryPreparationSites = 0;
     // Memo of canonicalCommandCut, and the sites sharing each canonical word,
     // with the component span of each such word. These are facts about the
     // immutable program and control alone: no ledger state enters them, so they
@@ -159,6 +169,8 @@ struct Group {
     std::vector<Cut> publications = {};
     Id forwardKey = NoAnalysisId;
     uint64_t version = 0;
+    Cut entryAcquisition = NoAnalysisId;
+    Id entryReturnKey = NoAnalysisId;
 };
 
 class Constructor {
@@ -206,6 +218,7 @@ private:
     std::set<Id> coverage(Cut, Pipe, const std::vector<FrontierRequirement>&) const;
     bool freshBetween(Cut, Cut, Id) const;
     bool sourceFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&) const;
+    bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&);
     bool consume();
     bool bind(Group&, RequirementStage);
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&);

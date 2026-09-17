@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/Native.h"
+#include "ObservationUnion.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
@@ -295,6 +296,33 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     out.program = std::move(refined.program);
     out.loopOwners[model.owner] = loop;
   }
+  // Preserve useful entry placement facts even when residue refinement is not
+  // admitted (notably tiled loops with a non-unit step). This neither changes
+  // the control graph nor makes a physical interval an occurrence certificate.
+  for (auto loop : loops) {
+    auto &q = *out.program.observed;
+    const auto owner = ids.lookup(loop.getOperation());
+    if (llvm::any_of(q.loops, [&](const auto &r) { return r.owner == owner; })) continue;
+    const auto lower = integer(loop.getLowerBound()), upper = integer(loop.getUpperBound()),
+               step = integer(loop.getStep());
+    if (!lower || !upper || !step || *step <= 0 || *lower >= *upper ||
+        loop->hasAttr("unsignedCmp") || loop->hasAttr("unsigned_cmp")) continue;
+    if (q.sites[owner].successors.size() != 1) continue;
+    const auto header = q.sites[owner].successors.front();
+    if (q.sites[header].successors.size() != 2) continue;
+    const auto body = q.sites[header].successors[0], exit = q.sites[header].successors[1];
+    ObservedLoop original{owner, owner, exit, {}, body, true};
+    std::vector<bool> seen(q.sites.size());
+    std::vector<Cut> todo{header};
+    while (!todo.empty()) {
+      const auto at = todo.back(); todo.pop_back();
+      if (at == exit || seen[at]) continue;
+      seen[at] = true;
+      original.sites.push_back(at);
+      for (auto next : q.sites[at].successors) todo.push_back(next);
+    }
+    q.loops.push_back(std::move(original));
+  }
   const auto originals = out.anchors;
   out.anchors.assign(commandCutCount(out.program), nullptr);
   for (Cut at = 0; at < out.anchors.size(); ++at) {
@@ -556,12 +584,32 @@ LogicalResult import(func::FuncOp function, Import &out,
 // Emit only total predicates over the original normalized induction variable
 // and upper bound. For an active visit 0<=i<N, N-i cannot overflow signed index
 // range; no new iteration/history counter or event-state query is introduced.
+struct PredicateCache {
+  struct BlockValues {
+    std::map<uint64_t, Value> constants;
+    std::map<std::pair<std::size_t, uint64_t>, Value> residues;
+    std::map<std::size_t, Value> remaining;
+    std::map<std::tuple<std::size_t, unsigned, uint64_t, uint64_t>, Value> atoms;
+  };
+  DenseMap<Block *, BlockValues> blocks;
+};
 FailureOr<Value>
 emitObservationPredicate(const OriginalObservation &observation,
                          mlir::Operation *anchor, const Import &input,
-                         OpBuilder &builder) {
+                         OpBuilder &builder, PredicateCache &cache) {
   Value predicate;
   auto loc = anchor->getLoc();
+  auto &values = cache.blocks[anchor->getBlock()];
+  auto reuse = [&](auto &table, const auto &key, auto build) -> Value {
+    auto at = table.find(key);
+    if (at != table.end()) {
+      auto *definition = at->second.getDefiningOp();
+      if (definition && definition->getBlock() == anchor->getBlock() &&
+          definition->isBeforeInBlock(anchor))
+        return at->second;
+    }
+    return table[key] = build();
+  };
   for (const auto &atom : observation.atoms) {
     auto owner = input.loopOwners.find(atom.owner);
     if (owner == input.loopOwners.end() ||
@@ -572,12 +620,20 @@ emitObservationPredicate(const OriginalObservation &observation,
     auto loop = owner->second;
     Value lhs = loop.getInductionVar();
     auto constant = [&](uint64_t value) -> Value {
-      return builder.create<arith::ConstantIndexOp>(
-          loc, static_cast<int64_t>(value));
+      return reuse(values.constants, value, [&]() -> Value {
+        return builder.create<arith::ConstantIndexOp>(loc, static_cast<int64_t>(value));
+      });
     };
     Value part;
-    if (atom.kind == ObservationAtom::LoopResidue) {
-      lhs = builder.create<arith::RemUIOp>(loc, lhs, constant(atom.parameter));
+    const auto atomIdentity = detail::atomKey(atom);
+    auto prior = values.atoms.find(atomIdentity);
+    if (prior != values.atoms.end() &&
+        prior->second.getDefiningOp()->isBeforeInBlock(anchor)) {
+      part = prior->second;
+    } else if (atom.kind == ObservationAtom::LoopResidue) {
+      lhs = reuse(values.residues, std::make_pair(atom.owner, atom.parameter), [&]() -> Value {
+        return builder.create<arith::RemUIOp>(loc, lhs, constant(atom.parameter));
+      });
       part = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, lhs,
                                            constant(atom.value));
     } else if (atom.kind == ObservationAtom::LoopHasPrevious) {
@@ -586,7 +642,9 @@ emitObservationPredicate(const OriginalObservation &observation,
           atom.value ? arith::CmpIPredicate::sge : arith::CmpIPredicate::slt,
           lhs, constant(atom.parameter));
     } else if (atom.kind == ObservationAtom::LoopHasNext) {
-      lhs = builder.create<arith::SubIOp>(loc, loop.getUpperBound(), lhs);
+      lhs = reuse(values.remaining, atom.owner, [&]() -> Value {
+        return builder.create<arith::SubIOp>(loc, loop.getUpperBound(), lhs);
+      });
       part = builder.create<arith::CmpIOp>(
           loc,
           atom.value ? arith::CmpIPredicate::sgt : arith::CmpIPredicate::sle,
@@ -594,6 +652,7 @@ emitObservationPredicate(const OriginalObservation &observation,
     } else
       return anchor->emitError("handoff: unsupported native observation atom"),
              failure();
+    values.atoms[atomIdentity] = part;
     predicate = predicate
                     ? Value(builder.create<arith::AndIOp>(loc, predicate, part))
                     : part;
@@ -710,9 +769,10 @@ LogicalResult execute(func::FuncOp function, NativeConstructor constructor,
   SyncIRs emission;
   SmallVector<std::unique_ptr<SyncOperation>> storage;
   struct EmittedWord {
-    Cut cut;
+    SmallVector<Cut> cuts;
     mlir::Operation *anchor;
     scf::IfOp guard;
+    detail::ObservationUnion predicates;
   };
   SmallVector<EmittedWord> words;
   llvm::SmallPtrSet<mlir::Operation *, 32> originalSet;
@@ -724,21 +784,49 @@ LogicalResult execute(func::FuncOp function, NativeConstructor constructor,
     if (cut >= input.anchors.size() || !input.anchors[cut])
       return function.emitError(
           "handoff: selected command has no original native anchor");
-    mlir::Operation *wordAnchor = input.anchors[cut];
-    scf::IfOp generatedGuard;
+    const auto &word = result.commands[cut];
+    auto sameWord = [&](const auto &candidate) {
+      const auto &other = result.commands[candidate.cuts.front()];
+      return candidate.anchor == input.anchors[cut] && word.size() == other.size() &&
+          std::equal(word.begin(), word.end(), other.begin(), [](const auto &a, const auto &b) {
+            return a.kind == b.kind && a.source == b.source && a.observer == b.observer && a.key == b.key;
+          });
+    };
+    auto found = llvm::find_if(words, sameWord);
+    if (found == words.end()) {
+      words.push_back({{}, input.anchors[cut], {}, {}});
+      found = words.end() - 1;
+    }
+    found->cuts.push_back(cut);
     const auto observation = input.program.observed->sites[cut].observation;
-    const auto &descriptor = input.program.observed->observations[observation];
-    if (!descriptor.atoms.empty()) {
+    found->predicates.push_back(input.program.observed->observations[observation].atoms);
+  }
+  DenseMap<mlir::Operation *, std::size_t> originalOrder;
+  for (auto [index, op] : llvm::enumerate(originalOperations)) originalOrder[op] = index;
+  llvm::stable_sort(words, [&](const auto &a, const auto &b) {
+    return originalOrder.lookup(a.anchor) < originalOrder.lookup(b.anchor);
+  });
+  PredicateCache predicateCache;
+  for (auto &word : words) {
+    const auto cut = word.cuts.front();
+    mlir::Operation *wordAnchor = word.anchor;
+    scf::IfOp generatedGuard;
+    word.predicates = detail::simplifyObservationUnion(std::move(word.predicates));
+    if (word.predicates.size() != 1 || !word.predicates.front().empty()) {
       OpBuilder builder(wordAnchor);
-      auto predicate =
-          emitObservationPredicate(descriptor, wordAnchor, input, builder);
-      if (failed(predicate))
-        return failure();
+      Value condition;
+      for (const auto &term : word.predicates) {
+        OriginalObservation descriptor{0, term, true};
+        auto predicate = emitObservationPredicate(descriptor, wordAnchor, input, builder, predicateCache);
+        if (failed(predicate)) return failure();
+        condition = condition ? Value(builder.create<arith::OrIOp>(wordAnchor->getLoc(), condition, *predicate)) : *predicate;
+      }
       generatedGuard =
-          builder.create<scf::IfOp>(wordAnchor->getLoc(), *predicate, false);
+          builder.create<scf::IfOp>(wordAnchor->getLoc(), condition, false);
       wordAnchor = generatedGuard.getThenRegion().front().getTerminator();
     }
-    words.push_back({cut, wordAnchor, generatedGuard});
+    word.anchor = wordAnchor;
+    word.guard = generatedGuard;
     auto anchor = std::make_unique<PlaceHolderInstanceElement>(cut, 0);
     anchor->elementOp = wordAnchor;
     for (const auto &command : result.commands[cut]) {
@@ -815,16 +903,27 @@ LogicalResult execute(func::FuncOp function, NativeConstructor constructor,
         "handoff: unexpected operation in synchronization word");
   };
   for (const auto &word : words) {
-    const auto observation =
-        input.program.observed->sites[word.cut].observation;
-    const auto &descriptor = input.program.observed->observations[observation];
+    const auto cut = word.cuts.front();
     auto guard = word.guard;
-    if (word.guard &&
-        failed(checkObservationPredicate(descriptor, input.anchors[word.cut],
-                                         input, guard.getCondition())))
-      return failure();
-    if (bool(word.guard) != !descriptor.atoms.empty())
+    const bool unconditional = word.predicates.size() == 1 && word.predicates.front().empty();
+    if (bool(word.guard) == unconditional)
       return function.emitError("handoff: emitted guard participation changed");
+    if (guard) {
+      SmallVector<Value> alternatives;
+      std::function<void(Value)> flatten = [&](Value value) {
+        if (auto either = value.getDefiningOp<arith::OrIOp>()) {
+          flatten(either.getLhs()); flatten(either.getRhs());
+        } else alternatives.push_back(value);
+      };
+      flatten(guard.getCondition());
+      if (alternatives.size() != word.predicates.size())
+        return function.emitError("handoff: emitted observation union changed");
+      for (std::size_t i = 0; i < alternatives.size(); ++i) {
+        OriginalObservation descriptor{0, word.predicates[i], true};
+        if (failed(checkObservationPredicate(descriptor, input.anchors[cut], input, alternatives[i])))
+          return failure();
+      }
+    }
     SmallVector<mlir::Operation *> backwards;
     for (auto *op = word.anchor->getPrevNode();
          op && isa<SetFlagOp, WaitFlagOp, BarrierOp>(op) &&
@@ -832,9 +931,11 @@ LogicalResult execute(func::FuncOp function, NativeConstructor constructor,
          op = op->getPrevNode())
       backwards.push_back(op);
     for (auto *op : llvm::reverse(backwards)) {
-      if (!readCommands.insert(op).second || failed(read(op, word.cut)))
+      if (!readCommands.insert(op).second || failed(read(op, cut)))
         return failure();
     }
+    for (auto member : word.cuts)
+      if (member != cut) actual[member] = actual[cut];
   }
   bool extra = false;
   function.walk([&](mlir::Operation *op) {

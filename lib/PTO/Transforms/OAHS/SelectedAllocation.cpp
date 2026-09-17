@@ -300,8 +300,25 @@ bool Constructor::bind(Group& group, RequirementStage stage)
             decision.endpoints.push_back(ledger.append(cut,
                 {Command::Publish, group.source, observer, key.key}, EndpointPurpose::Completion, request));
         }
-        decision.endpoints.push_back(ledger.append(current,
-            {Command::Acquire, group.source, observer, key.key}, EndpointPurpose::Completion, request));
+        const auto acquisition = group.entryAcquisition == NoAnalysisId ? current : group.entryAcquisition;
+        const auto acquired = ledger.append(acquisition,
+            {Command::Acquire, group.source, observer, key.key}, EndpointPurpose::Completion, request);
+        decision.endpoints.push_back(acquired);
+        if (group.entryAcquisition != NoAnalysisId) {
+            ++result.work.loopEntryTransfers;
+            recurringKeys.insert(group.forwardKey);
+            closedKeys.insert(group.forwardKey);
+            if (group.entryReturnKey != NoAnalysisId) {
+                const auto& reply = frontier.keys()[group.entryReturnKey];
+                recurringKeys.insert(group.entryReturnKey);
+                closedKeys.insert(group.entryReturnKey);
+                decision.endpoints.push_back(ledger.append(acquisition,
+                    {Command::Publish, observer, group.source, reply.key}, EndpointPurpose::ConsumptionAcknowledgment, request, acquired));
+                decision.endpoints.push_back(ledger.append(acquisition,
+                    {Command::Acquire, observer, group.source, reply.key}, EndpointPurpose::ConsumptionAcknowledgment, request, acquired));
+                ++result.work.acknowledgments;
+            }
+        }
         if (!update()) return false;
         result.decisions.push_back(std::move(decision));
         return true;
