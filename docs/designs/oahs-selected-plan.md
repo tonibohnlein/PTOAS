@@ -241,10 +241,44 @@ original residue predicates. No operation-name table or full-write inference is
 introduced. Other loops retain ordinary conservative control; there is no retry
 with another constructor. The analysis-only report can still expose normalized
 first/tail observations independently.
-The current emitter materializes a separate guarded word for each observation;
-it does not yet merge identical words across first/tail cases. Guard arithmetic
-can therefore be substantial even when fewer event operations execute. Native
-order quality and device latency still need calibration.
+The emitter groups identical complete ordered words only at the same original
+anchor. It forms the exact union of their original predicates, absorbs redundant
+clauses, and removes a predicate dimension only when all its values are present.
+Predicate arithmetic is reused within a block when its definition dominates the
+anchor. Read-back decodes the union and reconstructs the word for every original
+observation; exact word comparison and cold verification remain mandatory.
+Different words, payload anchors, and publication prefixes are not merged.
+
+For unrefined counted loops with constant signed bounds proving at least one
+iteration, native import also retains the original body entry. This includes
+non-unit-step loops. A source prefix outside such a loop can be acquired once
+at entry when its required access classes are invariant inside the loop, the
+consumer cannot be bypassed on an exiting body path, no earlier payload on its
+observing engine is crossed, and whole-graph endpoint participation is balanced.
+Repeated surrounding entries reuse existing causal consumption knowledge first;
+a return is proposed only for a reported missing rearm certificate on that key.
+Unknown and zero-trip bounds keep conservative
+placement. This is an invariant-entry mechanism, not general correspondence
+between successive uses of alternating banks across guarded loop bodies.
+The first phase builds each qualified region's issued access classes and unique
+first consumer per observing engine once. A bypass or distinct first consumers
+leave that engine's entry deadline unqualified. The forward constructor queries
+these immutable summaries, then separately checks the selected source receipt,
+paired endpoint participation, and physical-key protocol. Preparation visits are
+reported as `loopEntryPreparationSites`; they are not hidden in replay counts.
+
+Recurring proposals are checked before committing their endpoints. A cheap
+alternative-direction-path query identifies candidates for whole-channel
+omission, but gives no completion credit. Certified replay must retain every
+previously covered memory and retirement obligation and satisfy all remaining
+event preconditions. A return carrying necessary consumption knowledge is
+therefore retained even if its memory effect is redundant. Trial counts and
+site evaluations are recorded separately. This finite selection can require
+multiple full analyses; it does not make construction two linear scans.
+
+Known and Overlap remain separate selection stages. Look-ahead supplies original
+placement and participation facts; actual transfers supply completion knowledge.
+Native order quality and device latency still need calibration.
 
 The original Qwen3 RMSNorm and post-RMSNorm kernels exercise this representation
 in native regression coverage. Their unrelated reduction loops require

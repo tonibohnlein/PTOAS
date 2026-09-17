@@ -7,7 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // RUN: pto-oahs-selected-test --construct %s 2>&1 >/dev/null | FileCheck %s
 // CHECK: function=topk_block construction=1 reconstruction=1
-// CHECK-SAME: recurring=9
+// CHECK-SAME: recurring=5
+// CHECK-SAME: recurring_removed=4
 // CHECK-SAME: common_cut=0
 
 module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a3"} {

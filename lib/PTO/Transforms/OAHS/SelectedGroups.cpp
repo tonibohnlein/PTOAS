@@ -144,6 +144,87 @@ bool Constructor::sourceFrontier(
     group.coverage = std::move(needed); // conservative joint credit; no hypothetical receipt
     return true;
 }
+bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequirement>& required, Group& group)
+{
+    if (!program.observed || required.empty()) return false;
+    std::set<Id> needed;
+    for (const auto& r : required) needed.insert(accessClass(r));
+    const auto observer = program.operations[control.graph.operations[current]].pipe;
+    for (const auto& loop : control.loopEntries) {
+        if (loop.firstConsumer[unsigned(observer)] != current ||
+            control.canonicalCut[loop.entry] != loop.entry) continue;
+        // No relevant source-class occurrence may be refreshed inside the
+        // region. Readiness/release belongs to this bank, not to a maximum
+        // operation number or to every operation on its source engine.
+        if (std::any_of(needed.begin(), needed.end(), [&](Id access) {
+            return loop.issuedClasses.count(access) != 0;
+        })) continue;
+        const SelectedSource* selected = nullptr;
+        for (const auto& handle : result.sources) {
+            if (handle.pipe != source || handle.version != cache.version || !handle.snapshot.reachable() ||
+                !control.straight(handle.cut, loop.entry)) continue;
+            bool covered = true;
+            const auto& snapshot = cache.cuts[handle.cut].before.causal;
+            if (!snapshot.reachable()) continue;
+            for (auto access : needed) {
+                const auto* history = snapshot.facts()->history.find(access);
+                covered &= freshBetween(handle.cut, loop.entry, access) && history &&
+                    frontierContains(*history, PipeCount + unsigned(source));
+            }
+            if (covered && (!selected || control.position[handle.cut] < control.position[selected->cut]))
+                selected = &handle;
+        }
+        if (!selected || !control.lookahead.balancedTransfer({selected->cut}, loop.entry,
+                                       control.graph.entry, control.graph.exit)) continue;
+        auto unused = [&](Pipe a, Pipe b) {
+            for (Id key = 0; key < frontier.keys().size(); ++key) {
+                const auto& e = frontier.keys()[key];
+                if (e.source != a || e.observer != b || closedKeys.count(key) || recurringKeys.count(key)) continue;
+                if (std::none_of(ledger.records().begin(), ledger.records().end(), [&](const auto& r) {
+                    const auto& c = r.command;
+                    return (c.kind == Command::Publish || c.kind == Command::Acquire) &&
+                        c.source == a && c.observer == b && c.key == e.key;
+                })) return key;
+            }
+            return NoAnalysisId;
+        };
+        const auto forward = unused(source, observer);
+        if (forward == NoAnalysisId) continue;
+        const bool repeats = control.components[control.component[selected->cut]].cyclic;
+        Id reverse = NoAnalysisId;
+        auto commands = ledger.commands();
+        commands[selected->cut].push_back({Command::Publish, source, observer, frontier.keys()[forward].key});
+        commands[loop.entry].push_back({Command::Acquire, source, observer, frontier.keys()[forward].key});
+        auto trial = analyze(program, commands, {false});
+        result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
+        const bool needsConsumption = std::any_of(trial.protocol.begin(), trial.protocol.end(), [&](const auto& r) {
+            return r.kind == ProtocolObligation::ConsumptionNotEstablished &&
+                r.event.source == source && r.event.observer == observer &&
+                r.event.key == frontier.keys()[forward].key;
+        });
+        // Existing causal paths get the first opportunity to prove reuse. A
+        // return is justified by this key's missing consumption certificate,
+        // not merely by being textually inside a repeated component.
+        if (trial.complete && trial.diagnostics.empty() && repeats && needsConsumption) {
+            reverse = unused(observer, source);
+            if (reverse == NoAnalysisId) continue;
+            commands[loop.entry].push_back({Command::Publish, observer, source, frontier.keys()[reverse].key});
+            commands[loop.entry].push_back({Command::Acquire, observer, source, frontier.keys()[reverse].key});
+            trial = analyze(program, commands, {false});
+            result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
+        }
+        if (!trial.complete || !trial.diagnostics.empty() || !trial.protocol.empty()) continue;
+        group.publication = selected->cut;
+        group.publications = {selected->cut};
+        group.entryAcquisition = loop.entry;
+        group.entryReturnKey = reverse;
+        group.forwardKey = forward;
+        group.version = ledger.version();
+        group.coverage = needed;
+        return true;
+    }
+    return false;
+}
 Group Constructor::sourceGroup(
     Pipe source, const std::vector<FrontierRequirement>& required,
     const std::vector<FrontierRequirement>& all)
@@ -163,6 +244,7 @@ Group Constructor::sourceGroup(
     }
     const bool comparable = selected != nullptr;
     if (!comparable && sourceFrontier(source, required, group)) return group;
+    if (!comparable && loopEntryFrontier(source, required, group)) return group;
     group.publication = comparable ? selected->cut : current;
     group.common = !comparable;
     group.coverage = coverage(group.publication, source, all);

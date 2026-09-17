@@ -250,12 +250,55 @@ void sharedRecurringPrefixes()
                 "shared recurring channel must retain both physical obligations");
     }
 }
+void transitiveRecurringCoverage()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE3;
+    auto body = base(1, 8);
+    body.operations = {op(P, {{0, false, true}}),
+                       op(Q, {{0, true, true}}), op(R, {{0, true, false}})};
+    body.body = {o::Region::For, {seq({leaf(0), leaf(1), leaf(2)})}, 0, true};
+    auto input = o::addStructuredBoundaryCuts(body);
+    require(input.success, input.reason);
+    auto &q = *input.program.observed;
+    const auto originalSize = q.sites.size();
+    for (std::size_t site = 0; site < originalSize; ++site) {
+        if (q.sites[site].operation == o::NoControlId) continue;
+        const auto cut = q.sites.size(), observation = q.observations.size();
+        auto boundary = q.sites[site];
+        boundary.operation = o::NoControlId;
+        boundary.observation = observation;
+        q.observations.push_back({1000 + cut, {}, true});
+        q.sites.push_back(std::move(boundary));
+        q.sites[site].successors = {cut};
+        q.sites[site].backedgeOwners.clear();
+    }
+    const auto program = refine(input.program, input.program.observed->scopes[1].ownerSite);
+    const auto result = accepted(program);
+    std::cout << "transitive channels=" << result.channels.size()
+              << " removed=" << result.work.redundantRecurringChannels << '\n';
+    require(result.channels.size() == 3 && result.work.redundantRecurringChannels == 3,
+            "load/RMW/store recurrence must retain only its ready/ready/release chain");
+    require(result.work.acknowledgments == 0, "real storage release already supplies rearming");
+    // A remaining storage-release channel is also part of the rearming proof.
+    // Deleting any complete channel must invalidate the combined cycle.
+    for (const auto &channel : result.channels) {
+        auto words = result.commands;
+        for (auto &word : words)
+            word.erase(std::remove_if(word.begin(), word.end(), [&](const auto &command) {
+                return (command.kind == o::Command::Publish || command.kind == o::Command::Acquire) &&
+                    command.source == channel.source && command.observer == channel.observer && command.key == channel.key;
+            }), word.end());
+        require(!o::checkCausalFrontier(program, words).accepted,
+                "removing a necessary whole channel was accepted");
+    }
+}
 } // namespace
 int main()
 {
     regional();
     contextual();
     sharedRecurringPrefixes();
+    transitiveRecurringCoverage();
     for (unsigned slots = 1; slots <= 4; ++slots) {
         checkSlots(slots);
     }

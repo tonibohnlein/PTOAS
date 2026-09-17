@@ -37,20 +37,10 @@ module attributes {pto.target_arch = "a3"} {
 // CHECK: scf.if
 // CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
 // CHECK-NEXT: }
-// CHECK: arith.cmpi sge, [[IV]],
-// CHECK: scf.if
-// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
-// CHECK-NEXT: }
 // CHECK-NEXT: pto.tload
-// CHECK-COUNT-4: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
 // CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
-// CHECK-NEXT: }
 // CHECK-NEXT: pto.tadd
-// CHECK: arith.subi [[N]], [[IV]]
-// CHECK: arith.cmpi sgt,
-// CHECK: scf.if
-// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]
-// CHECK-NEXT: }
 // CHECK: arith.subi [[N]], [[IV]]
 // CHECK: arith.cmpi sgt,
 // CHECK: scf.if

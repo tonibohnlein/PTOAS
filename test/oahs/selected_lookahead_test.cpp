@@ -169,6 +169,63 @@ void keepLoopReturn()
             require(control.lookahead.mayIssueAfter(site), "loop lookahead erased backedge");
     }
 }
+void invariantLoopEntry()
+{
+    auto p = base(2, 4);
+    p.operations = {op(P, {{0, false, true}}), op(P, {{1, false, true}}),
+                    op(Q, {{0, true, false}})};
+    o::ObservedControl q;
+    q.qualification = "test-original-nonempty-loop-entry";
+    q.entry = 0; q.exit = 7;
+    const std::vector<std::size_t> operations{0, o::NoAnalysisId, 1, o::NoAnalysisId,
+        o::NoAnalysisId, 2, o::NoAnalysisId, o::NoAnalysisId};
+    const std::vector<std::vector<std::size_t>> edges{{1}, {2}, {3}, {4}, {5, 7}, {6}, {4}, {}};
+    for (std::size_t i = 0; i < operations.size(); ++i) {
+        q.observations.push_back({i, {}, true});
+        q.sites.push_back({operations[i], i, edges[i], {}, 0});
+    }
+    q.sites[6].backedgeOwners = {3};
+    q.loops.push_back({3, 3, 7, {4, 5, 6}, 5, true});
+    p.observed = q;
+    const o::selected::Control original(p);
+    require(original.loopEntries.size() == 1 &&
+            original.loopEntries.front().firstConsumer[unsigned(Q)] == 5,
+            "first pass lost the unique observer deadline");
+    const auto plan = accepted(p);
+    require(plan.work.loopEntryTransfers == 1, "invariant readiness not acquired at loop entry");
+    require(plan.commands[1].size() == 1 && plan.commands[1][0].kind == o::Command::Publish,
+            "loop-entry readiness includes unrelated source work");
+    require(plan.commands[3].size() == 1 && plan.commands[3][0].kind == o::Command::Acquire,
+            "invariant readiness must be acquired once per entry");
+    require(plan.commands[5].empty(), "loop body repeats invariant acquisition");
+    // Fold control-only entry words into the first body visit for a concrete
+    // three-visit trace, retaining the actual command order and payload sites.
+    auto flat = p;
+    flat.observed.reset(); flat.operations.clear(); flat.body = {};
+    o::Commands words;
+    std::vector<o::Command> pending;
+    for (auto site : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 4u, 5u, 6u, 4u, 5u, 6u, 4u, 7u}) {
+        pending.insert(pending.end(), plan.commands[site].begin(), plan.commands[site].end());
+        if (operations[site] == o::NoAnalysisId) continue;
+        flat.operations.push_back(p.operations[operations[site]]);
+        words.push_back(std::move(pending)); pending.clear();
+    }
+    words.push_back(std::move(pending));
+    require(bool(oahs_oracle::graph(flat, words, {0, 1, 2, 3, 4}, {{1, 2}, {1, 3}, {1, 4}})),
+            "unrelated load orders a loop consumer");
+    auto earlier = p;
+    earlier.operations.push_back(op(Q, {}));
+    auto& entry = *earlier.observed;
+    entry.observations.push_back({8, {}, true});
+    entry.sites.push_back({3, 8, {5}, {}, 0});
+    entry.sites[4].successors[0] = 8;
+    entry.loops.front().bodyEntry = 8;
+    entry.loops.front().sites.push_back(8);
+    require(accepted(earlier).work.loopEntryTransfers == 0,
+            "entry acquisition unnecessarily gates an earlier observer payload");
+    p.observed->loops.front().atLeastOnce = false;
+    require(accepted(p).work.loopEntryTransfers == 0, "unknown/zero-trip entry was acquired unconditionally");
+}
 } // namespace
 int main()
 {
@@ -179,5 +236,6 @@ int main()
     keepFuturePayloadReturn();
     keepFutureWordReturn();
     keepLoopReturn();
+    invariantLoopEntry();
     std::cout << "selected lookahead, deadline and terminal-return tests passed\n";
 }
