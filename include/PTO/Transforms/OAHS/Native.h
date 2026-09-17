@@ -21,7 +21,9 @@ struct NativeAnalysis {
   // Preserved lowering-owned protocols; handles refer to unchanged original IR.
   llvm::SmallVector<SyncProtocolModel, 0> protocols;
   AnalysisResult analysis;
-  // Original operation mapping, valid while the caller keeps the IR unchanged.
+  // Analytical-phase to original operation mapping, valid while the caller
+  // keeps the IR unchanged. Periodic effects can map several phases to the
+  // same instruction; these are not cloned native payload operations.
   llvm::SmallVector<mlir::Operation *> phases;
   // Original SSA roots indexed by Cell::storageOrigins. Equal numeric local
   // addresses may have several roots; root identity alone is not disjointness.

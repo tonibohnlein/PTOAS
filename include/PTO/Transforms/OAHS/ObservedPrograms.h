@@ -43,6 +43,15 @@ struct CountedLoopRegion {
   unsigned period = 1;
   std::vector<std::size_t> bodySites;
   std::vector<ResidueDecision> decisions;
+  // Frontend-proved physical effects for each residue of the ORIGINAL loop.
+  // These specialize analytical phases only; payload and command anchors stay
+  // original. The caller proves address arithmetic, alias coverage and reset
+  // at every region entry. No definite-write credit follows from this binding.
+  struct PeriodicEffects {
+    std::size_t operation = 0;
+    std::vector<std::vector<Access>> residues;
+  };
+  std::vector<PeriodicEffects> effects;
 };
 // Refines original control only; no physical phase or command is inserted.
 // Assumes original i=0..N-1, step 1. Native import discharges this premise.

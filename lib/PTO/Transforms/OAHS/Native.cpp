@@ -11,6 +11,7 @@
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/Transforms/InsertSync/SyncOriginClosure.h"
+#include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
 #include "PTO/Transforms/OAHS/ObservedPrograms.h"
 #include "PTO/Transforms/OAHS/Plan.h"
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
@@ -78,6 +79,11 @@ struct Import {
   SmallVector<mlir::Operation *> anchors;
   SmallVector<Cut> phaseCuts;
   DenseMap<std::size_t, scf::ForOp> loopOwners;
+  struct SlotLoop {
+    unsigned period = 1;
+    std::vector<CountedLoopRegion::PeriodicEffects> effects;
+  };
+  DenseMap<mlir::Operation *, SlotLoop> slotLoops;
   std::vector<std::string> observationNotes;
 };
 enum class ObservationPolicy { RefineLeafLoops, QualifiedAccessRoles };
@@ -205,11 +211,16 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     });
     if (nested || !isa<IndexType>(loop.getInductionVar().getType()) ||
         loop->hasAttr("unsignedCmp") || loop->hasAttr("unsigned_cmp") ||
-        !loop.getInitArgs().empty() ||
+        (!loop.getInitArgs().empty() && !out.slotLoops.count(loop.getOperation())) ||
         integer(loop.getLowerBound()) != std::optional<int64_t>(0) ||
         integer(loop.getStep()) != std::optional<int64_t>(1))
       continue;
     CountedLoopRegion model;
+    auto slots = out.slotLoops.find(loop.getOperation());
+    if (slots != out.slotLoops.end()) {
+      model.period = slots->second.period;
+      model.effects = slots->second.effects;
+    }
     model.owner = ids.lookup(loop.getOperation());
     const auto &control = *out.program.observed;
     model.header = control.sites[model.owner].successors.front();
@@ -291,11 +302,21 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
       // Do not refine unrelated loops merely because a prior loop qualified.
       auto local = refined.program;
       local.observed->loops = {local.observed->loops.back()};
-      if (!hasQualifiedRecurringAccesses(local)) continue;
+      if (!hasQualifiedRecurringAccesses(local)) {
+        out.observationNotes.push_back("kept original SCF control: no qualified recurring access roles");
+        continue;
+      }
     }
     out.program = std::move(refined.program);
     out.loopOwners[model.owner] = loop;
+    if (slots != out.slotLoops.end())
+      out.observationNotes.push_back("qualified original carried-slot orbit: period " +
+                                     std::to_string(model.period));
   }
+  // Several analytical residues can map to the same unchanged instruction.
+  // Native emission uses original anchors; no payload is duplicated.
+  while (out.payload.size() < out.program.operations.size())
+    out.payload.push_back(out.payload[out.program.operations[out.payload.size()].original]);
   // Preserve useful entry placement facts even when residue refinement is not
   // admitted (notably tiled loops with a non-unit step). This neither changes
   // the control graph nor makes a physical interval an occurrence certificate.
@@ -435,6 +456,63 @@ LogicalResult import(func::FuncOp function, Import &out,
     bool write;
   };
   SmallVector<Effect> physicalEffects;
+  // Qualify scalar slot evolution once, then specialize the SAME shared
+  // footprint records. The canonical partition and unknown-alias witnesses
+  // still account for every other access, including ACC and unqualified views.
+  struct SlotCandidate {
+    scf::ForOp loop;
+    SyncSlotMapping mapping;
+    DenseMap<const BaseMemInfo *, std::vector<const BaseMemInfo *>> memories;
+  };
+  std::vector<SlotCandidate> slotCandidates;
+  SmallVector<std::unique_ptr<BaseMemInfo>> slotMemory;
+  const auto slotTarget = a3SyncProfile(SyncCore::Cube);
+  std::size_t maximumPeriod = 1;
+  for (const auto &row : slotTarget.keys)
+    for (const auto &pool : row) maximumPeriod = std::max(maximumPeriod, pool.size());
+  function.walk([&](scf::ForOp loop) {
+    bool nested = false;
+    loop.getRegion().walk([&](mlir::Operation *op) { nested |= isa<scf::ForOp, scf::WhileOp>(op); });
+    if (nested) return;
+    auto mapping = SyncSlotMapping::derive(loop, unsigned(maximumPeriod));
+    if (!mapping) return;
+    SlotCandidate candidate;
+    candidate.loop = loop;
+    candidate.mapping = std::move(*mapping);
+    for (auto *payload : out.payload) {
+      if (!loop->isProperAncestor(payload)) continue;
+      auto *phase = phases.lookup(payload);
+      auto qualify = [&](const auto &memories) {
+        for (const BaseMemInfo *memory : memories) {
+          if (candidate.memories.count(memory) || memory->scope == AddressSpace::GM ||
+              memory->scope == AddressSpace::Zero || !memory->allocateSize ||
+              memory->baseBuffer != memory->rootBuffer) continue;
+          auto alloc = memory->rootBuffer.template getDefiningOp<AllocTileOp>();
+          if (!alloc || !alloc.getAddr() || !loop->isProperAncestor(alloc) ||
+              SyncSlotMapping::literal(alloc.getAddr())) continue;
+          std::vector<uint64_t> addresses;
+          for (auto &values : candidate.mapping.values) {
+            auto address = SyncSlotMapping::evaluate(alloc.getAddr(), values);
+            if (!address || memory->allocateSize > std::numeric_limits<uint64_t>::max() - *address) break;
+            addresses.push_back(*address);
+          }
+          if (addresses.size() != candidate.mapping.period) continue;
+          auto &variants = candidate.memories[memory];
+          for (auto address : addresses) {
+            auto copy = memory->clone();
+            copy->baseAddresses = {address};
+            copy->hasKnownPhysicalAddresses = true;
+            copy->aliasesUnknownRange = false;
+            variants.push_back(copy.get());
+            slotMemory.push_back(std::move(copy));
+          }
+        }
+      };
+      qualify(phase->defVec);
+      qualify(phase->useVec);
+    }
+    if (!candidate.memories.empty()) slotCandidates.push_back(std::move(candidate));
+  });
   // A missing absolute local address is not a distinct-allocation proof. Keep
   // legacy alias behavior unchanged; normalize the handoff import's private
   // records instead. Stable copies also preserve the original SSA effect names.
@@ -471,18 +549,44 @@ LogicalResult import(func::FuncOp function, Import &out,
     imported.original = i;
     imported.complete = true;
     out.program.operations.push_back(std::move(imported));
+  }
+  const auto originalPhases = out.program.operations.size();
+  struct Variant { unsigned original, residue, operation; SlotCandidate *candidate; };
+  std::vector<Variant> variants;
+  for (auto &candidate : slotCandidates)
+    for (unsigned i = 0; i < out.payload.size(); ++i)
+      if (candidate.loop->isProperAncestor(out.payload[i]))
+        for (unsigned residue = 0; residue < candidate.mapping.period; ++residue) {
+          variants.push_back({i, residue, unsigned(out.program.operations.size()), &candidate});
+          out.program.operations.push_back(out.program.operations[i]);
+        }
+  auto effects = [&](unsigned i, unsigned operation, SlotCandidate *candidate,
+                     std::optional<unsigned> residue) -> LogicalResult {
+    auto *phase = phases.lookup(out.payload[i]);
     auto add = [&](const auto &memories, bool write) -> LogicalResult {
       for (const BaseMemInfo *memory : memories) {
         // Admit the same translated storage scopes as production autosync.
         // Visibility remains a separate contract below; ordinary GM byte
         // completion is intentionally governed by production alias behavior.
-        physicalEffects.push_back({i, qualifyMemory(memory), write});
+        if (candidate && candidate->memories.count(memory)) {
+          const auto &resolved = candidate->memories.find(memory)->second;
+          if (residue) physicalEffects.push_back({operation, resolved[*residue], write});
+          else for (auto *bank : resolved) physicalEffects.push_back({operation, bank, write});
+        } else physicalEffects.push_back({operation, qualifyMemory(memory), write});
       }
       return success();
     };
     if (failed(add(phase->defVec, true)) || failed(add(phase->useVec, false)))
       return failure();
+    return success();
+  };
+  for (unsigned i = 0; i < originalPhases; ++i) {
+    SlotCandidate *candidate = nullptr;
+    for (auto &slot : slotCandidates) if (slot.loop->isProperAncestor(out.payload[i])) candidate = &slot;
+    if (failed(effects(i, i, candidate, {}))) return failure();
   }
+  for (const auto &variant : variants)
+    if (failed(effects(variant.original, variant.operation, variant.candidate, variant.residue))) return failure();
   // Group only repeated uses of the identical immutable imported record.
   // This is not a may-alias equivalence closure. Origin alternatives and views
   // with distinct records retain separate groups and pairwise overlap tests.
@@ -529,6 +633,16 @@ LogicalResult import(func::FuncOp function, Import &out,
   }
   appendCanonicalStorage(
       out.program, groups, [&](std::size_t a, std::size_t b) { return aliases.MemAlias(memories[a], memories[b]); });
+  // Variants are ordered by region, original phase and residue. Consume this
+  // sparse population once rather than scanning it for every original phase.
+  for (const auto &variant : variants) {
+    auto &slot = out.slotLoops[variant.candidate->loop.getOperation()];
+    slot.period = variant.candidate->mapping.period;
+    if (slot.effects.empty() || slot.effects.back().operation != variant.original)
+      slot.effects.push_back({variant.original, {}});
+    slot.effects.back().residues.push_back(out.program.operations[variant.operation].accesses);
+  }
+  out.program.operations.resize(originalPhases);
   // Select the physical core, not a complete graph over unrelated pipelines.
   bool vector = false, cube = false;
   auto kind =
