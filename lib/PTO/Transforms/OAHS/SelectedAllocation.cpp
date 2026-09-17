@@ -154,6 +154,43 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
     }
     return true;
 }
+bool Constructor::needsCommonAcknowledgment(const State& afterForward) const
+{
+    // A syntactically last body operation is not a last dynamic operation. The
+    // backward summary retains original backedges and all branch alternatives.
+    if (control.lookahead.mayIssueAfter(current)) return true;
+    // A selected word may be shared by several original occurrences. Being
+    // terminal at only this occurrence is not a terminal-channel certificate.
+    const auto canonical = control.canonicalCut[current];
+    const auto& occurrences = control.wordOccurrences[canonical];
+    if (std::count_if(occurrences.begin(), occurrences.end(),
+                     [&](Id site) { return control.reachable[site]; }) != 1) return true;
+    const auto operation = control.graph.operations[current];
+    if (operation == NoAnalysisId) return true;
+    const auto checked = frontier.inspect(afterForward.causal, operation);
+    if (!checked.applied && checked.failure != FrontierFailure::Payload) return true;
+    const auto observer = program.operations[operation].pipe;
+    if (std::any_of(checked.residuals.begin(), checked.residuals.end(),
+                   [&](const auto& r) { return r.source != observer; })) return true;
+    // Only the final cross-engine acquisition of this terminal payload can use
+    // this rule. Later fixed/recurring words can have rearming obligations even
+    // when there are no later payloads; inspect the CURRENT ledger, not the
+    // immutable analysis. Terminal ALL neither consumes nor rearms an event.
+    std::vector<bool> seen(control.graph.sites.size());
+    auto todo = control.graph.sites[current].successors;
+    while (!todo.empty()) {
+        const auto site = todo.back();
+        todo.pop_back();
+        if (seen[site]) continue;
+        seen[site] = true;
+        for (auto endpoint : ledger.word(site)) {
+            if (ledger.endpoint(endpoint).command.kind != Command::BarrierAll) return true;
+        }
+        const auto& next = control.graph.sites[site].successors;
+        todo.insert(todo.end(), next.begin(), next.end());
+    }
+    return false;
+}
 bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed, SelectedDecision& decision)
 {
     const bool recurringClosed = closed && control.components[activeComponent].cyclic;
@@ -208,6 +245,15 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
         {Command::Acquire, source, observer, number}, {current, offset + 1});
     if (!acquired.applied) return fail(SelectedFailure::SelectedUpdate, acquired.reason, current);
     afterForward.causal = std::move(acquired.state);
+    if (observer == program.operations[control.graph.operations[current]].pipe &&
+        !needsCommonAcknowledgment(afterForward)) {
+        // The token is consumed, and no future selected/publication or payload
+        // needs knowledge of that consumption at its publisher. Do not invent
+        // such knowledge: simply omit its unused return transfer. Validation
+        // and the native reconstruction checker are unchanged.
+        ++result.work.commonCutTransfers;
+        return update();
+    }
     const auto reverse = retained ? binding->second.second : reusable(observer, source, afterForward);
     if (reverse == NoAnalysisId || !canPublish(afterForward, reverse)) {
         return fail(SelectedFailure::EventResource,
@@ -233,6 +279,33 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
 bool Constructor::bind(Group& group, RequirementStage stage)
 {
     const auto observer = program.operations[control.graph.operations[current]].pipe;
+    if (!group.publications.empty()) {
+        if (group.version != ledger.version() || group.forwardKey >= frontier.keys().size()) {
+            return fail(SelectedFailure::SelectedUpdate, "stale alternative source frontier", current);
+        }
+        const auto& key = frontier.keys()[group.forwardKey];
+        if (key.source != group.source || key.observer != observer) {
+            return fail(SelectedFailure::SelectedUpdate, "alternative source key changed direction", current);
+        }
+        SelectedDecision decision;
+        decision.consumer = current;
+        decision.publication = group.publication;
+        decision.publicationFrontier = group.publications;
+        decision.stage = stage;
+        decision.source = group.source;
+        decision.observer = observer;
+        decision.required = group.requirements;
+        const auto request = result.decisions.size();
+        for (auto cut : group.publications) {
+            decision.endpoints.push_back(ledger.append(cut,
+                {Command::Publish, group.source, observer, key.key}, EndpointPurpose::Completion, request));
+        }
+        decision.endpoints.push_back(ledger.append(current,
+            {Command::Acquire, group.source, observer, key.key}, EndpointPurpose::Completion, request));
+        if (!update()) return false;
+        result.decisions.push_back(std::move(decision));
+        return true;
+    }
     const auto path = route(group.source, observer);
     if (path.empty()) {
         return fail(SelectedFailure::EventResource, "no eligible engine route for the required completion", current);

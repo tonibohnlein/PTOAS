@@ -292,6 +292,27 @@ Control::Control(const Program& program)
         }
     }
     complete = components.size() == groups.size();
+    if (!complete) return;
+    std::vector<std::vector<Id>> originalEdges(graph.sites.size());
+    std::vector<bool> payloadSites(graph.sites.size());
+    std::vector<LookaheadIndex::ClassIssue> classIssues;
+    for (Id site = 0; site < graph.sites.size(); ++site) {
+        originalEdges[site] = graph.sites[site].successors;
+        const auto operation = graph.operations[site];
+        payloadSites[site] = operation != NoAnalysisId;
+        if (!reachable[site] || operation == NoAnalysisId || frame[site] == NoAnalysisId) continue;
+        const auto& op = program.operations[operation];
+        for (const auto& effect : op.accesses) {
+            const auto base = (Id(effect.cell) * PipeCount + unsigned(op.pipe)) * 2;
+            if (effect.read) classIssues.push_back({frame[site], position[site], base});
+            if (effect.write) classIssues.push_back({frame[site], position[site], base + 1});
+        }
+    }
+    if (!lookahead.build(originalEdges, payloadSites, classIssues)) {
+        complete = false;
+        reason = "invalid immutable lookahead dimensions";
+        return;
+    }
     // One pass over the sites fixes the canonical word of each site, the sites
     // sharing it, and the range of components it spans. canonicalCommandCut
     // names the EARLIEST site carrying an observation, so the first occurrence
