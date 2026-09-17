@@ -38,9 +38,11 @@ std::set<Id> Constructor::coverage(
     const auto& history = atSource.causal.facts()->history;
     for (const auto& r : requirements) {
         const auto index = accessClass(r);
+        const auto origin = atSource.latest.get(index);
         const bool sameOccurrence = cut == current ||
-            (atSource.latest[index] != NoAnalysisId && atSource.latest[index] == atConsumer.latest[index]);
-        if (sameOccurrence && history[index] && frontierContains(*history[index], PipeCount + unsigned(source))) {
+            (origin != NoAnalysisId && origin == atConsumer.latest.get(index));
+        const auto* reached = history.find(index);
+        if (sameOccurrence && reached && frontierContains(*reached, PipeCount + unsigned(source))) {
             out.insert(index);
         }
     }
@@ -56,7 +58,7 @@ Group Constructor::sourceGroup(
     Id latest = NoAnalysisId;
     bool comparable = true;
     for (const auto& r : required) {
-        const auto origin = currentState().latest[accessClass(r)];
+        const auto origin = currentState().latest.get(accessClass(r));
         if (origin == NoAnalysisId || !control.straight(origin, current)) {
             comparable = false;
             break;

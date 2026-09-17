@@ -34,7 +34,7 @@ void facts(const o::FrontierState& state)
     std::cout << "],\"history\":[";
     for (std::size_t i = 0; i < f.history.size(); ++i) {
         if (i) { std::cout << ','; }
-        if (f.history[i]) { bits(*f.history[i]); } else { std::cout << "null"; }
+        if (const auto* reached = f.history.find(i)) { bits(*reached); } else { std::cout << "null"; }
     }
     std::cout << "],\"events\":[";
     for (std::size_t i = 0; i < f.events.size(); ++i) {

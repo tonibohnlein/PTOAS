@@ -12,9 +12,47 @@
 
 namespace mlir::pto::oahs {
 namespace {
-FrontierBits bits(std::size_t n) { return FrontierBits(n / 64 + bool(n % 64)); }
+std::size_t wordCount(std::size_t n) { return n / 64 + bool(n % 64); }
+FrontierBits bits(std::size_t n) { return FrontierBits(wordCount(n)); }
 void set(FrontierBits& b, std::size_t i) { b[i / 64] |= uint64_t(1) << (i % 64); }
-void clear(FrontierBits& b, std::size_t i) { b[i / 64] &= ~(uint64_t(1) << (i % 64)); }
+// Forget a whole set of ports in one pass instead of one pass per port.
+void subtract(FrontierBits& a, const FrontierBits& b)
+{
+    for (std::size_t i = 0; i < a.size() && i < b.size(); ++i)
+        a[i] &= ~b[i];
+}
+bool empty(const FrontierBits& b)
+{
+    for (auto word : b)
+        if (word)
+            return false;
+    return true;
+}
+unsigned lowestBit(uint64_t word)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    return unsigned(__builtin_ctzll(word));
+#else
+    unsigned k = 0;
+    while (!((word >> k) & 1))
+        ++k;
+    return k;
+#endif
+}
+// Visit only the ports a row actually holds. The rows reached through a history
+// class are sparse, so this replaces a scan of every port per row.
+template <typename Fn>
+void forEachPort(const FrontierBits& b, Fn&& fn)
+{
+    for (std::size_t w = 0; w < b.size(); ++w) {
+        auto word = b[w];
+        while (word) {
+            const auto low = lowestBit(word);
+            fn(w * 64 + low);
+            word &= word - 1;
+        }
+    }
+}
 void unite(FrontierBits& a, const FrontierBits& b)
 {
     for (std::size_t i = 0; i < a.size(); ++i)
@@ -45,11 +83,6 @@ FrontierStep accepted(const FrontierState& s)
     return r;
 }
 } // namespace
-
-bool frontierContains(const FrontierBits& b, std::size_t i)
-{
-    return i / 64 < b.size() && (b[i / 64] & (uint64_t(1) << (i % 64)));
-}
 
 namespace detail {
 struct CausalFrontierModel {
@@ -161,7 +194,7 @@ FrontierState CausalFrontier::initial() const
     for (std::size_t i = 0; i < n; ++i)
         if (frontierContains(active, i))
             s->facts.reach[i] = active;
-    s->facts.history.resize(model->program.cells.size() * PipeCount * 2);
+    s->facts.history.reset(model->program.cells.size() * PipeCount * 2);
     s->facts.events.resize(keys().size());
     out.data = std::move(s);
     return out;
@@ -195,12 +228,13 @@ FrontierStep CausalFrontier::join(const FrontierState& a, const FrontierState& b
     // relations preserves shared consequences without splicing branch paths.
     for (std::size_t i = 0; i < f.reach.size(); ++i)
         intersect(f.reach[i], other.reach[i]);
-    for (std::size_t i = 0; i < f.history.size(); ++i) {
-        if (!f.history[i])
-            f.history[i] = other.history[i];
-        else if (other.history[i])
-            intersect(*f.history[i], *other.history[i]);
+    for (const auto& entry : other.history.present()) {
+        if (auto* mine = f.history.find(entry.first))
+            intersect(*mine, entry.second);
+        else
+            f.history.assign(entry.first, entry.second);
     }
+    auto stale = bits(model->ports());
     for (std::size_t e = 0; e < keys().size(); ++e) {
         auto& event = f.events[e];
         event.occupancy |= other.events[e].occupancy;
@@ -211,13 +245,18 @@ FrontierStep CausalFrontier::join(const FrontierState& a, const FrontierState& b
         event.publishers = std::move(bindings);
         if (event.occupancy != 2) {
             const auto port = model->publication(e);
-            f.reach[port] = bits(model->ports());
-            for (auto& row : f.reach)
-                clear(row, port);
-            for (auto& h : f.history)
-                if (h)
-                    clear(*h, port);
+            std::fill(f.reach[port].begin(), f.reach[port].end(), uint64_t(0));
+            set(stale, port);
         }
+    }
+    // Forgetting a publication column is idempotent and independent per port,
+    // so every port that stopped being must-full is dropped in one pass over
+    // the rows and the history instead of one pass per port.
+    if (!empty(stale)) {
+        for (auto& row : f.reach)
+            subtract(row, stale);
+        for (auto& entry : f.history.present())
+            subtract(entry.second, stale);
     }
     FrontierState out;
     out.data = std::move(data);
@@ -239,18 +278,30 @@ FrontierStep CausalFrontier::inspect(const FrontierState& s, std::size_t operati
     auto failed = reject(s, FrontierFailure::Payload, "unresolved original byte completion");
     // Merge duplicate effects before querying so every RMW role participates
     // in one residual and one update, independent of access-list ordering.
-    std::vector<std::pair<bool, bool>> roles(model->program.cells.size());
+    // Only the cells this operation names are examined, in ascending cell order,
+    // so the residual sequence is exactly the one the dense scan produced.
+    std::vector<std::pair<unsigned, std::pair<bool, bool>>> roles;
     for (const auto& a : op.accesses) {
-        roles[a.cell].first |= a.read;
-        roles[a.cell].second |= a.write;
+        const auto at = std::lower_bound(
+            roles.begin(), roles.end(), a.cell,
+            [](const std::pair<unsigned, std::pair<bool, bool>>& entry, unsigned key) {
+                return entry.first < key;
+            });
+        if (at != roles.end() && at->first == a.cell) {
+            at->second.first |= a.read;
+            at->second.second |= a.write;
+        } else {
+            roles.insert(at, {a.cell, {a.read, a.write}});
+        }
     }
-    for (unsigned cell = 0; cell < roles.size(); ++cell) {
-        const auto [read, write] = roles[cell];
+    for (const auto& entry : roles) {
+        const auto cell = entry.first;
+        const auto read = entry.second.first, write = entry.second.second;
         if (!read && !write)
             continue;
         for (unsigned source = 0; source < PipeCount; ++source)
             for (unsigned mode = 0; mode < 2; ++mode) {
-                const auto& h = s.data->facts.history[(cell * PipeCount + source) * 2 + mode];
+                const auto* h = s.data->facts.history.find((cell * PipeCount + source) * 2 + mode);
                 if ((write || (read && mode)) && h && !frontierContains(*h, unsigned(op.pipe)))
                     failed.residuals.push_back({cell, Pipe(source), bool(mode), operation, read, write});
             }
@@ -311,10 +362,10 @@ FrontierStep CausalFrontier::assumePreviousAccesses(
         for (const auto& access : op.accesses) {
             const auto index = (std::size_t(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
             if (access.read) {
-                data->facts.history[index] = history;
+                data->facts.history.assign(index, history);
             }
             if (access.write) {
-                data->facts.history[index + 1] = history;
+                data->facts.history.assign(index + 1, history);
             }
         }
     }
@@ -396,9 +447,10 @@ FrontierStep CausalFrontier::extend(
     const auto n = model->ports(), issue = n, finish = n + 1, aggregate = n + 2;
     const std::size_t gate = unsigned(pipe), prefix = PipeCount + unsigned(pipe);
     auto rows = s.data->facts.reach;
+    const auto augmented = wordCount(n + 3);
     rows.resize(n + 3);
     for (auto& row : rows)
-        row.resize(bits(n + 3).size());
+        row.resize(augmented);
     // The retained relation is already transitively closed and the fresh
     // vertices have no edge back into it, so closure only adds, to each old
     // row, the fresh vertices it reaches through gate, prefix, or publication:
@@ -410,11 +462,12 @@ FrontierStep CausalFrontier::extend(
     set(rows[issue], aggregate);
     set(rows[finish], aggregate);
     const bool prefixFinish = publish || fence;
+    const auto matched = acquire ? model->publication(key) : NoAnalysisId;
     for (std::size_t r = 0; r < n; ++r) {
         auto& row = rows[r];
         const bool toIssue = frontierContains(row, gate);
         const bool toFinish = toIssue || (prefixFinish && frontierContains(row, prefix)) ||
-                              (acquire && frontierContains(row, model->publication(key)));
+                              (acquire && frontierContains(row, matched));
         if (toIssue)
             set(row, issue);
         if (toFinish)
@@ -447,26 +500,54 @@ FrontierStep CausalFrontier::extend(
     for (std::size_t e = 0; e < keys().size(); ++e)
         if (out.events[e].occupancy != 2)
             mapping[model->publication(e)] = NoAnalysisId;
-    auto project = [&](const FrontierBits& reached) {
-        auto b = bits(n);
-        for (std::size_t i = 0; i < n; ++i)
-            if (mapping[i] != NoAnalysisId && frontierContains(reached, mapping[i]))
-                set(b, i);
-        return b;
+    // `mapping` is the identity apart from the two ports of this primitive, the
+    // matched publication or consumption, and the publications that are not
+    // must-full. Splitting it into an identity mask plus that short list makes
+    // one projection a few word operations rather than a scan of every port.
+    // The projected value is unchanged.
+    auto identity = bits(n);
+    std::vector<std::pair<std::size_t, std::size_t>> remapped;
+    for (std::size_t i = 0; i < n; ++i) {
+        if (mapping[i] == i)
+            set(identity, i);
+        else if (mapping[i] != NoAnalysisId)
+            remapped.emplace_back(i, mapping[i]);
+    }
+    auto projectInto = [&](const FrontierBits& reached, FrontierBits& target) {
+        for (std::size_t w = 0; w < target.size(); ++w)
+            target[w] = reached[w] & identity[w];
+        for (const auto& port : remapped)
+            if (frontierContains(reached, port.second))
+                set(target, port.first);
     };
     out.reach.assign(n, bits(n));
     for (std::size_t i = 0; i < n; ++i)
         if (mapping[i] != NoAnalysisId)
-            out.reach[i] = project(rows[mapping[i]]);
+            projectInto(rows[mapping[i]], out.reach[i]);
     out.history = s.data->facts.history;
-    for (auto& h : out.history)
-        if (h) {
-            auto image = bits(n + 3);
-            for (std::size_t i = 0; i < n; ++i)
-                if (frontierContains(*h, i))
-                    unite(image, rows[i]);
-            h = project(image);
+    // One issue assigns the same set to every access of its operation, so many
+    // classes share one history value. Each distinct value is transported once;
+    // the cache is bounded so a program with many distinct values cannot make
+    // the lookup quadratic. This is a memo of a pure function.
+    constexpr std::size_t transportedLimit = 64;
+    std::vector<std::pair<FrontierBits, FrontierBits>> transported;
+    auto image = bits(n + 3);
+    for (auto& entry : out.history.present()) {
+        auto& h = entry.second;
+        const auto known = std::find_if(transported.begin(), transported.end(), [&](const auto& cached) {
+            return cached.first == h;
+        });
+        if (known != transported.end()) {
+            h = known->second;
+            continue;
         }
+        auto source = h;
+        std::fill(image.begin(), image.end(), uint64_t(0));
+        forEachPort(source, [&](std::size_t i) { unite(image, rows[i]); });
+        projectInto(image, h);
+        if (transported.size() < transportedLimit)
+            transported.emplace_back(std::move(source), h);
+    }
     if (!command) {
         auto latest = bits(n);
         set(latest, prefix);
@@ -476,9 +557,9 @@ FrontierStep CausalFrontier::extend(
         for (const auto& a : model->program.operations[operation].accesses) {
             const auto index = (std::size_t(a.cell) * PipeCount + unsigned(pipe)) * 2;
             if (a.read)
-                out.history[index] = latest;
+                out.history.assign(index, latest);
             if (a.write)
-                out.history[index + 1] = latest;
+                out.history.assign(index + 1, latest);
         }
     }
     FrontierState result;

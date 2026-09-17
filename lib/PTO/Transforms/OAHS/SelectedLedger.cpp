@@ -25,7 +25,17 @@ std::vector<Id> unionIds(const std::vector<Id>& a, const std::vector<Id>& b)
     std::set_union(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(out));
     return out;
 }
-Ledger::Ledger(const Program& p) : program(p), words(commandCutCount(p)) {}
+Ledger::Ledger(const Program& p, const std::vector<Cut>& canonicalWords)
+    : program(p), canonicalCut(canonicalWords), words(commandCutCount(p))
+{
+}
+// Same value as canonicalCommandCut, read from the control's one-pass memo.
+// Cuts beyond the table, and programs without a refined control, are their own
+// canonical word, exactly as the program-level query defines.
+Cut Ledger::canonical(Cut cut) const
+{
+    return cut < canonicalCut.size() ? canonicalCut[cut] : cut;
+}
 bool Ledger::initialize(const Commands& fixed, std::string& reason)
 {
     if (fixed.empty()) {
@@ -40,7 +50,7 @@ bool Ledger::initialize(const Commands& fixed, std::string& reason)
             reason = "fixed endpoint has no legal original cut";
             return false;
         }
-        const auto leader = canonicalCommandCut(program, cut);
+        const auto leader = canonical(cut);
         if (fixed[cut].size() != fixed[leader].size() ||
             !std::equal(fixed[cut].begin(), fixed[cut].end(), fixed[leader].begin(), identical)) {
             reason = "fixed words disagree at one original observation";
@@ -57,7 +67,7 @@ bool Ledger::initialize(const Commands& fixed, std::string& reason)
 }
 Id Ledger::insert(Cut cut, Id offset, Command command, EndpointPurpose purpose, Id request, Id ack)
 {
-    cut = canonicalCommandCut(program, cut);
+    cut = canonical(cut);
     const auto id = endpoints.size();
     endpoints.push_back({id, cut, command, purpose, request, ack});
     words[cut].insert(words[cut].begin() + offset, id);
@@ -67,7 +77,7 @@ Id Ledger::insert(Cut cut, Id offset, Command command, EndpointPurpose purpose, 
 }
 Id Ledger::append(Cut cut, Command command, EndpointPurpose purpose, Id request, Id ack)
 {
-    const auto leader = canonicalCommandCut(program, cut);
+    const auto leader = canonical(cut);
     return insert(leader, words[leader].size(), command, purpose, request, ack);
 }
 Id Ledger::after(Id predecessor, Command command, EndpointPurpose purpose, Id request, Id ack)
@@ -83,7 +93,7 @@ const std::vector<Id>& Ledger::word(Cut cut) const
     if (cut >= words.size()) {
         return empty;
     }
-    return words[canonicalCommandCut(program, cut)];
+    return words[canonical(cut)];
 }
 const SelectedEndpoint& Ledger::endpoint(Id id) const { return endpoints.at(id); }
 Commands Ledger::commands() const

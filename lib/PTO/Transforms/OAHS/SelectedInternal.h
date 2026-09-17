@@ -10,8 +10,10 @@
 
 #include "Control.h"
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
+#include <algorithm>
 #include <map>
 #include <set>
+#include <utility>
 
 namespace mlir::pto::oahs::selected {
 
@@ -29,6 +31,13 @@ struct Control {
     std::vector<Component> components;
     std::vector<Id> component, position, frame;
     std::vector<bool> reachable;
+    // Memo of canonicalCommandCut, and the sites sharing each canonical word,
+    // with the component span of each such word. These are facts about the
+    // immutable program and control alone: no ledger state enters them, so they
+    // are built once instead of rescanned by every boundary query.
+    std::vector<Cut> canonicalCut;
+    std::vector<std::vector<Id>> wordOccurrences;
+    std::vector<std::pair<Id, Id>> wordSpan;
     bool complete = false, validInput = false;
     std::string reason;
     explicit Control(const Program&);
@@ -38,7 +47,8 @@ struct Control {
 
 class Ledger {
 public:
-    explicit Ledger(const Program&);
+    // The canonical table belongs to the enclosing Control and outlives this.
+    Ledger(const Program&, const std::vector<Cut>&);
     bool initialize(const Commands&, std::string&);
     Id append(Cut, Command, EndpointPurpose, Id request = NoAnalysisId, Id ack = NoAnalysisId);
     Id after(Id, Command, EndpointPurpose, Id request, Id ack);
@@ -51,7 +61,9 @@ public:
     void clearChanges() { changed.clear(); }
 
 private:
+    Cut canonical(Cut) const;
     const Program& program;
+    const std::vector<Cut>& canonicalCut;
     uint64_t revision = 0;
     std::vector<std::vector<Id>> words;
     std::vector<SelectedEndpoint> endpoints;
@@ -59,11 +71,50 @@ private:
     Id insert(Cut, Id, Command, EndpointPurpose, Id, Id);
 };
 
+// The last original static origin per access class. Only the classes an
+// execution actually touched are represented: an absent class is NoAnalysisId,
+// exactly as the dense array over cells x pipes x modes expressed it, so the two
+// representations describe the same partial map and compare equal iff the maps
+// are equal. The dense array was copied at every site evaluation, which
+// dominated programs with many storage cells.
+class LatestOrigins {
+public:
+    Id get(Id index) const
+    {
+        const auto at = std::lower_bound(items.begin(), items.end(), index,
+            [](const std::pair<Id, Id>& entry, Id key) { return entry.first < key; });
+        return at != items.end() && at->first == index ? at->second : NoAnalysisId;
+    }
+    void set(Id index, Id origin)
+    {
+        const auto at = std::lower_bound(items.begin(), items.end(), index,
+            [](const std::pair<Id, Id>& entry, Id key) { return entry.first < key; });
+        if (at != items.end() && at->first == index) {
+            if (origin == NoAnalysisId) {
+                items.erase(at);
+            } else {
+                at->second = origin;
+            }
+            return;
+        }
+        if (origin != NoAnalysisId) {
+            items.insert(at, {index, origin});
+        }
+    }
+    const std::vector<std::pair<Id, Id>>& entries() const { return items; }
+    bool operator==(const LatestOrigins& b) const { return items == b.items; }
+    bool operator!=(const LatestOrigins& b) const { return items != b.items; }
+
+private:
+    // Sorted by class index, and never holding a NoAnalysisId value, so the
+    // representation of a given partial map is unique.
+    std::vector<std::pair<Id, Id>> items;
+};
 struct State {
     FrontierState causal;
     // Last original static origin, or unknown after an unqualified recurrence
     // or an incompatible choice. These names never become runtime predicates.
-    std::vector<Id> latest;
+    LatestOrigins latest;
     std::vector<std::vector<Id>> consumptions;
 };
 struct Checkpoint {
@@ -86,6 +137,7 @@ struct RecurringRequirement {
     Pipe source = Pipe::S, observer = Pipe::S;
     std::vector<Cut> publications, acquisitions;
     Id owner = NoAnalysisId;
+    uint64_t period = 0;
 };
 // A storage/control qualifier: it returns requirements and original frontiers,
 // not commands or physical key choices. Empty means ordinary F1--F8 applies.
@@ -130,6 +182,8 @@ private:
     bool fixedComponent(Id, const std::vector<State>&, Replay&, std::vector<State>&);
     bool partialComponent(Id, const std::vector<State>&, Replay&);
     bool replay();
+    // The component prefix an update may keep, shared by both replay paths.
+    Id reusablePrefix() const;
     bool advance();
     void refreshSources();
     bool update();
