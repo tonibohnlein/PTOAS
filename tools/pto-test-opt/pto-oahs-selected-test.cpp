@@ -198,6 +198,12 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " cells=" << work.cells << " eligible_keys=" << work.eligibleKeys
                  << " components=" << work.components << " cyclic=" << work.cyclicComponents
                  << " recurring=" << work.recurringChannels
+                 << " recurring_trials=" << work.recurringTrials
+                 << " recurring_removed=" << work.redundantRecurringChannels
+                 << " recurring_analysis_sites=" << work.recurringAnalysisSites
+                 << " loop_entry_transfers=" << work.loopEntryTransfers
+                 << " loop_entry_analysis_sites=" << work.loopEntryAnalysisSites
+                 << " loop_entry_preparation_sites=" << work.loopEntryPreparationSites
                  << " contextual=" << work.contextualReplays
                  << " unreused_updates=" << work.unreusedUpdates
                  << " sources=" << work.sourceHandles << " acknowledgments=" << work.acknowledgments

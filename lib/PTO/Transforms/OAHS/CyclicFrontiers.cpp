@@ -520,11 +520,15 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
                 fixedKeys.insert(key);
         }
     }
+    // Allocate the proposed words without committing them to the ledger. A
+    // channel is not necessary merely because its participation is qualified.
+    std::vector<Id> keys;
+    std::set<Id> proposedKeys;
     for (const auto& request : requests) {
         Id selected = NoAnalysisId;
         for (Id key = 0; key < frontier.keys().size(); ++key) {
             const auto& identity = frontier.keys()[key];
-            if (identity.source == request.source && identity.observer == request.observer && !reserved.count(key) && !fixedKeys.count(key)) {
+            if (identity.source == request.source && identity.observer == request.observer && !proposedKeys.count(key) && !fixedKeys.count(key)) {
                 selected = key;
                 break;
             }
@@ -532,8 +536,80 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
         if (selected == NoAnalysisId) {
             return fail(SelectedFailure::EventResource, "qualified recurring roles exceed their eligible key pool");
         }
-        reserved.insert(selected);
-        const auto number = frontier.keys()[selected].key;
+        proposedKeys.insert(selected);
+        keys.push_back(selected);
+    }
+    std::vector<bool> retained(requests.size(), true);
+    auto candidate = [&]() {
+        auto commands = ledger.commands();
+        for (Id i = 0; i < requests.size(); ++i) {
+            if (!retained[i]) continue;
+            const auto& r = requests[i];
+            const auto number = frontier.keys()[keys[i]].key;
+            auto add = [&](Cut cut, Command::Kind kind) {
+                for (auto site : control.wordOccurrences[control.canonicalCut[cut]])
+                    commands[site].push_back({kind, r.source, r.observer, number});
+            };
+            for (auto cut : r.publications) add(cut, Command::Publish);
+            for (auto cut : r.acquisitions) add(cut, Command::Acquire);
+        }
+        return commands;
+    };
+    auto alternativeRoute = [&](Id omitted) {
+        // Immutable topology is only a cheap opportunity filter. Actual prefix,
+        // occurrence, and consumption coverage must pass full replay below.
+        std::set<Pipe> reached{requests[omitted].source};
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (Id i = 0; i < requests.size(); ++i)
+                if (i != omitted && retained[i] && reached.count(requests[i].source))
+                    changed |= reached.insert(requests[i].observer).second;
+        }
+        return reached.count(requests[omitted].observer) != 0;
+    };
+    auto requirementKeys = [](const AnalysisResult& report) {
+        std::set<std::tuple<Cut, Id, Id, unsigned, unsigned, unsigned>> out;
+        for (const auto& r : report.residuals)
+            out.emplace(r.consumerCut, r.demand.producer, r.demand.consumer,
+                        r.demand.cell, unsigned(r.kind), unsigned(r.demand.property));
+        return out;
+    };
+    std::optional<AnalysisResult> selected;
+    for (Id index = requests.size(); index-- > 0;) {
+        if (!alternativeRoute(index)) continue;
+        if (!selected) {
+            selected = analyze(program, candidate(), {false});
+            result.work.recurringAnalysisSites += selected->stats.siteEvaluations;
+        }
+        if (!selected->complete || !selected->diagnostics.empty() ||
+            !selected->protocol.empty() || !selected->phaseResources.empty()) break;
+        retained[index] = false;
+        auto trial = analyze(program, candidate(), {false});
+        ++result.work.recurringTrials;
+        result.work.recurringAnalysisSites += trial.stats.siteEvaluations;
+        const auto before = requirementKeys(*selected), after = requirementKeys(trial);
+        // An otherwise memory-redundant return may be the only acknowledgment
+        // for another key. Require all remaining event preconditions, not only
+        // byte completion, and never accept a newly uncovered payload demand.
+        const bool covered = trial.complete && trial.diagnostics.empty() &&
+            trial.protocol.empty() && trial.phaseResources.empty() &&
+            std::includes(before.begin(), before.end(), after.begin(), after.end()) &&
+            std::all_of(trial.retirement.begin(), trial.retirement.end(), [&](const auto& r) {
+                return std::any_of(selected->retirement.begin(), selected->retirement.end(), [&](const auto& old) {
+                    return r.operation == old.operation && r.observer == old.observer;
+                });
+            });
+        if (covered) {
+            selected = std::move(trial);
+            ++result.work.redundantRecurringChannels;
+        } else retained[index] = true;
+    }
+    for (Id index = 0; index < requests.size(); ++index) {
+        if (!retained[index]) continue;
+        const auto& request = requests[index];
+        reserved.insert(keys[index]);
+        const auto number = frontier.keys()[keys[index]].key;
         const auto id = result.channels.size();
         for (auto cut : request.publications) {
             ledger.append(cut, {Command::Publish, request.source, request.observer, number},

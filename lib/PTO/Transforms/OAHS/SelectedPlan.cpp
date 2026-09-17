@@ -78,6 +78,7 @@ SelectedPlan Constructor::run(const Commands& fixed)
         result.ledger = ledger.records();
         result.work.sourceHandles = result.sources.size();
         result.work.constructedSites = control.graph.sites.size();
+        result.work.loopEntryPreparationSites = control.loopEntryPreparationSites;
         result.work.commandWords = commandCutCount(program);
         result.work.cells = program.cells.size();
         result.work.eligibleKeys = frontier.keys().size();

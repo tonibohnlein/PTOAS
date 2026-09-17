@@ -313,6 +313,50 @@ Control::Control(const Program& program)
         reason = "invalid immutable lookahead dimensions";
         return;
     }
+    // Prepare region entry placement facts once, before selecting any event.
+    // Construction queries these summaries instead of rediscovering invariant
+    // classes and earlier observer work at every residual repair.
+    if (program.observed) for (const auto& loop : program.observed->loops) {
+        if (!loop.atLeastOnce || loop.bodyEntry == NoAnalysisId) continue;
+        LoopEntryFacts facts;
+        facts.entry = loop.entry;
+        facts.firstConsumer.fill(NoAnalysisId);
+        std::set<Pipe> observers;
+        for (auto site : loop.sites) {
+            ++loopEntryPreparationSites;
+            const auto operation = graph.operations[site];
+            if (operation == NoAnalysisId) continue;
+            const auto& op = program.operations[operation];
+            observers.insert(op.pipe);
+            for (const auto& access : op.accesses) {
+                const auto base = (Id(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
+                if (access.read) facts.issuedClasses.insert(base);
+                if (access.write) facts.issuedClasses.insert(base + 1);
+            }
+        }
+        for (auto observer : observers) {
+            std::vector<bool> seen(graph.sites.size());
+            std::vector<Cut> todo{loop.bodyEntry};
+            std::set<Cut> first;
+            bool bypass = false;
+            while (!todo.empty()) {
+                const auto at = todo.back(); todo.pop_back();
+                if (seen[at]) continue;
+                seen[at] = true;
+                ++loopEntryPreparationSites;
+                if (at == loop.exit) { bypass = true; break; }
+                const auto operation = graph.operations[at];
+                if (operation != NoAnalysisId && program.operations[operation].pipe == observer) {
+                    first.insert(at);
+                    continue;
+                }
+                const auto& next = graph.sites[at].successors;
+                todo.insert(todo.end(), next.begin(), next.end());
+            }
+            if (!bypass && first.size() == 1) facts.firstConsumer[unsigned(observer)] = *first.begin();
+        }
+        loopEntries.push_back(std::move(facts));
+    }
     // One pass over the sites fixes the canonical word of each site, the sites
     // sharing it, and the range of components it spans. canonicalCommandCut
     // names the EARLIEST site carrying an observation, so the first occurrence

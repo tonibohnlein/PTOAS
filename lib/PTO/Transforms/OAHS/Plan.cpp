@@ -75,7 +75,7 @@ bool validObserved(const Program &p, std::string &reason) {
         "observed invocation exit requires a legal payload-free terminal cut");
   std::set<std::size_t> loopOwners;
   for (const auto& loop : q.loops) {
-    if (loop.entry >= q.sites.size() || loop.exit >= q.sites.size() ||
+    if (loop.owner >= q.sites.size() || loop.entry >= q.sites.size() || loop.exit >= q.sites.size() ||
         loop.entry == loop.exit || !loopOwners.insert(loop.owner).second)
       return fail("invalid or duplicate observed recurrence interface");
     std::set<std::size_t> members;
@@ -83,6 +83,8 @@ bool validObserved(const Program &p, std::string &reason) {
       if (site >= q.sites.size() || site == loop.entry || site == loop.exit ||
           !members.insert(site).second)
         return fail("invalid observed recurrence member");
+    if (loop.atLeastOnce && (loop.bodyEntry >= q.sites.size() || !members.count(loop.bodyEntry)))
+      return fail("invalid qualified loop entry");
   }
   std::set<std::vector<uint64_t>> unique;
   std::map<std::size_t,

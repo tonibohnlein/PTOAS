@@ -51,6 +51,11 @@ struct ObservedScope {
 struct ObservedLoop {
   std::size_t owner = NoControlId, entry = NoControlId, exit = NoControlId;
   std::vector<std::size_t> sites;
+  // Original unrefined entry, qualified by the frontend's actual bounds.
+  // These placement facts do not change the conservative execution graph or
+  // grant completion. Refined quotients leave bodyEntry unavailable.
+  std::size_t bodyEntry = NoControlId;
+  bool atLeastOnce = false;
 };
 struct ObservedControl {
   std::vector<ObservedSite> sites;
