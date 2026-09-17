@@ -161,9 +161,8 @@ void joins()
     const auto publication = 2 * o::PipeCount + key;
     for (const auto& row : joined.state.facts()->reach)
         CHECK(!o::frontierContains(row, publication));
-    for (const auto& h : joined.state.facts()->history)
-        if (h)
-            CHECK(!o::frontierContains(*h, publication));
+    for (const auto& entry : joined.state.facts()->history.present())
+        CHECK(!o::frontierContains(entry.second, publication));
     CHECK(f.command(joined.state, wait(P, Q), {0, 0}).failure == o::FrontierFailure::AcquisitionNotFull);
     CHECK(f.command(joined.state, pub(P, Q), {0, 0}).failure == o::FrontierFailure::PublicationNotEmpty);
     CHECK(f.join({}, left).state == left); // unreachable is not fresh empty
@@ -174,7 +173,7 @@ void joins()
     CHECK(!f.join(left, other.initial()).applied);
     CHECK(!f.issue(other.initial(), 0).applied);
     p.operations[0].accesses.clear(); // immutable original program
-    CHECK(f.issue(f.initial(), 0).state.facts()->history[1].has_value());
+    CHECK(f.issue(f.initial(), 0).state.facts()->history.find(1) != nullptr);
 }
 void closedJoins()
 {

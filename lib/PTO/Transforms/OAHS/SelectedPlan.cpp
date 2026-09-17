@@ -11,7 +11,7 @@
 
 namespace mlir::pto::oahs::selected {
 Constructor::Constructor(const Program& p)
-    : program(p), frontier(p), control(p), storage(p), ledger(p), finalized(control.graph.sites.size())
+    : program(p), frontier(p), control(p), storage(p), ledger(p, control.canonicalCut), finalized(control.graph.sites.size())
 {
 }
 bool Constructor::fail(SelectedFailure failure, std::string reason, Cut cut)
@@ -77,6 +77,14 @@ SelectedPlan Constructor::run(const Commands& fixed)
     auto complete = [&]() {
         result.ledger = ledger.records();
         result.work.sourceHandles = result.sources.size();
+        result.work.constructedSites = control.graph.sites.size();
+        result.work.commandWords = commandCutCount(program);
+        result.work.cells = program.cells.size();
+        result.work.eligibleKeys = frontier.keys().size();
+        result.work.components = control.components.size();
+        result.work.cyclicComponents = std::size_t(std::count_if(
+            control.components.begin(), control.components.end(),
+            [](const Component& block) { return block.cyclic; }));
         result.work.elapsedMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - start).count();
         return std::move(result);

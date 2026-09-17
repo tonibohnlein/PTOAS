@@ -9,14 +9,22 @@
 #define PTO_TRANSFORMS_OAHS_CAUSALFRONTIER_H
 
 #include "PTO/Transforms/OAHS/Analysis.h"
+#include <algorithm>
 #include <memory>
+#include <utility>
 
 namespace mlir::pto::oahs {
 
 namespace selected { class Constructor; }
 
 using FrontierBits = std::vector<uint64_t>;
-bool frontierContains(const FrontierBits&, std::size_t);
+// Defined here because it is the innermost query of the frontier primitives.
+// A measured profile attributed 21% of a large-cell construction to the call
+// overhead of this three-line test alone. The value is unchanged.
+inline bool frontierContains(const FrontierBits& b, std::size_t i)
+{
+    return i / 64 < b.size() && (b[i / 64] & (uint64_t(1) << (i % 64)));
+}
 
 struct FrontierBinding {
     Cut cut = NoAnalysisId;
@@ -34,14 +42,69 @@ struct FrontierEvent {
     bool operator==(const FrontierEvent& b) const { return occupancy == b.occupancy && publishers == b.publishers; }
 };
 
+// The must-history of the access classes, ordered
+// (cell * PipeCount + engine) * 2 + mode, R=0, W=1. Absence means no
+// represented history; a PRESENT EMPTY bitset means unresolved history, so the
+// two are distinct and `find` returning null is the only expression of absence.
+// Only present classes are stored: a program with many storage cells otherwise
+// carries a dense array of mostly absent classes through every state copy, which
+// measurement showed to dominate both time and peak memory. `size` still reports
+// the dense class extent, so callers may enumerate every class.
+class FrontierHistory {
+public:
+    void reset(std::size_t classes)
+    {
+        extent = classes;
+        entries.clear();
+    }
+    std::size_t size() const { return extent; }
+    const FrontierBits* find(std::size_t index) const
+    {
+        const auto at = locate(index);
+        return at != entries.end() && at->first == index ? &at->second : nullptr;
+    }
+    FrontierBits* find(std::size_t index)
+    {
+        const auto at = locate(index);
+        return at != entries.end() && at->first == index ? &at->second : nullptr;
+    }
+    void assign(std::size_t index, FrontierBits value)
+    {
+        const auto at = locate(index);
+        if (at != entries.end() && at->first == index) {
+            at->second = std::move(value);
+            return;
+        }
+        entries.insert(at, {index, std::move(value)});
+    }
+    using Entry = std::pair<std::size_t, FrontierBits>;
+    std::vector<Entry>& present() { return entries; }
+    const std::vector<Entry>& present() const { return entries; }
+    bool operator==(const FrontierHistory& b) const { return extent == b.extent && entries == b.entries; }
+
+private:
+    std::vector<Entry>::const_iterator locate(std::size_t index) const
+    {
+        return std::lower_bound(entries.begin(), entries.end(), index,
+            [](const Entry& entry, std::size_t key) { return entry.first < key; });
+    }
+    std::vector<Entry>::iterator locate(std::size_t index)
+    {
+        return std::lower_bound(entries.begin(), entries.end(), index,
+            [](const Entry& entry, std::size_t key) { return entry.first < key; });
+    }
+    // Sorted by class index, so the representation of a given history is unique
+    // and equality is a plain comparison.
+    std::size_t extent = 0;
+    std::vector<Entry> entries;
+};
+
 struct FrontierFacts {
     // A[p], T[p], S[e], D[e], in that order. A is the next launch gate;
     // T aggregates earlier finishes, but does not serialize their completion.
     // Only must-full keys have an S port. Other rows/columns for S are zero.
     std::vector<FrontierBits> reach;
-    // Class order: (cell * PipeCount + engine) * 2 + mode, R=0, W=1.
-    // nullopt is absence; a present empty bitset is unresolved history.
-    std::vector<std::optional<FrontierBits>> history;
+    FrontierHistory history;
     std::vector<FrontierEvent> events;
     // Terminal retirement is not a reusable completion or event-reset receipt.
     bool terminalRetired = false, mayBeRetired = false;

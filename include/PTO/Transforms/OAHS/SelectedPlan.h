@@ -49,6 +49,10 @@ struct SelectedDecision {
 struct SelectedUpdate {
     uint64_t version = 0, siteEvaluations = 0;
     std::size_t finalizedQueries = 0;
+    // Components whose previous least solution this update actually reused, and
+    // whether it had to solve the whole original graph instead.
+    std::size_t reusedComponents = 0;
+    bool contextual = false;
     std::vector<Cut> changedCuts;
 };
 struct SelectedChannel {
@@ -56,6 +60,9 @@ struct SelectedChannel {
     Pipe source = Pipe::S, observer = Pipe::S;
     std::vector<Cut> publications, acquisitions;
     std::size_t owner = NoAnalysisId;
+    // The actual original modulo period this role was qualified with. Native
+    // period begins at 1; the key pool limits admission, it does not select it.
+    uint64_t period = 0;
 };
 // A clause is conditional on the original observation at its exact cut. Its
 // snapshot is established by the selected ledger at version, never assumed by
@@ -82,6 +89,13 @@ struct SelectedWork {
     uint64_t elapsedMicroseconds = 0, preparationMicroseconds = 0;
     std::size_t sourceHandles = 0, acknowledgments = 0, commonCutTransfers = 0;
     std::size_t recurringChannels = 0;
+    // Dimensions of the graph actually constructed over, recorded once. They
+    // separate refinement expansion from repeated visits and state-copy cost;
+    // they are not work allowances and never affect a decision.
+    std::size_t constructedSites = 0, commandWords = 0, cells = 0, eligibleKeys = 0;
+    std::size_t components = 0, cyclicComponents = 0;
+    // Whole-original-graph contextual solves, and updates that reused nothing.
+    std::size_t contextualReplays = 0, unreusedUpdates = 0;
 };
 struct SelectedPlan {
     bool success = false;
