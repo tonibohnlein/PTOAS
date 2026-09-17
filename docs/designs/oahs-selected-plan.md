@@ -72,8 +72,8 @@ cross-engine demand, one reachable occurrence of the word, and no later ledger
 command other than retirement. Consumption knowledge at the publisher is not
 invented. General acknowledgment deferral still requires tracking later key uses.
 
-These queries do not qualify loop-entry acquisitions or previous-use bank
-correspondence across guarded or non-unit-step loops. Those need original
+These acyclic queries do not themselves qualify loop-entry acquisitions or
+previous-use bank correspondence across guarded or non-unit-step loops. Those need original
 occurrence and participation certificates, including zero-trip and enclosing
 continuations. Backward demand queries guide endpoint placement; the actual
 completion and event-generation state continues forward through selected words.
@@ -279,6 +279,45 @@ multiple full analyses; it does not make construction two linear scans.
 Known and Overlap remain separate selection stages. Look-ahead supplies original
 placement and participation facts; actual transfers supply completion knowledge.
 Native order quality and device latency still need calibration.
+
+### Carried scalar slots and physical bank correspondence
+
+The shared `SyncSlotMapping` helper derives finite scalar orbits from original
+normalized counted loops: constant in-range initial slots and nonnegative,
+nonoverflowing `(slot + stride) % modulus` updates. Multiple slots use a common
+qualified period. Constant/add/multiply/remainder/index-cast address expressions
+are evaluated over that period, not over runtime trip counts. Unknown initial
+values, unsupported arithmetic, narrowing/overflow and periods outside the
+selected observation vocabulary keep conservative storage coverage.
+
+Native import currently connects this to **leaf loops**. It specializes shared
+direct-allocation footprint records and runs the existing physical interval
+partition, including witnesses to all unqualified accesses. No payload opcode
+recognizer, definite-write assumption, new target contract or payload rewrite
+is introduced. Several analytical phases can map to one original instruction;
+original anchors, addresses and payload/control order remain unchanged.
+
+The existing recurrence qualifier then derives bank-specific readiness and
+reader-release channels. Their selected words are replayed through entry,
+backedges and exit; ACC and other invariant storage retain their separate
+ordinary obligations. For re-entered regions, final release publications stay
+after the corresponding bank reader, while final consumption can wait until
+the original last body exit. A last-iteration feature is exposed only at that
+exit anchor. Consuming each final release immediately after its reader would
+unnecessarily gate preparation of another bank.
+
+The exact stripped Shenggan step4 payload is a native regression, accompanied by
+an independent concrete local-memory/event-order check. It checks one and two
+enclosing entries and forbids current-bank compute completion from gating the
+next inner-iteration bank fill. An injected ALL drain fails that quality check.
+Portable tests additionally cover zero through seven trips and repeated entry;
+native scalar tests include a three-bank stride-two orbit.
+
+This qualifies Shenggan's inner LEFT/RIGHT slot cycle. Its outer MAT slot loop
+contains a nested loop and remains conservative. Composing bank-use interfaces
+through nested regions, runtime initial slots, arbitrary conditional bank skips,
+and non-unit-step carried-slot loops remains separate work. This is not a claim
+that the entire manual protocol or its device performance has been reproduced.
 
 The original Qwen3 RMSNorm and post-RMSNorm kernels exercise this representation
 in native regression coverage. Their unrelated reduction loops require
