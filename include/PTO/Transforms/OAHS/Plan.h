@@ -67,6 +67,11 @@ struct Cell {
   // Function-local translated root identities, retained even when geometry is
   // unknown or several SSA roots name one physical atom. Not disjointness facts.
   std::vector<std::size_t> storageOrigins;
+  // Explicit target/lowering premise for all M accesses to this exact atom:
+  // qualified ordinary large-shape MMADs permit a subsequent accumulating
+  // consumer to rely on native ACC-local access ordering.
+  // This does NOT complete an operation or clear any pending source history.
+  bool nativeMmadAccOrder = false;
 };
 struct Operation {
   Pipe pipe = Pipe::S;
@@ -81,6 +86,9 @@ struct Operation {
   // name or absence of a typed effect can turn this default into true.
   bool complete = false;
   std::optional<FinalBlockOperation> finalBlock;
+  // Only an accumulating consumer may use the qualified ACC-local rule.
+  // A fresh matrix initialization is not a K-axis accumulation dependency.
+  bool nativeMmadAccumulate = false;
 };
 struct Region {
   enum Kind { Sequence, Choice, For, While, Operation } kind = Sequence;

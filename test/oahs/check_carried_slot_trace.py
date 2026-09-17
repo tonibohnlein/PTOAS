@@ -37,7 +37,7 @@ def parse(lines, at):
 
 
 class Trace:
-    def __init__(self, serialize=False):
+    def __init__(self, serialize=False, check_outer=False):
         self.ancestors = []
         self.launch = {}
         self.gate = {}
@@ -48,6 +48,10 @@ class Trace:
         self.overlap_checks = 0
         self.required_checks = 0
         self.serialize = serialize
+        self.native_acc = {}
+        self.native_acc_checks = 0
+        self.check_outer = check_outer
+        self.outer_checks = 0
 
     def vertex(self, parents):
         bits = 0
@@ -97,7 +101,7 @@ class Trace:
                 self.consumed[identity] = done
         self.finishes.setdefault(pipe, []).append(done)
 
-    def payload(self, name, effects, context):
+    def payload(self, name, effects, context, acc_order=False):
         pipe = {"tload": "MTE2", "textract": "MTE1", "tmatmul": "M",
                 "tmatmul.acc": "M", "tstore": "FIX"}[name]
         if self.serialize and name == "textract":
@@ -108,8 +112,24 @@ class Trace:
             for a, aw in old[2]:
                 for b, bw in effects:
                     if (aw or bw) and a[0] == b[0] and a[1] < b[1] + b[2] and b[1] < a[1] + a[2]:
+                        # Target-qualified ACC access ordering is not a graph
+                        # completion edge. Never propagate it to operand reuse
+                        # or FIX readiness. Both original operations must match.
+                        if (acc_order and name == "tmatmul.acc" and self.native_acc.get(old[1]) == acc_order and
+                                a[0] == "acc" and a == b):
+                            self.native_acc_checks += 1
+                            continue
                         assert self.ancestors[issued] & (1 << old[1]), ("missing physical conflict", old, name, effects, context)
                         self.required_checks += 1
+        if self.check_outer and name == "tload":
+            last_compute = next((p for p in reversed(self.payloads) if p[0].startswith("tmatmul")), None)
+            for old in self.payloads:
+                if (old is last_compute and old[3][:-2] == context[:-1] and
+                        old[3][-2][0] == context[-1][0] and old[3][-2][1] + 1 == context[-1][1]):
+                    assert not self.ancestors[issued] & (1 << old[1]), "child compute gates parent DMA"
+                    self.outer_checks += 1
+                if old[0] == "tload" and old[3] == context:
+                    assert not self.ancestors[issued] & (1 << old[1]), "disjoint MAT pools serialized"
         if name == "textract":
             # Adjacent inner iterations use distinct banks. Restrict the
             # forbidden edge to one invocation of that inner loop; region-exit
@@ -119,6 +139,8 @@ class Trace:
                 assert not self.ancestors[issued] & (1 << prior[1]), ("current-bank compute gates next-bank preparation", context)
                 self.overlap_checks += 1
         self.payloads.append((name, done, effects, context))
+        if acc_order:
+            self.native_acc[done] = acc_order
         self.finishes.setdefault(pipe, []).append(done)
 
 
@@ -164,7 +186,17 @@ def execute(nodes, env, trace, context=()):
             written = re.findall(r"%\w+", outs.split(":")[0])
             effects = [(env[v], write) for values, write in ((read, False), (written, True))
                        for v in values if isinstance(env.get(v), tuple)]
-            trace.payload(payload[1], effects, context)
+            qualified = False
+            if payload[1] in ("tmatmul", "tmatmul.acc") and "acc_phase" not in line:
+                a, b = (env.get(("shape", v)) for v in read[-2:])
+                c = env.get(("shape", written[0]))
+                if a and b and c:
+                    qualified = (a[2] == b[2] == 16 and c[2] == 32 and
+                                 a[0] == c[0] and b[1] == c[1] and a[1] == b[0] and
+                                 all(0 < n <= 4095 and n % 16 == 0 for n in (*a[:2], *b[:2])) and
+                                 (a[0] // 16) * (b[1] // 16) >= 10 and
+                                 (payload[1] == "tmatmul" or read[0] == written[0]))
+            trace.payload(payload[1], effects, context, (*c, a[1]) if qualified else False)
             continue
         if " = " not in line:
             assert line == "return", line
@@ -198,6 +230,10 @@ def execute(nodes, env, trace, context=()):
             assert shape, expression
             addr = re.search(r"addr = (%\w+)", expression)[1]
             env[name] = (shape[1], env[addr], int(shape[2]) * int(shape[3]) * int(shape[4]) // 8)
+            valid = [re.search(r"valid_" + d + r" = (%\w+)", expression) for d in ("row", "col")]
+            dimensions = tuple(env[v[1]] if v else int(shape[i+2]) for i, v in enumerate(valid))
+            if dimensions == (int(shape[2]), int(shape[3])):
+                env[("shape", name)] = (*dimensions, int(shape[4]))
         else:
             assert expression.startswith(("pto.make_tensor_view", "pto.partition_view")), expression
     return None
@@ -208,12 +244,14 @@ def main():
     start = next(i for i, line in enumerate(lines) if "func.func @hpgemm_hpgemm" in line) + 1
     nodes, _ = parse(lines, start)
     for step in (256, 128):
-        trace = Trace()
+        trace = Trace(check_outer=True)
         execute(nodes, {"%arg3": 0, "%arg4": step}, trace)
         assert not trace.live, "unconsumed events at return"
         assert trace.overlap_checks == (256 // step) * 16 * 3 * 2, trace.overlap_checks
+        assert trace.outer_checks == (256 // step) * 15 * 2, trace.outer_checks
         print("outer entries", 256 // step, "required edges", trace.required_checks,
-              "forbidden overlap edges absent", trace.overlap_checks)
+              "native ACC access checks", trace.native_acc_checks,
+              "forbidden inner/outer overlap edges absent", trace.overlap_checks, trace.outer_checks)
     # A safety-preserving drain must FAIL the quality gate. This distinguishes
     # the overlap assertion from an acceptance-only synchronization test.
     try:
