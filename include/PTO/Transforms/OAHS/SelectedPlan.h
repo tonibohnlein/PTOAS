@@ -51,6 +51,9 @@ struct SelectedDecision {
     std::size_t repairedAcquisition = NoAnalysisId;
     unsigned repairedForwardKey = 0, repairReverseKey = 0;
     uint64_t repairInputVersion = 0, repairOutputVersion = 0;
+    // Nonempty for one key published at alternative original source cuts and
+    // acquired once at the common consumer. These are actual emitted cuts.
+    std::vector<Cut> publicationFrontier = {};
 };
 struct SelectedUpdate {
     uint64_t version = 0, siteEvaluations = 0;

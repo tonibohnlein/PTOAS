@@ -43,6 +43,41 @@ Ordinary completion endpoint `request` IDs index `decisions`. Endpoints with
 purpose `RecurringCompletion` index `channels`. Both kinds coexist in the same
 ledger; `channels` contains qualified physical access-role requests. Neither table supplies completion to the checker.
 
+## Look-ahead and publication frontiers
+
+Known readiness/reuse and additional-overlap requirements retain separate
+selection stages. Sharing a source engine and consumer does not automatically
+combine their publication prefixes. After each actual acquisition, construction
+recomputes the residual and provider groups; each edit must strictly reduce the
+cross-engine residual before continuing.
+
+`SelectedLookahead.h` indexes immutable original class issues within proven
+corridors and strict-future payload reachability. Freshness queries use the same
+half-open source-to-consumer interval as the original scan. Future reachability
+includes backedges, so the last textual payload of a loop is not terminal.
+
+When a straight-corridor source is unavailable, backward search can find an
+acyclic frontier of alternative publication cuts. Each source must contain the
+required completion in its actual selected snapshot. A separate empty/full
+monitor checks participation from original entry to exit; shared observation
+words and unqualified cyclic sources are excluded. One globally unused eligible
+directional key is checked at every source position. The publications and common
+acquisition are inserted together and replayed as one selected edit. The branch
+regression checks absence of unrelated-load completion before consumer issue in
+the independent graph oracle, as well as final safety.
+
+A common-cut return acknowledgment can be omitted only after the final
+cross-engine acquisition of a terminal payload: no future payload, no remaining
+cross-engine demand, one reachable occurrence of the word, and no later ledger
+command other than retirement. Consumption knowledge at the publisher is not
+invented. General acknowledgment deferral still requires tracking later key uses.
+
+These queries do not qualify loop-entry acquisitions or previous-use bank
+correspondence across guarded or non-unit-step loops. Those need original
+occurrence and participation certificates, including zero-trip and enclosing
+continuations. Backward demand queries guide endpoint placement; the actual
+completion and event-generation state continues forward through selected words.
+
 ## Selected updates
 
 Updates reuse a predecessor-closed unchanged prefix. Each materialized endpoint

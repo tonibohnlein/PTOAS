@@ -9,6 +9,7 @@
 #define PTO_OAHS_SELECTED_INTERNAL_H
 
 #include "Control.h"
+#include "SelectedLookahead.h"
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include <algorithm>
 #include <map>
@@ -31,6 +32,7 @@ struct Control {
     std::vector<Component> components;
     std::vector<Id> component, position, frame;
     std::vector<bool> reachable;
+    LookaheadIndex lookahead;
     // Memo of canonicalCommandCut, and the sites sharing each canonical word,
     // with the component span of each such word. These are facts about the
     // immutable program and control alone: no ledger state enters them, so they
@@ -151,6 +153,12 @@ struct Group {
     std::vector<FrontierRequirement> requirements;
     std::set<Id> coverage;
     bool common = false;
+    // A participation-qualified set of alternative early source cuts. It uses
+    // one virgin directional key, not one key per branch. Empty means the
+    // original single-cut/F7 path. The candidate is tied to the selected map.
+    std::vector<Cut> publications = {};
+    Id forwardKey = NoAnalysisId;
+    uint64_t version = 0;
 };
 
 class Constructor {
@@ -197,10 +205,12 @@ private:
                       const std::vector<FrontierRequirement>&);
     std::set<Id> coverage(Cut, Pipe, const std::vector<FrontierRequirement>&) const;
     bool freshBetween(Cut, Cut, Id) const;
+    bool sourceFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&) const;
     bool consume();
     bool bind(Group&, RequirementStage);
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&);
     bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&);
+    bool needsCommonAcknowledgment(const State&) const;
     Id reusable(Pipe, Pipe, const State&);
     bool canPublish(const State&, Id) const;
     bool clearInterval(Id, Cut, Cut) const;
