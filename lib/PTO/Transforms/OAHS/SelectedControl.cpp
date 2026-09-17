@@ -353,7 +353,22 @@ Control::Control(const Program& program)
                 const auto& next = graph.sites[at].successors;
                 todo.insert(todo.end(), next.begin(), next.end());
             }
-            if (!bypass && first.size() == 1) facts.firstConsumer[unsigned(observer)] = *first.begin();
+            if (!bypass && first.size() == 1) {
+                const auto deadline = *first.begin();
+                facts.firstConsumer[unsigned(observer)] = deadline;
+                std::fill(seen.begin(), seen.end(), false);
+                todo = graph.sites[loop.entry].successors;
+                while (!todo.empty()) {
+                    const auto at = todo.back(); todo.pop_back();
+                    if (at == loop.exit || at == loop.entry || seen[at]) continue;
+                    seen[at] = true;
+                    ++loopEntryPreparationSites;
+                    facts.crossedWords[unsigned(observer)].push_back(at);
+                    if (at == deadline) continue;
+                    const auto& next = graph.sites[at].successors;
+                    todo.insert(todo.end(), next.begin(), next.end());
+                }
+            }
         }
         loopEntries.push_back(std::move(facts));
     }

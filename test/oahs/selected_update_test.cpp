@@ -40,7 +40,7 @@ struct ReplayTestAccess {
         Constructor c(program);
         auto plan = c.run({});
         require(plan.success, plan.reason);
-        require(c.recurringKeys.empty() != contextual, "unexpected replay path for this program");
+        require(c.needsContextualReplay == contextual, "unexpected replay path for this program");
         c.current = c.control.graph.exit;
         c.activeComponent = c.control.component[c.current];
         c.activeOffset = 0;

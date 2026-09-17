@@ -169,9 +169,9 @@ void keepLoopReturn()
             require(control.lookahead.mayIssueAfter(site), "loop lookahead erased backedge");
     }
 }
-void invariantLoopEntry()
+o::Program invariantLoopProgram(unsigned keys = 4)
 {
-    auto p = base(2, 4);
+    auto p = base(3, keys);
     p.operations = {op(P, {{0, false, true}}), op(P, {{1, false, true}}),
                     op(Q, {{0, true, false}})};
     o::ObservedControl q;
@@ -187,6 +187,11 @@ void invariantLoopEntry()
     q.sites[6].backedgeOwners = {3};
     q.loops.push_back({3, 3, 7, {4, 5, 6}, 5, true});
     p.observed = q;
+    return p;
+}
+void invariantLoopEntry()
+{
+    auto p = invariantLoopProgram();
     const o::selected::Control original(p);
     require(original.loopEntries.size() == 1 &&
             original.loopEntries.front().firstConsumer[unsigned(Q)] == 5,
@@ -206,8 +211,9 @@ void invariantLoopEntry()
     std::vector<o::Command> pending;
     for (auto site : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 4u, 5u, 6u, 4u, 5u, 6u, 4u, 7u}) {
         pending.insert(pending.end(), plan.commands[site].begin(), plan.commands[site].end());
-        if (operations[site] == o::NoAnalysisId) continue;
-        flat.operations.push_back(p.operations[operations[site]]);
+        const auto operation = p.observed->sites[site].operation;
+        if (operation == o::NoAnalysisId) continue;
+        flat.operations.push_back(p.operations[operation]);
         words.push_back(std::move(pending)); pending.clear();
     }
     words.push_back(std::move(pending));
@@ -226,6 +232,94 @@ void invariantLoopEntry()
     p.observed->loops.front().atLeastOnce = false;
     require(accepted(p).work.loopEntryTransfers == 0, "unknown/zero-trip entry was acquired unconditionally");
 }
+void reuseOneShotEntryKey()
+{
+    auto p = invariantLoopProgram(1);
+    p.operations.push_back(op(P, {{2, false, true}}));
+    p.operations.push_back(op(Q, {{2, true, false}}));
+    auto& q = *p.observed;
+    q.exit = 10;
+    q.sites[7].successors = {8};
+    for (o::Cut i = 8; i <= 10; ++i) {
+        q.observations.push_back({i, {}, true});
+        q.sites.push_back({i < 10 ? i - 5 : o::NoAnalysisId, i,
+            i < 10 ? std::vector<o::Cut>{i + 1} : std::vector<o::Cut>{}, {}, 0});
+    }
+    o::Commands fixed(o::commandCutCount(p));
+    fixed[7] = {{o::Command::Publish, Q, P, 0}, {o::Command::Acquire, Q, P, 0}};
+    const auto plan = accepted(p, fixed);
+    require(plan.work.loopEntryTransfers == 1 && plan.commands[1].size() == 1 &&
+            plan.commands[1][0].kind == o::Command::Publish && plan.commands[3].size() == 1 &&
+            plan.commands[3][0].kind == o::Command::Acquire,
+            "one-shot key reuse lost the useful early entry placement");
+    require(plan.work.acknowledgments == 0,
+            "valid fixed return was ignored when proving one-shot key reuse");
+    unsigned publications = 0;
+    for (const auto& endpoint : plan.ledger)
+        if (endpoint.command.kind == o::Command::Publish && endpoint.command.source == P &&
+            endpoint.command.observer == Q) {
+            require(endpoint.command.key == 0, "single-key pool was enlarged");
+            ++publications;
+        }
+    require(publications == 2, "consumed one-shot key was permanently reserved");
+    require(std::any_of(plan.updates.begin(), plan.updates.end(),
+                       [](const auto& update) { return update.contextual; }),
+            "ending a compiler reservation disabled contextual replay");
+    auto missingReturn = plan.commands;
+    missingReturn[7].clear();
+    require(!o::checkCausalFrontier(p, missingReturn).accepted,
+            "ending a reservation manufactured consumption knowledge");
+}
+
+void entryWaitMustNotCrossPublication()
+{
+    auto p = invariantLoopProgram();
+    p.operations.push_back(op(R, {}));
+    auto& q = *p.observed;
+    q.observations.push_back({8, {}, true});
+    q.sites.push_back({3, 8, {5}, {}, 0});
+    q.sites[4].successors[0] = 8;
+    q.loops.front().bodyEntry = 8;
+    q.loops.front().sites.push_back(8);
+    const std::vector<o::Command> relay{
+        {o::Command::Publish, Q, R, 0}, {o::Command::Acquire, Q, R, 0},
+        {o::Command::Publish, R, Q, 0}, {o::Command::Acquire, R, Q, 0}};
+    o::Commands fixed(o::commandCutCount(p));
+    fixed[8] = relay;
+    const auto plan = accepted(p, fixed);
+    require(plan.work.loopEntryTransfers == 0,
+            "entry acquisition crossed an observer publication to another engine");
+    auto flat = p;
+    flat.observed.reset(); flat.operations.clear(); flat.body = {};
+    o::Commands words;
+    std::vector<o::Command> pending;
+    for (auto site : {0u, 1u, 2u, 3u, 4u, 8u, 5u, 6u,
+                     4u, 8u, 5u, 6u, 4u, 8u, 5u, 6u, 4u, 7u}) {
+        pending.insert(pending.end(), plan.commands[site].begin(), plan.commands[site].end());
+        const auto operation = q.sites[site].operation;
+        if (operation == o::NoAnalysisId) continue;
+        flat.operations.push_back(p.operations[operation]);
+        words.push_back(std::move(pending)); pending.clear();
+    }
+    words.push_back(std::move(pending));
+    require(bool(oahs_oracle::graph(flat, words, {0, 1, 2, 3, 4, 5, 6, 7}, {{0, 2}})),
+            "entry placement ordered A completion before independent R work");
+
+    // A fixed publication in the deadline's word also precedes the original
+    // acquisition; checking only strictly earlier sites is insufficient.
+    fixed[8].clear(); fixed[5] = relay;
+    require(accepted(p, fixed).work.loopEntryTransfers == 0,
+            "entry placement crossed the deadline's existing publication");
+
+    // Keep useful placements when these words are not crossed: the new WAIT
+    // is appended after entry commands, and body-exit commands follow Q's use.
+    fixed[5].clear(); fixed[3] = relay;
+    require(accepted(p, fixed).work.loopEntryTransfers == 1,
+            "publication before the entry WAIT disabled useful early placement");
+    fixed[3].clear(); fixed[6] = relay;
+    require(accepted(p, fixed).work.loopEntryTransfers == 1,
+            "publication after the consumer disabled useful early placement");
+}
 } // namespace
 int main()
 {
@@ -237,5 +331,7 @@ int main()
     keepFutureWordReturn();
     keepLoopReturn();
     invariantLoopEntry();
+    reuseOneShotEntryKey();
+    entryWaitMustNotCrossPublication();
     std::cout << "selected lookahead, deadline and terminal-return tests passed\n";
 }
