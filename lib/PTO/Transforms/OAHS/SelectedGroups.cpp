@@ -31,22 +31,35 @@ std::set<Id> Constructor::coverage(
 {
     std::set<Id> out;
     const auto& atSource = cache.cuts[cut].before;
-    const auto& atConsumer = cache.cuts[current].before;
     if (!atSource.causal.reachable()) {
         return out;
     }
     const auto& history = atSource.causal.facts()->history;
     for (const auto& r : requirements) {
         const auto index = accessClass(r);
-        const auto origin = atSource.latest.get(index);
-        const bool sameOccurrence = cut == current ||
-            (origin != NoAnalysisId && origin == atConsumer.latest.get(index));
         const auto* reached = history.find(index);
-        if (sameOccurrence && reached && frontierContains(*reached, PipeCount + unsigned(source))) {
+        if (freshBetween(cut, current, index) && reached &&
+            frontierContains(*reached, PipeCount + unsigned(source))) {
             out.insert(index);
         }
     }
     return out;
+}
+bool Constructor::freshBetween(Cut source, Cut target, Id access) const
+{
+    if (source == target) return true;
+    if (!control.straight(source, target)) return false;
+    for (Cut site = 0; site < control.graph.sites.size(); ++site) {
+        if (site == target || !control.straight(source, site) || !control.straight(site, target)) continue;
+        const auto operation = control.graph.operations[site];
+        if (operation == NoAnalysisId) continue;
+        const auto& op = program.operations[operation];
+        for (const auto& effect : op.accesses) {
+            const auto base = (Id(effect.cell) * PipeCount + unsigned(op.pipe)) * 2;
+            if ((effect.read && access == base) || (effect.write && access == base + 1)) return false;
+        }
+    }
+    return true;
 }
 Group Constructor::sourceGroup(
     Pipe source, const std::vector<FrontierRequirement>& required,
@@ -55,33 +68,18 @@ Group Constructor::sourceGroup(
     Group group;
     group.source = source;
     group.requirements = required;
-    Id latest = NoAnalysisId;
-    bool comparable = true;
-    for (const auto& r : required) {
-        const auto origin = currentState().latest.get(accessClass(r));
-        if (origin == NoAnalysisId || !control.straight(origin, current)) {
-            comparable = false;
-            break;
-        }
-        if (latest == NoAnalysisId || control.position[latest] < control.position[origin]) {
-            latest = origin;
-        }
+    std::set<Id> needed;
+    for (const auto& requirement : required) needed.insert(accessClass(requirement));
+    const SelectedSource* selected = nullptr;
+    for (const auto& handle : result.sources) {
+        if (handle.pipe != source || handle.version != cache.version || !handle.snapshot.reachable() ||
+            !control.straight(handle.cut, current)) continue;
+        const auto covered = coverage(handle.cut, source, required);
+        if (!std::includes(covered.begin(), covered.end(), needed.begin(), needed.end())) continue;
+        if (!selected || control.position[handle.cut] < control.position[selected->cut]) selected = &handle;
     }
-    group.publication = comparable && latest != NoAnalysisId ? control.after(latest) : current;
-    if (group.publication == NoAnalysisId || !control.straight(group.publication, current)) {
-        group.publication = current;
-        comparable = false;
-    }
-    if (comparable) {
-        const auto saved = std::find_if(result.sources.begin(), result.sources.end(), [&](const auto& handle) {
-            return handle.origin == latest && handle.pipe == source && handle.cut == group.publication &&
-                   handle.version == cache.version && handle.snapshot.reachable();
-        });
-        if (saved == result.sources.end()) {
-            comparable = false;
-            group.publication = current;
-        }
-    }
+    const bool comparable = selected != nullptr;
+    group.publication = comparable ? selected->cut : current;
     group.common = !comparable;
     group.coverage = coverage(group.publication, source, all);
     return group;

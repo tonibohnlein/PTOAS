@@ -103,7 +103,7 @@ SelectedPlan Constructor::run(const Commands& fixed)
         fail(SelectedFailure::InvalidInput, reason);
         return complete();
     }
-    const auto channels = qualifyCyclicFrontiers(program, control);
+    const auto channels = qualifyCyclicFrontiers(program, control, storage);
     if (!channels.empty() && !recurring(channels)) return complete();
     for (activeComponent = 0; activeComponent < control.components.size(); ++activeComponent) {
         // End compiler role reservations, not physical event state. Actual D/S
@@ -141,7 +141,9 @@ namespace mlir::pto::oahs {
 bool hasQualifiedRecurringAccesses(const Program& program)
 {
     selected::Control control(program);
-    return control.complete && !selected::qualifyCyclicFrontiers(program, control).empty();
+    StorageFrontierAnalysis storage(program);
+    return control.complete && storage.complete() &&
+        !selected::qualifyCyclicFrontiers(program, control, storage).empty();
 }
 SelectedPlan constructSelectedPlan(const Program& program, const Commands& fixed)
 {

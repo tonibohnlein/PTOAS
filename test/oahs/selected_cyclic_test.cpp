@@ -234,11 +234,28 @@ void contextual()
     require(withIncoming.loops[0].incoming.facts()->events[found - keys.begin()].occupancy == 2,
             "child interface reset an incoming live event");
 }
+void sharedRecurringPrefixes()
+{
+    const auto P = o::Pipe::MTE1, Q = o::Pipe::M;
+    auto body = base(2, 4);
+    body.operations = {op(P, {{0, false, true, true}}), op(P, {{1, false, true, true}}),
+                       op(Q, {{0, true, false}, {1, true, false}})};
+    const auto input = o::makePeriodicLoop(body, 1, {});
+    require(input.success, input.reason);
+    const auto result = accepted(input.program);
+    require(result.channels.size() == 2,
+            "common matrix consumer and reuse frontier must share recurring ready/release prefixes");
+    for (const auto& channel : result.channels) {
+        require(channel.cells == std::vector<unsigned>({0, 1}),
+                "shared recurring channel must retain both physical obligations");
+    }
+}
 } // namespace
 int main()
 {
     regional();
     contextual();
+    sharedRecurringPrefixes();
     for (unsigned slots = 1; slots <= 4; ++slots) {
         checkSlots(slots);
     }

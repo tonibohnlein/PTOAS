@@ -134,6 +134,7 @@ struct Replay {
 };
 struct RecurringRequirement {
     unsigned cell = 0;
+    std::vector<unsigned> cells;
     Pipe source = Pipe::S, observer = Pipe::S;
     std::vector<Cut> publications, acquisitions;
     Id owner = NoAnalysisId;
@@ -141,7 +142,8 @@ struct RecurringRequirement {
 };
 // A storage/control qualifier: it returns requirements and original frontiers,
 // not commands or physical key choices. Empty means ordinary F1--F8 applies.
-std::vector<RecurringRequirement> qualifyCyclicFrontiers(const Program&, const Control&);
+std::vector<RecurringRequirement> qualifyCyclicFrontiers(
+    const Program&, const Control&, const StorageFrontierAnalysis&);
 
 struct Group {
     Pipe source = Pipe::S;
@@ -194,6 +196,7 @@ private:
     Group sourceGroup(Pipe, const std::vector<FrontierRequirement>&,
                       const std::vector<FrontierRequirement>&);
     std::set<Id> coverage(Cut, Pipe, const std::vector<FrontierRequirement>&) const;
+    bool freshBetween(Cut, Cut, Id) const;
     bool consume();
     bool bind(Group&, RequirementStage);
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&);

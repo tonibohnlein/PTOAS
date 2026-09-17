@@ -106,17 +106,26 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
         if (after == cache.afterEndpoint.end()) {
             continue;
         }
-        const auto reverseKey = reusable(observer, source, after->second);
         const auto newCut = control.position[cut] > control.position[publication] ? cut : publication;
-        if (reverseKey == NoAnalysisId || !clearInterval(candidate, newCut, current) ||
-            !clearInterval(reverseKey, cut, newCut)) {
+        if (!clearInterval(candidate, newCut, current)) {
             continue;
         }
-        key = candidate;
-        oldWait = wait;
-        reverse = reverseKey;
-        moved = newCut;
-        break;
+        // F7 chooses the lowest reverse key whose COMPLETE certificate passes.
+        // A lower reusable key with an intervening use must not hide a later
+        // eligible key for this same stable forward repair target.
+        for (Id reverseKey = 0; reverseKey < frontier.keys().size(); ++reverseKey) {
+            const auto& reverseIdentity = frontier.keys()[reverseKey];
+            if (reverseIdentity.source != observer || reverseIdentity.observer != source ||
+                closedKeys.count(reverseKey)) continue;
+            ++result.work.keyQueries;
+            if (!canPublish(after->second, reverseKey) || !clearInterval(reverseKey, cut, newCut)) continue;
+            key = candidate;
+            oldWait = wait;
+            reverse = reverseKey;
+            moved = newCut;
+            break;
+        }
+        if (oldWait != NoAnalysisId) break;
     }
     if (oldWait == NoAnalysisId) {
         return fail(SelectedFailure::EventResource,
@@ -124,6 +133,10 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
     }
     const auto& identity = frontier.keys()[reverse];
     const auto request = result.decisions.size();
+    decision.repairedAcquisition = oldWait;
+    decision.repairedForwardKey = frontier.keys()[key].key;
+    decision.repairReverseKey = identity.key;
+    decision.repairInputVersion = ledger.version();
     decision.endpoints.push_back(ledger.after(oldWait,
         {Command::Publish, observer, source, identity.key}, EndpointPurpose::ConsumptionAcknowledgment, request, oldWait));
     decision.endpoints.push_back(ledger.append(moved,
@@ -134,6 +147,7 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
     if (!update()) {
         return false;
     }
+    decision.repairOutputVersion = ledger.version();
     if (!canPublish(cache.cuts[publication].before, key)) {
         return fail(SelectedFailure::SelectedUpdate,
             "selected acknowledgment does not rearm its new publication", publication);

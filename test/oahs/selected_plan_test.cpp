@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedTestSupport.h"
+#include "GraphOracle.h"
 using namespace selected_test;
 const auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE3;
 namespace {
@@ -94,6 +95,31 @@ void scarcity()
     p.target.keys[unsigned(R)][unsigned(Q)] = {0};
     result = accepted(p);
     require(count(result, o::Command::Publish) == 2, "canonical route should use actual relay endpoints");
+
+    // v0.22 T6b: stable F7 repair selection must repair key 0 after its
+    // preceding acquisition. Repairing key 1 would add completion of read x
+    // before issue of read z, despite the two reads being independent.
+    p = base(3, 2);
+    p.operations = {op(P, {{0, false, true, true}}), op(P, {{1, false, true, true}}),
+                    op(P, {{2, false, true, true}}), op(Q, {{0, true, false}}),
+                    op(Q, {{1, true, false}}), op(Q, {{2, true, false}})};
+    result = accepted(p);
+    require(result.work.acknowledgments == 1 && result.ledger.size() == 8 &&
+            count(result, o::Command::Barrier) == 0,
+            "T6b requires the exact eight-endpoint, fence-free realization");
+    const auto repaired = std::find_if(result.decisions.begin(), result.decisions.end(), [](const auto& decision) {
+        return decision.repairedAcquisition != o::NoAnalysisId;
+    });
+    require(repaired != result.decisions.end() && repaired->repairedForwardKey == 0 &&
+            repaired->repairReverseKey == 0 && repaired->repairInputVersion < repaired->repairOutputVersion,
+            "T6b must record the complete stable repair certificate for key 0");
+    require(repaired->endpoints.size() == 4,
+            "T6b repair decision must name helper and forward endpoints together");
+    require(repaired->repairedAcquisition < result.ledger.size() &&
+            result.ledger[repaired->repairedAcquisition].cut == 3,
+            "T6b acknowledgment must target the first acquisition");
+    require(bool(oahs_oracle::graph(p, result.commands, {0, 1, 2, 3, 4, 5}, {{3, 5}})),
+            "T6b stable repair added read-x completion before read-z issue");
 }
 void structured()
 {
