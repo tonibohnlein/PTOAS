@@ -351,6 +351,32 @@ ObservedImport refineCountedLoop(const Program &input,
   }
   out.program = input;
   auto &q = *out.program.observed;
+  std::map<std::size_t, std::vector<std::size_t>> phases;
+  for (std::size_t i = 0; i < input.operations.size(); ++i)
+    out.originalPhases.push_back(i);
+  for (const auto &binding : loop.effects) {
+    if (binding.operation >= input.operations.size() ||
+        binding.residues.size() != loop.period || phases.count(binding.operation))
+      return fail("invalid periodic original-effect binding");
+    for (std::size_t site = 0; site < size; ++site)
+      if (old.sites[site].operation == binding.operation && !members.count(site))
+        return fail("periodic effect escapes its qualified loop");
+    const auto original = input.operations[binding.operation];
+    auto &variants = phases[binding.operation];
+    for (unsigned residue = 0; residue < loop.period; ++residue) {
+      auto operation = original;
+      operation.accesses = binding.residues[residue];
+      for (const auto &access : operation.accesses)
+        if (access.cell >= input.cells.size() || access.definiteWrite)
+          return fail("periodic native effect needs existing conservative cells");
+      const auto id = residue ? out.program.operations.size() : binding.operation;
+      if (residue) {
+        out.program.operations.push_back(std::move(operation));
+        out.originalPhases.push_back(binding.operation);
+      } else out.program.operations[id] = std::move(operation);
+      variants.push_back(id);
+    }
+  }
   using Mode = std::tuple<unsigned, unsigned, unsigned>;
   std::map<Mode, std::size_t> headers;
   std::vector<Mode> work;
@@ -370,7 +396,7 @@ ObservedImport refineCountedLoop(const Program &input,
     const auto id = header({0, 0, remaining});
     q.sites[loop.owner].successors.push_back(id);
   }
-  std::map<std::tuple<std::size_t, unsigned, bool, bool>, std::size_t>
+  std::map<std::tuple<std::size_t, unsigned, bool, bool, bool>, std::size_t>
       observations;
   for (std::size_t modeIndex = 0; modeIndex < work.size(); ++modeIndex) {
     const auto [residue, elapsed, remaining] = work[modeIndex];
@@ -384,14 +410,19 @@ ObservedImport refineCountedLoop(const Program &input,
       const auto id = q.sites.size();
       clone.emplace(site, id);
       q.sites.push_back(old.sites[site]);
+      auto phase = phases.find(old.sites[site].operation);
+      if (phase != phases.end()) q.sites[id].operation = phase->second[residue];
       q.sites[id].successors.clear();
       q.sites[id].backedgeOwners.clear();
       const auto oldObservation = old.sites[site].observation;
       if (oldObservation == NoControlId)
         continue;
+      const auto &owners = old.sites[site].backedgeOwners;
+      const bool splitTail = !loop.effects.empty() && loop.period > 1 &&
+          std::find(owners.begin(), owners.end(), loop.owner) != owners.end();
       const auto key =
           std::make_tuple(oldObservation, residue, elapsed >= loop.period,
-                          remaining > loop.period);
+                          remaining > loop.period, splitTail && remaining > 1);
       auto found = observations.find(key);
       if (found == observations.end()) {
         auto observation = old.observations[oldObservation];
@@ -402,6 +433,12 @@ ObservedImport refineCountedLoop(const Program &input,
               uint64_t(elapsed >= loop.period)},
              {ObservationAtom::LoopHasNext, loop.owner, loop.period,
               uint64_t(remaining > loop.period)}});
+        // A bank's final reader need not be the final loop iteration. Keep a
+        // distinct original last-iteration observation so key cleanup can wait
+        // until body exit instead of serializing preparation of another bank.
+        if (splitTail)
+          observation.atoms.push_back(
+              {ObservationAtom::LoopHasNext, loop.owner, 1, uint64_t(remaining > 1)});
         const auto index = q.observations.size();
         q.observations.push_back(std::move(observation));
         observations.emplace(key, index);
@@ -462,8 +499,6 @@ ObservedImport refineCountedLoop(const Program &input,
     refinedLoop.sites.push_back(site);
   q.loops.push_back(std::move(refinedLoop));
   q.qualification += "; normalized-counted-first-tail-v1";
-  for (std::size_t i = 0; i < input.operations.size(); ++i)
-    out.originalPhases.push_back(i);
   valid = validateProgram(out.program);
   out.success = valid.success;
   out.reason = valid.reason;

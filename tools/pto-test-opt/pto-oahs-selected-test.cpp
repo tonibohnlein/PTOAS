@@ -7,12 +7,14 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/OAHS/Native.h"
+#include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -174,6 +176,105 @@ bool mutations(MLIRContext &context) {
   }
   return true;
 }
+// Scalar/address qualification is shared and independent of payload opcodes.
+const char *slotInput = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @slots(%src: !pto.partition_tensor_view<1x32xf32>, %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %three = arith.constant 3 : index
+    %stride = arith.constant 128 : index
+    %base = arith.constant 256 : index
+    %out_addr = arith.constant 2048 : i64
+    %out = pto.alloc_tile addr = %out_addr : !pto.tile_buf<vec, 1x32xf32>
+    %result = scf.for %i = %zero to %n step %one iter_args(%slot = %two) -> index {
+      %advance = arith.addi %slot, %two : index
+      %next = arith.remsi %advance, %three : index
+      %offset = arith.muli %next, %stride : index
+      %address = arith.addi %offset, %base : index
+      %cast = arith.index_cast %address : index to i64
+      %bank = pto.alloc_tile addr = %cast : !pto.tile_buf<vec, 1x32xf32>
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%bank : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tabs ins(%bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+      scf.yield %next : index
+    }
+    return
+  }
+})mlir";
+bool slotMappings(MLIRContext &context) {
+  auto module = parseSourceString<ModuleOp>(slotInput, &context);
+  if (!check(bool(module), "parse carried-slot fixture")) return false;
+  auto function = module->lookupSymbol<func::FuncOp>("slots");
+  const auto original = text(function);
+  scf::ForOp loop;
+  AllocTileOp bank;
+  function.walk([&](scf::ForOp op) { loop = op; });
+  loop.walk([&](AllocTileOp op) { bank = op; });
+  auto mapping = SyncSlotMapping::derive(loop, 8);
+  if (!check(mapping && mapping->period == 3, "derive stride-two modulo-three orbit")) return false;
+  uint64_t slot = 2;
+  for (unsigned i = 0; i < 30; ++i) {
+    slot = (slot + 2) % 3;
+    auto address = SyncSlotMapping::evaluate(bank.getAddr(), mapping->values[i % 3]);
+    if (!check(address && *address == 256 + 128 * slot, "slot address differs from original recurrence")) return false;
+  }
+  if (!check(!SyncSlotMapping::derive(loop, 2), "finite vocabulary cannot silently truncate the orbit")) return false;
+  oahs::NativeAnalysis imported;
+  if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)) && text(function) == original,
+             "periodic import must preserve original IR")) return false;
+  bool distinctBanks[3] = {};
+  for (const auto &cell : imported.program.cells) {
+    if (cell.coordinateSpace != "physical-local" || cell.ranges.size() != 1) continue;
+    for (unsigned i = 0; i < 3; ++i)
+      distinctBanks[i] |= cell.ranges[0] == std::make_pair(uint64_t(256 + 128 * i), uint64_t(128));
+  }
+  if (!check(distinctBanks[0] && distinctBanks[1] && distinctBanks[2], "lost exact physical bank partition")) return false;
+  oahs::SelectedPlan plan;
+  if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)) &&
+             plan.work.recurringChannels == 6, "generic three-bank native recurrence")) return false;
+
+  // Bounds, initialization, arithmetic and narrowing must be proved, not guessed.
+  for (unsigned mutation = 0; mutation < 6; ++mutation) {
+    auto test = parseSourceString<ModuleOp>(slotInput, &context);
+    scf::ForOp changed;
+    test->walk([&](scf::ForOp op) { changed = op; });
+    auto yield = cast<scf::YieldOp>(changed.getBody()->getTerminator());
+    auto rem = yield.getOperand(0).getDefiningOp<arith::RemSIOp>();
+    auto add = rem.getLhs().getDefiningOp<arith::AddIOp>();
+    if (mutation == 0) changed.getInitArgsMutable().assign(ValueRange{changed.getUpperBound()});
+    if (mutation == 1) changed.getStepMutable().assign(add.getRhs());
+    if (mutation == 2) rem.setOperand(1, changed.getLowerBound());
+    if (mutation == 3) add.setOperand(1, changed.getInductionVar());
+    if (mutation == 4) changed.getInitArgsMutable().assign(ValueRange{rem.getRhs()});
+    if (mutation == 5) {
+      OpBuilder builder(changed);
+      auto huge = builder.create<arith::ConstantIndexOp>(changed.getLoc(), std::numeric_limits<int64_t>::max());
+      add.setOperand(1, huge);
+    }
+    if (!check(!SyncSlotMapping::derive(changed, 8), "unproved carried slot was admitted")) return false;
+  }
+  auto unresolved = parseSourceString<ModuleOp>(slotInput, &context);
+  auto unknownFunction = unresolved->lookupSymbol<func::FuncOp>("slots");
+  scf::ForOp unknownLoop;
+  AllocTileOp unknownBank;
+  unresolved->walk([&](scf::ForOp op) { unknownLoop = op; });
+  unknownLoop.walk([&](AllocTileOp op) { unknownBank = op; });
+  auto castAddress = unknownBank.getAddr().getDefiningOp<arith::IndexCastOp>();
+  OpBuilder unknownBuilder(castAddress);
+  Value unavailable = unknownLoop.getUpperBound();
+  for (unsigned depth = 0; depth < 40; ++depth)
+    unavailable = unknownBuilder.create<arith::AddIOp>(castAddress.getLoc(), unavailable, unavailable);
+  castAddress->setOperand(0, unavailable);
+  oahs::NativeAnalysis unknown;
+  if (!check(succeeded(oahs::analyzeHandoffSync(unknownFunction, unknown)) &&
+             unknown.program.operations.size() == 2 &&
+             llvm::any_of(unknown.program.cells, [](const auto &c) {
+               return c.unknownRange && c.addressSpace == std::to_string(unsigned(AddressSpace::VEC));
+             }), "unknown pool base must retain conservative alias coverage")) return false;
+  return true;
+}
 bool runFile(MLIRContext &context, const char *path) {
   auto module = parseSourceFile<ModuleOp>(path, &context);
   if (!module) { return false; }
@@ -244,6 +345,6 @@ int main(int argc, char **argv) {
   const bool passed = positive(context, ordinary, "ordinary") && positive(context, loop, "loop") &&
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
-                      positive(context, queue, "queue") && mutations(context);
+                      positive(context, queue, "queue") && mutations(context) && slotMappings(context);
   return passed ? 0 : 1;
 }

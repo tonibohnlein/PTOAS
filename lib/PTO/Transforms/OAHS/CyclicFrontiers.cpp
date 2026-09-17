@@ -36,11 +36,16 @@ Mode mode(const Program& p, Cut cut)
         return out;
     }
     const auto& value = p.observed->observations[observation];
-    if (!value.available || value.atoms.size() != 3) {
+    if (!value.available || (value.atoms.size() != 3 && value.atoms.size() != 4)) {
         return out;
     }
+    uint64_t period = 0;
+    Id owner = NoAnalysisId;
+    for (const auto &atom : value.atoms)
+        if (atom.kind == ObservationAtom::LoopResidue) { period = atom.parameter; owner = atom.owner; }
     unsigned seen = 0;
     for (const auto& atom : value.atoms) {
+        if (period > 1 && atom.kind == ObservationAtom::LoopHasNext && atom.parameter == 1 && atom.owner == owner) continue;
         if (seen && (atom.owner != out.owner || atom.parameter != out.period)) {
             return {};
         }
@@ -202,6 +207,23 @@ std::vector<RecurringRequirement> qualifyCell(
     release.observer = producer;
     ready.owner = release.owner = loop.owner;
     ready.period = release.period = period;
+    std::vector<Cut> finalAcquisitions;
+    if (reentered && period > 1) {
+        for (auto site : members) {
+            if (!c.graph.legalCuts[site] || c.graph.operations[site] != NoAnalysisId) continue;
+            const auto m = mode(p, site);
+            if (!m.valid || m.owner != loop.owner || m.period != period ||
+                (!m.previous && m.residue < residue)) continue;
+            const auto &node = p.observed->sites[site];
+            if (std::find(node.backedgeOwners.begin(), node.backedgeOwners.end(), loop.owner) ==
+                node.backedgeOwners.end()) continue;
+            const auto &observation = p.observed->observations[node.observation];
+            if (std::any_of(observation.atoms.begin(), observation.atoms.end(), [&](const auto &atom) {
+                    return atom.owner == loop.owner && atom.kind == ObservationAtom::LoopHasNext &&
+                           atom.parameter == 1 && atom.value == 0;
+                })) finalAcquisitions.push_back(canonicalCommandCut(p, site));
+        }
+    }
     for (auto site : members) {
         if (!roles[site]) continue;
         const auto cut = canonicalCommandCut(p, site);
@@ -220,10 +242,11 @@ std::vector<RecurringRequirement> qualifyCell(
             if ((nextRoles & 1) && nextRoles != 1) return {}; // ambiguous last reader
             if (!(nextRoles & 1) && (modes[site].next || reentered)) {
                 release.publications.push_back(endpoint);
-                if (!modes[site].next) release.acquisitions.push_back(endpoint);
+                if (!modes[site].next && finalAcquisitions.empty()) release.acquisitions.push_back(endpoint);
             }
         }
     }
+    release.acquisitions.insert(release.acquisitions.end(), finalAcquisitions.begin(), finalAcquisitions.end());
     for (auto* request : {&ready, &release}) {
         for (auto* cuts : {&request->publications, &request->acquisitions}) {
             std::sort(cuts->begin(), cuts->end());

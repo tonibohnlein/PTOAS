@@ -6,6 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedTestSupport.h"
+#include "GraphOracle.h"
+#include <functional>
+#include <numeric>
 #include <numeric>
 #include <set>
 using namespace selected_test;
@@ -292,9 +295,130 @@ void transitiveRecurringCoverage()
                 "removing a necessary whole channel was accepted");
     }
 }
+// The frontend specializes physical effects, never payload order. Check that
+// ACC reuse remains a compute obligation and cannot gate the next bank fill.
+void carriedBankEffects(bool reentered, unsigned banks)
+{
+    auto p = base(banks + 1, 8);
+    const auto P = o::Pipe::MTE1, Q = o::Pipe::M;
+    p.operations = {op(P, {}), op(Q, {{banks, true, true}})};
+    for (unsigned cell = 0; cell < banks; ++cell) {
+        p.operations[0].accesses.push_back({cell, false, true});
+        p.operations[1].accesses.push_back({cell, true, false});
+    }
+    p.operations[0].original = 0;
+    p.operations[1].original = 1;
+    p.body = {o::Region::For, {seq({leaf(0), leaf(1)})}, 0, true};
+    if (reentered) p.body = {o::Region::For, {p.body}, 0, true};
+    auto input = o::addStructuredBoundaryCuts(p);
+    require(input.success, input.reason);
+    const auto &q = *input.program.observed;
+    o::CountedLoopRegion loop;
+    loop.owner = q.scopes.back().ownerSite;
+    loop.header = q.sites[loop.owner].successors.front();
+    loop.bodyEntry = q.sites[loop.header].successors.front();
+    loop.continuation = q.sites[loop.header].successors.back();
+    loop.period = banks;
+    std::set<o::Cut> seen;
+    std::vector<o::Cut> todo{loop.bodyEntry};
+    while (!todo.empty()) {
+        auto at = todo.back(); todo.pop_back();
+        if (at == loop.header || !seen.insert(at).second) continue;
+        loop.bodySites.push_back(at);
+        for (auto next : q.sites[at].successors) todo.push_back(next);
+    }
+    loop.effects = {{0, {}}, {1, {}}};
+    for (unsigned residue = 0; residue < banks; ++residue) {
+        const unsigned cell = banks == 3 ? (2 * residue + 1) % 3 : residue;
+        loop.effects[0].residues.push_back({{cell, false, true}});
+        loop.effects[1].residues.push_back({{cell, true, false}, {banks, true, true}});
+    }
+    const auto refined = o::refineCountedLoop(input.program, loop);
+    require(refined.success, refined.reason);
+    const auto &program = refined.program;
+    const auto plan = accepted(program);
+    require(plan.channels.size() == 2 * banks, "banks need separate ready/release pairs");
+    for (const auto &channel : plan.channels)
+        require(std::find(channel.cells.begin(), channel.cells.end(), banks) == channel.cells.end(),
+                "ACC reuse merged into operand-bank release");
+    const auto &control = *program.observed;
+    for (unsigned iterations = 0; iterations <= 2 * banks + 3; ++iterations) {
+        std::vector<o::Cut> path;
+        std::vector<unsigned> visits(control.sites.size());
+        const unsigned entries = reentered ? 2 : 1, total = 2 * iterations * entries;
+        std::function<bool(o::Cut, unsigned, unsigned, unsigned)> trace =
+            [&](o::Cut at, unsigned payloads, unsigned iteration, unsigned entered) {
+            if (payloads > total || visits[at] > 2 * (iterations + 1)) return false;
+            if (at == loop.owner) { iteration = 0; if (++entered > entries) return false; }
+            if (at == loop.continuation && iteration != iterations) return false;
+            const auto &node = control.sites[at];
+            if (node.observation != o::NoAnalysisId) {
+                for (const auto &atom : control.observations[node.observation].atoms) {
+                    if (atom.owner != loop.owner) continue;
+                    bool actual = true;
+                    if (atom.kind == o::ObservationAtom::LoopResidue)
+                        actual = iteration % atom.parameter == atom.value;
+                    else if (atom.kind == o::ObservationAtom::LoopHasPrevious)
+                        actual = (iteration >= atom.parameter) == bool(atom.value);
+                    else if (atom.kind == o::ObservationAtom::LoopHasNext)
+                        actual = (iterations > iteration && iterations - iteration > atom.parameter) == bool(atom.value);
+                    if (!actual) return false;
+                }
+            }
+            path.push_back(at);
+            ++visits[at];
+            if (at == control.exit && payloads == total && entered == entries) return true;
+            const auto op = node.operation;
+            if (op != o::NoAnalysisId) {
+                if (payloads == total || program.operations[op].original != payloads % 2) {
+                    --visits[at]; path.pop_back(); return false;
+                }
+                ++payloads;
+            }
+            for (std::size_t edge = 0; edge < node.successors.size(); ++edge) {
+                const bool back = !node.backedgeOwners.empty() && node.backedgeOwners[edge] == loop.owner;
+                if (trace(node.successors[edge], payloads, iteration + unsigned(back), entered)) return true;
+            }
+            --visits[at]; path.pop_back(); return false;
+        };
+        require(trace(control.entry, 0, 0, 0), "missing first/steady/tail/reentry trace");
+        auto flat = program;
+        flat.observed.reset(); flat.body = {}; flat.operations.clear();
+        o::Commands words;
+        std::vector<o::Command> pending;
+        for (auto site : path) {
+            pending.insert(pending.end(), plan.commands[site].begin(), plan.commands[site].end());
+            const auto operation = control.sites[site].operation;
+            if (operation == o::NoAnalysisId) continue;
+            flat.operations.push_back(program.operations[operation]);
+            words.push_back(std::move(pending)); pending.clear();
+        }
+        words.push_back(std::move(pending));
+        std::vector<unsigned> sequence(flat.operations.size());
+        std::iota(sequence.begin(), sequence.end(), 0);
+        std::vector<std::pair<unsigned, unsigned>> forbidden;
+        for (unsigned entry = 0; entry < entries; ++entry)
+            for (unsigned i = 0; i + 1 < iterations; ++i) {
+                const unsigned base = 2 * entry * iterations;
+                forbidden.push_back({base+2*i+1, base+2*i+2});
+            }
+        require(bool(oahs_oracle::graph(flat, words, sequence, forbidden)),
+                "next-bank preparation acquired unrelated current-bank compute (or lost required order)");
+    }
+    auto malformed = loop;
+    malformed.effects[0].residues.pop_back();
+    require(!o::refineCountedLoop(input.program, malformed).success, "partial orbit binding accepted");
+    malformed = loop;
+    malformed.effects[0].residues[0][0].definiteWrite = true;
+    require(!o::refineCountedLoop(input.program, malformed).success, "geometry conferred full-write credit");
+}
 } // namespace
 int main()
 {
+    for (unsigned banks : {2u, 3u}) {
+        carriedBankEffects(false, banks);
+        carriedBankEffects(true, banks);
+    }
     regional();
     contextual();
     sharedRecurringPrefixes();
