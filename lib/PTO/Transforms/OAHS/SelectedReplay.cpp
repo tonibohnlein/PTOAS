@@ -445,7 +445,7 @@ Id Constructor::reusablePrefix() const
 }
 bool Constructor::replay()
 {
-    if (!recurringKeys.empty()) return contextualReplay();
+    if (needsContextualReplay) return contextualReplay();
     Replay fresh;
     fresh.version = ledger.version();
     fresh.cuts.resize(control.graph.sites.size());
@@ -506,7 +506,7 @@ void Constructor::refreshSources()
 }
 bool Constructor::advance()
 {
-    if (!recurringKeys.empty()) {
+    if (needsContextualReplay) {
         if (cache.version == ledger.version() && !cache.cuts.empty()) return true;
         return contextualReplay();
     }
@@ -551,7 +551,7 @@ bool Constructor::update()
     record.siteEvaluations = result.work.replaySiteEvaluations - before;
     record.finalizedQueries = std::count(finalized.begin(), finalized.end(), true);
     record.reusedComponents = cache.reusedComponents;
-    record.contextual = !recurringKeys.empty();
+    record.contextual = needsContextualReplay;
     record.changedCuts = ledger.changes();
     result.work.unreusedUpdates += record.reusedComponents == 0;
     result.updates.push_back(std::move(record));
