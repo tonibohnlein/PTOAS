@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <deque>
 #include <limits>
+#include <tuple>
 
 namespace mlir::pto::oahs::selected {
 namespace {
@@ -20,6 +21,11 @@ struct Mode {
     {
         return valid && b.valid && owner == b.owner && period == b.period && residue == b.residue &&
                previous == b.previous && next == b.next;
+    }
+    bool operator<(const Mode& b) const
+    {
+        return std::tie(owner, period, residue, previous, next, valid) <
+               std::tie(b.owner, b.period, b.residue, b.previous, b.next, b.valid);
     }
 };
 Mode mode(const Program& p, Cut cut)
@@ -187,7 +193,13 @@ std::vector<RecurringRequirement> qualifyCell(
         const auto& next = c.graph.sites[at].successors;
         later.insert(later.end(), next.begin(), next.end());
     }
-    RecurringRequirement ready{cell, producer, consumer, {}, {}}, release{cell, consumer, producer, {}, {}};
+    RecurringRequirement ready, release;
+    ready.cell = release.cell = cell;
+    ready.cells = release.cells = {cell};
+    ready.source = producer;
+    ready.observer = consumer;
+    release.source = consumer;
+    release.observer = producer;
     ready.owner = release.owner = loop.owner;
     ready.period = release.period = period;
     for (auto site : members) {
@@ -221,9 +233,174 @@ std::vector<RecurringRequirement> qualifyCell(
     }
     return {std::move(ready), std::move(release)};
 }
+
+bool balanced(const Control& c, const std::vector<Cut>& publications,
+              const std::vector<Cut>& acquisitions)
+{
+    std::set<Cut> publish(publications.begin(), publications.end());
+    std::set<Cut> acquire(acquisitions.begin(), acquisitions.end());
+    for (auto cut : publish) if (acquire.count(cut)) return false;
+    std::vector<uint8_t> incoming(c.graph.sites.size());
+    std::deque<Id> queue;
+    std::vector<bool> queued(c.graph.sites.size());
+    bool invalid = false;
+    incoming[c.graph.entry] = 1; // bit 0: empty; bit 1: full; bit 2: invalid
+    queue.push_back(c.graph.entry);
+    queued[c.graph.entry] = true;
+    while (!queue.empty()) {
+        const auto site = queue.front();
+        queue.pop_front();
+        queued[site] = false;
+        auto state = incoming[site];
+        const auto cut = c.canonicalCut[site];
+        if (publish.count(cut)) {
+            uint8_t next = state & 4;
+            if (state & 1) next |= 2;
+            if (state & 2) {
+                next |= 4;
+                invalid = true;
+            }
+            state = next;
+        }
+        if (acquire.count(cut)) {
+            uint8_t next = state & 4;
+            if (state & 2) next |= 1;
+            if (state & 1) {
+                next |= 4;
+                invalid = true;
+            }
+            state = next;
+        }
+        for (auto successor : c.graph.sites[site].successors) {
+            const auto joined = uint8_t(incoming[successor] | state);
+            if (joined != incoming[successor]) {
+                incoming[successor] = joined;
+                if (!queued[successor]) {
+                    queue.push_back(successor);
+                    queued[successor] = true;
+                }
+            }
+        }
+    }
+    return !invalid && incoming[c.graph.exit] == 1;
+}
+
+std::vector<RecurringRequirement> qualifyRelationships(
+    const Program& p, const Control& c, const StorageFrontierAnalysis& storage)
+{
+    using Key = std::tuple<Id, uint64_t, Pipe, Pipe, Id, Id>;
+    std::map<Key, RecurringRequirement> grouped;
+    if (!p.observed) return {};
+    for (const auto& loop : p.observed->loops) {
+        const std::set<Id> members(loop.sites.begin(), loop.sites.end());
+        for (auto target : loop.sites) {
+            if (target >= c.graph.sites.size() || !c.reachable[target]) continue;
+            const auto targetOperation = c.graph.operations[target];
+            if (targetOperation == NoAnalysisId) continue;
+            const auto targetMode = mode(p, target);
+            if (!targetMode.valid || targetMode.owner != loop.owner) continue;
+            const auto targetPipe = p.operations[targetOperation].pipe;
+            if (p.target.synchronous[unsigned(targetPipe)]) continue;
+            for (const auto& relationship : storage.relationshipsAt(target)) {
+                const auto sourceSite = relationship.source.site;
+                if (!members.count(sourceSite) || sourceSite >= c.graph.sites.size()) continue;
+                const auto sourceOperation = c.graph.operations[sourceSite];
+                if (sourceOperation == NoAnalysisId || relationship.cell >= p.cells.size() ||
+                    p.cells[relationship.cell].exclusive) continue;
+                const auto sourcePipe = p.operations[sourceOperation].pipe;
+                const auto sourceMode = mode(p, sourceSite);
+                if (sourcePipe == targetPipe || p.target.synchronous[unsigned(sourcePipe)] ||
+                    !sourceMode.valid || sourceMode.owner != loop.owner ||
+                    sourceMode.period != targetMode.period) continue;
+                const auto publication = after(p, c, sourceSite, sourceMode);
+                if (publication == NoAnalysisId) continue;
+                for (const auto key : {
+                        Key{loop.owner, sourceMode.period, sourcePipe, targetPipe,
+                            NoAnalysisId, NoAnalysisId},
+                        Key{loop.owner, sourceMode.period, sourcePipe, targetPipe,
+                            sourceOperation, targetOperation}}) {
+                    auto& request = grouped[key];
+                    request.source = sourcePipe;
+                    request.observer = targetPipe;
+                    request.owner = loop.owner;
+                    request.period = sourceMode.period;
+                    request.cells.push_back(relationship.cell);
+                    request.publications.push_back(publication);
+                    request.acquisitions.push_back(canonicalCommandCut(p, target));
+                }
+            }
+        }
+    }
+    std::vector<RecurringRequirement> out;
+    auto normalize = [&](RecurringRequirement& request) {
+        std::sort(request.cells.begin(), request.cells.end());
+        request.cells.erase(std::unique(request.cells.begin(), request.cells.end()), request.cells.end());
+        for (auto* values : {&request.publications, &request.acquisitions}) {
+            std::sort(values->begin(), values->end());
+            values->erase(std::unique(values->begin(), values->end()), values->end());
+        }
+        request.cell = request.cells.front();
+    };
+    for (auto& [key, request] : grouped) normalize(request);
+    std::set<std::tuple<Id, uint64_t, Pipe, Pipe>> coarseAccepted;
+    for (auto& [key, request] : grouped) {
+        const auto [owner, period, source, observer, sourceOperation, targetOperation] = key;
+        const auto coarse = std::make_tuple(owner, period, source, observer);
+        if (sourceOperation != NoAnalysisId) continue;
+        if (balanced(c, request.publications, request.acquisitions)) {
+            coarseAccepted.insert(coarse);
+            out.push_back(request);
+        }
+    }
+    for (auto& [key, request] : grouped) {
+        const auto [owner, period, source, observer, sourceOperation, targetOperation] = key;
+        const auto coarse = std::make_tuple(owner, period, source, observer);
+        if (sourceOperation == NoAnalysisId) continue;
+        if (!coarseAccepted.count(coarse) && balanced(c, request.publications, request.acquisitions)) {
+            out.push_back(request);
+        }
+    }
+    return out;
+}
+
+bool protocolCompatible(const Program& p, const Control& c,
+                        const std::vector<RecurringRequirement>& requests)
+{
+    Commands commands(commandCutCount(p));
+    std::map<std::pair<Pipe, Pipe>, std::set<unsigned>> used;
+    for (const auto& reservation : p.reservations) {
+        used[{reservation.source, reservation.observer}].insert(reservation.key);
+    }
+    for (const auto& request : requests) {
+        const auto direction = std::make_pair(request.source, request.observer);
+        unsigned number = std::numeric_limits<unsigned>::max();
+        for (auto candidate : p.target.keys[unsigned(request.source)][unsigned(request.observer)]) {
+            if (!used[direction].count(candidate)) {
+                number = candidate;
+                break;
+            }
+        }
+        if (number == std::numeric_limits<unsigned>::max()) return false;
+        used[direction].insert(number);
+        auto add = [&](Cut cut, Command::Kind kind) {
+            const auto canonical = c.canonicalCut[cut];
+            for (auto site : c.wordOccurrences[canonical]) {
+                commands[site].push_back({kind, request.source, request.observer, number});
+            }
+        };
+        for (auto cut : request.publications) add(cut, Command::Publish);
+        for (auto cut : request.acquisitions) add(cut, Command::Acquire);
+    }
+    const auto checked = analyze(p, commands, {false});
+    if (!checked.complete || !checked.diagnostics.empty()) return false;
+    return std::none_of(checked.protocol.begin(), checked.protocol.end(), [](const auto& obligation) {
+        return obligation.kind != ProtocolObligation::ReceiptNotEstablished;
+    });
+}
 } // namespace
 
-std::vector<RecurringRequirement> qualifyCyclicFrontiers(const Program& p, const Control& c)
+std::vector<RecurringRequirement> qualifyCyclicFrontiers(
+    const Program& p, const Control& c, const StorageFrontierAnalysis& storage)
 {
     std::vector<RecurringRequirement> requests;
     if (!p.observed) return requests;
@@ -238,7 +415,94 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(const Program& p, const
                         old.publications == request.publications && old.acquisitions == request.acquisitions;
                 });
                 if (duplicate == requests.end()) requests.push_back(std::move(request));
+                else {
+                    duplicate->cells.insert(duplicate->cells.end(), request.cells.begin(), request.cells.end());
+                    std::sort(duplicate->cells.begin(), duplicate->cells.end());
+                    duplicate->cells.erase(std::unique(duplicate->cells.begin(), duplicate->cells.end()),
+                                           duplicate->cells.end());
+                }
             }
+        }
+    }
+    // Complex loops can contain RMW accesses and more than two participating
+    // pipelines. Build their recurring frontiers from the shared storage
+    // succession relation. Prefer a direction-wide word; if its uses do not
+    // alternate, retain independently balanced operation-pair words. Every
+    // retained word has exact original-control participation under the finite
+    // balance monitor, and the combined protocol is checked below.
+    // This grants no completion credit: the completed combined ledger is still
+    // checked by the causal frontier before emission.
+    const auto ordinary = requests;
+    auto relationshipRequests = qualifyRelationships(p, c, storage);
+    for (auto& candidate : relationshipRequests) {
+        auto subset = [](const std::vector<Cut>& a, const std::vector<Cut>& b) {
+            return std::includes(b.begin(), b.end(), a.begin(), a.end());
+        };
+        requests.erase(std::remove_if(requests.begin(), requests.end(), [&](const auto& old) {
+            return old.owner == candidate.owner && old.source == candidate.source &&
+                old.observer == candidate.observer && subset(old.publications, candidate.publications) &&
+                subset(old.acquisitions, candidate.acquisitions);
+        }), requests.end());
+        requests.push_back(std::move(candidate));
+    }
+    if (!relationshipRequests.empty() && !protocolCompatible(p, c, requests)) requests = ordinary;
+    // Apply F3/F4 to recurring roles too. If one side of two role interfaces
+    // is already the same frontier, a later compatible source prefix (or an
+    // earlier compatible acquisition) can serve the conjunction. We only
+    // merge one unambiguous cut per original occurrence mode; alternatives
+    // remain separate until their participation correspondence is proved.
+    auto indexed = [&](const std::vector<Cut>& cuts) {
+        std::map<Mode, Cut> out;
+        for (auto cut : cuts) {
+            const auto key = mode(p, cut);
+            if (!key.valid || !out.emplace(key, cut).second) return std::map<Mode, Cut>{};
+        }
+        return out;
+    };
+    auto combine = [&](const std::vector<Cut>& a, const std::vector<Cut>& b, bool later,
+                       std::vector<Cut>& out) {
+        const auto left = indexed(a), right = indexed(b);
+        if (left.empty() || left.size() != right.size()) return false;
+        out.clear();
+        for (const auto& [key, x] : left) {
+            const auto found = right.find(key);
+            if (found == right.end()) return false;
+            const auto y = found->second;
+            if (c.straight(x, y)) out.push_back(later ? y : x);
+            else if (c.straight(y, x)) out.push_back(later ? x : y);
+            else return false;
+        }
+        std::sort(out.begin(), out.end());
+        return true;
+    };
+    for (Id i = 0; i < requests.size(); ++i) {
+        for (Id j = i + 1; j < requests.size();) {
+            auto& a = requests[i];
+            auto& b = requests[j];
+            if (a.source != b.source || a.observer != b.observer || a.owner != b.owner ||
+                a.period != b.period) {
+                ++j;
+                continue;
+            }
+            std::vector<Cut> merged;
+            bool compatible = false;
+            if (a.acquisitions == b.acquisitions && combine(a.publications, b.publications, true, merged)) {
+                a.publications = std::move(merged);
+                compatible = true;
+            } else if (a.publications == b.publications &&
+                       combine(a.acquisitions, b.acquisitions, false, merged)) {
+                a.acquisitions = std::move(merged);
+                compatible = true;
+            }
+            if (!compatible) {
+                ++j;
+                continue;
+            }
+            a.cells.insert(a.cells.end(), b.cells.begin(), b.cells.end());
+            std::sort(a.cells.begin(), a.cells.end());
+            a.cells.erase(std::unique(a.cells.begin(), a.cells.end()), a.cells.end());
+            a.cell = a.cells.front();
+            requests.erase(requests.begin() + j);
         }
     }
     return requests;
@@ -279,7 +543,7 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
             ledger.append(cut, {Command::Acquire, request.source, request.observer, number},
                 EndpointPurpose::RecurringCompletion, id);
         }
-        result.channels.push_back({request.cell, number, request.source, request.observer,
+        result.channels.push_back({request.cell, number, request.cells, request.source, request.observer,
                                    request.publications, request.acquisitions, request.owner,
                                    request.period});
     }

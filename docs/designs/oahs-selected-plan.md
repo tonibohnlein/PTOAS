@@ -1,6 +1,6 @@
 # Selected-plan construction: draft F1–F8 implementation
 
-Specification: the synchronization draft v0.19, policies F1–F8.
+Specification: the synchronization draft v0.22, policies F1–F8.
 See [shared semantic extraction](oahs-shared-semantics.md) and
 [storage and fixed-plan analysis](oahs-analysis.md) for the input contracts.
 `algorithm=handoff` uses this constructor. `algorithm=existing` remains the default
@@ -32,12 +32,12 @@ a later access cannot inherit an older receipt merely by sharing its class.
 | --- | --- |
 | F1 | `SelectedControl.cpp`: original graph, SCC order and original-cut frames; `SelectedPlan.cpp::run` visits each task once. |
 | F2 | `CausalFrontier::inspect`, `SelectedGroups.cpp::reasons/consume`: every effect including RMW, no hypothetical acquisition. |
-| F3 | `SelectedGroups.cpp::groups/sourceGroup`: known readiness and reuse together, then remaining overlaps; group only one source stream and one target frontier. |
-| F4 | `coverage/groups`: strict containment among required providers, then stable source ordering; `consume` rechecks the whole residual after real acquisitions. |
-| F5 | `Control::after`, saved `SelectedSource` records and ledger placement preserve separate early source positions. |
+| F3 | `SelectedGroups.cpp::groups/sourceGroup` and `CyclicFrontiers.cpp`: known readiness and reuse together, then remaining overlaps; compatible recurring cells share one source/target prefix. |
+| F4 | `coverage/groups` and recurring-frontier merging: strict containment among required providers, then stable source ordering; `consume` rechecks the whole residual after real acquisitions. |
+| F5 | `Control::after`, saved `SelectedSource` records and ledger placement preserve separate early source positions, including qualified straight corridors inside observed loops. |
 | F6 | `consume`: cross-engine repairs first, named fence only for the remaining same-engine residual, then complete payload check. |
-| F7 | `SelectedAllocation.cpp`: source-time key checks, ledger intervals, nonrecursive consumption acknowledgment and one shortest eligible route. |
-| F8 | `SelectedControl/SelectedReplay`: open choice/loop interfaces and actual fixed-point validation; `CyclicFrontiers.cpp`: qualified recurring requirement frontiers and deterministic role allocation. |
+| F7 | `SelectedAllocation.cpp`: stable source-time key selection, complete forward/reverse interval certificates, nonrecursive consumption acknowledgment and one shortest eligible route. |
+| F8 | `SelectedControl/SelectedReplay`: open choice/loop interfaces and actual fixed-point validation; `CyclicFrontiers.cpp`: qualified recurring relationship frontiers, participation checks and deterministic role allocation. |
 
 Ordinary completion endpoint `request` IDs index `decisions`. Endpoints with
 purpose `RecurringCompletion` index `channels`. Both kinds coexist in the same
@@ -123,6 +123,23 @@ surrounding accesses, and invocation retirement are retained. An ambiguous role
 uses ordinary construction instead. Different cells with identical endpoint sets
 share one physical prefix; independent loops do not require a product of their
 observation vocabularies.
+
+For observed loops that do not match the strict alternating-cell form, the
+qualifier derives candidate recurring interfaces from the shared storage
+succession relation. It first tries one word for a complete pipe direction and
+then independently balanced operation pairs. A finite empty/full participation
+monitor rejects branch bypasses, repeated publication or acquisition, and live
+tokens at exit. The combined candidate words are replayed by the shared fixed-plan
+analysis before construction; only missing completion may remain for ordinary
+F1--F7. If that protocol certificate fails, the strict qualified interfaces are
+restored unchanged.
+
+Within an observed cyclic component, saved prefixes may also use a unique
+forward predecessor corridor. Coverage is read from the actual saved causal
+snapshot, and any intervening issue of the same access class invalidates the
+candidate. This makes qualified continuations useful without treating static
+body order as a generation certificate. Unobserved structured loops retain the
+conservative common-cut path.
 
 This qualifies **physical access ordering**, not produced-content identity. A
 partial or may-overlap write is not promoted to `definiteWrite`. Whole-operation
