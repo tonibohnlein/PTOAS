@@ -7,37 +7,80 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedTestSupport.h"
 #include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
+#include <numeric>
 using namespace selected_test;
 namespace mlir::pto::oahs::selected {
 // Inspect intermediate construction checkpoints, not the already-cold final
 // certificate. Keep the production API free of a second replay/planner mode.
 struct ReplayTestAccess {
-    static void compare(const Program& program, Cut edit, Pipe pipe) {
-        Constructor c(program);
-        auto plan = c.run({});
-        require(plan.success, plan.reason);
-        c.current = c.control.graph.exit;
-        c.activeComponent = c.control.component[c.current];
-        c.activeOffset = 0;
-        c.ledger.append(edit, {Command::Barrier, pipe, pipe, 0}, EndpointPurpose::Fixed);
-        require(c.replay(), c.cache.reason);
-        auto reused = c.cache;
-        c.cache = {};
-        require(c.replay(), c.cache.reason);
+    // The complete semantic checkpoint, not just acceptance: causal facts, the
+    // original-occurrence record and consumption evidence at every cut, plus
+    // every endpoint aggregate.
+    static void identical(const Replay& reused, const Replay& cold) {
         auto sameState = [](const State& a, const State& b) {
             require(a.causal == b.causal && a.latest == b.latest && a.consumptions == b.consumptions,
                     "incremental selected checkpoint differs from cold replay");
         };
-        require(reused.cuts.size() == c.cache.cuts.size(), "checkpoint population");
+        require(reused.cuts.size() == cold.cuts.size(), "checkpoint population");
         for (Cut site = 0; site < reused.cuts.size(); ++site) {
-            sameState(reused.cuts[site].incoming, c.cache.cuts[site].incoming);
-            sameState(reused.cuts[site].before, c.cache.cuts[site].before);
-            sameState(reused.cuts[site].outgoing, c.cache.cuts[site].outgoing);
+            sameState(reused.cuts[site].incoming, cold.cuts[site].incoming);
+            sameState(reused.cuts[site].before, cold.cuts[site].before);
+            sameState(reused.cuts[site].outgoing, cold.cuts[site].outgoing);
         }
-        require(reused.afterEndpoint.size() == c.cache.afterEndpoint.size(), "endpoint population");
+        require(reused.afterEndpoint.size() == cold.afterEndpoint.size(), "endpoint population");
         for (const auto& entry : reused.afterEndpoint) {
-            sameState(entry.second, c.cache.afterEndpoint.at(entry.first));
+            sameState(entry.second, cold.afterEndpoint.at(entry.first));
         }
+    }
+    // One edit, replayed with the reusable prefix kept and then entirely cold.
+    // Returns how many components the incremental run actually kept.
+    // Returns the components the incremental run kept, and whether the edit was
+    // admissible at all.
+    static std::pair<std::size_t, bool> compareEdit(const Program& program, Cut edit, Pipe pipe, bool contextual) {
+        Constructor c(program);
+        auto plan = c.run({});
+        require(plan.success, plan.reason);
+        require(c.recurringKeys.empty() != contextual, "unexpected replay path for this program");
+        c.current = c.control.graph.exit;
+        c.activeComponent = c.control.component[c.current];
+        c.activeOffset = 0;
+        c.ledger.append(edit, {Command::Barrier, pipe, pipe, 0}, EndpointPurpose::Fixed);
+        const bool incremental = c.replay();
+        auto reused = c.cache;
+        c.cache = {};
+        const bool cold = c.replay();
+        // An inadmissible edit must be refused identically. Whether a candidate
+        // is valid may not depend on how much of the prefix was kept.
+        require(incremental == cold, "prefix reuse changed whether the edit is admissible");
+        if (!cold) {
+            require(reused.reason == c.cache.reason && reused.failureCut == c.cache.failureCut,
+                    "incremental and cold replay disagree about the refusal");
+            return {reused.reusedComponents, false};
+        }
+        identical(reused, c.cache);
+        return {reused.reusedComponents, true};
+    }
+    static void compare(const Program& program, Cut edit, Pipe pipe) {
+        require(compareEdit(program, edit, pipe, false).second, "edit was expected to hold");
+    }
+    // Sweep every legal original cut as the edit position. On a refined loop
+    // this covers words inside the body, words reached only across a backedge,
+    // words shared by several original occurrences, and the surrounding words.
+    static std::size_t compareEveryCut(
+        const Program& program, Pipe pipe, bool contextual, const char* label) {
+        std::size_t edits = 0, kept = 0, total = 0, refused = 0;
+        for (Cut edit = 0; edit < commandCutCount(program); ++edit) {
+            if (!legalCommandCut(program, edit)) continue;
+            const auto outcome = compareEdit(program, edit, pipe, contextual);
+            kept += outcome.first != 0;
+            total += outcome.first;
+            refused += !outcome.second;
+            ++edits;
+        }
+        require(edits != 0, "no legal edit position in this program");
+        std::cout << label << " edits=" << edits << " edits_with_reuse=" << kept
+                  << " components_kept=" << total << " refused=" << refused << '\n';
+        return refused;
     }
 };
 } // namespace mlir::pto::oahs::selected
@@ -170,6 +213,65 @@ void sharedObservationReplay()
     p.operations = {op(P, {{0, true, false}}), op(P, {{0, true, false}})};
     p.body = seq({{o::Region::For, {leaf(0)}, 0, true}, leaf(1)});
     o::selected::ReplayTestAccess::compare(p, 0, P);
+    // The same sweep on the component path, whose boundary now reads the
+    // precomputed occurrence and span index rather than rescanning the sites.
+    auto shared = base(3, 2);
+    shared.operations = {op(P, {{0, false, true, true}}), op(Q, {{0, true, false}}),
+                         op(P, {{1, false, true, true}}), op(R, {{1, true, false}}),
+                         op(P, {{2, false, true, true}}), op(Q, {{2, true, false}})};
+    shared.body = seq({leaf(0), {o::Region::For, {seq({leaf(1), leaf(2)})}, 0, true}, leaf(3),
+                       {o::Region::Choice, {leaf(4), leaf(5)}}});
+    auto bounded = o::addStructuredBoundaryCuts(shared);
+    require(bounded.success, bounded.reason);
+    o::selected::ReplayTestAccess::compareEveryCut(bounded.program, P, false, "component-path");
+}
+void contextualPrefixReuse()
+{
+    // A qualified periodic loop takes the contextual replay path, which solved
+    // the whole original graph per edit and kept nothing. Every legal original
+    // cut is used as an edit position, so the sweep covers words inside the
+    // refined body, words reached only across the backedge, words shared by
+    // several original occurrences, and the surrounding words.
+    // A qualified loop with independent work before and after it, so the
+    // condensation really has components on both sides of the body.
+    auto body = base(2, 8);
+    body.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}, {1, false, true}}),
+                       op(Q, {{0, true, false}})};
+    auto input = o::makePeriodicLoop(body, 1, {});
+    require(input.success, input.reason);
+    auto& p = input.program;
+    auto& q = *p.observed;
+    const auto preOp = p.operations.size();
+    p.operations.push_back(op(R, {{0, false, true}}));
+    const auto postOp = p.operations.size();
+    p.operations.push_back(op(o::Pipe::MTE1, {{0, true, false}, {1, false, true}}));
+    auto node = [&](std::size_t operation) {
+        const auto site = q.sites.size();
+        const auto observation = q.observations.size();
+        q.observations.push_back({1000 + site, {}, true});
+        q.sites.push_back({operation, observation, {}, {}, 0});
+        return site;
+    };
+    const auto oldEntry = q.entry, oldExit = q.exit;
+    q.entry = node(preOp);
+    const auto post = node(postOp);
+    q.exit = node(o::NoControlId);
+    q.sites[q.entry].successors = {oldEntry};
+    q.sites[oldExit].successors = {post};
+    q.sites[post].successors = {q.exit};
+    p.target.barrierAll = true;
+    p.invocation.retirement = o::Program::InvocationContract::DrainAllAtReturn;
+    const auto plan = accepted(p);
+    require(plan.work.recurringChannels != 0, "this program must qualify recurrence");
+    require(plan.work.contextualReplays != 0, "this program must use contextual replay");
+    o::selected::ReplayTestAccess::compareEveryCut(p, P, true, "contextual-named-fence");
+    // An endpoint on an engine without a named fence is an invalid candidate. It
+    // must be refused identically whether or not a prefix was kept.
+    auto unavailable = p;
+    unavailable.target.barriers[unsigned(R)] = false;
+    const auto refusals = o::selected::ReplayTestAccess::compareEveryCut(
+        unavailable, R, true, "contextual-invalid");
+    require(refusals != 0, "the invalid-candidate sweep never actually refused an edit");
 }
 void recurringRoleIsolation()
 {
@@ -191,6 +293,7 @@ int main()
     joinedPrecisionBoundary();
     replayReusesUnchangedPrefix();
     sharedObservationReplay();
+    contextualPrefixReuse();
     recurringRoleIsolation();
     std::cout << "selected-ledger update, boundary and refusal tests passed\n";
 }

@@ -183,11 +183,42 @@ bool runFile(MLIRContext &context, const char *path) {
     oahs::SelectedPlan report;
     const auto status = oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report);
     accepted &= succeeded(status);
+    // Existing token order is preserved so earlier recorded logs stay comparable.
+    // The added tokens are the report's own counters; `reason` stays last.
+    const auto &work = report.work;
     llvm::errs() << "function=" << function.getSymName() << " construction=" << report.success
                  << " reconstruction=" << succeeded(status) << " failure=" << unsigned(report.failure)
                  << " cut=" << report.cut
-                 << " updates=" << report.work.selectedUpdates << " replay=" << report.work.replaySiteEvaluations
-                 << " microseconds=" << report.work.elapsedMicroseconds << " reason=" << report.reason << "\n";
+                 << " updates=" << work.selectedUpdates << " replay=" << work.replaySiteEvaluations
+                 << " microseconds=" << work.elapsedMicroseconds
+                 << " forward=" << work.forwardSiteEvaluations << " visits=" << work.frontierVisits
+                 << " key_queries=" << work.keyQueries << " invariant=" << work.invariantSiteEvaluations
+                 << " prepare_microseconds=" << work.preparationMicroseconds
+                 << " sites=" << work.constructedSites << " words=" << work.commandWords
+                 << " cells=" << work.cells << " eligible_keys=" << work.eligibleKeys
+                 << " components=" << work.components << " cyclic=" << work.cyclicComponents
+                 << " recurring=" << work.recurringChannels
+                 << " contextual=" << work.contextualReplays
+                 << " unreused_updates=" << work.unreusedUpdates
+                 << " sources=" << work.sourceHandles << " acknowledgments=" << work.acknowledgments
+                 << " common_cut=" << work.commonCutTransfers
+                 << " decisions=" << report.decisions.size() << " endpoints=" << report.ledger.size();
+    // How much of the component prefix each update actually kept. A nonzero
+    // reuse count says nothing on its own; the fraction of the prefix is what
+    // distinguishes working reuse from a boundary that collapses to the entry.
+    std::size_t reusedTotal = 0, reusedMax = 0, contextualUpdates = 0;
+    for (const auto &update : report.updates) {
+      reusedTotal += update.reusedComponents;
+      reusedMax = std::max(reusedMax, update.reusedComponents);
+      contextualUpdates += update.contextual;
+    }
+    llvm::errs() << " reused_total=" << reusedTotal << " reused_max=" << reusedMax
+                 << " contextual_updates=" << contextualUpdates
+                 << " periods=";
+    for (std::size_t i = 0; i < report.channels.size(); ++i) {
+      llvm::errs() << (i ? "," : "") << report.channels[i].period;
+    }
+    llvm::errs() << (report.channels.empty() ? "-" : "") << " reason=" << report.reason << "\n";
   });
   if (accepted) { module->print(llvm::outs()); }
   return accepted;
