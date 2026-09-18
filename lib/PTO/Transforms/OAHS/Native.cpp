@@ -1265,17 +1265,15 @@ LogicalResult testing::runSelectedHandoffSyncWithMutation(
   return executeSelectedHandoffSync(function, mutate, report);
 }
 
-LogicalResult runHandoffSync(func::FuncOp function) {
-  return executeSelectedHandoffSync(function, {}, nullptr);
-}
-
-LogicalResult analyzeHandoffSync(func::FuncOp function,
-                                 NativeAnalysis &result) {
+namespace {
+LogicalResult analyzeHandoffSyncWithPolicy(func::FuncOp function,
+                                           NativeAnalysis &result,
+                                           ObservationPolicy policy) {
   result = NativeAnalysis{};
   if (getTargetArch(function) != PTOArch::A3)
     return function.emitError("handoff: native analysis target is a3");
   Import input;
-  if (failed(import(function, input)))
+  if (failed(import(function, input, policy)))
     return failure();
   result.analysis = analyze(input.program);
   result.program = std::move(input.program);
@@ -1288,6 +1286,23 @@ LogicalResult analyzeHandoffSync(func::FuncOp function,
   if (!result.analysis.complete)
     return function.emitError("handoff analysis: ") << result.analysis.reason;
   return success();
+}
+} // namespace
+
+LogicalResult testing::analyzeSelectedHandoffSync(func::FuncOp function,
+                                                  NativeAnalysis &result) {
+  return analyzeHandoffSyncWithPolicy(function, result,
+                                      ObservationPolicy::QualifiedAccessRoles);
+}
+
+LogicalResult runHandoffSync(func::FuncOp function) {
+  return executeSelectedHandoffSync(function, {}, nullptr);
+}
+
+LogicalResult analyzeHandoffSync(func::FuncOp function,
+                                 NativeAnalysis &result) {
+  return analyzeHandoffSyncWithPolicy(function, result,
+                                      ObservationPolicy::RefineLeafLoops);
 }
 LogicalResult analyzeHandoffSync(func::FuncOp function) {
   NativeAnalysis result;

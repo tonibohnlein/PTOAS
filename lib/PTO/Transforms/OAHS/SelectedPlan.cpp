@@ -11,7 +11,8 @@
 
 namespace mlir::pto::oahs::selected {
 Constructor::Constructor(const Program& p)
-    : program(p), frontier(p), control(p), storage(p), ledger(p, control.canonicalCut), finalized(control.graph.sites.size())
+    : program(p), frontier(p), control(p), storage(p), requirements(p, control, storage),
+      ledger(p, control.canonicalCut), finalized(control.graph.sites.size())
 {
 }
 bool Constructor::fail(SelectedFailure failure, std::string reason, Cut cut)
@@ -113,13 +114,25 @@ SelectedPlan Constructor::run(const Commands& fixed)
         result.work.cyclicComponents = std::size_t(std::count_if(
             control.components.begin(), control.components.end(),
             [](const Component& block) { return block.cyclic; }));
+        result.work.requirementFrontiers = requirements.size();
+        result.work.qualifiedSourceFrontiers = requirements.sourceBoundaries();
+        result.work.unqualifiedSourceFrontiers = requirements.size() - requirements.sourceBoundaries();
+        const auto& occurrences = requirements.occurrenceCounts();
+        result.work.frontierAcyclic = occurrences[unsigned(RequirementOccurrence::Acyclic)];
+        result.work.frontierSameVisit = occurrences[unsigned(RequirementOccurrence::SameVisit)];
+        result.work.frontierPreviousUse = occurrences[unsigned(RequirementOccurrence::PreviousUse)];
+        result.work.frontierRegionEntry = occurrences[unsigned(RequirementOccurrence::RegionEntry)];
+        result.work.frontierRegionContinuation =
+            occurrences[unsigned(RequirementOccurrence::RegionContinuation)];
+        result.work.frontierGuarded = occurrences[unsigned(RequirementOccurrence::Guarded)];
+        result.work.frontierUnknown = occurrences[unsigned(RequirementOccurrence::Unknown)];
         result.work.elapsedMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - start).count();
         return std::move(result);
     };
-    if (!control.complete || !storage.complete()) {
+    if (!control.complete || !storage.complete() || !requirements.complete()) {
         fail(control.validInput ? SelectedFailure::UnqualifiedControl : SelectedFailure::InvalidInput,
-             control.complete ? storage.reason() : control.reason);
+             !control.complete ? control.reason : (!storage.complete() ? storage.reason() : requirements.reason()));
         return complete();
     }
     if (!frontier.complete()) {
@@ -131,7 +144,7 @@ SelectedPlan Constructor::run(const Commands& fixed)
         fail(SelectedFailure::InvalidInput, reason);
         return complete();
     }
-    const auto channels = qualifyCyclicFrontiers(program, control, storage);
+    const auto channels = qualifyCyclicFrontiers(program, control, requirements);
     if (!channels.empty() && !recurring(channels)) return complete();
     for (activeComponent = 0; activeComponent < control.components.size(); ++activeComponent) {
         // End compiler role reservations, not physical event state. Actual D/S
@@ -166,8 +179,9 @@ bool hasQualifiedRecurringAccesses(const Program& program)
 {
     selected::Control control(program);
     StorageFrontierAnalysis storage(program);
-    return control.complete && storage.complete() &&
-        !selected::qualifyCyclicFrontiers(program, control, storage).empty();
+    selected::RequirementFrontiers requirements(program, control, storage);
+    return control.complete && storage.complete() && requirements.complete() &&
+        !selected::qualifyCyclicFrontiers(program, control, requirements).empty();
 }
 SelectedPlan constructSelectedPlan(const Program& program, const Commands& fixed)
 {

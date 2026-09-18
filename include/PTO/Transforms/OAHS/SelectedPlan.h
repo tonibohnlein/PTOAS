@@ -76,6 +76,15 @@ struct SelectedChannel {
     // period begins at 1; the key pool limits admission, it does not select it.
     uint64_t period = 0;
 };
+struct SelectedFence {
+    Cut cut = NoAnalysisId;
+    Pipe observer = Pipe::S;
+    uint64_t version = 0;
+    // Exact same-engine residual present immediately before construction
+    // inserted this fence. These are diagnostic obligations, not assumptions
+    // supplied to final validation.
+    std::vector<FrontierRequirement> residuals;
+};
 // A clause is conditional on the original observation at its exact cut. Its
 // snapshot is established by the selected ledger at version, never assumed by
 // the checker. Fixed physical cell/key names are not dynamic generation ranks.
@@ -114,6 +123,14 @@ struct SelectedWork {
     // they are not work allowances and never affect a decision.
     std::size_t constructedSites = 0, commandWords = 0, cells = 0, eligibleKeys = 0;
     std::size_t components = 0, cyclicComponents = 0;
+    // Immutable original-program requirements. A source boundary is counted
+    // only when its acyclic occurrence is qualified; the remainder needs
+    // recurring, guarded, or alternative-source correspondence.
+    std::size_t requirementFrontiers = 0, qualifiedSourceFrontiers = 0;
+    std::size_t unqualifiedSourceFrontiers = 0;
+    std::size_t frontierAcyclic = 0, frontierSameVisit = 0, frontierPreviousUse = 0;
+    std::size_t frontierRegionEntry = 0, frontierRegionContinuation = 0;
+    std::size_t frontierGuarded = 0, frontierUnknown = 0;
     // Whole-original-graph contextual solves, and updates that reused nothing.
     std::size_t contextualReplays = 0, unreusedUpdates = 0;
 };
@@ -129,6 +146,7 @@ struct SelectedPlan {
     std::vector<SelectedSource> sources;
     std::vector<SelectedDecision> decisions;
     std::vector<SelectedChannel> channels;
+    std::vector<SelectedFence> fences;
     std::vector<SelectedUpdate> updates;
     // Populated only from the final, entry-containing original-graph proof.
     std::vector<SelectedLoopInterface> loops;

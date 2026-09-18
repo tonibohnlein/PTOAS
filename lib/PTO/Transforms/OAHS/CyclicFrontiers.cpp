@@ -13,63 +13,7 @@
 
 namespace mlir::pto::oahs::selected {
 namespace {
-struct Mode {
-    Id owner = NoAnalysisId;
-    uint64_t period = 0, residue = 0;
-    bool previous = false, next = false, valid = false;
-    bool operator==(const Mode& b) const
-    {
-        return valid && b.valid && owner == b.owner && period == b.period && residue == b.residue &&
-               previous == b.previous && next == b.next;
-    }
-    bool operator<(const Mode& b) const
-    {
-        return std::tie(owner, period, residue, previous, next, valid) <
-               std::tie(b.owner, b.period, b.residue, b.previous, b.next, b.valid);
-    }
-};
-Mode mode(const Program& p, Cut cut)
-{
-    Mode out;
-    const auto observation = p.observed->sites[cut].observation;
-    if (observation == NoAnalysisId) {
-        return out;
-    }
-    const auto& value = p.observed->observations[observation];
-    if (!value.available || value.atoms.size() < 3 || value.atoms.size() > 5) return out;
-    uint64_t period = 0;
-    Id owner = NoAnalysisId;
-    for (const auto &atom : value.atoms)
-        if (atom.kind == ObservationAtom::LoopResidue) {
-            period = atom.parameter;
-            owner = atom.owner;
-        }
-    if (!period) return out;
-    unsigned seen = 0;
-    for (const auto& atom : value.atoms) {
-        if (period > 1 && atom.owner == owner && atom.parameter == 1 &&
-            (atom.kind == ObservationAtom::LoopHasPrevious ||
-             atom.kind == ObservationAtom::LoopHasNext)) continue;
-        if (seen && (atom.owner != out.owner || atom.parameter != out.period)) return {};
-        out.owner = atom.owner;
-        out.period = atom.parameter;
-        if (atom.kind == ObservationAtom::LoopResidue) {
-            out.residue = atom.value;
-            seen |= 1;
-        } else if (atom.kind == ObservationAtom::LoopHasPrevious) {
-            out.previous = atom.value != 0;
-            seen |= 2;
-        } else if (atom.kind == ObservationAtom::LoopHasNext) {
-            out.next = atom.value != 0;
-            seen |= 4;
-        } else {
-            return {};
-        }
-    }
-    out.valid = seen == 7 && out.period != 0 && out.residue < out.period;
-    return out;
-}
-Cut after(const Program& p, const Control& c, Id site, const Mode& expected)
+Cut after(const Program& p, const Control& c, Id site, const OccurrenceMode& expected)
 {
     // A unique legal source position in the unchanged current-visit corridor.
     std::set<Id> candidates;
@@ -83,7 +27,7 @@ Cut after(const Program& p, const Control& c, Id site, const Mode& expected)
         }
         seen[at] = true;
         if (c.graph.legalCuts[at]) {
-            if (!(mode(p, at) == expected)) {
+            if (!(occurrenceMode(p, at) == expected)) {
                 return NoAnalysisId;
             }
             candidates.insert(canonicalCommandCut(p, at));
@@ -115,7 +59,7 @@ std::vector<RecurringRequirement> qualifyCell(
         }
     }
     if (p.cells[cell].exclusive) return {};
-    std::vector<Mode> modes(c.graph.sites.size());
+    std::vector<OccurrenceMode> modes(c.graph.sites.size());
     std::vector<unsigned> roles(c.graph.sites.size());
     Pipe producer = Pipe::Count, consumer = Pipe::Count;
     uint64_t residue = NoAnalysisId, period = 0;
@@ -127,7 +71,7 @@ std::vector<RecurringRequirement> qualifyCell(
         unsigned role = 0;
         for (const auto& a : op.accesses) if (a.cell == cell) role |= unsigned(a.read) | (unsigned(a.write) << 1);
         if (!role) continue;
-        const auto m = mode(p, site);
+        const auto m = occurrenceMode(p, site);
         if (role == 3 || !m.valid || m.owner != loop.owner ||
             (period && (period != m.period || residue != m.residue)) ||
             p.target.synchronous[unsigned(op.pipe)]) return {};
@@ -214,7 +158,7 @@ std::vector<RecurringRequirement> qualifyCell(
     if (reentered && period > 1) {
         for (auto site : members) {
             if (!c.graph.legalCuts[site] || c.graph.operations[site] != NoAnalysisId) continue;
-            const auto m = mode(p, site);
+            const auto m = occurrenceMode(p, site);
             if (!m.valid || m.owner != loop.owner || m.period != period ||
                 (!m.previous && m.residue < residue)) continue;
             const auto &node = p.observed->sites[site];
@@ -468,7 +412,7 @@ bool balanced(const Control& c, const std::vector<Cut>& publications,
 }
 
 std::vector<RecurringRequirement> qualifyRelationships(
-    const Program& p, const Control& c, const StorageFrontierAnalysis& storage)
+    const Program& p, const Control& c, const RequirementFrontiers& frontiers)
 {
     using Key = std::tuple<Id, uint64_t, Pipe, Pipe, Id, Id>;
     std::map<Key, RecurringRequirement> grouped;
@@ -479,18 +423,19 @@ std::vector<RecurringRequirement> qualifyRelationships(
             if (target >= c.graph.sites.size() || !c.reachable[target]) continue;
             const auto targetOperation = c.graph.operations[target];
             if (targetOperation == NoAnalysisId) continue;
-            const auto targetMode = mode(p, target);
+            const auto targetMode = occurrenceMode(p, target);
             if (!targetMode.valid || targetMode.owner != loop.owner) continue;
             const auto targetPipe = p.operations[targetOperation].pipe;
             if (p.target.synchronous[unsigned(targetPipe)]) continue;
-            for (const auto& relationship : storage.relationshipsAt(target)) {
+            for (const auto& requirement : frontiers.at(target)) {
+                const auto& relationship = requirement.relationship;
                 const auto sourceSite = relationship.source.site;
                 if (!members.count(sourceSite) || sourceSite >= c.graph.sites.size()) continue;
                 const auto sourceOperation = c.graph.operations[sourceSite];
                 if (sourceOperation == NoAnalysisId || relationship.cell >= p.cells.size() ||
                     p.cells[relationship.cell].exclusive) continue;
                 const auto sourcePipe = p.operations[sourceOperation].pipe;
-                const auto sourceMode = mode(p, sourceSite);
+                const auto sourceMode = occurrenceMode(p, sourceSite);
                 if (sourcePipe == targetPipe || p.target.synchronous[unsigned(sourcePipe)] ||
                     !sourceMode.valid || sourceMode.owner != loop.owner ||
                     sourceMode.period != targetMode.period) continue;
@@ -582,7 +527,7 @@ bool protocolCompatible(const Program& p, const Control& c,
 } // namespace
 
 std::vector<RecurringRequirement> qualifyCyclicFrontiers(
-    const Program& p, const Control& c, const StorageFrontierAnalysis& storage)
+    const Program& p, const Control& c, const RequirementFrontiers& frontiers)
 {
     std::vector<RecurringRequirement> requests;
     if (!p.observed) return requests;
@@ -617,7 +562,7 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     // This grants no completion credit: the completed combined ledger is still
     // checked by the causal frontier before emission.
     const auto ordinary = requests;
-    auto relationshipRequests = qualifyRelationships(p, c, storage);
+    auto relationshipRequests = qualifyRelationships(p, c, frontiers);
     for (auto& candidate : relationshipRequests) {
         auto subset = [](const std::vector<Cut>& a, const std::vector<Cut>& b) {
             return std::includes(b.begin(), b.end(), a.begin(), a.end());
@@ -636,10 +581,10 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     // merge one unambiguous cut per original occurrence mode; alternatives
     // remain separate until their participation correspondence is proved.
     auto indexed = [&](const std::vector<Cut>& cuts) {
-        std::map<Mode, Cut> out;
+        std::map<OccurrenceMode, Cut> out;
         for (auto cut : cuts) {
-            const auto key = mode(p, cut);
-            if (!key.valid || !out.emplace(key, cut).second) return std::map<Mode, Cut>{};
+            const auto key = occurrenceMode(p, cut);
+            if (!key.valid || !out.emplace(key, cut).second) return std::map<OccurrenceMode, Cut>{};
         }
         return out;
     };

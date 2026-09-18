@@ -167,10 +167,79 @@ struct RecurringRequirement {
     Id owner = NoAnalysisId;
     uint64_t period = 0;
 };
+struct OccurrenceMode {
+    Id owner = NoAnalysisId;
+    uint64_t period = 0, residue = 0;
+    bool previous = false, next = false, valid = false;
+    bool operator==(const OccurrenceMode& b) const
+    {
+        return valid && b.valid && owner == b.owner && period == b.period && residue == b.residue &&
+               previous == b.previous && next == b.next;
+    }
+    bool operator<(const OccurrenceMode& b) const
+    {
+        return std::tie(owner, period, residue, previous, next, valid) <
+               std::tie(b.owner, b.period, b.residue, b.previous, b.next, b.valid);
+    }
+};
+OccurrenceMode occurrenceMode(const Program&, Cut);
+enum class RequirementOccurrence : unsigned {
+    Acyclic,
+    SameVisit,
+    PreviousUse,
+    RegionEntry,
+    RegionContinuation,
+    Guarded,
+    Unknown,
+    Count
+};
+// One original storage requirement with both of its placement bounds retained.
+// This is immutable analysis metadata: it grants no completion receipt, event
+// token, or permission to merge requirements that happen to use one pipeline.
+struct RequirementFrontier {
+    StorageRelationship relationship;
+    // Priority/occurrence provenance is enriched once, on demand, because
+    // native import probes recurring eligibility for several candidate loops.
+    // The source/deadline relationship itself is always indexed eagerly.
+    mutable RequirementProvenance provenance;
+    mutable bool described = false;
+    RequirementOccurrence occurrence = RequirementOccurrence::Unknown;
+    Pipe source = Pipe::S, observer = Pipe::S;
+    Id access = NoAnalysisId;
+    // The earliest ordinary publication cut immediately after the source when
+    // it is qualified as one acyclic visit. Recurring/guarded frontiers retain
+    // NoAnalysisId until their occurrence qualifier supplies a paired cut.
+    Cut publication = NoAnalysisId;
+    // The original consumer launch deadline. Several records may deliberately
+    // share a pipeline while retaining different publications or deadlines.
+    Cut deadline = NoAnalysisId;
+};
+class RequirementFrontiers {
+public:
+    RequirementFrontiers(const Program&, const Control&, const StorageFrontierAnalysis&);
+    bool complete() const { return ready; }
+    const std::string& reason() const { return error; }
+    const std::vector<RequirementFrontier>& at(Cut site) const;
+    std::map<Id, unsigned> reasons(Cut site) const;
+    std::size_t size() const { return population; }
+    std::size_t sourceBoundaries() const { return boundedSources; }
+    const std::array<std::size_t, unsigned(RequirementOccurrence::Count)>& occurrenceCounts() const
+    {
+        return occurrences;
+    }
+
+private:
+    bool ready = false;
+    std::string error;
+    std::size_t population = 0, boundedSources = 0;
+    std::array<std::size_t, unsigned(RequirementOccurrence::Count)> occurrences{};
+    const StorageFrontierAnalysis* storage = nullptr;
+    std::vector<std::vector<RequirementFrontier>> byDeadline;
+};
 // A storage/control qualifier: it returns requirements and original frontiers,
 // not commands or physical key choices. Empty means ordinary F1--F8 applies.
 std::vector<RecurringRequirement> qualifyCyclicFrontiers(
-    const Program&, const Control&, const StorageFrontierAnalysis&);
+    const Program&, const Control&, const RequirementFrontiers&);
 
 struct Group {
     Pipe source = Pipe::S;
@@ -200,6 +269,7 @@ private:
     CausalFrontier frontier;
     Control control;
     StorageFrontierAnalysis storage;
+    RequirementFrontiers requirements;
     Ledger ledger;
     SelectedPlan result;
     Replay cache;
