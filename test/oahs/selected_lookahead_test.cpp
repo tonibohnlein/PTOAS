@@ -78,15 +78,33 @@ void keepKnownPrefixSeparateFromOverlap()
 void keepDifferentDeadlines()
 {
     auto p = base(2, 2);
-    p.operations = {op(P, {{0, false, true, true}}), op(Q, {{0, true, false}}),
-                    op(P, {{1, false, true, true}}), op(Q, {{1, true, false}})};
+    p.operations = {op(P, {{0, false, true, true}}), op(P, {{1, false, true, true}}),
+                    op(Q, {{0, true, false}}), op(Q, {{1, true, false}})};
     p.body = seq({leaf(0), leaf(1), leaf(2), leaf(3)});
+    o::selected::Control control(p);
+    o::StorageFrontierAnalysis storage(p);
+    o::selected::RequirementFrontiers frontiers(p, control, storage);
+    require(frontiers.complete() && frontiers.size() == 2,
+            "first pass did not retain the two readiness requirements");
+    require(frontiers.sourceBoundaries() == 2,
+            "acyclic frontier qualification was not recorded");
+    require(frontiers.occurrenceCounts()[unsigned(o::selected::RequirementOccurrence::Acyclic)] == 2,
+            "acyclic occurrence class was not recorded");
+    const auto& first = frontiers.at(2);
+    const auto& second = frontiers.at(3);
+    require(first.size() == 1 && first.front().publication == 1 && first.front().deadline == 2,
+            "first source boundary/deadline pair changed");
+    require(second.size() == 1 && second.front().publication == 2 && second.front().deadline == 3,
+            "second source boundary/deadline pair changed");
+    require(first.front().source == second.front().source &&
+            first.front().observer == second.front().observer,
+            "fixture does not exercise one pipeline pair with distinct frontiers");
     const auto plan = accepted(p);
     require(plan.decisions.size() == 2, "different consumers were merged");
-    require(plan.decisions[0].publication == 1 && plan.decisions[0].consumer == 1,
+    require(plan.decisions[0].publication == 1 && plan.decisions[0].consumer == 2,
             "first consumer now waits for the second load");
     require(plan.decisions[1].consumer == 3, "second deadline lost");
-    require(bool(oahs_oracle::graph(p, plan.commands, {0, 1, 2, 3}, {{2, 1}})),
+    require(bool(oahs_oracle::graph(p, plan.commands, {0, 1, 2, 3}, {{1, 2}})),
             "first consumer unnecessarily waits for completion of the second load");
 }
 o::Program joinedTerminal()

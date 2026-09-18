@@ -419,4 +419,136 @@ Cut Control::after(Id origin) const
     }
     return NoAnalysisId;
 }
+
+OccurrenceMode occurrenceMode(const Program& program, Cut cut)
+{
+    OccurrenceMode out;
+    if (!program.observed || cut >= program.observed->sites.size()) return out;
+    const auto observation = program.observed->sites[cut].observation;
+    if (observation == NoAnalysisId || observation >= program.observed->observations.size()) return out;
+    const auto& value = program.observed->observations[observation];
+    if (!value.available || value.atoms.size() < 3 || value.atoms.size() > 5) return out;
+    uint64_t period = 0;
+    Id owner = NoAnalysisId;
+    for (const auto& atom : value.atoms)
+        if (atom.kind == ObservationAtom::LoopResidue) {
+            period = atom.parameter;
+            owner = atom.owner;
+        }
+    if (!period) return out;
+    unsigned seen = 0;
+    for (const auto& atom : value.atoms) {
+        if (period > 1 && atom.owner == owner && atom.parameter == 1 &&
+            (atom.kind == ObservationAtom::LoopHasPrevious || atom.kind == ObservationAtom::LoopHasNext))
+            continue;
+        if (seen && (atom.owner != out.owner || atom.parameter != out.period)) return {};
+        out.owner = atom.owner;
+        out.period = atom.parameter;
+        if (atom.kind == ObservationAtom::LoopResidue) {
+            out.residue = atom.value;
+            seen |= 1;
+        } else if (atom.kind == ObservationAtom::LoopHasPrevious) {
+            out.previous = atom.value != 0;
+            seen |= 2;
+        } else if (atom.kind == ObservationAtom::LoopHasNext) {
+            out.next = atom.value != 0;
+            seen |= 4;
+        } else {
+            return {};
+        }
+    }
+    out.valid = seen == 7 && out.period != 0 && out.residue < out.period;
+    return out;
+}
+
+RequirementFrontiers::RequirementFrontiers(
+    const Program& program, const Control& control, const StorageFrontierAnalysis& storageAnalysis)
+{
+    if (!control.complete || !storageAnalysis.complete()) {
+        error = control.complete ? storageAnalysis.reason() : control.reason;
+        return;
+    }
+    storage = &storageAnalysis;
+    byDeadline.resize(control.graph.sites.size());
+    for (Cut site = 0; site < control.graph.sites.size(); ++site) {
+        if (!control.reachable[site]) continue;
+        const auto targetOperation = control.graph.operations[site];
+        if (targetOperation == NoAnalysisId) continue;
+        for (const auto& relationship : storageAnalysis.relationshipsAt(site)) {
+            if (relationship.source.operation >= program.operations.size()) {
+                error = "storage requirement has no original source operation";
+                return;
+            }
+            RequirementFrontier frontier;
+            frontier.relationship = relationship;
+            frontier.source = program.operations[relationship.source.operation].pipe;
+            frontier.observer = program.operations[targetOperation].pipe;
+            const bool write = relationship.kind != StorageRelationship::WAR;
+            frontier.access =
+                (Id(relationship.cell) * PipeCount + unsigned(frontier.source)) * 2 + Id(write);
+            frontier.deadline = control.canonicalCut[site];
+            const auto sourceComponent = control.component[relationship.source.site];
+            const auto targetComponent = control.component[site];
+            if (sourceComponent != NoAnalysisId && targetComponent != NoAnalysisId &&
+                !control.components[sourceComponent].cyclic && !control.components[targetComponent].cyclic &&
+                control.straight(relationship.source.site, site)) {
+                const auto after = control.after(relationship.source.site);
+                if (after != NoAnalysisId) {
+                    frontier.publication = control.canonicalCut[after];
+                    ++boundedSources;
+                }
+            }
+            const auto sourceMode = occurrenceMode(program, relationship.source.site);
+            const auto targetMode = occurrenceMode(program, site);
+            auto guarded = [&](Id occurrence) {
+                if (!program.observed || occurrence >= program.observed->sites.size()) return false;
+                const auto observation = program.observed->sites[occurrence].observation;
+                return observation != NoAnalysisId && observation < program.observed->observations.size() &&
+                    std::any_of(program.observed->observations[observation].atoms.begin(),
+                                program.observed->observations[observation].atoms.end(), [](const auto& atom) {
+                                    return atom.kind == ObservationAtom::OriginalBoolean;
+                                });
+            };
+            if (frontier.publication != NoAnalysisId) {
+                frontier.occurrence = RequirementOccurrence::Acyclic;
+            } else if (guarded(relationship.source.site) || guarded(site)) {
+                frontier.occurrence = RequirementOccurrence::Guarded;
+            } else if (sourceMode == targetMode) {
+                frontier.occurrence = RequirementOccurrence::SameVisit;
+            } else if (sourceMode.valid && targetMode.valid && sourceMode.owner == targetMode.owner &&
+                       sourceMode.period == targetMode.period && sourceMode.residue == targetMode.residue &&
+                       sourceMode.next && targetMode.previous) {
+                frontier.occurrence = RequirementOccurrence::PreviousUse;
+            } else if (!sourceMode.valid && targetMode.valid && !targetMode.previous) {
+                frontier.occurrence = RequirementOccurrence::RegionEntry;
+            } else if (sourceMode.valid && !sourceMode.next && !targetMode.valid) {
+                frontier.occurrence = RequirementOccurrence::RegionContinuation;
+            }
+            ++occurrences[unsigned(frontier.occurrence)];
+            byDeadline[site].push_back(std::move(frontier));
+            ++population;
+        }
+    }
+    ready = true;
+}
+
+const std::vector<RequirementFrontier>& RequirementFrontiers::at(Cut site) const
+{
+    static const std::vector<RequirementFrontier> empty;
+    return ready && site < byDeadline.size() ? byDeadline[site] : empty;
+}
+
+std::map<Id, unsigned> RequirementFrontiers::reasons(Cut site) const
+{
+    std::map<Id, unsigned> out;
+    if (!ready || site >= byDeadline.size() || !storage) return out;
+    for (auto& frontier : byDeadline[site]) {
+        if (!frontier.described) {
+            frontier.provenance = storage->describeRequirement(frontier.relationship);
+            frontier.described = true;
+        }
+        out[frontier.access] |= frontier.provenance.reasons;
+    }
+    return out;
+}
 } // namespace mlir::pto::oahs::selected

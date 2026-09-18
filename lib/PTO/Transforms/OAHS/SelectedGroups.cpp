@@ -17,14 +17,7 @@ bool properSubset(const std::set<Id>& a, const std::set<Id>& b)
 } // namespace
 std::map<Id, unsigned> Constructor::reasons(Cut site) const
 {
-    std::map<Id, unsigned> out;
-    for (const auto& relationship : storage.relationshipsAt(site)) {
-        const auto source = program.operations[relationship.source.operation].pipe;
-        const bool write = relationship.kind != StorageRelationship::WAR;
-        const auto index = (Id(relationship.cell) * PipeCount + unsigned(source)) * 2 + Id(write);
-        out[index] |= storage.describeRequirement(relationship).reasons;
-    }
-    return out;
+    return requirements.reasons(site);
 }
 std::set<Id> Constructor::coverage(
     Cut cut, Pipe source, const std::vector<FrontierRequirement>& requirements) const
@@ -375,6 +368,7 @@ bool Constructor::consume()
             return fail(SelectedFailure::UnsupportedContract,
                 "no qualified named fence for the remaining same-engine requirement", current);
         }
+        result.fences.push_back({current, observer, ledger.version(), missing});
         ledger.append(current, {Command::Barrier, observer, Pipe::S, 0}, EndpointPurpose::LocalFence);
         if (!update()) {
             return false;
