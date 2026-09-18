@@ -32,6 +32,45 @@ struct ReplayTestAccess {
             sameState(entry.second, cold.afterEndpoint.at(entry.first));
         }
     }
+    static void compareAdvances(const Program& program, Pipe pipe) {
+        Constructor c(program);
+        require(c.control.complete && c.frontier.complete(),
+                "advance fixture import: " + c.control.reason + " / " + c.frontier.reason());
+        Commands fixed(commandCutCount(program));
+        for (Cut cut = 0; cut < fixed.size(); ++cut) {
+            if (legalCommandCut(program, cut)) {
+                fixed[cut] = {{Command::Barrier, pipe, pipe, 0}};
+            }
+        }
+        std::string reason;
+        require(c.ledger.initialize(fixed, reason), reason);
+        uint64_t incrementalWork = 0, coldWork = 0;
+        for (c.activeComponent = 0; c.activeComponent < c.control.components.size(); ++c.activeComponent) {
+            const auto& block = c.control.components[c.activeComponent];
+            for (c.activeOffset = 0; c.activeOffset < block.order.size(); ++c.activeOffset) {
+                c.current = block.order[c.activeOffset];
+                auto before = c.result.work.replaySiteEvaluations + c.result.work.forwardSiteEvaluations;
+                require(c.advance(), c.cache.reason);
+                incrementalWork += c.result.work.replaySiteEvaluations + c.result.work.forwardSiteEvaluations - before;
+                auto reused = c.cache;
+                c.cache = {};
+                require(c.replay(), c.cache.reason);
+                coldWork += c.cache.evaluations;
+                identical(reused, c.cache);
+                c.cache = std::move(reused);
+                auto outgoing = c.currentState();
+                if (outgoing.causal.reachable()) {
+                    require(c.payload(outgoing, c.current, c.cache), c.cache.reason);
+                }
+                c.cache.cuts[c.current].outgoing = std::move(outgoing);
+                c.finalized[c.current] = true;
+            }
+        }
+        require(c.result.work.forwardSiteEvaluations > 0, "no construction prefix was continued");
+        require(incrementalWork <= 8 * c.control.graph.sites.size(),
+                "unchanged traversal revisits growing cyclic prefixes");
+        require(coldWork > incrementalWork, "test did not exercise saved replay work");
+    }
     // One edit, replayed with the reusable prefix kept and then entirely cold.
     // Returns how many components the incremental run actually kept.
     // Returns the components the incremental run kept, and whether the edit was
@@ -294,6 +333,21 @@ int main()
     replayReusesUnchangedPrefix();
     sharedObservationReplay();
     contextualPrefixReuse();
+    for (unsigned length : {4u, 16u, 64u}) {
+        auto p = base(2);
+        std::vector<o::Region> body;
+        for (unsigned i = 0; i < length; ++i) {
+            p.operations.push_back(op(P, {{i % 2, true, true}}));
+            body.push_back(leaf(i));
+        }
+        // Branches inside nested loops exercise joins and inner-header seeds.
+        p.body = {o::Region::For, {{o::Region::Choice,
+            {{o::Region::For, {{o::Region::Sequence, body}}, 0, true},
+             {o::Region::Sequence, {}}}}}, 0, true};
+        auto bounded = o::addStructuredBoundaryCuts(p);
+        require(bounded.success, bounded.reason);
+        o::selected::ReplayTestAccess::compareAdvances(bounded.program, P);
+    }
     recurringRoleIsolation();
     std::cout << "selected-ledger update, boundary and refusal tests passed\n";
 }

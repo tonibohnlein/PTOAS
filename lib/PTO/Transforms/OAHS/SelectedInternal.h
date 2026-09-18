@@ -147,6 +147,8 @@ struct Replay {
     // the construction-only hypothesis traversal of the active component. Only
     // those may be reused by a later replay; everything else is recomputed.
     std::size_t fixedComponents = 0, reusedComponents = 0;
+    Id partialComponent = NoAnalysisId, partialOffset = NoAnalysisId;
+    std::vector<State> partialIncoming;
 };
 struct RecurringRequirement {
     unsigned cell = 0;
@@ -193,6 +195,7 @@ private:
     SelectedPlan result;
     Replay cache;
     std::vector<bool> finalized;
+    std::map<Cut, std::vector<Id>> sourcesAtCut;
     Id activeComponent = 0, activeOffset = 0;
     Cut current = NoAnalysisId;
     // Roles are stable within a selected loop component. A reverse acknowledgment
@@ -211,11 +214,12 @@ private:
     bool contextualReplay();
     bool fixedComponent(Id, const std::vector<State>&, Replay&, std::vector<State>&);
     bool partialComponent(Id, const std::vector<State>&, Replay&);
+    bool partialSite(Id, Cut, std::vector<State>&, Replay&);
     bool replay();
     // The component prefix an update may keep, shared by both replay paths.
     Id reusablePrefix() const;
     bool advance();
-    void refreshSources();
+    void refreshSources(Cut = NoAnalysisId);
     bool update();
     State& currentState();
     std::vector<FrontierRequirement> residual() const;

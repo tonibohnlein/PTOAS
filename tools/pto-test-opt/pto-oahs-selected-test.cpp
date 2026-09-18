@@ -264,6 +264,59 @@ bool accumulatorOrdering(MLIRContext &context) {
   }
   return true;
 }
+bool constantAddresses(MLIRContext &context) {
+  const char *input = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @addresses(%unknown: i64) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %z = arith.index_cast %zero : index to i64
+    %base = arith.constant 24576 : i64
+    %sum = arith.addi %base, %z : i64
+    %a = pto.alloc_tile addr = %sum : !pto.tile_buf<vec, 1x16xf32>
+    pto.tabs ins(%a : !pto.tile_buf<vec, 1x16xf32>) outs(%a : !pto.tile_buf<vec, 1x16xf32>)
+    return
+  }
+})mlir";
+  for (unsigned mutation = 0; mutation < 4; ++mutation) {
+    auto module = parseSourceString<ModuleOp>(input, &context);
+    if (!check(bool(module), "parse constant address fixture")) {
+      return false;
+    }
+    auto function = module->lookupSymbol<func::FuncOp>("addresses");
+    AllocTileOp allocation;
+    function.walk([&](AllocTileOp op) { allocation = op; });
+    auto sum = allocation.getAddr().getDefiningOp<arith::AddIOp>();
+    OpBuilder builder(sum);
+    if (mutation == 1) {
+      sum.setOperand(1, function.getArgument(0));
+    }
+    if (mutation == 2) {
+      sum.setOperand(0, builder.create<arith::ConstantIntOp>(sum.getLoc(), INT64_MAX, 64));
+      sum.setOperand(1, builder.create<arith::ConstantIntOp>(sum.getLoc(), 1, 64));
+    }
+    if (mutation == 3) {
+      auto large = builder.create<arith::ConstantIndexOp>(sum.getLoc(), 256);
+      auto narrow = builder.create<arith::IndexCastOp>(sum.getLoc(), builder.getI8Type(), large);
+      auto widen = builder.create<arith::IndexCastOp>(sum.getLoc(), builder.getIndexType(), narrow);
+      auto address = builder.create<arith::IndexCastOp>(sum.getLoc(), builder.getI64Type(), widen);
+      allocation.getAddrMutable().assign(address);
+    }
+    oahs::NativeAnalysis imported;
+    if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)), "constant address import")) {
+      return false;
+    }
+    bool known = false, unknown = false;
+    for (const auto &cell : imported.program.cells) {
+      unknown |= cell.unknownRange;
+      known |= !cell.unknownRange && cell.ranges == std::vector<std::pair<uint64_t,uint64_t>>{{24576, 64}};
+    }
+    if (!check(mutation == 0 ? known && !unknown : !known && unknown,
+               "constant address certainty or byte footprint incorrect")) {
+      return false;
+    }
+  }
+  return true;
+}
 bool slotMappings(MLIRContext &context) {
   auto module = parseSourceString<ModuleOp>(slotInput, &context);
   if (!check(bool(module), "parse carried-slot fixture")) return false;
@@ -420,6 +473,7 @@ int main(int argc, char **argv) {
   const bool passed = positive(context, ordinary, "ordinary") && positive(context, loop, "loop") &&
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
-                      positive(context, queue, "queue") && mutations(context) && slotMappings(context) && accumulatorOrdering(context);
+                      positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
+                      slotMappings(context) && accumulatorOrdering(context);
   return passed ? 0 : 1;
 }
