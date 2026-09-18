@@ -105,7 +105,8 @@ struct SelectedWork {
     uint64_t recurringAnalysisSites = 0;
     std::size_t loopEntryTransfers = 0;
     std::size_t rearmingDischarged = 0;
-    uint64_t rearmingQuerySites = 0;
+    std::size_t rearmingRestored = 0;
+    uint64_t rearmingPairVisits = 0, rearmingQuerySites = 0;
     uint64_t loopEntryAnalysisSites = 0;
     uint64_t loopEntryPreparationSites = 0;
     // Dimensions of the graph actually constructed over, recorded once. They

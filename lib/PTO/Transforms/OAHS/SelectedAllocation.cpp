@@ -299,6 +299,7 @@ bool Constructor::restoreReturns(Id key)
         ledger.restoreAfter(helper.second, helper.first);
         requiredReturns.insert(helper.second);
         ++result.work.acknowledgments;
+        ++result.work.rearmingRestored;
         --result.work.rearmingDischarged;
         changed = true;
     }
@@ -389,11 +390,16 @@ bool Constructor::settleRearming(const SelectedDecision& decision)
         const auto pending = pendingRearming.find(direction);
         const auto returns = necessaryReturns.find(direction);
         if (pending == pendingRearming.end() || returns == necessaryReturns.end()) continue;
-        for (const auto& helper : pending->second) {
+        auto& paired = pairedReturns[direction];
+        const auto helpers = pending->second.size(), actuals = returns->second.size();
+        if (paired.first == helpers && paired.second == actuals) continue;
+        const auto firstHelper = paired.second == actuals ? paired.first : 0;
+        for (Id h = firstHelper; h < helpers; ++h) {
+            const auto& helper = pending->second[h];
             if (!ledger.active(helper.second) || requiredReturns.count(helper.second)) continue;
-            for (auto actual : returns->second) {
-                if (!queriedReturns.insert({helper.second, actual}).second ||
-                    !returnBeforeUse(helper.second, actual)) continue;
+            for (Id r = h < paired.first ? paired.second : 0; r < actuals; ++r) {
+                ++result.work.rearmingPairVisits;
+                if (!returnBeforeUse(helper.second, returns->second[r])) continue;
                 ledger.erase(helper.first);
                 ledger.erase(helper.second);
                 --result.work.acknowledgments;
@@ -402,6 +408,7 @@ bool Constructor::settleRearming(const SelectedDecision& decision)
                 break;
             }
         }
+        paired = {helpers, actuals};
     }
     // One structural certificate per helper/actual-return pair, no speculative
     // command populations or cold-check deletion sweep. Replay the changed

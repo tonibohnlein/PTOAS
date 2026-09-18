@@ -277,6 +277,47 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
+  {
+    auto module = parseSourceString<ModuleOp>(input, &context);
+    auto function = module->lookupSymbol<func::FuncOp>("addresses");
+    OpBuilder builder(function.getBody().front().getTerminator());
+    auto zero = builder.create<arith::ConstantIntOp>(function.getLoc(), 0, 64);
+    std::vector<Value> chain{function.getArgument(0)};
+    for (unsigned i = 0; i < 256; ++i)
+      chain.push_back(builder.create<arith::AddIOp>(function.getLoc(), chain.back(), zero));
+    for (bool reverse : {false, true}) {
+      SyncSlotMapping::ConstantCache cache;
+      for (unsigned i = 1; i < chain.size(); ++i) {
+        const auto at = reverse ? chain.size() - i : i;
+        if (!check(!SyncSlotMapping::evaluateConstant(chain[at], cache), "unknown address became constant")) return false;
+      }
+      if (!check(cache.evaluations == chain.size() && cache.notConstant.size() == chain.size(),
+                 "failed address prefixes were repeatedly expanded")) return false;
+      const auto work = cache.evaluations;
+      llvm::DenseMap<Value, uint64_t> seeded;
+      seeded[chain.front()] = 9;
+      if (!check(SyncSlotMapping::evaluate(chain.back(), seeded) == std::optional<uint64_t>(9) &&
+                 !SyncSlotMapping::evaluateConstant(chain.back(), cache) && cache.evaluations == work,
+                 "unseeded negative facts leaked into a slot valuation")) return false;
+      cache.clear();
+      if (!check(cache.evaluations == 0 && cache.known.empty() && cache.notConstant.empty(),
+                 "new import retained old scalar facts")) return false;
+    }
+    // Rejected arithmetic and unsupported expressions are memoized too.
+    auto maximum = builder.create<arith::ConstantIntOp>(function.getLoc(), std::numeric_limits<int64_t>::max(), 64);
+    auto one = builder.create<arith::ConstantIntOp>(function.getLoc(), 1, 64);
+    Value overflow = builder.create<arith::AddIOp>(function.getLoc(), maximum, one);
+    Value unsupported = builder.create<arith::SubIOp>(function.getLoc(), one, zero);
+    SyncSlotMapping::ConstantCache cache;
+    if (!check(!SyncSlotMapping::evaluateConstant(overflow, cache) &&
+               !SyncSlotMapping::evaluateConstant(unsupported, cache), "rejected scalar unexpectedly admitted")) return false;
+    const auto work = cache.evaluations;
+    for (unsigned repeat = 0; repeat < 32; ++repeat) {
+      if (!check(!SyncSlotMapping::evaluateConstant(overflow, cache) &&
+                 !SyncSlotMapping::evaluateConstant(unsupported, cache) && cache.evaluations == work,
+                 "rejected expression was reevaluated")) return false;
+    }
+  }
   for (unsigned mutation = 0; mutation < 10; ++mutation) {
     auto module = parseSourceString<ModuleOp>(input, &context);
     if (!check(bool(module), "parse constant address fixture")) {
@@ -453,6 +494,8 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " contextual=" << work.contextualReplays
                  << " unreused_updates=" << work.unreusedUpdates
                  << " sources=" << work.sourceHandles << " rearming_discharged=" << work.rearmingDischarged
+                 << " rearming_restored=" << work.rearmingRestored
+                 << " rearming_pairs=" << work.rearmingPairVisits
                  << " rearming_query_sites=" << work.rearmingQuerySites
                  << " acknowledgments=" << work.acknowledgments
                  << " common_cut=" << work.commonCutTransfers

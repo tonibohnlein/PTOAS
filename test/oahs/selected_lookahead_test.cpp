@@ -11,6 +11,36 @@
 
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void pairEnumeration(unsigned count)
+    {
+        auto p = selected_test::base(1, 2);
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        p.operations = {selected_test::op(P, {{0, true, false}})};
+        Constructor c(p);
+        c.needsContextualReplay = true;
+        std::string reason;
+        selected_test::require(c.ledger.initialize(Commands(commandCutCount(p)), reason), reason);
+        // Structural-query stress fixture, not an accepted event protocol:
+        // the intervening P payload must reject every possible replacement.
+        for (unsigned i = 0; i < count; ++i) {
+            auto publish = c.ledger.append(0, {Command::Publish, Q, P, 0}, EndpointPurpose::ConsumptionAcknowledgment);
+            auto wait = c.ledger.append(0, {Command::Acquire, Q, P, 0}, EndpointPurpose::ConsumptionAcknowledgment);
+            c.rememberReturn(publish, wait);
+            c.ledger.append(1, {Command::Publish, Q, P, 1}, EndpointPurpose::Completion);
+            auto actual = c.ledger.append(1, {Command::Acquire, Q, P, 1}, EndpointPurpose::Completion);
+            SelectedDecision decision;
+            decision.endpoints = {wait, actual};
+            selected_test::require(c.settleRearming(decision), "pair enumeration changed ledger");
+            selected_test::require(c.result.work.rearmingPairVisits == uint64_t(i+1)*(i+1),
+                                   "old helper/return product was enumerated again");
+            // Relevant decision with no newly appended helper or necessary return.
+            decision.endpoints = {wait};
+            selected_test::require(c.settleRearming(decision), "unchanged pair population");
+            selected_test::require(c.result.work.rearmingPairVisits == uint64_t(i+1)*(i+1),
+                                   "unchanged population revisited old pairs");
+        }
+        selected_test::require(c.result.work.rearmingDischarged == 0, "protected P payload ignored");
+    }
     static SelectedPlan contextual(const Program& program)
     {
         Constructor constructor(program);
@@ -372,6 +402,7 @@ void changedRepublicationDeadline()
         {o::Region::Choice, {seq({leaf(1)}), seq({leaf(2)})}}, leaf(3)})}, 0, true};
     const auto plan = o::selected::ReplayTestAccess::contextual(p);
     require(plan.success, "new publication deadline: " + plan.reason);
+    require(plan.work.rearmingRestored != 0, "changed-deadline fixture never restored a helper");
     require(o::checkCausalFrontier(p, plan.commands).accepted, "earlier deadline lost its rearming path");
     for (const auto& visits : oahs_oracle::traces(p, 3))
         require(bool(oahs_oracle::graph(p, plan.commands, visits)), "changed deadline failed independent protocol check");
@@ -413,6 +444,7 @@ void enclosingAcquisitionAndRearming()
 } // namespace
 int main()
 {
+    for (auto n : {32u, 64u, 128u}) o::selected::ReplayTestAccess::pairEnumeration(n);
     keepKnownPrefixSeparateFromOverlap();
     keepDifferentDeadlines();
     alternativeEarlySources();
