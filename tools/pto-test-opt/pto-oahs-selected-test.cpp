@@ -435,7 +435,9 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " loop_entry_preparation_sites=" << work.loopEntryPreparationSites
                  << " contextual=" << work.contextualReplays
                  << " unreused_updates=" << work.unreusedUpdates
-                 << " sources=" << work.sourceHandles << " acknowledgments=" << work.acknowledgments
+                 << " sources=" << work.sourceHandles << " rearming_discharged=" << work.rearmingDischarged
+                 << " rearming_query_sites=" << work.rearmingQuerySites
+                 << " acknowledgments=" << work.acknowledgments
                  << " common_cut=" << work.commonCutTransfers
                  << " decisions=" << report.decisions.size() << " endpoints=" << report.ledger.size();
     // How much of the component prefix each update actually kept. A nonzero

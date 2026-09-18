@@ -87,6 +87,24 @@ Id Ledger::after(Id predecessor, Command command, EndpointPurpose purpose, Id re
     const auto found = std::find(ids.begin(), ids.end(), predecessor);
     return insert(cut, Id(found - ids.begin()) + 1, command, purpose, request, ack);
 }
+void Ledger::erase(Id id)
+{
+    const auto cut = endpoints.at(id).cut;
+    auto& word = words[cut];
+    word.erase(std::find(word.begin(), word.end(), id));
+    removed.insert(id);
+    changed.push_back(cut);
+    ++revision;
+}
+void Ledger::restoreAfter(Id id, Id predecessor)
+{
+    const auto cut = endpoints.at(id).cut;
+    auto& word = words[cut];
+    word.insert(std::next(std::find(word.begin(), word.end(), predecessor)), id);
+    removed.erase(id);
+    changed.push_back(cut);
+    ++revision;
+}
 const std::vector<Id>& Ledger::word(Cut cut) const
 {
     static const std::vector<Id> empty;

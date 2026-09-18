@@ -320,6 +320,7 @@ Control::Control(const Program& program)
         if (!loop.atLeastOnce || loop.bodyEntry == NoAnalysisId) continue;
         LoopEntryFacts facts;
         facts.entry = loop.entry;
+        facts.sites = loop.sites;
         facts.firstConsumer.fill(NoAnalysisId);
         std::set<Pipe> observers;
         for (auto site : loop.sites) {
@@ -328,6 +329,7 @@ Control::Control(const Program& program)
             if (operation == NoAnalysisId) continue;
             const auto& op = program.operations[operation];
             observers.insert(op.pipe);
+            facts.issuedPipes.insert(op.pipe);
             for (const auto& access : op.accesses) {
                 const auto base = (Id(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
                 if (access.read) facts.issuedClasses.insert(base);
@@ -353,9 +355,9 @@ Control::Control(const Program& program)
                 const auto& next = graph.sites[at].successors;
                 todo.insert(todo.end(), next.begin(), next.end());
             }
-            if (!bypass && first.size() == 1) {
-                const auto deadline = *first.begin();
-                facts.firstConsumer[unsigned(observer)] = deadline;
+            if (!bypass && !first.empty()) {
+                facts.firstConsumers[unsigned(observer)].assign(first.begin(), first.end());
+                if (first.size() == 1) facts.firstConsumer[unsigned(observer)] = *first.begin();
                 std::fill(seen.begin(), seen.end(), false);
                 todo = graph.sites[loop.entry].successors;
                 while (!todo.empty()) {
@@ -364,7 +366,7 @@ Control::Control(const Program& program)
                     seen[at] = true;
                     ++loopEntryPreparationSites;
                     facts.crossedWords[unsigned(observer)].push_back(at);
-                    if (at == deadline) continue;
+                    if (first.count(at)) continue;
                     const auto& next = graph.sites[at].successors;
                     todo.insert(todo.end(), next.begin(), next.end());
                 }
