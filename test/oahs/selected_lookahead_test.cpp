@@ -448,8 +448,9 @@ void enclosingAcquisitionAndRearming()
     fixed[6] = {{o::Command::Publish, P, R, 0}, {o::Command::Acquire, P, R, 0},
                 {o::Command::Publish, R, P, 0}, {o::Command::Acquire, R, P, 0}};
     const auto exporting = accepted(p, fixed);
-    require(exporting.work.loopEntryTransfers == 1 && exporting.work.acknowledgments != 0,
-            "pending rearming ignored a publication before the necessary return");
+    require(exporting.work.loopEntryTransfers == 1 && exporting.work.rearmingComposed != 0 &&
+            exporting.work.acknowledgments == 0,
+            "sealed reciprocal transfers did not discharge the conservative helper");
     auto unrelated = p;
     unrelated.operations[1].accesses.clear();
     require(accepted(unrelated).work.loopEntryTransfers == 0,
