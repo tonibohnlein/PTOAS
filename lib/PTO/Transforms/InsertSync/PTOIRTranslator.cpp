@@ -16,6 +16,7 @@
 #include "PTO/IR/SyncResources.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
+#include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/Matchers.h"
@@ -148,11 +149,11 @@ static bool getConstIndexValue(Value value, int64_t &out) {
 }
 
 static std::optional<uint64_t> getKnownPhysicalAddress(Value value) {
-  int64_t address = 0;
-  if (!getConstIndexValue(value, address) || address < 0) {
-    return std::nullopt;
-  }
-  return static_cast<uint64_t>(address);
+  // Exact constant expressions are physical addresses too. The shared scalar
+  // evaluator rejects unknown inputs, narrowing loss and overflowing arithmetic;
+  // it does not infer a definite write or an occurrence from an address.
+  llvm::DenseMap<Value, uint64_t> constants;
+  return SyncSlotMapping::evaluate(value, constants);
 }
 
 static bool isLocalAddressSpace(pto::AddressSpace space) {

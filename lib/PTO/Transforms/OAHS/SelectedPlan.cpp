@@ -128,7 +128,11 @@ SelectedPlan Constructor::run(const Commands& fixed)
             const auto operation = control.graph.operations[current];
             const auto after = control.after(current);
             if (operation != NoAnalysisId && after != NoAnalysisId) {
+                sourcesAtCut[after].push_back(result.sources.size());
                 result.sources.push_back({program.operations[operation].pipe, current, after, ledger.version(), {}});
+                if (needsContextualReplay) {
+                    refreshSources(after);
+                }
             }
         }
 
