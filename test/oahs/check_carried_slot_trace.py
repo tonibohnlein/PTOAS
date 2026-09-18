@@ -37,7 +37,7 @@ def parse(lines, at):
 
 
 class Trace:
-    def __init__(self, serialize=False, check_outer=False):
+    def __init__(self, serialize=False, check_outer=False, check_bank=False, serialize_parent=False):
         self.ancestors = []
         self.launch = {}
         self.gate = {}
@@ -53,6 +53,10 @@ class Trace:
         self.check_outer = check_outer
         self.outer_checks = 0
         self.sync_counts = {}
+        self.check_bank = check_bank
+        self.serialize_parent = serialize_parent
+        self.bank_checks = 0
+        self.early_ready_checks = 0
 
     def vertex(self, parents):
         bits = 0
@@ -109,6 +113,8 @@ class Trace:
                 "tmatmul.acc": "M", "tstore": "FIX"}[name]
         if self.serialize and name == "textract":
             self.sync("barrier", "ALL")
+        if self.serialize_parent and name == "tload" and context[-1][1] > 0:
+            self.sync("barrier", "ALL")
         issued = self.issue(pipe)
         done = self.vertex([issued])
         for old in self.payloads:
@@ -141,6 +147,20 @@ class Trace:
             if prior and prior[3][:-1] == context[:-1] and prior[3][-1][0] == context[-1][0] and prior[3][-1][1] + 1 == context[-1][1]:
                 assert not self.ancestors[issued] & (1 << prior[1]), ("current-bank compute gates next-bank preparation", context)
                 self.overlap_checks += 1
+        if self.check_bank:
+            if name == "tload":
+                for old in self.payloads:
+                    if (old[0].startswith("tmatmul") and old[3][:-2] == context[:-1] and
+                            old[3][-2][0] == context[-1][0] and old[3][-2][1] + 1 == context[-1][1]):
+                        assert not self.ancestors[issued] & (1 << old[1]), (
+                            "previous-group compute gates a different MAT bank", old[3], context)
+                        self.bank_checks += 1
+            if (name == "textract" and context[-1][1] == 0 and
+                    any(write and cell[0] == "left" for cell, write in effects)):
+                loads = [old for old in self.payloads if old[0] == "tload" and old[3] == context[:-1]]
+                assert len(loads) == 2, "fixture MAT producers changed"
+                assert not self.ancestors[issued] & (1 << loads[1][1]), "B load gates early A readiness"
+                self.early_ready_checks += 1
         self.payloads.append((name, done, effects, context))
         if acc_order:
             self.native_acc[done] = acc_order
@@ -246,8 +266,8 @@ def main():
     lines = open(sys.argv[1]).read().splitlines()
     start = next(i for i, line in enumerate(lines) if "func.func @hpgemm_hpgemm" in line) + 1
     nodes, _ = parse(lines, start)
-    for step in (256, 128):
-        trace = Trace(check_outer=True)
+    for step in (256, 128, 64):
+        trace = Trace(check_outer=True, check_bank=True)
         execute(nodes, {"%arg3": 0, "%arg4": step}, trace)
         assert not trace.live, "unconsumed events at return"
         for kind in ("set_flag", "wait_flag"):
@@ -255,15 +275,28 @@ def main():
                 assert trace.sync_counts.get((kind, source, observer), 0) == 256 // step, (
                     "invariant enclosing completion or its acknowledgment repeats in a child",
                     trace.sync_counts)
-        assert trace.sync_counts.get(("barrier", "MTE2", None), 0) == 0, (
-            "MAT overwrite retained a redundant same-pipe barrier", trace.sync_counts)
-        assert trace.sync_counts.get(("barrier", "M", None), 0) == 256 // step, (
-            "unexpected ACC initialization barrier population", trace.sync_counts)
+        assert all(count == 0 for (kind, source, _), count in trace.sync_counts.items()
+                   if kind == "barrier" and source != "ALL"), trace.sync_counts
+        assert trace.sync_counts.get(("barrier", "ALL", None), 0) == 1, trace.sync_counts
         assert trace.overlap_checks == (256 // step) * 16 * 3 * 2, trace.overlap_checks
         assert trace.outer_checks == (256 // step) * 15 * 2, trace.outer_checks
+        entries = 256 // step
+        assert trace.bank_checks == entries * 15 * 4 * 2, trace.bank_checks
+        assert trace.early_ready_checks == entries * 16, trace.early_ready_checks
+        pairs = {("M", "MTE1"): 64 * entries + 2,
+                 ("MTE1", "MTE2"): 16 * entries + 2,
+                 ("MTE2", "MTE1"): 32 * entries,
+                 ("MTE1", "M"): 64 * entries,
+                 ("FIX", "M"): entries, ("M", "FIX"): entries}
+        for kind in ("set_flag", "wait_flag"):
+            actual = {(source, observer): count
+                      for (command, source, observer), count in trace.sync_counts.items() if command == kind}
+            assert actual == pairs, ("bank-qualified event population changed", actual)
         print("outer entries", 256 // step, "required edges", trace.required_checks,
               "native ACC access checks", trace.native_acc_checks,
-              "forbidden inner/outer overlap edges absent", trace.overlap_checks, trace.outer_checks)
+              "forbidden inner/outer overlap edges absent", trace.overlap_checks, trace.outer_checks,
+              "bank prefetch", trace.bank_checks, "early A readiness", trace.early_ready_checks,
+              "event pairs", sum(pairs.values()), "named barriers", 0, "terminal ALL", 1)
     # A safety-preserving drain must FAIL the quality gate. This distinguishes
     # the overlap assertion from an acceptance-only synchronization test.
     try:
@@ -272,6 +305,12 @@ def main():
         assert "current-bank compute gates next-bank preparation" in str(error), error
     else:
         raise AssertionError("ordering oracle accepted an inserted whole-pipeline drain")
+    try:
+        execute(nodes, {"%arg3": 0, "%arg4": 256}, Trace(check_bank=True, serialize_parent=True))
+    except AssertionError as error:
+        assert "previous-group compute gates a different MAT bank" in str(error), error
+    else:
+        raise AssertionError("ordering oracle accepted a drain before next-bank prefetch")
 
 
 if __name__ == "__main__":

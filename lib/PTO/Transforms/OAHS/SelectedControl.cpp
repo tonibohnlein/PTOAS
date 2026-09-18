@@ -427,17 +427,32 @@ OccurrenceMode occurrenceMode(const Program& program, Cut cut)
     const auto observation = program.observed->sites[cut].observation;
     if (observation == NoAnalysisId || observation >= program.observed->observations.size()) return out;
     const auto& value = program.observed->observations[observation];
-    if (!value.available || value.atoms.size() < 3 || value.atoms.size() > 5) return out;
+    const bool insufficientObservation = !value.available || value.atoms.size() < 3;
+    if (insufficientObservation) {
+        return out;
+    }
     uint64_t period = 0;
     Id owner = NoAnalysisId;
     for (const auto& atom : value.atoms)
         if (atom.kind == ObservationAtom::LoopResidue) {
-            period = atom.parameter;
-            owner = atom.owner;
+            const bool counted = std::any_of(value.atoms.begin(), value.atoms.end(), [&](const auto& other) {
+                return other.owner == atom.owner && other.parameter == atom.parameter &&
+                    other.kind == ObservationAtom::LoopHasPrevious;
+            });
+            if (counted) {
+                if (owner != NoAnalysisId) {
+                    return {};
+                }
+                period = atom.parameter;
+                owner = atom.owner;
+            }
         }
     if (!period) return out;
     unsigned seen = 0;
     for (const auto& atom : value.atoms) {
+        if (atom.owner != owner && atom.kind == ObservationAtom::LoopResidue) {
+            continue;
+        }
         if (period > 1 && atom.owner == owner && atom.parameter == 1 &&
             (atom.kind == ObservationAtom::LoopHasPrevious || atom.kind == ObservationAtom::LoopHasNext))
             continue;

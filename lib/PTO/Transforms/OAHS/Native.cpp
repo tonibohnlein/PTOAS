@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/Native.h"
 #include "ObservationUnion.h"
+#include "NativeFirstUse.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
@@ -83,6 +84,7 @@ struct Import {
   struct SlotLoop {
     unsigned period = 1;
     std::vector<CountedLoopRegion::PeriodicEffects> effects;
+    bool enclosing = false;
   };
   DenseMap<mlir::Operation *, SlotLoop> slotLoops;
   std::vector<std::string> observationNotes;
@@ -316,6 +318,59 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
       out.observationNotes.push_back("qualified original carried-slot orbit: period " +
                                      std::to_string(model.period));
   }
+  // Compose only physical bank identity with the existing child interface.
+  // Do not build enclosing elapsed/remaining or first/tail mode products.
+  for (auto loop : loops) {
+    const auto slots = out.slotLoops.find(loop.getOperation());
+    const bool usableOrbit = slots != out.slotLoops.end() && slots->second.enclosing &&
+                             slots->second.period >= 2;
+    if (!usableOrbit) {
+      continue;
+    }
+    const auto& control = *out.program.observed;
+    CountedLoopRegion model;
+    model.owner = ids.lookup(loop.getOperation());
+    model.period = slots->second.period;
+    model.effects = slots->second.effects;
+    const auto bound = integer(loop.getUpperBound());
+    model.atLeastOnce = bound && *bound > 0;
+    const bool uniqueHeader = control.sites[model.owner].successors.size() == 1;
+    if (!uniqueHeader) {
+      continue;
+    }
+    model.header = control.sites[model.owner].successors.front();
+    const bool structuredHeader = control.sites[model.header].successors.size() == 2;
+    if (!structuredHeader) {
+      continue;
+    }
+    model.bodyEntry = control.sites[model.header].successors[0];
+    model.continuation = control.sites[model.header].successors[1];
+    std::set<std::size_t> seen;
+    std::vector<std::size_t> todo{model.bodyEntry};
+    while (!todo.empty()) {
+      const auto at = todo.back();
+      todo.pop_back();
+      if (at == model.header || !seen.insert(at).second) {
+        continue;
+      }
+      model.bodySites.push_back(at);
+      for (auto next : control.sites[at].successors) {
+        todo.push_back(next);
+      }
+    }
+    auto refined = refineBankOccurrences(out.program, model);
+    auto local = refined.program;
+    if (refined.success) {
+      local.observed->loops = {local.observed->loops.back()};
+    }
+    if (!refined.success || !hasQualifiedRecurringAccesses(local)) {
+      out.observationNotes.push_back("kept original bank interface: " + refined.reason);
+      continue;
+    }
+    out.program = std::move(refined.program);
+    out.loopOwners[model.owner] = loop;
+    out.observationNotes.push_back("qualified enclosing bank occurrences: period " + std::to_string(model.period));
+  }
   // Several analytical residues can map to the same unchanged instruction.
   // Native emission uses original anchors; no payload is duplicated.
   while (out.payload.size() < out.program.operations.size())
@@ -347,6 +402,7 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     }
     q.loops.push_back(std::move(original));
   }
+  native_detail::importFirstUse(function, out.program, ids, out.observationNotes);
   const auto originals = out.anchors;
   out.anchors.assign(commandCutCount(out.program), nullptr);
   for (Cut at = 0; at < out.anchors.size(); ++at) {
@@ -466,6 +522,7 @@ LogicalResult import(func::FuncOp function, Import &out,
     scf::ForOp loop;
     SyncSlotMapping mapping;
     DenseMap<const BaseMemInfo *, std::vector<const BaseMemInfo *>> memories;
+    bool nested = false;
   };
   std::vector<SlotCandidate> slotCandidates;
   SmallVector<std::unique_ptr<BaseMemInfo>> slotMemory;
@@ -484,6 +541,7 @@ LogicalResult import(func::FuncOp function, Import &out,
     if (!mapping) return;
     SlotCandidate candidate;
     candidate.loop = loop;
+    candidate.nested = nested;
     candidate.mapping = std::move(*mapping);
     for (auto *payload : out.payload) {
       if (!loop->isProperAncestor(payload)) continue;
@@ -523,8 +581,16 @@ LogicalResult import(func::FuncOp function, Import &out,
       qualify(phase->defVec);
       qualify(phase->useVec);
     }
-    if (!nested && !candidate.memories.empty()) slotCandidates.push_back(std::move(candidate));
+    if (!candidate.memories.empty()) {
+      slotCandidates.push_back(std::move(candidate));
+    }
   });
+  DenseMap<const BaseMemInfo *, const std::vector<const BaseMemInfo *> *> bankMemories;
+  for (const auto& candidate : slotCandidates) {
+    for (const auto& item : candidate.memories) {
+      bankMemories[item.first] = &item.second;
+    }
+  }
   // A missing absolute local address is not a distinct-allocation proof. Keep
   // legacy alias behavior unchanged; normalize the handoff import's private
   // records instead. Stable copies also preserve the original SSA effect names.
@@ -586,7 +652,13 @@ LogicalResult import(func::FuncOp function, Import &out,
           const auto &resolved = candidate->memories.find(memory)->second;
           if (residue) physicalEffects.push_back({operation, resolved[*residue], write});
           else for (auto *bank : resolved) physicalEffects.push_back({operation, bank, write});
-        } else physicalEffects.push_back({operation, qualifyMemory(memory), write});
+        } else if (const auto banks = bankMemories.find(memory); banks != bankMemories.end()) {
+          for (const auto* bank : *banks->second) {
+            physicalEffects.push_back({operation, bank, write});
+          }
+        } else {
+          physicalEffects.push_back({operation, qualifyMemory(memory), write});
+        }
       }
       return success();
     };
@@ -652,6 +724,7 @@ LogicalResult import(func::FuncOp function, Import &out,
   for (const auto &variant : variants) {
     auto &slot = out.slotLoops[variant.candidate->loop.getOperation()];
     slot.period = variant.candidate->mapping.period;
+    slot.enclosing = variant.candidate->nested;
     if (slot.effects.empty() || slot.effects.back().operation != variant.original)
       slot.effects.push_back({variant.original, {}});
     slot.effects.back().residues.push_back(out.program.operations[variant.operation].accesses);
