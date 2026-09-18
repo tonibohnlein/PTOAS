@@ -39,6 +39,9 @@ struct Control {
         // A unique first observer payload on every exiting entry path, or no
         // qualified deadline. These are original-program facts, not receipts.
         std::array<Cut, PipeCount> firstConsumer;
+        std::array<std::vector<Cut>, PipeCount> firstConsumers;
+        std::vector<Cut> sites;
+        std::set<Pipe> issuedPipes;
         // Original word positions crossed by moving an acquisition to entry,
         // including the deadline's pre-payload word, excluding entry itself.
         // Their commands are selected-plan facts and must be queried afresh.
@@ -71,6 +74,9 @@ public:
     const std::vector<Id>& word(Cut) const;
     const SelectedEndpoint& endpoint(Id) const;
     Commands commands() const;
+    bool active(Id id) const { return !removed.count(id); }
+    void erase(Id);
+    void restoreAfter(Id, Id);
     uint64_t version() const { return revision; }
     const std::vector<SelectedEndpoint>& records() const { return endpoints; }
     const std::vector<Cut>& changes() const { return changed; }
@@ -84,6 +90,7 @@ private:
     std::vector<std::vector<Id>> words;
     std::vector<SelectedEndpoint> endpoints;
     std::vector<Cut> changed;
+    std::set<Id> removed;
     Id insert(Cut, Id, Command, EndpointPurpose, Id, Id);
 };
 
@@ -140,6 +147,8 @@ struct Replay {
     uint64_t version = 0, evaluations = 0;
     bool success = true;
     Cut failureCut = NoAnalysisId;
+    Id failureEndpoint = NoAnalysisId;
+    FrontierFailure failure = FrontierFailure::None;
     std::string reason;
     std::vector<Checkpoint> cuts;
     std::map<Id, State> afterEndpoint;
@@ -205,6 +214,17 @@ private:
     // Contextual state propagation is also needed for one-shot loop-entry
     // receipts. It does not reserve a physical key or establish rearming.
     bool needsContextualReplay = false;
+    // Each fallback return records a pending rearming obligation. A later
+    // necessary transfer may discharge it; memory requirements remain separate.
+    std::map<std::pair<Pipe, Pipe>, std::vector<std::pair<Id, Id>>> pendingRearming;
+    std::map<std::pair<Pipe, Pipe>, std::vector<Id>> necessaryReturns;
+    std::set<std::pair<Id, Id>> queriedReturns;
+    std::set<Id> requiredReturns;
+    bool restoreReturns(Id);
+    bool restoreRearming(Id, Cut);
+    bool settleRearming(const SelectedDecision&);
+    bool returnBeforeUse(Id helperWait, Id necessaryWait);
+    void rememberReturn(Id publication, Id acquisition);
 
     bool fail(SelectedFailure, std::string, Cut = NoAnalysisId);
     State initial() const;

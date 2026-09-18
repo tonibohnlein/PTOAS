@@ -392,7 +392,7 @@ ObservedImport refineCountedLoop(const Program &input,
     return id;
   };
   q.sites[loop.owner].successors.clear();
-  for (unsigned remaining = 0; remaining <= loop.period + 1; ++remaining) {
+  for (unsigned remaining = loop.atLeastOnce ? 1 : 0; remaining <= loop.period + 1; ++remaining) {
     const auto id = header({0, 0, remaining});
     q.sites[loop.owner].successors.push_back(id);
   }

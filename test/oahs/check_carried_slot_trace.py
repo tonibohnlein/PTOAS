@@ -52,6 +52,7 @@ class Trace:
         self.native_acc_checks = 0
         self.check_outer = check_outer
         self.outer_checks = 0
+        self.sync_counts = {}
 
     def vertex(self, parents):
         bits = 0
@@ -72,6 +73,8 @@ class Trace:
         return issue
 
     def sync(self, kind, source, observer=None, key=None):
+        identity = (kind, source, observer)
+        self.sync_counts[identity] = self.sync_counts.get(identity, 0) + 1
         if kind == "barrier" and source == "ALL":
             issued = self.vertex(list(self.launch.values()) + list(self.gate.values()))
             done = self.vertex([issued] + [x for fs in self.finishes.values() for x in fs])
@@ -247,6 +250,11 @@ def main():
         trace = Trace(check_outer=True)
         execute(nodes, {"%arg3": 0, "%arg4": step}, trace)
         assert not trace.live, "unconsumed events at return"
+        for kind in ("set_flag", "wait_flag"):
+            for source, observer in (("FIX", "M"), ("M", "FIX")):
+                assert trace.sync_counts.get((kind, source, observer), 0) == 256 // step, (
+                    "invariant enclosing completion or its acknowledgment repeats in a child",
+                    trace.sync_counts)
         assert trace.overlap_checks == (256 // step) * 16 * 3 * 2, trace.overlap_checks
         assert trace.outer_checks == (256 // step) * 15 * 2, trace.outer_checks
         print("outer entries", 256 // step, "required edges", trace.required_checks,

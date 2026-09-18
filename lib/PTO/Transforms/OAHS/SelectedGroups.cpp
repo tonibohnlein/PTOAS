@@ -151,8 +151,17 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
     for (const auto& r : required) needed.insert(accessClass(r));
     const auto observer = program.operations[control.graph.operations[current]].pipe;
     for (const auto& loop : control.loopEntries) {
-        if (loop.firstConsumer[unsigned(observer)] != current ||
+        const auto& first = loop.firstConsumers[unsigned(observer)];
+        if (std::find(first.begin(), first.end(), current) == first.end() ||
             control.canonicalCut[loop.entry] != loop.entry) continue;
+        if (!std::all_of(first.begin(), first.end(), [&](Cut cut) {
+            const auto& op = program.operations[control.graph.operations[cut]];
+            return std::all_of(required.begin(), required.end(), [&](const auto& r) {
+                return std::any_of(op.accesses.begin(), op.accesses.end(), [&](const auto& a) {
+                    return a.cell == r.cell && (a.write || (a.read && r.sourceWrite));
+                });
+            });
+        })) continue;
         // Moving a wait ahead of Q's first payload can still order another
         // engine through an earlier Q publication. Consult actual selected
         // words, not just payload order. Existing entry commands precede the
@@ -189,13 +198,28 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
             if (covered && (!selected || control.position[handle.cut] < control.position[selected->cut]))
                 selected = &handle;
         }
-        if (!selected || !control.lookahead.balancedTransfer({selected->cut}, loop.entry,
+        // With no saved source in this invocation, a source-inactive region
+        // can establish its incoming completion at entry. All alternative first
+        // observer payloads must need these same classes: a branch containing
+        // unrelated observer work is not a reason to advance its deadline.
+        const bool regional = !selected && !loop.issuedPipes.count(source) &&
+            std::none_of(loop.sites.begin(), loop.sites.end(), [&](Cut cut) {
+                return std::any_of(ledger.word(cut).begin(), ledger.word(cut).end(), [&](Id id) {
+                    const auto& c = ledger.endpoint(id).command;
+                    return c.kind == Command::BarrierAll || c.source == source ||
+                        ((c.kind == Command::Publish || c.kind == Command::Acquire) && c.observer == source);
+                });
+            });
+        if (!selected && !regional) continue;
+        const auto publication = selected ? selected->cut : loop.entry;
+        if (!regional && !control.lookahead.balancedTransfer({publication}, loop.entry,
                                        control.graph.entry, control.graph.exit)) continue;
         auto unused = [&](Pipe a, Pipe b) {
             for (Id key = 0; key < frontier.keys().size(); ++key) {
                 const auto& e = frontier.keys()[key];
                 if (e.source != a || e.observer != b || closedKeys.count(key) || recurringKeys.count(key)) continue;
                 if (std::none_of(ledger.records().begin(), ledger.records().end(), [&](const auto& r) {
+                    if (!ledger.active(r.id)) return false;
                     const auto& c = r.command;
                     return (c.kind == Command::Publish || c.kind == Command::Acquire) &&
                         c.source == a && c.observer == b && c.key == e.key;
@@ -205,10 +229,10 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
         };
         const auto forward = unused(source, observer);
         if (forward == NoAnalysisId) continue;
-        const bool repeats = control.components[control.component[selected->cut]].cyclic;
+        const bool repeats = control.components[control.component[publication]].cyclic;
         Id reverse = NoAnalysisId;
         auto commands = ledger.commands();
-        commands[selected->cut].push_back({Command::Publish, source, observer, frontier.keys()[forward].key});
+        commands[publication].push_back({Command::Publish, source, observer, frontier.keys()[forward].key});
         commands[loop.entry].push_back({Command::Acquire, source, observer, frontier.keys()[forward].key});
         auto trial = analyze(program, commands, {false});
         result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
@@ -229,8 +253,8 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
             result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
         }
         if (!trial.complete || !trial.diagnostics.empty() || !trial.protocol.empty()) continue;
-        group.publication = selected->cut;
-        group.publications = {selected->cut};
+        group.publication = publication;
+        group.publications = {publication};
         group.entryAcquisition = loop.entry;
         group.entryReturnKey = reverse;
         group.entryRepeats = repeats;

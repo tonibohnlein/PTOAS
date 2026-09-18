@@ -336,6 +336,26 @@ int main() {
         pending.push_back(next);
     }
     CHECK(o::refineCountedLoop(original.program, spec).success);
+    auto bypassesBody = [](const o::Program& p) {
+      const auto& graph = *p.observed;
+      std::vector<bool> seen(graph.sites.size());
+      std::vector<std::size_t> todo{graph.entry};
+      while (!todo.empty()) {
+        const auto at = todo.back(); todo.pop_back();
+        if (at == graph.exit) return true;
+        if (seen[at] || graph.sites[at].operation != o::NoAnalysisId) continue;
+        seen[at] = true;
+        for (auto next : graph.sites[at].successors) todo.push_back(next);
+      }
+      return false;
+    };
+    CHECK(bypassesBody(o::refineCountedLoop(original.program, spec).program));
+    spec.atLeastOnce = true;
+    const auto nonempty = o::refineCountedLoop(original.program, spec);
+    CHECK(nonempty.success);
+    CHECK(!bypassesBody(nonempty.program));
+    spec.atLeastOnce = false;
+
     for (unsigned variant = 0; variant < 3; ++variant) {
       auto bad = original.program;
       if (variant == 0)

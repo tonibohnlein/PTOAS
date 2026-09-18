@@ -52,6 +52,8 @@ struct CountedLoopRegion {
     std::vector<std::vector<Access>> residues;
   };
   std::vector<PeriodicEffects> effects;
+  // Proven from original bounds, independently of the selected protocol.
+  bool atLeastOnce = false;
 };
 // Refines original control only; no physical phase or command is inserted.
 // Assumes original i=0..N-1, step 1. Native import discharges this premise.

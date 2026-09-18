@@ -9,6 +9,16 @@
 #include "GraphOracle.h"
 #include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
 
+namespace mlir::pto::oahs::selected {
+struct ReplayTestAccess {
+    static SelectedPlan contextual(const Program& program)
+    {
+        Constructor constructor(program);
+        constructor.needsContextualReplay = true;
+        return constructor.run({});
+    }
+};
+}
 using namespace selected_test;
 namespace {
 constexpr auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE3;
@@ -162,7 +172,14 @@ void keepLoopReturn()
     p.operations = {op(P, {{0, false, true, true}}), op(Q, {{0, true, false}})};
     p.body = {o::Region::For, {seq({leaf(0), leaf(1)})}, 0, true};
     const auto plan = accepted(p);
-    require(plan.work.acknowledgments != 0, "last body issue was mistaken for invocation exit");
+    require(plan.work.acknowledgments + plan.work.rearmingDischarged != 0,
+            "last body issue was mistaken for invocation exit");
+    auto missingReturn = plan.commands;
+    for (auto& word : missingReturn) word.erase(std::remove_if(word.begin(), word.end(), [](const auto& c) {
+        return (c.kind == o::Command::Publish || c.kind == o::Command::Acquire) && c.source == Q && c.observer == P;
+    }), word.end());
+    require(!o::checkCausalFrontier(p, missingReturn).accepted,
+            "loop republication lost its actual consumption path");
     o::selected::Control control(p);
     for (std::size_t site = 0; site < control.graph.sites.size(); ++site) {
         if (control.graph.operations[site] == 1)
@@ -320,6 +337,79 @@ void entryWaitMustNotCrossPublication()
     require(accepted(p, fixed).work.loopEntryTransfers == 1,
             "publication after the consumer disabled useful early placement");
 }
+// A region with alternative first writers, re-entered after a foreign reader.
+// The source does no work inside the child; no kernel/opcode recognition is used.
+o::Program enclosingChoice()
+{
+    auto p = base(1, 3);
+    p.operations = {op(Q, {{0, false, true}}), op(Q, {{0, false, true}}),
+                    op(P, {{0, true, false}})};
+    o::ObservedControl q;
+    q.entry = 0; q.exit = 8; q.qualification = "original nested choice/re-entry";
+    for (o::Cut i = 0; i <= 8; ++i) {
+        q.observations.push_back({i, {}, true});
+        q.sites.push_back({o::NoAnalysisId, i, {}, {}, 0});
+    }
+    q.sites[0].successors = {1, 8};
+    q.sites[1].successors = {2};
+    q.sites[2].successors = {3, 4};
+    q.sites[3].operation = 0; q.sites[3].successors = {5};
+    q.sites[4].operation = 1; q.sites[4].successors = {5};
+    q.sites[5].successors = {2, 6}; q.sites[5].backedgeOwners = {1, o::NoAnalysisId};
+    q.sites[6].successors = {7};
+    q.sites[7].operation = 2; q.sites[7].successors = {1, 8};
+    q.sites[7].backedgeOwners = {0, o::NoAnalysisId};
+    q.loops.push_back({1, 1, 6, {2, 3, 4, 5}, 2, true});
+    p.observed = std::move(q);
+    return p;
+}
+void changedRepublicationDeadline()
+{
+    auto p = base(1, 3);
+    p.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}}),
+                    op(R, {{0, true, true}}), op(Q, {{0, true, false}})};
+    p.body = {o::Region::For, {seq({leaf(0),
+        {o::Region::Choice, {seq({leaf(1)}), seq({leaf(2)})}}, leaf(3)})}, 0, true};
+    const auto plan = o::selected::ReplayTestAccess::contextual(p);
+    require(plan.success, "new publication deadline: " + plan.reason);
+    require(o::checkCausalFrontier(p, plan.commands).accepted, "earlier deadline lost its rearming path");
+    for (const auto& visits : oahs_oracle::traces(p, 3))
+        require(bool(oahs_oracle::graph(p, plan.commands, visits)), "changed deadline failed independent protocol check");
+}
+void enclosingAcquisitionAndRearming()
+{
+    const auto p = enclosingChoice();
+    const auto plan = accepted(p);
+    require(plan.work.loopEntryTransfers == 1, "alternative first consumers lost enclosing acquisition");
+    require(plan.commands[1].size() == 2 && plan.commands[1][0].kind == o::Command::Publish &&
+            plan.commands[1][1].kind == o::Command::Acquire,
+            "enclosing completion must be acquired once, without an immediate return");
+    require(plan.work.rearmingDischarged == 2 && plan.work.acknowledgments == 0,
+            "necessary entry/result transfers did not discharge each other's rearming");
+    for (auto cut : {3u, 4u}) for (const auto& c : plan.commands[cut])
+        require(c.kind != o::Command::Publish && c.kind != o::Command::Acquire,
+                "invariant source completion was reacquired inside the region");
+    for (auto cut : {1u, 7u}) {
+        auto missing = plan.commands;
+        missing[cut].clear();
+        require(!o::checkCausalFrontier(p, missing).accepted,
+                "necessary return deletion manufactured consumption knowledge");
+    }
+    o::Commands fixed(o::commandCutCount(p));
+    fixed[6] = {{o::Command::Publish, P, R, 0}, {o::Command::Acquire, P, R, 0},
+                {o::Command::Publish, R, P, 0}, {o::Command::Acquire, R, P, 0}};
+    const auto exporting = accepted(p, fixed);
+    require(exporting.work.loopEntryTransfers == 1 && exporting.work.acknowledgments != 0,
+            "pending rearming ignored a publication before the necessary return");
+    auto unrelated = p;
+    unrelated.operations[1].accesses.clear();
+    require(accepted(unrelated).work.loopEntryTransfers == 0,
+            "one branch's deadline was broadened to an unrelated first consumer");
+    auto optional = p;
+    optional.observed->loops.front().atLeastOnce = false;
+    require(accepted(optional).work.loopEntryTransfers == 0,
+            "unqualified nonempty region received an enclosing acquisition");
+}
 } // namespace
 int main()
 {
@@ -330,6 +420,8 @@ int main()
     keepFuturePayloadReturn();
     keepFutureWordReturn();
     keepLoopReturn();
+    changedRepublicationDeadline();
+    enclosingAcquisitionAndRearming();
     invariantLoopEntry();
     reuseOneShotEntryKey();
     entryWaitMustNotCrossPublication();
