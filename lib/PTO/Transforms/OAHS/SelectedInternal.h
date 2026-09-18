@@ -166,6 +166,11 @@ struct RecurringRequirement {
     std::vector<Cut> publications, acquisitions;
     Id owner = NoAnalysisId;
     uint64_t period = 0;
+    // Exact storage-cycle qualification supplies occurrence, endpoint and
+    // participation correspondence directly. Relationship-derived fallbacks
+    // remain eligible for conservative redundancy trials.
+    bool qualifiedCycle = false;
+    bool storageRelease = false;
 };
 struct OccurrenceMode {
     Id owner = NoAnalysisId;

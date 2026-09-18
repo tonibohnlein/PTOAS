@@ -56,6 +56,10 @@ struct ObservedLoop {
   // grant completion. Refined quotients leave bodyEntry unavailable.
   std::size_t bodyEntry = NoControlId;
   bool atLeastOnce = false;
+  // Copies of the same original child boundary under an enclosing bank
+  // interface. Empty vectors denote the single entry/exit above. These remain
+  // original-control positions and never imply a storage or event reset.
+  std::vector<std::size_t> entries = {}, exits = {};
 };
 struct ObservedControl {
   std::vector<ObservedSite> sites;

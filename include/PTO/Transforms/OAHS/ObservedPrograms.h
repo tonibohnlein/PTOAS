@@ -58,6 +58,19 @@ struct CountedLoopRegion {
 // Refines original control only; no physical phase or command is inserted.
 // Assumes original i=0..N-1, step 1. Native import discharges this premise.
 ObservedImport refineCountedLoop(const Program &, const CountedLoopRegion &);
+// Frontend proof: each decision is true exactly before any of the listed
+// original loop backedges since entry. Exit ends that qualification. Only the
+// prefix up to a decision/backedge is split; all later control remains shared.
+struct FirstUseRegion {
+  std::size_t entry = 0, exit = 0;
+  std::vector<std::size_t> decisions, backedgeOwners;
+};
+ObservedImport refineFirstUse(const Program &, const FirstUseRegion &);
+// Carry only the finite bank identity across a region. Unlike counted first/tail
+// refinement this adds no elapsed/remaining modes. Child occurrence interfaces
+// retain their own modes and shared physical phases. Invariant effects are not
+// replaced by the enclosing bank's conservative may-footprints.
+ObservedImport refineBankOccurrences(const Program &, const CountedLoopRegion &);
 struct ObservedWord {
   OriginalObservation observation;
   std::vector<Command> commands;

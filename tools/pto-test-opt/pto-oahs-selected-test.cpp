@@ -267,6 +267,77 @@ bool accumulatorOrdering(MLIRContext &context) {
   }
   return true;
 }
+bool firstUseOrdering(MLIRContext &context) {
+  std::string original = matrixInput;
+  const auto argument = original.find("%unknown: index");
+  original.replace(argument, std::string("%unknown: index").size(),
+                   "%unknown: index, %out: !pto.partition_tensor_view<128x256xf32>");
+  const auto begin = original.find("    pto.tmatmul ins");
+  const auto middle = original.find("    pto.tmatmul.acc ins");
+  const auto end = original.find("    return");
+  for (unsigned variant = 0; variant < 4; ++variant) {
+    std::string source = original.substr(0, begin);
+    source += R"mlir(
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    scf.for %tile = %c0 to %c2 step %c1 {
+    scf.for %outer = %c0 to %c2 step %c1 {
+      scf.for %inner = %c0 to %c2 step %c1 {
+        %firstOuter = arith.cmpi eq, %outer, %c0 : index
+        %firstInner = arith.cmpi eq, %inner, %c0 : index
+)mlir";
+    if (variant == 0 || variant == 3) {
+      source += variant == 0 ? "        %first = arith.andi %firstOuter, %firstInner : i1\n"
+                             : "        %first = arith.ori %firstOuter, %firstInner : i1\n";
+    }
+    const char *condition = variant == 1 ? "%firstInner" : variant == 2 ? "%firstOuter" : "%first";
+    source += std::string("        scf.if ") + condition + " {\n";
+    source += original.substr(begin, middle - begin);
+    source += "        } else {\n";
+    source += original.substr(middle, end - middle);
+    source += R"mlir(
+        }
+      }
+    }
+    pto.tstore
+      ins(%c : !pto.tile_buf<acc, 128x256xf32, valid=?x?, blayout=col_major, slayout=row_major, fractal=1024>)
+      outs(%out : !pto.partition_tensor_view<128x256xf32>)
+    }
+)mlir" + original.substr(end);
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module), "parse nested first-use fixture")) return false;
+    auto function = module->lookupSymbol<func::FuncOp>("matrix");
+    oahs::NativeAnalysis imported;
+    if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, imported)),
+               "import nested first-use fixture")) return false;
+    SmallVector<scf::ForOp> loops;
+    function.walk([&](scf::ForOp loop) { loops.push_back(loop); });
+    oahs::Commands commands(oahs::commandCutCount(imported.program));
+    for (oahs::Cut cut = 0; cut < commands.size(); ++cut) {
+      if (imported.cuts[cut] == loops[1].getOperation()) {
+        commands[cut] = {{oahs::Command::Publish, oahs::Pipe::FIX, oahs::Pipe::M, 0},
+                         {oahs::Command::Acquire, oahs::Pipe::FIX, oahs::Pipe::M, 0}};
+      } else if (isa_and_nonnull<TStoreOp>(imported.cuts[cut])) {
+        commands[cut] = {{oahs::Command::Publish, oahs::Pipe::M, oahs::Pipe::FIX, 0},
+                         {oahs::Command::Acquire, oahs::Pipe::M, oahs::Pipe::FIX, 0}};
+      }
+    }
+    commands[oahs::invocationExitCut(imported.program)] = {{oahs::Command::BarrierAll}};
+    const auto checked = oahs::checkCausalFrontier(imported.program, commands);
+    if (!check(checked.accepted == (variant == 0),
+               "first use or genuinely repeating initialization completion")) return false;
+    if (variant != 0) {
+      for (oahs::Cut cut = 0; cut < commands.size(); ++cut) {
+        if (isa_and_nonnull<TMatmulOp>(imported.cuts[cut]))
+          commands[cut].push_back({oahs::Command::Barrier, oahs::Pipe::M});
+      }
+      if (!check(oahs::checkCausalFrontier(imported.program, commands).accepted,
+                 "repeated initialization must retain a real completion repair")) return false;
+    }
+  }
+  return true;
+}
 bool constantAddresses(MLIRContext &context) {
   const char *input = R"mlir(
 module attributes {pto.target_arch = "a3"} {
@@ -670,6 +741,6 @@ int main(int argc, char **argv) {
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
-                      slotMappings(context) && accumulatorOrdering(context);
+                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context);
   return passed ? 0 : 1;
 }
