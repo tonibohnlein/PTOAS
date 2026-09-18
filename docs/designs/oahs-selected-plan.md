@@ -85,10 +85,15 @@ Helpers remain a conservative construction fallback while the suffix is
 unfinished. If a later selected publication introduces an earlier deadline,
 that key's original helper is restored at its original prefix and marked
 required. Actual occupancy and consumption checks remain authoritative. Each
-helper/necessary-return query is evaluated at most once, indexed by direction;
-only successful discharges or required restorations replay the changed ledger.
+helper/necessary-return pair is enumerated at most once: per-direction cursors
+pair old helpers only with newly appended returns and new helpers with all
+returns, retaining the original selection order. Unchanged populations require
+no pair scan. The distinct pair population can still be quadratic, and each
+continuation query and successful edit/replay has a separate cost.
+Only successful discharges or required restorations replay the changed ledger.
 There is no final-plan deletion sweep or trial cold-check population. Work
-counters report graph query visits and net discharged helpers. The ordinary
+counters report pair visits, graph query visits, restorations and net discharged
+helpers. The ordinary
 loop-hypothesis traversal retains its closed fallback: it does not yet export
 these contextual token-generation interfaces. Physical reservations also remain
 conservative, so this does not solve allocation under a one-key pool.

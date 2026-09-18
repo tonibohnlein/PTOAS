@@ -152,7 +152,7 @@ std::optional<uint64_t> PTOIRTranslator::getKnownPhysicalAddress(Value value) {
   // Exact constant expressions are physical addresses too. The shared scalar
   // evaluator rejects unknown inputs, narrowing loss and overflowing arithmetic;
   // it does not infer a definite write or an occurrence from an address.
-  return SyncSlotMapping::evaluate(value, constantAddresses_);
+  return SyncSlotMapping::evaluateConstant(value, constantAddresses_);
 }
 
 static bool isLocalAddressSpace(pto::AddressSpace space) {

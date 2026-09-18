@@ -18,6 +18,7 @@
 #include "PTO/IR/SyncProtocolModel.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
+#include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -95,7 +96,7 @@ private:
   bool translated_ = false;
   // Unseeded scalar facts for this immutable import only. Never share these
   // with the per-residue maps used to qualify carried slots.
-  llvm::DenseMap<Value, uint64_t> constantAddresses_;
+  SyncSlotMapping::ConstantCache constantAddresses_;
   std::optional<uint64_t> getKnownPhysicalAddress(Value value);
   unsigned index; // 当前 SyncIR 节点的索引计数器
   

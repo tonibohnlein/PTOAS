@@ -137,6 +137,79 @@ struct ReplayTestAccess {
                 "unchanged traversal revisits growing cyclic prefixes");
         require(coldWork > incrementalWork, "test did not exercise saved replay work");
     }
+    static void dischargeRestore()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE3;
+        auto p = base(4, 2);
+        p.operations = {op(P, {{0, true, false}}), op(Q, {{1, true, false}}),
+                        op(R, {{2, true, false}}), op(P, {{3, true, false}})};
+        Constructor c(p);
+        c.needsContextualReplay = true;
+        std::string reason;
+        require(c.ledger.initialize(Commands(commandCutCount(p)), reason), reason);
+        auto append = [&](Cut cut, decltype(Command::Publish) kind, Pipe from, Pipe to, unsigned key,
+                          EndpointPurpose purpose, Id ack = NoAnalysisId) {
+            return c.ledger.append(cut, {kind, from, to, key}, purpose, NoAnalysisId, ack);
+        };
+        append(1, Command::Publish, P, Q, 0, EndpointPurpose::Completion);
+        const auto forward = append(1, Command::Acquire, P, Q, 0, EndpointPurpose::Completion);
+        const auto helperSet = append(1, Command::Publish, Q, P, 0, EndpointPurpose::ConsumptionAcknowledgment, forward);
+        const auto helperWait = append(1, Command::Acquire, Q, P, 0, EndpointPurpose::ConsumptionAcknowledgment, forward);
+        c.rememberReturn(helperSet, helperWait);
+        c.result.work.acknowledgments = 1;
+        append(3, Command::Publish, Q, P, 1, EndpointPurpose::Completion);
+        const auto actual = append(3, Command::Acquire, Q, P, 1, EndpointPurpose::Completion);
+        const auto originalWord = c.ledger.word(1);
+        c.current = c.control.graph.exit;
+        c.activeComponent = c.control.component[c.current];
+        c.activeOffset = 0;
+        std::fill(c.finalized.begin(), c.finalized.end(), true);
+        require(c.update(), c.cache.reason);
+        for (Cut at = 0; at < c.control.graph.sites.size(); ++at) {
+            c.current = at;
+            c.registerSource();
+        }
+        c.current = c.control.graph.exit;
+        auto compare = [&] {
+            const auto reused = c.cache;
+            const auto sources = c.result.sources;
+            c.cache = {};
+            require(c.replay(), c.cache.reason);
+            identical(reused, c.cache);
+            require(!sources.empty(), "erase/restore has no saved sources");
+            for (Id i = 0; i < sources.size(); ++i)
+                require(sources[i].snapshot == c.result.sources[i].snapshot &&
+                        sources[i].version == c.result.sources[i].version,
+                        "erase/restore source snapshot differs from cold replay");
+            c.cache = reused;
+            c.result.sources = sources;
+        };
+        compare();
+        SelectedDecision decision;
+        decision.endpoints = {actual};
+        require(c.settleRearming(decision), c.cache.reason);
+        require(!c.ledger.active(helperSet) && !c.ledger.active(helperWait) &&
+                c.result.work.rearmingDischarged == 1, "fixture never discharged its helper");
+        compare();
+        // New earlier republication needs the removed helper BEFORE the later
+        // actual return. update() must restore original IDs and word positions.
+        append(2, Command::Publish, P, Q, 0, EndpointPurpose::Completion);
+        append(2, Command::Acquire, P, Q, 0, EndpointPurpose::Completion);
+        require(c.update(), c.cache.reason);
+        require(c.result.work.rearmingRestored == 1 && c.result.work.rearmingDischarged == 0 &&
+                c.requiredReturns.count(helperWait) && c.ledger.word(1) == originalWord,
+                "earlier deadline did not restore and pin original helper identities/positions");
+        compare();
+        require(checkCausalFrontier(p, c.ledger.commands()).accepted, "restored plan not accepted");
+        c.current = 3;
+        c.activeComponent = c.control.component[c.current];
+        require(c.advance(), c.cache.reason);
+        compare();
+        decision.endpoints.clear();
+        decision.endpoints.push_back(helperWait);
+        require(c.settleRearming(decision) && c.ledger.word(1) == originalWord,
+                "required return was removed again");
+    }
     // One edit, replayed with the reusable prefix kept and then entirely cold.
     // Returns how many components the incremental run actually kept.
     // Returns the components the incremental run kept, and whether the edit was
@@ -393,6 +466,7 @@ void recurringRoleIsolation()
 } // namespace
 int main()
 {
+    o::selected::ReplayTestAccess::dischargeRestore();
     sourceTimeAndNeighbors();
     retirementAlternatives();
     joinedPrecisionBoundary();
