@@ -396,7 +396,7 @@ ObservedImport refineCountedLoop(const Program &input,
     const auto id = header({0, 0, remaining});
     q.sites[loop.owner].successors.push_back(id);
   }
-  std::map<std::tuple<std::size_t, unsigned, bool, bool, bool>, std::size_t>
+  std::map<std::tuple<std::size_t, unsigned, bool, bool, bool, bool>, std::size_t>
       observations;
   for (std::size_t modeIndex = 0; modeIndex < work.size(); ++modeIndex) {
     const auto [residue, elapsed, remaining] = work[modeIndex];
@@ -417,12 +417,10 @@ ObservedImport refineCountedLoop(const Program &input,
       const auto oldObservation = old.sites[site].observation;
       if (oldObservation == NoControlId)
         continue;
-      const auto &owners = old.sites[site].backedgeOwners;
-      const bool splitTail = !loop.effects.empty() && loop.period > 1 &&
-          std::find(owners.begin(), owners.end(), loop.owner) != owners.end();
       const auto key =
           std::make_tuple(oldObservation, residue, elapsed >= loop.period,
-                          remaining > loop.period, splitTail && remaining > 1);
+                          remaining > loop.period, elapsed != 0,
+                          remaining > 1);
       auto found = observations.find(key);
       if (found == observations.end()) {
         auto observation = old.observations[oldObservation];
@@ -433,10 +431,17 @@ ObservedImport refineCountedLoop(const Program &input,
               uint64_t(elapsed >= loop.period)},
              {ObservationAtom::LoopHasNext, loop.owner, loop.period,
               uint64_t(remaining > loop.period)}});
-        // A bank's final reader need not be the final loop iteration. Keep a
-        // distinct original last-iteration observation so key cleanup can wait
-        // until body exit instead of serializing preparation of another bank.
-        if (splitTail)
+        // A containing storage-use cycle and original first-iteration guards
+        // need the first child visit independently of the same-bank distance.
+        // For period one the ordinary previous-use atom is already identical.
+        if (loop.period > 1)
+          observation.atoms.push_back(
+              {ObservationAtom::LoopHasPrevious, loop.owner, 1,
+               uint64_t(elapsed != 0)});
+        // Enclosing producer/reader cycles need the child's first and final
+        // visits at the actual reader frontier, not only at its backedge.
+        // These remain predicates over the original IV and upper bound.
+        if (loop.period > 1)
           observation.atoms.push_back(
               {ObservationAtom::LoopHasNext, loop.owner, 1, uint64_t(remaining > 1)});
         const auto index = q.observations.size();

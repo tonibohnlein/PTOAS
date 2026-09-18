@@ -255,6 +255,10 @@ def main():
                 assert trace.sync_counts.get((kind, source, observer), 0) == 256 // step, (
                     "invariant enclosing completion or its acknowledgment repeats in a child",
                     trace.sync_counts)
+        assert trace.sync_counts.get(("barrier", "MTE2", None), 0) == 0, (
+            "MAT overwrite retained a redundant same-pipe barrier", trace.sync_counts)
+        assert trace.sync_counts.get(("barrier", "M", None), 0) == 256 // step, (
+            "unexpected ACC initialization barrier population", trace.sync_counts)
         assert trace.overlap_checks == (256 // step) * 16 * 3 * 2, trace.overlap_checks
         assert trace.outer_checks == (256 // step) * 15 * 2, trace.outer_checks
         print("outer entries", 256 // step, "required edges", trace.required_checks,
