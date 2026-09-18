@@ -121,6 +121,20 @@ void scarcity()
     require(bool(oahs_oracle::graph(p, result.commands, {0, 1, 2, 3, 4, 5}, {{3, 5}})),
             "T6b stable repair added read-x completion before read-z issue");
 }
+void sealedReciprocalComposition()
+{
+    auto p = base(1, 2);
+    p.operations = {op(Q, {{0, true, false}}), op(P, {{0, true, true, true}})};
+    p.body = {o::Region::For, {seq({leaf(0), leaf(1)})}, 0, true};
+    const auto result = accepted(p);
+    require(result.work.rearmingComposed == 2 && result.work.acknowledgments == 0,
+            "sealed reciprocal transfers did not compose their rearming paths");
+    require(count(result, o::Command::Publish) == 2 && count(result, o::Command::Acquire) == 2,
+            "composition changed the necessary completion transfers");
+    for (const auto& visits : oahs_oracle::traces(p, 3))
+        require(bool(oahs_oracle::graph(p, result.commands, visits)),
+                "composed reciprocal transfers failed the independent event check");
+}
 void structured()
 {
     auto p = base(1);
@@ -172,6 +186,7 @@ int main()
     straightLine();
     sharedCredit();
     scarcity();
+    sealedReciprocalComposition();
     structured();
     qualification();
     std::cout << "selected-plan named policy tests passed\n";

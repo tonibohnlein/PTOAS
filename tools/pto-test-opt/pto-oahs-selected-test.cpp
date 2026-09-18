@@ -576,6 +576,7 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " contextual=" << work.contextualReplays
                  << " unreused_updates=" << work.unreusedUpdates
                  << " sources=" << work.sourceHandles << " rearming_discharged=" << work.rearmingDischarged
+                 << " rearming_composed=" << work.rearmingComposed
                  << " rearming_restored=" << work.rearmingRestored
                  << " rearming_pairs=" << work.rearmingPairVisits
                  << " rearming_query_sites=" << work.rearmingQuerySites

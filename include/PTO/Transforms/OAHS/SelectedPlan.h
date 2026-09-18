@@ -114,6 +114,7 @@ struct SelectedWork {
     uint64_t recurringAnalysisSites = 0;
     std::size_t loopEntryTransfers = 0;
     std::size_t rearmingDischarged = 0;
+    std::size_t rearmingComposed = 0;
     std::size_t rearmingRestored = 0;
     uint64_t rearmingPairVisits = 0, rearmingQuerySites = 0;
     uint64_t loopEntryAnalysisSites = 0;

@@ -35,6 +35,39 @@ bool Constructor::finish()
             ledger.append(exit, {Command::BarrierAll, Pipe::S, Pipe::S, 0}, EndpointPurpose::Retirement);
         }
     }
+    // Reciprocal storage transfers can close each other's physical-key
+    // rearming obligations.  Consider the complete helper population for one
+    // unordered engine pair at a time: this composes actual selected transfers,
+    // never changes a completion publication/acquisition, and needs at most one
+    // cold certificate per target engine pair rather than one trial per helper.
+    using Pair = std::pair<Pipe, Pipe>;
+    std::set<std::pair<Pipe, Pipe>> completionDirections;
+    std::map<Pair, std::vector<Id>> helpers;
+    for (const auto& endpoint : ledger.records()) if (ledger.active(endpoint.id)) {
+        const auto& command = endpoint.command;
+        if (endpoint.purpose == EndpointPurpose::Completion && command.kind == Command::Acquire)
+            completionDirections.insert({command.source, command.observer});
+        if (endpoint.purpose == EndpointPurpose::ConsumptionAcknowledgment) {
+            const auto pair = std::minmax(command.source, command.observer);
+            helpers[{pair.first, pair.second}].push_back(endpoint.id);
+        }
+    }
+    for (const auto& [pair, endpoints] : helpers) {
+        if (!completionDirections.count({pair.first, pair.second}) ||
+            !completionDirections.count({pair.second, pair.first})) continue;
+        Ledger trial = ledger;
+        for (auto id : endpoints) trial.erase(id);
+        auto checked = checkCausalFrontier(program, trial.commands());
+        result.work.invariantSiteEvaluations += checked.siteEvaluations;
+        if (!checked.accepted) continue;
+        for (auto id : endpoints) ledger.erase(id);
+        const auto removed = std::count_if(endpoints.begin(), endpoints.end(), [&](Id id) {
+            return ledger.endpoint(id).command.kind == Command::Acquire;
+        });
+        result.work.acknowledgments -= removed;
+        result.work.rearmingDischarged += removed;
+        result.work.rearmingComposed += removed;
+    }
     auto commands = ledger.commands();
     result.certificate = checkCausalFrontier(program, commands);
     result.work.invariantSiteEvaluations += result.certificate.siteEvaluations;
