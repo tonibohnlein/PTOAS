@@ -36,19 +36,21 @@ Mode mode(const Program& p, Cut cut)
         return out;
     }
     const auto& value = p.observed->observations[observation];
-    if (!value.available || (value.atoms.size() != 3 && value.atoms.size() != 4)) {
-        return out;
-    }
+    if (!value.available || value.atoms.size() < 3 || value.atoms.size() > 5) return out;
     uint64_t period = 0;
     Id owner = NoAnalysisId;
     for (const auto &atom : value.atoms)
-        if (atom.kind == ObservationAtom::LoopResidue) { period = atom.parameter; owner = atom.owner; }
+        if (atom.kind == ObservationAtom::LoopResidue) {
+            period = atom.parameter;
+            owner = atom.owner;
+        }
+    if (!period) return out;
     unsigned seen = 0;
     for (const auto& atom : value.atoms) {
-        if (period > 1 && atom.kind == ObservationAtom::LoopHasNext && atom.parameter == 1 && atom.owner == owner) continue;
-        if (seen && (atom.owner != out.owner || atom.parameter != out.period)) {
-            return {};
-        }
+        if (period > 1 && atom.owner == owner && atom.parameter == 1 &&
+            (atom.kind == ObservationAtom::LoopHasPrevious ||
+             atom.kind == ObservationAtom::LoopHasNext)) continue;
+        if (seen && (atom.owner != out.owner || atom.parameter != out.period)) return {};
         out.owner = atom.owner;
         out.period = atom.parameter;
         if (atom.kind == ObservationAtom::LoopResidue) {
@@ -283,6 +285,135 @@ std::vector<RecurringRequirement> qualifyCell(
     return {std::move(ready), std::move(release)};
 }
 
+// Compose a refined child reader episode with its original enclosing loop.
+// This is deliberately narrower than nested residue refinement: it retains the
+// child's existing finite quotient and derives one complete producer/readers
+// cycle for an exact physical cell. The selected protocol is available before
+// ordinary construction decides whether a same-pipe overwrite needs a fence.
+std::vector<RecurringRequirement> qualifyEnclosingCell(
+    const Program& p, const Control& c, const ObservedLoop& loop, unsigned cell)
+{
+    if (loop.bodyEntry == NoAnalysisId || !loop.atLeastOnce ||
+        loop.entry >= c.graph.sites.size() || loop.exit >= c.graph.sites.size() ||
+        !c.graph.legalCuts[c.graph.entry] || !c.graph.legalCuts[c.graph.exit] ||
+        p.cells[cell].exclusive) return {};
+    const std::set<Id> members(loop.sites.begin(), loop.sites.end());
+    if (!members.count(loop.bodyEntry) || members.count(loop.entry) || members.count(loop.exit)) return {};
+    std::vector<unsigned> roles(c.graph.sites.size());
+    Pipe producer = Pipe::Count, consumer = Pipe::Count;
+    for (auto site : members) {
+        if (site >= c.graph.sites.size() || !c.reachable[site]) continue;
+        const auto operation = c.graph.operations[site];
+        if (operation == NoAnalysisId) continue;
+        const auto& op = p.operations[operation];
+        unsigned role = 0;
+        for (const auto& access : op.accesses)
+            if (access.cell == cell) role |= unsigned(access.read) | (unsigned(access.write) << 1);
+        if (!role) continue;
+        if (role == 3 || p.target.synchronous[unsigned(op.pipe)]) return {};
+        auto& pipe = role == 2 ? producer : consumer;
+        if (pipe != Pipe::Count && pipe != op.pipe) return {};
+        pipe = op.pipe;
+        roles[site] = role;
+    }
+    if (producer == Pipe::Count || consumer == Pipe::Count || producer == consumer) return {};
+
+    auto atomsEqual = [&](Cut a, Cut b) {
+        const auto oa = p.observed->sites[a].observation;
+        const auto ob = p.observed->sites[b].observation;
+        if (oa == NoAnalysisId || ob == NoAnalysisId) return false;
+        auto left = p.observed->observations[oa].atoms;
+        auto right = p.observed->observations[ob].atoms;
+        auto less = [](const auto& x, const auto& y) {
+            return std::tie(x.owner, x.kind, x.parameter, x.value) <
+                   std::tie(y.owner, y.kind, y.parameter, y.value);
+        };
+        std::sort(left.begin(), left.end(), less);
+        std::sort(right.begin(), right.end(), less);
+        return left.size() == right.size() &&
+            std::equal(left.begin(), left.end(), right.begin(), [&](const auto& x, const auto& y) {
+                return !less(x, y) && !less(y, x);
+            });
+    };
+    auto afterObservation = [&](Id source) {
+        std::set<Cut> cuts;
+        auto todo = c.graph.sites[source].successors;
+        std::vector<bool> seen(c.graph.sites.size());
+        while (!todo.empty()) {
+            const auto at = todo.back(); todo.pop_back();
+            if (seen[at]) continue;
+            seen[at] = true;
+            if (c.graph.legalCuts[at]) {
+                if (!atomsEqual(source, at)) return Cut(NoAnalysisId);
+                cuts.insert(canonicalCommandCut(p, at));
+                continue;
+            }
+            if (c.graph.operations[at] != NoAnalysisId || at == c.graph.exit)
+                return Cut(NoAnalysisId);
+            const auto& next = c.graph.sites[at].successors;
+            todo.insert(todo.end(), next.begin(), next.end());
+        }
+        return cuts.size() == 1 ? *cuts.begin() : Cut(NoAnalysisId);
+    };
+    struct ChildVisit { Id owner = NoAnalysisId; bool first = false, last = false, valid = false; };
+    auto childVisit = [&](Id site) {
+        ChildVisit out;
+        const auto observation = p.observed->sites[site].observation;
+        if (observation == NoAnalysisId) return out;
+        const auto& atoms = p.observed->observations[observation].atoms;
+        for (const auto& before : atoms) {
+            if (before.kind != ObservationAtom::LoopHasPrevious || before.parameter != 1 ||
+                before.owner == loop.owner) continue;
+            for (const auto& after : atoms) {
+                if (after.kind != ObservationAtom::LoopHasNext || after.parameter != 1 ||
+                    after.owner != before.owner) continue;
+                if (out.valid && out.owner != before.owner) return ChildVisit{};
+                out = {before.owner, before.value == 0, after.value == 0, true};
+            }
+        }
+        return out;
+    };
+
+    RecurringRequirement ready, release;
+    ready.cell = release.cell = cell;
+    ready.cells = release.cells = {cell};
+    ready.source = producer;
+    ready.observer = consumer;
+    release.source = consumer;
+    release.observer = producer;
+    ready.owner = release.owner = loop.owner;
+    ready.period = release.period = 1;
+    release.publications.push_back(canonicalCommandCut(p, c.graph.entry));
+    release.acquisitions.push_back(canonicalCommandCut(p, c.graph.exit));
+    Id childOwner = NoAnalysisId;
+    for (auto site : members) {
+        if (!roles[site]) continue;
+        const auto endpoint = afterObservation(site);
+        if (endpoint == NoAnalysisId) return {};
+        if (roles[site] == 2) {
+            ready.publications.push_back(endpoint);
+            release.acquisitions.push_back(canonicalCommandCut(p, site));
+            continue;
+        }
+        const auto visit = childVisit(site);
+        if (!visit.valid || visit.owner == loop.owner ||
+            (childOwner != NoAnalysisId && childOwner != visit.owner)) return {};
+        childOwner = visit.owner;
+        if (visit.first) ready.acquisitions.push_back(canonicalCommandCut(p, site));
+        if (visit.last) release.publications.push_back(endpoint);
+    }
+    if (childOwner == NoAnalysisId) return {};
+    for (auto* request : {&ready, &release}) {
+        for (auto* cuts : {&request->publications, &request->acquisitions}) {
+            std::sort(cuts->begin(), cuts->end());
+            cuts->erase(std::unique(cuts->begin(), cuts->end()), cuts->end());
+        }
+        if (request->publications.empty() || request->acquisitions.empty() ||
+            !balanced(c, request->publications, request->acquisitions)) return {};
+    }
+    return {std::move(ready), std::move(release)};
+}
+
 bool balanced(const Control& c, const std::vector<Cut>& publications,
               const std::vector<Cut>& acquisitions)
 {
@@ -457,7 +588,9 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     if (!p.observed) return requests;
     for (const auto& loop : p.observed->loops) {
         for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
-            auto local = qualifyCell(p, c, loop, cell);
+            auto local = loop.bodyEntry == NoAnalysisId
+                ? qualifyCell(p, c, loop, cell)
+                : qualifyEnclosingCell(p, c, loop, cell);
             for (auto& request : local) {
                 // Several conservative storage witnesses can name the same
                 // physical role. One actual prefix serves their conjunction.
