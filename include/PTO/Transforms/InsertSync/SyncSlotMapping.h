@@ -10,6 +10,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include <limits>
 #include <numeric>
 #include <optional>
@@ -30,50 +31,72 @@ struct SyncSlotMapping {
     if (!attr || attr.getValue().getBitWidth() > 64 || attr.getValue().isNegative()) return {};
     return attr.getValue().getZExtValue();
   }
+  // Only for immutable UNSEEDED evaluation. Failed facts must not leak into
+  // the separate residue valuations, where an unknown slot can become known.
+  struct ConstantCache {
+    llvm::DenseMap<Value, uint64_t> known;
+    llvm::DenseSet<Value> notConstant;
+    uint64_t evaluations = 0;
+    void clear() { known.clear(); notConstant.clear(); evaluations = 0; }
+  };
+  static std::optional<uint64_t> evaluateConstant(Value value, ConstantCache &cache) {
+    return evaluateImpl(value, cache.known, &cache.notConstant, &cache.evaluations);
+  }
   static std::optional<uint64_t> evaluate(Value value, llvm::DenseMap<Value, uint64_t> &known) {
+    return evaluateImpl(value, known, nullptr, nullptr);
+  }
+private:
+  static std::optional<uint64_t> evaluateImpl(Value value, llvm::DenseMap<Value, uint64_t> &known,
+                                             llvm::DenseSet<Value> *failed, uint64_t *evaluations) {
     auto found = known.find(value);
     if (found != known.end()) return found->second;
-    if (auto constant = literal(value)) {
-      known[value] = *constant;
-      return constant;
-    }
-    auto *op = value.getDefiningOp();
-    if (!op) return {};
-    unsigned width = isa<IndexType>(value.getType()) ? 64 :
-        (isa<IntegerType>(value.getType()) ? cast<IntegerType>(value.getType()).getWidth() : 0);
-    if (!width || width > 64) return {};
-    const uint64_t maximum = (uint64_t(1) << (width - 1)) - 1;
-    std::optional<uint64_t> result;
-    if (auto cast = dyn_cast<arith::IndexCastOp>(op)) {
-      result = evaluate(cast.getIn(), known);
-    } else if (isa<arith::ExtSIOp, arith::ExtUIOp, arith::TruncIOp>(op)) {
-      // The input must already be a known nonnegative signed value. Both
-      // extensions preserve it; truncation is admitted only if it fits the
-      // destination's nonnegative range (checked below). Never strip a lossy
-      // conversion or reinterpret a negative literal as a physical address.
-      result = evaluate(op->getOperand(0), known);
-    } else if (isa<arith::AddIOp, arith::MulIOp, arith::RemSIOp, arith::RemUIOp>(op)) {
-      // Stop on an unqualified operand. Evaluating both children eagerly can
-      // revisit a shared unknown scalar DAG exponentially (x = add(y, y)).
-      auto a = evaluate(op->getOperand(0), known);
-      if (!a) return {};
-      auto b = evaluate(op->getOperand(1), known);
-      if (!b) return {};
-      if (isa<arith::AddIOp>(op)) {
-        if (*a > maximum || *b > maximum - *a) return {};
-        result = *a + *b;
-      } else if (isa<arith::MulIOp>(op)) {
-        if (*b && *a > maximum / *b) return {};
-        result = *a * *b;
-      } else {
-        if (!*b) return {};
-        result = *a % *b;
+    if (failed && failed->contains(value)) return {};
+    if (evaluations) ++*evaluations;
+    const auto result = [&]() -> std::optional<uint64_t> {
+      if (auto constant = literal(value)) {
+        return constant;
       }
-    }
-    if (!result || *result > maximum) return {};
-    known[value] = *result;
+      auto *op = value.getDefiningOp();
+      if (!op) return {};
+      unsigned width = isa<IndexType>(value.getType()) ? 64 :
+          (isa<IntegerType>(value.getType()) ? cast<IntegerType>(value.getType()).getWidth() : 0);
+      if (!width || width > 64) return {};
+      const uint64_t maximum = (uint64_t(1) << (width - 1)) - 1;
+      std::optional<uint64_t> result;
+      if (auto cast = dyn_cast<arith::IndexCastOp>(op)) {
+        result = evaluateImpl(cast.getIn(), known, failed, evaluations);
+      } else if (isa<arith::ExtSIOp, arith::ExtUIOp, arith::TruncIOp>(op)) {
+        // The input must already be a known nonnegative signed value. Both
+        // extensions preserve it; truncation is admitted only if it fits the
+        // destination's nonnegative range (checked below). Never strip a lossy
+        // conversion or reinterpret a negative literal as a physical address.
+        result = evaluateImpl(op->getOperand(0), known, failed, evaluations);
+      } else if (isa<arith::AddIOp, arith::MulIOp, arith::RemSIOp, arith::RemUIOp>(op)) {
+        // Stop on an unqualified operand. Evaluating both children eagerly can
+        // revisit a shared unknown scalar DAG exponentially (x = add(y, y)).
+        auto a = evaluateImpl(op->getOperand(0), known, failed, evaluations);
+        if (!a) return {};
+        auto b = evaluateImpl(op->getOperand(1), known, failed, evaluations);
+        if (!b) return {};
+        if (isa<arith::AddIOp>(op)) {
+          if (*a > maximum || *b > maximum - *a) return {};
+          result = *a + *b;
+        } else if (isa<arith::MulIOp>(op)) {
+          if (*b && *a > maximum / *b) return {};
+          result = *a * *b;
+        } else {
+          if (!*b) return {};
+          result = *a % *b;
+        }
+      }
+      if (!result || *result > maximum) return {};
+      return result;
+    }();
+    if (result) known[value] = *result;
+    else if (failed) failed->insert(value);
     return result;
   }
+public:
 
   static std::optional<SyncSlotMapping> derive(scf::ForOp loop, unsigned maximumPeriod) {
     if (loop.getInitArgs().empty() || literal(loop.getLowerBound()) != std::optional<uint64_t>(0) ||

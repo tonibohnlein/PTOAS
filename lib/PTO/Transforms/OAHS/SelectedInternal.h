@@ -218,7 +218,9 @@ private:
     // necessary transfer may discharge it; memory requirements remain separate.
     std::map<std::pair<Pipe, Pipe>, std::vector<std::pair<Id, Id>>> pendingRearming;
     std::map<std::pair<Pipe, Pipe>, std::vector<Id>> necessaryReturns;
-    std::set<std::pair<Id, Id>> queriedReturns;
+    // Append-only populations already paired for each direction. Old helpers
+    // see only new returns; new helpers see all returns, in the original order.
+    std::map<std::pair<Pipe, Pipe>, std::pair<Id, Id>> pairedReturns;
     std::set<Id> requiredReturns;
     bool restoreReturns(Id);
     bool restoreRearming(Id, Cut);
