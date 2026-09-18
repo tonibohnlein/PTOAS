@@ -48,14 +48,23 @@ std::vector<RecurringRequirement> qualifyCell(
     const Program& p, const Control& c, const ObservedLoop& loop, unsigned cell)
 {
     std::set<Id> members(loop.sites.begin(), loop.sites.end());
+    const std::set<Id> entries = loop.entries.empty() ? std::set<Id>{loop.entry}
+        : std::set<Id>(loop.entries.begin(), loop.entries.end());
+    const std::set<Id> exits = loop.exits.empty() ? std::set<Id>{loop.exit}
+        : std::set<Id>(loop.exits.begin(), loop.exits.end());
     if (loop.entry >= c.graph.sites.size() || loop.exit >= c.graph.sites.size() ||
         members.count(loop.entry) || members.count(loop.exit) || members.count(c.graph.entry)) return {};
     // Metadata is a proposal, not a trusted interface. Check all entries and
     // exits, including a root entry with no predecessor edge.
     for (Id site = 0; site < c.graph.sites.size(); ++site) {
         for (auto next : c.graph.sites[site].successors) {
-            if (members.count(next) && !members.count(site) && site != loop.entry) return {};
-            if (members.count(site) && !members.count(next) && next != loop.exit) return {};
+            const bool unqualifiedEntry = members.count(next) && !members.count(site) &&
+                !entries.count(site);
+            const bool unqualifiedExit = members.count(site) && !members.count(next) &&
+                !exits.count(next);
+            if (unqualifiedEntry || unqualifiedExit) {
+                return {};
+            }
         }
     }
     if (p.cells[cell].exclusive) return {};
@@ -92,21 +101,29 @@ std::vector<RecurringRequirement> qualifyCell(
             const auto at = todo.back(); todo.pop_back();
             if (seen[at]) continue;
             seen[at] = true;
-            if (at == loop.exit || roles[at]) out.insert(at);
-            else if (members.count(at) || at == loop.entry) {
+            const bool foundAccess = exits.count(at) || roles[at];
+            if (foundAccess) {
+                out.insert(at);
+            } else if (members.count(at) || entries.count(at)) {
                 const auto& next = c.graph.sites[at].successors;
                 todo.insert(todo.end(), next.begin(), next.end());
             }
         }
         return out;
     };
-    for (auto first : nextAccess({loop.entry})) {
-        if (first != loop.exit && (roles[first] != 2 || modes[first].previous)) return {};
+    for (auto first : nextAccess(std::vector<Id>(entries.begin(), entries.end()))) {
+        const bool invalidFirstAccess = !exits.count(first) &&
+            (roles[first] != 2 || modes[first].previous);
+        if (invalidFirstAccess) {
+            return {};
+        }
     }
     // Track first/reused permission from the real local entry and all backedges.
     std::vector<unsigned> previous(c.graph.sites.size());
-    std::deque<Id> queue{loop.entry};
-    previous[loop.entry] = 1;
+    std::deque<Id> queue(entries.begin(), entries.end());
+    for (auto entry : entries) {
+        previous[entry] = 1;
+    }
     while (!queue.empty()) {
         auto site = queue.front(); queue.pop_front();
         auto bits = roles[site] == 1 ? 2u : previous[site];
@@ -121,7 +138,7 @@ std::vector<RecurringRequirement> qualifyCell(
         const auto next = nextAccess(c.graph.sites[site].successors);
         if (next.empty()) return {};
         for (auto target : next) {
-            if (target == loop.exit) {
+            if (exits.count(target)) {
                 if (roles[site] == 2 || modes[site].next) return {};
             } else {
                 predecessors[target] |= roles[site];
@@ -135,17 +152,19 @@ std::vector<RecurringRequirement> qualifyCell(
     // consumption must reach its publisher before the next first-use SET.
     // A final local return is justified by that specific rearm obligation.
     bool reentered = false;
-    std::vector<Id> later{loop.exit};
+    std::vector<Id> later(exits.begin(), exits.end());
     std::vector<bool> visited(c.graph.sites.size());
     while (!later.empty()) {
         const auto at = later.back(); later.pop_back();
-        if (at == loop.entry) { reentered = true; break; }
+        if (entries.count(at)) { reentered = true; break; }
         if (visited[at]) continue;
         visited[at] = true;
         const auto& next = c.graph.sites[at].successors;
         later.insert(later.end(), next.begin(), next.end());
     }
     RecurringRequirement ready, release;
+    ready.qualifiedCycle = release.qualifiedCycle = true;
+    release.storageRelease = true;
     ready.cell = release.cell = cell;
     ready.cells = release.cells = {cell};
     ready.source = producer;
@@ -185,7 +204,9 @@ std::vector<RecurringRequirement> qualifyCell(
             else if (predecessors[site] != 1) return {}; // ambiguous first reader
             const auto next = nextAccess(c.graph.sites[site].successors);
             unsigned nextRoles = 0;
-            for (auto target : next) nextRoles |= target == loop.exit ? 4u : roles[target];
+            for (auto target : next) {
+                nextRoles |= exits.count(target) ? 4u : roles[target];
+            }
             if ((nextRoles & 1) && nextRoles != 1) return {}; // ambiguous last reader
             if (!(nextRoles & 1) && (modes[site].next || reentered)) {
                 release.publications.push_back(endpoint);
@@ -212,7 +233,7 @@ std::vector<RecurringRequirement> qualifyCell(
             else if (roles[site] == 1) {
                 const auto next = nextAccess(c.graph.sites[site].successors);
                 if (std::none_of(next.begin(), next.end(), [&](Id target) {
-                        return target != loop.exit && roles[target] == 1;
+                        return !exits.count(target) && roles[target] == 1;
                     }))
                     open.publications.push_back(after(p, c, site, modes[site]));
             }
@@ -245,6 +266,7 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
     if (!members.count(loop.bodyEntry) || members.count(loop.entry) || members.count(loop.exit)) return {};
     std::vector<unsigned> roles(c.graph.sites.size());
     Pipe producer = Pipe::Count, consumer = Pipe::Count;
+    uint64_t bankPeriod = 0, bankResidue = NoAnalysisId;
     for (auto site : members) {
         if (site >= c.graph.sites.size() || !c.reachable[site]) continue;
         const auto operation = c.graph.operations[site];
@@ -255,6 +277,19 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
             if (access.cell == cell) role |= unsigned(access.read) | (unsigned(access.write) << 1);
         if (!role) continue;
         if (role == 3 || p.target.synchronous[unsigned(op.pipe)]) return {};
+        const auto observation = p.observed->sites[site].observation;
+        if (observation != NoAnalysisId) {
+            for (const auto& atom : p.observed->observations[observation].atoms) {
+                if (atom.kind != ObservationAtom::LoopResidue || atom.owner != loop.owner) {
+                    continue;
+                }
+                if (bankPeriod && (bankPeriod != atom.parameter || bankResidue != atom.value)) {
+                    return {};
+                }
+                bankPeriod = atom.parameter;
+                bankResidue = atom.value;
+            }
+        }
         auto& pipe = role == 2 ? producer : consumer;
         if (pipe != Pipe::Count && pipe != op.pipe) return {};
         pipe = op.pipe;
@@ -319,6 +354,8 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
     };
 
     RecurringRequirement ready, release;
+    ready.qualifiedCycle = release.qualifiedCycle = true;
+    release.storageRelease = true;
     ready.cell = release.cell = cell;
     ready.cells = release.cells = {cell};
     ready.source = producer;
@@ -326,7 +363,7 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
     release.source = consumer;
     release.observer = producer;
     ready.owner = release.owner = loop.owner;
-    ready.period = release.period = 1;
+    ready.period = release.period = bankPeriod ? bankPeriod : 1;
     release.publications.push_back(canonicalCommandCut(p, c.graph.entry));
     release.acquisitions.push_back(canonicalCommandCut(p, c.graph.exit));
     Id childOwner = NoAnalysisId;
@@ -545,6 +582,7 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
                 });
                 if (duplicate == requests.end()) requests.push_back(std::move(request));
                 else {
+                    duplicate->qualifiedCycle &= request.qualifiedCycle;
                     duplicate->cells.insert(duplicate->cells.end(), request.cells.begin(), request.cells.end());
                     std::sort(duplicate->cells.begin(), duplicate->cells.end());
                     duplicate->cells.erase(std::unique(duplicate->cells.begin(), duplicate->cells.end()),
@@ -580,11 +618,21 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     // earlier compatible acquisition) can serve the conjunction. We only
     // merge one unambiguous cut per original occurrence mode; alternatives
     // remain separate until their participation correspondence is proved.
+    using EndpointOccurrence = std::vector<std::tuple<Id, unsigned, uint64_t, uint64_t>>;
     auto indexed = [&](const std::vector<Cut>& cuts) {
-        std::map<OccurrenceMode, Cut> out;
+        std::map<EndpointOccurrence, Cut> out;
         for (auto cut : cuts) {
-            const auto key = occurrenceMode(p, cut);
-            if (!key.valid || !out.emplace(key, cut).second) return std::map<OccurrenceMode, Cut>{};
+            if (cut >= p.observed->sites.size()) return std::map<EndpointOccurrence, Cut>{};
+            const auto observation = p.observed->sites[cut].observation;
+            if (observation == NoAnalysisId || observation >= p.observed->observations.size() ||
+                !p.observed->observations[observation].available)
+                return std::map<EndpointOccurrence, Cut>{};
+            EndpointOccurrence key;
+            for (const auto& atom : p.observed->observations[observation].atoms)
+                key.emplace_back(atom.owner, unsigned(atom.kind), atom.parameter, atom.value);
+            std::sort(key.begin(), key.end());
+            if (!out.emplace(std::move(key), cut).second)
+                return std::map<EndpointOccurrence, Cut>{};
         }
         return out;
     };
@@ -632,6 +680,57 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
             a.cells.erase(std::unique(a.cells.begin(), a.cells.end()), a.cells.end());
             a.cell = a.cells.front();
             requests.erase(requests.begin() + j);
+        }
+    }
+    // Two exact cells in the same physical bank episode may share their
+    // storage-release return while retaining separate early readiness. Admit
+    // this only when each cell has its own reverse exact cycle, the complete
+    // guarded occurrences correspond, and the merged release token stream is
+    // balanced. This is the private multi-operand bank case, not the broader
+    // one-sided endpoint coalescing policy.
+    bool joinedCycle = true;
+    while (joinedCycle) {
+        joinedCycle = false;
+        for (Id i = 0; i < requests.size() && !joinedCycle; ++i) {
+            const auto& a = requests[i];
+            if (!a.qualifiedCycle || !a.storageRelease) continue;
+            for (Id j = i + 1; j < requests.size() && !joinedCycle; ++j) {
+                const auto& b = requests[j];
+                if (!b.qualifiedCycle || a.source != b.source || a.observer != b.observer ||
+                    a.owner != b.owner || a.period != b.period || a.cells == b.cells) continue;
+                auto reverse = [&](const RecurringRequirement& value, Id skip) {
+                    for (Id k = 0; k < requests.size(); ++k) {
+                        const auto& candidate = requests[k];
+                        if (k != skip && candidate.qualifiedCycle && candidate.owner == value.owner &&
+                            candidate.period == value.period && candidate.source == value.observer &&
+                            candidate.observer == value.source && candidate.cells == value.cells)
+                            return k;
+                    }
+                    return Id(NoAnalysisId);
+                };
+                const auto ri = reverse(a, i), rj = reverse(b, j);
+                if (ri == NoAnalysisId || rj == NoAnalysisId || ri == rj) continue;
+                std::vector<Cut> forwardPublications, forwardAcquisitions;
+                if (!combine(a.publications, b.publications, true, forwardPublications) ||
+                    !combine(a.acquisitions, b.acquisitions, false, forwardAcquisitions) ||
+                    !balanced(c, forwardPublications, forwardAcquisitions))
+                    continue;
+                auto forward = a;
+                forward.cells = a.cells;
+                forward.cells.insert(forward.cells.end(), b.cells.begin(), b.cells.end());
+                std::sort(forward.cells.begin(), forward.cells.end());
+                forward.cells.erase(std::unique(forward.cells.begin(), forward.cells.end()),
+                                    forward.cells.end());
+                forward.cell = forward.cells.front();
+                forward.publications = std::move(forwardPublications);
+                forward.acquisitions = std::move(forwardAcquisitions);
+                std::vector<Id> erase{i, j};
+                std::sort(erase.begin(), erase.end(), std::greater<Id>());
+                erase.erase(std::unique(erase.begin(), erase.end()), erase.end());
+                for (auto index : erase) requests.erase(requests.begin() + index);
+                requests.push_back(std::move(forward));
+                joinedCycle = true;
+            }
         }
     }
     return requests;
@@ -706,6 +805,7 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
     };
     std::optional<AnalysisResult> selected;
     for (Id index = requests.size(); index-- > 0;) {
+        if (requests[index].qualifiedCycle) continue;
         if (!alternativeRoute(index)) continue;
         if (!selected) {
             selected = analyze(program, candidate(), {false});

@@ -8,10 +8,10 @@ advancing acquisition deadlines.
 
 ## Current priority order
 
-1. Improve synchronization-plan quality. The active task is the qualified
-   first-use ACC initializer described in `HANDOFF.md`.
-2. Revisit guarded attention bank reuse using requirements that remain after
-   actual selected credit, without increasing event count speculatively.
+1. Device-qualify the locally completed GEMM plan: 182 event pairs, zero named
+   barriers, and no added checked payload ordering relative to the manual plan.
+2. Extend remaining-obligation selection to guarded attention bank reuse,
+   without eagerly installing every qualified bank channel.
 3. Harden recurring specialization and coalescing at their correctness and
    resource boundaries.
 4. Optimize construction runtime and repeated immutable structure building.
@@ -19,6 +19,42 @@ advancing acquisition deadlines.
 Finish and measure a coherent plan milestone before moving to the next item.
 Runtime work may still be performed when it blocks plan experimentation, but it
 is not the current optimization target.
+
+## Locally completed GEMM plan milestone
+
+The working tree carries finite outer-bank identity through the nested MAT
+reader region and relates each overwrite to the previous participating use of
+the same physical bank. It composes that fact with the existing child
+ready/release interfaces without expanding the full nested first/tail product.
+
+Two operands in the same exact bank episode keep separate early readiness but
+share one storage-release return. A narrow first-use qualifier recognizes the
+original `outer_k == 0 && inner_k == 0` conjunction and splits only the entry
+prefix needed to eliminate impossible repeated ACC initialization. It grants no
+completion credit and declines incomplete or unsupported predicates.
+
+On the exact Shenggan payload, the plan has 182/360/716 event pairs for one,
+two, and four output-tile entries, zero named barriers, and one terminal ALL.
+The independent concrete checker finds no ordering relation added relative to
+compact MAT or the reconstructed manual plan. It removes 446/928/1,892
+relations relative to compact MAT and 16/32/64 relative to manual. It retains
+same-bank prefetch, separate early A readiness, memory/event/rearming coverage,
+and native ACC checks.
+
+Construction has 718 analytical sites, three selected updates, 21,846 replay
+site evaluations, ten recurring channels, zero recurring omission trials, and
+zero recurring-analysis site evaluations. The recorded exact run took about
+0.46 seconds. This satisfies the current requirement to avoid an expensive
+whole-plan refinement or candidate-search stage.
+
+Portable and native tests cover guarded/repeated bank entry, two and three
+banks, malformed correspondence, first-use conjunction negatives, and
+reconstruction of the exact emitted words. Device performance remains to be
+measured; event and barrier counts do not establish latency.
+
+The six representative attention outputs were unchanged by the bank-occurrence
+mechanism before first-use integration. Their guarded/non-scalar correspondence
+remains separate work and must be rerun in the next corpus/device qualification.
 
 ## 1. Restrict recurring endpoint coalescing
 
@@ -100,6 +136,13 @@ ready to apply:
 The next design must derive useful interfaces from remaining obligations rather
 than eagerly installing a ready/release pair for every qualified bank. It must
 also avoid re-solving unchanged selected regions after each endpoint edit.
+
+The general bank-qualified occurrence milestone does not by itself change these
+six plans. Their guarded/non-scalar correspondence is not represented as the
+finite scalar orbit admitted by the current native interface, so construction
+reports no recurring interfaces. The next mechanism should export the guarded
+participating occurrence and physical-bank correspondence, then select only the
+channels still required after actual selected completion and consumption.
 
 Acceptance criteria:
 

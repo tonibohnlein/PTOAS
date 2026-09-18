@@ -85,6 +85,21 @@ bool validObserved(const Program &p, std::string &reason) {
         return fail("invalid observed recurrence member");
     if (loop.atLeastOnce && (loop.bodyEntry >= q.sites.size() || !members.count(loop.bodyEntry)))
       return fail("invalid qualified loop entry");
+    for (const auto* boundaries : {&loop.entries, &loop.exits}) {
+      std::set<std::size_t> seen;
+      for (auto boundary : *boundaries) {
+        const bool invalidBoundary = boundary >= q.sites.size() || members.count(boundary) ||
+                                     !seen.insert(boundary).second;
+        if (invalidBoundary) {
+          return fail("invalid composed recurrence boundary");
+        }
+      }
+    }
+    const bool missingEntry = !loop.entries.empty() && loop.entries.front() != loop.entry;
+    const bool missingExit = !loop.exits.empty() && loop.exits.front() != loop.exit;
+    if (missingEntry || missingExit) {
+      return fail("composed recurrence omits its representative boundary");
+    }
   }
   std::set<std::vector<uint64_t>> unique;
   std::map<std::size_t,
@@ -925,3 +940,5 @@ std::vector<Cut> StorageFrontierAnalysis::corridor(std::size_t s, Pipe pipe,
 } // namespace mlir::pto::oahs
 
 #include "ObservedFrontend.h"
+#include "BankOccurrenceFrontend.h"
+#include "FirstUseFrontend.h"

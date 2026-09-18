@@ -6,178 +6,96 @@ Updated: 2026-09-18
 
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
-- Current milestone base: `948dafb40`
-- Expected working tree at this handoff: clean
+- Base HEAD: `8d08bbe6d8043822e9dd950bf4be1934ea75cd48`
+- Working tree: uncommitted bank-occurrence, shared-release, first-use, replay-cost, tests, and documentation changes
 
-Verify these facts at the start of a new session. A newer user commit supersedes
-the recorded base.
+Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
 
-## Active milestone
+## Delivered local synchronization plan
 
-Improve the selected synchronization plan before doing more construction-time
-optimization.
+The current implementation composes three direct constructor mechanisms:
 
-The immediate target is the remaining dynamically executed `PIPE_M` barrier in
-the exact Shenggan GEMM. The implementation must preserve the compact MAT
-readiness/release protocol and its measured overlap improvement.
+1. A finite physical-bank occurrence interface carries the outer MAT bank residue across the nested reader region. It relates each overwrite to the previous participating use of the same bank without expanding a product of nested first/middle/final modes.
+2. Two operands in one qualified physical-bank episode retain separate early readiness transfers but share one exact storage-release return. This preserves early A extraction and removes the redundant second MAT release channel.
+3. A first-use prefix qualifier recognizes the original conjunction `outer_k == 0 && inner_k == 0`. It splits one entry prefix, shares the remaining graph, and removes the impossible repeated ACC-initialization paths. It supplies no completion credit and retains conservative behavior for incomplete conjunctions, disjunctions, and unsupported loop forms.
 
-### Concrete next task
+Exact qualified cycles bypass whole-plan omission trials. Guarded copies of one original local-fence decision are batched into one selected update and one emitted command word. These changes avoid the expensive candidate-analysis/refinement path used by earlier experiments.
 
-Represent the original first-initialization fact
+## Exact Shenggan result
 
-```text
-outer_k == 0 && inner_k == 0
-```
+Generated artifact:
 
-without expanding the complete nested control graph. The fresh `tmatmul`
-initializer executes only on the first inner visit of the first K group. Its
-cross-tile predecessor is already intended to be ordered through
+- `/home/toni/work/pypto3_sync_more/bank-occurrence-work/shared-release-first-use.pto`
+- SHA-256: `3f1e19bf600e137685e0fdd4a49b5ea8ec4e19f1bf53f375618190ea2dfab8f2`
+- construction log: `/home/toni/work/pypto3_sync_more/bank-occurrence-work/shared-release-first-use.log`
 
-```text
-previous M work -> M-to-FIX readiness -> FIX store -> FIX-to-M entry acquisition
-```
+For identical concrete payloads:
 
-The analysis currently admits fresh initialization after arbitrary interior M
-operations. That produces guarded local fences even though those paths do not
-exist in the original program.
+| Tiles | Event pairs | Named barriers | Terminal ALL | Added / removed vs compact MAT | Added / removed vs manual |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 182 | 0 | 1 | 0 / 446 | 0 / 16 |
+| 2 | 360 | 0 | 1 | 0 / 928 | 0 / 32 |
+| 4 | 716 | 0 | 1 | 0 / 1,892 | 0 / 64 |
 
-Use a general qualified first-use/region-boundary mechanism. Do not mark fresh
-initialization as an accumulating MMAD, assume same-pipe completion, or add a
-GEMM recognizer. Do not restore the discarded full nested-mode expansion; it
-increased the selected graph and construction work substantially.
+The manual protocol has 167 event pairs for one tile. The 15-pair difference preserves separate early A/B readiness; the independent command-graph comparison finds the generated plan to be an ordering subset of the manual plan on all checked traces. Event count alone is not a performance estimate.
 
-Success means:
-
-- zero dynamically executed named barriers for the exact GEMM, while retaining
-  the terminal `PIPE_ALL`;
-- no new finish-to-launch ordering between current-bank compute and next-bank
-  preparation, or between child compute and independent parent DMA;
-- unchanged payload, memory coverage, event balance, and rearming checks;
-- a negative test where initialization can genuinely repeat still retains its
-  completion requirement;
-- focused native/core tests and the exact emitted-order checker pass before a
-  new device task is issued.
-
-## Current verified GEMM state
-
-The compact MAT mechanism carries a complete MAT readiness/release cycle before
-same-pipe fence decisions. It removes all 16 dynamically executed `PIPE_MTE2`
-barriers and adds 18 event pairs per tile.
-
-Correctly optimized device build results:
-
-| Arm | Median | TFLOPS | MAC ratio |
-| --- | ---: | ---: | ---: |
-| Manual | 229.632 us | 299.3 | 0.917 |
-| Compact MAT | 357.290 us | 192.3 | 0.605 |
-| Previous handoff | 391.147 us | 175.7 | 0.550 |
-| Existing | 533.640 us | 128.8 | 0.434 |
-
-Compact MAT is 8.66% faster than the previous handoff and 33.05% faster than
-existing. Its matrix work time equals the previous handoff; the shorter kernel
-and higher MAC occupancy show that removing the MTE2 drains restored overlap.
-The 18 added event pairs had no measurable cost in this experiment.
-
-The manual plan remains 1.56 times faster than compact MAT, so substantial plan
-quality headroom remains.
-
-## Latest frontier diagnosis
-
-The immutable requirement-frontier index reports 1,683 original storage
-relationships for the exact GEMM:
-
-- 320 same-visit;
-- 160 previous-use;
-- 24 region-entry;
-- 32 region-continuation;
-- 1,147 currently unclassified pairwise relationships.
-
-Most unclassified records are the cross-product of first/middle/final
-observations of already qualified inner operand/ACC cycles. Raw relationship
-count is therefore not a synchronization target.
-
-Every remaining fence record is on `PIPE_M`, for ACC cell 9, immediately before
-a represented fresh initializer. Each has the same residuals:
+The one-tile direction counts are:
 
 ```text
-previous M read  -> new ACC write
-previous M write -> new ACC write
+M -> MTE1      66
+MTE1 -> MTE2   18
+MTE2 -> MTE1   32
+MTE1 -> M      64
+FIX -> M        1
+M -> FIX        1
 ```
 
-The emitted static observations simplify to two guarded barrier words, with one
-barrier executed per output tile. This is the evidence for the active first-use
-task.
+The trace checker validates one, two, and four output-tile entries. It checks memory conflicts, native ACC ordering, event occupancy, consumption before republication, final balance, same-bank prefetch, separate early A readiness, and the absence of current-bank compute ordering before different-bank preparation or parent DMA. Its injected terminal drain remains a discriminating negative control.
 
-The frontier-indexed constructor still emits a byte-identical compact MAT plan:
+## Construction cost
+
+The exact run reports:
 
 ```text
-sha256 6e089c9c2f0d693a1ce0716699e7d3b2253172e1568b546f9842793db4c9eea5
+sites                         718
+selected updates                3
+replay site evaluations     21,846
+recurring channels             10
+recurring trials                0
+recurring analysis sites        0
+construction time          ~0.46 s in the recorded run
+peak RSS                    ~112 MB
 ```
 
-One- and two-entry trace checks pass, including all forbidden-overlap checks.
+The first-use qualifier adds 67 analysis sites to the 651-site bank graph, but does not create a nested mode product. The expensive recurring omission population is gone. Construction time remains suitable for corpus and device qualification; repeated immutable structure construction remains a later optimization target.
 
-## Validation and artifacts
+## Validation completed
 
-Useful local artifacts:
-
-- `/home/toni/work/pypto3_sync_more/gemm-cycle-work/frontier-analysis.log`
-- `/home/toni/work/pypto3_sync_more/gemm-cycle-work/frontier-details.tsv`
-- `/home/toni/work/pypto3_sync_more/gemm-cycle-work/frontier-unknown-modes.tsv`
-- `/home/toni/work/pypto3_sync_more/gemm-cycle-work/frontier-analysis.pto`
-- `/home/toni/work/pypto3_sync_more/gemm-cycle-work/compact-final.pto`
-- Device archive: `/opt/pypto/oahs-compact-mat-device.tar.gz`
-- Device archive SHA-256:
-  `e115f57710febac032ccc50f97a732e8f9f3cedb6bcf569682616a37b99f94cd`
-
-Last completed local validation at the milestone base:
-
-- standalone OAHS CTest: 18/18;
-- native `pto-oahs-selected-test`;
-- exact Shenggan one- and two-entry trace checker;
+- standalone OAHS CTest: 20/20;
+- portable bank occurrence tests: guarded and repeated entry, two and three banks, non-identity bank mapping, malformed boundaries, and exact shared-release structure;
+- portable first-use tests: 145 concrete traces, zero trip, repeated entry, malformed boundaries, and genuinely repeating initialization negatives;
+- native selected driver, including first-use conjunction and negative variants;
+- exact native construction and reconstruction;
+- exact Shenggan lit test: frontend lowering, FileCheck, and independent trace checker;
 - `git diff --check`.
 
-Common commands:
+Sanitizers and device execution were not run locally.
 
-```bash
-cmake --build /home/toni/work/pypto3_sync_more/oahs-m1-core-build --parallel 2
-ctest --test-dir /home/toni/work/pypto3_sync_more/oahs-m1-core-build --output-on-failure -j2
-cmake --build /home/toni/work/pypto3_sync_more/oahs-m1-native-build \
-  --target pto-oahs-selected-test --parallel 2
-```
+## Device qualification required
 
-Run the exact GEMM through construction and its checker:
+The local result matches or improves the manual plan's checked payload ordering, but device latency is not established. The next device task should compare:
 
-```bash
-/home/toni/work/pypto3_sync_more/oahs-m1-native-build/tools/pto-test-opt/pto-oahs-selected-test \
-  --construct test/lit/pto/oahs_carried_slot_shenggan.pto \
-  > /home/toni/work/pypto3_sync_more/gemm-cycle-work/current.pto
-python3 test/oahs/check_carried_slot_trace.py \
-  /home/toni/work/pypto3_sync_more/gemm-cycle-work/current.pto
-```
+- the current generated 182-pair, zero-named-barrier arm;
+- the reconstructed manual arm;
+- the prior 200-pair bank-qualified arm;
+- compact MAT;
+- existing and the frozen previous handoff where useful.
 
-## Parked work
+Use the project reference compiler flags obtained from `_kernel_compile_flags`, verify `-O2` in both device compiler invocations, retain numerical checks, and report MAC/MTE/scalar profile data. Do not infer performance from event or barrier counts.
 
-The tracked TODO contains the full acceptance criteria. In priority terms:
+## Remaining work
 
-1. Continue synchronization-plan improvements, starting with first-use ACC
-   initialization and then re-measuring the manual-plan gap.
-2. Rework guarded attention bank reuse from remaining obligations, without the
-   event-count and replay-cost increase of the preserved prototype.
-3. Restrict recurring coalescing and make optional specialization decline
-   cleanly under key pressure.
-4. Optimize construction time by sharing immutable structure and replacing
-   recurring changed-plan trials with direct certificates.
-
-Do not start item 4 merely because the current GEMM constructor performs 24,752
-recurring-analysis site evaluations. The current project decision is to improve
-the selected plan first, then optimize its construction.
-
-## Fresh-session prompt
-
-```text
-Read AGENTS.md, HANDOFF.md, and docs/designs/oahs-todo.md. Verify the branch,
-HEAD, and working tree. Continue the active first-use ACC milestone. Preserve
-the compact MAT protocol and do not use full nested graph expansion. Implement,
-run focused tests, regenerate the exact GEMM, and report ordering and mechanism
-counts before proposing a device task.
-```
+1. Measure the current GEMM plan on device before changing its protocol again.
+2. Redesign guarded attention occurrence correspondence from remaining obligations; the scalar bank orbit does not change the six representative attention plans.
+3. Restrict broader recurring endpoint coalescing with an ordering certificate and make optional specialization decline cleanly under key pressure.
+4. Reduce repeated immutable control/storage construction after plan quality is settled.

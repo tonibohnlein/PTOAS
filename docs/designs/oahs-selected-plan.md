@@ -185,6 +185,23 @@ uses ordinary construction instead. Different cells with identical endpoint sets
 share one physical prefix; independent loops do not require a product of their
 observation vocabularies.
 
+An enclosing physical-bank orbit can compose with an already qualified child
+recurrence. Native import retains the exact bank selected by each original
+residue and adds only that finite bank identity; it does not add enclosing
+first/tail or elapsed/remaining modes. Existing child modes and effects remain
+intact. Copies of a child interface export all corresponding entry and exit
+boundaries, so guarded participation and re-entry are checked over the composed
+original graph without treating a region boundary as a storage or event reset.
+
+The occurrence reader distinguishes the child's counted residue from the
+enclosing bank-only residue. The recurring qualifier then carries the previous
+participating use of the same physical bank and its event generation at the bank
+period. It still returns readiness/release obligations rather than commands.
+Selection processes those obligations through the ordinary remaining-residual
+and actual-credit rules; an enclosing interface is retained only when the
+resulting graph admits a recurring physical access relationship. This is a
+storage/control mechanism, not an operation-name or GEMM-pattern recognizer.
+
 For observed loops that do not match the strict alternating-cell form, the
 qualifier derives candidate recurring interfaces from the shared storage
 succession relation. It first tries one word for a complete pipe direction and
@@ -267,6 +284,15 @@ original residue predicates. No operation-name table or full-write inference is
 introduced. Other loops retain ordinary conservative control; there is no retry
 with another constructor. The analysis-only report can still expose normalized
 first/tail observations independently.
+
+Nested slot mappings are imported conservatively first: an operation outside the
+currently specialized orbit keeps the union of all physical bank effects. After
+leaf recurrence qualification, a finite enclosing bank orbit may specialize
+those effects and compose child boundaries as described above. Only the bank
+period is expanded, reusing residue-zero sites; the complete product of nested
+counted first/tail modes is not constructed. Malformed boundaries, duplicate
+bank dimensions, may-write promotion, and candidates without a qualified
+recurring access are declined.
 The emitter groups identical complete ordered words only at the same original
 anchor. It forms the exact union of their original predicates, absorbs redundant
 clauses, and removes a predicate dimension only when all its values are present.
@@ -339,46 +365,53 @@ too. An outer A-bank pool can be disjoint from a B-bank pool without qualifying
 which visit accesses each bank. Unknown expressions retain conservative aliases;
 this does not form a Cartesian product of enclosing-loop periods.
 
-Occurrence specialization still requires **leaf loops**. It specializes shared
-direct-allocation footprint records and runs the existing physical interval
-partition, including witnesses to all unqualified accesses. No payload opcode
-recognizer, definite-write assumption, new target contract or payload rewrite
-is introduced. Several analytical phases can map to one original instruction;
-original anchors, addresses and payload/control order remain unchanged.
+Occurrence specialization admits a finite enclosing scalar-bank orbit without
+forming a product with the child loop's first/middle/final modes. It copies only
+the enclosing bank residue, specializes shared direct-allocation footprint
+records, and exports copies of the child entry and exit boundaries. Invariant
+child effects remain shared. Original anchors, addresses, payload instructions,
+and runtime control remain unchanged.
 
-The existing recurrence qualifier then derives bank-specific readiness and
-reader-release channels. Their selected words are replayed through entry,
-backedges and exit; ACC and other invariant storage retain their separate
-ordinary obligations. For re-entered multi-bank regions, construction first
-tries an open release protocol: prime once at invocation entry, acquire before
-every corresponding bank write, publish after its last reader, and drain at
-invocation exit. The original-control balance monitor must prove participation
-including zero-trip paths, partial bank use and repeated entry. Otherwise the
-closed interface is retained. The combined ledger must still establish every
-consumption-before-republication requirement; priming supplies no memory credit.
+The recurring qualifier composes this bank identity with the child's existing
+producer/reader interface. It identifies the previous participating use of the
+same physical bank across child invocations and carries the actual ready/release
+token state through those boundaries. Empty child visits preserve the incoming
+interface. Exact qualified cycles are selected directly and do not invoke
+whole-plan channel-omission trials.
 
-Child interfaces export the actual causal/event snapshots, including full
-release tokens. Parent continuation does not reset them. MAT reader publications
-can stay before the next operand-release acquisition, avoiding unrelated compute
-completion in the DMA prerequisite. The admitted acquisition deadline is the
-next bank write. General earlier event deadlines and arbitrary open channels
-remain outside this extension. Recurring keys remain reserved for that protocol.
+For two operands occupying disjoint pools but sharing one bank selector, the
+constructor keeps their readiness publications separate. Each can therefore be
+acquired at its own first reader. Their storage-release returns may share one
+channel only when both cells have exact reverse cycles, complete guarded
+occurrence correspondence, comparable frontiers, and a balanced merged token
+stream. This prevents count reduction from delaying A readiness until B is
+available.
 
-The exact stripped Shenggan step4 payload is a native regression, accompanied by
-an independent concrete local-memory/event-order check. It checks one and two
-enclosing entries and forbids current-bank compute completion from gating the
-next inner-iteration bank fill, the last child computation from gating the next
-parent DMA, and serialization between disjoint A/B MAT loads. An injected ALL
-drain fails that quality check. Qualified native ACC access ordering is checked
-separately from the graph's whole-operation completion edges.
-Portable tests additionally cover zero through seven trips and repeated entry;
-native scalar tests include a three-bank stride-two orbit.
+A separate first-use qualifier recognizes conjunctions of original normalized
+loop first-visit equalities. It splits only the entry prefix until the decision
+or participating backedge and rejoins the existing graph afterward. The copied
+prefix shares physical operations, observations, storage history, and event
+state. Missing terms, disjunctions, unsupported bounds or steps, and intervening
+while loops retain conservative control. The qualifier removes impossible
+repeated initialization paths; it grants no completion credit and does not
+weaken the access-scoped native accumulator rule.
 
-This qualifies Shenggan's inner LEFT/RIGHT slot cycle. Its outer MAT slot loop
-has finite may-footprints but no exact per-visit MAT-bank correspondence.
-Runtime initial slots, arbitrary conditional bank skips,
-and non-unit-step carried-slot loops remains separate work. This is not a claim
-that the entire manual protocol or its device performance has been reproduced.
+The exact stripped Shenggan step4 payload is a native regression accompanied by
+an independent concrete local-memory/event-order check. The selected plan keeps
+separate early A/B readiness, shares the MAT release per physical bank episode,
+and has no named local barriers. For one, two, and four output-tile entries it
+executes 182, 360, and 716 event pairs plus one terminal ALL. The checker forbids
+current-bank compute completion from gating different-bank preparation, child
+compute from gating parent DMA, and B readiness from delaying the first A
+reader. Its complete payload-order relation is a subset of the reconstructed
+manual protocol on those traces. This is a plan-quality result; device latency
+requires separate measurement.
+
+Construction batches identical guarded local-fence decisions into one ledger
+update and one emitted command word. On the exact payload, qualified recurring
+cycles require no changed-plan omission analyses. This avoids the earlier
+expensive refinement path while retaining final causal and native read-back
+validation.
 
 The original Qwen3 RMSNorm and post-RMSNorm kernels exercise this representation
 in native regression coverage. Their unrelated reduction loops require
