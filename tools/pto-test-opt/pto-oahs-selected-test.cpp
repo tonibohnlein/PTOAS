@@ -10,12 +10,15 @@
 #include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
 #include "PTO/Transforms/InsertSync/SyncAccumulatorOrdering.h"
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
+#include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 #include <limits>
+#include <map>
+#include <tuple>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -461,6 +464,7 @@ bool slotMappings(MLIRContext &context) {
              }), "unknown pool base must retain conservative alias coverage")) return false;
   return true;
 }
+const char *pipeName(oahs::Pipe pipe);
 bool runFile(MLIRContext &context, const char *path) {
   auto module = parseSourceFile<ModuleOp>(path, &context);
   if (!module) { return false; }
@@ -484,6 +488,13 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " sites=" << work.constructedSites << " words=" << work.commandWords
                  << " cells=" << work.cells << " eligible_keys=" << work.eligibleKeys
                  << " components=" << work.components << " cyclic=" << work.cyclicComponents
+                 << " requirement_frontiers=" << work.requirementFrontiers
+                 << " source_frontiers=" << work.qualifiedSourceFrontiers
+                 << " unqualified_frontiers=" << work.unqualifiedSourceFrontiers
+                 << " frontier_classes=" << work.frontierAcyclic << "," << work.frontierSameVisit << ","
+                 << work.frontierPreviousUse << "," << work.frontierRegionEntry << ","
+                 << work.frontierRegionContinuation << "," << work.frontierGuarded << ","
+                 << work.frontierUnknown
                  << " recurring=" << work.recurringChannels
                  << " recurring_trials=" << work.recurringTrials
                  << " recurring_removed=" << work.redundantRecurringChannels
@@ -516,8 +527,128 @@ bool runFile(MLIRContext &context, const char *path) {
       llvm::errs() << (i ? "," : "") << report.channels[i].period;
     }
     llvm::errs() << (report.channels.empty() ? "-" : "") << " reason=" << report.reason << "\n";
+    for (const auto &fence : report.fences) {
+      llvm::errs() << "fence cut=" << fence.cut << " observer=" << pipeName(fence.observer)
+                   << " version=" << fence.version << " residuals=";
+      for (std::size_t i = 0; i < fence.residuals.size(); ++i) {
+        const auto &residual = fence.residuals[i];
+        llvm::errs() << (i ? "," : "") << "cell" << residual.cell << ":"
+                     << pipeName(residual.source) << ":"
+                     << (residual.sourceWrite ? "W" : "R") << "->"
+                     << (residual.consumerRead ? "R" : "")
+                     << (residual.consumerWrite ? "W" : "");
+      }
+      llvm::errs() << "\n";
+    }
   });
   if (accepted) { module->print(llvm::outs()); }
+  return accepted;
+}
+
+const char *pipeName(oahs::Pipe pipe) {
+  static constexpr const char *names[] = {"S", "V", "M", "MTE1", "MTE2", "MTE3", "FIX"};
+  const auto value = unsigned(pipe);
+  return value < oahs::PipeCount ? names[value] : "?";
+}
+const char *relationshipName(oahs::StorageRelationship::Kind kind) {
+  switch (kind) {
+  case oahs::StorageRelationship::RAW: return "RAW";
+  case oahs::StorageRelationship::WAR: return "WAR";
+  case oahs::StorageRelationship::WAW: return "WAW";
+  }
+  return "?";
+}
+const char *occurrenceName(oahs::selected::RequirementOccurrence occurrence) {
+  using O = oahs::selected::RequirementOccurrence;
+  switch (occurrence) {
+  case O::Acyclic: return "acyclic";
+  case O::SameVisit: return "same_visit";
+  case O::PreviousUse: return "previous_use";
+  case O::RegionEntry: return "region_entry";
+  case O::RegionContinuation: return "region_continuation";
+  case O::Guarded: return "guarded";
+  case O::Unknown: return "unknown";
+  case O::Count: break;
+  }
+  return "?";
+}
+bool frontierFile(MLIRContext &context, const char *path) {
+  auto module = parseSourceFile<ModuleOp>(path, &context);
+  if (!module) return false;
+  bool accepted = true;
+  module->walk([&](func::FuncOp function) {
+    if (function.isDeclaration()) return;
+    oahs::NativeAnalysis imported;
+    if (failed(oahs::testing::analyzeSelectedHandoffSync(function, imported))) {
+      accepted = false;
+      return;
+    }
+    oahs::selected::Control control(imported.program);
+    oahs::StorageFrontierAnalysis storage(imported.program);
+    oahs::selected::RequirementFrontiers frontiers(imported.program, control, storage);
+    if (!control.complete || !storage.complete() || !frontiers.complete()) {
+      llvm::errs() << "frontier analysis failed for " << function.getSymName() << ": "
+                   << (!control.complete ? control.reason :
+                       !storage.complete() ? storage.reason() : frontiers.reason()) << "\n";
+      accepted = false;
+      return;
+    }
+    struct Aggregate {
+      std::size_t count = 0;
+      oahs::Cut source = oahs::NoAnalysisId, deadline = oahs::NoAnalysisId;
+      oahs::Cut publication = oahs::NoAnalysisId;
+    };
+    auto modeName = [](const oahs::selected::OccurrenceMode &mode) {
+      if (!mode.valid) return std::string("-");
+      return std::to_string(mode.owner) + ":" + std::to_string(mode.period) + ":" +
+             std::to_string(mode.residue) + ":" + (mode.previous ? "P" : "-") +
+             (mode.next ? "N" : "-");
+    };
+    using Key = std::tuple<unsigned, unsigned, unsigned, unsigned, unsigned,
+                           std::string, std::string>;
+    std::map<Key, Aggregate> groups;
+    for (oahs::Cut deadline = 0; deadline < oahs::commandCutCount(imported.program); ++deadline) {
+      for (const auto &frontier : frontiers.at(deadline)) {
+        const Key key{unsigned(frontier.occurrence), unsigned(frontier.relationship.kind),
+                      unsigned(frontier.source), unsigned(frontier.observer),
+                      frontier.relationship.cell,
+                      modeName(oahs::selected::occurrenceMode(
+                          imported.program, frontier.relationship.source.site)),
+                      modeName(oahs::selected::occurrenceMode(imported.program, deadline))};
+        auto &group = groups[key];
+        if (group.count++ == 0) {
+          group.source = frontier.relationship.source.site;
+          group.deadline = frontier.deadline;
+          group.publication = frontier.publication;
+        }
+      }
+    }
+    llvm::outs() << "function\t" << function.getSymName() << "\trequirements\t"
+                 << frontiers.size() << "\tqualified_sources\t" << frontiers.sourceBoundaries() << "\n";
+    for (unsigned cell = 0; cell < imported.program.cells.size(); ++cell) {
+      const auto &physical = imported.program.cells[cell];
+      llvm::outs() << "cell\t" << cell << "\tspace\t" << physical.addressSpace
+                   << "\tstorage\t" << unsigned(physical.storage)
+                   << "\tunknown\t" << physical.unknownRange << "\tranges\t";
+      for (std::size_t i = 0; i < physical.ranges.size(); ++i)
+        llvm::outs() << (i ? "," : "") << physical.ranges[i].first << ":" << physical.ranges[i].second;
+      llvm::outs() << "\n";
+    }
+    llvm::outs() << "occurrence\tkind\tsource\tobserver\tcell\tsource_mode\ttarget_mode\tcount"
+                    "\tsample_source_site\tsample_publication\tsample_deadline\n";
+    for (const auto &[key, group] : groups) {
+      const auto &[occurrence, kind, source, observer, cell, sourceMode, targetMode] = key;
+      auto cut = [](oahs::Cut value) -> uint64_t {
+        return value == oahs::NoAnalysisId ? std::numeric_limits<uint64_t>::max() : value;
+      };
+      llvm::outs() << occurrenceName(oahs::selected::RequirementOccurrence(occurrence)) << "\t"
+                   << relationshipName(oahs::StorageRelationship::Kind(kind)) << "\t"
+                   << pipeName(oahs::Pipe(source)) << "\t" << pipeName(oahs::Pipe(observer)) << "\t"
+                   << cell << "\t" << sourceMode << "\t" << targetMode << "\t"
+                   << group.count << "\t" << cut(group.source) << "\t"
+                   << cut(group.publication) << "\t" << cut(group.deadline) << "\n";
+    }
+  });
   return accepted;
 }
 } // namespace
@@ -528,8 +659,11 @@ int main(int argc, char **argv) {
   if (argc == 3 && StringRef(argv[1]) == "--construct") {
     return runFile(context, argv[2]) ? 0 : 1;
   }
+  if (argc == 3 && StringRef(argv[1]) == "--frontiers") {
+    return frontierFile(context, argv[2]) ? 0 : 1;
+  }
   if (argc != 1) {
-    llvm::errs() << "usage: pto-oahs-selected-test [--construct INPUT]\n";
+    llvm::errs() << "usage: pto-oahs-selected-test [--construct INPUT | --frontiers INPUT]\n";
     return 2;
   }
   const bool passed = positive(context, ordinary, "ordinary") && positive(context, loop, "loop") &&

@@ -32,6 +32,10 @@ void checkSlots(unsigned slots)
     auto input = o::makePeriodicLoop(body, slots, {{0, 0, cells, 1, 0}, {1, 0, cells, 1, 0}});
     require(input.success, "periodic input: " + input.reason);
     auto result = accepted(input.program);
+    require(result.work.frontierSameVisit != 0,
+            "recurring readiness requirements lost same-visit correspondence");
+    require(result.work.frontierPreviousUse != 0,
+            "recurring release requirements lost previous-use correspondence");
     require(result.channels.size() == 2 * slots, "cyclic qualifier must derive both roles per slot");
     require(result.work.acknowledgments == 0 && count(result, o::Command::Barrier) == 0 &&
             count(result, o::Command::BarrierAll) == 0, "qualified slot cycle must not select extra barriers/helpers");
