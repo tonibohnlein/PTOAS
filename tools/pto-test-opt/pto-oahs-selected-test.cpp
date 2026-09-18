@@ -277,7 +277,7 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
-  for (unsigned mutation = 0; mutation < 4; ++mutation) {
+  for (unsigned mutation = 0; mutation < 10; ++mutation) {
     auto module = parseSourceString<ModuleOp>(input, &context);
     if (!check(bool(module), "parse constant address fixture")) {
       return false;
@@ -301,6 +301,23 @@ module attributes {pto.target_arch = "a3"} {
       auto address = builder.create<arith::IndexCastOp>(sum.getLoc(), builder.getI64Type(), widen);
       allocation.getAddrMutable().assign(address);
     }
+    uint64_t expected = 24576;
+    const bool expectKnown = mutation == 0 || (mutation >= 4 && mutation <= 6);
+    if (mutation >= 4) {
+      expected = mutation == 6 ? 64 : 256;
+      auto input = builder.create<arith::ConstantIntOp>(sum.getLoc(),
+          mutation >= 7 ? (mutation == 9 ? 256 : -1) : int64_t(expected), 32);
+      Value converted;
+      if (mutation == 4 || mutation == 7)
+        converted = builder.create<arith::ExtSIOp>(sum.getLoc(), builder.getI64Type(), input);
+      else if (mutation == 5 || mutation == 8)
+        converted = builder.create<arith::ExtUIOp>(sum.getLoc(), builder.getI64Type(), input);
+      else {
+        auto narrow = builder.create<arith::TruncIOp>(sum.getLoc(), builder.getI8Type(), input);
+        converted = builder.create<arith::ExtUIOp>(sum.getLoc(), builder.getI64Type(), narrow);
+      }
+      allocation.getAddrMutable().assign(converted);
+    }
     oahs::NativeAnalysis imported;
     if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)), "constant address import")) {
       return false;
@@ -308,9 +325,9 @@ module attributes {pto.target_arch = "a3"} {
     bool known = false, unknown = false;
     for (const auto &cell : imported.program.cells) {
       unknown |= cell.unknownRange;
-      known |= !cell.unknownRange && cell.ranges == std::vector<std::pair<uint64_t,uint64_t>>{{24576, 64}};
+      known |= !cell.unknownRange && cell.ranges == std::vector<std::pair<uint64_t,uint64_t>>{{expected, 64}};
     }
-    if (!check(mutation == 0 ? known && !unknown : !known && unknown,
+    if (!check(expectKnown ? known && !unknown : !known && unknown,
                "constant address certainty or byte footprint incorrect")) {
       return false;
     }

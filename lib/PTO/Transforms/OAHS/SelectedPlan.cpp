@@ -71,6 +71,16 @@ bool Constructor::finish()
     result.success = true;
     return true;
 }
+void Constructor::registerSource()
+{
+    const auto operation = control.graph.operations[current];
+    const auto after = control.after(current);
+    if (operation == NoAnalysisId || after == NoAnalysisId) return;
+    sourcesAtCut[after].push_back(result.sources.size());
+    result.sources.push_back({program.operations[operation].pipe, current, after, ledger.version(), {}});
+    if (needsContextualReplay) refreshSources(after);
+}
+
 SelectedPlan Constructor::run(const Commands& fixed)
 {
     const auto start = std::chrono::steady_clock::now();
@@ -142,15 +152,7 @@ SelectedPlan Constructor::run(const Commands& fixed)
             }
             cache.cuts[current].outgoing = std::move(outgoing);
             finalized[current] = true;
-            const auto operation = control.graph.operations[current];
-            const auto after = control.after(current);
-            if (operation != NoAnalysisId && after != NoAnalysisId) {
-                sourcesAtCut[after].push_back(result.sources.size());
-                result.sources.push_back({program.operations[operation].pipe, current, after, ledger.version(), {}});
-                if (needsContextualReplay) {
-                    refreshSources(after);
-                }
-            }
+            registerSource();
         }
 
     }

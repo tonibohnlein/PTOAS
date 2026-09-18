@@ -93,6 +93,10 @@ public:
 private:
   func::FuncOp func_;
   bool translated_ = false;
+  // Unseeded scalar facts for this immutable import only. Never share these
+  // with the per-residue maps used to qualify carried slots.
+  llvm::DenseMap<Value, uint64_t> constantAddresses_;
+  std::optional<uint64_t> getKnownPhysicalAddress(Value value);
   unsigned index; // 当前 SyncIR 节点的索引计数器
   
   // 核心数据结构 (定义在 SyncCommon.h 中)

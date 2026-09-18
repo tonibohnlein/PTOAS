@@ -239,6 +239,7 @@ private:
     // The component prefix an update may keep, shared by both replay paths.
     Id reusablePrefix() const;
     bool advance();
+    void registerSource();
     void refreshSources(Cut = NoAnalysisId);
     bool update();
     State& currentState();
