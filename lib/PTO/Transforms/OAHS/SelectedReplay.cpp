@@ -249,48 +249,57 @@ bool Constructor::partialComponent(Id index, const std::vector<State>& boundary,
         }
     }
     for (Id offset = 0; offset <= activeOffset; ++offset) {
-        const auto site = block.order[offset];
-        auto state = incoming[site];
-        if (state.causal.reachable() && !control.headerAccesses[site].empty()) {
-            auto seed = frontier.assumePreviousAccesses(state.causal, control.headerAccesses[site]);
-            if (!seed.applied) {
-                return refused(replay, site, seed);
-            }
-            state.causal = std::move(seed.state);
-            for (auto operation : control.headerAccesses[site]) {
-                const auto& op = program.operations[operation];
-                for (const auto& access : op.accesses) {
-                    const auto base = (Id(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
-                    if (access.read) {
-                        state.latest.set(base, NoAnalysisId);
-                    }
-                    if (access.write) {
-                        state.latest.set(base + 1, NoAnalysisId);
-                    }
+        if (!partialSite(index, block.order[offset], incoming, replay)) {
+            return false;
+        }
+    }
+    replay.partialComponent = index;
+    replay.partialOffset = activeOffset;
+    replay.partialIncoming = std::move(incoming);
+    return true;
+}
+bool Constructor::partialSite(Id index, Cut site, std::vector<State>& incoming, Replay& replay)
+{
+    auto state = incoming[site];
+    if (state.causal.reachable() && !control.headerAccesses[site].empty()) {
+        auto seed = frontier.assumePreviousAccesses(state.causal, control.headerAccesses[site]);
+        if (!seed.applied) {
+            return refused(replay, site, seed);
+        }
+        state.causal = std::move(seed.state);
+        for (auto operation : control.headerAccesses[site]) {
+            const auto& op = program.operations[operation];
+            for (const auto& access : op.accesses) {
+                const auto base = (Id(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
+                if (access.read) {
+                    state.latest.set(base, NoAnalysisId);
+                }
+                if (access.write) {
+                    state.latest.set(base + 1, NoAnalysisId);
                 }
             }
         }
-        replay.cuts[site].incoming = state;
-        if (!state.causal.reachable()) {
-            continue;
-        }
-        ++replay.evaluations;
-        if (!word(state, site, replay)) {
-            return false;
-        }
-        replay.cuts[site].before = state;
-        if (site != current && finalized[site] && !payload(state, site, replay)) {
-            return false;
-        }
-        replay.cuts[site].outgoing = state;
-        if (site == current) {
-            continue;
-        }
-        for (auto next : control.constructionEdges[site]) {
-            if (control.component[next] == index) {
-                if (!join(incoming[next], state)) {
-                    return false;
-                }
+    }
+    replay.cuts[site].incoming = state;
+    if (!state.causal.reachable()) {
+        return true;
+    }
+    ++replay.evaluations;
+    if (!word(state, site, replay)) {
+        return false;
+    }
+    replay.cuts[site].before = state;
+    if (site != current && finalized[site] && !payload(state, site, replay)) {
+        return false;
+    }
+    replay.cuts[site].outgoing = state;
+    if (site == current) {
+        return true;
+    }
+    for (auto next : control.constructionEdges[site]) {
+        if (control.component[next] == index) {
+            if (!join(incoming[next], state)) {
+                return false;
             }
         }
     }
@@ -495,20 +504,59 @@ bool Constructor::replay()
     refreshSources();
     return true;
 }
-void Constructor::refreshSources()
+void Constructor::refreshSources(Cut only)
 {
-    for (auto& source : result.sources) {
+    auto refresh = [&](SelectedSource& source) {
         if (source.cut < cache.cuts.size()) {
             source.snapshot = cache.cuts[source.cut].before.causal;
             source.version = cache.version;
+        }
+    };
+    if (only != NoAnalysisId) {
+        const auto found = sourcesAtCut.find(only);
+        if (found != sourcesAtCut.end()) {
+            for (auto id : found->second) {
+                refresh(result.sources[id]);
+            }
+        }
+    } else {
+        for (auto& source : result.sources) {
+            refresh(source);
         }
     }
 }
 bool Constructor::advance()
 {
     if (needsContextualReplay) {
-        if (cache.version == ledger.version() && !cache.cuts.empty()) return true;
+        if (cache.version == ledger.version() && !cache.cuts.empty()) {
+            return true;
+        }
         return contextualReplay();
+    }
+    // Continue the hypothesis-seeded construction DAG, not a previous cyclic
+    // fixed point. The prior cursor had not yet propagated its payload. Its
+    // now-finalized outgoing state is the only new boundary contribution.
+    if (cache.success && cache.version == ledger.version() &&
+        cache.partialComponent == activeComponent &&
+        cache.partialOffset != NoAnalysisId && cache.partialOffset + 1 == activeOffset &&
+        cache.partialIncoming.size() == control.graph.sites.size()) {
+        const auto previous = control.components[activeComponent].order[cache.partialOffset];
+        if (finalized[previous]) {
+            for (auto next : control.constructionEdges[previous]) {
+                if (control.component[next] == activeComponent &&
+                    !join(cache.partialIncoming[next], cache.cuts[previous].outgoing)) {
+                    return fail(SelectedFailure::SelectedUpdate, "incompatible construction boundary", next);
+                }
+            }
+            const auto before = cache.evaluations;
+            if (!partialSite(activeComponent, current, cache.partialIncoming, cache)) {
+                return fail(SelectedFailure::SelectedUpdate, cache.reason, cache.failureCut);
+            }
+            result.work.forwardSiteEvaluations += cache.evaluations - before;
+            cache.partialOffset = activeOffset;
+            refreshSources(current);
+            return true;
+        }
     }
     bool reusablePrefix = cache.version == ledger.version() && cache.cuts.size() == control.graph.sites.size() &&
                           !control.components[activeComponent].cyclic;
@@ -535,7 +583,7 @@ bool Constructor::advance()
     cache.cuts[current].before = state;
     cache.cuts[current].outgoing = state;
     ++result.work.forwardSiteEvaluations;
-    refreshSources();
+    refreshSources(current);
     return true;
 }
 bool Constructor::update()

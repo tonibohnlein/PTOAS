@@ -428,3 +428,18 @@ The diagnostic all-residual interpreter remains because analysis-only native
 reports use it. Its obsolete provisional/first-failure construction mode is
 removed. `PrefixQuery`, `BundleQuery`, and `ReplaySession` still have diagnostic
 and calibration callers; they are not live alternative constructors.
+
+
+## Reusing unchanged construction prefixes
+
+Ordinary construction retains its current hypothesis-seeded DAG boundary while
+the ledger is unchanged. Advancing propagates only the just-finalized payload
+and evaluates the next site, including its original header seed. Earlier
+endpoint edits invalidate this cursor and use the existing replay rules. Saved
+source snapshots are indexed by cut, avoiding an all-source scan on unchanged
+advances. Cyclic fixed points, edits and the final cold check retain their costs.
+
+Shared physical-address extraction also evaluates supported constant expressions
+using the checked scalar evaluator. Unknown inputs, overflowing arithmetic and
+narrowing loss retain conservative footprints; address certainty does not grant
+definite-write or occurrence credit.
