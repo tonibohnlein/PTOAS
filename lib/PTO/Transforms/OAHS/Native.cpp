@@ -217,6 +217,8 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
         integer(loop.getStep()) != std::optional<int64_t>(1))
       continue;
     CountedLoopRegion model;
+    const auto bound = integer(loop.getUpperBound());
+    model.atLeastOnce = bound && *bound > 0;
     auto slots = out.slotLoops.find(loop.getOperation());
     if (slots != out.slotLoops.end()) {
       model.period = slots->second.period;

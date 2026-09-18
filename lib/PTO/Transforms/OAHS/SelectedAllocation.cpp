@@ -46,6 +46,7 @@ bool Constructor::clearInterval(Id key, Cut source, Cut target) const
     }
     const auto& identity = frontier.keys()[key];
     for (const auto& endpoint : ledger.records()) {
+        if (!ledger.active(endpoint.id)) continue;
         const auto& c = endpoint.command;
         if ((c.kind != Command::Publish && c.kind != Command::Acquire) || c.source != identity.source ||
             c.observer != identity.observer || c.key != identity.key) {
@@ -198,7 +199,8 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     const bool retained = recurringClosed && binding != closedBindings.end();
     Id key = retained ? binding->second.first : NoAnalysisId;
     if (retained) {
-        if (!canPublish(cache.cuts[publication].before, key)) {
+        if (!canPublish(cache.cuts[publication].before, key) &&
+            !restoreRearming(key, publication)) {
             return fail(SelectedFailure::EventResource,
                 "recurring forward role lacks its consumption path", publication);
         }
@@ -264,6 +266,7 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
         {Command::Publish, observer, source, reverseNumber}, EndpointPurpose::ConsumptionAcknowledgment, request, wait));
     decision.endpoints.push_back(ledger.append(current,
         {Command::Acquire, observer, source, reverseNumber}, EndpointPurpose::ConsumptionAcknowledgment, request, wait));
+    rememberReturn(decision.endpoints[decision.endpoints.size() - 2], decision.endpoints.back());
     ++result.work.acknowledgments;
     ++result.work.commonCutTransfers;
     if (!update()) {
@@ -276,6 +279,136 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     }
     return true;
 }
+bool Constructor::restoreReturns(Id key)
+{
+    const auto& identity = frontier.keys()[key];
+    const auto found = pendingRearming.find({identity.observer, identity.source});
+    if (found == pendingRearming.end()) return false;
+    bool changed = false;
+    for (const auto& helper : found->second) {
+        if (ledger.active(helper.second)) continue;
+        const auto wait = ledger.endpoint(helper.second).acknowledges;
+        const auto& forward = ledger.endpoint(wait).command;
+        if (forward.source != identity.source || forward.observer != identity.observer || forward.key != identity.key)
+            continue;
+        // A newly selected publication can introduce an EARLIER deadline than
+        // the return which discharged this obligation. Restore its original
+        // source prefix, before advancing that publication; never assume a
+        // receipt from the still-later necessary transfer.
+        ledger.restoreAfter(helper.first, wait);
+        ledger.restoreAfter(helper.second, helper.first);
+        requiredReturns.insert(helper.second);
+        ++result.work.acknowledgments;
+        --result.work.rearmingDischarged;
+        changed = true;
+    }
+    return changed;
+}
+bool Constructor::restoreRearming(Id key, Cut publication)
+{
+    return restoreReturns(key) && update() && canPublish(cache.cuts[publication].before, key);
+}
+
+void Constructor::rememberReturn(Id publication, Id acquisition)
+{
+    const auto& c = ledger.endpoint(acquisition).command;
+    pendingRearming[{c.source, c.observer}].push_back({publication, acquisition});
+}
+
+bool Constructor::returnBeforeUse(Id helperWait, Id necessaryWait)
+{
+    const auto& helper = ledger.endpoint(helperWait);
+    const auto& necessary = ledger.endpoint(necessaryWait);
+    const auto sameKey = [](const Command& a, const Command& b) {
+        return a.source == b.source && a.observer == b.observer && a.key == b.key;
+    };
+    // Track whether the ACTUAL return publication follows this consumption.
+    // Merely reaching an acquisition of an older source prefix is insufficient.
+    using Point = std::tuple<Cut, Id, bool>;
+    std::vector<Point> todo;
+    for (auto cut : control.wordOccurrences[helper.cut]) {
+        if (!control.reachable[cut]) continue;
+        const auto& word = ledger.word(cut);
+        const auto at = std::find(word.begin(), word.end(), helperWait);
+        todo.emplace_back(cut, Id(at - word.begin()) + 1, false);
+    }
+    std::set<Point> seen;
+    bool reached = false;
+    while (!todo.empty()) {
+        const auto point = todo.back(); todo.pop_back();
+        if (!seen.insert(point).second) continue;
+        ++result.work.rearmingQuerySites;
+        auto [cut, offset, published] = point;
+        const auto& word = ledger.word(cut);
+        bool acquired = false;
+        for (; offset < word.size(); ++offset) {
+            const auto id = word[offset];
+            const auto& c = ledger.endpoint(id).command;
+            if (id == necessaryWait && published) { acquired = reached = true; break; }
+            if (c.kind == Command::Publish && sameKey(c, necessary.command)) published = true;
+            // Do not remove completion used by a payload or transmitted to a
+            // third engine before the real return. This also stops at every
+            // earlier selected republication deadline, including backedges.
+            if ((c.kind == Command::BarrierAll && cut != control.graph.exit) ||
+                (c.kind == Command::Publish && c.source == helper.command.observer) ||
+                ((c.kind == Command::Publish || c.kind == Command::Acquire) && sameKey(c, helper.command)))
+                return false;
+        }
+        if (acquired) continue;
+        const auto operation = control.graph.operations[cut];
+        if (operation != NoAnalysisId && program.operations[operation].pipe == helper.command.observer)
+            return false;
+        const auto& next = control.graph.sites[cut].successors;
+        if (next.empty()) {
+            if (cut != control.graph.exit) return false;
+            continue; // consumed token, no subsequent republication deadline
+        }
+        for (auto successor : next) todo.emplace_back(successor, 0, published);
+    }
+    return reached;
+}
+
+bool Constructor::settleRearming(const SelectedDecision& decision)
+{
+    // This certificate refers to the selected original-graph continuation.
+    // The construction-only loop hypothesis traversal does not retain that
+    // continuation's token generations. Keep its closed fallback until it has
+    // a contextual interface; do not enable extra global solves for this rule.
+    if (!needsContextualReplay) return true;
+    std::set<std::pair<Pipe, Pipe>> directions;
+    for (auto id : decision.endpoints) {
+        const auto& endpoint = ledger.endpoint(id);
+        if (endpoint.command.kind != Command::Acquire) continue;
+        const auto direction = std::make_pair(endpoint.command.source, endpoint.command.observer);
+        if (endpoint.purpose == EndpointPurpose::Completion) necessaryReturns[direction].push_back(id);
+        if (endpoint.purpose == EndpointPurpose::Completion ||
+            endpoint.purpose == EndpointPurpose::ConsumptionAcknowledgment) directions.insert(direction);
+    }
+    bool changed = false;
+    for (const auto& direction : directions) {
+        const auto pending = pendingRearming.find(direction);
+        const auto returns = necessaryReturns.find(direction);
+        if (pending == pendingRearming.end() || returns == necessaryReturns.end()) continue;
+        for (const auto& helper : pending->second) {
+            if (!ledger.active(helper.second) || requiredReturns.count(helper.second)) continue;
+            for (auto actual : returns->second) {
+                if (!queriedReturns.insert({helper.second, actual}).second ||
+                    !returnBeforeUse(helper.second, actual)) continue;
+                ledger.erase(helper.first);
+                ledger.erase(helper.second);
+                --result.work.acknowledgments;
+                ++result.work.rearmingDischarged;
+                changed = true;
+                break;
+            }
+        }
+    }
+    // One structural certificate per helper/actual-return pair, no speculative
+    // command populations or cold-check deletion sweep. Replay the changed
+    // selected ledger once and recheck every previously finalized payload.
+    return !changed || update();
+}
+
 bool Constructor::bind(Group& group, RequirementStage stage)
 {
     const auto observer = program.operations[control.graph.operations[current]].pipe;
@@ -321,10 +454,12 @@ bool Constructor::bind(Group& group, RequirementStage stage)
                     {Command::Publish, observer, group.source, reply.key}, EndpointPurpose::ConsumptionAcknowledgment, request, acquired));
                 decision.endpoints.push_back(ledger.append(acquisition,
                     {Command::Acquire, observer, group.source, reply.key}, EndpointPurpose::ConsumptionAcknowledgment, request, acquired));
+                rememberReturn(decision.endpoints[decision.endpoints.size() - 2], decision.endpoints.back());
                 ++result.work.acknowledgments;
             }
         }
         if (!update()) return false;
+        if (!settleRearming(decision)) return false;
         result.decisions.push_back(std::move(decision));
         return true;
     }
@@ -350,6 +485,7 @@ bool Constructor::bind(Group& group, RequirementStage stage)
         }
         source = current;
     }
+    if (!settleRearming(decision)) return false;
     result.decisions.push_back(std::move(decision));
     return true;
 }

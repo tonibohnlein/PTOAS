@@ -75,7 +75,24 @@ SelectedPlan Constructor::run(const Commands& fixed)
 {
     const auto start = std::chrono::steady_clock::now();
     auto complete = [&]() {
-        result.ledger = ledger.records();
+        // Internal endpoint identities survive online discharge. Export a
+        // compact ledger and remap all public provenance to its live records.
+        std::vector<Id> remap(ledger.records().size(), NoAnalysisId);
+        for (const auto& endpoint : ledger.records()) if (ledger.active(endpoint.id)) {
+            remap[endpoint.id] = result.ledger.size();
+            auto live = endpoint;
+            live.id = result.ledger.size();
+            result.ledger.push_back(live);
+        }
+        for (auto& endpoint : result.ledger)
+            if (endpoint.acknowledges != NoAnalysisId) endpoint.acknowledges = remap[endpoint.acknowledges];
+        for (auto& decision : result.decisions) {
+            std::vector<Id> live;
+            for (auto id : decision.endpoints) if (remap[id] != NoAnalysisId) live.push_back(remap[id]);
+            decision.endpoints = std::move(live);
+            if (decision.repairedAcquisition != NoAnalysisId)
+                decision.repairedAcquisition = remap[decision.repairedAcquisition];
+        }
         result.work.sourceHandles = result.sources.size();
         result.work.constructedSites = control.graph.sites.size();
         result.work.loopEntryPreparationSites = control.loopEntryPreparationSites;

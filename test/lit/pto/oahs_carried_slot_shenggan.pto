@@ -12,6 +12,9 @@
 // RUN: %python %S/../../oahs/check_carried_slot_trace.py %t
 // CHECK-LABEL: func.func @hpgemm_hpgemm
 // CHECK: scf.for
+// CHECK: pto.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+// CHECK-NEXT: {{.*}}scf.for
 // CHECK: pto.wait_flag[<PIPE_M>, <PIPE_MTE1>
 // CHECK: pto.textract
 // CHECK: pto.set_flag[<PIPE_MTE1>, <PIPE_M>

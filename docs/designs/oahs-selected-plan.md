@@ -66,11 +66,32 @@ acquisition are inserted together and replayed as one selected edit. The branch
 regression checks absence of unrelated-load completion before consumer issue in
 the independent graph oracle, as well as final safety.
 
-A common-cut return acknowledgment can be omitted only after the final
+A common-cut return acknowledgment can be omitted after the final
 cross-engine acquisition of a terminal payload: no future payload, no remaining
 cross-engine demand, one reachable occurrence of the word, and no later ledger
 command other than retirement. Consumption knowledge at the publisher is not
-invented. General acknowledgment deferral still requires tracking later key uses.
+invented.
+
+For contextual region construction, closed-exchange helpers also retain a
+pending rearming record. A newly selected necessary reverse transfer can
+supersede a helper if its publication follows the original consumption and its
+acquisition precedes every affected source payload, outward publication and
+selected republication on the original paths (including backedges). Exit paths
+need no rearming after their consumed token. The query considers every reachable
+occurrence of a shared word. It retains helpers when these conditions are not
+proved; it does not merge source prefixes or move either necessary endpoint.
+
+Helpers remain a conservative construction fallback while the suffix is
+unfinished. If a later selected publication introduces an earlier deadline,
+that key's original helper is restored at its original prefix and marked
+required. Actual occupancy and consumption checks remain authoritative. Each
+helper/necessary-return query is evaluated at most once, indexed by direction;
+only successful discharges or required restorations replay the changed ledger.
+There is no final-plan deletion sweep or trial cold-check population. Work
+counters report graph query visits and net discharged helpers. The ordinary
+loop-hypothesis traversal retains its closed fallback: it does not yet export
+these contextual token-generation interfaces. Physical reservations also remain
+conservative, so this does not solve allocation under a one-key pool.
 
 These acyclic queries do not themselves qualify loop-entry acquisitions or
 previous-use bank correspondence across guarded or non-unit-step loops. Those need original
@@ -267,12 +288,20 @@ Contextual replay is an explicit construction property, separate from physical
 key reservations. One-shot entry handoffs do not permanently reserve their
 keys: later uses still need actual emptiness, consumption knowledge and a clear
 endpoint interval. Repeated entry protocols retain their recurring reservations.
-Unknown and zero-trip bounds keep conservative
-placement. This is an invariant-entry mechanism, not general correspondence
+When no suitable saved prefix exists, a source-inactive enclosing region may
+publish and acquire its incoming source prefix at entry. The source must issue
+no payload or synchronization inside the region; every first observer path must
+require the same completion, and the crossed-publication exclusion still applies.
+This handles invariant incoming reader completion as well as writer readiness.
+Native counted refinement preserves a positive constant-bound proof by excluding
+only its impossible initial zero-trip alternative; it still permits termination
+after each admitted positive number of visits. Unknown and zero-trip bounds keep
+conservative placement. This is an invariant-entry mechanism, not general correspondence
 between successive uses of alternating banks across guarded loop bodies.
 The first phase builds each qualified region's issued access classes and unique
-first consumer per observing engine once. A bypass or distinct first consumers
-leave that engine's entry deadline unqualified. The forward constructor queries
+first-consumer frontier per observing engine once. Alternative first consumers
+are admitted only when each needs the same required classes. A bypass or an
+unrelated first payload leaves the entry deadline unqualified. The forward constructor queries
 these immutable summaries, then separately checks the selected source receipt,
 paired endpoint participation, and physical-key protocol. Preparation visits are
 reported as `loopEntryPreparationSites`; they are not hidden in replay counts.

@@ -93,6 +93,8 @@ bool Constructor::word(State& state, Cut site, Replay& replay)
         const auto& endpoint = ledger.endpoint(id);
         auto step = frontier.command(state.causal, endpoint.command, {site, offset++});
         if (!step.applied) {
+            replay.failureEndpoint = id;
+            replay.failure = step.failure;
             return refused(replay, site, step);
         }
         state.causal = std::move(step.state);
@@ -591,8 +593,18 @@ bool Constructor::update()
     // Recompute the affected suffix from bottom. Reuse only predecessor-closed
     // unchanged components; no old facts seed a changed prefix or loop.
     const auto before = result.work.replaySiteEvaluations;
-    if (!replay()) {
-        return false;
+    while (!replay()) {
+        if (cache.failure != FrontierFailure::ConsumptionNotEstablished || cache.failureEndpoint == NoAnalysisId)
+            return false;
+        const auto key = keyIndex(frontier, ledger.endpoint(cache.failureEndpoint).command);
+        if (key == NoAnalysisId || !restoreReturns(key)) return false;
+        // A new selected endpoint exposed an earlier rearming deadline on a
+        // different original path. Restore only that key's pending helpers at
+        // their unchanged prefixes. Each helper is permanently required after
+        // this transition, so the repair cannot cycle or enumerate subsets.
+        result.failure = SelectedFailure::None;
+        result.reason.clear();
+        result.cut = NoAnalysisId;
     }
     SelectedUpdate record;
     record.version = ledger.version();
