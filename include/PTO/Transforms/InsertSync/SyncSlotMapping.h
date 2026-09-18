@@ -33,7 +33,10 @@ struct SyncSlotMapping {
   static std::optional<uint64_t> evaluate(Value value, llvm::DenseMap<Value, uint64_t> &known) {
     auto found = known.find(value);
     if (found != known.end()) return found->second;
-    if (auto constant = literal(value)) return constant;
+    if (auto constant = literal(value)) {
+      known[value] = *constant;
+      return constant;
+    }
     auto *op = value.getDefiningOp();
     if (!op) return {};
     unsigned width = isa<IndexType>(value.getType()) ? 64 :
@@ -43,6 +46,12 @@ struct SyncSlotMapping {
     std::optional<uint64_t> result;
     if (auto cast = dyn_cast<arith::IndexCastOp>(op)) {
       result = evaluate(cast.getIn(), known);
+    } else if (isa<arith::ExtSIOp, arith::ExtUIOp, arith::TruncIOp>(op)) {
+      // The input must already be a known nonnegative signed value. Both
+      // extensions preserve it; truncation is admitted only if it fits the
+      // destination's nonnegative range (checked below). Never strip a lossy
+      // conversion or reinterpret a negative literal as a physical address.
+      result = evaluate(op->getOperand(0), known);
     } else if (isa<arith::AddIOp, arith::MulIOp, arith::RemSIOp, arith::RemUIOp>(op)) {
       // Stop on an unqualified operand. Evaluating both children eagerly can
       // revisit a shared unknown scalar DAG exponentially (x = add(y, y)).

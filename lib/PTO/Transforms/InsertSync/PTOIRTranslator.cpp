@@ -148,12 +148,11 @@ static bool getConstIndexValue(Value value, int64_t &out) {
   return true;
 }
 
-static std::optional<uint64_t> getKnownPhysicalAddress(Value value) {
+std::optional<uint64_t> PTOIRTranslator::getKnownPhysicalAddress(Value value) {
   // Exact constant expressions are physical addresses too. The shared scalar
   // evaluator rejects unknown inputs, narrowing loss and overflowing arithmetic;
   // it does not infer a definite write or an occurrence from an address.
-  llvm::DenseMap<Value, uint64_t> constants;
-  return SyncSlotMapping::evaluate(value, constants);
+  return SyncSlotMapping::evaluate(value, constantAddresses_);
 }
 
 static bool isLocalAddressSpace(pto::AddressSpace space) {
@@ -299,6 +298,7 @@ static pto::TCoreType getSyncHelperCoreType(pto::PipelineType pipe) {
 // 1. 构建入口
 // ============================================================================
 LogicalResult PTOIRTranslator::Build() {
+  constantAddresses_.clear();
   translated_ = false;
   Region &funcRegion = func_.getBody();
   UpdateKernelArgMemInfo();
