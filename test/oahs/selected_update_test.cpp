@@ -32,19 +32,51 @@ struct ReplayTestAccess {
             sameState(entry.second, cold.afterEndpoint.at(entry.first));
         }
     }
-    static void compareAdvances(const Program& program, Pipe pipe) {
+    static void compareAdvances(const Program& program, Pipe pipe, bool barriers = true, bool mixed = false, bool contextual = false) {
         Constructor c(program);
+        c.needsContextualReplay = contextual;
         require(c.control.complete && c.frontier.complete(),
                 "advance fixture import: " + c.control.reason + " / " + c.frontier.reason());
         Commands fixed(commandCutCount(program));
         for (Cut cut = 0; cut < fixed.size(); ++cut) {
-            if (legalCommandCut(program, cut)) {
+            if (barriers && legalCommandCut(program, cut)) {
                 fixed[cut] = {{Command::Barrier, pipe, pipe, 0}};
             }
         }
         std::string reason;
         require(c.ledger.initialize(fixed, reason), reason);
         uint64_t incrementalWork = 0, coldWork = 0;
+        bool edited = false;
+        unsigned resumed = 0, coveredQueries = 0, positiveCoverage = 0;
+        auto compareCold = [&] {
+            auto reused = c.cache;
+            const auto sources = c.result.sources;
+            auto required = c.residual();
+            // Query release coverage even in the no-write fixture, where no
+            // current payload needs a transfer. These queries must carry real
+            // outstanding reader histories, not just compare empty residuals.
+            for (unsigned cell = 0; cell < program.cells.size(); ++cell)
+                required.push_back({cell, pipe, false, NoAnalysisId, false, true});
+            std::vector<std::set<Id>> coverage;
+            for (const auto& source : sources)
+                coverage.push_back(c.coverage(source.cut, source.pipe, required));
+            c.cache = {};
+            require(c.replay(), c.cache.reason);
+            coldWork += c.cache.evaluations;
+            identical(reused, c.cache);
+            for (Id i = 0; i < sources.size(); ++i) {
+                const auto& actual = sources[i];
+                const auto& expected = c.result.sources[i];
+                require(actual.snapshot == expected.snapshot && actual.version == expected.version,
+                        "indexed source refresh differs from cold replay");
+                require(coverage[i] == c.coverage(actual.cut, actual.pipe, required),
+                        "source coverage differs after cold replay");
+                coveredQueries += actual.snapshot.reachable();
+                positiveCoverage += !coverage[i].empty();
+            }
+            c.cache = std::move(reused);
+            c.result.sources = sources;
+        };
         for (c.activeComponent = 0; c.activeComponent < c.control.components.size(); ++c.activeComponent) {
             const auto& block = c.control.components[c.activeComponent];
             for (c.activeOffset = 0; c.activeOffset < block.order.size(); ++c.activeOffset) {
@@ -52,21 +84,55 @@ struct ReplayTestAccess {
                 auto before = c.result.work.replaySiteEvaluations + c.result.work.forwardSiteEvaluations;
                 require(c.advance(), c.cache.reason);
                 incrementalWork += c.result.work.replaySiteEvaluations + c.result.work.forwardSiteEvaluations - before;
-                auto reused = c.cache;
-                c.cache = {};
-                require(c.replay(), c.cache.reason);
-                coldWork += c.cache.evaluations;
-                identical(reused, c.cache);
-                c.cache = std::move(reused);
+                compareCold();
+                if (edited) ++resumed;
+                // Insert a real, rearmed event exchange after several cached
+                // advances. The early SET forces rebuilding the current cyclic
+                // prefix; subsequent advances must resume from that new ledger.
+                if (mixed && !edited && c.activeOffset >= 6 && !c.result.sources.empty()) {
+                    Cut source = NoAnalysisId;
+                    for (const auto& saved : c.result.sources) {
+                        if (saved.cut != c.current && c.control.straight(saved.cut, c.current) &&
+                            c.control.position[saved.cut] < c.control.position[c.current] &&
+                            legalCommandCut(program, saved.cut)) source = saved.cut;
+                    }
+                    if (source != NoAnalysisId && legalCommandCut(program, c.current)) {
+                        const auto target = Pipe::V;
+                        c.ledger.append(source, {Command::Publish, pipe, target, 0}, EndpointPurpose::Fixed);
+                        c.ledger.append(c.current, {Command::Acquire, pipe, target, 0}, EndpointPurpose::Fixed);
+                        c.ledger.append(c.current, {Command::Publish, target, pipe, 0}, EndpointPurpose::Fixed);
+                        c.ledger.append(c.current, {Command::Acquire, target, pipe, 0}, EndpointPurpose::Fixed);
+                        require(c.update(), c.cache.reason);
+                        compareCold();
+                        edited = true;
+                    }
+                }
+                require(c.consume(), c.result.reason);
+                compareCold();
                 auto outgoing = c.currentState();
                 if (outgoing.causal.reachable()) {
                     require(c.payload(outgoing, c.current, c.cache), c.cache.reason);
                 }
                 c.cache.cuts[c.current].outgoing = std::move(outgoing);
                 c.finalized[c.current] = true;
+                const auto operation = c.control.graph.operations[c.current];
+                const auto after = c.control.after(c.current);
+                c.registerSource();
+                if (operation != NoAnalysisId && after != NoAnalysisId) {
+                    if (c.needsContextualReplay) {
+                        const auto& source = c.result.sources.back();
+                        require(source.snapshot.reachable() && source.version == c.ledger.version() &&
+                                source.snapshot == c.cache.cuts[after].before.causal,
+                                "new contextual source must be usable without a later edit");
+                    }
+                }
             }
         }
-        require(c.result.work.forwardSiteEvaluations > 0, "no construction prefix was continued");
+        require(!mixed || (edited && resumed >= 3), "mixed edit did not resume cached advancement");
+        require(coveredQueries != 0, "source snapshots were never inspected");
+        require(barriers || positiveCoverage != 0, "no outstanding reader coverage was queried");
+        require(contextual || c.result.work.forwardSiteEvaluations > 0,
+                "no construction prefix was continued");
         require(incrementalWork <= 8 * c.control.graph.sites.size(),
                 "unchanged traversal revisits growing cyclic prefixes");
         require(coldWork > incrementalWork, "test did not exercise saved replay work");
@@ -347,6 +413,13 @@ int main()
         auto bounded = o::addStructuredBoundaryCuts(p);
         require(bounded.success, bounded.reason);
         o::selected::ReplayTestAccess::compareAdvances(bounded.program, P);
+        for (auto& operation : bounded.program.operations)
+            for (auto& access : operation.accesses) access.write = false;
+        o::selected::ReplayTestAccess::compareAdvances(bounded.program, P, false);
+        if (length == 16) {
+            o::selected::ReplayTestAccess::compareAdvances(bounded.program, P, false, true);
+            o::selected::ReplayTestAccess::compareAdvances(bounded.program, P, false, false, true);
+        }
     }
     recurringRoleIsolation();
     std::cout << "selected-ledger update, boundary and refusal tests passed\n";
