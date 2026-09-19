@@ -8,6 +8,7 @@
 #include "PTO/Transforms/OAHS/Native.h"
 #include "ObservationUnion.h"
 #include "NativeFirstUse.h"
+#include "NativeFifoSlots.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
@@ -403,6 +404,10 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     q.loops.push_back(std::move(original));
   }
   native_detail::importFirstUse(function, out.program, ids, out.observationNotes);
+  if (out.loopOwners.empty())
+    native_detail::importFifoSlots(function, out.program, out.payload, out.observationNotes);
+  while (out.payload.size() < out.program.operations.size())
+    out.payload.push_back(out.payload[out.program.operations[out.payload.size()].original]);
   const auto originals = out.anchors;
   out.anchors.assign(commandCutCount(out.program), nullptr);
   for (Cut at = 0; at < out.anchors.size(); ++at) {

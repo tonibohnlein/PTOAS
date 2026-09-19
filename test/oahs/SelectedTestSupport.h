@@ -82,6 +82,11 @@ inline o::SelectedPlan accepted(const o::Program& p, const o::Commands& fixed = 
         }
     }
     require(result.work.selectedUpdates == result.updates.size(), "update accounting mismatch");
+    require(result.work.helperCompositionTrials <= o::PipeCount * (o::PipeCount - 1) / 2,
+            "helper composition exceeded one trial per unordered engine pair");
+    require(result.work.finalCertificateSiteEvaluations == result.certificate.siteEvaluations &&
+            result.work.helperCompositionSiteEvaluations + result.work.finalCertificateSiteEvaluations <=
+                result.work.invariantSiteEvaluations, "cold-check accounting mismatch");
     return result;
 }
 } // namespace selected_test

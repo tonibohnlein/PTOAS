@@ -40,6 +40,7 @@ bool Constructor::finish()
     // unordered engine pair at a time: this composes actual selected transfers,
     // never changes a completion publication/acquisition, and needs at most one
     // cold certificate per target engine pair rather than one trial per helper.
+    const auto helperStart = std::chrono::steady_clock::now();
     using Pair = std::pair<Pipe, Pipe>;
     std::set<std::pair<Pipe, Pipe>> completionDirections;
     std::map<Pair, std::vector<Id>> helpers;
@@ -55,10 +56,12 @@ bool Constructor::finish()
     for (const auto& [pair, endpoints] : helpers) {
         if (!completionDirections.count({pair.first, pair.second}) ||
             !completionDirections.count({pair.second, pair.first})) continue;
+        ++result.work.helperCompositionTrials;
         Ledger trial = ledger;
         for (auto id : endpoints) trial.erase(id);
         auto checked = checkCausalFrontier(program, trial.commands());
         result.work.invariantSiteEvaluations += checked.siteEvaluations;
+        result.work.helperCompositionSiteEvaluations += checked.siteEvaluations;
         if (!checked.accepted) continue;
         for (auto id : endpoints) ledger.erase(id);
         const auto removed = std::count_if(endpoints.begin(), endpoints.end(), [&](Id id) {
@@ -68,8 +71,14 @@ bool Constructor::finish()
         result.work.rearmingDischarged += removed;
         result.work.rearmingComposed += removed;
     }
+    result.work.helperCompositionMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - helperStart).count();
+    const auto certificateStart = std::chrono::steady_clock::now();
     auto commands = ledger.commands();
     result.certificate = checkCausalFrontier(program, commands);
+    result.work.finalCertificateMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - certificateStart).count();
+    result.work.finalCertificateSiteEvaluations = result.certificate.siteEvaluations;
     result.work.invariantSiteEvaluations += result.certificate.siteEvaluations;
     if (!result.certificate.accepted) {
         return fail(SelectedFailure::FinalValidation, result.certificate.reason, result.certificate.cut);
@@ -177,8 +186,11 @@ SelectedPlan Constructor::run(const Commands& fixed)
         fail(SelectedFailure::InvalidInput, reason);
         return complete();
     }
+    const auto qualificationStart = std::chrono::steady_clock::now();
     const auto channels = qualifyCyclicFrontiers(
         program, control, requirements, ledger.records().empty());
+    result.work.recurringQualificationMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - qualificationStart).count();
     if (!channels.empty() && !recurring(channels)) return complete();
     for (activeComponent = 0; activeComponent < control.components.size(); ++activeComponent) {
         // End compiler role reservations, not physical event state. Actual D/S

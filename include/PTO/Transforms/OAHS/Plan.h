@@ -114,6 +114,14 @@ struct Program {
   // than silently flattens, body. Effects still name original physical phases.
   std::optional<ObservedControl> observed;
   std::vector<EventIdentity> reservations;
+  // Original two-slot FIFO use correspondence. It supplies byte identities,
+  // not completion. Commands at both hidden slot phases share original words.
+  struct AlternatingSlots {
+    std::vector<unsigned> cells;
+    std::vector<Cut> reads;
+    Pipe reader = Pipe::S, writer = Pipe::S;
+  };
+  std::optional<AlternatingSlots> alternatingSlots;
   Target target;
   // No native frontend populates this until its lowering/service premises are
   // qualified. Model clients can explicitly supply the reference contract.

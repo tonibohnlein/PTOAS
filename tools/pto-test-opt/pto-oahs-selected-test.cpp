@@ -123,6 +123,57 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
+const char *alternatingQueue = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @alternating_queue(%gm: !pto.ptr<f32, gm>, %n: index, %active: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %base = arith.constant 0 : i32
+    %outaddr = arith.constant 1024 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %pipe = pto.initialize_l2g2l_pipe{dir_mask = 3, slot_size = 128,
+      slot_num = 2, local_slot_num = 1, flag_base = 0, nosplit = true}
+      (%gm : !pto.ptr<f32, gm>, %base : i32, %base : i32) -> !pto.pipe
+    scf.for %i = %zero to %n step %one {
+      scf.if %active {
+        %a = pto.declare_tile -> !pto.tile_buf<vec, 1x32xf32>
+        %out = pto.alloc_tile addr = %outaddr : !pto.tile_buf<vec, 1x32xf32>
+        pto.tpop(%a, %pipe : !pto.tile_buf<vec, 1x32xf32>, !pto.pipe) {split = 0}
+        pto.tabs ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+        pto.tpush(%out, %pipe : !pto.tile_buf<vec, 1x32xf32>, !pto.pipe) {split = 0}
+        pto.tfree(%pipe : !pto.pipe) {split = 0}
+      }
+    }
+    return
+  }
+})mlir";
+bool fifoSlotQualification(MLIRContext &context) {
+  for (unsigned variant = 0; variant < 4; ++variant) {
+    std::string source = alternatingQueue;
+    auto replace = [&](StringRef before, StringRef after) {
+      const auto at = source.find(before.str());
+      if (at != std::string::npos) source.replace(at, before.size(), after.str());
+    };
+    if (variant == 1) replace("slot_num = 2", "slot_num = 1");
+    if (variant == 2) replace("slot_size = 128", "slot_size = 64");
+    if (variant == 3) replace("pto.tpush(%out, %pipe : !pto.tile_buf<vec, 1x32xf32>, !pto.pipe) {split = 0}", "");
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module), "parse alternating FIFO")) return false;
+    auto function = module->lookupSymbol<func::FuncOp>("alternating_queue");
+    oahs::NativeAnalysis input;
+    if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, input)), "import alternating FIFO")) return false;
+    if (!check(bool(input.program.alternatingSlots) == (variant == 0), "FIFO slot qualification boundary")) return false;
+    if (variant) continue;
+    oahs::SelectedPlan report;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report)), "construct/reconstruct alternating FIFO")) return false;
+    if (!check(report.channels.size() == 2, "FIFO uses two shared logical directions")) return false;
+    for (auto read : input.program.alternatingSlots->reads)
+      for (auto c : report.commands[read])
+        if (!check(!(c.kind == oahs::Command::Acquire && c.source == oahs::Pipe::MTE3 &&
+                     c.observer == oahs::Pipe::MTE2), "FIFO output receipt must follow ingress")) return false;
+  }
+  return true;
+}
 bool positive(MLIRContext &context, const char *source, StringRef name) {
   auto module = parseSourceString<ModuleOp>(source, &context);
   if (!check(bool(module), "parse positive input")) { return false; }
@@ -570,6 +621,12 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " recurring_trials=" << work.recurringTrials
                  << " recurring_removed=" << work.redundantRecurringChannels
                  << " recurring_analysis_sites=" << work.recurringAnalysisSites
+                 << " qualification_microseconds=" << work.recurringQualificationMicroseconds
+                 << " helper_trials=" << work.helperCompositionTrials
+                 << " helper_sites=" << work.helperCompositionSiteEvaluations
+                 << " helper_microseconds=" << work.helperCompositionMicroseconds
+                 << " final_sites=" << work.finalCertificateSiteEvaluations
+                 << " final_microseconds=" << work.finalCertificateMicroseconds
                  << " loop_entry_transfers=" << work.loopEntryTransfers
                  << " loop_entry_analysis_sites=" << work.loopEntryAnalysisSites
                  << " loop_entry_preparation_sites=" << work.loopEntryPreparationSites
@@ -742,6 +799,6 @@ int main(int argc, char **argv) {
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
-                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context);
+                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context);
   return passed ? 0 : 1;
 }

@@ -41,6 +41,23 @@ The attention study used the older `5ecb89fc7` corpus. Do not carry its excess
 counts forward as current findings. The newer guarded attention device task is
 already prepared; use its result alongside current native diagnostics.
 
+## Device-driven priority update
+
+Preliminary device results put projection overlap ahead of further event-count
+reductions: down/q/kv/gate-up regress 64–76%, already before guarded changes.
+Current native down_proj has no recurring channels; common-cut readiness and
+release unnecessarily connect the two distinct operand roles. The attributed
+next mechanism is bounded cyclic occurrence/deadline correspondence, not another
+release-count optimization. See `../../../projection-review-work/REPORT.md`.
+
+Review hardening now propagates additional actual coverage through alternative
+and invariant-entry providers, rejects impossible promotions before trial solves,
+and removes the broad distinct-publication release merge. GEMM now uses 200
+pairs for one output tile (194T+6 overall), remains barrier-free and removes
+14/30/62 ordering relations against its 182/360/716 reference. Device timing of
+this new plan remains unmeasured. The following shortlist is a mechanism ranking,
+not a replacement for this measured-performance priority.
+
 ## Rated shortlist and decision
 
 Ratings are engineering judgments about the next experiment, not predicted
@@ -181,10 +198,24 @@ For genuinely dependent in-place vector operations, retain required V fences.
 
 ## C2. AIV acquire output completion at its actual reuse deadline
 
+Native follow-up to `8cc0d5892`: the bounded two-slot qualifier and complete
+return/acknowledgment cycle now permit the delayed acquisition. Modules 44–47
+retain 119 pairs and 87 named barriers; other corpus outputs are unchanged.
+140 native-plan finite paths pass memory/event checks with no added ordering.
+Evidence: `../../../fifo-slot-work/REPORT.md`.
+
+- [x] Derive participating same-slot correspondence from the pinned lowering;
+  preserve whole-episode skips, reject one slot/unequal participation/oversized
+  transfers/other root users. Retain two shared logical directions, with actual
+  preceding-return credit established before ordinary repair.
+- [ ] Control the newly exposed replay cost: 125 edits trigger 813,458 visits
+  versus 26,206 before. Keep the accepted mechanism while investigating repeated
+  contextual propagation; do not introduce a larger history product.
+
 - [ ] Establish receive-slot footprint, ownership/free lifetime, implicit
   resources, and cross-core queue semantics from the importer/lowering contract.
   A declared two-slot layout in the reference experiment is insufficient.
-- [ ] If pop's destination is independent, keep output-release SET early and
+- [x] For the admitted two-slot case, keep output-release SET early and
   acquire it after pop but before score readiness carries completion to V.
   Check crossed selected words, acknowledgment timing, key occupancy, and all
   participating paths; no wait may cross its real access or protocol deadline.

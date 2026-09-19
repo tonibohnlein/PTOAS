@@ -22,7 +22,7 @@ target_include_directories(oahs-core-under-test PUBLIC ../../include)
 target_compile_features(oahs-core-under-test PUBLIC cxx_std_17)
 target_compile_options(oahs-core-under-test PRIVATE -Wall -Wextra -Werror -pedantic)
 set(OAHS_TEST_SUITES scaling analysis storage_frontier observed phase replay lifecycle causal_frontier
-  selected_plan selected_cyclic selected_update selected_lookahead observation_union bank_occurrence first_use)
+  selected_plan selected_cyclic selected_update selected_lookahead observation_union bank_occurrence first_use fifo_slot)
 foreach(suite ${OAHS_TEST_SUITES})
   add_executable(oahs-${suite}-test ${suite}_test.cpp)
   target_link_libraries(oahs-${suite}-test PRIVATE oahs-core-under-test)

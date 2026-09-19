@@ -167,7 +167,7 @@ void run(bool guarded, bool reentered, unsigned banks = 2)
     require(p.observed->sites.size() == f.child.observed->sites.size() + (banks - 1) * (f.bank.bodySites.size() + 1),
         "bank interface introduced enclosing first/tail modes");
     const auto plan = accepted(p);
-    require(plan.channels.size() == 3 * banks + 4, "bank-qualified readiness/release channels absent");
+    require(plan.channels.size() == 4 * banks + 4, "bank-qualified readiness/release channels absent");
     unsigned bankReady = 0, bankRelease = 0;
     for (const auto& channel : plan.channels) {
         if (channel.owner != f.bank.owner) continue;
@@ -175,12 +175,12 @@ void run(bool guarded, bool reentered, unsigned banks = 2)
             require(channel.cells.size() == 1, "distinct bank readiness prefixes were combined");
             ++bankReady;
         } else if (channel.source == o::Pipe::MTE1 && channel.observer == o::Pipe::MTE2) {
-            require(channel.cells.size() == 2 && channel.cells[0] % banks == channel.cells[1] % banks,
-                    "release did not join the same physical bank episode");
+            require(channel.cells.size() == 1,
+                    "distinct final readers lost their separate release prefixes");
             ++bankRelease;
         }
     }
-    require(bankReady == 2 * banks && bankRelease == banks,
+    require(bankReady == 2 * banks && bankRelease == 2 * banks,
             "unexpected bank readiness/release interface population");
     std::vector<std::size_t> path;
     std::map<std::size_t, unsigned> backedges;

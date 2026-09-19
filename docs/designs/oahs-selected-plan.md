@@ -43,6 +43,21 @@ Ordinary completion endpoint `request` IDs index `decisions`. Endpoints with
 purpose `RecurringCompletion` index `channels`. Both kinds coexist in the same
 ledger; `channels` contains qualified physical access-role requests. Neither table supplies completion to the checker.
 
+## Independent physical-bank episodes
+
+The guarded episode analysis also supports an independent cohort whose banks
+have distinct reader frontiers but the same producer/reader engines. Each bank
+retains its own early readiness and previous participating reader's release;
+sibling-region boundaries do not consume its token. Selection happens before
+key binding, and insufficient capacity declines before ledger modification.
+This admission applies when the cohort has no existing common-reader group;
+it does not append every recognized cell to an already composed protocol.
+
+The original role, boundary, participation and balance proofs are unchanged.
+It adds no observation modes, numerical loop expansion or omission trials.
+Native non-unit-step loops can use this interface without refining their scalar
+iteration count. Actual selected endpoints still establish every receipt.
+
 ## Look-ahead and publication frontiers
 
 Known readiness/reuse and additional-overlap requirements retain separate
@@ -53,6 +68,12 @@ snapshot already covers a known prerequisite. This lets a necessary readiness
 receipt discharge a reader-release requirement through an established
 third-engine path. It does not extend the early prefix of a source that already
 has a Known group, or grant credit before the receipt is selected and replayed.
+Alternative publications intersect additional coverage from their actual saved
+source checkpoints and exclude classes regenerated on any intervening path.
+Loop-entry providers require source-time coverage, incoming-corridor freshness,
+and no class regeneration inside the region. These claims are separate from the
+requirements motivating the transfer. An overlap-only promotion with no Known
+coverage declines before key selection or loop-entry candidate analysis.
 After each actual acquisition, construction
 recomputes the residual and provider groups; each edit must strictly reduce the
 cross-engine residual before continuing.
@@ -110,6 +131,34 @@ occurrence and participation certificates, including zero-trip and enclosing
 continuations. Backward demand queries guide endpoint placement; the actual
 completion and event-generation state continues forward through selected words.
 
+## Alternating FIFO slot interface (native experiment)
+
+The pinned unsplit vector tile FIFO exposes a two-slot GM envelope and separate
+participating send/receive increments. Native admission proves complete
+alternating episodes for one invocation-owned, otherwise unused backing root.
+A hidden two-state quotient preserves original command observations; skipped
+episodes do not advance it. Unsupported cases keep conservative pooled effects.
+No cross-core receipt or TFREE operation supplies local completion credit.
+
+The constructor selects a shared writer-to-reader publication before each
+receive, its acquisition after the receive, and a reverse acknowledgment there.
+For receive i, the previously acquired return covers writer i-2 of that same
+slot. The current acknowledgment covers receive i before writer i. These are
+consequences of the selected commands, checked from invocation entry, rather
+than assumed future receipts. Local scratch obligations remain ordinary demands.
+
+This conservative cycle has no general order-optimality claim. The partial
+attention corpus preserves counts while improving checked receive placement.
+It currently exposes substantial contextual-replay cost: see the handoff and
+FIFO report before expanding its admission. It creates two directional roles,
+not channels per cell, and never moves endpoints in a finished plan.
+
+Distinct final-reader release publications retain separate channels. The former
+later-publication/earlier-acquisition `joinedCycle` merge is removed: bank-phase
+agreement and token balance alone do not establish order preservation. Common
+identical publication frontiers can still share; broader movement requires a
+separate ordering certificate. More event pairs can preserve more overlap.
+
 ## Selected updates
 
 Updates reuse a predecessor-closed unchanged prefix. Each materialized endpoint
@@ -156,7 +205,13 @@ differential bridges compare the resulting facts with the exact reference.
 Acyclic forward advancement reuses an unchanged predecessor map only when its
 ledger version is unchanged. `selectedUpdates`, `replaySiteEvaluations`, normal
 `forwardSiteEvaluations`, finalized-query counts and changed cuts distinguish the
-work. `elapsedMicroseconds` includes portable model/control/storage preparation,
+work. `recurringQualificationMicroseconds` measures recurring proposal qualification
+inside this constructor, excluding native admission queries. Final helper
+composition reports trial count, cold-check site visits and elapsed time
+(including indexing and ledger copies); the final certificate has separate
+visits/time. Both cold-check populations remain subsets of the historical
+`invariantSiteEvaluations` aggregate and must not be added to it a second time.
+`elapsedMicroseconds` includes portable model/control/storage preparation,
 policy construction and final compact validation. `preparationMicroseconds` is a
 subset; native import/emission and external reference checking are excluded.
 

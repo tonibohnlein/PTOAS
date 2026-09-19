@@ -21,6 +21,11 @@ struct SyncProtocolModel {
   PIPE pipeline = PIPE::PIPE_UNASSIGNED;
   SmallVector<Value> reads, writes;
   unsigned localSlots = 0;
+  // Optional GM slot envelope for the pinned, unsplit vector tile-entry path.
+  // Indices start at zero and advance independently on participating send/pop.
+  // These facts grant no peer completion or local storage-release credit.
+  unsigned globalSlots = 0;
+  uint64_t globalSlotBytes = 0;
   // Cross-core flags are a distinct namespace from directional local events.
   unsigned crossCoreFlagBase = 0, crossCoreFlagCount = 0;
   // Preserved intrinsic behavior, not extra generated commands or checker

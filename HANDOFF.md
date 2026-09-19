@@ -6,12 +6,156 @@ Updated: 2026-09-19
 
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
-- Base before the current milestone: `d6c5731279229f369579ab1dd69634f3a49bffa7`
-- Current milestone: post-RMSNorm required output-return composition
+- Base before the current milestone: `8cc0d58927c1b5acb032415ead339e2cc8d9fcab`
+- Current milestone: projection operand-bank overlap fix (host-validated)
+- Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
 
-## Current local milestone: post-RMSNorm output-return composition
+## Current milestone: projection operand-bank overlap fix
+
+The placement defect is now fixed in construction: qualified independent banks
+retain early operand readiness and their own previous-use releases across
+sibling/guarded child entries. The prior selector discarded these valid episodes
+unless two cells shared their complete reader frontier. The new admission selects
+an independent cohort with one producer/reader direction before physical binding;
+it preserves existing common-reader compositions and capacity fallback.
+
+Down_proj retains **166 sites** and adds no graph expansion or recurring omission
+trials. Its 17-chunk one-/two-tile traces remove **315/632** finish-to-issue
+relations with zero additions. Gate/up, KV, and out projection likewise remove
+376 relations per active phase (756 for both gate/up phases), with zero additions
+on the checked paths. Early readiness and same-bank refill assertions now reject
+the old plan. Static event counts increase; this is an overlap improvement whose
+device benefit is still unmeasured. Genuine BF16 M completion remains required.
+LM head also removes 346/696 relations on bounded one-/two-output-tile paths;
+these use output-loop start parameters, not physical core IDs. New remote results
+put its **prior** handoff slowdown at 1.9463x, provisionally pending correctness.
+The MTE1-heavy-work hypothesis is contradicted by neutral qkv_proj; all three
+qkv_proj outputs remain byte-identical under this fix. Use paired timelines to
+attribute stalls, and keep out-projection AIV as a neutral performance control.
+
+Local construction is about 0.71 s for down, 0.69 s for gate/up, 1.47 s for KV,
+and 0.18–0.19 s for q/out. Qualification is below 0.4 ms; contextual replay increases
+(e.g. down 3,498 -> 23,430 visits). These costs are recorded separately. The
+counted-loop expansion experiment was excluded because its child-exit drains
+added parent-DMA dependencies; the retained mechanism needs no loop expansion.
+
+Validation: 21/21 portable suites; native regression; production down_proj and
+18 concrete memory/event/ordering traces; sixteen paired family traces;
+87/87 corpus constructions/reconstructions (71 byte-identical); production
+Shenggan FileCheck and one/two/four-tile checks. All six attention and both
+post-RMSNorm plans remain byte-identical. Sixteen corpus outputs change, detailed
+in `../projection-overlap-work/REPORT.md`; new device timings are not available.
+
+GEMM is byte-identical to the review-hardened **200/394/782-pair**, zero-named-
+barrier plan. The earlier device parity result belongs to **182 pairs**.
+
+Next: device-qualify projection overlap and GEMM against pinned baselines. Remaining
+MAT readiness can still observe later unrelated loads; inspect those deadlines
+before claiming the whole projection regression is closed. Preserve the FIFO
+experiment and its separate cost/peer qualification work. The next remote
+campaign is specified in `docs/designs/oahs-projection-device-task.md`; its
+dispatch package pins the commit and includes all required local inputs.
+Full evidence and alternatives are in
+`../projection-overlap-work/REPORT.md`.
+
+## Retained milestone: projection attribution and review hardening
+
+The supplied device campaign shows a 64–76% regression across down/q/kv/gate-up
+projections, present before guarded/helper changes. Local regeneration of
+`down_proj` selects **zero recurring channels**: the broad release merge is not
+its cause. All 21 ordinary transfers use common cuts. Readiness for the first
+matrix operation observes preparation of both operand roles; the next first-role
+refill acquires completion of the later second matrix operation. Existing has
+separate earlier publications. Concrete identical-payload comparisons reproduce
+these extra edges (38 handoff-only versus 6 existing-only relations for one tile,
+two K chunks). These are ordering witnesses, not device stall attribution.
+
+The full decision/physical-deadline inventory, fence residuals, explicit graph
+witnesses and their scope are in `../projection-review-work/REPORT.md`.
+The small even-K single-tile comparisons pass local memory, balance and rearming
+for both arms. Other existing-plan paths have unproved rearming in this local
+model, recorded without adding edges or claiming a native wrong-code finding.
+
+Review amendments now implemented:
+
+- Distinct release publications no longer undergo the broad later-publication /
+  earlier-acquisition merge. Identical-publication/common-reader sharing remains.
+- Alternative source frontiers report all-path additional credit with explicit
+  no-regeneration checks; loop-entry sources use source-time coverage and region
+  invariance. Hop deletion, one-arm missing support, stale-reader and early-prefix
+  tests retain the distinction between motivating requirements and actual credit.
+- Impossible Known promotions decline before loop-entry candidate solves. The
+  down_proj plan stays identical; loop-entry analysis visits fall 2,471 -> 0.
+- Three-engine tests vary inner lengths independently over repeated entries,
+  including empty intervening entries. Qualification time, selected replay,
+  final helper trials/visits/time and final certificate work are separate metrics.
+
+**GEMM changed:** 200/394/782 pairs for one/two/four tiles, zero named barriers,
+one terminal ALL. Separate MAT releases replace the broad shared release. The
+new native check forbids the last B reader from gating the next A refill. All
+previous overlap/memory/rearming checks still pass. Relative to the saved
+182-pair plan, no payload ordering is added; 14/30/62 relations are removed.
+The 182-pair plan remains the device-verified reference. Performance of this
+200-pair plan is unmeasured and must not inherit the earlier timing result.
+GEMM still has 718 sites, three updates and 21,846 replay visits; recurring roles
+rise from ten to twelve, with no omission trials.
+
+Validation: 21/21 portable suites, native regression, 87/87 corpus constructions /
+reconstructions (all 87 outputs byte-identical to the prior FIFO baseline),
+production GEMM FileCheck and one/two/four-tile trace checks; repository hooks
+and direct compliance scan report no findings. Run the scanner with
+`OAT_MAX_WORKERS=2` (`-w 1` means incremental mode, not one worker). The standalone
+Shenggan fixture is separate from those 87 corpus modules. Test logs, paired
+plans, JSON/CSV inventories and reproduction scripts are in the report directory.
+
+The independent-bank milestone above now addresses operand-role readiness and
+previous-use release through these original loops. It uses invocation-owned
+physical episodes, so positive-step counted-loop expansion is unnecessary.
+A paired device pipe timeline is still needed to quantify the remaining stalls.
+The FIFO experiment's cost and full device/peer qualification remain separate.
+
+## Retained experiment: qualified FIFO receive placement
+
+The native AIV importer now derives the two-slot GM use correspondence from the
+pinned unsplit vector tile-entry contract. It requires one invocation-owned
+handle, no other backing-root users/aliases, complete alternating pop/push
+episodes and no product with another refined observation dimension. Whole-episode
+skips preserve slot state. Both phases share original command words; no runtime
+counter or guard is added. TFREE remains a no-op and both directions share GM.
+
+Slot precision alone does not improve construction: the previous supporting
+return is absent when the first reuse is repaired. The new path therefore
+selects two logical return/acknowledgment directions before ordinary repair and
+physical key binding. The actual preceding return covers the older same-slot
+writer, permitting the current acquisition after TPOP. No future credit, final
+wait-sinking pass or per-cell channel population is introduced.
+
+Partial modules 44–47 remain 119 pairs / 87 named barriers / two terminal ALL
+barriers, with ten AIV acquisitions delayed. Original payload/control text is
+preserved exactly. Native construction/reconstruction and A3 lowering pass.
+All 87 corpus modules pass; the other 83 outputs are byte-identical, including
+post-RMSNorm and single-block attention. All 21 portable suites and the native
+regression pass. The native plan passes 140 independent finite path comparisons:
+478,125 conflict checks, no added payload order, unchanged counts. GEMM remains
+182/360/716 pairs, zero named barriers and one terminal ALL.
+
+**Cost limitation:** AIV sites 738 -> 1,423; the same 125 edits now use contextual
+replay, raising replay visits 26,206 -> 813,458. Construction is about 18.5 seconds
+in the isolated diagnostic (23–33 seconds in native runs; latest 29.6), versus a
+recorded 0.40 seconds before. This is a retained working experiment, not a claim
+that the low-cost objective is met. The cost is repeated selected-state replay,
+not an unbounded slot/guard analysis. Preserve the successful mechanism while
+addressing that distinction; do not expand another history product.
+
+Evidence and reproduction: `../fifo-slot-work/REPORT.md`, `native-diagnostic/`,
+`native-comparison.json`, `corpus/summary.json` and validation logs. Local order
+comparisons do not include the full coupled peer/backpressure protocol or device
+performance. The already-issued d6c573127 task remains historical; the new
+projection/device task includes this retained experiment as a separate target.
+
+## Committed milestone: post-RMSNorm output-return composition
 
 Base: `d6c5731279229f369579ab1dd69634f3a49bffa7`. This milestone is recorded
 in the commit containing this handoff. The previous attention device task

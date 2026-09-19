@@ -134,6 +134,30 @@ mlir::pto::getSyncProtocolModel(Operation *op) {
     model.gap = "queue requires a tile-entry byte-effect contract";
     return model;
   }
+  // TILE_NO_SPLIT has no sub-AIV offset and uses a dense GM tile rectangle.
+  // Retain a whole-slot may-footprint (no definite-write assertion). Mutable
+  // valid dimensions obey the original tile bounds, as for local footprints.
+  const bool unsplit = isa<TPushOp>(op) ? cast<TPushOp>(op).getSplit() == 0
+                                      : cast<TPopOp>(op).getSplit() == 0;
+  const auto space = cast<AddressSpaceAttr>(type.getMemorySpace()).getAddressSpace();
+  if (direction == 3 && init.getSlotNum() == 2 && unsplit &&
+      space == AddressSpace::VEC && init.getNosplitAttr() &&
+      init.getNosplitAttr().getValue()) {
+    const auto bits = type.getElementType().getIntOrFloatBitWidth();
+    uint64_t bytes = bits / 8;
+    bool fits = bits && bits % 8 == 0 && type.getShape().size() == 2;
+    for (auto dimension : type.getShape()) {
+      if (dimension <= 0 || uint64_t(dimension) > uint64_t(init.getSlotSize()) / std::max(uint64_t(1), bytes)) {
+        fits = false;
+        break;
+      }
+      bytes *= uint64_t(dimension);
+    }
+    if (fits && bytes <= uint64_t(init.getSlotSize())) {
+      model.globalSlots = 2;
+      model.globalSlotBytes = uint64_t(init.getSlotSize());
+    }
+  }
   if (model.kind == SyncProtocolModel::Send) {
     if (model.pipeline != PIPE::PIPE_FIX && model.pipeline != PIPE::PIPE_MTE3) {
       model.gap = "queue producer has no qualified physical pipeline";
