@@ -7,9 +7,69 @@ Updated: 2026-09-19
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Base before the current milestone: `3f7cd81c24264f32f6db11ae2c319447b4689270`
-- Current milestone: guarded bank episodes composed before physical key allocation, plus review hardening
+- Current milestone: reuse probability-readiness completion for QK release
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Current local milestone: probability readiness supports QK release
+
+Base is the committed guarded-episode/hardening milestone `a6bbe1ff8`.
+The current uncommitted constructor change is in `SelectedGroups.cpp::groups`.
+It lets an independently required Overlap provider compete during Known
+selection when its current selected prefix already covers a Known requirement.
+Existing Known-source prefixes remain separate from that source's later
+Overlap requirements; actual selection/replay supplies completion.
+
+The module-44 QK-to-PV overwrite previously selected direct M-to-MTE1 release
+before considering the required probability-readiness receipt. The latter
+already carries QK completion through the current selected M-to-FIX,
+FIX-to-MTE2 and MTE2-to-MTE1 path. It now discharges the reuse requirement
+without creating the duplicate return. No recurring population, graph expansion,
+new refiner, queue contract or hardware assumption was introduced.
+
+Emitted static results:
+
+- Partial attention modules 44–47: AIC **69 → 64 pairs**, AIV **57 → 55**;
+  total **126 → 119**, named barriers unchanged at 87, two terminal ALLs.
+- Single-block modules 48–49: **79 → 78 pairs**, 26 named barriers unchanged,
+  two terminal ALLs. Analytical endpoint counts exceed emitted counts because
+  complete identical guarded words share their emission.
+- Shenggan GEMM unchanged: **182/360/716 pairs**, zero named barriers and one
+  terminal ALL for one/two/four tiles.
+
+Validation: 20/20 standalone suites; extended focused three-engine regression
+including missing-support negatives and 0/1/2/4 visits; native regression
+driver; all six attention constructions/reconstructions and A3 level3 C++
+lowering; GEMM production emission, FileCheck and independent trace checks.
+Module-44 finite comparison checks 126 paths / 90,699 conflicts, valid memory,
+balance and rearming, and **identical payload finish-to-issue relations**.
+Its imported local-effects model does not replace device/cross-core qualification.
+
+AIC module 44 keeps 407 sites / three recurring channels / zero recurring
+trials. Selected updates fall 66 → 61, replay-site evaluations
+111,095 → 102,810. Device performance of this change is unmeasured.
+
+Artifacts and reproducible diagnostics:
+`../aic-completion-work/REPORT.md`, `corpus-summary.json`, `compare.py`,
+`ordering-comparison.json`, paired baseline/candidate logs and plans,
+all six emitted/lowered attention plans, and test logs.
+
+### Remaining roadmap
+
+The reviewed studies and rated choices are in
+[`docs/designs/oahs-composition-roadmap.md`](docs/designs/oahs-composition-roadmap.md).
+Downloaded source notes were checked against 18 archived hashes, 329 attention
+excerpt lines and the post-RMSNorm input hash; evidence is preserved in
+`../composition-review-20260919/`. Their reference-model counts are not native
+compiler measurements.
+
+Next: inspect current post-RMSNorm for required store-return support (C1),
+using the current-credit rule above before adding a new mechanism. Preserve
+separate input/gamma readiness. Keep the pending attention device qualification
+separate from this unmeasured local change. AIV receive placement (C2) still
+requires queue-slot/tail-storage qualification; it was not implemented here.
+Guarded use correspondence (C3) and the broader shared-release ordering
+certificate remain open. Read retained projection results before repeating work.
 
 ## Guarded attention milestone
 
@@ -67,7 +127,11 @@ The current implementation composes three direct constructor mechanisms:
 2. Two operands in one qualified physical-bank episode retain separate early readiness transfers but share one exact storage-release return. This preserves early A extraction and removes the redundant second MAT release channel.
 3. A first-use prefix qualifier recognizes the original conjunction `outer_k == 0 && inner_k == 0`. It splits one entry prefix, shares the remaining graph, and removes the impossible repeated ACC-initialization paths. It supplies no completion credit and retains conservative behavior for incomplete conjunctions, disjunctions, and unsupported loop forms.
 
-Exact qualified cycles bypass whole-plan omission trials. Guarded copies of one original local-fence decision are batched into one selected update and one emitted command word. These changes avoid the expensive candidate-analysis/refinement path used by earlier experiments.
+Exact qualified cycles bypass whole-plan omission trials. Local fences are now
+decided at their actual occurrence deadline; the hardening removed eager
+batching over future analytical copies. Canonicalization still shares commands
+in a genuinely shared word. The GEMM construction figures below are the
+recorded GEMM milestone measurements, not a new whole-corpus cost bound.
 
 ## Exact Shenggan result
 
@@ -147,6 +211,8 @@ Archive: `/opt/pypto/oahs-gemm-16564fa8a.tar.gz`, SHA-256
 1. Device-qualify guarded attention episode composition. Modules 44--47 require
    authentic runtime scheduler state; modules 48--49 are the primary runnable
    cases.
-2. Restrict broader recurring endpoint coalescing with an ordering certificate.
+2. Attribute current post-RMSNorm/AIC residuals and select one native completion
+   support experiment; follow the composition roadmap for AIV and other families.
+3. Restrict broader recurring endpoint coalescing with an ordering certificate.
    Optional specialization now declines cleanly under key pressure.
-3. Reduce repeated immutable control/storage construction after plan quality is settled.
+4. Reduce repeated immutable control/storage construction after plan quality is settled.

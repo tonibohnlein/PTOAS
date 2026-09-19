@@ -47,7 +47,13 @@ ledger; `channels` contains qualified physical access-role requests. Neither tab
 
 Known readiness/reuse and additional-overlap requirements retain separate
 selection stages. Sharing a source engine and consumer does not automatically
-combine their publication prefixes. After each actual acquisition, construction
+combine their publication prefixes. A required overlap provider from another
+source may compete during the Known stage when its current selected source
+snapshot already covers a known prerequisite. This lets a necessary readiness
+receipt discharge a reader-release requirement through an established
+third-engine path. It does not extend the early prefix of a source that already
+has a Known group, or grant credit before the receipt is selected and replayed.
+After each actual acquisition, construction
 recomputes the residual and provider groups; each edit must strictly reduce the
 cross-engine residual before continuing.
 
@@ -346,7 +352,8 @@ therefore retained even if its memory effect is redundant. Trial counts and
 site evaluations are recorded separately. This finite selection can require
 multiple full analyses; it does not make construction two linear scans.
 
-Known and Overlap remain separate selection stages. Look-ahead supplies original
+Known and Overlap remain separate requirement stages, with the current-credit
+provider exception described above. Look-ahead supplies original
 placement and participation facts; actual transfers supply completion knowledge.
 Native order quality and device latency still need calibration.
 
