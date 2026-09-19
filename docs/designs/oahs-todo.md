@@ -8,11 +8,31 @@ advancing acquisition deadlines.
 
 ## Current priority order
 
-1. Device-qualify the guarded attention episode composition and use the result
-   to choose the next remaining-obligation refinement.
-2. Harden recurring specialization and coalescing at their correctness and
-   resource boundaries.
-3. Optimize construction runtime and repeated immutable structure building.
+1. Complete the pending guarded-attention device qualification. In local work,
+   attribute the proposed post-RMSNorm and attention opportunities on current
+   output before selecting the next compiler change (C0 below).
+2. AIC probability-readiness support is implemented and host-validated locally
+   (C1): partial attention 126 → 119 emitted pairs; single-block 79 → 78;
+   no added ordering on the 126 checked module-44 paths; GEMM unchanged.
+   Next inspect post-RMSNorm's store-return support using the same current-credit
+   selection rule before adding another mechanism.
+   Follow with qualified AIV receive/reuse placement (C2); keep non-unit-step
+   first-use qualification as a separate bounded control-analysis experiment.
+3. Extend guarded participating-use support (C3) and validate it against paired
+   projections, merge/finalization, quantization, and RoPE/staging (C4--C7).
+4. Resolve the recurring coalescing ordering certificate alongside any affected
+   change; do not claim general order preservation before this is done.
+5. Optimize construction runtime and repeated immutable structure building.
+
+The [composition roadmap](oahs-composition-roadmap.md) reviews the supplied
+agent studies, maps them to current code, and gives concrete tasks, negative
+tests, evidence limits, and cost requirements for C0--C7. Its reference-model
+counts are not measured improvements to current native plans.
+Its rated shortlist incorporates the four newly downloaded source notes and
+inventory. Their archived hashes/excerpts were checked; executable experiment
+archives are still unavailable. The earlier direct/indirect QK-release duplication has now been reproduced
+and ordinary duplicate selection corrected; see [the handoff](../../HANDOFF.md) and
+[the local report](../../../aic-completion-work/REPORT.md).
 
 Finish and measure a coherent plan milestone before moving to the next item.
 Runtime work may still be performed when it blocks plan experimentation, but it
@@ -20,7 +40,7 @@ is not the current optimization target.
 
 ## Locally completed GEMM plan milestone
 
-The working tree carries finite outer-bank identity through the nested MAT
+The committed implementation carries finite outer-bank identity through the nested MAT
 reader region and relates each overwrite to the previous participating use of
 the same physical bank. It composes that fact with the existing child
 ready/release interfaces without expanding the full nested first/tail product.
@@ -77,28 +97,38 @@ Until this certificate exists, keep broader recurring endpoints separate. If a
 resource fallback deliberately broadens ordering, classify and measure it
 explicitly instead of treating it as ordinary F3 sharing.
 
+Current implementation gap: `joinedCycle` still permits the older later-release
+publication/earlier-acquisition merge. Requiring both `a.storageRelease` and
+`b.storageRelease` fixed category admission, but did not supply the missing
+ordering certificate. The identical-publication check in the guarded episode
+builder is not a certificate for every later merge or crossed selected word.
+
 Acceptance criteria:
 
 - strengthen `sharedRecurringPrefixes` with an independent forbidden-order
   assertion;
 - add an interleaved-publication negative regression based on
   `WAIT early; SET relay; WAIT late`;
+- add the distinct B-reader to earlier A-refill negative: a merged release
+  must not make A reuse depend on an otherwise unrelated later B reader;
 - retain memory coverage, matching, consumption-before-republication, and the
   original endpoint participation;
 - show that accepted coalescing adds no payload finish-to-launch relation on
   the admitted fixture family.
 
-## 2. Make recurring specialization optional under key pressure
+## 2. Optional recurring specialization: implemented, verify and extend
 
-Qualification currently binds every proposed recurring channel to a physical
-key before redundant proposals can be removed. An oversized optional proposal
-population can therefore fail with `EventResource` even when ordinary
-construction could produce a valid plan.
+`Constructor::recurring` now declines an oversized specialized population before
+mutating the ledger and lets ordinary construction run. That removes the
+specialization's immediate `EventResource` failure. Physical proposal binding
+still precedes legacy omission trials; logical necessity before physical binding
+remains longer-term work.
 
-Add a pre-selection resource check. If the complete specialized population cannot
-fit, decline it before modifying the ledger and run ordinary construction.
-Failure of the ordinary route may still report its genuine resource or
-participation error.
+Remaining validation should explicitly exercise the fallback, including a case
+where ordinary construction succeeds. A test requiring fewer keys because
+logical episodes were already composed does not by itself test failed
+specialization cleanup. Ordinary construction may still report a genuine
+resource or participation failure.
 
 Acceptance criteria:
 
@@ -131,10 +161,10 @@ previous-bank-compute to next-bank-fill edge. Single-block attention remains at
 79 pairs and 26 named barriers. Construction, reconstruction, and lowering pass;
 device performance remains unmeasured.
 
-The next decision depends on device evidence. If the new episode composition is
-useful, extend it from remaining obligations without eagerly materializing
-unneeded channels. If it is neutral or harmful, retain its correspondence
-analysis but reconsider which logical channels are selected.
+The next adoption decision depends on device evidence. Current-output analysis
+can proceed meanwhile using C0--C3 in the composition roadmap. Include both AIC
+and AIV: indirect QK release, output-return placement, tail-buffer reuse, and
+guarded bank/queue correspondence have different proof requirements.
 
 The earlier eager prototype remains preserved for comparison:
 

@@ -293,18 +293,34 @@ std::vector<Group> Constructor::groups(
 {
     const auto labels = reasons(current);
     const auto observer = program.operations[control.graph.operations[current]].pipe;
-    std::map<Pipe, std::vector<FrontierRequirement>> sources;
+    std::map<Pipe, std::vector<FrontierRequirement>> sources, overlapSources;
+    std::set<Id> known;
     for (const auto& r : all) {
         const auto found = labels.find(accessClass(r));
         const auto flags = found == labels.end() ? unsigned(AdditionalOverlap) : found->second;
-        if (r.source == observer || (stage == RequirementStage::Known && !(flags & (KnownReadiness | KnownReuse)))) {
+        if (r.source == observer) continue;
+        if (stage == RequirementStage::Known && !(flags & (KnownReadiness | KnownReuse))) {
+            overlapSources[r.source].push_back(r);
             continue;
         }
         sources[r.source].push_back(r);
+        known.insert(accessClass(r));
     }
     std::vector<Group> pending, ordered;
     for (const auto& source : sources) {
         pending.push_back(sourceGroup(source.first, source.second, all));
+    }
+    // A required overlap transfer may already carry a known reuse/readiness
+    // prerequisite through selected handoffs. Let that actual provider compete
+    // now instead of first installing a duplicate direct return. Keep an
+    // existing known source's early prefix: do not widen it with its later
+    // overlap demands. No future transfer is credited by this query.
+    if (!known.empty()) for (const auto& source : overlapSources) {
+        if (sources.count(source.first)) continue;
+        auto group = sourceGroup(source.first, source.second, all);
+        if (std::any_of(known.begin(), known.end(), [&](Id access) {
+                return group.coverage.count(access) != 0;
+            })) pending.push_back(std::move(group));
     }
     while (!pending.empty()) {
         Id selected = NoAnalysisId;
