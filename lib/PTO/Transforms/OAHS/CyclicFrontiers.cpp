@@ -43,7 +43,7 @@ Cut after(const Program& p, const Control& c, Id site, const OccurrenceMode& exp
 }
 // Project one physical cell's access roles, without making storage succession
 // imply completion. All other payload remains in the selected full-graph replay.
-bool balanced(const Control&, const std::vector<Cut>&, const std::vector<Cut>&);
+bool balanced(const Control&, const std::vector<Cut>&, const std::vector<Cut>&, bool = false);
 std::vector<RecurringRequirement> qualifyCell(
     const Program& p, const Control& c, const ObservedLoop& loop, unsigned cell)
 {
@@ -250,6 +250,116 @@ std::vector<RecurringRequirement> qualifyCell(
     return {std::move(ready), std::move(release)};
 }
 
+// Derive complete guarded producer/reader episodes before assigning physical
+// event keys. A skipped branch preserves the bank release token, so the next
+// participating writer is paired with the preceding participating reader.
+std::vector<RecurringRequirement> qualifyGuardedBanks(const Program& p, const Control& c)
+{
+    std::vector<RecurringRequirement> out;
+    if (!p.observed || !c.complete || !c.graph.legalCuts[c.graph.entry] || !c.graph.legalCuts[c.graph.exit]) return out;
+    const auto n = c.graph.sites.size();
+    std::vector<std::vector<std::pair<Cut, unsigned>>> incidences(p.cells.size());
+    for (Cut site = 0; site < n; ++site) {
+        const auto operation = c.graph.operations[site];
+        if (!c.reachable[site] || operation == NoAnalysisId) continue;
+        for (const auto& access : p.operations[operation].accesses)
+            incidences[access.cell].push_back({site, unsigned(access.read) | (unsigned(access.write) << 1)});
+    }
+    for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
+        const auto& physical = p.cells[cell];
+        if (physical.storage != Cell::Storage::CanonicalInterval || physical.unknownRange || physical.exclusive)
+            continue;
+        std::vector<unsigned> roles(n);
+        for (auto [site, role] : incidences[cell]) roles[site] |= role;
+        Pipe writer = Pipe::Count, reader = Pipe::Count;
+        bool admitted = true, cyclic = false;
+        for (auto [site, ignored] : incidences[cell]) {
+            (void)ignored;
+            const auto role = roles[site];
+            const auto pipe = p.operations[c.graph.operations[site]].pipe;
+            if (role == 3 || !role || p.target.synchronous[unsigned(pipe)]) { admitted = false; break; }
+            auto& engine = role == 2 ? writer : reader;
+            if (engine != Pipe::Count && engine != pipe) { admitted = false; break; }
+            engine = pipe;
+            cyclic |= c.components[c.component[site]].cyclic;
+        }
+        if (!admitted || !cyclic || writer == Pipe::Count || reader == Pipe::Count || writer == reader) continue;
+        // Nearest access ROLE on every original path, in each direction. The
+        // boundary bit is distinct from either engine. At most three bits can
+        // be added per site; no source/target pairs or guard products are built.
+        auto nearest = [&](bool backward) {
+            std::vector<unsigned> facts(n);
+            std::deque<Cut> todo;
+            std::vector<bool> queued(n);
+            auto add = [&](Cut site, unsigned bits) {
+                const auto joined = facts[site] | bits;
+                if (facts[site] == joined) return;
+                facts[site] = joined;
+                if (!queued[site]) { queued[site] = true; todo.push_back(site); }
+            };
+            auto edges = [&](Cut site) -> const std::vector<Id>& {
+                return backward ? c.predecessors[site] : c.graph.sites[site].successors;
+            };
+            for (auto [site, ignored] : incidences[cell]) {
+                (void)ignored;
+                for (auto next : edges(site)) add(next, roles[site]);
+            }
+            add(backward ? c.graph.exit : c.graph.entry, 4);
+            while (!todo.empty()) {
+                const auto site = todo.front(); todo.pop_front(); queued[site] = false;
+                if (roles[site]) continue;
+                for (auto next : edges(site)) add(next, facts[site]);
+            }
+            return facts;
+        };
+        const auto previous = nearest(false), next = nearest(true);
+        RecurringRequirement ready, release;
+        ready.qualifiedCycle = release.qualifiedCycle = true;
+        release.storageRelease = true;
+        ready.cell = release.cell = cell;
+        ready.cells = release.cells = {cell};
+        ready.source = writer; ready.observer = reader;
+        release.source = reader; release.observer = writer;
+        // Invocation-owned, not a fabricated periodic-loop qualification.
+        ready.owner = release.owner = NoAnalysisId;
+        release.publications = {c.canonicalCut[c.graph.entry]};
+        release.acquisitions = {c.canonicalCut[c.graph.exit]};
+        for (Cut site = 0; site < n && admitted; ++site) {
+            const auto role = roles[site];
+            if (!role) continue;
+            const auto after = c.after(site);
+            if (!c.graph.legalCuts[site] || after == NoAnalysisId) { admitted = false; break; }
+            if (role == 2) {
+                // One writer per phase; every write must reach a reader before
+                // another write or exit. Consecutive writes remain ordinary.
+                admitted = previous[site] && !(previous[site] & ~5u) && next[site] == 1;
+                release.acquisitions.push_back(c.canonicalCut[site]);
+                ready.publications.push_back(c.canonicalCut[after]);
+            } else {
+                // Multiple readers on one engine form a conjunction. First and
+                // last endpoints must be unambiguous at their ORIGINAL cuts.
+                admitted = (previous[site] == 1 || previous[site] == 2) &&
+                    (next[site] == 1 || (next[site] && !(next[site] & ~6u)));
+                if (previous[site] == 2) ready.acquisitions.push_back(c.canonicalCut[site]);
+                if (!(next[site] & 1)) release.publications.push_back(c.canonicalCut[after]);
+            }
+        }
+        if (!admitted) continue;
+        for (auto* r : {&ready, &release})
+            for (auto* cuts : {&r->publications, &r->acquisitions}) {
+                std::sort(cuts->begin(), cuts->end());
+                cuts->erase(std::unique(cuts->begin(), cuts->end()), cuts->end());
+            }
+        // Shared emitted words must participate exactly like the analytical
+        // endpoints, including zero visits, backedges, and invocation exit.
+        if (!balanced(c, ready.publications, ready.acquisitions, true) ||
+            !balanced(c, release.publications, release.acquisitions, true)) continue;
+        out.push_back(std::move(ready));
+        out.push_back(std::move(release));
+    }
+    return out;
+}
+
 // Compose a refined child reader episode with its original enclosing loop.
 // This is deliberately narrower than nested residue refinement: it retains the
 // child's existing finite quotient and derives one complete producer/readers
@@ -396,11 +506,11 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
 }
 
 bool balanced(const Control& c, const std::vector<Cut>& publications,
-              const std::vector<Cut>& acquisitions)
+              const std::vector<Cut>& acquisitions, bool adjacent)
 {
     std::set<Cut> publish(publications.begin(), publications.end());
     std::set<Cut> acquire(acquisitions.begin(), acquisitions.end());
-    for (auto cut : publish) if (acquire.count(cut)) return false;
+    for (auto cut : publish) if (!adjacent && acquire.count(cut)) return false;
     std::vector<uint8_t> incoming(c.graph.sites.size());
     std::deque<Id> queue;
     std::vector<bool> queued(c.graph.sites.size());
@@ -564,31 +674,33 @@ bool protocolCompatible(const Program& p, const Control& c,
 } // namespace
 
 std::vector<RecurringRequirement> qualifyCyclicFrontiers(
-    const Program& p, const Control& c, const RequirementFrontiers& frontiers)
+    const Program& p, const Control& c, const RequirementFrontiers& frontiers,
+    bool allowGuardedEpisodes)
 {
     std::vector<RecurringRequirement> requests;
     if (!p.observed) return requests;
+    auto append = [&](RecurringRequirement request) {
+        // Several conservative storage witnesses can name the same physical
+        // role. One actual prefix serves their conjunction.
+        const auto duplicate = std::find_if(requests.begin(), requests.end(), [&](const auto& old) {
+            return old.source == request.source && old.observer == request.observer &&
+                old.publications == request.publications && old.acquisitions == request.acquisitions;
+        });
+        if (duplicate == requests.end()) requests.push_back(std::move(request));
+        else {
+            duplicate->qualifiedCycle &= request.qualifiedCycle;
+            duplicate->cells.insert(duplicate->cells.end(), request.cells.begin(), request.cells.end());
+            std::sort(duplicate->cells.begin(), duplicate->cells.end());
+            duplicate->cells.erase(std::unique(duplicate->cells.begin(), duplicate->cells.end()),
+                                   duplicate->cells.end());
+        }
+    };
     for (const auto& loop : p.observed->loops) {
         for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
             auto local = loop.bodyEntry == NoAnalysisId
                 ? qualifyCell(p, c, loop, cell)
                 : qualifyEnclosingCell(p, c, loop, cell);
-            for (auto& request : local) {
-                // Several conservative storage witnesses can name the same
-                // physical role. One actual prefix serves their conjunction.
-                const auto duplicate = std::find_if(requests.begin(), requests.end(), [&](const auto& old) {
-                    return old.source == request.source && old.observer == request.observer &&
-                        old.publications == request.publications && old.acquisitions == request.acquisitions;
-                });
-                if (duplicate == requests.end()) requests.push_back(std::move(request));
-                else {
-                    duplicate->qualifiedCycle &= request.qualifiedCycle;
-                    duplicate->cells.insert(duplicate->cells.end(), request.cells.begin(), request.cells.end());
-                    std::sort(duplicate->cells.begin(), duplicate->cells.end());
-                    duplicate->cells.erase(std::unique(duplicate->cells.begin(), duplicate->cells.end()),
-                                           duplicate->cells.end());
-                }
-            }
+            for (auto& request : local) append(std::move(request));
         }
     }
     // Complex loops can contain RMW accesses and more than two participating
@@ -688,6 +800,63 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     // guarded occurrences correspond, and the merged release token stream is
     // balanced. This is the private multi-operand bank case, not the broader
     // one-sided endpoint coalescing policy.
+    if (requests.empty() && allowGuardedEpisodes) {
+        // Compose exact guarded banks by their shared first-reader episode
+        // before assigning keys. Distinct readiness publications stay at their
+        // early source prefixes; a common reader completion supplies one
+        // release token acquired at the earliest corresponding reuse deadline.
+        auto guarded = qualifyGuardedBanks(p, c);
+        using Episode = std::tuple<Pipe, Pipe, std::vector<Cut>>;
+        std::map<Episode, std::vector<Id>> episodes;
+        for (Id i = 0; i + 1 < guarded.size(); i += 2) {
+            const auto& ready = guarded[i];
+            const auto& release = guarded[i + 1];
+            if (release.source != ready.observer || release.observer != ready.source ||
+                ready.cell != release.cell) continue;
+            episodes[{ready.source, ready.observer, ready.acquisitions}].push_back(i);
+        }
+        for (auto& [episode, members] : episodes) {
+            (void)episode;
+            if (members.size() < 2) continue;
+            std::optional<RecurringRequirement> release;
+            std::vector<RecurringRequirement> readiness;
+            for (auto index : members) {
+                readiness.push_back(std::move(guarded[index]));
+                auto next = std::move(guarded[index + 1]);
+                if (!release) {
+                    release = std::move(next);
+                    continue;
+                }
+                if (release->publications != next.publications ||
+                    release->acquisitions.size() != next.acquisitions.size()) {
+                    release.reset();
+                    break;
+                }
+                std::vector<Cut> acquisitions;
+                for (Id i = 0; i < release->acquisitions.size(); ++i) {
+                    const auto a = release->acquisitions[i];
+                    const auto b = next.acquisitions[i];
+                    if (a == b || c.straight(a, b)) acquisitions.push_back(a);
+                    else if (c.straight(b, a)) acquisitions.push_back(b);
+                    else {
+                        release.reset();
+                        break;
+                    }
+                }
+                if (!release) break;
+                release->acquisitions = std::move(acquisitions);
+                release->cells.insert(release->cells.end(), next.cells.begin(), next.cells.end());
+                std::sort(release->cells.begin(), release->cells.end());
+                release->cells.erase(std::unique(release->cells.begin(), release->cells.end()),
+                                     release->cells.end());
+                release->cell = release->cells.front();
+            }
+            if (!release ||
+                !balanced(c, release->publications, release->acquisitions, true)) continue;
+            for (auto& ready : readiness) append(std::move(ready));
+            append(std::move(*release));
+        }
+    }
     bool joinedCycle = true;
     while (joinedCycle) {
         joinedCycle = false;
@@ -697,7 +866,8 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
             for (Id j = i + 1; j < requests.size() && !joinedCycle; ++j) {
                 const auto& b = requests[j];
                 if (!b.qualifiedCycle || a.source != b.source || a.observer != b.observer ||
-                    a.owner != b.owner || a.period != b.period || a.cells == b.cells) continue;
+                    !b.storageRelease || a.owner != b.owner || a.period != b.period ||
+                    a.cells == b.cells) continue;
                 auto reverse = [&](const RecurringRequirement& value, Id skip) {
                     for (Id k = 0; k < requests.size(); ++k) {
                         const auto& candidate = requests[k];
@@ -762,7 +932,10 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
             }
         }
         if (selected == NoAnalysisId) {
-            return fail(SelectedFailure::EventResource, "qualified recurring roles exceed their eligible key pool");
+            // Recurring qualification is an optional construction shortcut.
+            // No endpoint has been committed yet, so decline the whole proposal
+            // and let ordinary demand-driven construction reuse the key pool.
+            return true;
         }
         proposedKeys.insert(selected);
         keys.push_back(selected);
@@ -834,6 +1007,11 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
             ++result.work.redundantRecurringChannels;
         } else retained[index] = true;
     }
+    const bool guarded = std::all_of(requests.begin(), requests.end(), [](const auto& request) {
+        return request.owner == NoAnalysisId && request.period == 0;
+    });
+    struct PendingEndpoint { Cut cut; Command command; Id channel; };
+    std::vector<PendingEndpoint> endpoints;
     for (Id index = 0; index < requests.size(); ++index) {
         if (!retained[index]) continue;
         const auto& request = requests[index];
@@ -841,18 +1019,20 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
         needsContextualReplay = true;
         const auto number = frontier.keys()[keys[index]].key;
         const auto id = result.channels.size();
-        for (auto cut : request.publications) {
-            ledger.append(cut, {Command::Publish, request.source, request.observer, number},
-                EndpointPurpose::RecurringCompletion, id);
-        }
-        for (auto cut : request.acquisitions) {
-            ledger.append(cut, {Command::Acquire, request.source, request.observer, number},
-                EndpointPurpose::RecurringCompletion, id);
-        }
+        for (auto cut : request.publications)
+            endpoints.push_back({cut, {Command::Publish, request.source, request.observer, number}, id});
+        for (auto cut : request.acquisitions)
+            endpoints.push_back({cut, {Command::Acquire, request.source, request.observer, number}, id});
         result.channels.push_back({request.cell, number, request.cells, request.source, request.observer,
                                    request.publications, request.acquisitions, request.owner,
                                    request.period});
     }
+    if (guarded) std::stable_partition(endpoints.begin(), endpoints.end(), [](const auto& endpoint) {
+        return endpoint.command.kind == Command::Publish;
+    });
+    for (const auto& endpoint : endpoints)
+        ledger.append(endpoint.cut, endpoint.command, EndpointPurpose::RecurringCompletion,
+                      endpoint.channel);
     result.work.recurringChannels = result.channels.size();
     // These are physical access roles, not definite-write/content certificates.
     // They are symbolic obligations, not assumed fresh-entry receipts.

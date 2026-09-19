@@ -177,7 +177,8 @@ SelectedPlan Constructor::run(const Commands& fixed)
         fail(SelectedFailure::InvalidInput, reason);
         return complete();
     }
-    const auto channels = qualifyCyclicFrontiers(program, control, requirements);
+    const auto channels = qualifyCyclicFrontiers(
+        program, control, requirements, ledger.records().empty());
     if (!channels.empty() && !recurring(channels)) return complete();
     for (activeComponent = 0; activeComponent < control.components.size(); ++activeComponent) {
         // End compiler role reservations, not physical event state. Actual D/S

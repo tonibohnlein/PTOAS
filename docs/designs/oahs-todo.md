@@ -8,13 +8,11 @@ advancing acquisition deadlines.
 
 ## Current priority order
 
-1. Device-qualify the locally completed GEMM plan: 182 event pairs, zero named
-   barriers, and no added checked payload ordering relative to the manual plan.
-2. Extend remaining-obligation selection to guarded attention bank reuse,
-   without eagerly installing every qualified bank channel.
-3. Harden recurring specialization and coalescing at their correctness and
+1. Device-qualify the guarded attention episode composition and use the result
+   to choose the next remaining-obligation refinement.
+2. Harden recurring specialization and coalescing at their correctness and
    resource boundaries.
-4. Optimize construction runtime and repeated immutable structure building.
+3. Optimize construction runtime and repeated immutable structure building.
 
 Finish and measure a coherent plan milestone before moving to the next item.
 Runtime work may still be performed when it blocks plan experimentation, but it
@@ -49,8 +47,9 @@ whole-plan refinement or candidate-search stage.
 
 Portable and native tests cover guarded/repeated bank entry, two and three
 banks, malformed correspondence, first-use conjunction negatives, and
-reconstruction of the exact emitted words. Device performance remains to be
-measured; event and barrier counts do not establish latency.
+reconstruction of the exact emitted words. Device qualification reports
+229.306 us median at 299.7 TFLOPS and 0.921 MAC ratio, matching the reconstructed
+manual protocol's performance while retaining all numerical checks.
 
 The six representative attention outputs were unchanged by the bank-occurrence
 mechanism before first-use integration. Their guarded/non-scalar correspondence
@@ -117,7 +116,27 @@ reuse keys between disjoint scopes only with actual token-consumption and
 publisher-rearming evidence. Do not add a whole-plan search or expensive
 post-construction refinement pass.
 
-## 3. Redesign guarded attention bank handling
+## 3. Guarded attention bank handling
+
+The current milestone composes exact cells with one guarded reader episode
+before physical key allocation. It keeps each early readiness publication and
+shares only an identical release publication, using the earliest comparable
+reuse acquisition. It is disabled when authored synchronization is present and
+declines before ledger mutation when the specialized key population cannot fit.
+
+On representative host plans, partial attention changes from 146 to 126 event
+pairs while named barriers change from 86 to 87. The independent module-44
+checker finds no added payload ordering and removes the targeted
+previous-bank-compute to next-bank-fill edge. Single-block attention remains at
+79 pairs and 26 named barriers. Construction, reconstruction, and lowering pass;
+device performance remains unmeasured.
+
+The next decision depends on device evidence. If the new episode composition is
+useful, extend it from remaining obligations without eagerly materializing
+unneeded channels. If it is neutral or harmful, retain its correspondence
+analysis but reconsider which logical channels are selected.
+
+The earlier eager prototype remains preserved for comparison:
 
 The preserved prototype derives guarded physical-bank ready/release interfaces
 from original control. It demonstrates the missing correspondence and removes
@@ -133,16 +152,14 @@ ready to apply:
   evaluations;
 - the exact Shenggan GEMM plan stays unchanged.
 
-The next design must derive useful interfaces from remaining obligations rather
+Further work must derive useful interfaces from remaining obligations rather
 than eagerly installing a ready/release pair for every qualified bank. It must
 also avoid re-solving unchanged selected regions after each endpoint edit.
 
-The general bank-qualified occurrence milestone does not by itself change these
-six plans. Their guarded/non-scalar correspondence is not represented as the
-finite scalar orbit admitted by the current native interface, so construction
-reports no recurring interfaces. The next mechanism should export the guarded
-participating occurrence and physical-bank correspondence, then select only the
-channels still required after actual selected completion and consumption.
+The guarded episode mechanism now exports participating occurrence and exact
+physical-cell correspondence for the admitted common-reader case. More general
+guards and unequal deadlines still need selection from actual remaining
+completion and consumption obligations.
 
 Acceptance criteria:
 
