@@ -14,8 +14,10 @@ advancing acquisition deadlines.
 2. AIC probability-readiness support is implemented and host-validated locally
    (C1): partial attention 126 → 119 emitted pairs; single-block 79 → 78;
    no added ordering on the 126 checked module-44 paths; GEMM unchanged.
-   Next inspect post-RMSNorm's store-return support using the same current-credit
-   selection rule before adding another mechanism.
+   Post-RMSNorm is now host-validated: a complete three-engine recurring cycle
+   supports gamma reuse before channel allocation; modules 22/23 fall 16 -> 10
+   static pairs with barriers and checked payload ordering unchanged. Review
+   and device-qualify this milestone separately from the d6 task.
    Follow with qualified AIV receive/reuse placement (C2); keep non-unit-step
    first-use qualification as a separate bounded control-analysis experiment.
 3. Extend guarded participating-use support (C3) and validate it against paired

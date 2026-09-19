@@ -45,7 +45,7 @@ Cut after(const Program& p, const Control& c, Id site, const OccurrenceMode& exp
 // imply completion. All other payload remains in the selected full-graph replay.
 bool balanced(const Control&, const std::vector<Cut>&, const std::vector<Cut>&, bool = false);
 std::vector<RecurringRequirement> qualifyCell(
-    const Program& p, const Control& c, const ObservedLoop& loop, unsigned cell)
+    const Program& p, const Control& c, const ObservedLoop& loop, unsigned cell, Pipe intermediate = Pipe::Count)
 {
     std::set<Id> members(loop.sites.begin(), loop.sites.end());
     const std::set<Id> entries = loop.entries.empty() ? std::set<Id>{loop.entry}
@@ -77,6 +77,7 @@ std::vector<RecurringRequirement> qualifyCell(
         const auto operation = c.graph.operations[site];
         if (!c.reachable[site] || operation == NoAnalysisId) continue;
         const auto& op = p.operations[operation];
+        if (op.pipe == intermediate) continue;
         unsigned role = 0;
         for (const auto& a : op.accesses) if (a.cell == cell) role |= unsigned(a.read) | (unsigned(a.write) << 1);
         if (!role) continue;
@@ -248,6 +249,125 @@ std::vector<RecurringRequirement> qualifyCell(
         if (request->publications.empty() || request->acquisitions.empty()) return {};
     }
     return {std::move(ready), std::move(release)};
+}
+
+// A restricted three-engine storage cycle: producer write, in-place work,
+// then a final reader. Projecting out the middle engine only derives the outer
+// occurrence correspondence; the actual protocol includes both readiness hops.
+// It grants no receipt until the selected endpoints are causally propagated.
+std::vector<RecurringRequirement> qualifyPipelineCycle(
+    const Program& p, const Control& c, const ObservedLoop& loop, unsigned cell,
+    const std::vector<RecurringRequirement>& ordinary)
+{
+    if (loop.bodyEntry != NoAnalysisId || p.cells[cell].exclusive ||
+        p.cells[cell].unknownRange || p.cells[cell].storage != Cell::Storage::CanonicalInterval)
+        return {};
+    Pipe middle = Pipe::Count;
+    std::vector<Id> accesses;
+    for (auto site : loop.sites) {
+        const auto operation = c.graph.operations[site];
+        if (!c.reachable[site] || operation == NoAnalysisId) continue;
+        const auto& op = p.operations[operation];
+        unsigned role = 0;
+        for (const auto& a : op.accesses)
+            if (a.cell == cell) role |= unsigned(a.read) | (unsigned(a.write) << 1);
+        if (!role) continue;
+        const auto mode = occurrenceMode(p, site);
+        if (!mode.valid || mode.owner != loop.owner || mode.period != 1 ||
+            p.target.synchronous[unsigned(op.pipe)]) return {};
+        accesses.push_back(site);
+        if (role == 3) {
+            if (middle != Pipe::Count && middle != op.pipe) return {};
+            middle = op.pipe;
+        }
+    }
+    if (middle == Pipe::Count) return {};
+    auto outer = qualifyCell(p, c, loop, cell, middle);
+    if (outer.size() != 2) return {};
+    auto ready = outer[0], result = outer[0];
+    ready.observer = middle;
+    ready.acquisitions.clear();
+    result.source = middle;
+    result.publications.clear();
+    std::set<Id> assigned;
+    // Each original occurrence must have a single straight corridor from the
+    // producer's publication through the middle accesses to its final reader.
+    // Guards, partial middle episodes, and coupled bank schedules decline.
+    for (auto publication : outer[0].publications) {
+        std::vector<Id> body;
+        Cut reader = NoAnalysisId;
+        for (auto acquisition : outer[0].acquisitions)
+            if (occurrenceMode(p, publication) == occurrenceMode(p, acquisition) &&
+                c.straight(publication, acquisition)) {
+                if (reader != NoAnalysisId) return {};
+                reader = acquisition;
+            }
+        if (reader == NoAnalysisId) return {};
+        for (auto site : accesses)
+            if (p.operations[c.graph.operations[site]].pipe == middle &&
+                c.straight(publication, site) && c.straight(site, reader)) body.push_back(site);
+        if (body.empty() || std::any_of(body.begin(), body.end(), [&](Id site) {
+                return !(occurrenceMode(p, site) == occurrenceMode(p, publication));
+            })) return {};
+        std::sort(body.begin(), body.end(), [&](Id a, Id b) { return c.position[a] < c.position[b]; });
+        const auto& first = p.operations[c.graph.operations[body.front()]];
+        const auto& last = p.operations[c.graph.operations[body.back()]];
+        auto has = [&](const Operation& op, bool write) {
+            return std::any_of(op.accesses.begin(), op.accesses.end(), [&](const auto& a) {
+                return a.cell == cell && (write ? a.write : a.read);
+            });
+        };
+        // Both hops are independently required by the original storage uses.
+        if (!has(first, false) || !has(last, true)) return {};
+        const auto endpoint = after(p, c, body.back(), occurrenceMode(p, body.back()));
+        if (endpoint == NoAnalysisId) return {};
+        ready.acquisitions.push_back(canonicalCommandCut(p, body.front()));
+        result.publications.push_back(endpoint);
+        assigned.insert(body.begin(), body.end());
+    }
+    for (auto site : accesses)
+        if (p.operations[c.graph.operations[site]].pipe == middle && !assigned.count(site)) return {};
+    for (auto* request : {&ready, &result}) {
+        for (auto* cuts : {&request->publications, &request->acquisitions}) std::sort(cuts->begin(), cuts->end());
+        if (!balanced(c, request->publications, request->acquisitions)) return {};
+    }
+    // Independent two-engine operands retain their early readiness. Their
+    // private return is unnecessary only when this cycle's producer starts
+    // earlier and its middle publication follows every operand reader in the
+    // SAME occurrence. The final-reader return then transports both completion
+    // and readiness-consumption evidence before the operand's next overwrite.
+    std::vector<RecurringRequirement> supported;
+    for (const auto& operand : ordinary) {
+        if (operand.owner != loop.owner) continue;
+        if (!operand.qualifiedCycle || operand.period != 1 || operand.storageRelease ||
+            operand.source != ready.source || operand.observer != middle) continue;
+        const auto reverse = std::find_if(ordinary.begin(), ordinary.end(), [&](const auto& r) {
+            return r.owner == operand.owner && r.period == 1 && r.qualifiedCycle && r.storageRelease &&
+                r.source == middle && r.observer == ready.source && r.cells == operand.cells;
+        });
+        if (reverse == ordinary.end()) return {};
+        for (auto cut : operand.publications)
+            if (std::none_of(ready.publications.begin(), ready.publications.end(), [&](Cut earlier) {
+                    return occurrenceMode(p, earlier) == occurrenceMode(p, cut) && c.straight(earlier, cut);
+                })) return {};
+        for (auto cut : reverse->publications)
+            if (std::none_of(result.publications.begin(), result.publications.end(), [&](Cut later) {
+                    return occurrenceMode(p, cut) == occurrenceMode(p, later) && c.straight(cut, later);
+                })) return {};
+        supported.push_back(operand);
+    }
+    // Keep this admission local: do not replace unrelated owner protocols.
+    for (const auto& old : ordinary) {
+        if (old.owner != loop.owner) continue;
+        if (std::none_of(supported.begin(), supported.end(), [&](const auto& operand) {
+                return old.cells == operand.cells &&
+                    ((old.source == operand.source && old.observer == operand.observer) ||
+                     (old.source == operand.observer && old.observer == operand.source));
+            })) return {};
+    }
+    std::vector<RecurringRequirement> out{ready, result, outer[1]};
+    out.insert(out.end(), supported.begin(), supported.end());
+    return out;
 }
 
 // Derive complete guarded producer/reader episodes before assigning physical
@@ -703,6 +823,25 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
             for (auto& request : local) append(std::move(request));
         }
     }
+    std::set<Id> pipelineOwners;
+    // Select a complete supported pipeline interface before binding keys or
+    // repairing same-engine remainders. No changed-plan omission trial is used.
+    if (allowGuardedEpisodes) {
+        for (const auto& loop : p.observed->loops) {
+            for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
+                auto pipeline = qualifyPipelineCycle(p, c, loop, cell, requests);
+                if (pipeline.empty()) continue;
+                pipelineOwners.insert(loop.owner);
+                requests.erase(std::remove_if(requests.begin(), requests.end(), [&](const auto& r) {
+                    return r.owner == loop.owner;
+                }), requests.end());
+                for (auto& request : pipeline) append(std::move(request));
+                // The selected cycle's source prefix covers the other cells
+                // touched by these same operations; don't allocate per-cell rings.
+                break;
+            }
+        }
+    }
     // Complex loops can contain RMW accesses and more than two participating
     // pipelines. Build their recurring frontiers from the shared storage
     // succession relation. Prefer a direction-wide word; if its uses do not
@@ -713,6 +852,8 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     // checked by the causal frontier before emission.
     const auto ordinary = requests;
     auto relationshipRequests = qualifyRelationships(p, c, frontiers);
+    relationshipRequests.erase(std::remove_if(relationshipRequests.begin(), relationshipRequests.end(),
+        [&](const auto& r) { return pipelineOwners.count(r.owner); }), relationshipRequests.end());
     for (auto& candidate : relationshipRequests) {
         auto subset = [](const std::vector<Cut>& a, const std::vector<Cut>& b) {
             return std::includes(b.begin(), b.end(), a.begin(), a.end());

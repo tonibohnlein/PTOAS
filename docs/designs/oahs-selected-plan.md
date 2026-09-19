@@ -357,6 +357,49 @@ provider exception described above. Look-ahead supplies original
 placement and participation facts; actual transfers supply completion knowledge.
 Native order quality and device latency still need calibration.
 
+### Required output returns support other operand reuse
+
+For an exact period-one storage cycle, `qualifyPipelineCycle` recognizes three
+engine roles: producer write, middle in-place accesses, and final reader. The
+outer writer/reader projection establishes occurrence and boundary participation;
+the selected protocol contains the actual producer-to-middle and middle-to-reader
+readiness hops plus the reader-to-producer reuse return. Both readiness hops
+must correspond to original access requirements. Middle accesses must form one
+straight corridor in the same qualified occurrence.
+
+An independently loaded operand keeps its early readiness. Its private release
+is not created when the primary producer precedes its write and the middle
+publication follows its last reader in the same occurrence. The required final-
+reader return then carries its completion and readiness-consumption evidence
+before its next write/publication. This is structural selection before physical
+key binding; only the actual selected words and replay grant causal credit.
+Unrelated readers remain separate requirements. Unknown cells, guarded middle
+routes, larger bank periods and unrelated existing owner protocols decline.
+
+The post-RMSNorm instance retains the input/gamma deadlines and genuine vector
+barriers. It uses four recurring channels rather than two, while avoiding the
+ordinary duplicate transfers: emitted static pairs fall 16 to 10. It adds no
+analysis sites and uses no omission trials. The qualifier performs cell/loop
+scans, occurrence comparisons and finite balance checks; ordinary replay and
+unrelated legacy trials retain their costs.
+
+The GEMM, attention AIC and post-RMSNorm cases identify three distinct causes
+of excess synchronization: lost physical-use correspondence, an existing
+provider considered too late, and an incomplete selected cycle at the repair
+deadline. Diagnose which fact is missing before extending construction. A
+required receipt can cover several storage and key-consumption obligations;
+that sharing does not require combining their early readiness publications.
+The next complementary question is whether a necessary acquisition is placed
+before its actual deadline and unnecessarily gates independent ingress work.
+
+Measure redundant-transfer reduction separately from newly permitted pipeline
+overlap. Post-RMSNorm reduces commands with unchanged checked payload ordering;
+GEMM improved overlap by waiting for the preceding use of the same bank instead
+of a different bank's recent computation. Preserve early publications and place
+acquisitions at their real reuse deadlines. Counts and finite payload relation
+sets do not fully represent hardware drain costs or predict latency; retain
+negative overlap tests and qualify gains with device profiles.
+
 ### Carried scalar slots and physical bank correspondence
 
 The shared `SyncSlotMapping` helper derives finite scalar orbits from original
