@@ -51,7 +51,7 @@ a small native patch.
 | Candidate | Rating | Generality | Effort / qualification risk | Decision |
 | --- | ---: | --- | --- | --- |
 | AIC indirect QK release (C1) | 5/5 | High: a necessary provider covers another source | Medium / medium | Implemented locally: partial AIC 69 → 64 pairs; current-credit provider selection |
-| Post-RMSNorm downstream return (C1) | 5/5 | High: retained value, reader/writer and key-consumption support | Medium / medium | Try next as the queue-free companion; regenerate current baseline first |
+| Post-RMSNorm downstream return (C1) | 5/5 | High: retained value, reader/writer and key-consumption support | Medium / medium | Implemented locally: complete three-engine cycle; 16 -> 10 static pairs, unchanged barriers/order |
 | Positive non-unit-step first-use/range facts (C4) | 4/5 | High: original scalar/control precision | Low--medium / low--medium | Separate bounded experiment; count actual residual/fence improvements |
 | Merge update receipt reuse + seed negative (C5) | 4/5 | High: branch-sensitive source-prefix coverage | Low--medium / low--medium | Use as a small generalization test; may already be handled |
 | AIV acquire after independent receive (C2) | 4/5 | High: deadline placement through a relay | Medium--high / high | Try after queue/slot semantics are qualified; potential overlap gain |
@@ -88,7 +88,7 @@ that path removes the support, reassess the direct release rather than deleting
 both. This dependency is part of the experiment's acceptance criteria.
 
 The initial saved-output inspection above is superseded by the C1 native
-experiment below. Continue with post-RMSNorm. Keep non-unit-step initialization as a separate
+experiments below. Post-RMSNorm now has a validated local cycle mechanism. Keep non-unit-step initialization as a separate
 small follow-up. AIV is the next overlap-focused experiment once queue facts
 are available. No new device speedup is inferred from the ratings or pair counts.
 
@@ -153,10 +153,14 @@ placement defect. An already-covered case becomes a regression, not a new pass.
   decision; discharge demands only through selected commands or an explicitly
   supported and sealed recurring invariant. Reject circular justifications
   that omit all mutually supporting transfers.
-- [ ] Post-RMSNorm: test whether reciprocal scratch release, followed by input
-  readiness, already establishes retained normalization completion. Then test
-  whether the required store-to-load return covers gamma's previous reader,
-  writer, and readiness-key consumption before gamma overwrite/republication.
+- [x] Post-RMSNorm: provider selection alone left output unchanged. A qualified
+  period-one three-engine cycle now establishes the store-return support before
+  ordinary repair. It retains separate early input/gamma readiness and vector
+  barriers, and avoids gamma's private release. Both native variants fall
+  16 -> 10 static pairs; 48 finite paths retain identical payload ordering.
+  Retained normalization, narrow output extent, missing-support and independent-
+  reader tests pass. See `../../../rms-completion-work/REPORT.md`. Guarded and
+  unequal-bank support remain outside this admission; device benefit is unknown.
 - [x] Attention AIC: reproduced the ordinary stage-ordering defect. The current
   imported path is `M -> FIX -> MTE2 -> MTE1`. Its required probability
   readiness now competes during Known selection when existing source coverage

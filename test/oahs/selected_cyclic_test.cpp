@@ -283,7 +283,7 @@ void transitiveRecurringCoverage()
     const auto result = accepted(program);
     std::cout << "transitive channels=" << result.channels.size()
               << " removed=" << result.work.redundantRecurringChannels << '\n';
-    require(result.channels.size() == 3 && result.work.redundantRecurringChannels == 3,
+    require(result.channels.size() == 3 && result.work.redundantRecurringChannels == 0 && result.work.recurringTrials == 0,
             "load/RMW/store recurrence must retain only its ready/ready/release chain");
     require(result.work.acknowledgments == 0, "real storage release already supplies rearming");
     // A remaining storage-release channel is also part of the rearming proof.
@@ -298,6 +298,128 @@ void transitiveRecurringCoverage()
         require(!o::checkCausalFrontier(program, words).accepted,
                 "removing a necessary whole channel was accepted");
     }
+}
+
+// A retained normalization value and an independently loaded operand share
+// actual completion through an in-place pipeline and its final-reader return.
+void pipelineOperandSupport()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE3;
+    auto body = base(4, 8);
+    body.operations = {
+        op(Q, {{0, true, false}, {2, false, true}}),
+        op(P, {{0, false, true}, {3, false, true}}), op(P, {{1, false, true}}),
+        op(Q, {{0, true, true}, {3, true, true}, {2, true, false}}),
+        op(Q, {{0, true, true}, {3, true, true}, {1, true, false}}),
+        op(Q, {{0, true, true}, {3, true, false}}), op(R, {{0, true, false}})};
+    o::Region inner{o::Region::For, {seq({leaf(1), leaf(2), leaf(3), leaf(4), leaf(5), leaf(6)})}};
+    body.body = {o::Region::For, {seq({leaf(0), inner})}};
+    auto build = [&](const o::Program& original) {
+        auto input = o::addStructuredBoundaryCuts(original);
+        require(input.success, input.reason);
+        auto& q = *input.program.observed;
+        const auto owner = q.scopes.back().ownerSite;
+        const auto size = q.sites.size();
+        for (std::size_t site = 0; site < size; ++site) {
+            if (q.sites[site].operation == o::NoControlId) continue;
+            const auto cut = q.sites.size(), observation = q.observations.size();
+            auto boundary = q.sites[site];
+            boundary.operation = o::NoControlId;
+            boundary.observation = observation;
+            q.observations.push_back({1000 + cut, {}, true});
+            q.sites.push_back(std::move(boundary));
+            q.sites[site].successors = {cut};
+            q.sites[site].backedgeOwners.clear();
+        }
+        return refine(input.program, owner);
+    };
+    const auto program = build(body);
+    const auto result = accepted(program);
+    require(result.channels.size() == 4 && result.work.recurringTrials == 0,
+            "pipeline must select two early readiness roles, result readiness and final-reader return directly");
+    unsigned ready = 0;
+    for (const auto& channel : result.channels) {
+        ready += channel.source == P && channel.observer == Q;
+        require(channel.source != Q || channel.observer != P,
+                "supported operand still allocated its own release channel");
+        auto broken = result.commands;
+        for (auto& word : broken)
+            word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+                return (command.kind == o::Command::Publish || command.kind == o::Command::Acquire) &&
+                    command.source == channel.source && command.observer == channel.observer &&
+                    command.key == channel.key;
+            }), word.end());
+        require(!o::checkCausalFrontier(program, broken).accepted,
+                "removing a supporting pipeline hop must lose memory or rearming evidence");
+    }
+    require(ready == 2, "input and operand readiness were broadened into one prefix");
+    const auto& graph = *program.observed;
+    for (unsigned entries : {0u, 1u, 2u}) for (unsigned iterations : {0u, 1u, 2u, 4u}) {
+        std::vector<unsigned> expected;
+        for (unsigned entry = 0; entry < entries; ++entry) {
+            expected.push_back(0);
+            for (unsigned i = 0; i < iterations; ++i)
+                for (unsigned op = 1; op <= 6; ++op) expected.push_back(op);
+        }
+        std::set<std::pair<std::size_t, std::size_t>> active, dead;
+        std::vector<std::size_t> path;
+        std::function<bool(std::size_t, std::size_t)> walk = [&](std::size_t at, std::size_t offset) {
+            const auto key = std::make_pair(at, offset);
+            if (active.count(key) || dead.count(key)) return false;
+            const auto& node = graph.sites[at];
+            if (node.operation != o::NoControlId) {
+                if (offset == expected.size() || node.operation != expected[offset]) return false;
+                ++offset;
+            }
+            path.push_back(at);
+            if (at == graph.exit && offset == expected.size()) return true;
+            active.insert(key);
+            for (auto next : node.successors) if (walk(next, offset)) return true;
+            active.erase(key); dead.insert(key); path.pop_back(); return false;
+        };
+        require(walk(graph.entry, 0), "pipeline trace missing zero/first/steady/tail/reentry case");
+        auto flat = program;
+        flat.observed.reset(); flat.body = {}; flat.operations.clear();
+        o::Commands words;
+        std::vector<o::Command> pending;
+        std::vector<std::pair<unsigned, unsigned>> forbidden;
+        unsigned vectorFences = 0;
+        for (auto site : path) {
+            pending.insert(pending.end(), result.commands[site].begin(), result.commands[site].end());
+            for (const auto& command : result.commands[site])
+                vectorFences += command.kind == o::Command::Barrier && command.source == Q;
+            const auto operation = graph.sites[site].operation;
+            if (operation == o::NoControlId) continue;
+            if (operation == 3)
+                require(std::none_of(pending.begin(), pending.end(), [&](const auto& command) {
+                    return command.kind == o::Command::Barrier && command.source == Q;
+                }), "retained normalization completion was repaired again at the row operation");
+            if (operation == 2) forbidden.emplace_back(flat.operations.size(), flat.operations.size() + 1);
+            flat.operations.push_back(program.operations[operation]);
+            words.push_back(std::move(pending)); pending.clear();
+        }
+        words.push_back(std::move(pending));
+        std::vector<unsigned> sequence(flat.operations.size());
+        std::iota(sequence.begin(), sequence.end(), 0);
+        require(bool(oahs_oracle::graph(flat, words, sequence, forbidden)),
+                "pipeline lost memory/rearming or delayed early input use for the independent operand");
+        require(vectorFences >= 2 * entries * iterations,
+                "genuine in-place vector dependencies lost their barriers");
+    }
+    // An independent reader has no path into the final output receipt.
+    auto independent = body;
+    independent.operations.push_back(op(o::Pipe::MTE1, {{1, true, false}}));
+    independent.body.children[0].children[1].children[0].children.push_back(leaf(7));
+    const auto withReader = build(independent);
+    const auto separate = accepted(withReader);
+    auto missing = separate.commands;
+    for (auto& word : missing)
+        word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+            return (command.kind == o::Command::Publish || command.kind == o::Command::Acquire) &&
+                command.source == o::Pipe::MTE1;
+        }), word.end());
+    require(!o::checkCausalFrontier(withReader, missing).accepted,
+            "the output return falsely covered an independent operand reader");
 }
 
 void guardedReaderEpisode()
@@ -512,6 +634,7 @@ int main()
     contextual();
     sharedRecurringPrefixes();
     transitiveRecurringCoverage();
+    pipelineOperandSupport();
     guardedReaderEpisode();
     for (unsigned slots = 1; slots <= 4; ++slots) {
         checkSlots(slots);

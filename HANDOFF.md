@@ -6,15 +6,59 @@ Updated: 2026-09-19
 
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
-- Base before the current milestone: `3f7cd81c24264f32f6db11ae2c319447b4689270`
-- Current milestone: reuse probability-readiness completion for QK release
+- Base before the current milestone: `d6c5731279229f369579ab1dd69634f3a49bffa7`
+- Current milestone: post-RMSNorm required output-return composition
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
 
-## Current local milestone: probability readiness supports QK release
+## Current local milestone: post-RMSNorm output-return composition
+
+Base: `d6c5731279229f369579ab1dd69634f3a49bffa7`. This milestone is recorded
+in the commit containing this handoff. The previous attention device task
+remains pinned to the base commit.
+
+Regeneration confirmed that the provider-selection change alone leaves
+post-RMSNorm unchanged: gamma's private return is preinstalled by recurring
+qualification. Declining all recurring channels removes that return but adds an
+MTE2 barrier, so that diagnostic was not adopted.
+
+`CyclicFrontiers.cpp::qualifyPipelineCycle` now prepares a restricted three-engine
+write / in-place-work / final-reader cycle before ordinary repair. It preserves
+the early input and gamma readiness words. The required store-to-load return
+carries gamma reader/writer completion and readiness consumption, so gamma does
+not receive its own release channel. The same actual credit preserves the
+normalization result established through initial scratch release.
+
+Admission requires exact cells, period one and straight same-occurrence middle
+work; it declines unrelated owner protocols and fixed/authored words. It does
+not generalize guarded or unequal-bank sharing. Physical key assignment and
+final causal/reconstruction checks remain unchanged. There is no graph
+expansion or new omission trial; genuine vector barriers remain.
+
+Modules 22/23: **16 -> 10 static pairs**, **10 named barriers unchanged**, one
+terminal ALL. Two outer entries with 20 iterations in each phase execute
+**360 -> 246 pairs**, with all barriers unchanged. Forty-eight finite paths /
+1,017,762 conflict checks pass; payload finish-to-issue relations are identical.
+The graph remains 175 sites; selected updates 37 -> 22, replay visits
+21,292 -> 11,773, recurring channels 2 -> 4, zero omission trials.
+
+Validation: 20/20 portable suites; support/deletion/independent-reader/retained-
+value regressions; native regression; both RMS variants construct, reconstruct
+and lower. All 87 corpus modules construct/reconstruct: 84 byte-identical,
+two RMS improvements, one RMS sample changes only event-key numbering. All six
+attention plans are identical. GEMM remains 182/360/716 pairs, zero named
+barriers, one terminal ALL, with emission/FileCheck/trace checks passing.
+
+Details, scope and reproduction: `../rms-completion-work/REPORT.md` and its
+paired native plans, logs and ordering comparison. Device benefit is unmeasured.
+Next: qualify this mechanism on device separately
+from the already-dispatched d6 suite; then return to AIV placement (C2) once its
+receive-slot and tail-storage contracts are established.
+
+## Committed milestone: probability readiness supports QK release
 
 Base is the committed guarded-episode/hardening milestone `a6bbe1ff8`.
-The current uncommitted constructor change is in `SelectedGroups.cpp::groups`.
+The committed constructor change is in `SelectedGroups.cpp::groups`.
 It lets an independently required Overlap provider compete during Known
 selection when its current selected prefix already covers a Known requirement.
 Existing Known-source prefixes remain separate from that source's later
@@ -30,9 +74,9 @@ new refiner, queue contract or hardware assumption was introduced.
 Emitted static results:
 
 - Partial attention modules 44–47: AIC **69 → 64 pairs**, AIV **57 → 55**;
-  total **126 → 119**, named barriers unchanged at 87, two terminal ALLs.
+  total **126 → 119**, named barriers unchanged at 87, two terminal ALL barriers.
 - Single-block modules 48–49: **79 → 78 pairs**, 26 named barriers unchanged,
-  two terminal ALLs. Analytical endpoint counts exceed emitted counts because
+  two terminal ALL barriers. Analytical endpoint counts exceed emitted counts because
   complete identical guarded words share their emission.
 - Shenggan GEMM unchanged: **182/360/716 pairs**, zero named barriers and one
   terminal ALL for one/two/four tiles.
@@ -63,10 +107,9 @@ excerpt lines and the post-RMSNorm input hash; evidence is preserved in
 `../composition-review-20260919/`. Their reference-model counts are not native
 compiler measurements.
 
-Next: inspect current post-RMSNorm for required store-return support (C1),
-using the current-credit rule above before adding a new mechanism. Preserve
-separate input/gamma readiness. Keep the pending attention device qualification
-separate from this unmeasured local change. AIV receive placement (C2) still
+Post-RMSNorm attribution and the required additional cycle mechanism are
+recorded above. Keep pending attention device qualification separate from this
+unmeasured local change. AIV receive placement (C2) still
 requires queue-slot/tail-storage qualification; it was not implemented here.
 Guarded use correspondence (C3) and the broader shared-release ordering
 certificate remain open. Read retained projection results before repeating work.
