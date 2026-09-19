@@ -1,15 +1,63 @@
 # OAHS current handoff
 
-Updated: 2026-09-18
+Updated: 2026-09-19
 
 ## Checkout
 
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
-- Base HEAD: `8d08bbe6d8043822e9dd950bf4be1934ea75cd48`
-- Working tree: uncommitted bank-occurrence, shared-release, first-use, replay-cost, tests, and documentation changes
+- Base before the current milestone: `3f7cd81c24264f32f6db11ae2c319447b4689270`
+- Current milestone: guarded bank episodes composed before physical key allocation, plus review hardening
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Guarded attention milestone
+
+The constructor now derives complete guarded producer/reader episodes for exact
+canonical cells before assigning physical event keys. Cells with the same
+guarded first-reader episode keep separate early readiness publications and may
+share one identical reader-release publication. The shared release uses the
+earliest comparable reuse acquisition. This is admitted only when ordinary
+recurring qualification produced no requests and no authored/fixed
+synchronization is present.
+
+The implementation does not reserve one recurring release channel per exact
+cell and does not use omission trials for the new guarded channels. If the
+specialized channel population cannot fit the directional key pool, it declines
+before mutating the ledger and ordinary demand-driven construction continues.
+
+Review hardening in the same milestone:
+
+- local fences are selected only when their actual occurrence deadline is
+  reached; future analytical copies are no longer permanently repaired from an
+  unfinished checkpoint;
+- first-use descriptors reject a true arm that can reach another listed
+  decision before a tracked backedge or exit;
+- the older nested shared-release merge requires both operands to be classified
+  as storage releases. Its broader ordering certificate remains open work.
+
+For attention modules `pypto_lib__prefill_fwd__44` through `__47`, the generated
+plans have 126 SET/WAIT pairs, 87 named barriers, two terminal ALL barriers,
+three cube recurring channels, zero vector recurring channels, and zero
+recurring omission trials/analysis sites. Modules `__48` and `__49` remain at
+79 pairs, 26 named barriers, two terminal ALL barriers, and their six existing
+periodic channels on each participating function. All six construct,
+reconstruct, and lower successfully.
+
+The independent module-44 check covers 126 paths and 90,699 conflict checks. It
+reports zero added payload-order relations, 347 removed path-local relations,
+and absence of the designated previous-bank-compute to next-bank-fill edge.
+This is host evidence only; device latency is pending.
+
+The exact Shenggan GEMM regression remains unchanged at 182/360/716 pairs for
+one/two/four tiles, zero named barriers, and one terminal ALL. The full
+standalone OAHS suite passes 20/20.
+
+Device instructions and the reviewed source patch are outside the repository:
+
+- `/home/toni/work/pypto3_sync_more/guarded-attention-work/DEVICE_TASK.md`
+- `/home/toni/work/pypto3_sync_more/guarded-attention-work/guarded-episodes.patch`
+- patch SHA-256: `8ed4a0169ef66102f50e79c37b7ad93dc85b43ea96f9d1cc73b9aa60c28454f9`
 
 ## Delivered local synchronization plan
 
@@ -81,21 +129,24 @@ The first-use qualifier adds 67 analysis sites to the 651-site bank graph, but d
 
 Sanitizers and device execution were not run locally.
 
-## Device qualification required
+## GEMM device qualification
 
-The local result matches or improves the manual plan's checked payload ordering, but device latency is not established. The next device task should compare:
+The current 182-pair, zero-named-barrier GEMM plan is device-qualified. Across
+180 samples it measured 229.306 us median at 299.7 TFLOPS and 0.921 MAC ratio,
+compared with 230.548 us for the reconstructed manual protocol, 358.570 us for
+compact MAT, 391.834 us for the earlier handoff, and 534.956 us for existing.
+All 20 correctness runs passed with identical error ratios across the five
+arms. The measured result is parity with the manual protocol, with a small
+0.54% median advantage in this campaign.
 
-- the current generated 182-pair, zero-named-barrier arm;
-- the reconstructed manual arm;
-- the prior 200-pair bank-qualified arm;
-- compact MAT;
-- existing and the frozen previous handoff where useful.
-
-Use the project reference compiler flags obtained from `_kernel_compile_flags`, verify `-O2` in both device compiler invocations, retain numerical checks, and report MAC/MTE/scalar profile data. Do not infer performance from event or barrier counts.
+Archive: `/opt/pypto/oahs-gemm-16564fa8a.tar.gz`, SHA-256
+`9f71dc1fe129da538fe16ecebbd73d12410185b8a9176f91e512286e2c9dd25d`.
 
 ## Remaining work
 
-1. Measure the current GEMM plan on device before changing its protocol again.
-2. Redesign guarded attention occurrence correspondence from remaining obligations; the scalar bank orbit does not change the six representative attention plans.
-3. Restrict broader recurring endpoint coalescing with an ordering certificate and make optional specialization decline cleanly under key pressure.
-4. Reduce repeated immutable control/storage construction after plan quality is settled.
+1. Device-qualify guarded attention episode composition. Modules 44--47 require
+   authentic runtime scheduler state; modules 48--49 are the primary runnable
+   cases.
+2. Restrict broader recurring endpoint coalescing with an ordering certificate.
+   Optional specialization now declines cleanly under key pressure.
+3. Reduce repeated immutable control/storage construction after plan quality is settled.

@@ -139,6 +139,20 @@ int main() {
   auto bypass = original;
   bypass.observed->sites[0].successors.push_back(7);
   require(!o::refineFirstUse(bypass, region).success, "accepted external region entry");
+  auto successive = original;
+  successive.observed->sites.resize(17);
+  successive.observed->sites[8].operation = o::NoControlId;
+  successive.observed->sites[8].successors = {15, 16};
+  for (auto site : {15u, 16u}) {
+    successive.observed->sites[site].operation = site == 15 ? 0 : 1;
+    successive.observed->sites[site].successors = {10};
+    successive.observed->sites[site].observation = site;
+    successive.observed->observations.push_back({site, {}, true});
+  }
+  auto twoDecisions = region;
+  twoDecisions.decisions = {7, 8};
+  require(!o::refineFirstUse(successive, twoDecisions).success,
+          "accepted successive first-use decisions before one tracked backedge");
   for (unsigned mutation = 0; mutation < 4; ++mutation) {
     auto invalid = region;
     if (mutation == 0) { invalid.entry = 99; }

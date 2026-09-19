@@ -59,8 +59,10 @@ struct CountedLoopRegion {
 // Assumes original i=0..N-1, step 1. Native import discharges this premise.
 ObservedImport refineCountedLoop(const Program &, const CountedLoopRegion &);
 // Frontend proof: each decision is true exactly before any of the listed
-// original loop backedges since entry. Exit ends that qualification. Only the
-// prefix up to a decision/backedge is split; all later control remains shared.
+// original loop backedges since entry, and no selected true arm reaches another
+// listed decision before such a backedge or exit. Exit ends that qualification.
+// Only the prefix up to a decision/backedge is split; all later control remains
+// shared.
 struct FirstUseRegion {
   std::size_t entry = 0, exit = 0;
   std::vector<std::size_t> decisions, backedgeOwners;

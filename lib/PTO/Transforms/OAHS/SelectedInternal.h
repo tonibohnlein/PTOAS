@@ -244,7 +244,8 @@ private:
 // A storage/control qualifier: it returns requirements and original frontiers,
 // not commands or physical key choices. Empty means ordinary F1--F8 applies.
 std::vector<RecurringRequirement> qualifyCyclicFrontiers(
-    const Program&, const Control&, const RequirementFrontiers&);
+    const Program&, const Control&, const RequirementFrontiers&,
+    bool allowGuardedEpisodes = true);
 
 struct Group {
     Pipe source = Pipe::S;

@@ -37,6 +37,10 @@ public:
         return "first-use decision outside its region";
       }
     }
+    const auto separated = validateDecisionSeparation();
+    if (!separated.empty()) {
+      return separated;
+    }
     if (members.count(old.entry)) {
       return "original entry bypasses first-use boundary";
     }
@@ -104,6 +108,46 @@ private:
         const bool bypass = members.count(next) && !members.count(site) && site != region.entry;
         if (bypass) {
           return "external entry bypasses first-use boundary";
+        }
+      }
+    }
+    return {};
+  }
+
+  std::string validateDecisionSeparation() const {
+    for (auto decision : decisions) {
+      std::vector<std::size_t> todo;
+      const auto &start = old.sites[decision];
+      for (std::size_t edge = 0; edge < start.successors.size(); ++edge) {
+        if (edge != 0) {
+          continue;
+        }
+        const auto owner = start.backedgeOwners.empty()
+                               ? NoControlId
+                               : start.backedgeOwners[edge];
+        if (!owners.count(owner) && start.successors[edge] != region.exit) {
+          todo.push_back(start.successors[edge]);
+        }
+      }
+      std::set<std::size_t> seen;
+      while (!todo.empty()) {
+        const auto site = todo.back();
+        todo.pop_back();
+        if (!seen.insert(site).second) {
+          continue;
+        }
+        if (decisions.count(site)) {
+          return "first-use decisions are not separated by a tracked backedge";
+        }
+        const auto &node = old.sites[site];
+        for (std::size_t edge = 0; edge < node.successors.size(); ++edge) {
+          const auto owner = node.backedgeOwners.empty()
+                                 ? NoControlId
+                                 : node.backedgeOwners[edge];
+          const auto next = node.successors[edge];
+          if (!owners.count(owner) && next != region.exit) {
+            todo.push_back(next);
+          }
         }
       }
     }

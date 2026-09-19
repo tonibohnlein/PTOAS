@@ -299,6 +299,65 @@ void transitiveRecurringCoverage()
                 "removing a necessary whole channel was accepted");
     }
 }
+
+void guardedReaderEpisode()
+{
+    const auto P = o::Pipe::MTE1, Q = o::Pipe::M;
+    auto input = base(3, 4);
+    input.operations = {
+        op(P, {{0, false, true}}),
+        op(P, {{1, false, true}}),
+        op(Q, {{0, true, false}, {1, true, false}, {2, false, true}}),
+        op(o::Pipe::S, {})};
+    input.target.keys[unsigned(Q)][unsigned(P)].resize(1);
+    input.body = {o::Region::For,
+                  {{o::Region::Choice, {seq({leaf(0), leaf(1), leaf(2), leaf(3)}), {}}}},
+                  0, true};
+    auto converted = o::addStructuredBoundaryCuts(input);
+    require(converted.success, converted.reason);
+    const auto plan = accepted(converted.program);
+    require(plan.channels.size() == 3,
+            "shared guarded reader episode reserved per-cell release channels");
+    unsigned readiness = 0, release = 0;
+    for (const auto& channel : plan.channels) {
+        require(channel.owner == o::NoAnalysisId && channel.period == 0,
+                "guarded episode invented periodic correspondence");
+        if (channel.source == P && channel.observer == Q) {
+            ++readiness;
+            require(channel.cells.size() == 1,
+                    "independent early readiness prefixes were combined");
+        } else if (channel.source == Q && channel.observer == P) {
+            ++release;
+            require(channel.cells == std::vector<unsigned>({0, 1}),
+                    "common guarded reader completion was not composed");
+        }
+    }
+    require(readiness == 2 && release == 1 && plan.work.recurringTrials == 0,
+            "guarded episode used physical-key trials instead of logical composition");
+    require(o::checkCausalFrontier(converted.program, plan.commands).accepted,
+            "composed guarded episode failed the independent final checker");
+
+    o::Commands fixed(o::commandCutCount(converted.program));
+    fixed[converted.program.observed->entry].push_back(
+        {o::Command::Barrier, P, P, 0});
+    const auto authored = accepted(converted.program, fixed);
+    require(authored.channels.empty(),
+            "guarded qualification reinterpreted an authored synchronization protocol");
+
+    auto distinct = input;
+    distinct.operations = {
+        op(P, {{0, false, true}}), op(P, {{1, false, true}}),
+        op(Q, {{0, true, false}, {2, false, true}}),
+        op(Q, {{1, true, false}, {2, false, true}})};
+    distinct.body = {o::Region::For,
+                     {{o::Region::Choice, {seq({leaf(0), leaf(1), leaf(2), leaf(3)}), {}}}},
+                     0, true};
+    auto separated = o::addStructuredBoundaryCuts(distinct);
+    require(separated.success, separated.reason);
+    const auto ordinary = accepted(separated.program);
+    require(ordinary.channels.empty(),
+            "different guarded reader deadlines were composed into a recurring protocol");
+}
 // The frontend specializes physical effects, never payload order. Check that
 // ACC reuse remains a compute obligation and cannot gate the next bank fill.
 void carriedBankEffects(bool reentered, unsigned banks)
@@ -453,6 +512,7 @@ int main()
     contextual();
     sharedRecurringPrefixes();
     transitiveRecurringCoverage();
+    guardedReaderEpisode();
     for (unsigned slots = 1; slots <= 4; ++slots) {
         checkSlots(slots);
     }
