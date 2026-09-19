@@ -46,7 +46,8 @@ bool Constructor::freshBetween(Cut source, Cut target, Id access) const
         control.frame[source], access, control.position[source], control.position[target]);
 }
 bool Constructor::sourceFrontier(
-    Pipe source, const std::vector<FrontierRequirement>& required, Group& group) const
+    Pipe source, const std::vector<FrontierRequirement>& required, Group& group,
+    const std::vector<FrontierRequirement>& all, const std::set<Id>* promotion) const
 {
     // This extension is intentionally acyclic: static predecessor identities
     // are not a bank-generation correspondence across an unqualified loop.
@@ -67,6 +68,7 @@ bool Constructor::sourceFrontier(
             availableSources.emplace(handle.origin, &handle);
     }
     std::set<Cut> publications;
+    std::set<Id> regenerated;
     std::vector<bool> seen(control.graph.sites.size());
     auto todo = control.predecessors[current];
     while (!todo.empty()) {
@@ -103,12 +105,34 @@ bool Constructor::sourceFrontier(
             publications.insert(handle.cut);
             continue;
         }
+        // These issues lie after a selected alternative publication on at
+        // least one path. Exclude their classes from additional credit, even
+        // if another arm's source snapshot contains an older occurrence.
+        if (operation != NoAnalysisId) {
+            const auto& op = program.operations[operation];
+            for (const auto& access : op.accesses) {
+                const auto base = (Id(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
+                if (access.read) regenerated.insert(base);
+                if (access.write) regenerated.insert(base + 1);
+            }
+        }
         if (site == control.graph.entry || control.predecessors[site].empty()) return false;
         const auto& before = control.predecessors[site];
         todo.insert(todo.end(), before.begin(), before.end());
     }
     std::vector<Cut> cuts(publications.begin(), publications.end());
     if (!control.lookahead.balancedTransfer(cuts, current, control.graph.entry, control.graph.exit)) return false;
+    auto covered = needed;
+    for (const auto& r : all) {
+        const auto access = accessClass(r);
+        if (regenerated.count(access)) continue;
+        if (std::all_of(cuts.begin(), cuts.end(), [&](Cut cut) {
+                const auto* history = cache.cuts[cut].before.causal.facts()->history.find(access);
+                return history && frontierContains(*history, PipeCount + unsigned(source));
+            })) covered.insert(access);
+    }
+    if (promotion && std::none_of(promotion->begin(), promotion->end(),
+            [&](Id access) { return covered.count(access); })) return false;
     // No edit/retry: only offer this vocabulary when an unused physical key has
     // its complete source-time certificate at ALL alternative publications.
     const auto observer = program.operations[control.graph.operations[current]].pipe;
@@ -134,10 +158,12 @@ bool Constructor::sourceFrontier(
     group.forwardKey = selected;
     group.version = cache.version;
     group.common = false;
-    group.coverage = std::move(needed); // conservative joint credit; no hypothetical receipt
+    group.coverage = std::move(covered); // all paths, source-time credit, no regenerated class
     return true;
 }
-bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequirement>& required, Group& group)
+bool Constructor::loopEntryFrontier(
+    Pipe source, const std::vector<FrontierRequirement>& required, Group& group,
+    const std::vector<FrontierRequirement>& all, const std::set<Id>* promotion)
 {
     if (!program.observed || required.empty()) return false;
     std::set<Id> needed;
@@ -212,6 +238,22 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
         const auto publication = selected ? selected->cut : loop.entry;
         if (!regional && !control.lookahead.balancedTransfer({publication}, loop.entry,
                                        control.graph.entry, control.graph.exit)) continue;
+        // Additional credit comes from the actual publication checkpoint,
+        // never the consumer checkpoint. Invariance inside the region and
+        // freshness on the incoming corridor preserve occurrence identity.
+        auto covered = needed;
+        const auto& snapshot = cache.cuts[publication].before.causal;
+        if (snapshot.reachable()) for (const auto& r : all) {
+            const auto access = accessClass(r);
+            const auto* history = snapshot.facts()->history.find(access);
+            if (!loop.issuedClasses.count(access) &&
+                freshBetween(publication, loop.entry, access) && history &&
+                frontierContains(*history, PipeCount + unsigned(source))) covered.insert(access);
+        }
+        // An overlap-only promotion without Known credit cannot succeed.
+        // Reject it before key selection and the whole-program trial solve.
+        if (promotion && std::none_of(promotion->begin(), promotion->end(),
+                [&](Id access) { return covered.count(access); })) continue;
         auto unused = [&](Pipe a, Pipe b) {
             for (Id key = 0; key < frontier.keys().size(); ++key) {
                 const auto& e = frontier.keys()[key];
@@ -258,14 +300,14 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
         group.entryRepeats = repeats;
         group.forwardKey = forward;
         group.version = ledger.version();
-        group.coverage = needed;
+        group.coverage = std::move(covered);
         return true;
     }
     return false;
 }
 Group Constructor::sourceGroup(
     Pipe source, const std::vector<FrontierRequirement>& required,
-    const std::vector<FrontierRequirement>& all)
+    const std::vector<FrontierRequirement>& all, const std::set<Id>* promotion)
 {
     Group group;
     group.source = source;
@@ -281,8 +323,8 @@ Group Constructor::sourceGroup(
         if (!selected || control.position[handle.cut] < control.position[selected->cut]) selected = &handle;
     }
     const bool comparable = selected != nullptr;
-    if (!comparable && sourceFrontier(source, required, group)) return group;
-    if (!comparable && loopEntryFrontier(source, required, group)) return group;
+    if (!comparable && sourceFrontier(source, required, group, all, promotion)) return group;
+    if (!comparable && loopEntryFrontier(source, required, group, all, promotion)) return group;
     group.publication = comparable ? selected->cut : current;
     group.common = !comparable;
     group.coverage = coverage(group.publication, source, all);
@@ -317,7 +359,7 @@ std::vector<Group> Constructor::groups(
     // overlap demands. No future transfer is credited by this query.
     if (!known.empty()) for (const auto& source : overlapSources) {
         if (sources.count(source.first)) continue;
-        auto group = sourceGroup(source.first, source.second, all);
+        auto group = sourceGroup(source.first, source.second, all, &known);
         if (std::any_of(known.begin(), known.end(), [&](Id access) {
                 return group.coverage.count(access) != 0;
             })) pending.push_back(std::move(group));

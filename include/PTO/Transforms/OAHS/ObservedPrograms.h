@@ -73,6 +73,17 @@ ObservedImport refineFirstUse(const Program &, const FirstUseRegion &);
 // retain their own modes and shared physical phases. Invariant effects are not
 // replaced by the enclosing bank's conservative may-footprints.
 ObservedImport refineBankOccurrences(const Program &, const CountedLoopRegion &);
+// Lowering premise: one private two-slot root, counters initially zero; each
+// read/write advances its own counter and touches at most one slot. The
+// transformer verifies alternating complete read/write episodes on every path.
+// Other accesses to the pooled cell, incomplete episodes and repeated refinement
+// decline. Hidden phase is analytical only; no new command predicate is legal.
+struct AlternatingSlotRegion {
+  unsigned cell = 0, slots = 2;
+  uint64_t slotBytes = 0;
+  std::vector<std::size_t> reads, writes;
+};
+ObservedImport refineAlternatingSlots(const Program &, const AlternatingSlotRegion &);
 struct ObservedWord {
   OriginalObservation observation;
   std::vector<Command> commands;

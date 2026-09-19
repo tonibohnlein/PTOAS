@@ -257,6 +257,55 @@ void sharedRecurringPrefixes()
                 "shared recurring channel must retain both physical obligations");
     }
 }
+void distinctReleaseDeadlines()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
+    auto body = base(2, 4);
+    body.operations = {op(P, {{0, false, true, true}}), op(P, {{1, false, true, true}}),
+                       op(Q, {{0, true, false}}), op(Q, {{1, true, false}})};
+    const auto input = o::makePeriodicLoop(body, 1, {});
+    require(input.success, input.reason);
+    const auto& p = input.program;
+    const auto plan = accepted(p);
+    require(plan.channels.size() == 4, "different reader prefixes must keep separate releases");
+    const auto& g = *p.observed;
+    for (unsigned iterations : {0u, 1u, 2u, 6u}) {
+        std::vector<o::Cut> path;
+        std::set<std::pair<o::Cut, unsigned>> active, dead;
+        std::function<bool(o::Cut, unsigned)> walk = [&](o::Cut at, unsigned offset) {
+            const auto key = std::make_pair(at, offset);
+            if (active.count(key) || dead.count(key)) return false;
+            const auto& node = g.sites[at];
+            if (node.operation != o::NoControlId) {
+                if (offset == 4 * iterations || p.operations[node.operation].original != offset % 4) return false;
+                ++offset;
+            }
+            path.push_back(at);
+            if (at == g.exit && offset == 4 * iterations) return true;
+            active.insert(key);
+            for (auto next : node.successors) if (walk(next, offset)) return true;
+            active.erase(key); dead.insert(key); path.pop_back(); return false;
+        };
+        require(walk(g.entry, 0), "missing separate-release repeated trace");
+        auto flat = p; flat.observed.reset(); flat.body = {}; flat.operations.clear();
+        o::Commands words; std::vector<o::Command> pending;
+        for (auto cut : path) {
+            pending.insert(pending.end(), plan.commands[cut].begin(), plan.commands[cut].end());
+            const auto operation = g.sites[cut].operation;
+            if (operation == o::NoControlId) continue;
+            flat.operations.push_back(p.operations[operation]);
+            words.push_back(std::move(pending)); pending.clear();
+        }
+        words.push_back(std::move(pending));
+        std::vector<unsigned> visits(flat.operations.size());
+        std::iota(visits.begin(), visits.end(), 0);
+        std::vector<std::pair<unsigned, unsigned>> forbidden;
+        for (unsigned i = 1; i < iterations; ++i) forbidden.emplace_back(4*i-1, 4*i);
+        require(bool(oahs_oracle::graph(flat, words, visits, forbidden)),
+                "later B reader now gates the next independent A overwrite");
+    }
+}
+
 void transitiveRecurringCoverage()
 {
     const auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE3;
@@ -354,9 +403,16 @@ void pipelineOperandSupport()
     }
     require(ready == 2, "input and operand readiness were broadened into one prefix");
     const auto& graph = *program.observed;
-    for (unsigned entries : {0u, 1u, 2u}) for (unsigned iterations : {0u, 1u, 2u, 4u}) {
+    std::vector<std::vector<unsigned>> lengths{{}};
+    for (unsigned first : {0u, 1u, 2u, 4u}) {
+        lengths.push_back({first});
+        for (unsigned second : {0u, 1u, 2u, 4u}) lengths.push_back({first, second});
+    }
+    lengths.push_back({4, 0, 1});
+    lengths.push_back({0, 2, 0, 4});
+    for (const auto& entries : lengths) {
         std::vector<unsigned> expected;
-        for (unsigned entry = 0; entry < entries; ++entry) {
+        for (auto iterations : entries) {
             expected.push_back(0);
             for (unsigned i = 0; i < iterations; ++i)
                 for (unsigned op = 1; op <= 6; ++op) expected.push_back(op);
@@ -403,7 +459,7 @@ void pipelineOperandSupport()
         std::iota(sequence.begin(), sequence.end(), 0);
         require(bool(oahs_oracle::graph(flat, words, sequence, forbidden)),
                 "pipeline lost memory/rearming or delayed early input use for the independent operand");
-        require(vectorFences >= 2 * entries * iterations,
+        require(vectorFences >= 2 * std::accumulate(entries.begin(), entries.end(), 0u),
                 "genuine in-place vector dependencies lost their barriers");
     }
     // An independent reader has no path into the final output receipt.
@@ -480,6 +536,124 @@ void guardedReaderEpisode()
     require(ordinary.channels.empty(),
             "different guarded reader deadlines were composed into a recurring protocol");
 }
+// Distinct physical-bank episodes stay open across sibling child loops. This
+// exercises unrefined control: no residue modes, loop unrolling or new guards.
+void independentBankEpisodes()
+{
+    const auto P = o::Pipe::MTE1, Q = o::Pipe::M;
+    auto input = base(3, 4);
+    input.operations = {
+        op(P, {{0, false, true}}), op(P, {{1, false, true}}),
+        op(Q, {{0, true, false}}), op(Q, {{1, true, false}}),
+        op(Q, {{0, true, false}}), op(o::Pipe::MTE2, {{2, false, true}}),
+        op(o::Pipe::S, {})};
+    const auto episode = seq({leaf(0), leaf(1),
+                              {o::Region::Choice, {leaf(2), leaf(4)}}, leaf(3)});
+    const o::Region child{o::Region::For,
+                         {seq({leaf(6), {o::Region::Choice, {episode, seq({})}}})}, 0, true};
+    auto secondChild = child;
+    std::function<void(o::Region&)> renumber = [&](o::Region& region) {
+        if (region.kind == o::Region::Operation) region.operation += 7;
+        for (auto& nested : region.children) renumber(nested);
+    };
+    renumber(secondChild);
+    const auto firstOperations = input.operations;
+    input.operations.insert(input.operations.end(), firstOperations.begin(), firstOperations.end());
+    input.body = {o::Region::For, {seq({leaf(5), child, leaf(12), secondChild})}, 0, true};
+    auto imported = o::addStructuredBoundaryCuts(input);
+    require(imported.success, imported.reason);
+    // Native SCF import has legal after-operation/yield cuts on both arms.
+    auto& control = *imported.program.observed;
+    const auto originalSites = control.sites.size();
+    for (o::Cut site = 0; site < originalSites; ++site) {
+        if (control.sites[site].operation == o::NoControlId) continue;
+        const auto after = control.sites.size();
+        auto boundary = control.sites[site];
+        boundary.operation = o::NoControlId;
+        boundary.observation = control.observations.size();
+        control.observations.push_back({1000 + after, {}, true});
+        control.sites.push_back(std::move(boundary));
+        control.sites[site].successors = {after};
+        control.sites[site].backedgeOwners.clear();
+    }
+    const auto& p = imported.program;
+    const auto plan = accepted(p);
+    require(plan.channels.size() == 4 && plan.work.recurringTrials == 0,
+            "distinct banks must select their own complete interfaces directly");
+    for (const auto& channel : plan.channels) {
+        require(channel.cells.size() == 1 && channel.owner == o::NoAnalysisId && channel.period == 0,
+                "distinct reader frontiers were merged or assigned a fabricated period");
+        auto broken = plan.commands;
+        for (auto& word : broken)
+            word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+                return (command.kind == o::Command::Publish || command.kind == o::Command::Acquire) &&
+                    command.source == channel.source && command.observer == channel.observer &&
+                    command.key == channel.key;
+            }), word.end());
+        require(!o::checkCausalFrontier(p, broken).accepted,
+                "missing bank readiness/release was credited by the interface alone");
+    }
+    const auto& g = *p.observed;
+    for (const auto& lengths : std::vector<std::vector<unsigned>>{{}, {0, 0}, {1, 2},
+                                                               {3, 0, 0, 2}, {2, 3, 1, 4}}) {
+        for (unsigned mask = 0; mask < 8; ++mask) {
+            std::vector<unsigned> expected;
+            unsigned iteration = 0, phase = 0;
+            for (auto length : lengths) {
+                const auto base = 7 * (phase++ % 2);
+                expected.push_back(base + 5);
+                for (unsigned i = 0; i < length; ++i, ++iteration) {
+                    expected.push_back(base + 6);
+                    if (!(mask & (1u << (iteration % 3)))) continue;
+                    for (auto operation : {0u, 1u, iteration % 2 ? 4u : 2u, 3u})
+                        expected.push_back(base + operation);
+                }
+            }
+            std::vector<o::Cut> path;
+            std::set<std::pair<o::Cut, unsigned>> active, dead;
+            std::function<bool(o::Cut, unsigned)> walk = [&](o::Cut at, unsigned offset) {
+                const auto key = std::make_pair(at, offset);
+                if (active.count(key) || dead.count(key)) return false;
+                const auto& node = g.sites[at];
+                if (node.operation != o::NoControlId) {
+                    if (offset == expected.size() || node.operation != expected[offset]) return false;
+                    ++offset;
+                }
+                path.push_back(at);
+                if (at == g.exit && offset == expected.size()) return true;
+                active.insert(key);
+                for (auto next : node.successors) if (walk(next, offset)) return true;
+                active.erase(key); dead.insert(key); path.pop_back(); return false;
+            };
+            require(walk(g.entry, 0), "missing skipped/sibling/reentered bank trace");
+            auto flat = p; flat.observed.reset(); flat.body = {}; flat.operations.clear();
+            o::Commands words; std::vector<o::Command> pending;
+            for (auto cut : path) {
+                pending.insert(pending.end(), plan.commands[cut].begin(), plan.commands[cut].end());
+                const auto operation = g.sites[cut].operation;
+                if (operation == o::NoControlId) continue;
+                flat.operations.push_back(p.operations[operation]);
+                words.push_back(std::move(pending)); pending.clear();
+            }
+            words.push_back(std::move(pending));
+            std::vector<unsigned> visits(flat.operations.size());
+            std::iota(visits.begin(), visits.end(), 0);
+            std::vector<std::pair<unsigned, unsigned>> forbidden;
+            unsigned lastB = unsigned(expected.size());
+            for (unsigned i = 0; i < expected.size(); ++i) {
+                const auto operation = expected[i] % 7;
+                if (operation == 3) lastB = i;
+                if ((operation == 0 || operation == 5) && lastB < i)
+                    forbidden.emplace_back(lastB, i);
+                if (operation == 2 || operation == 4)
+                    forbidden.emplace_back(i - 1, i);
+            }
+            require(bool(oahs_oracle::graph(flat, words, visits, forbidden)),
+                    "bank protocol delayed early readiness, acquired the wrong reader, or drained at child exit");
+        }
+    }
+}
+
 // The frontend specializes physical effects, never payload order. Check that
 // ACC reuse remains a compute obligation and cannot gate the next bank fill.
 void carriedBankEffects(bool reentered, unsigned banks)
@@ -633,9 +807,11 @@ int main()
     regional();
     contextual();
     sharedRecurringPrefixes();
+    distinctReleaseDeadlines();
     transitiveRecurringCoverage();
     pipelineOperandSupport();
     guardedReaderEpisode();
+    independentBankEpisodes();
     for (unsigned slots = 1; slots <= 4; ++slots) {
         checkSlots(slots);
     }

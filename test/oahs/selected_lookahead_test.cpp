@@ -99,6 +99,113 @@ void reuseThroughRequiredOverlapReadiness()
         }
     }
 }
+void alternativeProviderCredit()
+{
+    for (unsigned variant : {0u, 1u, 2u}) {
+        auto p = base(4, 4);
+        p.cells[2].storage = o::Cell::Storage::OverlapWitness;
+        p.operations = {op(P, {{0, false, true, true}}),
+                        op(Q, {{0, true, false}, {1, false, true, true}}),
+                        op(R, {{1, true, false}, {2, false, true}}),
+                        op(R, {{2, false, true}}),
+                        op(R, {{3, false, true}}), op(R, {{3, false, true}}),
+                        op(P, {{0, false, true, true}, {2, true, false}})};
+        if (variant != 1) p.operations[3].accesses.push_back({1, true, false});
+        if (variant == 2) p.operations[4] = op(Q, {{0, true, false}});
+        o::ObservedControl g;
+        g.qualification = "alternative required provider with source-time joint credit";
+        g.entry = 0; g.exit = 10;
+        const std::vector<std::size_t> operations{0, 1, o::NoAnalysisId, 2, 4,
+            o::NoAnalysisId, 3, 5, o::NoAnalysisId, 6, o::NoAnalysisId};
+        const std::vector<std::vector<std::size_t>> edges{
+            {1}, {2}, {3, 6}, {4}, {5}, {9}, {7}, {8}, {9}, {10}, {}};
+        for (std::size_t i = 0; i < operations.size(); ++i) {
+            g.observations.push_back({i, {}, true});
+            g.sites.push_back({operations[i], i, edges[i], {}, 0});
+        }
+        p.observed = g;
+        const auto plan = accepted(p);
+        const bool direct = std::any_of(plan.decisions.begin(), plan.decisions.end(), [](const auto& d) {
+            return d.consumer == 9 && d.source == Q;
+        });
+        require(direct == (variant != 0),
+                "alternative provider must cover every arm and the current reader occurrence");
+        if (variant == 0) {
+            require(std::any_of(plan.decisions.begin(), plan.decisions.end(), [](const auto& d) {
+                return d.consumer == 9 && d.source == R && d.stage == o::RequirementStage::Known &&
+                    d.publicationFrontier == std::vector<o::Cut>{4, 7};
+            }), "Known promotion lost alternative early publication boundaries");
+            auto broken = plan.commands;
+            for (auto& word : broken) word.erase(std::remove_if(word.begin(), word.end(), [](const auto& c) {
+                return (c.kind == o::Command::Publish || c.kind == o::Command::Acquire) &&
+                    c.source == Q && c.observer == R;
+            }), word.end());
+            require(!o::checkCausalFrontier(p, broken).accepted,
+                    "alternative source manufactured credit without supporting readiness");
+        }
+        for (const auto& path : {std::vector<o::Cut>{0,1,2,3,4,5,9,10},
+                                 std::vector<o::Cut>{0,1,2,6,7,8,9,10}}) {
+            auto flat = p; flat.observed.reset(); flat.body = {}; flat.operations.clear();
+            o::Commands words; std::vector<o::Command> pending;
+            for (auto cut : path) {
+                pending.insert(pending.end(), plan.commands[cut].begin(), plan.commands[cut].end());
+                const auto operation = g.sites[cut].operation;
+                if (operation == o::NoAnalysisId) continue;
+                flat.operations.push_back(p.operations[operation]);
+                words.push_back(std::move(pending)); pending.clear();
+            }
+            words.push_back(std::move(pending));
+            const std::vector<std::pair<unsigned, unsigned>> forbidden = variant == 0 ?
+                std::vector<std::pair<unsigned, unsigned>>{{3, 4}} :
+                std::vector<std::pair<unsigned, unsigned>>{};
+            require(bool(oahs_oracle::graph(flat, words, {0,1,2,3,4}, forbidden)),
+                    "alternative provider lost memory/rearming or imported the later unrelated R work");
+        }
+    }
+}
+
+void entryProviderCredit()
+{
+    for (bool connected : {false, true}) {
+        auto p = base(4, 4);
+        p.cells[2].storage = o::Cell::Storage::OverlapWitness;
+        p.operations = {op(P, {{0, false, true, true}}),
+                        op(Q, {{0, true, false}, {1, false, true, true}}),
+                        op(R, {{2, false, true}}),
+                        op(P, {{0, false, true, true}, {2, true, false}}),
+                        op(R, {{3, false, true}})};
+        if (connected) p.operations[2].accesses.push_back({1, true, false});
+        o::ObservedControl g;
+        g.qualification = "nonempty consumer region with invariant extra provider credit";
+        g.entry = 0; g.exit = 9;
+        const std::vector<std::size_t> operations{0, 1, 2, o::NoAnalysisId,
+            4, o::NoAnalysisId, o::NoAnalysisId, 3, o::NoAnalysisId, o::NoAnalysisId};
+        const std::vector<std::vector<std::size_t>> edges{{1}, {2}, {3}, {4}, {5}, {6}, {7,9}, {8}, {6}, {}};
+        for (std::size_t i = 0; i < operations.size(); ++i) {
+            g.observations.push_back({i, {}, true});
+            g.sites.push_back({operations[i], i, edges[i], {}, 0});
+        }
+        g.sites[8].backedgeOwners = {5};
+        g.loops.push_back({5, 5, 9, {6,7,8}, 7, true});
+        p.observed = g;
+        const auto plan = accepted(p);
+        const bool direct = std::any_of(plan.decisions.begin(), plan.decisions.end(), [](const auto& d) {
+            return d.consumer == 7 && d.source == Q;
+        });
+        require(direct == !connected, "entry provider failed to distinguish actual extra credit");
+        require(plan.work.loopEntryTransfers != 0, "fixture did not select entry acquisition");
+        if (connected) {
+            auto broken = plan.commands;
+            for (auto& word : broken) word.erase(std::remove_if(word.begin(), word.end(), [](const auto& c) {
+                return (c.kind == o::Command::Publish || c.kind == o::Command::Acquire) &&
+                    c.source == Q && c.observer == R;
+            }), word.end());
+            require(!o::checkCausalFrontier(p, broken).accepted,
+                    "entry provider kept credit after deleting its supporting transfer");
+        }
+    }
+}
+
 void keepKnownPrefixSeparateFromOverlap()
 {
     auto p = base(2, 2);
@@ -515,6 +622,8 @@ int main()
     reuseThroughRequiredOverlapReadiness();
     keepDifferentDeadlines();
     alternativeEarlySources();
+    alternativeProviderCredit();
+    entryProviderCredit();
     noUnusedTerminalReturn();
     keepFuturePayloadReturn();
     keepFutureWordReturn();

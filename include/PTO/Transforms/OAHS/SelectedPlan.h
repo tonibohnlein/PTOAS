@@ -112,6 +112,13 @@ struct SelectedWork {
     std::size_t recurringChannels = 0;
     std::size_t recurringTrials = 0, redundantRecurringChannels = 0;
     uint64_t recurringAnalysisSites = 0;
+    // Qualification runs once in this constructor. Native admission queries
+    // are outside this timer, as is selected replay. Final helper trials are
+    // separate from recurring omission trials and from the final certificate.
+    uint64_t recurringQualificationMicroseconds = 0;
+    std::size_t helperCompositionTrials = 0;
+    uint64_t helperCompositionSiteEvaluations = 0, helperCompositionMicroseconds = 0;
+    uint64_t finalCertificateSiteEvaluations = 0, finalCertificateMicroseconds = 0;
     std::size_t loopEntryTransfers = 0;
     std::size_t rearmingDischarged = 0;
     std::size_t rearmingComposed = 0;

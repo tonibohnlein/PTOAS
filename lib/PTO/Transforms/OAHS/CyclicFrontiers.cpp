@@ -799,6 +799,35 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
 {
     std::vector<RecurringRequirement> requests;
     if (!p.observed) return requests;
+    if (allowGuardedEpisodes && p.alternatingSlots) {
+        // Complete the two-slot read/write ownership cycle before ordinary
+        // repair. The previous episode's return covers the older same-slot
+        // writer; this episode's return may therefore follow its read. The
+        // acknowledgment carries that read's completion before the next write.
+        // One logical pair of directions serves the FIFO, not one per cell.
+        const auto& slots = *p.alternatingSlots;
+        RecurringRequirement returned, acknowledged;
+        returned.cell = acknowledged.cell = slots.cells.front();
+        returned.cells = acknowledged.cells = slots.cells;
+        returned.source = acknowledged.observer = slots.writer;
+        returned.observer = acknowledged.source = slots.reader;
+        returned.qualifiedCycle = acknowledged.qualifiedCycle = true;
+        // Preserve WAIT return -> SET acknowledgment -> WAIT acknowledgment
+        // within each after-read word (not the guarded publication-first form).
+        returned.period = acknowledged.period = 1;
+        std::set<Cut> reads, afterReads;
+        for (auto site : slots.reads) {
+            auto next = c.after(site);
+            if (next == NoAnalysisId) return {};
+            reads.insert(c.canonicalCut[site]);
+            afterReads.insert(c.canonicalCut[next]);
+        }
+        returned.publications.assign(reads.begin(), reads.end());
+        returned.acquisitions.assign(afterReads.begin(), afterReads.end());
+        acknowledged.publications = acknowledged.acquisitions = returned.acquisitions;
+        if (!balanced(c, returned.publications, returned.acquisitions)) return {};
+        return {returned, acknowledged};
+    }
     auto append = [&](RecurringRequirement request) {
         // Several conservative storage witnesses can name the same physical
         // role. One actual prefix serves their conjunction.
@@ -935,12 +964,9 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
             requests.erase(requests.begin() + j);
         }
     }
-    // Two exact cells in the same physical bank episode may share their
-    // storage-release return while retaining separate early readiness. Admit
-    // this only when each cell has its own reverse exact cycle, the complete
-    // guarded occurrences correspond, and the merged release token stream is
-    // balanced. This is the private multi-operand bank case, not the broader
-    // one-sided endpoint coalescing policy.
+    // Unrefined physical episodes retain their release across child exits.
+    // Sharing a final reader is optional: a bank with a distinct reader
+    // frontier still needs its own readiness and previous-use return.
     if (requests.empty() && allowGuardedEpisodes) {
         // Compose exact guarded banks by their shared first-reader episode
         // before assigning keys. Distinct readiness publications stay at their
@@ -956,9 +982,29 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
                 ready.cell != release.cell) continue;
             episodes[{ready.source, ready.observer, ready.acquisitions}].push_back(i);
         }
+        // Admit independent banks as one logical cohort. Do not append a
+        // per-cell population to an already composed common-reader protocol,
+        // or mix unrelated producer/reader directions into this specialization.
+        const bool independent = episodes.size() > 1 &&
+            std::all_of(episodes.begin(), episodes.end(), [&](const auto& item) {
+                return item.second.size() == 1 &&
+                    std::get<0>(item.first) == std::get<0>(episodes.begin()->first) &&
+                    std::get<1>(item.first) == std::get<1>(episodes.begin()->first);
+            });
         for (auto& [episode, members] : episodes) {
             (void)episode;
-            if (members.size() < 2) continue;
+            if (members.size() == 1) {
+                if (!independent) continue;
+                // The role/balance proofs above already admit this episode.
+                // Do not force ordinary common-cut repair merely because no
+                // other storage cell has the exact same reader frontier.
+                // Capacity is checked for the complete logical proposal before
+                // any endpoint is committed by recurring().
+                const auto index = members.front();
+                append(std::move(guarded[index]));
+                append(std::move(guarded[index + 1]));
+                continue;
+            }
             std::optional<RecurringRequirement> release;
             std::vector<RecurringRequirement> readiness;
             for (auto index : members) {
@@ -998,52 +1044,10 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
             append(std::move(*release));
         }
     }
-    bool joinedCycle = true;
-    while (joinedCycle) {
-        joinedCycle = false;
-        for (Id i = 0; i < requests.size() && !joinedCycle; ++i) {
-            const auto& a = requests[i];
-            if (!a.qualifiedCycle || !a.storageRelease) continue;
-            for (Id j = i + 1; j < requests.size() && !joinedCycle; ++j) {
-                const auto& b = requests[j];
-                if (!b.qualifiedCycle || a.source != b.source || a.observer != b.observer ||
-                    !b.storageRelease || a.owner != b.owner || a.period != b.period ||
-                    a.cells == b.cells) continue;
-                auto reverse = [&](const RecurringRequirement& value, Id skip) {
-                    for (Id k = 0; k < requests.size(); ++k) {
-                        const auto& candidate = requests[k];
-                        if (k != skip && candidate.qualifiedCycle && candidate.owner == value.owner &&
-                            candidate.period == value.period && candidate.source == value.observer &&
-                            candidate.observer == value.source && candidate.cells == value.cells)
-                            return k;
-                    }
-                    return Id(NoAnalysisId);
-                };
-                const auto ri = reverse(a, i), rj = reverse(b, j);
-                if (ri == NoAnalysisId || rj == NoAnalysisId || ri == rj) continue;
-                std::vector<Cut> forwardPublications, forwardAcquisitions;
-                if (!combine(a.publications, b.publications, true, forwardPublications) ||
-                    !combine(a.acquisitions, b.acquisitions, false, forwardAcquisitions) ||
-                    !balanced(c, forwardPublications, forwardAcquisitions))
-                    continue;
-                auto forward = a;
-                forward.cells = a.cells;
-                forward.cells.insert(forward.cells.end(), b.cells.begin(), b.cells.end());
-                std::sort(forward.cells.begin(), forward.cells.end());
-                forward.cells.erase(std::unique(forward.cells.begin(), forward.cells.end()),
-                                    forward.cells.end());
-                forward.cell = forward.cells.front();
-                forward.publications = std::move(forwardPublications);
-                forward.acquisitions = std::move(forwardAcquisitions);
-                std::vector<Id> erase{i, j};
-                std::sort(erase.begin(), erase.end(), std::greater<Id>());
-                erase.erase(std::unique(erase.begin(), erase.end()), erase.end());
-                for (auto index : erase) requests.erase(requests.begin() + index);
-                requests.push_back(std::move(forward));
-                joinedCycle = true;
-            }
-        }
-    }
+    // Distinct release publications retain their own prefixes. Matching bank
+    // phases and a balanced merged token stream do not justify waiting for a
+    // later reader at an earlier overwrite. Identical publication frontiers
+    // can still share through the common-prefix rule above.
     return requests;
 }
 bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)

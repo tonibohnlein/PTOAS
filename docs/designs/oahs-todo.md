@@ -8,23 +8,30 @@ advancing acquisition deadlines.
 
 ## Current priority order
 
-1. Complete the pending guarded-attention device qualification. In local work,
-   attribute the proposed post-RMSNorm and attention opportunities on current
-   output before selecting the next compiler change (C0 below).
-2. AIC probability-readiness support is implemented and host-validated locally
-   (C1): partial attention 126 → 119 emitted pairs; single-block 79 → 78;
-   no added ordering on the 126 checked module-44 paths; GEMM unchanged.
-   Post-RMSNorm is now host-validated: a complete three-engine recurring cycle
-   supports gamma reuse before channel allocation; modules 22/23 fall 16 -> 10
-   static pairs with barriers and checked payload ordering unchanged. Review
-   and device-qualify this milestone separately from the d6 task.
-   Follow with qualified AIV receive/reuse placement (C2); keep non-unit-step
-   first-use qualification as a separate bounded control-analysis experiment.
-3. Extend guarded participating-use support (C3) and validate it against paired
-   projections, merge/finalization, quantization, and RoPE/staging (C4--C7).
-4. Resolve the recurring coalescing ordering certificate alongside any affected
-   change; do not claim general order preservation before this is done.
-5. Optimize construction runtime and repeated immutable structure building.
+1. Device-qualify the projection operand-bank fix. Qualified independent bank
+   episodes now retain early readiness and the previous same-bank reader release
+   across child entries, without graph expansion. Down_proj removes 315/632
+   checked ordering relations for one/two tiles; gate/up, KV and out projection
+   also improve, with no additions on checked paths. Counts increase; timing is
+   unmeasured. See `../../../projection-overlap-work/REPORT.md`. Remaining MAT
+   readiness still observes some later loads, so the full 64–95% device regression (LM head remains correctness-provisional)
+   is not yet declared resolved. Attribute those deadlines before further changes.
+2. Review corrections are implemented and host-validated: distinct release
+   prefixes stay separate; alternative/entry providers expose additional current
+   coverage; repeated-entry cycle tests vary lengths; final helper trials are
+   separately counted. GEMM remains barrier-free at 200/394/782 pairs, with no
+   added ordering and 14/30/62 removed relations against the 182-pair reference.
+   Device-qualify this changed plan; earlier parity measurements belong to 182.
+3. Retain the successful AIC and post-RMSNorm compositions and the uncommitted
+   FIFO receive-placement experiment. The FIFO plan improves checked placement
+   but increases contextual replay from 26,206 to 813,458 visits. Its cost and
+   full peer/device qualification remain unresolved. The pending device task
+   stays pinned; do not silently substitute this working tree.
+4. Extend guarded participating-use support and use paired projections,
+   merge/finalization, quantization and RoPE as generalization tests only after
+   attributing an actual remaining requirement on current output.
+5. Optimize repeated immutable structure construction and replay. Keep those
+   measurements separate from synchronization-plan quality.
 
 The [composition roadmap](oahs-composition-roadmap.md) reviews the supplied
 agent studies, maps them to current code, and gives concrete tasks, negative
@@ -40,7 +47,7 @@ Finish and measure a coherent plan milestone before moving to the next item.
 Runtime work may still be performed when it blocks plan experimentation, but it
 is not the current optimization target.
 
-## Locally completed GEMM plan milestone
+## Device-verified GEMM reference (before current review hardening)
 
 The committed implementation carries finite outer-bank identity through the nested MAT
 reader region and relates each overwrite to the previous participating use of
@@ -99,11 +106,12 @@ Until this certificate exists, keep broader recurring endpoints separate. If a
 resource fallback deliberately broadens ordering, classify and measure it
 explicitly instead of treating it as ordinary F3 sharing.
 
-Current implementation gap: `joinedCycle` still permits the older later-release
-publication/earlier-acquisition merge. Requiring both `a.storageRelease` and
-`b.storageRelease` fixed category admission, but did not supply the missing
-ordering certificate. The identical-publication check in the guarded episode
-builder is not a certificate for every later merge or crossed selected word.
+The current hardening removes `joinedCycle`: different final-reader publication
+frontiers now remain separate. A linked independent B-reader/A-refill regression
+and the native Shenggan quality check cover this restriction. Identical-prefix
+sharing remains. A broader endpoint-motion certificate, including crossed
+ordered words, is still separate future work; the guarded identical-publication
+rule is not such a certificate.
 
 Acceptance criteria:
 

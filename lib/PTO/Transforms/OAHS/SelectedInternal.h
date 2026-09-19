@@ -250,6 +250,9 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
 struct Group {
     Pipe source = Pipe::S;
     Cut publication = NoAnalysisId;
+    // Motivating demands determine the endpoint boundaries. Coverage may also
+    // contain other current residual classes proved by those source prefixes;
+    // it does not widen the motivation or grant credit before actual replay.
     std::vector<FrontierRequirement> requirements;
     std::set<Id> coverage;
     bool common = false;
@@ -325,11 +328,13 @@ private:
     std::map<Id, unsigned> reasons(Cut) const;
     std::vector<Group> groups(const std::vector<FrontierRequirement>&, RequirementStage);
     Group sourceGroup(Pipe, const std::vector<FrontierRequirement>&,
-                      const std::vector<FrontierRequirement>&);
+                      const std::vector<FrontierRequirement>&, const std::set<Id>* promotion = nullptr);
     std::set<Id> coverage(Cut, Pipe, const std::vector<FrontierRequirement>&) const;
     bool freshBetween(Cut, Cut, Id) const;
-    bool sourceFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&) const;
-    bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&);
+    bool sourceFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&,
+                        const std::vector<FrontierRequirement>&, const std::set<Id>*) const;
+    bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&,
+                           const std::vector<FrontierRequirement>&, const std::set<Id>*);
     bool consume();
     bool bind(Group&, RequirementStage);
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&);

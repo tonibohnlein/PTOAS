@@ -215,6 +215,24 @@ bool valid(const Program &p, std::string &reason) {
           return false;
       }
   }
+  if (p.alternatingSlots) {
+    const auto &slots = *p.alternatingSlots;
+    if (!p.observed || slots.cells.size() != 2 || slots.cells[0] == slots.cells[1] ||
+        slots.cells[0] >= p.cells.size() || slots.cells[1] >= p.cells.size() ||
+        slots.reads.empty() || slots.reader == slots.writer ||
+        unsigned(slots.reader) >= PipeCount || unsigned(slots.writer) >= PipeCount) {
+      reason = "invalid alternating slot interface";
+      return false;
+    }
+    for (auto site : slots.reads) {
+      const auto op = site < p.observed->sites.size()
+                          ? p.observed->sites[site].operation : NoControlId;
+      if (op >= p.operations.size() || p.operations[op].pipe != slots.reader) {
+        reason = "invalid alternating slot read boundary";
+        return false;
+      }
+    }
+  }
   for (const auto &op : p.operations) {
     if (op.nativeMmadAccumulate && (op.pipe != Pipe::M || p.finalBlocks ||
         p.target.contract != "a3-aic-prefix-static-safe-v1")) {
@@ -942,3 +960,4 @@ std::vector<Cut> StorageFrontierAnalysis::corridor(std::size_t s, Pipe pipe,
 #include "ObservedFrontend.h"
 #include "BankOccurrenceFrontend.h"
 #include "FirstUseFrontend.h"
+#include "FifoSlotFrontend.h"
