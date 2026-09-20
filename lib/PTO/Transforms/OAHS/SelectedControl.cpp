@@ -328,6 +328,15 @@ Control::Control(const Program& program)
             const auto operation = graph.operations[site];
             if (operation == NoAnalysisId) continue;
             const auto& op = program.operations[operation];
+            const auto observation = program.observed->sites[site].observation;
+            if (observation != NoAnalysisId) {
+                const auto& atoms = program.observed->observations[observation].atoms;
+                if (std::any_of(atoms.begin(), atoms.end(), [&](const auto& a) {
+                        return a.kind == ObservationAtom::LoopHasPrevious &&
+                            a.owner == loop.owner && a.parameter == 1 && a.value == 0;
+                    }) && lookahead.balancedTransfer({loop.entry}, site, graph.entry, graph.exit))
+                    facts.firstInputConsumers.push_back(site);
+            }
             observers.insert(op.pipe);
             facts.issuedPipes.insert(op.pipe);
             for (const auto& access : op.accesses) {
@@ -399,6 +408,15 @@ Control::Control(const Program& program)
         span.first = span.first == NoAnalysisId ? block : std::min(span.first, block);
         span.second = std::max(span.second, block);
     }
+    if (program.observed) for (const auto& loop : program.observed->loops)
+        for (auto cut : loop.firstVisitPrefix) {
+            if (cut >= canonicalCut.size()) {
+                complete = false;
+                reason = "invalid first-visit prefix cut";
+                return;
+            }
+            firstPrefixWords.insert(canonicalCut[cut]);
+        }
 }
 bool Control::straight(Id a, Id b) const
 {

@@ -8,6 +8,7 @@
 #include "PTO/Transforms/OAHS/Native.h"
 #include "ObservationUnion.h"
 #include "NativeFirstUse.h"
+#include "NativeFirstConsumer.h"
 #include "NativeFifoSlots.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
@@ -403,6 +404,7 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     }
     q.loops.push_back(std::move(original));
   }
+  native_detail::importFirstConsumers(out.program, loops, ids, out.loopOwners, out.observationNotes);
   native_detail::importFirstUse(function, out.program, ids, out.observationNotes);
   if (out.loopOwners.empty())
     native_detail::importFifoSlots(function, out.program, out.payload, out.observationNotes);
@@ -875,7 +877,8 @@ emitObservationPredicate(const OriginalObservation &observation,
       part = builder.create<arith::CmpIOp>(
           loc,
           atom.value ? arith::CmpIPredicate::sge : arith::CmpIPredicate::slt,
-          lhs, constant(atom.parameter));
+          lhs, constant(uint64_t(*native_detail::firstUseInteger(loop.getLowerBound())) +
+                        atom.parameter * uint64_t(*native_detail::firstUseInteger(loop.getStep()))));
     } else if (atom.kind == ObservationAtom::LoopHasNext) {
       lhs = reuse(values.remaining, atom.owner, [&]() -> Value {
         return builder.create<arith::SubIOp>(loc, loop.getUpperBound(), lhs);
@@ -952,7 +955,8 @@ LogicalResult checkObservationPredicate(const OriginalObservation &observation,
       } else if (atom.kind == ObservationAtom::LoopHasPrevious) {
         matched =
             cmp.getLhs() == loop.getInductionVar() &&
-            uint64_t(*rhs) == atom.parameter &&
+            uint64_t(*rhs) == uint64_t(*native_detail::firstUseInteger(loop.getLowerBound())) +
+                atom.parameter * uint64_t(*native_detail::firstUseInteger(loop.getStep())) &&
             cmp.getPredicate() == (atom.value ? arith::CmpIPredicate::sge
                                               : arith::CmpIPredicate::slt);
       } else if (atom.kind == ObservationAtom::LoopHasNext) {

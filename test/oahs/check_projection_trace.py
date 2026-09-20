@@ -11,8 +11,8 @@ Executes original scalar conditions and emitted words. GM arguments are separate
 this checks local byte footprints, not numerical execution or device latency.
 BF16 footprints are 16 bits; no native ACC exemption is used for this fixture.
 """
+import argparse
 import re
-import sys
 from pathlib import Path
 from check_carried_slot_trace import Trace, execute, parse
 
@@ -22,11 +22,13 @@ def overlap(a, b):
 
 
 class ProjectionTrace(Trace):
-    def __init__(self):
+    def __init__(self, check_mat=False):
         super().__init__()
         self.early_checks = 0
         self.reuse_checks = 0
         self.starts = []
+        self.check_mat = check_mat
+        self.mat_checks = 0
 
     def payload(self, name, effects, context, acc_order=False):
         pipe = {"tload": "MTE2", "textract": "MTE1", "tmatmul": "M",
@@ -50,6 +52,22 @@ class ProjectionTrace(Trace):
                 if old[0] == "textract" and old[3] == context:
                     assert not before & (1 << old[1]), "later operand preparation gates early matrix use"
                     self.early_checks += 1
+        if name == "textract" and self.check_mat:
+            # This fixture's first MAT B bank is [65536, 196608). Its
+            # readiness must not observe the later A1/B1 loads. The second
+            # child's entry placement is a separate, still-open deadline.
+            reads = [a for a, write in effects if not write and
+                     a[0] == "mat" and a[1] == 65536]
+            if reads:
+                producers = [i for i, old in enumerate(self.payloads) if
+                             old[0] == "tload" and any(write and any(overlap(a, b) for b in reads)
+                                                       for a, write in old[2])]
+                assert producers, "missing original B producer"
+                producer = producers[-1]
+                for old in self.payloads[producer + 1:]:
+                    if old[0] == "tload" and old[3] == self.payloads[producer][3]:
+                        assert not before & (1 << old[1]), "later MAT load gates early B extraction"
+                        self.mat_checks += 1
         if name == "textract":
             outputs = [a for a, write in effects if write and a[0] in ("left", "right")]
             readers = [i for i, old in enumerate(self.payloads) if old[0].startswith("tmatmul") and
@@ -67,7 +85,7 @@ class ProjectionTrace(Trace):
         self.finishes.setdefault(pipe, []).append(done)
 
 
-def run(path, chunks, tiles):
+def run(path, chunks, tiles, check_mat=False):
     # Only normalize spelling for the shared scalar/footprint parser. The
     # payload checker above deliberately ignores its optional ACC shortcut.
     source = path.read_text().replace("xbf16", "xf16")
@@ -75,7 +93,7 @@ def run(path, chunks, tiles):
     lines = source.splitlines()
     start = next(i for i, line in enumerate(lines) if "func.func @down_proj" in line) + 1
     nodes, _ = parse(lines, start)
-    trace = ProjectionTrace()
+    trace = ProjectionTrace(check_mat=check_mat)
     execute(nodes, {"%arg3": 20 * tiles, "%arg4": chunks, "%arg5": 0, "%arg6": 0,
                     "%arg7": 4352, "%arg8": 0, "%arg9": 20}, trace)
     assert not trace.live, "unconsumed event at invocation exit"
@@ -86,14 +104,22 @@ def run(path, chunks, tiles):
 
 
 def main():
-    path = Path(sys.argv[1])
-    checks = early = reuse = 0
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("path", type=Path)
+    parser.add_argument("--require-early-mat", action="store_true",
+                        help="require first-consumer placement before unrelated later loads")
+    args = parser.parse_args()
+    checks = early = reuse = mat = 0
     for chunks in (0, 1, 2, 3, 4, 17):
         for tiles in (0, 1, 2):
-            trace = run(path, chunks, tiles)
+            trace = run(args.path, chunks, tiles, check_mat=args.require_early_mat)
             checks += trace.required_checks
             early += trace.early_checks
             reuse += trace.reuse_checks
+            mat += trace.mat_checks
+    if args.require_early_mat:
+        assert mat, "MAT placement assertions were not exercised"
+        print(f"projection MAT target: {mat} unrelated-load edges absent")
     print(f"projection: 18 traces, {checks} local conflicts, {early} early-readiness and {reuse} reuse checks")
 
 

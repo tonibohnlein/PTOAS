@@ -6,23 +6,92 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
+## Pinned hand-written reference kernels
+
+**Revised priority, 2026-09-20:** the ordinary PTO-ISA GEMM is too similar to
+Shenggan to be the next device priority. Keep that prepared experiment parked.
+The user requested [three independent tasks](../../test/benchmarks/compositional_references/README.md):
+retained-A (CATLASS example 25), cross-tile preload (example 06), and full manual
+attention (PTO-ISA). Source-complete archives and dispatch prompts are prepared;
+source adoption, matched automatic plans and device measurements remain for the
+task agents. Frozen compiler `495fb9cbd`; no production changes in task preparation.
+
+- **Prepared; device pending:** manual PTO-ISA GEMM versus OAHS/existing, with
+  original C++ and normalized PTO controls. See
+  [benchmark protocol](../../test/benchmarks/manual_sync/README.md) and
+  [device task](../../test/benchmarks/manual_sync/DEVICE_TASK.md).
+  The upstream readiness-key rearming gap remains an explicit contract question;
+  a separately labelled banked-key control passes local checks. Record timings
+  and paired timelines before drawing a performance conclusion.
+- **Next adoption:** CATLASS ping-pong with separate A/B lifetimes, then preload
+  and retained-A. Preserve the reference's payload prefetch and target-specific
+  instruction modes; account for translation costs with an original source arm.
+- **Later adoption:** full manual attention, including queue/cross-core contracts
+  and prologue/body/epilogue. No local-only projection is a full attention result.
+
+The [manual synchronization survey](oahs-manual-sync-references.md) now pins
+CATLASS Ascend C and PTO-ISA manual kernel/build sources. The manual PTO build
+uses explicit events without the separate automode build flag; generated PTO
+examples are not independent manual references. No external kernel was run.
+
+Use CATLASS's separate first-consumer readiness and last-L1-copy release as the
+first projection target. Next study retained-input and cross-child ownership;
+then manual attention's separate ingress/output reuse and delayed QK/PV schedule.
+Keep hardware unit flags, queue semantics and payload prefetch changes separate
+from synchronization placement. Source locations and ranked experiments are in
+the survey; 26 pinned files and hashes are in `../manual-sync-reference-work`.
+
+## Immediate follow-up: reference-driven projection placement
+
+The device task is dispatched at `495fb9cbd`. Keep that arm fixed. The
+[reference study](oahs-projection-reference-study.md) confirms two separate
+opportunities on current output:
+
+- **First-consumer MAT readiness:** source-local B publication and one receipt
+  at the first B extraction improve down, gate/up, KV, q/out and LM reference
+  plans without added checked ordering. Implement the general invariant-physical-
+  generation / first-participating-consumer interface. Preserve non-unit-step
+  original control, aliases, actual rearming and separate early A readiness.
+  Implemented and host-validated; production down now passes the early-MAT
+  target. Measure the isolated change with the new device task.
+- **Complete MAT-cycle support before fences:** unchanged cold checking accepts
+  omitting all current MTE2 fences in gate/up, KV, q/out and LM. Down fails at
+  the B0 load. Attribute the missing partial-state support and down's incoming
+  paths before changing construction; no production fence-deletion stage.
+- **Second-child readiness:** A1's current entry receipt still observes B1.
+  The early-B reference experiment leaves this separate deadline unchanged.
+- **Reference acquisition:** use existing same-payload device baselines first;
+  pin a suitable external pipelined PTO kernel for an additional manual/stripped-
+  sync benchmark. Match hardware, dtype, layout and payload before comparing
+  sync quality. No external BF16 projection performance match is established.
+
+The portable reference regression tests the mechanism's ordering boundary;
+37 native-source-derived finite comparisons support the plan target. Neither
+proves device benefit or that the current constructor realizes the target.
+
 ## Current priority order
 
-1. Device-qualify the projection operand-bank fix. Qualified independent bank
+1. Complete device attribution of the projection operand-bank fix. Qualified independent bank
    episodes now retain early readiness and the previous same-bank reader release
    across child entries, without graph expansion. Down_proj removes 315/632
    checked ordering relations for one/two tiles; gate/up, KV and out projection
-   also improve, with no additions on checked paths. Counts increase; timing is
-   unmeasured. See `../../../projection-overlap-work/REPORT.md`. Remaining MAT
-   readiness still observes some later loads, so the full 64–95% device regression (LM head remains correctness-provisional)
-   is not yet declared resolved. Attribute those deadlines before further changes.
+   also improve, with no additions on checked paths. Counts increase; preliminary
+   device feedback reports 21.5–23.4% lower latency versus before, with all 153
+   correctness runs passing. Remaining slowdown versus existing is 25.7–52.7%;
+   the regression is not resolved. See the
+   [reported medians and corrections](oahs-projection-device-preliminary-20260920.md)
+   and `../../../projection-overlap-work/REPORT.md`. Profiles/archive are pending.
+   First-consumer placement is now implemented and locally validated across the
+   projection family; dispatch [its isolated comparison](oahs-first-consumer-device-task.md).
+   Preserve genuine fences while measuring this change. The second-child A1
+   publication and remaining MAT-cycle support are separate subsequent targets.
 2. Review corrections are implemented and host-validated: distinct release
    prefixes stay separate; alternative/entry providers expose additional current
    coverage; repeated-entry cycle tests vary lengths; final helper trials are
    separately counted. GEMM remains barrier-free at 200/394/782 pairs, with no
    added ordering and 14/30/62 removed relations against the 182-pair reference.
    Device-qualify this changed plan; earlier parity measurements belong to 182.
-3. Retain the successful AIC and post-RMSNorm compositions and the uncommitted
+3. Retain the successful AIC and post-RMSNorm compositions and the retained
    FIFO receive-placement experiment. The FIFO plan improves checked placement
    but increases contextual replay from 26,206 to 813,458 visits. Its cost and
    full peer/device qualification remain unresolved. The pending device task
