@@ -6,31 +6,32 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
-## Authoritative next order: placement experiments on 8afb90f17
+## Authoritative next order: device tasks dispatched at 9f30b9fd8
 
 See [implemented mechanisms and evidence limits](oahs-placement-experiments.md)
 and [isolated device tasks](../../test/benchmarks/placement/DEVICE_TASKS.md).
 This status supersedes the historical campaign priorities below.
 
-0. Keep the MAT device snapshot fixed. Down now reports 14.3% faster than
-   existing, 36/36 correctness passes and no measurable MTE2-omission benefit
-   versus the retained-fence control. Finish LM/family transfer and matched
-   profiling; do not generalize the down result yet.
+0. **Complete:** MAT family device campaign. All five projections beat existing;
+   GEMM parity holds. No resolved MTE2-omission benefit. See the
+   [final results and audit](oahs-mat-device-final-results.md). Obtain the detached
+   checksum matching the downloaded final archive. The isolated new device task
+   has now been dispatched; keep its snapshot fixed.
 1. **Implemented locally:** staged optional-proposal rejection, conservative
    exact-fit admission, separate trial controls/counters and next-provider-only
    selection. Default corpus is unchanged. General scoped recurring-key reuse
    and complete future-allocation admission remain open.
-2. **Ready to measure:** native source-gap witness with unchanged pair count,
+2. **Device task dispatched:** native source-gap witness with unchanged pair count,
    forbidden dependency removed. Extend beyond acyclic virgin-key word-start
    gaps only with exact coverage/participation/rearming certificates.
 3. **Ready as a separate control:** no-motion grouping. GEMM adds commands with
    identical checked ordering. Legacy motion remains default; obtain a specific
    contextual certificate or accept the measured no-motion cost before changing
    the default policy.
-4. **Ready to measure:** deferred acyclic acknowledgment, with both branch
+4. **Device task dispatched:** deferred acyclic acknowledgment, with both branch
    outcomes and a real-key-reuse regression. Optional acquisitions and recurring
    cases retain the conservative fallback.
-5. **Ready for device correctness:** access-class invariant first-consumer
+5. **Device correctness task dispatched:** access-class invariant first-consumer
    fixture with disjoint producer work. Default OAHS refuses this input; do not
    claim a matched-default speedup. General guarded/cross-child qualification
    remains future work.
@@ -38,14 +39,137 @@ This status supersedes the historical campaign priorities below.
    but no positively certified selection change. Keep disabled; obtain a
    discriminating positive case before broadening it or launching device timing.
 
-FIFO remains 813,458 replay evaluations / 125 contextual updates in the sampled
-AIV construction. New mandatory proposal work is separately charged. Reuse of
-contextual propagation and immutable structure remains explicit unfinished cost
-work; no compilation speedup is claimed.
+FIFO sibling reuse now reduces the sampled AIV from 813,458 to 608,848 replay
+evaluations at the same 125 updates, with identical plans across 88 corpus
+modules. The fresh paired sweep passes 176/176 runs: 12/97 function instances
+reduce replay, 85 are unchanged, none increase. Single-block AIV, QKV, RMSNorm
+and top-k also benefit. The added dependency walk is separately counted. Repeated fixed points
+inside an edited component remain unfinished cost work. Three matched local host
+rounds reduce median construction/reconstruction wall time from 24.568 to
+18.304 seconds; this is not a device performance result.
 
-## Latest priority: measure MAT reader-region cycles
+## Local work while the new device task runs
 
-Committed as `8afb90f17` on fe1, pending device measurement. See
+Keep source/binary identities for the dispatched experiments fixed. Local
+follow-ups are separate candidates, with no automatic substitution into that
+campaign. FIFO replay attribution and sibling reuse are implemented; see the
+[findings and replay certificate requirements](oahs-fifo-replay-attribution.md).
+The next bounded quality task is a narrow contextual frontier-motion certificate;
+the retained-generation task needs a concrete current native miss first.
+
+### Deliverables and exit gates
+
+| Milestone | Local deliverable | Acceptance before the next step |
+| --- | --- | --- |
+| **L1: replay attribution (implemented)** | Opt-in per-solve trace: changed words, active/restart component, shared-word widening, reused sites, unique/repeated visits, per-component work and elapsed time. Partial AIV plus AIC/projection/RMS/GEMM controls reproduced. | All five modules retain identical PTO; counts reconcile. 64 edits confined to one AIV branch spend 202,944 evaluations in its unmodified alternative loop. |
+| **L2: sibling replay reuse (implemented)** | Reuse unchanged predecessor-closed components; invalidate entire shared nonempty words. Dependency-walk work is separately counted. | Complete cached/cold checkpoint and endpoint comparisons pass, including failure/recovery. 23/23 suites pass; 88/88 native plans are unchanged. AIV replay falls 25.2%; active-loop fixed-point work remains. |
+| **L3: frontier-motion certificate** | A narrow moving-frontier rule with an outward-publication counterexample. | Prove contextual ordering, not only memory safety; independent finite oracle rejects the broadened plan. Use the pending no-motion device control to assess command cost. |
+| **L4: retained-generation placement** | Current-source witness and shared lifecycle view for one generation across two children. | Separate positive persistence from reload, premature release and independent-reader negatives. Record analysis fact → endpoint choice → ordering change. |
+| **L5: lowering facts** | First a qualified intrinsic-drain witness; next descriptor-scoped valid shapes; then address-sliced slot relations. | Each is a separate candidate with exact lowering scope and positive/negative importer tests; no inferred event reset, whole-M completion or joint bank-mode product. |
+
+Device dispatch is conditional: identical emitted plans from L2 need host
+equivalence and compilation-cost measurements, not another device timing sweep.
+Placement/semantic changes in L3–L5 need a discriminating local witness before
+preparing source-complete device tasks. Keep the current device archive immutable.
+
+1. **Completed first replay improvement; retain remaining cost work.** Certified
+   unchanged-sibling reuse preserves incoming states and complete endpoint
+   aggregates. The trace and prefix-only control remain available. Further work
+   must address repeated propagation within an edited loop, with the same full
+   cached/cold state comparison. Do not add a second causal analysis, truncate
+   loop history or weaken checks. Keep quality work below ahead of a broader
+   rewrite of the fixed-point solver.
+2. **Certify useful frontier motion.** The generic default coalescer still lacks
+   a general contextual no-added-order certificate. The no-motion device arm
+   measures its cost; locally prove a narrow admitted case, including outward
+   publications and event generations. A safety check alone is insufficient.
+3. **Extend shared lifecycle views from a real native miss.** Carry an invariant
+   generation across sibling/guarded regions while preserving its last-reader
+   frontier and actual first participating consumer. First identify a current
+   missing qualification; do not broaden all recognizers or eagerly allocate
+   one channel per exact cell.
+4. **Find a discriminating equal-coverage binding case.** Current attention
+   probes change no provider choice. Require an actual helper-free alternative,
+   exact equal coverage, source-time binding evidence and an ordering comparison
+   before expanding the probe. A synthetic cardinality tie is insufficient.
+5. **Revisit smaller generalization kernels on current output.** Qwen partial
+   merge/finalization first, then shared-input sibling projections; quantization
+   and RoPE are later. Recount and attribute current obligations before proposing
+   changes: earlier model-level savings may already be implemented. Keep A5
+   native admission and queue/unit-flag contracts separate from A3 evidence.
+
+Longer-term resource work: certified recurring-key reuse across disjoint scopes,
+using actual consumption/republication evidence. Exact-fit rejection is already
+implemented and should not be presented as unfinished. Likewise the successful
+MAT projection improvement needs no second implementation.
+
+## Review intake: placement and lowering facts, checked at 9f30b9fd8
+
+The supplied reviews inspect `fe1fc454` and `16564fa8`. Their proposed MAT
+reader-cycle milestone has since shipped and passed the completed family device
+campaign. Reproduce any remaining second-child A1 dependency on current output
+before treating it as a defect or performance target. Exact-fit rejection and
+optional-proposal rollback are also implemented; general key-lifetime reuse is
+still open. These follow-ups do not alter the dispatched device snapshot or
+replace the active FIFO replay investigation.
+
+### Confirmed current information losses
+
+- **Qualified intrinsic local drain:** `SyncProtocolModel::localDrainBefore`
+  records the pinned hard-collective contract, but `Native.cpp` explicitly
+  supplies no completion credit. First establish a current residual across an
+  original hard collective. Import its local completion at that anchor through
+  the shared semantics and checker, without emitting another ALL. Test that
+  event occupancy/consumption identities survive and that neither peer progress
+  nor arbitrary GM visibility is inferred. This is the smallest new semantic
+  opportunity, conditional on a useful native witness and exact lowering scope.
+- **Descriptor-scoped valid shapes:** native ACC qualification still has a
+  function-wide `SetValidShapeOp` veto. Qualify reaching descriptor definitions
+  and aliases for the actual matrix operands. An unrelated descriptor update
+  should preserve the certificate; a relevant or unresolved update must retain
+  ordinary requirements. Keep the result access-scoped, never whole-M completion.
+- **Independent physical slot relations:** `SyncSlotMapping::derive()` still
+  requires every carried argument to match, forms their LCM, and is called with
+  a cap derived from event-pool size. Dynamic `multi_tile_get` still retains the
+  address union. Start with an address/slot SSA slice and an unrelated carried
+  value negative-control pair; then independent periods three/four. Preserve
+  separate use relations and charge represented output size. Do not raise the
+  cap or enumerate a larger joint orbit. Unify explicit multibuffer and direct
+  address forms through shared origin/slot/view facts, checking physical aliases;
+  event feasibility remains a later construction obligation.
+
+### Generalizations and contract audits
+
+- **Retained generations across children:** build on `StorageFrontiers`,
+  `RequirementFrontiers` and existing source/occurrence queries. Expose references
+  to the physical generation, first/last readers, useful source positions,
+  deadlines and qualified continuations; do not create another completion state.
+  Test one load/two children, an intervening reload, premature release after the
+  first child, and independent reader engines. Readiness persists only for the
+  qualified generation; actual selected receipts supply completion/rearming.
+- **Attention phase composition:** keep semantic row, physical bank predecessor
+  and queue generation distinct across prologue/body/epilogue and skipped uses.
+  Require a current native miss before extending qualification. Queue/peer
+  obligations and A5 target admission remain separate from local A3 results.
+- **Scalar completion audit:** the A3 profile still marks all S payloads
+  synchronous. Inventory admitted scalar operations and their exact lowering
+  evidence before expanding admission. This is a contract audit, not an
+  established wrong-code finding or a switch to disable casually.
+- **Later contract work:** lowering-owned may-read/may-write/must-write extents,
+  verified macro boundaries and import of existing UnitFlag protocols. Keep
+  UnitFlag import distinct from selecting new payload modes; block permission
+  does not release all M operands. Additional event directions/IDs require their
+  own target qualification. No native benefit is established by these reviews.
+
+For each item retain the diagnostic chain: shared analysis fact → construction
+decision → actual endpoints → checked payload-order difference. This intake was
+a current-source inspection; no new compiler build, experiment or hardware
+contract verification was performed.
+
+## Completed priority: measure MAT reader-region cycles
+
+Committed as `8afb90f17` on fe1; final family device results now available.
+The original measurement checklist below is historical, not pending work. See
 [the mechanism and validation](oahs-mat-reader-cycles.md) and
 [the four-arm device task](oahs-mat-release-device-task.md).
 
@@ -56,16 +180,16 @@ Committed as `8afb90f17` on fe1, pending device measurement. See
 - Measure down first and LM as transfer, then projection family. Production
   removes MTE2 fences by actual cycle credit; retain the separate certified
   control with baseline MTE2 fences restored to distinguish the effects.
-- Finish matched profiling reconciliation on the remote agent. The pinned
-  MAT campaign closes the down gap and beats existing by 14.3%; the other
-  projections remain pending. Preserve the separate fence-restoring control.
+- Completed family timing closes the regression for all five projections.
+  Matched profiles cover down, gate/up and KV; no matched LM/GEMM profiles were
+  delivered. The retained-fence control preserves the measured improvements.
 - Revisit second-child A1 readiness only if a concrete remaining dependency is
   found; the earlier broad readiness existed in both baseline and existing.
 
 The subsequent placement milestone implements admission hardening and next-provider
 selection, exposes no-motion and trial variants, and measures remaining FIFO
-work separately. See the current status above; FIFO replay optimization and a
-general moving-frontier certificate remain open.
+work separately. See the current status above: sibling replay reuse is complete;
+repeated work inside edited loops and a general moving-frontier certificate remain open.
 
 ## Pinned hand-written reference kernels
 
@@ -264,29 +388,12 @@ specialization's immediate `EventResource` failure. Physical proposal binding
 still precedes legacy omission trials; logical necessity before physical binding
 remains longer-term work.
 
-Resource-allocation failure is only one rejection path. The source review also
-finds an invalid initial omission-analysis candidate can break its trial loop
-and still reach commitment. Mandatory protocol rejection must discard the
-complete staged state. Separately, an exactly fitting, protocol-valid cohort
-can reserve keys required by unrelated ordinary work. Add linked regressions
-for both; rollback alone does not fix later starvation.
-
-Remaining validation should explicitly exercise the fallback, including a case
-where ordinary construction succeeds. A test requiring fewer keys because
-logical episodes were already composed does not by itself test failed
-specialization cleanup. Ordinary construction may still report a genuine
-resource or participation failure.
-
-Acceptance criteria:
-
-- a redundant specialized population that exceeds the directional pool falls
-  back to ordinary construction;
-- failed specialization leaves no selected endpoints, reservations, receipts,
-  or source snapshots behind;
-- if both specialized and ordinary construction fail, report the ordinary
-  construction failure without a partial specialized plan;
-- existing admitted recurring protocols and their selected words remain
-  unchanged when the pool is sufficient.
+The additional mandatory-protocol rejection and exact-fit starvation cases are
+now fixed and covered by linked regressions in `9f30b9fd8`: an invalid optional
+candidate leaves no committed state, and a valid full-pool cohort can decline
+when it strands uncovered ordinary requirements. The default 88-case corpus
+remains byte-identical. Admission is conservative direct-vocabulary accounting,
+not a complete guarantee that every later allocation choice succeeds.
 
 Longer term, select necessary logical channels before physical key binding and
 reuse keys between disjoint scopes only with actual token-consumption and

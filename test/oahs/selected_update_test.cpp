@@ -241,6 +241,116 @@ struct ReplayTestAccess {
     static void compare(const Program& program, Cut edit, Pipe pipe) {
         require(compareEdit(program, edit, pipe, false).second, "edit was expected to hold");
     }
+    static void siblingReuse(unsigned length, bool sequential, bool sharedWord,
+                             unsigned siblings = 2, unsigned prefixLength = 0) {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(2);
+        std::vector<Region> left, right;
+        for (unsigned i = 0; i < 2 * length; ++i) {
+            p.operations.push_back(op(P, {{i < length ? 0u : 1u, true, false}}));
+            (i < length ? left : right).push_back(leaf(i));
+        }
+        Region a{Region::For, {{Region::Sequence, left}}, 0, true};
+        Region b{Region::For, {{Region::Sequence, right}}, 1, true};
+        p.body = sequential ? seq({a, b}) : Region{Region::Choice, {a, b}};
+        for (unsigned sibling = 2; sibling < siblings; ++sibling) {
+            std::vector<Region> child;
+            for (unsigned i = 0; i < length; ++i) {
+                child.push_back(leaf(p.operations.size()));
+                p.operations.push_back(op(P, {{1, true, false}}));
+            }
+            p.body = {Region::Choice, {p.body, {Region::For, {{Region::Sequence, child}}, sibling, true}}};
+        }
+        std::vector<Region> prefix;
+        for (unsigned i = 0; i < prefixLength; ++i) {
+            prefix.push_back(leaf(p.operations.size()));
+            p.operations.push_back(op(Q, {{0, true, false}}));
+        }
+        if (!prefix.empty()) p.body = seq({{Region::Sequence, prefix}, p.body});
+        auto input = addStructuredBoundaryCuts(p);
+        require(input.success, input.reason);
+        p = std::move(input.program);
+        Cut first = NoAnalysisId, second = NoAnalysisId;
+        for (Cut i = 0; i < p.observed->sites.size(); ++i) {
+            if (p.observed->sites[i].operation == 0) first = i;
+            if (p.observed->sites[i].operation == length) second = i;
+        }
+        require(first != NoAnalysisId && second != NoAnalysisId, "sibling fixture lost payloads");
+        if (sharedWord)
+            p.observed->sites[second].observation = p.observed->sites[first].observation;
+        SelectedOptions options;
+        options.traceReplay = true;
+        Constructor c(p, options);
+        c.needsContextualReplay = true;
+        require(c.run({}).success, "sibling fixture construction");
+        c.current = c.control.graph.exit;
+        c.activeComponent = c.control.component[c.current];
+        c.ledger.clearChanges();
+
+        auto compare = [&](bool expected, bool saves) {
+            const auto original = c.cache;
+            c.options.siblingReplayReuse = true;
+            const bool incremental = c.replay();
+            const auto reused = c.cache;
+            const auto trace = c.result.replayTraces.back();
+            c.options.siblingReplayReuse = false;
+            c.cache = original;
+            const bool prefix = c.replay();
+            const auto prefixWork = c.cache.evaluations;
+            c.cache = {};
+            const bool cold = c.replay();
+            require(incremental == expected && prefix == cold && cold == incremental,
+                    "sibling cache changed acceptance");
+            if (cold) {
+                identical(reused, c.cache);
+                require(reused.evaluations <= prefixWork && (!saves || reused.evaluations < prefixWork),
+                        "unchanged alternative did not save replay work");
+                if (saves) {
+                    const auto other = c.control.component[second];
+                    require(trace.components[other].evaluations == 0 && trace.siblingComponents != 0,
+                            "alternative component was still evaluated");
+                }
+            } else {
+                require(reused.failureCut == c.cache.failureCut && reused.reason == c.cache.reason,
+                        "sibling cache changed refusal evidence");
+            }
+            c.options.siblingReplayReuse = true;
+            c.cache = reused;
+            c.ledger.clearChanges();
+        };
+        const auto endpoint = c.ledger.append(first, {Command::Barrier, P, P, 0}, EndpointPurpose::Fixed);
+        compare(true, !sequential && !sharedWord);
+        c.ledger.erase(endpoint);
+        compare(true, !sequential && !sharedWord);
+        // Real matched event generations, including consumption/republication
+        // evidence, rather than only payload/fence histories.
+        for (const auto& command : std::vector<Command>{
+                 {Command::Publish, P, Q, 0}, {Command::Acquire, P, Q, 0},
+                 {Command::Publish, Q, P, 0}, {Command::Acquire, Q, P, 0}})
+            c.ledger.append(first, command, EndpointPurpose::Fixed);
+        compare(true, !sequential && !sharedWord);
+        // A shared word that was NOT edited must also couple invalidation.
+        if (sharedWord && !sequential) {
+            Cut inside = NoAnalysisId;
+            for (Cut i = 0; i < p.observed->sites.size(); ++i)
+                if (p.observed->sites[i].operation == 1) inside = i;
+            c.ledger.append(inside, {Command::Barrier, P, P, 0}, EndpointPurpose::Fixed);
+            compare(true, false);
+            require(c.result.replayTraces[c.result.replayTraces.size() - 3]
+                        .components[c.control.component[second]].evaluations != 0,
+                    "unchanged shared endpoint aggregate was reused across an edited component");
+        }
+        c.ledger.append(first, {Command::Barrier, P, P, 0}, EndpointPurpose::Fixed);
+        c.ledger.append(second, {Command::Barrier, P, P, 0}, EndpointPurpose::Fixed);
+        compare(true, false);
+        require(c.result.replayTraces[c.result.replayTraces.size() - 3]
+                    .components[c.control.component[second]].evaluations != 0,
+                "an edit to both branches reused the second loop");
+        const auto invalid = c.ledger.append(first, {Command::Acquire, P, Q, 0}, EndpointPurpose::Fixed);
+        compare(false, false);
+        c.ledger.erase(invalid);
+        compare(true, false); // Failed cache must fall back to a fresh solution.
+    }
     // Sweep every legal original cut as the edit position. On a refined loop
     // this covers words inside the body, words reached only across a backedge,
     // words shared by several original occurrences, and the surrounding words.
@@ -442,6 +552,38 @@ void contextualPrefixReuse()
     const auto plan = accepted(p);
     require(plan.work.recurringChannels != 0, "this program must qualify recurrence");
     require(plan.work.contextualReplays != 0, "this program must use contextual replay");
+    o::SelectedOptions tracedOptions;
+    tracedOptions.traceReplay = true;
+    const auto traced = o::constructSelectedPlan(p, {}, tracedOptions);
+    require(traced.success && traced.commands.size() == plan.commands.size(),
+            "replay attribution changed construction acceptance");
+    for (o::Cut cut = 0; cut < plan.commands.size(); ++cut) {
+        const auto& a = plan.commands[cut];
+        const auto& b = traced.commands[cut];
+        require(a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(),
+                [](const o::Command& x, const o::Command& y) {
+                    return x.kind == y.kind && x.source == y.source && x.observer == y.observer && x.key == y.key;
+                }), "replay attribution changed a selected command word");
+    }
+    require(plan.replayTraces.empty() && traced.replayTraces.size() == traced.work.contextualReplays,
+            "replay traces must be opt-in and include every contextual solve");
+    uint64_t evaluations = 0;
+    for (const auto& trace : traced.replayTraces) {
+        uint64_t unique = 0, visits = 0;
+        for (const auto& component : trace.components) {
+            unique += component.uniqueSites;
+            visits += component.evaluations;
+            require(component.uniqueSites <= component.sites && component.uniqueSites <= component.evaluations,
+                    "component replay attribution is inconsistent");
+        }
+        require(unique == trace.uniqueSites && visits == trace.evaluations &&
+                trace.resume <= trace.fixedBoundary && trace.fixedBoundary <= trace.changedBoundary &&
+                trace.changedBoundary <= trace.activeComponent && trace.changedJoins <= trace.successorJoins,
+                "contextual replay attribution is inconsistent");
+        evaluations += visits;
+    }
+    require(evaluations == traced.work.replaySiteEvaluations && evaluations == plan.work.replaySiteEvaluations,
+            "trace totals do not reconcile with replay work");
     o::selected::ReplayTestAccess::compareEveryCut(p, P, true, "contextual-named-fence");
     // An endpoint on an engine without a named fence is an invalid candidate. It
     // must be refused identically whether or not a prefix was kept.
@@ -473,6 +615,14 @@ int main()
     replayReusesUnchangedPrefix();
     sharedObservationReplay();
     contextualPrefixReuse();
+    for (unsigned length : {2u, 8u, 32u}) {
+        o::selected::ReplayTestAccess::siblingReuse(length, false, false);
+        o::selected::ReplayTestAccess::siblingReuse(length, true, false);
+        o::selected::ReplayTestAccess::siblingReuse(length, false, true);
+    }
+    for (unsigned siblings : {4u, 8u})
+        for (unsigned prefix : {0u, 16u})
+            o::selected::ReplayTestAccess::siblingReuse(8, false, false, siblings, prefix);
     for (unsigned length : {4u, 16u, 64u}) {
         auto p = base(2);
         std::vector<o::Region> body;

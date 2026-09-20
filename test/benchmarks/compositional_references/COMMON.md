@@ -92,8 +92,11 @@ arms. Source Ascend C and PTO may require distinct frontends: record that
 difference and use original-versus-matched-manual to expose its cost.
 
 After all compared arms pass correctness, use 180 samples per arm in six
-balanced rotated rounds. Warm up consistently. Serialize timed/profiled jobs on
-the same device: these three tasks must not benchmark concurrently there.
+balanced rotated rounds. Warm up consistently. Use all eight allocated devices
+for independent comparisons. Serialize timed/profiled jobs only on the same
+device; each matched comparison must run all of its arms on that device.
+Record device identity and retain per-device results rather than pooling raw
+latencies. Follow the [scheduling addendum](../../../docs/designs/oahs-eight-device-scheduling.md).
 Record kernel-only latency and separately end-to-end cost where wrappers launch
 padding, warm-up, SDMA prefetch or helper kernels. Never include such work in
 only one arm's timing scope.

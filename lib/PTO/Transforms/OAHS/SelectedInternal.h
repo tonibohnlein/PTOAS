@@ -160,6 +160,9 @@ struct Replay {
     // the construction-only hypothesis traversal of the active component. Only
     // those may be reused by a later replay; everything else is recomputed.
     std::size_t fixedComponents = 0, reusedComponents = 0;
+    // Marks a whole-original-graph pending-payload solve; reuse additionally
+    // requires success. A partial traversal cannot certify a sibling.
+    bool contextualFixedPoint = false;
     Id partialComponent = NoAnalysisId, partialOffset = NoAnalysisId;
     std::vector<State> partialIncoming;
 };
@@ -325,7 +328,8 @@ private:
     bool partialSite(Id, Cut, std::vector<State>&, Replay&);
     bool replay();
     // The component prefix an update may keep, shared by both replay paths.
-    Id reusablePrefix() const;
+    Id reusablePrefix(SelectedReplayTrace* = nullptr) const;
+    std::vector<bool> reusableComponents(SelectedReplayTrace*);
     bool advance();
     void registerSource();
     void refreshSources(Cut = NoAnalysisId);

@@ -46,7 +46,11 @@ source hashes and ABI/shape/scalar arguments. The package also includes earlier
 harness sources for recovery. Avoid building new numerical references unless the
 existing qualified oracle cannot serve these identical payloads. Generate and
 verify each seed's reference once, reuse it across arms, and use cache-friendly
-host computation. Keep timed/profiled jobs on the shared device serialized.
+host computation. Use all eight remote devices, with independent complete
+arm comparisons on different devices and timed/profiled exclusivity per device.
+Keep all arms of each matched comparison on the same device. Follow the
+[eight-device scheduling addendum](oahs-eight-device-scheduling.md); preserve
+per-device results and keep the verified source archives fixed.
 
 Keep prior campaigns pinned. Continue dependent stages without leaving the device
 idle. Respect the broker's observed job time cap; split large jobs into resumable

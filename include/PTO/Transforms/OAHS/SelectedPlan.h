@@ -68,6 +68,27 @@ struct SelectedUpdate {
     bool contextual = false;
     std::vector<Cut> changedCuts;
 };
+// Opt-in contextual replay attribution. These records never supply causal
+// facts or affect admission, placement, or the worklist order.
+struct SelectedReplayTrace {
+    uint64_t version = 0, microseconds = 0, evaluations = 0, uniqueSites = 0;
+    uint64_t successorJoins = 0, changedJoins = 0, finalizedQueries = 0;
+    std::size_t current = NoAnalysisId, activeComponent = 0;
+    std::size_t changedBoundary = 0, fixedBoundary = 0, resume = 0;
+    std::size_t reusedSites = 0, sharedWordLowerings = 0;
+    std::size_t siblingComponents = 0;
+    uint64_t invalidationSites = 0, invalidationEdges = 0, sharedWordOccurrences = 0;
+    bool success = false;
+    std::vector<Cut> changedCuts;
+    std::vector<std::size_t> changedComponents;
+    struct ComponentWork {
+        std::size_t sites = 0, uniqueSites = 0;
+        uint64_t evaluations = 0;
+        bool cyclic = false;
+        std::vector<std::size_t> successors;
+    };
+    std::vector<ComponentWork> components;
+};
 struct SelectedChannel {
     unsigned cell = 0, key = 0;
     // One recurring prefix can serve several compatible cells. `cell` remains
@@ -149,6 +170,8 @@ struct SelectedWork {
     std::size_t frontierGuarded = 0, frontierUnknown = 0;
     // Whole-original-graph contextual solves, and updates that reused nothing.
     std::size_t contextualReplays = 0, unreusedUpdates = 0;
+    uint64_t replayInvalidationSites = 0, replayInvalidationEdges = 0, replaySharedWordOccurrences = 0;
+    std::size_t siblingReusedComponents = 0;
 };
 // These switches never disable mandatory checking or native reconstruction.
 struct SelectedOptions {
@@ -160,6 +183,9 @@ struct SelectedOptions {
     bool deferredAcyclicAcknowledgments = false;
     bool classInvariantInputs = false;
     bool equalCoverageBinding = false;
+    bool traceReplay = false;
+    // Diagnostic comparison with the former prefix-only contextual cache.
+    bool siblingReplayReuse = true;
 };
 struct SelectedPlan {
     bool success = false;
@@ -175,6 +201,7 @@ struct SelectedPlan {
     std::vector<SelectedChannel> channels;
     std::vector<SelectedFence> fences;
     std::vector<SelectedUpdate> updates;
+    std::vector<SelectedReplayTrace> replayTraces;
     // Populated only from the final, entry-containing original-graph proof.
     std::vector<SelectedLoopInterface> loops;
     FrontierCheck certificate;

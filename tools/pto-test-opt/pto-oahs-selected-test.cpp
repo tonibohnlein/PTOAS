@@ -715,6 +715,11 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
                  << " loop_entry_analysis_sites=" << work.loopEntryAnalysisSites
                  << " loop_entry_preparation_sites=" << work.loopEntryPreparationSites
                  << " contextual=" << work.contextualReplays
+                 << " sibling_reuse=" << options.siblingReplayReuse
+                 << " sibling_components=" << work.siblingReusedComponents
+                 << " invalidation_sites=" << work.replayInvalidationSites
+                 << " invalidation_edges=" << work.replayInvalidationEdges
+                 << " shared_word_occurrences=" << work.replaySharedWordOccurrences
                  << " unreused_updates=" << work.unreusedUpdates
                  << " sources=" << work.sourceHandles << " rearming_discharged=" << work.rearmingDischarged
                  << " rearming_composed=" << work.rearmingComposed
@@ -724,9 +729,9 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
                  << " acknowledgments=" << work.acknowledgments
                  << " common_cut=" << work.commonCutTransfers
                  << " decisions=" << report.decisions.size() << " endpoints=" << report.ledger.size();
-    // How much of the component prefix each update actually kept. A nonzero
-    // reuse count says nothing on its own; the fraction of the prefix is what
-    // distinguishes working reuse from a boundary that collapses to the entry.
+    // Components actually kept across updates, including unchanged siblings.
+    // Per-solve traces distinguish prefix reuse from non-prefix reuse and
+    // include the dependency walk; this count alone is not a cost measure.
     std::size_t reusedTotal = 0, reusedMax = 0, contextualUpdates = 0;
     for (const auto &update : report.updates) {
       reusedTotal += update.reusedComponents;
@@ -740,6 +745,42 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
       llvm::errs() << (i ? "," : "") << report.channels[i].period;
     }
     llvm::errs() << (report.channels.empty() ? "-" : "") << " reason=" << report.reason << "\n";
+    if (!report.replayTraces.empty()) {
+      const auto &components = report.replayTraces.front().components;
+      for (std::size_t i = 0; i < components.size(); ++i) {
+        llvm::errs() << "replay_component function=" << function.getSymName() << " id=" << i
+                     << " sites=" << components[i].sites << " cyclic=" << components[i].cyclic
+                     << " successors=";
+        for (auto next : components[i].successors) llvm::errs() << next << ",";
+        llvm::errs() << "\n";
+      }
+    }
+    for (const auto &trace : report.replayTraces) {
+      llvm::errs() << "replay_trace function=" << function.getSymName()
+                   << " version=" << trace.version << " current=" << trace.current
+                   << " active=" << trace.activeComponent << " changed_boundary=" << trace.changedBoundary
+                   << " fixed_boundary=" << trace.fixedBoundary << " resume=" << trace.resume
+                   << " shared_lowerings=" << trace.sharedWordLowerings
+                   << " reused_sites=" << trace.reusedSites << " unique=" << trace.uniqueSites
+                   << " sibling_components=" << trace.siblingComponents
+                   << " invalidation_sites=" << trace.invalidationSites
+                   << " invalidation_edges=" << trace.invalidationEdges
+                   << " shared_word_occurrences=" << trace.sharedWordOccurrences
+                   << " evaluations=" << trace.evaluations << " joins=" << trace.successorJoins
+                   << " changed_joins=" << trace.changedJoins << " finalized=" << trace.finalizedQueries
+                   << " microseconds=" << trace.microseconds << " success=" << trace.success << " cuts=";
+      for (auto cut : trace.changedCuts) llvm::errs() << cut << ",";
+      llvm::errs() << " changed_components=";
+      for (auto component : trace.changedComponents) llvm::errs() << component << ",";
+      llvm::errs() << " components=";
+      for (std::size_t i = 0; i < trace.components.size(); ++i) {
+        const auto &component = trace.components[i];
+        if (component.evaluations)
+          llvm::errs() << i << ":" << component.sites << ":" << component.cyclic << ":"
+                       << component.uniqueSites << ":" << component.evaluations << ",";
+      }
+      llvm::errs() << "\n";
+    }
     for (const auto &decision : report.decisions) if (decision.publicationAtWordStart) {
       llvm::errs() << "source_gap publication=" << decision.publication << " gap=word_start consumer="
                    << decision.consumer << " source=" << pipeName(decision.source)
@@ -887,6 +928,8 @@ int main(int argc, char **argv) {
       else if (flag == "--defer-acyclic-acks") options.deferredAcyclicAcknowledgments = true;
       else if (flag == "--class-invariant-inputs") options.classInvariantInputs = true;
       else if (flag == "--equal-coverage-binding") options.equalCoverageBinding = true;
+      else if (flag == "--trace-replay") options.traceReplay = true;
+      else if (flag == "--prefix-replay") options.siblingReplayReuse = false;
       else { llvm::errs() << "unknown construction option: " << flag << "\n"; return 2; }
     }
     return runFile(context, argv[2], options) ? 0 : 1;
