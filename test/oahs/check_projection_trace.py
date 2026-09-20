@@ -22,13 +22,15 @@ def overlap(a, b):
 
 
 class ProjectionTrace(Trace):
-    def __init__(self, check_mat=False):
+    def __init__(self, check_mat=False, check_release=False):
         super().__init__()
         self.early_checks = 0
         self.reuse_checks = 0
         self.starts = []
         self.check_mat = check_mat
         self.mat_checks = 0
+        self.check_release = check_release
+        self.release_checks = 0
 
     def payload(self, name, effects, context, acc_order=False):
         pipe = {"tload": "MTE2", "textract": "MTE1", "tmatmul": "M",
@@ -43,6 +45,20 @@ class ProjectionTrace(Trace):
                     if (aw or bw) and overlap(a, b):
                         assert before & (1 << old[1]), ("missing local completion", old, name, b)
                         self.required_checks += 1
+        if self.check_release and name == "tload" and any(
+                write and a[0] == "mat" and a[1] == 0 for a, write in effects):
+            # The next first MAT pair must not wait for reads of the preceding
+            # second pair. Its own previous readers still remain mandatory.
+            for old in self.payloads:
+                if old[0] != "textract" or len(old[3]) != len(context) + 1:
+                    continue
+                if (old[3][:-2] != context[:-1] or old[3][-2][0] != context[-1][0]
+                        or old[3][-2][1] + 2 != context[-1][1]):
+                    continue
+                if any(not write and a[0] == "mat" and a[1] >= 196608
+                       for a, write in old[2]):
+                    assert not before & (1 << old[1]), "second-child MAT reader gates first-pair refill"
+                    self.release_checks += 1
         if pipe == "M":
             inputs = [a for a, write in effects if not write and a[0] in ("left", "right")]
             required = [i for i, old in enumerate(self.payloads) if old[0] == "textract" and
@@ -85,7 +101,7 @@ class ProjectionTrace(Trace):
         self.finishes.setdefault(pipe, []).append(done)
 
 
-def run(path, chunks, tiles, check_mat=False):
+def run(path, chunks, tiles, check_mat=False, check_release=False):
     # Only normalize spelling for the shared scalar/footprint parser. The
     # payload checker above deliberately ignores its optional ACC shortcut.
     source = path.read_text().replace("xbf16", "xf16")
@@ -93,7 +109,7 @@ def run(path, chunks, tiles, check_mat=False):
     lines = source.splitlines()
     start = next(i for i, line in enumerate(lines) if "func.func @down_proj" in line) + 1
     nodes, _ = parse(lines, start)
-    trace = ProjectionTrace(check_mat=check_mat)
+    trace = ProjectionTrace(check_mat=check_mat, check_release=check_release)
     execute(nodes, {"%arg3": 20 * tiles, "%arg4": chunks, "%arg5": 0, "%arg6": 0,
                     "%arg7": 4352, "%arg8": 0, "%arg9": 20}, trace)
     assert not trace.live, "unconsumed event at invocation exit"
@@ -108,18 +124,24 @@ def main():
     parser.add_argument("path", type=Path)
     parser.add_argument("--require-early-mat", action="store_true",
                         help="require first-consumer placement before unrelated later loads")
+    parser.add_argument("--require-early-release", action="store_true")
     args = parser.parse_args()
-    checks = early = reuse = mat = 0
+    checks = early = reuse = mat = releases = 0
     for chunks in (0, 1, 2, 3, 4, 17):
         for tiles in (0, 1, 2):
-            trace = run(args.path, chunks, tiles, check_mat=args.require_early_mat)
+            trace = run(args.path, chunks, tiles, check_mat=args.require_early_mat,
+                        check_release=args.require_early_release)
             checks += trace.required_checks
             early += trace.early_checks
             reuse += trace.reuse_checks
             mat += trace.mat_checks
+            releases += trace.release_checks
     if args.require_early_mat:
         assert mat, "MAT placement assertions were not exercised"
         print(f"projection MAT target: {mat} unrelated-load edges absent")
+    if args.require_early_release:
+        assert releases, "MAT release assertions were not exercised"
+        print(f"projection MAT release: {releases} unrelated-child edges absent")
     print(f"projection: 18 traces, {checks} local conflicts, {early} early-readiness and {reuse} reuse checks")
 
 

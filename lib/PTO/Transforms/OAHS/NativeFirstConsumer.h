@@ -81,6 +81,36 @@ inline void importFirstConsumers(
           earlyInputs.insert(access.cell);
       laterPipes.insert(operation.pipe);
     }
+    // A repeated parent may own several invariant inputs consumed by this
+    // child. Their separate first consumers are also needed to seal reuse
+    // cycles, even when the final producer has no later sibling load.
+    if (auto parent = loop->getParentOfType<scf::ForOp>()) {
+      std::map<Pipe, std::set<unsigned>> parentWrites, reusableInputs;
+      parent.walk([&](mlir::Operation *operation) {
+        if (operation == loop.getOperation() || loop->isAncestor(operation)) return;
+        const auto found = ids.find(operation);
+        if (found == ids.end()) return;
+        const auto source = old.sites[found->second].operation;
+        if (source == NoControlId) return;
+        for (auto access : program.operations[source].accesses)
+          if (access.write) parentWrites[program.operations[source].pipe].insert(access.cell);
+      });
+      for (auto at : members) {
+        const auto op = old.sites[at].operation;
+        if (op == NoControlId) continue;
+        for (auto access : program.operations[op].accesses) {
+          if (!access.read || written.count(access.cell)) continue;
+          for (auto writer : writers[access.cell])
+            if (writer != program.operations[op].pipe && !bodyPipes.count(writer) &&
+                parentWrites[writer].count(access.cell))
+              reusableInputs[writer].insert(access.cell);
+        }
+      }
+      for (const auto &[pipe, cells] : reusableInputs) {
+        (void)pipe;
+        if (cells.size() > 1) earlyInputs.insert(cells.begin(), cells.end());
+      }
+    }
     if (earlyInputs.empty()) continue;
     std::vector<std::size_t> prefix;
     std::set<std::size_t> consumers, seen;
