@@ -35,7 +35,9 @@ arms. Do not combine experimental flags unless a task explicitly asks for it.
    guard and nonfinite outputs. A failed or unsupported arm is a recorded
    failure, not a timing result. Reuse each seed's oracle across all arms.
 6. Timing: six balanced rotated rounds, 180 samples per arm, same binary/launch
-   shape/scalars/warm-up. Serialize timed/profiled use of the shared device.
+   shape/scalars/warm-up. Use all eight remote devices for independent matched
+   comparisons; serialize timed/profiled work only within each device. Run all
+   compared arms on the same device and retain per-device results.
    Report medians, IQRs, round medians and identical-binary controls. These tiny
    witnesses may be dominated by noise; report an unresolved difference as such.
    Use repeat sampling of unchanged launches, not rewritten kernel loops.
@@ -45,8 +47,10 @@ arms. Do not combine experimental flags unless a task explicitly asks for it.
    separate from kernel latency. Respect the broker's measured time cap and
    keep resumable jobs queued without duplicating submissions.
 
-Remote machine concurrency should follow its own resource capacity and shared
-device policy. No workstation path is required. Recovery runtime and qualified
+Use the [eight-device scheduling addendum](../../../docs/designs/oahs-eight-device-scheduling.md).
+Keep all allocated devices working when eligible work is ready; use complete
+matched replicas when useful. Host concurrency follows the remote CPU/memory
+capacity, not the local workstation limit. No workstation path is required. Recovery runtime and qualified
 GEMM references are in `support/`; input capture/provenance is also supplied.
 
 ## Task 2 — admission robustness and trial cost

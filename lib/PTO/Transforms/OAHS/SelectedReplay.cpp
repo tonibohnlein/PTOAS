@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedInternal.h"
 #include <algorithm>
+#include <chrono>
 #include <deque>
 
 namespace mlir::pto::oahs::selected {
@@ -313,6 +314,29 @@ bool Constructor::contextualReplay()
     // contribute pending effects, never their desired conflict edges. In
     // particular a child region does not reset events or erase incoming work.
     Replay fresh;
+    SelectedReplayTrace trace;
+    std::vector<bool> visited;
+    const auto traceStart = options.traceReplay ? std::chrono::steady_clock::now() :
+                                                std::chrono::steady_clock::time_point{};
+    if (options.traceReplay) {
+        trace.version = ledger.version();
+        trace.current = current;
+        trace.activeComponent = activeComponent;
+        trace.changedCuts = ledger.changes();
+        trace.components.resize(control.components.size());
+        visited.resize(control.graph.sites.size());
+        for (Id i = 0; i < control.components.size(); ++i) {
+            trace.components[i].sites = control.components[i].sites.size();
+            trace.components[i].cyclic = control.components[i].cyclic;
+            auto& successors = trace.components[i].successors;
+            for (auto site : control.components[i].sites)
+                for (auto next : control.graph.sites[site].successors)
+                    if (control.reachable[next] && control.component[next] != i)
+                        successors.push_back(control.component[next]);
+            std::sort(successors.begin(), successors.end());
+            successors.erase(std::unique(successors.begin(), successors.end()), successors.end());
+        }
+    }
     fresh.version = ledger.version();
     ++result.work.contextualReplays;
     fresh.cuts.resize(control.graph.sites.size());
@@ -325,16 +349,25 @@ bool Constructor::contextualReplay()
             queued[site] = true;
         }
     };
-    // Every component on this path is solved to its actual fixed point over the
-    // original edges, so a component before the reuse boundary keeps both its
-    // least solution and its endpoint aggregates, cyclic ones included. The
-    // recomputed region is still solved over the WHOLE remaining graph from its
-    // actual incoming interface; nothing is truncated at the active component,
-    // so an aggregate over a shared word stays complete.
-    const auto resume = reusablePrefix();
-    for (Id index = 0; fresh.success && index < resume; ++index) {
+    // Reuse only predecessor-closed components with unchanged equations, and
+    // keep every nonempty shared word entirely on one side of invalidation.
+    // Thus both cut states and complete endpoint aggregates remain valid.
+    const auto resume = reusablePrefix(options.traceReplay ? &trace : nullptr);
+    auto reusable = std::vector<bool>(control.components.size());
+    if (options.siblingReplayReuse && cache.contextualFixedPoint)
+        reusable = reusableComponents(options.traceReplay ? &trace : nullptr);
+    else
+        std::fill(reusable.begin(), reusable.begin() + resume, true);
+    for (Id index = 0; fresh.success && index < reusable.size(); ++index) {
+        if (!reusable[index]) continue;
+        ++fresh.reusedComponents;
+        if (index >= resume) {
+            ++result.work.siblingReusedComponents;
+            if (options.traceReplay) ++trace.siblingComponents;
+        }
         for (auto site : control.components[index].sites) {
             fresh.cuts[site] = cache.cuts[site];
+            if (options.traceReplay) ++trace.reusedSites;
             for (auto id : ledger.word(site)) {
                 const auto found = cache.afterEndpoint.find(id);
                 if (found != cache.afterEndpoint.end()) {
@@ -342,7 +375,7 @@ bool Constructor::contextualReplay()
                 }
             }
             for (auto next : control.graph.sites[site].successors) {
-                if (!control.reachable[next] || control.component[next] < resume) {
+                if (!control.reachable[next] || reusable[control.component[next]]) {
                     continue;
                 }
                 if (!join(incoming[next], fresh.cuts[site].outgoing)) {
@@ -355,9 +388,9 @@ bool Constructor::contextualReplay()
             }
         }
     }
-    fresh.reusedComponents = resume;
     fresh.fixedComponents = control.components.size();
-    if (control.component[control.graph.entry] >= resume) {
+    fresh.contextualFixedPoint = true;
+    if (!reusable[control.component[control.graph.entry]]) {
         incoming[control.graph.entry] = initial();
         enqueue(control.graph.entry);
     }
@@ -367,16 +400,26 @@ bool Constructor::contextualReplay()
         queued[site] = false;
         auto state = incoming[site];
         ++fresh.evaluations;
+        if (options.traceReplay) {
+            auto& component = trace.components[control.component[site]];
+            ++component.evaluations;
+            if (!visited[site]) {
+                visited[site] = true;
+                ++component.uniqueSites;
+                ++trace.uniqueSites;
+            }
+        }
         fresh.cuts[site].incoming = state;
         if (!word(state, site, fresh)) break;
         fresh.cuts[site].before = state;
         if (!payload(state, site, fresh, true)) break;
         fresh.cuts[site].outgoing = state;
         for (auto next : control.graph.sites[site].successors) {
-            if (control.component[next] < resume) {
+            if (reusable[control.component[next]]) {
                 continue;
             }
             const auto old = incoming[next];
+            if (options.traceReplay) ++trace.successorJoins;
             if (!join(incoming[next], state)) {
                 fresh.success = false;
                 fresh.reason = "incompatible contextual loop state";
@@ -384,6 +427,7 @@ bool Constructor::contextualReplay()
                 break;
             }
             if (!same(old, incoming[next])) {
+                if (options.traceReplay) ++trace.changedJoins;
                 enqueue(next);
             }
         }
@@ -395,15 +439,80 @@ bool Constructor::contextualReplay()
         if (!finalized[site] || operation == NoAnalysisId ||
             !fresh.cuts[site].before.causal.reachable()) continue;
         const auto checked = frontier.inspect(fresh.cuts[site].before.causal, operation);
+        if (options.traceReplay) ++trace.finalizedQueries;
         if (!checked.applied) refused(fresh, site, checked);
     }
     result.work.replaySiteEvaluations += fresh.evaluations;
+    if (options.traceReplay) {
+        trace.success = fresh.success;
+        trace.evaluations = fresh.evaluations;
+        trace.microseconds = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - traceStart).count();
+        result.replayTraces.push_back(std::move(trace));
+    }
     cache = std::move(fresh);
     if (!cache.success) return fail(SelectedFailure::SelectedUpdate, cache.reason, cache.failureCut);
     refreshSources();
     return true;
 }
-Id Constructor::reusablePrefix() const
+std::vector<bool> Constructor::reusableComponents(SelectedReplayTrace* trace)
+{
+    std::vector<bool> reusable(control.components.size(), false);
+    if (!cache.success || !cache.contextualFixedPoint || cache.cuts.size() != control.graph.sites.size() ||
+        cache.fixedComponents != control.components.size() ||
+        (cache.version != ledger.version() && ledger.changes().empty())) return reusable;
+
+    // Invalidation is closed under original control successors and under every
+    // occurrence of an occupied command word. The complement has unchanged
+    // equations and unchanged predecessor inputs, and no endpoint aggregate
+    // mixes a reused occurrence with a recomputed occurrence. Pending payload
+    // semantics are independent of the construction cursor/finalized flags.
+    std::vector<bool> dirty(control.components.size()), visitedWords(control.wordOccurrences.size());
+    std::deque<Id> pending;
+    auto invalidate = [&](Id component) {
+        if (component != NoAnalysisId && !dirty[component]) {
+            dirty[component] = true;
+            pending.push_back(component);
+        }
+    };
+    uint64_t sites = 0, edges = 0, occurrences = 0;
+    for (auto word : ledger.changes()) {
+        if (word >= control.wordOccurrences.size()) return reusable;
+        for (auto site : control.wordOccurrences[word]) {
+            ++occurrences;
+            invalidate(control.component[site]);
+        }
+    }
+    while (!pending.empty()) {
+        const auto component = pending.front();
+        pending.pop_front();
+        for (auto site : control.components[component].sites) {
+            ++sites;
+            for (auto next : control.graph.sites[site].successors) {
+                ++edges;
+                invalidate(control.component[next]);
+            }
+            const auto word = control.canonicalCut[site];
+            if (visitedWords[word] || ledger.word(word).empty()) continue;
+            visitedWords[word] = true;
+            for (auto occurrence : control.wordOccurrences[word]) {
+                ++occurrences;
+                invalidate(control.component[occurrence]);
+            }
+        }
+    }
+    result.work.replayInvalidationSites += sites;
+    result.work.replayInvalidationEdges += edges;
+    result.work.replaySharedWordOccurrences += occurrences;
+    if (trace) {
+        trace->invalidationSites = sites;
+        trace->invalidationEdges = edges;
+        trace->sharedWordOccurrences = occurrences;
+    }
+    for (Id i = 0; i < reusable.size(); ++i) reusable[i] = !dirty[i];
+    return reusable;
+}
+Id Constructor::reusablePrefix(SelectedReplayTrace* trace) const
 {
     if (!cache.success || cache.cuts.size() != control.graph.sites.size()) {
         return 0;
@@ -423,8 +532,15 @@ Id Constructor::reusablePrefix() const
         for (auto site : control.wordOccurrences[cut]) {
             if (control.component[site] != NoAnalysisId) {
                 resume = std::min(resume, control.component[site]);
+                if (trace) trace->changedComponents.push_back(control.component[site]);
             }
         }
+    }
+    if (trace) {
+        trace->changedBoundary = resume;
+        auto& changed = trace->changedComponents;
+        std::sort(changed.begin(), changed.end());
+        changed.erase(std::unique(changed.begin(), changed.end()), changed.end());
     }
     // A cyclic component is reused only from its actual fixed point, never from
     // the hypothesis-seeded construction traversal of the active component.
@@ -434,6 +550,7 @@ Id Constructor::reusablePrefix() const
             break;
         }
     }
+    if (trace) trace->fixedBoundary = resume;
     // afterEndpoint joins all occurrences of an endpoint. Do not reuse an
     // aggregate containing contributions from the region being recomputed.
     // Keep each shared nonempty word wholly on one side of the boundary. The
@@ -449,9 +566,11 @@ Id Constructor::reusablePrefix() const
                 continue;
             }
             resume = span.first;
+            if (trace) ++trace->sharedWordLowerings;
             widened = true;
         }
     }
+    if (trace) trace->resume = resume;
     return resume;
 }
 bool Constructor::replay()

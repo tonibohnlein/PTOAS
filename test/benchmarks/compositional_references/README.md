@@ -24,9 +24,11 @@ FP32-output ordinary GEMM contract.
 ## Dispatch
 
 Attach the corresponding archive and send its `DISPATCH.txt` contents. Agents
-may prepare sources independently, but timed and profiled runs sharing a device
-must be serialized. There is no reason to wait for the earlier ordinary GEMM
-campaign before beginning these tasks.
+should use all eight allocated devices for independent matched comparisons.
+Serialize timed/profiled work only within a device, with all compared arms on
+that same device. See the [scheduling addendum](../../../docs/designs/oahs-eight-device-scheduling.md).
+There is no reason to wait for the earlier ordinary GEMM campaign before
+beginning independent ready tasks.
 
 The task agent owns source adoption and harness adaptation as well as device
 measurement. If the full kernel cannot be imported, it must preserve the native

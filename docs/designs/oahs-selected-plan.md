@@ -304,19 +304,36 @@ memory-conflict edges. Event preconditions remain strict. Each edit checks all
 previously finalized requirements at convergence. No stale completion or
 provisional receipt escapes the selected ledger.
 
-Contextual replay reuses the same predecessor-closed component prefix as the
-acyclic path, under the same boundary rule: the earliest changed word is taken
-over every original occurrence of the edited observation, and a shared nonempty
-word is kept wholly on one side, so no reused endpoint aggregate holds a
-contribution from a recomputed region. Two properties of this path make the
-reuse admissible. Every site applies the pending transfer regardless of whether
-its payload is finalized, so a component's equations depend only on its words
-and its incoming interface. And every component is solved to its actual fixed
-point over the original edges, never from a hypothesis-seeded traversal, so a
-cyclic component before the boundary may also be kept. The recomputed region is
-still solved over the whole remaining graph rather than truncated at the active
-component, which is what keeps aggregates over shared words complete. Nothing is
-seeded with old facts: an invalidated site restarts from bottom.
+Contextual replay reuses a predecessor-closed set of components from a successful
+whole-original-graph contextual fixed point. Invalidation starts at every
+reachable occurrence of every edited word. It closes under original control
+successors and under all occurrences of each nonempty shared word reached by
+invalidation. An unchanged alternative branch may therefore be kept even when
+it follows the changed branch in the component ordering. Sequential successors
+cannot be kept merely because their own command words are unchanged.
+
+Every site applies the pending transfer regardless of whether its payload is
+finalized, so unchanged words and a predecessor-closed unchanged region certify
+the same incoming interface and the same least solution. Reused components keep
+their complete cut states. The shared-word closure also ensures that every
+endpoint aggregate belongs entirely to reused or recomputed occurrences; no
+cached aggregate imports stale contributions from a changed branch. Changed
+components restart from bottom with only actual reused-predecessor outputs as
+boundary inputs. The solve still covers all original paths, and all finalized
+requirements are checked afterward. Failed/partial caches do not qualify.
+
+The original prefix-only rule remains the fallback when no whole contextual
+fixed point is available. `SelectedOptions::siblingReplayReuse=false` (diagnostic
+driver `--prefix-replay`) retains it for controlled comparisons. The ordinary
+construction replay path is unchanged.
+
+`SelectedOptions::traceReplay` (diagnostic driver `--trace-replay`) records
+per-contextual-solve work and restart causes without changing the selected rule.
+It includes all edited-word occurrence components, control-component edges,
+unique/repeated evaluations, reused sites and finalized queries. See
+[FIFO replay attribution](oahs-fifo-replay-attribution.md) for baseline costs and
+the implemented sibling-reuse certificate. Dependency-walk sites, edges and word
+occurrences are counted separately from expensive causal replay evaluations.
 
 The cost that remains is the fixed point of the ACTIVE cyclic component, which is
 re-solved per edit. Inside a strongly connected component every site is reachable

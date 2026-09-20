@@ -1,8 +1,9 @@
 # MAT reader-region cycles
 
 Implemented in `8afb90f17` from the working-tree snapshot based on `fe1fc454b`.
-Down-projection device feedback is recorded below; family transfer and matched
-profiles remain pending. The running device snapshot stays fixed.
+The [final family campaign and audit](oahs-mat-device-final-results.md) now
+supersede the preliminary down-projection report below. Preserve the measured
+source snapshot and its archive.
 
 ## Problem and construction
 

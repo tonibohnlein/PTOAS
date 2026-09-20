@@ -6,11 +6,73 @@ Updated: 2026-09-20
 
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
-- Placement/admission milestone base: `8afb90f17` (MAT cycles, based on `fe1fc454b`); use Git HEAD for its subsequent commit
-- Current milestone: placement/admission hardening and opt-in experiments; MAT down_proj device result positive, family measurements pending
+- Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
+- Current milestone: MAT campaign complete; placement device task dispatched; certified sibling replay reuse implemented locally
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Remote scheduling: all eight devices
+
+Use all eight allocated remote devices for independent matched comparisons;
+serialize timing/profiling only within each device. Keep each comparison's arms
+on the same device and report results by device. See the
+[scheduling addendum](docs/designs/oahs-eight-device-scheduling.md), which should
+be sent alongside the immutable MAT/placement archives. Their contents and hashes
+remain unchanged. Remote CPU/reference work uses the remote host's own capacity.
+
+## While the new device task runs
+
+The user has dispatched the placement/admission device task. Keep its source
+snapshot fixed. The [local TODO order](docs/designs/oahs-todo.md#local-work-while-the-new-device-task-runs)
+now has concrete deliverables and exit gates. Local opt-in `--trace-replay`
+attributes FIFO work without changing replay or emitted plans. See
+[FIFO replay attribution](docs/designs/oahs-fifo-replay-attribution.md): 99.5% of
+AIV replay evaluations occur in two alternative loops. Sixty-four edits confined
+to the first branch still spend 202,944 evaluations in the unmodified sibling.
+One edit touches both loops and remains distinguished. Certified reuse beyond a
+topological prefix is now implemented: invalidation closes under original
+successors and all occurrences of touched nonempty words, preserving exact
+incoming state and complete endpoint aggregates. Partial AIV drops from 813,458
+to 608,848 replay evaluations (25.2%), at the same 125 updates; AIC is unchanged.
+
+A fresh paired corpus sweep passes all 176 module runs (88 inputs, two modes),
+with byte-identical PTO between modes and against `9f30`. Across 97 function
+instances, replay decreases in 12, is unchanged in 85, and increases in none.
+Besides partial AIV, reductions include single-block AIV (22.5%), QKV (13.6%),
+RMSNorm (8.1–10.2%) and top-k (24.1%). Total causal evaluations fall from
+4,085,803 to 3,236,543; the added 529,295 site/550,344 edge/81,370 word-occurrence
+visits are separately charged. See the attribution note for the complete table. The rebuilt portable suite passes 23/23 tests, including full cached/cold
+state comparisons for alternative/sequential loops, shared words, real events,
+failed edits and recovery. Native diagnostic tests pass. The dependency walk is
+counted separately; `--prefix-replay` retains the old rule for comparisons.
+Artifacts and serial reproducer: `/home/toni/work/pypto3_sync_more/sibling-replay-work/`.
+Initial attribution remains in `fifo-replay-work/`. The running device campaign
+is unchanged; identical selected plans need no new device timing for this change.
+Three matched serial host rounds on partial attention give 24.568 s prefix-only
+versus 18.304 s sibling-reuse median diagnostic wall time (paired reductions
+19.8–25.5%). This measures local construction/reconstruction, not device latency.
+
+The next local priorities are a contextual frontier-motion certificate and a
+current native retained-generation witness. Further replay work must target the
+remaining fixed point within an edited loop; sibling reuse does not solve that.
+
+## Completed MAT family device campaign
+
+See [final results and local audit](docs/designs/oahs-mat-device-final-results.md).
+All five projections beat existing: down14.3%, gate/up16.2%, KV14.3%, Q/out15.2%,
+LM4.4%. Candidate/control differences are unresolved; restoring MTE2 fences
+retains the gain. GEMM baseline/candidate timing binaries are identical.
+The agent reports 189 final correctness passes; all 264 host rows pass.
+Locally verified: 4,072 internal checksums, 52 library/build-record hashes and
+raw timing medians/IQR comparisons. The final archive's embedded outer checksum
+is stale; its detached remote checksum has not yet been supplied locally.
+
+The completed campaign used seven devices because card0 had a lock problem.
+Keep per-device matched comparisons and use all eight when available for the
+new microkernel tasks. These results qualify MAT cycles, not the new opt-in
+experiments. LM/GEMM matched profiles were not delivered; the remaining claimed
+"residual gap" is not an identified regression against existing.
 
 ## Current implementation: MAT reader-region cycles
 
@@ -26,15 +88,15 @@ Across 37 paths, production removes 6,881 ordering relations with none added;
 GEMM remains byte-identical and passes its 200/394/782 checker. Construction
 replay decreases; graph growth is a compact first-consumer prefix.
 
-Down-projection device feedback below now confirms a latency improvement;
-family transfer is still pending. The complete protocol also proves the MTE2
+Final family device feedback above confirms the latency improvement across
+all five measured projections. The complete protocol also proves the MTE2
 fences unnecessary before insertion.
 M/FIX/ALL fences remain. A separately certified placement control restores all
 baseline MTE2 fences; it removes 6,173 relations with none added. Measure this
 control alongside production, fe1 and existing. The down result is recorded below.
 The existing dispatch package preserves the precommit working-tree snapshot.
 The implementation is now committed as `8afb90f17`; keep that package and its
-hashes fixed for the ongoing family measurements.
+hashes fixed as the completed campaign reference.
 
 ## Current local work: placement-oriented views and isolated experiments
 
@@ -73,8 +135,8 @@ MAT campaign now reports down_proj at 25.792 us versus 30.077 existing and
 31.646 fe1, with 36/36 correctness passes. The retained-fence control is
 25.704 us: MTE2 omission has no measurable benefit in this comparison. See
 [measurements, attribution limits and pending work](docs/designs/oahs-mat-reader-cycles.md#device-feedback-down_proj-2026-09-20).
-The family and matched profiles remain pending. Keep the running MAT task
-and both packaged source snapshots fixed.
+The final family results supersede that preliminary update; see the completed
+campaign section above. Keep both packaged source snapshots fixed.
 
 Placement task bundle: [source-complete archive](../device-handoffs/oahs-placement-experiments-8afb/oahs-placement-experiments-8afb.tar.gz),
 SHA-256 `1ab2919c8887869da33741dcd42d936472d2035ef385b65f320d594dd74f4d51`;
