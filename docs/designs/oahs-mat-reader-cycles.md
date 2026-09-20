@@ -1,8 +1,8 @@
 # MAT reader-region cycles
 
-Implemented as a working-tree change based on `fe1fc454b`, 2026-09-20.
-Device performance is pending. This implements the follow-up to the remaining
-projection-gap diagnosis; it does not change the already running device arm.
+Implemented in `8afb90f17` from the working-tree snapshot based on `fe1fc454b`.
+Down-projection device feedback is recorded below; family transfer and matched
+profiles remain pending. The running device snapshot stays fixed.
 
 ## Problem and construction
 
@@ -101,3 +101,41 @@ they are not native wrong-code findings or waived candidate checks.
 
 Raw local evidence: workspace `mat-release-work/`; the self-contained device
 package carries plans, source snapshot, controls, comparison tools and logs.
+
+
+## Device feedback: down_proj (2026-09-20)
+
+User-supplied preliminary report from the pinned MAT campaign, not a new local
+measurement and not a device test of the later placement/admission experiments.
+36/36 correctness runs pass across four arms: three seeds, blocks 0/19 and a
+queued four-slot repeat, correctness-gated before timing. The timing campaign
+contains 720 samples over six balanced rotated rounds.
+
+| Arm | Median us | IQR us |
+| --- | ---: | --- |
+| placement_control | 25.704 | [25.686, 25.872] |
+| candidate | 25.792 | [25.686, 26.030] |
+| existing | 30.077 | [30.059, 30.230] |
+| baseline (fe1) | 31.646 | [31.623, 31.684] |
+
+Candidate/baseline is 0.8150 and candidate/existing is 0.8575, both IQR-disjoint:
+18.5% faster than fe1 and 14.3% faster than existing on down_proj. The control
+retaining both baseline MTE2 fences is also faster than baseline (0.8122).
+Candidate/control is 1.0034 with overlapping IQRs: this campaign detects no
+latency benefit from omitting the two MTE2 fences.
+
+The useful evidence is that the shared readiness/return protocol and control
+placement delivers the improvement even with those fences retained. It does
+not isolate placement from synchronization overhead: baseline has 56/57 static
+SET/WAIT instructions versus 66/69 in both new arms. The candidate/control
+comparison does isolate the MTE2 omission, with equal SET/WAIT populations.
+Do not transfer this result to other projections before their measurements.
+
+Reported host gates verify 8,038 source files and modes, exact restored-fence
+control reproduction at down's cuts 0 and 20, payload identity and all static
+pins across eleven projection rows. Both new plans pass early-MAT and
+early-release assertions; fe1 fails the new release negative control. Attention
+44/45 and post-RMSNorm22/23 plans and C++ remain identical to fe1. The agent
+reports all three OAHS host suites exit zero. LM head, gate/up, KV, Q/out,
+GEMM, remaining host rows and matched four-arm profiling are still running.
+The full archive and raw measurement report have not yet been supplied here.

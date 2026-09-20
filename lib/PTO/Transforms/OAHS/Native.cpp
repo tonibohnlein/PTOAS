@@ -91,7 +91,7 @@ struct Import {
   DenseMap<mlir::Operation *, SlotLoop> slotLoops;
   std::vector<std::string> observationNotes;
 };
-enum class ObservationPolicy { RefineLeafLoops, QualifiedAccessRoles };
+enum class ObservationPolicy { RefineLeafLoops, QualifiedAccessRoles, ClassInvariantInputs };
 // Every actual original instruction is an anchor, including scalar/control
 // instructions and region terminators. Synthetic branch/loop decisions have no
 // anchor and cannot acquire emitted commands. Payload phases remain unchanged.
@@ -304,7 +304,7 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
                                      refined.reason);
       continue;
     }
-    if (policy == ObservationPolicy::QualifiedAccessRoles) {
+    if (policy != ObservationPolicy::RefineLeafLoops) {
       // Qualify this region from shared physical effects, not operation names.
       // Do not refine unrelated loops merely because a prior loop qualified.
       auto local = refined.program;
@@ -404,7 +404,8 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     }
     q.loops.push_back(std::move(original));
   }
-  native_detail::importFirstConsumers(out.program, loops, ids, out.loopOwners, out.observationNotes);
+  native_detail::importFirstConsumers(out.program, loops, ids, out.loopOwners, out.observationNotes,
+      policy == ObservationPolicy::ClassInvariantInputs);
   native_detail::importFirstUse(function, out.program, ids, out.observationNotes);
   if (out.loopOwners.empty())
     native_detail::importFifoSlots(function, out.program, out.payload, out.observationNotes);
@@ -1306,7 +1307,8 @@ LogicalResult testing::checkHandoffObservationPredicate(
 
 namespace {
 LogicalResult executeSelectedHandoffSync(
-    func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate, SelectedPlan *report) {
+    func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate, SelectedPlan *report,
+    SelectedOptions options = {}) {
   if (report) {
     *report = SelectedPlan{};
   }
@@ -1315,8 +1317,8 @@ LogicalResult executeSelectedHandoffSync(
   // loops retain their original SCF graph. Bounding geometry never becomes a
   // full-write certificate, and a construction refusal does not trigger retry.
   return executeTransaction(function,
-      [report](const Program &program) {
-        auto selected = constructSelectedPlan(program);
+      [report, options](const Program &program) {
+        auto selected = constructSelectedPlan(program, {}, options);
         Result result;
         result.success = selected.success;
         result.reason = selected.reason;
@@ -1332,7 +1334,8 @@ LogicalResult executeSelectedHandoffSync(
         result.success = checked.accepted;
         result.reason = checked.reason;
         return result;
-      }, mutate, ObservationPolicy::QualifiedAccessRoles);
+      }, mutate, options.classInvariantInputs ? ObservationPolicy::ClassInvariantInputs
+                                             : ObservationPolicy::QualifiedAccessRoles);
 }
 
 } // namespace
@@ -1343,8 +1346,9 @@ LogicalResult testing::runHandoffSyncWithMutation(
 }
 
 LogicalResult testing::runSelectedHandoffSyncWithMutation(
-    func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate, SelectedPlan *report) {
-  return executeSelectedHandoffSync(function, mutate, report);
+    func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate, SelectedPlan *report,
+    const SelectedOptions *options) {
+  return executeSelectedHandoffSync(function, mutate, report, options ? *options : SelectedOptions{});
 }
 
 namespace {
@@ -1372,9 +1376,9 @@ LogicalResult analyzeHandoffSyncWithPolicy(func::FuncOp function,
 } // namespace
 
 LogicalResult testing::analyzeSelectedHandoffSync(func::FuncOp function,
-                                                  NativeAnalysis &result) {
-  return analyzeHandoffSyncWithPolicy(function, result,
-                                      ObservationPolicy::QualifiedAccessRoles);
+                                                  NativeAnalysis &result, bool classInvariantInputs) {
+  return analyzeHandoffSyncWithPolicy(function, result, classInvariantInputs
+      ? ObservationPolicy::ClassInvariantInputs : ObservationPolicy::QualifiedAccessRoles);
 }
 
 LogicalResult runHandoffSync(func::FuncOp function) {

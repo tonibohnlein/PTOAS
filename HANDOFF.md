@@ -6,15 +6,15 @@ Updated: 2026-09-20
 
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
-- Base for current implementation: `fe1fc454bb80cd4810410bcc8bd9212f36c8b5d8`
-- Current milestone: MAT reader-region cycles implemented and locally validated; device measurement pending
+- Placement/admission milestone base: `8afb90f17` (MAT cycles, based on `fe1fc454b`); use Git HEAD for its subsequent commit
+- Current milestone: placement/admission hardening and opt-in experiments; MAT down_proj device result positive, family measurements pending
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
 
 ## Current implementation: MAT reader-region cycles
 
-The working tree selects complete readiness/return cycles at each qualified
+Commit `8afb90f17` selects complete readiness/return cycles at each qualified
 reader child's boundaries, preserving separate first consumers. This removes
 the late second-child dependency on first-pair refill. See
 [mechanism and evidence](docs/designs/oahs-mat-reader-cycles.md) and
@@ -26,16 +26,64 @@ Across 37 paths, production removes 6,881 ordering relations with none added;
 GEMM remains byte-identical and passes its 200/394/782 checker. Construction
 replay decreases; graph growth is a compact first-consumer prefix.
 
-The complete protocol also proves the MTE2 fences unnecessary before insertion.
+Down-projection device feedback below now confirms a latency improvement;
+family transfer is still pending. The complete protocol also proves the MTE2
+fences unnecessary before insertion.
 M/FIX/ALL fences remain. A separately certified placement control restores all
 baseline MTE2 fences; it removes 6,173 relations with none added. Measure this
-control alongside production, fe1 and existing. No device speedup is claimed.
-The self-contained dispatch package is a working-tree snapshot, not a new commit.
+control alongside production, fe1 and existing. The down result is recorded below.
+The existing dispatch package preserves the precommit working-tree snapshot.
+The implementation is now committed as `8afb90f17`; keep that package and its
+hashes fixed for the ongoing family measurements.
 
-Four hardening items remain pending: optional-cohort resource starvation,
-remaining common-frontier merge certificate, next-provider selection, and FIFO
-contextual replay accounting. The historical diagnosis below describes the
-pre-implementation plans and must not be mistaken for current production.
+## Current local work: placement-oriented views and isolated experiments
+
+See [implementation, scope and results](docs/designs/oahs-placement-experiments.md)
+and [targeted device tasks](test/benchmarks/placement/DEVICE_TASKS.md).
+
+- Default hardening stages mandatory optional-protocol checks and rejects an
+  exactly-fitting cohort that strands uncovered ordinary demands. The exact
+  base reproducer fails; the candidate falls back and succeeds. Invalid-proposal
+  rollback is covered. Next-provider-only selection preserves the old tie rule.
+- Experimental switches isolate frontier motion, word-start source gaps,
+  deferred acyclic acknowledgments, class-invariant first consumers and the
+  exact-equal-coverage binding probe. Mandatory checks remain enabled.
+- 23/23 portable suites and native tests pass. Default hardening produces 88/88
+  byte-identical corpus plans. A 144-case matrix plus 16 final representative
+  default/probe checks pass. Default GEMM remains 200/394/782, no named barriers.
+- Native source-gap witness: 7 pairs unchanged, two payload dependencies removed,
+  none added. Deferred acknowledgment: 5 -> 4 pairs, three/two dependencies
+  removed on false/true paths, none added. All runnable microkernel arms lower.
+- Class-invariant fixture extends construction coverage: candidate succeeds,
+  default refuses rearming. It needs device qualification, not a claimed
+  before/after default speedup. Exact-coverage attention probes change no plan.
+- No-motion GEMM has 330/652/1296 pairs with identical checked payload ordering.
+  Legacy frontier motion remains default pending this isolated cost comparison;
+  the general ordering certificate remains open.
+- Trial configurations expose recurring omission separately from final helper
+  pruning. Proposal checking has its own counters. FIFO contextual replay remains
+  expensive and is NOT optimized by this work.
+
+Shared views use the existing deadline-indexed requirement frontiers, native
+cell/loop effects, original control and selected replay/key state. No additional
+completion authority or eager per-cell channel allocation is introduced.
+
+These placement/admission changes have no device result yet. The separate
+MAT campaign now reports down_proj at 25.792 us versus 30.077 existing and
+31.646 fe1, with 36/36 correctness passes. The retained-fence control is
+25.704 us: MTE2 omission has no measurable benefit in this comparison. See
+[measurements, attribution limits and pending work](docs/designs/oahs-mat-reader-cycles.md#device-feedback-down_proj-2026-09-20).
+The family and matched profiles remain pending. Keep the running MAT task
+and both packaged source snapshots fixed.
+
+Placement task bundle: [source-complete archive](../device-handoffs/oahs-placement-experiments-8afb/oahs-placement-experiments-8afb.tar.gz),
+SHA-256 `1ab2919c8887869da33741dcd42d936472d2035ef385b65f320d594dd74f4d51`;
+566 package checksums and reconstruction of all 8,046 candidate source files
+verified. That precommit snapshot remains immutable; this commit also records
+subsequently received MAT device feedback in documentation.
+
+Historical sections below describe
+previous milestones and are not current status.
 
 ## Prior local diagnosis: remaining projection gap (2026-09-20)
 

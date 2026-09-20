@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedInternal.h"
 #include <algorithm>
+#include <chrono>
 #include <deque>
 #include <limits>
 #include <tuple>
@@ -904,7 +905,7 @@ bool protocolCompatible(const Program& p, const Control& c,
 
 std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     const Program& p, const Control& c, const RequirementFrontiers& frontiers,
-    bool allowGuardedEpisodes)
+    bool allowGuardedEpisodes, bool movingFrontiers)
 {
     std::vector<RecurringRequirement> requests;
     if (!p.observed) return requests;
@@ -1029,6 +1030,11 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     };
     auto combine = [&](const std::vector<Cut>& a, const std::vector<Cut>& b, bool later,
                        std::vector<Cut>& out) {
+        if (!movingFrontiers) {
+            if (a != b) return false;
+            out = a;
+            return true;
+        }
         const auto left = indexed(a), right = indexed(b);
         if (left.empty() || left.size() != right.size()) return false;
         out.clear();
@@ -1191,6 +1197,7 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
             // Recurring qualification is an optional construction shortcut.
             // No endpoint has been committed yet, so decline the whole proposal
             // and let ordinary demand-driven construction reuse the key pool.
+            ++result.work.rejectedResourceProposals;
             return true;
         }
         proposedKeys.insert(selected);
@@ -1232,8 +1239,39 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
                         r.demand.cell, unsigned(r.kind), unsigned(r.demand.property));
         return out;
     };
-    std::optional<AnalysisResult> selected;
+    // Missing payload completion remains pending; invalid mandatory protocol
+    // must not commit endpoints/reservations and poison ordinary construction.
+    const auto checkStart = std::chrono::steady_clock::now();
+    std::optional<AnalysisResult> selected = analyze(program, candidate(), {false});
+    result.work.proposalCheckSites += selected->stats.siteEvaluations;
+    result.work.proposalCheckMicroseconds += std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - checkStart).count();
+    if (!selected->complete || !selected->diagnostics.empty() ||
+        !selected->protocol.empty() || !selected->phaseResources.empty()) {
+        ++result.work.rejectedProtocolProposals;
+        return true;
+    }
+    // An exactly fitting cohort can strand an uncovered ordinary demand.
+    // Conservative direct-vocabulary admission, not a global allocation proof
+    // or a fixed spare-key heuristic. Full-pool fully supported cycles may pass.
+    for (const auto& residual : selected->residuals) {
+        const auto source = program.operations[residual.demand.producer].pipe;
+        const auto observer = program.operations[residual.demand.consumer].pipe;
+        if (source == observer) continue;
+        bool proposed = false, ordinary = false;
+        for (Id key = 0; key < frontier.keys().size(); ++key) {
+            const auto& identity = frontier.keys()[key];
+            if (identity.source != source || identity.observer != observer) continue;
+            proposed |= proposedKeys.count(key) != 0;
+            ordinary |= !proposedKeys.count(key) && !fixedKeys.count(key);
+        }
+        if (proposed && !ordinary) {
+            ++result.work.rejectedResourceProposals;
+            return true;
+        }
+    }
     for (Id index = requests.size(); index-- > 0;) {
+        if (!options.recurringOmissionTrials) break;
         if (requests[index].qualifiedCycle) continue;
         if (!alternativeRoute(index)) continue;
         if (!selected) {

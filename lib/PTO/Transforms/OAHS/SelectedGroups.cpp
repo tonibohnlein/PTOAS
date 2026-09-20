@@ -20,10 +20,10 @@ std::map<Id, unsigned> Constructor::reasons(Cut site) const
     return requirements.reasons(site);
 }
 std::set<Id> Constructor::coverage(
-    Cut cut, Pipe source, const std::vector<FrontierRequirement>& requirements) const
+    Cut cut, Pipe source, const std::vector<FrontierRequirement>& requirements, bool atStart) const
 {
     std::set<Id> out;
-    const auto& atSource = cache.cuts[cut].before;
+    const auto& atSource = atStart ? cache.cuts[cut].incoming : cache.cuts[cut].before;
     if (!atSource.causal.reachable()) {
         return out;
     }
@@ -362,6 +362,25 @@ Group Constructor::sourceGroup(
         if (!std::includes(covered.begin(), covered.end(), needed.begin(), needed.end())) continue;
         if (!selected || control.position[handle.cut] < control.position[selected->cut]) selected = &handle;
     }
+    // A view of the existing deadline-indexed storage frontiers supplies the
+    // useful original publication boundary. Actual coverage is queried at the
+    // exact post-origin gap; immutable provenance supplies no causal credit.
+    const auto observer = program.operations[control.graph.operations[current]].pipe;
+    if (options.sourceGaps && selected && std::any_of(requirements.at(current).begin(),
+            requirements.at(current).end(), [&](const auto& fact) {
+                return fact.publication == selected->cut && fact.source == source;
+            })) {
+        const auto covered = coverage(selected->cut, source, all, true);
+        const auto key = virginAtStart(selected->cut, source, observer);
+        if (key != NoAnalysisId && std::includes(covered.begin(), covered.end(), needed.begin(), needed.end())) {
+            group.publication = selected->cut;
+            group.atWordStart = true;
+            group.forwardKey = key;
+            group.version = cache.version;
+            group.coverage = covered;
+            return group;
+        }
+    }
     const bool comparable = selected != nullptr;
     if (!comparable && sourceFrontier(source, required, group, all, promotion)) return group;
     if (!comparable && loopEntryFrontier(source, required, group, all, promotion)) return group;
@@ -426,8 +445,47 @@ std::vector<Group> Constructor::groups(
                 selected = i;
             }
         }
+        const auto baseline = selected;
+        // Audit the exact candidate population before proposing a new policy.
+        // Equal sizes are not equal certified residual sets.
+        for (Id i = 0; i < pending.size(); ++i)
+            if (i != selected && !pending[selected].coverage.empty() &&
+                pending[i].coverage == pending[selected].coverage)
+                ++result.work.equalCoveragePairs;
+        if (options.equalCoverageBinding && std::any_of(pending.begin(),pending.end(),[&](const auto& g) {
+                return &g != &pending[baseline] && !g.coverage.empty() && g.coverage == pending[baseline].coverage;
+            })) {
+            ++result.work.bindingProbes;
+            // Retain the original winner if already helper-free. Probe only
+            // equal SETS in this same priority population; do not mutate state.
+            if (helperFreeBinding(pending[baseline], observer) == NoAnalysisId) {
+                Id best = NoAnalysisId, binding = NoAnalysisId;
+                for (Id i = 0; i < pending.size(); ++i) {
+                    if (i == baseline || pending[i].coverage != pending[baseline].coverage) continue;
+                    ++result.work.bindingProbes;
+                    const auto key = helperFreeBinding(pending[i], observer);
+                    if (key == NoAnalysisId) continue; // Unknown, not Impossible
+                    bool better = best == NoAnalysisId;
+                    if (!better) {
+                        const auto a = pending[i].publication, b = pending[best].publication;
+                        const bool frame = control.straight(a,b) || control.straight(b,a);
+                        better = (frame && control.position[a] > control.position[b]) ||
+                            ((!frame || a == b) && std::make_pair(a,pending[i].source) <
+                                                      std::make_pair(b,pending[best].source));
+                    }
+                    if (better) { best = i; binding = key; }
+                }
+                if (best != NoAnalysisId) {
+                    selected = best;
+                    pending[best].forwardKey = binding;
+                    pending[best].version = ledger.version();
+                    pending[best].bindingCertified = true;
+                    ++result.work.bindingChoices;
+                }
+            }
+        }
         ordered.push_back(std::move(pending[selected]));
-        pending.erase(pending.begin() + selected);
+        break; // The next actual receipt invalidates the remaining ranking.
     }
     return ordered;
 }

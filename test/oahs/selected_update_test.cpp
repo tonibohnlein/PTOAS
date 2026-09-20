@@ -67,7 +67,7 @@ struct ReplayTestAccess {
             for (Id i = 0; i < sources.size(); ++i) {
                 const auto& actual = sources[i];
                 const auto& expected = c.result.sources[i];
-                require(actual.snapshot == expected.snapshot && actual.version == expected.version,
+                require(actual.snapshot == expected.snapshot && actual.postOrigin == expected.postOrigin && actual.version == expected.version,
                         "indexed source refresh differs from cold replay");
                 require(coverage[i] == c.coverage(actual.cut, actual.pipe, required),
                         "source coverage differs after cold replay");
