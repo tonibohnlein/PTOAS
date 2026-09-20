@@ -448,12 +448,14 @@ bool Constructor::bind(Group& group, RequirementStage stage)
             ++result.work.loopEntryTransfers;
             needsContextualReplay = true;
             if (group.entryRepeats) {
+                entryProtocolKeys.insert(group.forwardKey);
                 recurringKeys.insert(group.forwardKey);
                 closedKeys.insert(group.forwardKey);
             }
             if (group.entryReturnKey != NoAnalysisId) {
                 const auto& reply = frontier.keys()[group.entryReturnKey];
                 if (group.entryRepeats) {
+                    entryProtocolKeys.insert(group.entryReturnKey);
                     recurringKeys.insert(group.entryReturnKey);
                     closedKeys.insert(group.entryReturnKey);
                 }

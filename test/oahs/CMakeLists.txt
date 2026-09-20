@@ -59,3 +59,7 @@ add_executable(oahs-lookahead-index-test lookahead_index_test.cpp)
 target_compile_features(oahs-lookahead-index-test PRIVATE cxx_std_17)
 target_compile_options(oahs-lookahead-index-test PRIVATE -Wall -Wextra -Werror -pedantic)
 add_test(NAME oahs_lookahead_index COMMAND oahs-lookahead-index-test)
+
+# Ordered-word oracle for invariant generation / first-consumer placement.
+add_test(NAME oahs_first_consumer_reference
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/first_consumer_reference_test.py)

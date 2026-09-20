@@ -174,6 +174,75 @@ bool fifoSlotQualification(MLIRContext &context) {
   }
   return true;
 }
+bool firstConsumerPlacement(MLIRContext &context) {
+  const std::string fixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @first_consumer(%src: !pto.partition_tensor_view<1x32xf32>, %n: index, %active: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %lb = arith.constant 3 : index
+    %ub = arith.constant 9 : index
+    %step = arith.constant 2 : index
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %x = arith.constant 0 : i64
+    %y = arith.constant 128 : i64
+    %z = arith.constant 256 : i64
+    %w = arith.constant 384 : i64
+    %u = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %x : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %y : !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %z : !pto.tile_buf<vec, 1x32xf32>
+    %other = pto.alloc_tile addr = %w : !pto.tile_buf<vec, 1x32xf32>
+    %unused = pto.alloc_tile addr = %u : !pto.tile_buf<vec, 1x32xf32>
+    scf.for %entry = %zero to %n step %one {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%unused : !pto.tile_buf<vec, 1x32xf32>)
+      scf.for %i = %lb to %ub step %step {
+        pto.tabs ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+        // INSERT
+        pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%other : !pto.tile_buf<vec, 1x32xf32>)
+      }
+    }
+    return
+  }
+})mlir";
+  for (unsigned variant = 0; variant != 6; ++variant) {
+    auto source = fixture;
+    auto replace = [&](const std::string &a, const std::string &b) {
+      source.replace(source.find(a), a.size(), b);
+    };
+    if (variant == 1) replace("%lb to %ub", "%lb to %lb");
+    if (variant == 2) replace("%lb to %ub", "%lb to %n");
+    if (variant == 3) replace("// INSERT", "pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)");
+    if (variant == 4) replace("pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%other : !pto.tile_buf<vec, 1x32xf32>)",
+      "scf.if %active { pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%other : !pto.tile_buf<vec, 1x32xf32>) }");
+    if (variant == 5) replace("// INSERT", "pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%unused : !pto.tile_buf<vec, 1x32xf32>)");
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module), "parse first-consumer fixture")) return false;
+    auto function = module->lookupSymbol<func::FuncOp>("first_consumer");
+    oahs::NativeAnalysis input;
+    if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, input)), "import first consumer")) return false;
+    const bool qualified = input.program.observed->qualification.find("first-consumer-prefix-v1") != std::string::npos;
+    if (!check(qualified == (variant == 0), "first consumer must be invariant, unconditional and nonempty")) return false;
+    if (variant) continue; // Unsupported descriptors must retain ordinary control.
+    oahs::SelectedPlan report;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report)), "first-consumer construction/reconstruction")) {
+      llvm::errs() << "variant=" << variant << " cut=" << report.cut << " reason=" << report.reason << "\n";
+      return false;
+    }
+    if (variant == 0) {
+      bool correctThreshold = false;
+      function.walk([&](arith::CmpIOp cmp) {
+        auto constant = cmp.getRhs().getDefiningOp<arith::ConstantIndexOp>();
+        correctThreshold |= constant && constant.value() == 5 &&
+            cmp.getPredicate() == arith::CmpIPredicate::slt;
+      });
+      if (!check(correctThreshold, "nonunit first-visit guard uses original lower bound plus step")) return false;
+    }
+  }
+  return true;
+}
 bool positive(MLIRContext &context, const char *source, StringRef name) {
   auto module = parseSourceString<ModuleOp>(source, &context);
   if (!check(bool(module), "parse positive input")) { return false; }
@@ -799,6 +868,6 @@ int main(int argc, char **argv) {
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
-                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context);
+                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && firstConsumerPlacement(context);
   return passed ? 0 : 1;
 }

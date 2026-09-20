@@ -170,138 +170,166 @@ bool Constructor::loopEntryFrontier(
     for (const auto& r : required) needed.insert(accessClass(r));
     const auto observer = program.operations[control.graph.operations[current]].pipe;
     for (const auto& loop : control.loopEntries) {
-        const auto& first = loop.firstConsumers[unsigned(observer)];
-        // SCC construction may visit a later consumer before a qualified
-        // first use. The invariant incoming requirement still belongs at the
-        // original entry when every first consumer needs the same completion.
-        const bool eligible = !first.empty() &&
-            std::find(loop.sites.begin(), loop.sites.end(), current) != loop.sites.end() &&
-            control.canonicalCut[loop.entry] == loop.entry;
-        if (!eligible) continue;
-        if (!std::all_of(first.begin(), first.end(), [&](Cut cut) {
-            const auto& op = program.operations[control.graph.operations[cut]];
-            return std::all_of(required.begin(), required.end(), [&](const auto& r) {
-                return std::any_of(op.accesses.begin(), op.accesses.end(), [&](const auto& a) {
-                    return a.cell == r.cell && (a.write || (a.read && r.sourceWrite));
+        std::vector<Cut> acquisitions{loop.entry};
+        for (auto cut : loop.firstInputConsumers)
+            if (program.operations[control.graph.operations[cut]].pipe == observer)
+                acquisitions.push_back(cut);
+        for (auto acquisition : acquisitions) {
+            const bool atEntry = acquisition == loop.entry;
+            const auto first = atEntry ? loop.firstConsumers[unsigned(observer)]
+                                       : std::vector<Cut>{acquisition};
+            // SCC construction may visit a later consumer before a qualified
+            // first use. Select the receipt at that actual first deadline,
+            // or at entry only when every first observer payload requires it.
+            const bool eligible = !first.empty() &&
+                std::find(loop.sites.begin(), loop.sites.end(), current) != loop.sites.end() &&
+                control.canonicalCut[acquisition] == acquisition;
+            if (!eligible) continue;
+            if (!std::all_of(first.begin(), first.end(), [&](Cut cut) {
+                const auto& op = program.operations[control.graph.operations[cut]];
+                return std::all_of(required.begin(), required.end(), [&](const auto& r) {
+                    return std::any_of(op.accesses.begin(), op.accesses.end(), [&](const auto& a) {
+                        return a.cell == r.cell && (a.write || (a.read && r.sourceWrite));
+                    });
                 });
-            });
-        })) continue;
-        // Moving a wait ahead of Q's first payload can still order another
-        // engine through an earlier Q publication. Consult actual selected
-        // words, not just payload order. Existing entry commands precede the
-        // appended acquisition; existing deadline commands follow it only if
-        // we hoist, so the latter must also be checked.
-        const bool communicates = std::any_of(
-            loop.crossedWords[unsigned(observer)].begin(),
-            loop.crossedWords[unsigned(observer)].end(), [&](Cut cut) {
-                return std::any_of(ledger.word(cut).begin(), ledger.word(cut).end(), [&](Id id) {
-                    const auto& command = ledger.endpoint(id).command;
-                    return command.kind == Command::BarrierAll ||
-                        (command.kind == Command::Publish && command.source == observer);
+            })) continue;
+            // Moving a wait ahead of Q's first payload can still order another
+            // engine through an earlier Q publication. Consult actual selected
+            // words, not just payload order. Existing entry commands precede the
+            // appended acquisition; existing deadline commands follow it only if
+            // we hoist, so the latter must also be checked.
+            const bool communicates = atEntry && std::any_of(
+                loop.crossedWords[unsigned(observer)].begin(),
+                loop.crossedWords[unsigned(observer)].end(), [&](Cut cut) {
+                    return std::any_of(ledger.word(cut).begin(), ledger.word(cut).end(), [&](Id id) {
+                        const auto& command = ledger.endpoint(id).command;
+                        return command.kind == Command::BarrierAll ||
+                            (command.kind == Command::Publish && command.source == observer);
+                    });
                 });
-            });
-        if (communicates) continue;
-        // No relevant source-class occurrence may be refreshed inside the
-        // region. Readiness/release belongs to this bank, not to a maximum
-        // operation number or to every operation on its source engine.
-        if (std::any_of(needed.begin(), needed.end(), [&](Id access) {
-            return loop.issuedClasses.count(access) != 0;
-        })) continue;
-        const SelectedSource* selected = nullptr;
-        for (const auto& handle : result.sources) {
-            if (handle.pipe != source || handle.version != cache.version || !handle.snapshot.reachable() ||
-                !control.straight(handle.cut, loop.entry)) continue;
-            bool covered = true;
-            const auto& snapshot = cache.cuts[handle.cut].before.causal;
-            if (!snapshot.reachable()) continue;
-            for (auto access : needed) {
+            if (atEntry && communicates) continue;
+            // No relevant source-class occurrence may be refreshed inside the
+            // region. Readiness/release belongs to this bank, not to a maximum
+            // operation number or to every operation on its source engine.
+            if (std::any_of(needed.begin(), needed.end(), [&](Id access) {
+                return loop.issuedClasses.count(access) != 0;
+            })) continue;
+            const SelectedSource* selected = nullptr;
+            for (const auto& handle : result.sources) {
+                if (handle.pipe != source || handle.version != cache.version || !handle.snapshot.reachable() ||
+                    !control.straight(handle.cut, loop.entry)) continue;
+                bool covered = true;
+                const auto& snapshot = cache.cuts[handle.cut].before.causal;
+                if (!snapshot.reachable()) continue;
+                for (auto access : needed) {
+                    const auto* history = snapshot.facts()->history.find(access);
+                    covered &= freshBetween(handle.cut, loop.entry, access) && history &&
+                        frontierContains(*history, PipeCount + unsigned(source));
+                }
+                if (covered && (!selected || control.position[handle.cut] < control.position[selected->cut]))
+                    selected = &handle;
+            }
+            // With no saved source in this invocation, a source-inactive region
+            // can establish its incoming completion at entry. All alternative first
+            // observer payloads must need these same classes: a branch containing
+            // unrelated observer work is not a reason to advance its deadline.
+            const bool regional = atEntry && !selected && !loop.issuedPipes.count(source) &&
+                std::none_of(loop.sites.begin(), loop.sites.end(), [&](Cut cut) {
+                    return std::any_of(ledger.word(cut).begin(), ledger.word(cut).end(), [&](Id id) {
+                        const auto& c = ledger.endpoint(id).command;
+                        return c.kind == Command::BarrierAll || c.source == source ||
+                            ((c.kind == Command::Publish || c.kind == Command::Acquire) && c.observer == source);
+                    });
+                });
+            if (!selected && !regional) continue;
+            const auto publication = selected ? selected->cut : loop.entry;
+            if (!regional && !control.lookahead.balancedTransfer({publication}, acquisition,
+                                           control.graph.entry, control.graph.exit)) continue;
+            // Additional credit comes from the actual publication checkpoint,
+            // never the consumer checkpoint. Invariance inside the region and
+            // freshness on the incoming corridor preserve occurrence identity.
+            auto covered = needed;
+            const auto& snapshot = cache.cuts[publication].before.causal;
+            if (snapshot.reachable()) for (const auto& r : all) {
+                const auto access = accessClass(r);
                 const auto* history = snapshot.facts()->history.find(access);
-                covered &= freshBetween(handle.cut, loop.entry, access) && history &&
-                    frontierContains(*history, PipeCount + unsigned(source));
+                if (!loop.issuedClasses.count(access) &&
+                    freshBetween(publication, loop.entry, access) && history &&
+                    frontierContains(*history, PipeCount + unsigned(source))) covered.insert(access);
             }
-            if (covered && (!selected || control.position[handle.cut] < control.position[selected->cut]))
-                selected = &handle;
-        }
-        // With no saved source in this invocation, a source-inactive region
-        // can establish its incoming completion at entry. All alternative first
-        // observer payloads must need these same classes: a branch containing
-        // unrelated observer work is not a reason to advance its deadline.
-        const bool regional = !selected && !loop.issuedPipes.count(source) &&
-            std::none_of(loop.sites.begin(), loop.sites.end(), [&](Cut cut) {
-                return std::any_of(ledger.word(cut).begin(), ledger.word(cut).end(), [&](Id id) {
-                    const auto& c = ledger.endpoint(id).command;
-                    return c.kind == Command::BarrierAll || c.source == source ||
-                        ((c.kind == Command::Publish || c.kind == Command::Acquire) && c.observer == source);
-                });
-            });
-        if (!selected && !regional) continue;
-        const auto publication = selected ? selected->cut : loop.entry;
-        if (!regional && !control.lookahead.balancedTransfer({publication}, loop.entry,
-                                       control.graph.entry, control.graph.exit)) continue;
-        // Additional credit comes from the actual publication checkpoint,
-        // never the consumer checkpoint. Invariance inside the region and
-        // freshness on the incoming corridor preserve occurrence identity.
-        auto covered = needed;
-        const auto& snapshot = cache.cuts[publication].before.causal;
-        if (snapshot.reachable()) for (const auto& r : all) {
-            const auto access = accessClass(r);
-            const auto* history = snapshot.facts()->history.find(access);
-            if (!loop.issuedClasses.count(access) &&
-                freshBetween(publication, loop.entry, access) && history &&
-                frontierContains(*history, PipeCount + unsigned(source))) covered.insert(access);
-        }
-        // An overlap-only promotion without Known credit cannot succeed.
-        // Reject it before key selection and the whole-program trial solve.
-        if (promotion && std::none_of(promotion->begin(), promotion->end(),
-                [&](Id access) { return covered.count(access); })) continue;
-        auto unused = [&](Pipe a, Pipe b) {
-            for (Id key = 0; key < frontier.keys().size(); ++key) {
-                const auto& e = frontier.keys()[key];
-                if (e.source != a || e.observer != b || closedKeys.count(key) || recurringKeys.count(key)) continue;
-                if (std::none_of(ledger.records().begin(), ledger.records().end(), [&](const auto& r) {
-                    if (!ledger.active(r.id)) return false;
-                    const auto& c = r.command;
-                    return (c.kind == Command::Publish || c.kind == Command::Acquire) &&
-                        c.source == a && c.observer == b && c.key == e.key;
-                })) return key;
-            }
-            return NoAnalysisId;
-        };
-        const auto forward = unused(source, observer);
-        if (forward == NoAnalysisId) continue;
-        const bool repeats = control.components[control.component[publication]].cyclic;
-        Id reverse = NoAnalysisId;
-        auto commands = ledger.commands();
-        commands[publication].push_back({Command::Publish, source, observer, frontier.keys()[forward].key});
-        commands[loop.entry].push_back({Command::Acquire, source, observer, frontier.keys()[forward].key});
-        auto trial = analyze(program, commands, {false});
-        result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
-        const bool needsConsumption = std::any_of(trial.protocol.begin(), trial.protocol.end(), [&](const auto& r) {
-            return r.kind == ProtocolObligation::ConsumptionNotEstablished &&
-                r.event.source == source && r.event.observer == observer &&
-                r.event.key == frontier.keys()[forward].key;
-        });
-        // Existing causal paths get the first opportunity to prove reuse. A
-        // return is justified by this key's missing consumption certificate,
-        // not merely by being textually inside a repeated component.
-        if (trial.complete && trial.diagnostics.empty() && repeats && needsConsumption) {
-            reverse = unused(observer, source);
-            if (reverse == NoAnalysisId) continue;
-            commands[loop.entry].push_back({Command::Publish, observer, source, frontier.keys()[reverse].key});
-            commands[loop.entry].push_back({Command::Acquire, observer, source, frontier.keys()[reverse].key});
-            trial = analyze(program, commands, {false});
+            // An overlap-only promotion without Known credit cannot succeed.
+            // Reject it before key selection and the whole-program trial solve.
+            if (promotion && std::none_of(promotion->begin(), promotion->end(),
+                    [&](Id access) { return covered.count(access); })) continue;
+            auto unused = [&](Pipe a, Pipe b) {
+                for (Id key = 0; key < frontier.keys().size(); ++key) {
+                    const auto& e = frontier.keys()[key];
+                    if (e.source != a || e.observer != b || closedKeys.count(key) || recurringKeys.count(key)) continue;
+                    if (std::none_of(ledger.records().begin(), ledger.records().end(), [&](const auto& r) {
+                        if (!ledger.active(r.id)) return false;
+                        const auto& c = r.command;
+                        return (c.kind == Command::Publish || c.kind == Command::Acquire) &&
+                            c.source == a && c.observer == b && c.key == e.key;
+                    })) return key;
+                }
+                // Entry protocols may finish before a sibling scope. Reuse
+                // their physical key only with actual empty/consumed credit at
+                // the new publication, and no old use in this reader region.
+                // The existing all-path trial below still checks every event
+                // generation; lexical scope exit alone grants no ownership.
+                const auto at = a == source ? publication : acquisition;
+                for (auto key : entryProtocolKeys) {
+                    const auto& e = frontier.keys()[key];
+                    if (e.source != a || e.observer != b ||
+                        !canPublish(cache.cuts[at].before, key)) continue;
+                    const bool inRegion = std::any_of(ledger.records().begin(), ledger.records().end(),
+                        [&](const auto& endpoint) {
+                            const auto& c = endpoint.command;
+                            return ledger.active(endpoint.id) &&
+                                (c.kind == Command::Publish || c.kind == Command::Acquire) &&
+                                c.source == a && c.observer == b && c.key == e.key &&
+                                std::find(loop.sites.begin(), loop.sites.end(), endpoint.cut) != loop.sites.end();
+                        });
+                    if (!inRegion) return key;
+                }
+                return NoAnalysisId;
+            };
+            const auto forward = unused(source, observer);
+            if (forward == NoAnalysisId) continue;
+            const bool repeats = control.components[control.component[publication]].cyclic;
+            Id reverse = NoAnalysisId;
+            auto commands = ledger.commands();
+            commands[publication].push_back({Command::Publish, source, observer, frontier.keys()[forward].key});
+            commands[acquisition].push_back({Command::Acquire, source, observer, frontier.keys()[forward].key});
+            auto trial = analyze(program, commands, {false});
             result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
+            const bool needsConsumption = std::any_of(trial.protocol.begin(), trial.protocol.end(), [&](const auto& r) {
+                return r.kind == ProtocolObligation::ConsumptionNotEstablished &&
+                    r.event.source == source && r.event.observer == observer &&
+                    r.event.key == frontier.keys()[forward].key;
+            });
+            // Existing causal paths get the first opportunity to prove reuse. A
+            // return is justified by this key's missing consumption certificate,
+            // not merely by being textually inside a repeated component.
+            if (trial.complete && trial.diagnostics.empty() && repeats && needsConsumption) {
+                reverse = unused(observer, source);
+                if (reverse == NoAnalysisId) continue;
+                commands[acquisition].push_back({Command::Publish, observer, source, frontier.keys()[reverse].key});
+                commands[acquisition].push_back({Command::Acquire, observer, source, frontier.keys()[reverse].key});
+                trial = analyze(program, commands, {false});
+                result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
+            }
+            if (!trial.complete || !trial.diagnostics.empty() || !trial.protocol.empty()) continue;
+            group.publication = publication;
+            group.publications = {publication};
+            group.entryAcquisition = acquisition;
+            group.entryReturnKey = reverse;
+            group.entryRepeats = repeats;
+            group.forwardKey = forward;
+            group.version = ledger.version();
+            group.coverage = std::move(covered);
+            return true;
         }
-        if (!trial.complete || !trial.diagnostics.empty() || !trial.protocol.empty()) continue;
-        group.publication = publication;
-        group.publications = {publication};
-        group.entryAcquisition = loop.entry;
-        group.entryReturnKey = reverse;
-        group.entryRepeats = repeats;
-        group.forwardKey = forward;
-        group.version = ledger.version();
-        group.coverage = std::move(covered);
-        return true;
     }
     return false;
 }
@@ -318,6 +346,18 @@ Group Constructor::sourceGroup(
     for (const auto& handle : result.sources) {
         if (handle.pipe != source || handle.version != cache.version || !handle.snapshot.reachable() ||
             !control.straight(handle.cut, current)) continue;
+        // A shared word also executes on its later analytical occurrences.
+        // A source available only on the first-prefix corridor cannot publish
+        // once for an unconditional acquisition on all those visits.
+        const auto& occurrences = control.wordOccurrences[control.canonicalCut[current]];
+        const auto& publications = control.wordOccurrences[control.canonicalCut[handle.cut]];
+        if (control.firstPrefixWords.count(control.canonicalCut[current]) &&
+            std::any_of(occurrences.begin(), occurrences.end(), [&](Cut cut) {
+                return control.reachable[cut] &&
+                    std::none_of(publications.begin(), publications.end(), [&](Cut publication) {
+                        return control.reachable[publication] && control.straight(publication, cut);
+                    });
+            })) continue;
         const auto covered = coverage(handle.cut, source, required);
         if (!std::includes(covered.begin(), covered.end(), needed.begin(), needed.end())) continue;
         if (!selected || control.position[handle.cut] < control.position[selected->cut]) selected = &handle;

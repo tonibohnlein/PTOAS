@@ -1,18 +1,196 @@
 # OAHS current handoff
 
-Updated: 2026-09-19
+Updated: 2026-09-20
 
 ## Checkout
 
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
-- Base before the current milestone: `8cc0d58927c1b5acb032415ead339e2cc8d9fcab`
-- Current milestone: projection operand-bank overlap fix (host-validated)
+- Base for the current study: `495fb9cbda7649f15a7fc09d6b1d91ffb7737d54`
+- Current milestone: first-consumer projection placement implemented; device comparison pending
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
 
-## Current milestone: projection operand-bank overlap fix
+## Current result: first-consumer placement
+
+The native first-consumer mechanism is implemented in the working tree on top
+of 495fb9cbd. See [the implementation/evidence report](docs/designs/oahs-first-consumer-placement.md)
+and [the next device task](docs/designs/oahs-first-consumer-device-task.md).
+It keeps an input's early publication, acquires it once at its actual first
+consumer, and retains credit through later reader iterations. It qualifies only
+small straight prefixes with an inactive producer pipe and a genuine early-source
+opportunity. No fences are deleted or hardware assumptions changed.
+
+Checked key reuse across sibling entry protocols is part of realizing this
+placement: token emptiness and actual consumption knowledge are required, followed
+by the existing all-path protocol trial. No reservation is freed just at lexical exit.
+
+Local validation:
+
+- 22/22 portable suites; native positive nonzero-lower/non-unit-step repeated-entry
+  construction/reconstruction and five admission negatives.
+- 87 original corpus modules plus Shenggan construct/reconstruct successfully.
+  Exactly 11 projection modules change. All six attention modules and post-RMSNorm
+  remain byte-identical; GEMM is identical except for a trailing newline.
+- 37 paired projection paths, 511,187 checked local conflicts, identical payloads,
+  unchanged fences, zero added payload relations.
+- Down (17 chunks): 359→343 pairs and 184 relations removed for one tile;
+  712→680 and 368 removed for two tiles. Gate/up/KV/Q/out: 418→398 per active
+  phase, 230 removed. LM bounded tile: 393→363, 235 removed.
+- GEMM remains 200/394/782, zero named barriers, one ALL, with all overlap checks.
+- Down/KV lower to C++; the new down and sibling KV lit checks pass.
+
+Artifacts: workspace sibling `first-consumer-work/`; `corpus.json`,
+`family-ordering.json`, logs and generated plans. Eight separately supplied A5
+reference inputs fail layout/typed import and are not part of the qualified A3
+corpus. This work has no candidate device timing yet. The delivery package records the
+exact candidate commit in `candidate-manifest.json`.
+The existing remote campaign stays pinned at 495fb9cbd.
+
+Remaining plan opportunities are the second child's A1 readiness and complete
+MAT-cycle support before genuinely redundant local repairs. Do not combine a fence
+change with the pending first-consumer placement measurement.
+
+### Manual attention reference task (external)
+
+User-reported original manual smoke and pipeline cases pass on device, including
+three stable pipeline repetitions, at the upstream 1e-3 threshold. The earlier
+failure was cross-case input/binary contamination. The agent recorded a kernel-
+launch token fix and omission of an unavailable manual-mode build flag; the
+AUTO-mode replacement is not equivalent. Matched-manual PTO transcription is
+still pending. The remote agent reports that PTO lacks the EN_UNIT_FLAG pipe
+attribute, so it is preparing a separately labelled UF_ENABLE=0 explicit-event
+family. UF_ENABLE=1 remains a separate reference; the reported UF_ENABLE=0 smoke
+pass does not yet qualify its pipeline case. Preserve payload/allocation,
+QK_PRELOAD=4, queues and prologue/body/epilogue scheduling. Check every expected
+input file size/read: the upstream harness can falsely pass when inputs are absent.
+This is a separate task from the local projection placement.
+
+## Preliminary device feedback, 2026-09-20
+
+The user reports 153 correctness runs with zero failures, a 21.5–23.4% projection
+latency reduction versus the preceding handoff, and GEMM parity on the hardened
+200-pair plan. Projection latency still exceeds existing by 25.7–52.7%.
+See [the recorded medians and arithmetic corrections](docs/designs/oahs-projection-device-preliminary-20260920.md).
+The supplied "regression closed" column and GEMM noise-floor explanation need
+correction. Profiles/raw archive are pending; results are not locally reproduced.
+This earlier device report validates neither the new first-consumer placement nor
+the three new reference adoptions. First-consumer readiness is now implemented locally and awaits its separate
+device comparison; attribution must distinguish other remaining stalls.
+Follow-up aggregate profiles support reduced projection concurrency and partial
+recovery; candidate factors are 1.19–1.39 versus existing 1.58–2.08. Per-instruction
+timelines are unavailable on the remote CANN build. Use static deadline witnesses,
+resource-conflict counters and controlled placement comparisons; a factor near
+one alone does not prove complete serialization. The report records counter-scope
+and active-time arithmetic caveats. ResourceConflictRatio/MemoryL0 are pending.
+
+## Latest reference-source audit
+
+### Three distinct reference tasks prepared
+
+The user identified the ordinary PTO-ISA GEMM benchmark as too close to the
+already-solved Shenggan pattern. Keep its artifacts but deprioritize dispatch.
+The new [task set](test/benchmarks/compositional_references/README.md) covers
+CATLASS example 25 retained-A, example 06 cross-output-tile preload, and manual
+PTO-ISA attention with delayed QK/PV and separate ingress/output lifetimes.
+
+Each task has a self-contained source/harness archive under `../device-handoffs/`:
+`oahs-retained-a-495fb9cbd.tar.gz`, `oahs-preload-495fb9cbd.tar.gz`, and
+`oahs-attention-reference-495fb9cbd.tar.gz`. Each includes its own dispatch prompt,
+shared comparison protocol, exact compiler/CATLASS/PTO-ISA archives and hashes.
+These are adoption-and-benchmark tasks: matched plans/device results for these
+three sources are not prepared yet. The task agents construct the source adapters
+and matched arms before numerical validation/timing. Preserve native unit flags,
+FP16 output and mixed-core contracts; explicitly label any alternate template.
+No tasks were dispatched by this agent. Serialize measurements sharing a device.
+
+### First matched benchmark prepared
+
+`test/benchmarks/manual_sync/` now provides a reproducible first adoption of the
+pinned manual PTO-ISA GEMM. Production stays at `495fb9cbd`. Full source control
+instrumentation matches all 388,224 payload operations on 24 cores, including
+column-major B and the 32768-byte LEFT-bank spacing. Source C++ and normalized
+manual PTO are separate device arms to expose transcription/lowering costs.
+
+The original fixed A/B readiness keys fail the ordinary causal rearming check.
+An explicitly labelled `manual_banked_keys` control changes only key identity,
+passes bounded local checks, and preserves event count and payload ordering.
+For one K=6144 tile: manual/banked manual 270 pairs, OAHS 296, existing 245;
+named barriers 0/0/0/97. OAHS adds no checked payload order versus banked manual.
+All eight PTO arms lower to C++; native construction/reconstruction succeeds.
+Four discriminating oracle tests pass. No device build/timing was run locally.
+
+The self-contained bundle is `../device-handoffs/oahs-manual-reference-495fb9cbd.tar.gz`;
+its `DEVICE_TASK.md` specifies five arms, three seeds, queued repeats, cached
+FP64 references, and 180 timings per arm. Host artifacts are under
+`../manual-sync-benchmark-work`. CATLASS and full attention benchmark adoption
+remain pending; this result must not be attributed to those kernels.
+
+User requested actual hand-written Ascend C / PTO-ISA synchronization patterns,
+rather than generated PTO examples. The [pinned survey](docs/designs/oahs-manual-sync-references.md)
+checks source and build provenance and ranks CATLASS ping-pong/preload/retained-A,
+PTO-ISA manual GEMM, and two attention implementations. CATLASS is pinned at
+`2b85ed307b281baa76d663f11a9c9aa228d56652`; PTO-ISA at
+`c0d7148e95ef73bd12a73165fdce4b723a3b7e72`. Twenty-six selected files and SHA-256
+manifests are under `../manual-sync-reference-work` (about 318 kB of source).
+
+Manual PTO GEMM/attention builds do not enable the separate PTO automode flag;
+explicit source events are visible. This is a source/build audit, not a claim
+that device lowering inserts nothing. No external build or device run occurred.
+
+Most useful confirmed pattern: separate operand readiness at first L1-to-L0 use,
+separate L1 release after the last copy, and L0 release after its matrix reader.
+Manual attention also separates ingress-storage reuse (V→MTE2) from output reuse
+(MTE3→V at vector work), while CATLASS's delayed PV schedule keeps workspace
+message and operand-bank identities separate. Unit flags and shape-dependent M
+barriers require their own target contract. Production first-consumer work below
+remains the immediate implementation task; no constructor change in this audit.
+
+## Projection first-consumer reference study
+
+Production HEAD is `495fb9cbda7649f15a7fc09d6b1d91ffb7737d54`; its device task
+is already dispatched. Current follow-up edits are tests and documentation only.
+The [reference study](docs/designs/oahs-projection-reference-study.md) records
+exact down_proj acquisitions, external reference suitability, six reference PTO
+plans, 37 paired paths and the remaining production mechanism.
+
+Confirmed across down, gate/up, KV, q/out and LM: B readiness can be published
+immediately after its actual MAT load and acquired once at its first extraction,
+without waiting for later unrelated MAT loads. Reference plans pass 511,187
+strict local conflict checks and event/rearming checks, with no added
+finish-to-issue relation. Six modules parse/verify natively. **They are diagnostic
+plans, not constructor output or device-validated improvements.** LM uses distinct
+SSA views of the same physical bank; do not match only allocation names.
+
+New regression: `oahs_first_consumer_reference` checks early source/first-consumer
+placement, the safe-but-broad loop-entry alternative, missing readiness, repeated
+single-token consumption, skips and varying episode lengths. The optional
+`check_projection_trace.py --require-early-mat` accepts the reference down plan
+and rejects current production. Existing lit acceptance is unchanged. The new CTest and the 18-path projection
+checker pass. All six attention modules reconstruct byte-identically; current
+GEMM one/two/four-tile checks pass at 200/394/782 pairs and zero named barriers.
+
+A separate one-batch diagnostic removes all MTE2 fences from each completed
+current plan. The unchanged cold checker accepts gate/up, KV, q/out and LM;
+down rejects at B0 load cut 42. These results motivate preparing complete MAT
+cycles before fence repair; they do not authorize blanket deletion. The early-B
+reference retains every existing fence so the effects remain separable.
+
+Next production task: represent the first participating consumer of an invariant
+physical generation inside qualified non-unit-step loops. Keep the original
+source prefix and consumer deadline, one-token participation and real rearming
+proof. Merely relaxing `loopEntryFrontier()` moves B readiness before unrelated A
+work. Avoid the rejected full counted/nested expansion. First reproduce the
+reference locally with native all-path checks, then revalidate GEMM/attention and
+package a separate device arm. The dispatched SHA remains fixed.
+
+Artifacts: `../projection-reference-work/REPORT.md`, `down-acquisitions.csv`,
+`reference-ordering.json`, `negative-results.json`, `dma-fence-diagnostic.json`,
+per-module reference/current PTO and JSON. These local paths must be packaged
+explicitly for any remote agent.
+
+## Previous milestone: projection operand-bank overlap fix
 
 The placement defect is now fixed in construction: qualified independent banks
 retain early operand readiness and their own previous-use releases across

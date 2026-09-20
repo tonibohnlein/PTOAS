@@ -60,6 +60,9 @@ struct ObservedLoop {
   // interface. Empty vectors denote the single entry/exit above. These remain
   // original-control positions and never imply a storage or event reset.
   std::vector<std::size_t> entries = {}, exits = {};
+  // A frontend-qualified first-iteration prefix. Other words may remain shared
+  // with later visits; they cannot consume a one-time publication repeatedly.
+  std::vector<std::size_t> firstVisitPrefix = {};
 };
 struct ObservedControl {
   std::vector<ObservedSite> sites;

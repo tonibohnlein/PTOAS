@@ -41,6 +41,8 @@ struct Control {
         std::array<Cut, PipeCount> firstConsumer;
         std::array<std::vector<Cut>, PipeCount> firstConsumers;
         std::vector<Cut> sites;
+        // One occurrence per entry, at an invariant input's actual deadline.
+        std::vector<Cut> firstInputConsumers;
         std::set<Pipe> issuedPipes;
         // Original word positions crossed by moving an acquisition to entry,
         // including the deadline's pre-payload word, excluding entry itself.
@@ -49,6 +51,7 @@ struct Control {
         std::set<Id> issuedClasses;
     };
     std::vector<LoopEntryFacts> loopEntries;
+    std::set<Cut> firstPrefixWords;
     uint64_t loopEntryPreparationSites = 0;
     // Memo of canonicalCommandCut, and the sites sharing each canonical word,
     // with the component span of each such word. These are facts about the
@@ -289,7 +292,7 @@ private:
     // Roles are stable within a selected loop component. A reverse acknowledgment
     // key must not be borrowed as another recurring channel's forward key.
     std::map<std::pair<Pipe, Pipe>, std::pair<Id, Id>> closedBindings;
-    std::set<Id> closedKeys, recurringKeys;
+    std::set<Id> closedKeys, recurringKeys, entryProtocolKeys;
     // Contextual state propagation is also needed for one-shot loop-entry
     // receipts. It does not reserve a physical key or establish rearming.
     bool needsContextualReplay = false;

@@ -615,3 +615,19 @@ Shared physical-address extraction also evaluates supported constant expressions
 using the checked scalar evaluator. Unknown inputs, overflowing arithmetic and
 narrowing loss retain conservative footprints; address certainty does not grant
 definite-write or occurrence credit.
+
+## First-consumer invariant input placement
+
+`NativeFirstConsumer.h` qualifies a compact first-visit prefix of a proved
+nonempty leaf loop. Only invariant inputs from a source pipe inactive in the
+reader region are eligible, and admission requires later work on the source's
+incoming corridor. The acquisition belongs at that input's first actual consumer,
+not necessarily at the first operation on the observer. Positive non-unit steps
+use the original `iv < lower + step` predicate with checked arithmetic.
+
+`loopEntryFrontier` can use that cut from a later construction visit, with its
+existing source-time coverage, invariant-class, participation and event checks.
+Shared unconditional words cannot repeatedly consume a first-only publication.
+Completed entry-protocol keys can be reused only with actual consumption credit
+and the full protocol check, never merely because a lexical region ended.
+See [qualification, measurements and limits](oahs-first-consumer-placement.md).
