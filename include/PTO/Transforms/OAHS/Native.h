@@ -16,6 +16,7 @@
 #include <utility>
 namespace mlir::pto::oahs {
 struct SelectedPlan;
+struct SelectedOptions;
 struct NativeAnalysis {
   Program program;
   // Preserved lowering-owned protocols; handles refer to unchanged original IR.
@@ -54,13 +55,13 @@ namespace testing {
 // emission/reconstruction. No alternative constructor or fallback is used.
 LogicalResult runSelectedHandoffSyncWithMutation(
     func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate = {},
-    SelectedPlan *report = nullptr);
+    SelectedPlan *report = nullptr, const SelectedOptions *options = nullptr);
 
 // Import with the same qualified observation policy used by the selected
 // constructor. This is a read-only diagnostic/test entry point: it selects no
 // commands and grants no completion or event credit.
 LogicalResult analyzeSelectedHandoffSync(func::FuncOp function,
-                                         NativeAnalysis &result);
+                                         NativeAnalysis &result, bool classInvariantInputs = false);
 
 // Exercise arithmetic read-back directly, without the earlier whole-IR identity
 // gate masking decoder failures. This test hook grants no observation/target

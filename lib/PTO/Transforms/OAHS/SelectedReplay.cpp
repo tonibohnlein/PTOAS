@@ -511,6 +511,7 @@ void Constructor::refreshSources(Cut only)
     auto refresh = [&](SelectedSource& source) {
         if (source.cut < cache.cuts.size()) {
             source.snapshot = cache.cuts[source.cut].before.causal;
+            source.postOrigin = cache.cuts[source.cut].incoming.causal;
             source.version = cache.version;
         }
     };

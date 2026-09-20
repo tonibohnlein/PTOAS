@@ -10,8 +10,8 @@
 #include <chrono>
 
 namespace mlir::pto::oahs::selected {
-Constructor::Constructor(const Program& p)
-    : program(p), frontier(p), control(p), storage(p), requirements(p, control, storage),
+Constructor::Constructor(const Program& p, SelectedOptions settings)
+    : program(p), options(settings), frontier(p), control(p), storage(p), requirements(p, control, storage),
       ledger(p, control.canonicalCut), finalized(control.graph.sites.size())
 {
 }
@@ -54,6 +54,7 @@ bool Constructor::finish()
         }
     }
     for (const auto& [pair, endpoints] : helpers) {
+        if (!options.finalHelperTrials) break;
         if (!completionDirections.count({pair.first, pair.second}) ||
             !completionDirections.count({pair.second, pair.first})) continue;
         ++result.work.helperCompositionTrials;
@@ -86,6 +87,7 @@ bool Constructor::finish()
     for (auto& source : result.sources) {
         if (source.cut < result.certificate.cuts.size()) {
             source.snapshot = result.certificate.cuts[source.cut].beforeIssue;
+            source.postOrigin = result.certificate.cuts[source.cut].incoming;
             source.version = ledger.version();
         }
     }
@@ -120,7 +122,7 @@ void Constructor::registerSource()
     const auto after = control.after(current);
     if (operation == NoAnalysisId || after == NoAnalysisId) return;
     sourcesAtCut[after].push_back(result.sources.size());
-    result.sources.push_back({program.operations[operation].pipe, current, after, ledger.version(), {}});
+    result.sources.push_back({program.operations[operation].pipe, current, after, ledger.version(), {}, {}});
     if (needsContextualReplay) refreshSources(after);
 }
 
@@ -188,10 +190,10 @@ SelectedPlan Constructor::run(const Commands& fixed)
     }
     const auto qualificationStart = std::chrono::steady_clock::now();
     const auto channels = qualifyCyclicFrontiers(
-        program, control, requirements, ledger.records().empty());
+        program, control, requirements, ledger.records().empty(), options.movingFrontiers);
     result.work.recurringQualificationMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - qualificationStart).count();
-    if (!channels.empty() && !recurring(channels)) return complete();
+    if (options.recurring && !channels.empty() && !recurring(channels)) return complete();
     for (activeComponent = 0; activeComponent < control.components.size(); ++activeComponent) {
         // End compiler role reservations, not physical event state. Actual D/S
         // facts and balances continue through the selected-body fixed point.
@@ -229,10 +231,10 @@ bool hasQualifiedRecurringAccesses(const Program& program)
     return control.complete && storage.complete() && requirements.complete() &&
         !selected::qualifyCyclicFrontiers(program, control, requirements).empty();
 }
-SelectedPlan constructSelectedPlan(const Program& program, const Commands& fixed)
+SelectedPlan constructSelectedPlan(const Program& program, const Commands& fixed, SelectedOptions options)
 {
     const auto start = std::chrono::steady_clock::now();
-    selected::Constructor constructor(program);
+    selected::Constructor constructor(program, options);
     const auto prepared = std::chrono::steady_clock::now();
     auto result = constructor.run(fixed);
     result.work.preparationMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(

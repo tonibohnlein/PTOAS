@@ -207,31 +207,34 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
-  for (unsigned variant = 0; variant != 6; ++variant) {
+  for (unsigned variant = 0; variant != 12; ++variant) {
+    const bool classInvariant = variant >= 6;
+    const unsigned mutation = variant % 6;
     auto source = fixture;
     auto replace = [&](const std::string &a, const std::string &b) {
       source.replace(source.find(a), a.size(), b);
     };
-    if (variant == 1) replace("%lb to %ub", "%lb to %lb");
-    if (variant == 2) replace("%lb to %ub", "%lb to %n");
-    if (variant == 3) replace("// INSERT", "pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)");
-    if (variant == 4) replace("pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%other : !pto.tile_buf<vec, 1x32xf32>)",
+    if (mutation == 1) replace("%lb to %ub", "%lb to %lb");
+    if (mutation == 2) replace("%lb to %ub", "%lb to %n");
+    if (mutation == 3) replace("// INSERT", "pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)");
+    if (mutation == 4) replace("pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%other : !pto.tile_buf<vec, 1x32xf32>)",
       "scf.if %active { pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%other : !pto.tile_buf<vec, 1x32xf32>) }");
-    if (variant == 5) replace("// INSERT", "pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%unused : !pto.tile_buf<vec, 1x32xf32>)");
+    if (mutation == 5) replace("// INSERT", "pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%unused : !pto.tile_buf<vec, 1x32xf32>)");
     auto module = parseSourceString<ModuleOp>(source, &context);
     if (!check(bool(module), "parse first-consumer fixture")) return false;
     auto function = module->lookupSymbol<func::FuncOp>("first_consumer");
     oahs::NativeAnalysis input;
-    if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, input)), "import first consumer")) return false;
+    if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, input, classInvariant)), "import first consumer")) return false;
     const bool qualified = input.program.observed->qualification.find("first-consumer-prefix-v1") != std::string::npos;
-    if (!check(qualified == (variant == 0), "first consumer must be invariant, unconditional and nonempty")) return false;
-    if (variant) continue; // Unsupported descriptors must retain ordinary control.
+    if (!check(qualified == (mutation == 0 || (classInvariant && mutation == 5)), "first consumer must be invariant, unconditional and nonempty")) return false;
+    if (!qualified) continue; // Unsupported descriptors must retain ordinary control.
     oahs::SelectedPlan report;
-    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report)), "first-consumer construction/reconstruction")) {
+    oahs::SelectedOptions options; options.classInvariantInputs = classInvariant;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report, &options)), "first-consumer construction/reconstruction")) {
       llvm::errs() << "variant=" << variant << " cut=" << report.cut << " reason=" << report.reason << "\n";
       return false;
     }
-    if (variant == 0) {
+    if (mutation == 0) {
       bool correctThreshold = false;
       function.walk([&](arith::CmpIOp cmp) {
         auto constant = cmp.getRhs().getDefiningOp<arith::ConstantIndexOp>();
@@ -656,14 +659,14 @@ bool slotMappings(MLIRContext &context) {
   return true;
 }
 const char *pipeName(oahs::Pipe pipe);
-bool runFile(MLIRContext &context, const char *path) {
+bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions options = {}) {
   auto module = parseSourceFile<ModuleOp>(path, &context);
   if (!module) { return false; }
   bool accepted = true;
   module->walk([&](func::FuncOp function) {
     if (function.isDeclaration()) { return; }
     oahs::SelectedPlan report;
-    const auto status = oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report);
+    const auto status = oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report, &options);
     accepted &= succeeded(status);
     // Existing token order is preserved so earlier recorded logs stay comparable.
     // The added tokens are the report's own counters; `reason` stays last.
@@ -686,6 +689,18 @@ bool runFile(MLIRContext &context, const char *path) {
                  << work.frontierPreviousUse << "," << work.frontierRegionEntry << ","
                  << work.frontierRegionContinuation << "," << work.frontierGuarded << ","
                  << work.frontierUnknown
+                 << " policy=" << options.recurringOmissionTrials << options.finalHelperTrials
+                 << options.movingFrontiers << options.sourceGaps << options.deferredAcyclicAcknowledgments
+                 << options.classInvariantInputs << options.equalCoverageBinding
+                 << " proposal_sites=" << work.proposalCheckSites
+                 << " proposal_microseconds=" << work.proposalCheckMicroseconds
+                 << " rejected_protocol=" << work.rejectedProtocolProposals
+                 << " rejected_resource=" << work.rejectedResourceProposals
+                 << " gap_publications=" << work.gapPublications
+                 << " deferred_acks=" << work.deferredAcknowledgments
+                 << " equal_coverage_pairs=" << work.equalCoveragePairs
+                 << " binding_probes=" << work.bindingProbes
+                 << " binding_choices=" << work.bindingChoices
                  << " recurring=" << work.recurringChannels
                  << " recurring_trials=" << work.recurringTrials
                  << " recurring_removed=" << work.redundantRecurringChannels
@@ -725,6 +740,13 @@ bool runFile(MLIRContext &context, const char *path) {
       llvm::errs() << (i ? "," : "") << report.channels[i].period;
     }
     llvm::errs() << (report.channels.empty() ? "-" : "") << " reason=" << report.reason << "\n";
+    for (const auto &decision : report.decisions) if (decision.publicationAtWordStart) {
+      llvm::errs() << "source_gap publication=" << decision.publication << " gap=word_start consumer="
+                   << decision.consumer << " source=" << pipeName(decision.source)
+                   << " observer=" << pipeName(decision.observer) << " cells=";
+      for (const auto &requirement : decision.required) llvm::errs() << requirement.cell << ",";
+      llvm::errs() << "\n";
+    }
     for (const auto &fence : report.fences) {
       llvm::errs() << "fence cut=" << fence.cut << " observer=" << pipeName(fence.observer)
                    << " version=" << fence.version << " residuals=";
@@ -854,8 +876,20 @@ int main(int argc, char **argv) {
   MLIRContext context;
   context.disableMultithreading();
   context.loadDialect<PTODialect, arith::ArithDialect, scf::SCFDialect, func::FuncDialect>();
-  if (argc == 3 && StringRef(argv[1]) == "--construct") {
-    return runFile(context, argv[2]) ? 0 : 1;
+  if (argc >= 3 && StringRef(argv[1]) == "--construct") {
+    oahs::SelectedOptions options;
+    for (int i = 3; i < argc; ++i) {
+      const StringRef flag(argv[i]);
+      if (flag == "--no-recurring-trials") options.recurringOmissionTrials = false;
+      else if (flag == "--no-helper-trials") options.finalHelperTrials = false;
+      else if (flag == "--no-frontier-motion") options.movingFrontiers = false;
+      else if (flag == "--source-gaps") options.sourceGaps = true;
+      else if (flag == "--defer-acyclic-acks") options.deferredAcyclicAcknowledgments = true;
+      else if (flag == "--class-invariant-inputs") options.classInvariantInputs = true;
+      else if (flag == "--equal-coverage-binding") options.equalCoverageBinding = true;
+      else { llvm::errs() << "unknown construction option: " << flag << "\n"; return 2; }
+    }
+    return runFile(context, argv[2], options) ? 0 : 1;
   }
   if (argc == 3 && StringRef(argv[1]) == "--frontiers") {
     return frontierFile(context, argv[2]) ? 0 : 1;

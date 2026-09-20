@@ -155,10 +155,75 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
     }
     return true;
 }
-bool Constructor::needsCommonAcknowledgment(const State& afterForward) const
+Id Constructor::virginAtStart(Cut cut, Pipe source, Pipe observer) const
+{
+    if (cut == current || !control.straight(cut, current) ||
+        control.components[control.component[cut]].cyclic ||
+        control.components[activeComponent].cyclic ||
+        control.wordOccurrences[control.canonicalCut[cut]].size() != 1 ||
+        control.wordOccurrences[control.canonicalCut[current]].size() != 1) return NoAnalysisId;
+    for (Id key = 0; key < frontier.keys().size(); ++key) {
+        const auto& e = frontier.keys()[key];
+        if (e.source != source || e.observer != observer || closedKeys.count(key) ||
+            recurringKeys.count(key) || !canPublish(cache.cuts[cut].incoming, key)) continue;
+        // No neighboring selected generation exists. Reuse/recurring gaps need
+        // their own certificates and deliberately stay on the existing path.
+        if (std::none_of(ledger.records().begin(), ledger.records().end(), [&](const auto& record) {
+                const auto& command = record.command;
+                return ledger.active(record.id) && command.kind != Command::Barrier &&
+                    command.kind != Command::BarrierAll && command.source == source &&
+                    command.observer == observer && command.key == e.key;
+            })) return key;
+    }
+    return NoAnalysisId;
+}
+Id Constructor::helperFreeBinding(const Group& group, Pipe observer) const
+{
+    if (group.atWordStart) return group.version == ledger.version()
+        ? virginAtStart(group.publication, group.source, observer) : NoAnalysisId;
+    // Structured F3 queries already supply a complete candidate certificate.
+    // Reuse it without another solve, only if it needs no reverse helper.
+    if (!group.publications.empty()) return group.version == ledger.version() &&
+        group.entryReturnKey == NoAnalysisId ? group.forwardKey : NoAnalysisId;
+    if (group.common || !control.straight(group.publication, current) ||
+        control.components[activeComponent].cyclic ||
+        control.components[control.component[group.publication]].cyclic ||
+        control.wordOccurrences[control.canonicalCut[group.publication]].size() != 1 ||
+        control.wordOccurrences[control.canonicalCut[current]].size() != 1) return NoAnalysisId;
+    for (Id key = 0; key < frontier.keys().size(); ++key) {
+        const auto& e = frontier.keys()[key];
+        if (e.source != group.source || e.observer != observer || closedKeys.count(key) ||
+            recurringKeys.count(key) || !canPublish(cache.cuts[group.publication].before, key)) continue;
+        // Conservative positive certificate: a virgin key has no old/next
+        // selected generation. Unsupported reused-key queries return Unknown.
+        if (std::none_of(ledger.records().begin(),ledger.records().end(),[&](const auto& endpoint) {
+                const auto& c = endpoint.command;
+                return ledger.active(endpoint.id) && (c.kind == Command::Publish || c.kind == Command::Acquire) &&
+                    c.source == e.source && c.observer == e.observer && c.key == e.key;
+            })) return key;
+    }
+    return NoAnalysisId;
+}
+bool Constructor::needsCommonAcknowledgment(const State& afterForward, Id key) const
 {
     // A syntactically last body operation is not a last dynamic operation. The
     // backward summary retains original backedges and all branch alternatives.
+    if (options.deferredAcyclicAcknowledgments &&
+        std::none_of(control.components.begin(), control.components.end(),
+                     [](const auto& component) { return component.cyclic; }) &&
+        control.wordOccurrences[control.canonicalCut[current]].size() == 1 &&
+        control.lookahead.balancedTransfer({control.graph.entry}, current,
+                                          control.graph.entry, control.graph.exit)) {
+        const auto& e = frontier.keys()[key];
+        const bool otherPublication = std::any_of(ledger.records().begin(), ledger.records().end(),
+            [&](const auto& endpoint) {
+                const auto& command = endpoint.command;
+                return ledger.active(endpoint.id) && endpoint.cut != current &&
+                    command.kind == Command::Publish && command.source == e.source &&
+                    command.observer == e.observer && command.key == e.key;
+            });
+        if (!otherPublication) return false;
+    }
     if (control.lookahead.mayIssueAfter(current)) return true;
     // A selected word may be shared by several original occurrences. Being
     // terminal at only this occurrence is not a terminal-channel certificate.
@@ -192,13 +257,19 @@ bool Constructor::needsCommonAcknowledgment(const State& afterForward) const
     }
     return false;
 }
-bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed, SelectedDecision& decision)
+bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed, SelectedDecision& decision, Id certifiedKey)
 {
     const bool recurringClosed = closed && control.components[activeComponent].cyclic;
     const auto binding = closedBindings.find({source, observer});
     const bool retained = recurringClosed && binding != closedBindings.end();
     Id key = retained ? binding->second.first : NoAnalysisId;
-    if (retained) {
+    if (certifiedKey != NoAnalysisId) {
+        if (closed || certifiedKey >= frontier.keys().size() || closedKeys.count(certifiedKey) ||
+            !canPublish(cache.cuts[publication].before, certifiedKey) ||
+            !clearInterval(certifiedKey, publication, current))
+            return fail(SelectedFailure::SelectedUpdate, "binding certificate no longer applies", publication);
+        key = certifiedKey;
+    } else if (retained) {
         if (!canPublish(cache.cuts[publication].before, key) &&
             !restoreRearming(key, publication)) {
             return fail(SelectedFailure::EventResource,
@@ -248,10 +319,12 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     if (!acquired.applied) return fail(SelectedFailure::SelectedUpdate, acquired.reason, current);
     afterForward.causal = std::move(acquired.state);
     if (observer == program.operations[control.graph.operations[current]].pipe &&
-        !needsCommonAcknowledgment(afterForward)) {
-        // The token is consumed, and no future selected/publication or payload
-        // needs knowledge of that consumption at its publisher. Do not invent
-        // such knowledge: simply omit its unused return transfer. Validation
+        !needsCommonAcknowledgment(afterForward, key)) {
+        if (options.deferredAcyclicAcknowledgments && control.lookahead.mayIssueAfter(current))
+            ++result.work.deferredAcknowledgments;
+        // The token is consumed. Either no future use needs publisher knowledge,
+        // or the acyclic policy defers that obligation to actual key reuse.
+        // Do not invent consumption knowledge. Subsequent F7 and validation
         // and the native reconstruction checker are unchanged.
         ++result.work.commonCutTransfers;
         return update();
@@ -419,6 +492,29 @@ bool Constructor::settleRearming(const SelectedDecision& decision)
 bool Constructor::bind(Group& group, RequirementStage stage)
 {
     const auto observer = program.operations[control.graph.operations[current]].pipe;
+    if (group.atWordStart) {
+        const auto key = virginAtStart(group.publication, group.source, observer);
+        if (group.version != ledger.version() || key != group.forwardKey || key == NoAnalysisId)
+            return fail(SelectedFailure::SelectedUpdate, "stale source-gap binding", current);
+        const auto covered = coverage(group.publication, group.source, group.requirements, true);
+        if (std::any_of(group.requirements.begin(), group.requirements.end(), [&](const auto& r) {
+                return !covered.count(accessClass(r));
+            })) return fail(SelectedFailure::SelectedUpdate, "source-gap coverage changed", current);
+        SelectedDecision decision;
+        decision.consumer = current; decision.publication = group.publication;
+        decision.publicationAtWordStart = true; decision.stage = stage;
+        decision.source = group.source; decision.observer = observer;
+        decision.required = group.requirements;
+        const auto number = frontier.keys()[key].key;
+        decision.endpoints.push_back(ledger.prepend(group.publication,
+            {Command::Publish, group.source, observer, number}, EndpointPurpose::Completion, result.decisions.size()));
+        decision.endpoints.push_back(ledger.append(current,
+            {Command::Acquire, group.source, observer, number}, EndpointPurpose::Completion, result.decisions.size()));
+        ++result.work.gapPublications;
+        if (!update() || !settleRearming(decision)) return false;
+        result.decisions.push_back(std::move(decision));
+        return true;
+    }
     if (!group.publications.empty()) {
         if (group.version != ledger.version() || group.forwardKey >= frontier.keys().size()) {
             return fail(SelectedFailure::SelectedUpdate, "stale alternative source frontier", current);
@@ -472,6 +568,9 @@ bool Constructor::bind(Group& group, RequirementStage stage)
         result.decisions.push_back(std::move(decision));
         return true;
     }
+    if (group.bindingCertified && (group.version != ledger.version() ||
+        helperFreeBinding(group, observer) != group.forwardKey))
+        return fail(SelectedFailure::SelectedUpdate, "stale equal-coverage certificate", current);
     const auto path = route(group.source, observer);
     if (path.empty()) {
         return fail(SelectedFailure::EventResource, "no eligible engine route for the required completion", current);
@@ -486,7 +585,8 @@ bool Constructor::bind(Group& group, RequirementStage stage)
     decision.commonCut = group.common;
     auto source = group.publication;
     for (Id hop = 1; hop < path.size(); ++hop) {
-        if (!edge(path[hop - 1], path[hop], source, group.common, decision)) {
+        if (!edge(path[hop - 1], path[hop], source, group.common, decision,
+                  hop == 1 && group.bindingCertified ? group.forwardKey : NoAnalysisId)) {
             return false;
         }
         if (hop == 1) {

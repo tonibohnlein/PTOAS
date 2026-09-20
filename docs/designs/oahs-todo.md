@@ -6,9 +6,46 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
+## Authoritative next order: placement experiments on 8afb90f17
+
+See [implemented mechanisms and evidence limits](oahs-placement-experiments.md)
+and [isolated device tasks](../../test/benchmarks/placement/DEVICE_TASKS.md).
+This status supersedes the historical campaign priorities below.
+
+0. Keep the MAT device snapshot fixed. Down now reports 14.3% faster than
+   existing, 36/36 correctness passes and no measurable MTE2-omission benefit
+   versus the retained-fence control. Finish LM/family transfer and matched
+   profiling; do not generalize the down result yet.
+1. **Implemented locally:** staged optional-proposal rejection, conservative
+   exact-fit admission, separate trial controls/counters and next-provider-only
+   selection. Default corpus is unchanged. General scoped recurring-key reuse
+   and complete future-allocation admission remain open.
+2. **Ready to measure:** native source-gap witness with unchanged pair count,
+   forbidden dependency removed. Extend beyond acyclic virgin-key word-start
+   gaps only with exact coverage/participation/rearming certificates.
+3. **Ready as a separate control:** no-motion grouping. GEMM adds commands with
+   identical checked ordering. Legacy motion remains default; obtain a specific
+   contextual certificate or accept the measured no-motion cost before changing
+   the default policy.
+4. **Ready to measure:** deferred acyclic acknowledgment, with both branch
+   outcomes and a real-key-reuse regression. Optional acquisitions and recurring
+   cases retain the conservative fallback.
+5. **Ready for device correctness:** access-class invariant first-consumer
+   fixture with disjoint producer work. Default OAHS refuses this input; do not
+   claim a matched-default speedup. General guarded/cross-child qualification
+   remains future work.
+6. **Host experiment only:** equal-coverage probe finds actual attention pairs
+   but no positively certified selection change. Keep disabled; obtain a
+   discriminating positive case before broadening it or launching device timing.
+
+FIFO remains 813,458 replay evaluations / 125 contextual updates in the sampled
+AIV construction. New mandatory proposal work is separately charged. Reuse of
+contextual propagation and immutable structure remains explicit unfinished cost
+work; no compilation speedup is claimed.
+
 ## Latest priority: measure MAT reader-region cycles
 
-Implemented locally on fe1, pending device measurement. See
+Committed as `8afb90f17` on fe1, pending device measurement. See
 [the mechanism and validation](oahs-mat-reader-cycles.md) and
 [the four-arm device task](oahs-mat-release-device-task.md).
 
@@ -19,15 +56,16 @@ Implemented locally on fe1, pending device measurement. See
 - Measure down first and LM as transfer, then projection family. Production
   removes MTE2 fences by actual cycle credit; retain the separate certified
   control with baseline MTE2 fences restored to distinguish the effects.
-- Finish matched profiling reconciliation on the remote agent. No speedup or
-  closure of the remaining 5.6–17.8% device gap is claimed locally.
+- Finish matched profiling reconciliation on the remote agent. The pinned
+  MAT campaign closes the down gap and beats existing by 14.3%; the other
+  projections remain pending. Preserve the separate fence-restoring control.
 - Revisit second-child A1 readiness only if a concrete remaining dependency is
   found; the earlier broad readiness existed in both baseline and existing.
 
-The four review-hardening items remain pending: reproduce/fix optional-cohort
-resource starvation; narrow the uncertified common-frontier merge; select only
-the next provider; account for and reduce FIFO contextual replay. These are not
-fixed by the new storage cycle or by the successful corpus run.
+The subsequent placement milestone implements admission hardening and next-provider
+selection, exposes no-motion and trial variants, and measures remaining FIFO
+work separately. See the current status above; FIFO replay optimization and a
+general moving-frontier certificate remain open.
 
 ## Pinned hand-written reference kernels
 
@@ -64,7 +102,7 @@ Keep hardware unit flags, queue semantics and payload prefetch changes separate
 from synchronization placement. Source locations and ranked experiments are in
 the survey; 26 pinned files and hashes are in `../manual-sync-reference-work`.
 
-## Immediate follow-up: reference-driven projection placement
+## Historical targets: reference-driven projection placement
 
 The device task is dispatched at `495fb9cbd`. Keep that arm fixed. The
 [reference study](oahs-projection-reference-study.md) confirms two separate
@@ -92,7 +130,7 @@ The portable reference regression tests the mechanism's ordering boundary;
 37 native-source-derived finite comparisons support the plan target. Neither
 proves device benefit or that the current constructor realizes the target.
 
-## Current priority order
+## Historical campaign order (superseded by the order above)
 
 1. Complete device attribution of the projection operand-bank fix. Qualified independent bank
    episodes now retain early readiness and the previous same-bank reader release
@@ -218,13 +256,20 @@ Acceptance criteria:
 - show that accepted coalescing adds no payload finish-to-launch relation on
   the admitted fixture family.
 
-## 2. Optional recurring specialization: implemented, verify and extend
+## 2. Optional recurring specialization: partial fallback, extend admission
 
 `Constructor::recurring` now declines an oversized specialized population before
 mutating the ledger and lets ordinary construction run. That removes the
 specialization's immediate `EventResource` failure. Physical proposal binding
 still precedes legacy omission trials; logical necessity before physical binding
 remains longer-term work.
+
+Resource-allocation failure is only one rejection path. The source review also
+finds an invalid initial omission-analysis candidate can break its trial loop
+and still reach commitment. Mandatory protocol rejection must discard the
+complete staged state. Separately, an exactly fitting, protocol-valid cohort
+can reserve keys required by unrelated ordinary work. Add linked regressions
+for both; rollback alone does not fix later starvation.
 
 Remaining validation should explicitly exercise the fallback, including a case
 where ordinary construction succeeds. A test requiring fewer keys because

@@ -80,6 +80,10 @@ Id Ledger::append(Cut cut, Command command, EndpointPurpose purpose, Id request,
     const auto leader = canonical(cut);
     return insert(leader, words[leader].size(), command, purpose, request, ack);
 }
+Id Ledger::prepend(Cut cut, Command command, EndpointPurpose purpose, Id request)
+{
+    return insert(canonical(cut), 0, command, purpose, request, NoAnalysisId);
+}
 Id Ledger::after(Id predecessor, Command command, EndpointPurpose purpose, Id request, Id ack)
 {
     const auto cut = endpoints.at(predecessor).cut;

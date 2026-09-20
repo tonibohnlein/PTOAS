@@ -37,6 +37,9 @@ struct SelectedSource {
     Cut cut = NoAnalysisId;
     uint64_t version = 0;
     FrontierState snapshot;
+    // Stable gap: after the original payload, before every endpoint in cut's
+    // command word. This sentinel boundary has no shifting numeric offset.
+    FrontierState postOrigin;
 };
 struct SelectedDecision {
     Cut consumer = NoAnalysisId, publication = NoAnalysisId;
@@ -45,6 +48,7 @@ struct SelectedDecision {
     std::vector<FrontierRequirement> required;
     std::vector<std::size_t> endpoints;
     bool commonCut = false, enlargedPrefix = false;
+    bool publicationAtWordStart = false;
     // Present only when F7 repaired consumption-before-republication. These
     // are physical key numbers and actual ledger endpoint IDs, not a claim of
     // storage completion by the helper.
@@ -116,6 +120,10 @@ struct SelectedWork {
     // are outside this timer, as is selected replay. Final helper trials are
     // separate from recurring omission trials and from the final certificate.
     uint64_t recurringQualificationMicroseconds = 0;
+    uint64_t proposalCheckSites = 0, proposalCheckMicroseconds = 0;
+    std::size_t rejectedProtocolProposals = 0, rejectedResourceProposals = 0;
+    std::size_t gapPublications = 0, deferredAcknowledgments = 0;
+    std::size_t equalCoveragePairs = 0, bindingProbes = 0, bindingChoices = 0;
     std::size_t helperCompositionTrials = 0;
     uint64_t helperCompositionSiteEvaluations = 0, helperCompositionMicroseconds = 0;
     uint64_t finalCertificateSiteEvaluations = 0, finalCertificateMicroseconds = 0;
@@ -141,6 +149,17 @@ struct SelectedWork {
     std::size_t frontierGuarded = 0, frontierUnknown = 0;
     // Whole-original-graph contextual solves, and updates that reused nothing.
     std::size_t contextualReplays = 0, unreusedUpdates = 0;
+};
+// These switches never disable mandatory checking or native reconstruction.
+struct SelectedOptions {
+    bool recurring = true;
+    bool recurringOmissionTrials = true;
+    bool finalHelperTrials = true;
+    bool movingFrontiers = true;
+    bool sourceGaps = false;
+    bool deferredAcyclicAcknowledgments = false;
+    bool classInvariantInputs = false;
+    bool equalCoverageBinding = false;
 };
 struct SelectedPlan {
     bool success = false;
@@ -169,7 +188,8 @@ struct SelectedPlan {
 // event credit and does not imply that construction or allocation will succeed.
 bool hasQualifiedRecurringAccesses(const Program&);
 
-SelectedPlan constructSelectedPlan(const Program&, const Commands& fixed = {});
+SelectedPlan constructSelectedPlan(const Program&, const Commands& fixed = {},
+                                   SelectedOptions options = {});
 
 } // namespace mlir::pto::oahs
 #endif

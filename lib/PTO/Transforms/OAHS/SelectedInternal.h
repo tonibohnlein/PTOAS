@@ -73,6 +73,7 @@ public:
     Ledger(const Program&, const std::vector<Cut>&);
     bool initialize(const Commands&, std::string&);
     Id append(Cut, Command, EndpointPurpose, Id request = NoAnalysisId, Id ack = NoAnalysisId);
+    Id prepend(Cut, Command, EndpointPurpose, Id request = NoAnalysisId);
     Id after(Id, Command, EndpointPurpose, Id request, Id ack);
     const std::vector<Id>& word(Cut) const;
     const SelectedEndpoint& endpoint(Id) const;
@@ -248,7 +249,7 @@ private:
 // not commands or physical key choices. Empty means ordinary F1--F8 applies.
 std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     const Program&, const Control&, const RequirementFrontiers&,
-    bool allowGuardedEpisodes = true);
+    bool allowGuardedEpisodes = true, bool movingFrontiers = true);
 
 struct Group {
     Pipe source = Pipe::S;
@@ -259,6 +260,8 @@ struct Group {
     std::vector<FrontierRequirement> requirements;
     std::set<Id> coverage;
     bool common = false;
+    bool atWordStart = false;
+    bool bindingCertified = false;
     // A participation-qualified set of alternative early source cuts. It uses
     // one virgin directional key, not one key per branch. Empty means the
     // original single-cut/F7 path. The candidate is tied to the selected map.
@@ -273,11 +276,12 @@ struct Group {
 class Constructor {
     friend struct ReplayTestAccess;
 public:
-    explicit Constructor(const Program&);
+    explicit Constructor(const Program&, SelectedOptions = {});
     SelectedPlan run(const Commands&);
 
 private:
     const Program& program;
+    SelectedOptions options;
     CausalFrontier frontier;
     Control control;
     StorageFrontierAnalysis storage;
@@ -332,7 +336,9 @@ private:
     std::vector<Group> groups(const std::vector<FrontierRequirement>&, RequirementStage);
     Group sourceGroup(Pipe, const std::vector<FrontierRequirement>&,
                       const std::vector<FrontierRequirement>&, const std::set<Id>* promotion = nullptr);
-    std::set<Id> coverage(Cut, Pipe, const std::vector<FrontierRequirement>&) const;
+    std::set<Id> coverage(Cut, Pipe, const std::vector<FrontierRequirement>&, bool atStart = false) const;
+    Id virginAtStart(Cut, Pipe, Pipe) const;
+    Id helperFreeBinding(const Group&, Pipe) const;
     bool freshBetween(Cut, Cut, Id) const;
     bool sourceFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&,
                         const std::vector<FrontierRequirement>&, const std::set<Id>*) const;
@@ -340,9 +346,9 @@ private:
                            const std::vector<FrontierRequirement>&, const std::set<Id>*);
     bool consume();
     bool bind(Group&, RequirementStage);
-    bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&);
+    bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&, Id certifiedKey = NoAnalysisId);
     bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&);
-    bool needsCommonAcknowledgment(const State&) const;
+    bool needsCommonAcknowledgment(const State&, Id) const;
     Id reusable(Pipe, Pipe, const State&);
     bool canPublish(const State&, Id) const;
     bool clearInterval(Id, Cut, Cut) const;

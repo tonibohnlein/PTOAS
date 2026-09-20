@@ -20,7 +20,7 @@ inline void importFirstConsumers(
     Program &program, const SmallVector<scf::ForOp> &loops,
     const DenseMap<mlir::Operation *, std::size_t> &ids,
     DenseMap<std::size_t, scf::ForOp> &owners,
-    std::vector<std::string> &notes) {
+    std::vector<std::string> &notes, bool classInvariant = false) {
   std::map<unsigned, std::set<Pipe>> writers;
   for (const auto &op : program.operations) for (auto access : op.accesses)
     if (access.write) writers[access.cell].insert(op.pipe);
@@ -101,7 +101,7 @@ inline void importFirstConsumers(
         for (auto access : program.operations[op].accesses) {
           if (!access.read || written.count(access.cell)) continue;
           for (auto writer : writers[access.cell])
-            if (writer != program.operations[op].pipe && !bodyPipes.count(writer) &&
+            if (writer != program.operations[op].pipe && (classInvariant || !bodyPipes.count(writer)) &&
                 parentWrites[writer].count(access.cell))
               reusableInputs[writer].insert(access.cell);
         }
@@ -130,7 +130,7 @@ inline void importFirstConsumers(
             !program.cells[a.cell].unknownRange && !program.cells[a.cell].exclusive &&
             readInputs.insert({a.cell, operation.pipe}).second)
           for (auto writer : writers[a.cell])
-            invariant |= writer != operation.pipe && !bodyPipes.count(writer);
+            invariant |= writer != operation.pipe && (classInvariant || !bodyPipes.count(writer));
         // Entry acquisition already handles the first observer operation.
         if (invariant && issued.count(operation.pipe)) {
           consumers.insert(at);

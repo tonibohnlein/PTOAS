@@ -118,8 +118,11 @@ returns, retaining the original selection order. Unchanged populations require
 no pair scan. The distinct pair population can still be quadratic, and each
 continuation query and successful edit/replay has a separate cost.
 Only successful discharges or required restorations replay the changed ledger.
-There is no final-plan deletion sweep or trial cold-check population. Work
-counters report pair visits, graph query visits, restorations and net discharged
+This online discharge mechanism does not use changed-plan cold-check trials.
+Separately, `finish()` performs bounded engine-pair helper-removal trials and
+then a final certificate; the complete constructor therefore is trial-enhanced.
+Count `helperCompositionTrials`, its site evaluations/time and final certification
+separately from online pair visits, graph queries, restorations and net discharged
 helpers. The ordinary
 loop-hypothesis traversal retains its closed fallback: it does not yet export
 these contextual token-generation interfaces. Physical reservations also remain
@@ -398,7 +401,13 @@ these immutable summaries, then separately checks the selected source receipt,
 paired endpoint participation, and physical-key protocol. Preparation visits are
 reported as `loopEntryPreparationSites`; they are not hidden in replay counts.
 
-Recurring proposals are checked before committing their endpoints. A cheap
+Recurring proposals allocate keys in temporary state and decline on insufficient
+capacity before committing endpoints. A staged mandatory-protocol check now
+rejects invalid proposals without committing their state. Exact-fit admission
+also checks whether uncovered cross-engine demands lose their entire direct
+key direction; such a cohort declines to ordinary construction. This remains
+a conservative local admission test, not a complete future-allocation proof.
+See [admission results and limits](oahs-placement-experiments.md). A cheap
 alternative-direction-path query identifies candidates for whole-channel
 omission, but gives no completion credit. Certified replay must retain every
 previously covered memory and retirement obligation and satisfy all remaining
@@ -631,3 +640,16 @@ Shared unconditional words cannot repeatedly consume a first-only publication.
 Completed entry-protocol keys can be reused only with actual consumption credit
 and the full protocol check, never merely because a lexical region ended.
 See [qualification, measurements and limits](oahs-first-consumer-placement.md).
+
+
+## Placement-oriented experimental views (working tree after 8afb)
+
+Default optional admission now checks a private protocol before reserving keys
+and declines an exactly-fitting cohort when its staged residuals expose a
+stranded ordinary direction. Experimental switches retain separate word-start
+source coverage, defer qualified acyclic acknowledgments, admit class-invariant
+inputs under disjoint producer work, and probe exact-equal-coverage bindings.
+They share existing storage, control and selected-state views; first-pass facts
+never grant completion. See [scope, validation and controls](oahs-placement-experiments.md).
+The running MAT device snapshot is unchanged. Legacy generic frontier motion
+remains default, with an independently testable no-motion control.
