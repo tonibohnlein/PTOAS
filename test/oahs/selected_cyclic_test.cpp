@@ -538,6 +538,120 @@ void guardedReaderEpisode()
 }
 // Distinct physical-bank episodes stay open across sibling child loops. This
 // exercises unrefined control: no residue modes, loop unrolling or new guards.
+// Repeated readers keep a single input generation until their own child exit.
+// The next first-bank write must not acquire the second child's reader prefix.
+void readerRegionCycles()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
+    auto input = base(2, 6);
+    input.operations = {op(P, {{0, false, true}}), op(P, {{1, false, true}}),
+                        op(Q, {{0, true, false}}), op(Q, {{0, true, false}}),
+                        op(Q, {{1, true, false}}), op(Q, {{1, true, false}})};
+    input.body = {o::Region::For, {seq({leaf(0), leaf(1),
+        {o::Region::For, {seq({leaf(2), leaf(3)})}, 0, true},
+        {o::Region::For, {seq({leaf(4), leaf(5)})}, 0, true}})}, 0, true};
+    auto imported = o::addStructuredBoundaryCuts(input);
+    require(imported.success, imported.reason);
+    auto& p = imported.program;
+    auto& g = *p.observed;
+    const auto oldSize = g.sites.size();
+    for (o::Cut site = 0; site < oldSize; ++site) {
+        if (g.sites[site].operation == o::NoControlId) continue;
+        auto boundary = g.sites[site];
+        boundary.operation = o::NoControlId;
+        boundary.observation = g.observations.size();
+        g.observations.push_back({1000 + g.sites.size(), {}, true});
+        g.sites[site].successors = {g.sites.size()};
+        g.sites[site].backedgeOwners.clear();
+        g.sites.push_back(std::move(boundary));
+    }
+    // Portable counterpart of native constant-bound reader-loop metadata.
+    for (const auto& scope : g.scopes) {
+        if (scope.kind != o::AnalysisContext::ForBody) continue;
+        const auto owner = scope.ownerSite, header = g.sites[owner].successors.front();
+        o::ObservedLoop loop;
+        loop.owner = loop.entry = owner;
+        loop.bodyEntry = g.sites[header].successors.front();
+        loop.exit = g.sites[header].successors.back(); loop.atLeastOnce = true;
+        std::set<o::Cut> seen;
+        std::vector<o::Cut> todo{loop.bodyEntry};
+        while (!todo.empty()) {
+            const auto site = todo.back(); todo.pop_back();
+            if (site == header || site == loop.exit || !seen.insert(site).second) continue;
+            for (auto next : g.sites[site].successors) todo.push_back(next);
+        }
+        loop.sites.assign(seen.begin(), seen.end());
+        g.loops.push_back(std::move(loop));
+    }
+    const auto plan = accepted(p);
+    require(plan.channels.size() == 4 && plan.work.recurringTrials == 0,
+            "reader regions need two complete cycles without omission trials");
+    for (const auto& channel : plan.channels) {
+        auto broken = plan.commands;
+        for (auto& word : broken) word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+            return command.source == channel.source && command.observer == channel.observer &&
+                command.key == channel.key && (command.kind == o::Command::Publish || command.kind == o::Command::Acquire);
+        }), word.end());
+        require(!o::checkCausalFrontier(p, broken).accepted, "reader-region support was assumed without its channel");
+    }
+    for (const auto& lengths : std::vector<std::vector<unsigned>>{{}, {1, 2}, {3, 1, 2, 4}, {0, 0, 1, 3}}) {
+        std::vector<unsigned> expected;
+        for (unsigned pair = 0; pair < lengths.size(); pair += 2) {
+            expected.insert(expected.end(), {0, 1});
+            for (unsigned i = 0; i < lengths[pair]; ++i) expected.insert(expected.end(), {2, 3});
+            for (unsigned i = 0; i < lengths[pair + 1]; ++i) expected.insert(expected.end(), {4, 5});
+        }
+        std::vector<o::Cut> path;
+        std::set<std::pair<o::Cut, unsigned>> active, dead;
+        std::function<bool(o::Cut, unsigned)> walk = [&](o::Cut at, unsigned offset) {
+            const auto key = std::make_pair(at, offset);
+            if (active.count(key) || dead.count(key)) return false;
+            const auto& node = g.sites[at];
+            if (node.operation != o::NoControlId) {
+                if (offset == expected.size() || node.operation != expected[offset]) return false;
+                ++offset;
+            }
+            path.push_back(at);
+            if (at == g.exit && offset == expected.size()) return true;
+            active.insert(key);
+            for (auto next : node.successors) if (walk(next, offset)) return true;
+            active.erase(key); dead.insert(key); path.pop_back(); return false;
+        };
+        require(walk(g.entry, 0), "reader-region varying-length path missing");
+        auto flat = p; flat.observed.reset(); flat.body = {}; flat.operations.clear();
+        o::Commands words; std::vector<o::Command> pending;
+        for (auto cut : path) {
+            pending.insert(pending.end(), plan.commands[cut].begin(), plan.commands[cut].end());
+            const auto operation = g.sites[cut].operation;
+            if (operation == o::NoControlId) continue;
+            flat.operations.push_back(p.operations[operation]);
+            words.push_back(std::move(pending)); pending.clear();
+        }
+        words.push_back(std::move(pending));
+        std::vector<unsigned> visits(flat.operations.size()); std::iota(visits.begin(), visits.end(), 0);
+        std::vector<std::pair<unsigned, unsigned>> forbidden;
+        for (unsigned i = 0; i < expected.size(); ++i) if (expected[i] == 0)
+            for (unsigned j = 0; j < i; ++j) if (expected[j] == 4 || expected[j] == 5)
+                forbidden.emplace_back(j, i);
+        require(bool(oahs_oracle::graph(flat, words, visits, forbidden)),
+                "unrelated second reader region gates first-bank refill");
+    }
+    auto independent = p;
+    independent.operations[3].pipe = o::Pipe::M;
+    const auto separate = accepted(independent);
+    require(std::none_of(separate.channels.begin(), separate.channels.end(), [](const auto& channel) {
+        return std::find(channel.cells.begin(), channel.cells.end(), 0) != channel.cells.end();
+    }), "an independent reader was covered by another engine's return");
+    // A producer inside the reader region invalidates the invariant generation.
+    auto regenerated = p;
+    regenerated.operations[3].pipe = P;
+    regenerated.operations[3].accesses = {{0, false, true}};
+    const auto conservative = accepted(regenerated);
+    require(std::none_of(conservative.channels.begin(), conservative.channels.end(), [](const auto& channel) {
+        return std::find(channel.cells.begin(), channel.cells.end(), 0) != channel.cells.end();
+    }), "regenerated reader input admitted as invariant");
+}
+
 void independentBankEpisodes()
 {
     const auto P = o::Pipe::MTE1, Q = o::Pipe::M;
@@ -812,6 +926,7 @@ int main()
     pipelineOperandSupport();
     guardedReaderEpisode();
     independentBankEpisodes();
+    readerRegionCycles();
     for (unsigned slots = 1; slots <= 4; ++slots) {
         checkSlots(slots);
     }

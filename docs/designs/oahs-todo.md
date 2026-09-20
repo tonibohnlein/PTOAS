@@ -6,6 +6,29 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
+## Latest priority: measure MAT reader-region cycles
+
+Implemented locally on fe1, pending device measurement. See
+[the mechanism and validation](oahs-mat-reader-cycles.md) and
+[the four-arm device task](oahs-mat-release-device-task.md).
+
+- Complete each qualified reader child's readiness/release cycle before fence
+  selection. Preserve separate first consumers and physical return boundaries.
+  Production passes 88/88 corpus construction/reconstruction; exactly eleven
+  projection plans change. GEMM, attention and post-RMSNorm remain identical.
+- Measure down first and LM as transfer, then projection family. Production
+  removes MTE2 fences by actual cycle credit; retain the separate certified
+  control with baseline MTE2 fences restored to distinguish the effects.
+- Finish matched profiling reconciliation on the remote agent. No speedup or
+  closure of the remaining 5.6–17.8% device gap is claimed locally.
+- Revisit second-child A1 readiness only if a concrete remaining dependency is
+  found; the earlier broad readiness existed in both baseline and existing.
+
+The four review-hardening items remain pending: reproduce/fix optional-cohort
+resource starvation; narrow the uncertified common-frontier merge; select only
+the next provider; account for and reduce FIFO contextual replay. These are not
+fixed by the new storage cycle or by the successful corpus run.
+
 ## Pinned hand-written reference kernels
 
 **Revised priority, 2026-09-20:** the ordinary PTO-ISA GEMM is too similar to

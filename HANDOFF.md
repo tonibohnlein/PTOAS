@@ -6,11 +6,72 @@ Updated: 2026-09-20
 
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
-- Base for the current study: `495fb9cbda7649f15a7fc09d6b1d91ffb7737d54`
-- Current milestone: first-consumer projection placement implemented; device comparison pending
+- Base for current implementation: `fe1fc454bb80cd4810410bcc8bd9212f36c8b5d8`
+- Current milestone: MAT reader-region cycles implemented and locally validated; device measurement pending
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Current implementation: MAT reader-region cycles
+
+The working tree selects complete readiness/return cycles at each qualified
+reader child's boundaries, preserving separate first consumers. This removes
+the late second-child dependency on first-pair refill. See
+[mechanism and evidence](docs/designs/oahs-mat-reader-cycles.md) and
+[device task](docs/designs/oahs-mat-release-device-task.md).
+
+22/22 portable suites and native tests pass. 88/88 supported corpus inputs
+construct/reconstruct: eleven projections change, other 77 outputs are identical.
+Across 37 paths, production removes 6,881 ordering relations with none added;
+GEMM remains byte-identical and passes its 200/394/782 checker. Construction
+replay decreases; graph growth is a compact first-consumer prefix.
+
+The complete protocol also proves the MTE2 fences unnecessary before insertion.
+M/FIX/ALL fences remain. A separately certified placement control restores all
+baseline MTE2 fences; it removes 6,173 relations with none added. Measure this
+control alongside production, fe1 and existing. No device speedup is claimed.
+The self-contained dispatch package is a working-tree snapshot, not a new commit.
+
+Four hardening items remain pending: optional-cohort resource starvation,
+remaining common-frontier merge certificate, next-provider selection, and FIFO
+contextual replay accounting. The historical diagnosis below describes the
+pre-implementation plans and must not be mistaken for current production.
+
+## Prior local diagnosis: remaining projection gap (2026-09-20)
+
+HEAD is `fe1fc454bb80cd4810410bcc8bd9212f36c8b5d8`; the device candidate remains
+unchanged. User-reported first-consumer results pass 117/117 correctness, improve
+all projection members 16.7–22.9% versus 495, and preserve identical-binary GEMM
+parity. Residual versus existing: down 5.6%, Q/out 7.8%, KV 8.2%, gate/up 9.2%,
+LM 17.8%. Matched profiling reconciliation remains remote and pending.
+
+The [new local report](../projection-gap-work/REPORT.md) identifies late
+MAT release as the next concrete target: the next A0/B0 loads acquire an MTE1
+prefix containing the unrelated second reader child. Existing releases the
+first pair earlier. Second-child A1 readiness is broad in both plans, so it is
+not the distinguishing dependency. Saved current plans were regenerated exactly.
+
+Two constructed diagnostic return protocols pass the unchanged imported-program
+checker with every fence retained. Across 21 paths they add no payload relations;
+down/17 chunks loses 224 relations and LM/bounded one tile loses 224. Counts rise
+343→354 and 363→370 respectively. These are local reference protocols, not an
+implemented compiler change or a device performance result. General production
+selection must preserve individual physical last-reader boundaries rather than
+assume every pair in one child can share a release.
+
+MTE2 fence omission remains separate: LM passes the all-path checker, down fails
+at B0 load cut42 even with the split return. Finite traces alone do not authorize
+that omission. Existing also fails the strict local event oracle on some down
+tail/re-entry paths; comparisons exclude those paths rather than waive the check.
+Artifacts: workspace `projection-gap-work/`, report, native JSON/CSV inventories,
+causal witnesses, reference PTO, 63 finite checks and six negative mutations.
+
+Next plan mechanism: compact last-participating-reader interfaces across child
+loops, preserving actual readiness/return/rearming and tail byte overlap. Keep
+fences in the first controlled implementation. The requested review-hardening
+items remain pending: cohort starvation, common-frontier certificate, next-provider
+selection, and FIFO contextual replay accounting. No production code changed in
+this analysis. Historical sections below describe their original milestones.
 
 ## Current result: first-consumer placement
 

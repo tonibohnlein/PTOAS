@@ -480,6 +480,115 @@ std::vector<RecurringRequirement> qualifyGuardedBanks(const Program& p, const Co
     return out;
 }
 
+// A reader-only child retains one storage generation across its visits. Its
+// original exit observes all participating reads without observing a later
+// sibling's work. Its first observer must consume this invariant input: entry
+// readiness therefore crosses no independent observer work. Select both
+// directions so actual readiness supports the return and its rearming.
+std::vector<RecurringRequirement> qualifyReaderRegionCycles(
+    const Program& p, const Control& c, const std::vector<RecurringRequirement>& selected)
+{
+    std::vector<RecurringRequirement> out;
+    if (!p.observed) return out;
+    std::set<unsigned> owned;
+    for (const auto& request : selected)
+        owned.insert(request.cells.begin(), request.cells.end());
+    std::vector<std::vector<Cut>> accesses(p.cells.size());
+    for (Cut site = 0; site < c.graph.sites.size(); ++site) {
+        const auto operation = c.graph.operations[site];
+        if (!c.reachable[site] || operation == NoAnalysisId) continue;
+        for (const auto& access : p.operations[operation].accesses)
+            accesses[access.cell].push_back(site);
+    }
+    for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
+        const auto& physical = p.cells[cell];
+        if (owned.count(cell) || physical.storage != Cell::Storage::CanonicalInterval ||
+            physical.unknownRange || physical.exclusive) continue;
+        Pipe writer = Pipe::Count, reader = Pipe::Count;
+        std::set<Cut> writes, reads;
+        bool admitted = true;
+        for (auto site : accesses[cell]) {
+            const auto& operation = p.operations[c.graph.operations[site]];
+            for (const auto& access : operation.accesses) {
+                if (access.cell != cell) continue;
+                if (access.read == access.write) { admitted = false; break; }
+                auto& pipe = access.write ? writer : reader;
+                if (pipe != Pipe::Count && pipe != operation.pipe) { admitted = false; break; }
+                pipe = operation.pipe;
+                (access.write ? writes : reads).insert(site);
+            }
+            if (!admitted) break;
+        }
+        if (!admitted || writes.empty() || reads.empty() || writer == reader ||
+            p.target.synchronous[unsigned(writer)] || p.target.synchronous[unsigned(reader)]) continue;
+        if (std::any_of(writes.begin(), writes.end(), [&](Cut site) {
+                return !c.components[c.component[site]].cyclic;
+            })) continue;
+        std::set<Cut> publications{c.canonicalCut[c.graph.entry]};
+        std::set<Cut> firstConsumers;
+        std::set<Cut> covered;
+        for (const auto& loop : p.observed->loops) {
+            if (!loop.atLeastOnce || loop.bodyEntry == NoAnalysisId ||
+                !loop.entries.empty() || !loop.exits.empty()) continue;
+            const std::set<Cut> members(loop.sites.begin(), loop.sites.end());
+            // Use leaf reader regions; do not turn an enclosing multi-generation
+            // region into one completion episode.
+            if (std::any_of(p.observed->loops.begin(), p.observed->loops.end(), [&](const auto& child) {
+                    return child.owner != loop.owner && members.count(child.entry);
+                })) continue;
+            std::vector<Cut> local;
+            for (auto site : reads) if (members.count(site)) local.push_back(site);
+            if (local.empty() || std::any_of(writes.begin(), writes.end(),
+                    [&](Cut site) { return members.count(site); })) continue;
+            const auto facts = std::find_if(c.loopEntries.begin(), c.loopEntries.end(),
+                [&](const auto& entry) { return entry.entry == loop.entry; });
+            if (facts == c.loopEntries.end() || facts->issuedPipes.count(writer)) continue;
+            const auto& first = facts->firstConsumers[unsigned(reader)];
+            if (!first.empty() && std::all_of(first.begin(), first.end(), [&](Cut site) {
+                    return reads.count(site);
+                })) firstConsumers.insert(c.canonicalCut[loop.entry]);
+            else {
+                const auto input = std::find_if(facts->firstInputConsumers.begin(), facts->firstInputConsumers.end(),
+                    [&](Cut site) { return reads.count(site); });
+                if (input == facts->firstInputConsumers.end()) continue;
+                firstConsumers.insert(c.canonicalCut[*input]);
+            }
+            if (!c.graph.legalCuts[loop.exit]) { admitted = false; break; }
+            publications.insert(c.canonicalCut[loop.exit]);
+            covered.insert(local.begin(), local.end());
+        }
+        if (!admitted || covered != reads) continue;
+        RecurringRequirement returned;
+        returned.cell = cell; returned.cells = {cell};
+        returned.source = reader; returned.observer = writer;
+        returned.qualifiedCycle = returned.storageRelease = true;
+        returned.publications.assign(publications.begin(), publications.end());
+        std::set<Cut> acquisitions{c.canonicalCut[c.graph.exit]};
+        for (auto site : writes) acquisitions.insert(c.canonicalCut[site]);
+        returned.acquisitions.assign(acquisitions.begin(), acquisitions.end());
+        // Exact original participation, including skipped parent episodes,
+        // first entry, backedges, and tail reuse. No fresh-scope reset.
+        RecurringRequirement ready;
+        ready.cell = cell; ready.cells = {cell};
+        ready.source = writer; ready.observer = reader; ready.qualifiedCycle = true;
+        ready.acquisitions.assign(firstConsumers.begin(), firstConsumers.end());
+        for (auto site : writes) {
+            const auto after = c.after(site);
+            if (after == NoAnalysisId) { admitted = false; break; }
+            ready.publications.push_back(c.canonicalCut[after]);
+        }
+        std::sort(ready.publications.begin(), ready.publications.end());
+        ready.publications.erase(std::unique(ready.publications.begin(), ready.publications.end()),
+                                 ready.publications.end());
+        if (admitted && balanced(c, ready.publications, ready.acquisitions, true) &&
+            balanced(c, returned.publications, returned.acquisitions, true)) {
+            out.push_back(std::move(ready));
+            out.push_back(std::move(returned));
+        }
+    }
+    return out;
+}
+
 // Compose a refined child reader episode with its original enclosing loop.
 // This is deliberately narrower than nested residue refinement: it retains the
 // child's existing finite quotient and derives one complete producer/readers
@@ -1044,6 +1153,8 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
             append(std::move(*release));
         }
     }
+    if (allowGuardedEpisodes)
+        for (auto& request : qualifyReaderRegionCycles(p, c, requests)) append(std::move(request));
     // Distinct release publications retain their own prefixes. Matching bank
     // phases and a balanced merged token stream do not justify waiting for a
     // later reader at an earlier overwrite. Identical publication frontiers
