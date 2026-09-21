@@ -21,7 +21,7 @@ struct SyncProtocolModel {
   PIPE pipeline = PIPE::PIPE_UNASSIGNED;
   SmallVector<Value> reads, writes;
   unsigned localSlots = 0;
-  // Optional GM slot envelope for the pinned, unsplit vector tile-entry path.
+  // Optional GM slot envelope for the pinned, unsplit tile-entry paths (VEC, ACC send, MAT receive).
   // Indices start at zero and advance independently on participating send/pop.
   // These facts grant no peer completion or local storage-release credit.
   unsigned globalSlots = 0;

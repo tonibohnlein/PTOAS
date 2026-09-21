@@ -124,3 +124,26 @@ Use the existing requirement/source/word views for these facts. Do not introduce
 another completion authority, assume that all SETs can precede all WAITs, or
 substitute a safety-only changed-plan check for an ordering certificate. Until
 this is proved, keep no-motion grouping available as the conservative control.
+
+## Follow-up at `d1bf07ee5`: all three export positions
+
+The portable witness now includes the outward SET **before both waits**, in
+addition to between and after them. Across one/two/four episodes:
+
+| Outward position | Separate payload relations | Merged payload relations |
+| --- | --- | --- |
+| Before both | 21 / 132 / 654 | 21 / 132 / 654 |
+| Between | 25 / 140 / 670 | 29 / 148 / 686 |
+| After both | 29 / 148 / 686 | 29 / 148 / 686 |
+
+These compare complete relation sets, not just counts. Memory, balance and
+rearming pass in all nine supplied-plan comparisons. The existing removed-return
+negative remains. The before/after cases preserve order; the between case adds
+four relations per episode. This strengthens the exact-word-position boundary;
+it is **not** a production certificate or a newly reproduced constructor defect.
+
+No coalescer default changes in this follow-up. The next production step still
+needs a versioned, binding-aware certificate over the actual affected words and
+neighboring key generations, plus invalidation on later relevant insertions.
+The qualifier currently precedes those binding choices. A static cut comparison,
+or a veto on every same-cut outward publication, does not supply that proof.

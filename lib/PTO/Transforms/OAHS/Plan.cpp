@@ -215,6 +215,43 @@ bool valid(const Program &p, std::string &reason) {
           return false;
       }
   }
+  if (p.staticFifoSlots) {
+      const auto& slots = *p.staticFifoSlots;
+      if (!p.observed || p.alternatingSlots || slots.cells.size() != 2 || slots.cells[0] == slots.cells[1] ||
+          slots.cells[0] >= p.cells.size() || slots.cells[1] >= p.cells.size() || slots.reads.empty() ||
+          slots.writes.empty()) {
+          reason = "invalid static FIFO slot view";
+          return false;
+      }
+      std::set<std::size_t> bound;
+      for (unsigned kind : {1u, 2u})
+          for (auto op : kind == 1 ? slots.reads : slots.writes) {
+              if (op >= p.operations.size() || !bound.insert(op).second) {
+                  reason = "invalid static FIFO role binding";
+                  return false;
+              }
+              unsigned count = 0;
+              for (auto access : p.operations[op].accesses)
+                  if (std::find(slots.cells.begin(), slots.cells.end(), access.cell) != slots.cells.end()) {
+                      ++count;
+                      if ((unsigned(access.read) | (unsigned(access.write) << 1)) != kind || access.definiteWrite) {
+                          reason = "static FIFO role differs from its effect";
+                          return false;
+                      }
+                  }
+              if (count != 1) {
+                  reason = "static FIFO access must identify one slot";
+                  return false;
+              }
+          }
+      for (std::size_t op = 0; op < p.operations.size(); ++op)
+          if (!bound.count(op))
+              for (auto access : p.operations[op].accesses)
+                  if (std::find(slots.cells.begin(), slots.cells.end(), access.cell) != slots.cells.end()) {
+                      reason = "unrepresented static FIFO access";
+                      return false;
+                  }
+  }
   if (p.alternatingSlots) {
     const auto &slots = *p.alternatingSlots;
     if (!p.observed || slots.cells.size() != 2 || slots.cells[0] == slots.cells[1] ||

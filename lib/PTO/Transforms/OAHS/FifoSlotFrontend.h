@@ -14,6 +14,88 @@
 #include <map>
 
 namespace mlir::pto::oahs {
+ObservedImport refineStaticSlots(const Program& input, const AlternatingSlotRegion& region)
+{
+    ObservedImport result;
+    auto refuse = [&](const char* why) {
+        result.reason = why;
+        return result;
+    };
+    if (!validateProgram(input).success || !input.observed || input.alternatingSlots || input.staticFifoSlots ||
+        region.slots != 2 || !region.slotBytes || region.slotBytes > std::numeric_limits<uint64_t>::max() / 2 ||
+        region.cell >= input.cells.size() || input.cells[region.cell].exclusive || region.reads.empty() ||
+        region.writes.empty())
+        return refuse("unsupported static FIFO slot interface");
+    std::vector<unsigned> role(input.operations.size()), slots(input.operations.size());
+    for (unsigned kind : {1u, 2u}) {
+        for (auto op : kind == 1 ? region.reads : region.writes) {
+            if (op >= role.size() || role[op])
+                return refuse("invalid static slot binding");
+            unsigned effect = 0;
+            for (auto access : input.operations[op].accesses)
+                if (access.cell == region.cell)
+                    effect |= unsigned(access.read) | (unsigned(access.write) << 1);
+            if (effect != kind)
+                return refuse("static slot binding differs from original access");
+            role[op] = kind;
+        }
+    }
+    for (std::size_t op = 0; op < role.size(); ++op)
+        if (!role[op])
+            for (auto access : input.operations[op].accesses)
+                if (access.cell == region.cell)
+                    return refuse("unrepresented static FIFO access");
+    const auto& graph = *input.observed;
+    // Each monotone fact has only two bits. Keep the two cursors independent;
+    // do not materialize a product with one another or with loop observations.
+    for (unsigned kind : {1u, 2u}) {
+        std::vector<unsigned> masks(graph.sites.size());
+        std::vector<Cut> work{graph.entry};
+        masks[graph.entry] = 1;
+        for (std::size_t i = 0; i < work.size(); ++i) {
+            const auto at = work[i], op = graph.sites[at].operation;
+            unsigned next = masks[at];
+            if (op != NoControlId && role[op] == kind) {
+                slots[op] |= next;
+                next = ((next & 1) << 1) | ((next & 2) >> 1);
+            }
+            for (auto to : graph.sites[at].successors) {
+                const auto joined = masks[to] | next;
+                if (joined != masks[to]) {
+                    masks[to] = joined;
+                    work.push_back(to);
+                }
+            }
+        }
+    }
+    for (std::size_t op = 0; op < role.size(); ++op)
+        if (role[op] && slots[op] != 1 && slots[op] != 2)
+            return refuse("static FIFO access has ambiguous or unreachable cursor");
+    result.program = input;
+    auto& p = result.program;
+    const auto first = p.cells.size();
+    p.staticFifoSlots = Program::StaticFifoSlots{{unsigned(first), unsigned(first + 1)}, region.reads, region.writes};
+    for (unsigned slot = 0; slot < 2; ++slot) {
+        auto cell = input.cells[region.cell];
+        cell.storage = Cell::Storage::CanonicalInterval;
+        cell.unknownRange = false;
+        cell.coordinateSpace += "; qualified-static-FIFO-root:" + std::to_string(region.cell);
+        cell.ranges = {{slot * region.slotBytes, region.slotBytes}};
+        cell.provenance = "lowering-qualified static FIFO cursor";
+        p.cells.push_back(std::move(cell));
+    }
+    for (std::size_t op = 0; op < role.size(); ++op)
+        if (role[op])
+            for (auto& access : p.operations[op].accesses)
+                if (access.cell == region.cell) {
+                    access.cell = first + unsigned(slots[op] == 2);
+                    access.definiteWrite = false;
+                }
+    auto valid = validateProgram(p);
+    result.success = valid.success;
+    result.reason = valid.reason;
+    return result;
+}
 ObservedImport refineAlternatingSlots(const Program& input, const AlternatingSlotRegion& region)
 {
     ObservedImport result;
@@ -21,7 +103,7 @@ ObservedImport refineAlternatingSlots(const Program& input, const AlternatingSlo
         result.reason = why;
         return result;
     };
-    if (!validateProgram(input).success || !input.observed || input.alternatingSlots || region.slots != 2 ||
+    if (!validateProgram(input).success || !input.observed || input.alternatingSlots || input.staticFifoSlots || region.slots != 2 ||
         !region.slotBytes || region.slotBytes > std::numeric_limits<uint64_t>::max() / 2 ||
         region.cell >= input.cells.size() || input.cells[region.cell].exclusive || region.reads.empty() ||
         region.writes.empty())

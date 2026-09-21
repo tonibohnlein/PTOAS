@@ -122,6 +122,13 @@ struct Program {
     Pipe reader = Pipe::S, writer = Pipe::S;
   };
   std::optional<AlternatingSlots> alternatingSlots;
+  // Lowering-qualified, statically identified FIFO slots. This is an immutable
+  // physical-use view, not a completion or event-lifecycle certificate.
+  struct StaticFifoSlots {
+    std::vector<unsigned> cells;
+    std::vector<std::size_t> reads, writes;
+  };
+  std::optional<StaticFifoSlots> staticFifoSlots;
   Target target;
   // No native frontend populates this until its lowering/service premises are
   // qualified. Model clients can explicitly supply the reference contract.

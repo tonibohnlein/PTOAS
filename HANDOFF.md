@@ -7,10 +7,71 @@ Updated: 2026-09-21
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: qualified last-reader release within a straight child
+- Current milestone: native static FIFO slots and separate relay receipt deadlines
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Current local continuation: source gaps, attention and grouping
+
+User asked to investigate items 2–4 while leaving the last-reader device work
+(item 1) to the running device agent. Base: `d1bf07ee5`; no change to that
+agent's frozen source or task.
+
+- **Implemented, opt-in:** [reused-key word-start publication](docs/designs/oahs-reused-source-gaps.md).
+  The source state must already prove emptiness and consumption, and every
+  selected use of that key must precede the gap on a qualified straight corridor.
+  The linked one-key witness failed before the fix and now removes four complete
+  payload relations (67 -> 63), adding none. Five boundary cases reject missing,
+  late and conflicting neighboring-use evidence. `--source-gaps` stays off by
+  default; no general recurring-key allocation or arbitrary interior gap.
+- **Implemented in ordinary construction:** [static FIFO slots and split relay endpoints](docs/designs/oahs-static-fifo-relays.md).
+  The lowering-owned envelope now covers qualified ACC sends / MAT receives.
+  Independent cursor analysis preserves the shared GM root while identifying
+  each static slot. The first receive gets FIX -> MTE1 -> MTE2 from QK2's push;
+  QK3's push reaches the later receive through an M publication before PV0.
+  Exact source gaps and actual key credit govern binding; one staged ordered
+  population supplies checking and commit. Unsupported cases retain ordinary
+  handling. There is no new compiler option or global relay preference.
+  Both single-block variants emit/reconstruct successfully and pass six finite
+  independent cases each. One native-length outer entry removes 80 payload
+  relations, adds none, and uses 103 -> 109 event pairs. Removing real support
+  fails memory/rearming; a safe late-forwarding mutation adds ordering.
+  The previous hand-assembled prototype is now superseded. Next is coupled
+  AIC/AIV device qualification, not another attempt to move the bank release.
+- **Grouping boundary:** nine supplied-plan comparisons now cover outward
+  publication before/between/after two waits. Before/after preserve full order;
+  between broadens it. [A production motion certificate remains open](docs/designs/oahs-frontier-motion-context.md),
+  including exact word positions, physical binding and later-edit invalidation.
+  The existing coalescer remains unchanged; finite tests are not its certificate.
+
+Validation: 23/23 portable suites; focused placement rerun after the additional
+three export-position cases; native selected diagnostics; 16 targeted native
+module runs (22 function constructions/reconstructions), default/source-gap
+arms across projections, RMSNorm, attention and GEMM. All native outputs are
+byte-identical to saved current plans. This is not a full-corpus rerun or a new
+device result. Artifacts: `../source-reuse-quality-work/`.
+
+Native integration validation: 23/23 portable suites; both native diagnostic
+executables including five ACC/MAT slot-admission cases; seven targeted corpus
+modules. Only the two single-block AIC plans change; down, gate/up, LM head,
+post-RMSNorm and partial attention retain identical plans. AIV companions are unchanged. GEMM is byte-identical and passes its
+200/394/782-pair trace checks. The production-word probe and missing-support,
+rearming, phase and ordering comparisons are reproducible through
+`test/benchmarks/attention_relay/run.py`; raw records are in
+`../attention-native-work/`. Shorter/varying inner lengths are checker-CFG
+stress tests, not native constant-trip executions. There is no new device result.
+
+Two staged relay checks per admitted AIC add 1,318 analysis site evaluations;
+relay preparation records 1,434 site visits. These are charged separately from
+selected replay and final helper trials. The original graph stays at 239 sites.
+The relay coverage ranking is a heuristic, not a general no-added-order proof.
+
+The hardware/IR review remains mostly backlog: local-drain credit, descriptor
+scoping and general address-sliced slot analysis remain absent. This milestone
+implements a narrow lowering-qualified static FIFO slot view through the
+existing analyses. It does not establish a new peer-progress or GM-visibility
+contract, enable UnitFlag, or change the running device agent's frozen campaign.
 
 ## Completed locally: release before trailing child work
 
