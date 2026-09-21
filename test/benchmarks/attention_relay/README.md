@@ -6,6 +6,10 @@ The current default compiler refines the FIFO slots and constructs the two
 receipts. A captured pre-change command population is the ordering control.
 See the [diagnosis and contract boundaries](../../../docs/designs/oahs-attention-bank-prefix-diagnosis.md).
 
+For coupled numerical/progress validation and short matched timing, use the
+[device handoff](DEVICE_TASK.md). It includes qualification of an isolated
+shared-slot harness; these host checks alone do not qualify the runtime.
+
 ## Run
 
 Use an already-built native Makefiles build containing `pto-oahs-selected-test`:

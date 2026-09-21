@@ -54,6 +54,16 @@ superseded by the user's explicit instruction to implement this opportunity.
 - Treat the larger analytical graph and replay work as measured costs. Shared
   suffix words do not remove the need to preserve final/continuation identity.
 
+## Device follow-up: static FIFO slots and split relay
+
+The dedicated [row48/49 coupled attention task](../../test/benchmarks/attention_relay/DEVICE_TASK.md)
+is prepared. Baseline `d1bf07ee5`, candidate `21f95f9b7`; this is separate from
+the newer projection guards and the older full sweep. Qualify the original
+shared-slot runtime in an isolated adapter, then check correctness/progress and
+run the short matched comparison. The task authorizes that harness work; the
+working separate-ring runtime must remain intact. Dispatch is not locally
+confirmed. Host order reductions are not device speedup evidence.
+
 ## Completed local milestone: required-return sharing
 
 [Required-return sharing](oahs-required-return-sharing.md) selects a composed
