@@ -932,7 +932,8 @@ void retainedReaderRegions()
 // Original observed paths are flattened only in the independent test oracle.
 // Production qualification never enumerates child lengths or parent visits.
 bool readerTraceOrder(const o::Program& p, const o::Commands& commands,
-                      const std::vector<unsigned>& expected, oahs_oracle::PayloadOrder& order)
+                      const std::vector<unsigned>& expected, oahs_oracle::PayloadOrder& order,
+                      oahs_oracle::Verdict* verdict = nullptr)
 {
     const auto& g = *p.observed;
     std::vector<o::Cut> path;
@@ -963,7 +964,9 @@ bool readerTraceOrder(const o::Program& p, const o::Commands& commands,
     }
     words.push_back(std::move(pending));
     std::vector<unsigned> visits(flat.operations.size()); std::iota(visits.begin(), visits.end(), 0);
-    return bool(oahs_oracle::graph(flat, words, visits, {}, nullptr, nullptr, &order));
+    const auto result = oahs_oracle::graph(flat, words, visits, {}, nullptr, nullptr, &order);
+    if (verdict) *verdict = result;
+    return bool(result);
 }
 
 o::Program multiReaderInput(bool secondRetained)
@@ -988,10 +991,16 @@ void retainedProducerCohort()
 {
     const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
     unsigned paths = 0, removed = 0;
+    o::SelectedOptions privateReturns; privateReturns.shareReaderReturns = false;
+    auto separate = [&](const o::Program& program) {
+        auto plan = o::constructSelectedPlan(program, {}, privateReturns);
+        require(plan.success, plan.reason);
+        return plan;
+    };
     for (bool secondRetained : {false, true}) {
         auto input = multiReaderInput(secondRetained);
         const auto p = readerRegionProgram(input);
-        const auto plan = accepted(p);
+        const auto plan = separate(p);
         require(plan.channels.size() == 4 && plan.work.recurringTrials == 0,
                 "multi-input reader cohort lost separate complete cycles");
         require(plan.work.rejectedSupportProposals == 0 &&
@@ -1080,7 +1089,7 @@ void retainedProducerCohort()
         reload.operations.push_back(op(P, {{0, false, true}}));
         auto& sequence = reload.body.children.front().children;
         sequence.insert(sequence.begin() + 4, leaf(reload.operations.size() - 1));
-        const auto reloaded = accepted(readerRegionProgram(reload));
+        const auto reloaded = separate(readerRegionProgram(reload));
         for (const auto& channel : reloaded.channels) if (channel.cell == 0 && channel.source == P)
             require(channel.publications.size() == 2 && channel.acquisitions.size() == 2,
                     "multi-input readiness survived an actual X reload");
@@ -1088,7 +1097,7 @@ void retainedProducerCohort()
         tight.target.keys[unsigned(P)][unsigned(Q)] = {0, 1};
         tight.target.keys[unsigned(Q)][unsigned(P)] = {0};
         const auto tightProgram = readerRegionProgram(tight);
-        const auto fallback = o::constructSelectedPlan(tightProgram);
+        const auto fallback = o::constructSelectedPlan(tightProgram, {}, privateReturns);
         const auto tightOrdinary = o::constructSelectedPlan(tightProgram, {}, ordinary);
         require(fallback.channels.empty() && fallback.work.rejectedResourceProposals == 1,
                 "partial multi-input cohort escaped capacity fallback");
@@ -1096,17 +1105,237 @@ void retainedProducerCohort()
                 "capacity fallback changed ordinary construction's outcome");
         auto uncovered = input;
         uncovered.operations[3].accesses.clear(); uncovered.operations[5].accesses.clear();
-        const auto declined = accepted(readerRegionProgram(uncovered));
+        const auto declined = separate(readerRegionProgram(uncovered));
         require(declined.channels.empty(), "uncovered Y writer allowed X's fence to move");
         auto independent = input;
         independent.operations[4].pipe = o::Pipe::M;
-        const auto otherReader = accepted(readerRegionProgram(independent));
+        const auto otherReader = separate(readerRegionProgram(independent));
         require(std::none_of(otherReader.channels.begin(), otherReader.channels.end(),
                     [](const auto& channel) { return channel.cell == 0; }),
                 "independent X reader was covered by a different engine's release");
     }
     require(removed != 0, "multi-input cycle did not recover any payload independence");
     std::cout << "retained-cohort paths=" << paths << " removed-payload-relations=" << removed << '\n';
+}
+
+void sharedReaderReturns()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
+    o::SelectedOptions separate; separate.shareReaderReturns = false;
+    // Disable both deletion policies: this must be a productive construction
+    // choice, not a successful after-the-fact removal experiment.
+    separate.recurringOmissionTrials = separate.finalHelperTrials = false;
+    auto composed = separate; composed.shareReaderReturns = true;
+    auto eraseChannel = [](o::Commands& words, const o::SelectedChannel& channel) {
+        for (auto& word : words) word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+            return (command.kind == o::Command::Publish || command.kind == o::Command::Acquire) &&
+                command.source == channel.source && command.observer == channel.observer && command.key == channel.key;
+        }), word.end());
+    };
+    unsigned paths = 0;
+    for (bool reverseDeadline : {false, true}) {
+        auto input = multiReaderInput(false);
+        if (reverseDeadline) std::swap(input.body.children.front().children[0],
+                                       input.body.children.front().children[1]);
+        const auto p = readerRegionProgram(input);
+        const auto baseline = o::constructSelectedPlan(p, {}, separate);
+        const auto plan = o::constructSelectedPlan(p, {}, composed);
+        require(baseline.success && plan.success, baseline.reason + plan.reason);
+        require(baseline.channels.size() == 4 && plan.channels.size() == (reverseDeadline ? 4 : 3),
+                "return-sharing positive/deadline-negative not discriminating");
+        require(plan.work.sharedReaderReturns == unsigned(!reverseDeadline) &&
+                plan.work.recurringTrials == 0 && plan.work.helperCompositionTrials == 0,
+                "shared return came from a deletion trial");
+        for (const auto& channel : baseline.channels) if (channel.source == P) {
+            const auto found = std::find_if(plan.channels.begin(), plan.channels.end(), [&](const auto& other) {
+                return other.source == P && other.cell == channel.cell;
+            });
+            require(found != plan.channels.end() && channel.publications == found->publications &&
+                    channel.acquisitions == found->acquisitions, "sharing moved a readiness frontier");
+        }
+        for (const auto& lengths : std::vector<std::vector<unsigned>>{
+                {}, {0,0,0}, {1,1,1}, {2,0,3}, {0,3,0},
+                {1,3,2, 2,0,1}, {0,0,0, 2,1,3}, {3,2,1, 1,4,3, 0,2,0}}) {
+            std::vector<unsigned> expected;
+            for (unsigned entry = 0; entry < lengths.size(); entry += 3) {
+                expected.insert(expected.end(), reverseDeadline ? std::initializer_list<unsigned>{1,0}
+                                                                 : std::initializer_list<unsigned>{0,1});
+                for (unsigned child = 0; child < 3; ++child)
+                    expected.insert(expected.end(), lengths[entry + child], 2 + child);
+                expected.push_back(5);
+            }
+            oahs_oracle::PayloadOrder before, after;
+            require(readerTraceOrder(p, baseline.commands, expected, before) &&
+                    readerTraceOrder(p, plan.commands, expected, after),
+                    "shared-return trace lost completion, matching, or rearming");
+            require(before == after, "return sharing changed the complete payload-order set");
+            ++paths;
+        }
+        const auto returned = std::find_if(plan.channels.begin(), plan.channels.end(),
+            [&](const auto& channel) { return channel.source == Q && channel.cell == 0; });
+        require(returned != plan.channels.end(), "X return missing");
+        if (reverseDeadline) {
+            // Force the tempting safe-but-broader composition. It has to move
+            // X's wait before the earlier Y overwrite, adding last-X -> Y.
+            auto broader = plan.commands;
+            const auto yReturn = std::find_if(plan.channels.begin(), plan.channels.end(),
+                [&](const auto& channel) { return channel.source == Q && channel.cell == 1; });
+            require(yReturn != plan.channels.end(), "negative needs a private Y return");
+            eraseChannel(broader, *yReturn);
+            const auto& graph = *p.observed;
+            o::Cut xWrite = o::NoAnalysisId, yWrite = xWrite;
+            for (o::Cut cut = 0; cut < graph.sites.size(); ++cut) {
+                if (graph.sites[cut].operation == 0) xWrite = o::canonicalCommandCut(p, cut);
+                if (graph.sites[cut].operation == 1) yWrite = o::canonicalCommandCut(p, cut);
+            }
+            auto& word = broader[xWrite];
+            const auto wait = std::find_if(word.begin(), word.end(), [&](const auto& command) {
+                return command.kind == o::Command::Acquire && command.source == Q &&
+                    command.observer == P && command.key == returned->key;
+            });
+            require(wait != word.end(), "deadline-negative X wait missing");
+            broader[yWrite].push_back(*wait); word.erase(wait);
+            require(o::checkCausalFrontier(p, broader).accepted, "deadline mutation should remain safe");
+            oahs_oracle::PayloadOrder before, after;
+            const std::vector<unsigned> trace{1,0,2,3,4,5,1,0,2,3,4,5};
+            require(readerTraceOrder(p, plan.commands, trace, before) &&
+                    readerTraceOrder(p, broader, trace, after), "deadline mutation broke protocol");
+            require(!before.count({9,12}) && after.count({9,12}) &&
+                    std::includes(after.begin(), after.end(), before.begin(), before.end()),
+                    "deadline-negative failed to expose later-X -> earlier-Y ordering");
+            std::cout << "shared-return deadline-negative added=" << after.size() - before.size() << '\n';
+            continue;
+        }
+        require(returned != plan.channels.end() && returned->cells == std::vector<unsigned>({0,1}),
+                "shared return lost physical support identities");
+        oahs_oracle::PayloadOrder supportOrder;
+        require(readerTraceOrder(p, plan.commands, {0,1,2,3,4,5,0,1,2,3,4,5}, supportOrder) &&
+                supportOrder.count({7,14}) && supportOrder.count({3,14}),
+                "actual X return did not cover Y reader and old writer at Y overwrite");
+        // Isolate event rearming from memory hazards: move the Y readiness
+        // consumption behind X's publication, then erase ONLY payload effects.
+        // Tokens still match, but the return no longer carries that consumption.
+        auto noCredit = plan.commands;
+        const auto yReady = std::find_if(plan.channels.begin(), plan.channels.end(),
+            [&](const auto& channel) { return channel.source == P && channel.cell == 1; });
+        require(yReady != plan.channels.end() && yReady->acquisitions.size() == 1, "Y readiness missing");
+        auto& readyWord = noCredit[yReady->acquisitions.front()];
+        const auto wait = std::find_if(readyWord.begin(), readyWord.end(), [&](const auto& command) {
+            return command.kind == o::Command::Acquire && command.source == P &&
+                command.observer == Q && command.key == yReady->key;
+        });
+        require(wait != readyWord.end(), "Y readiness acquisition missing");
+        const auto late = *wait; readyWord.erase(wait);
+        for (auto cut : returned->publications) if (cut != o::canonicalCommandCut(p, p.observed->entry))
+            noCredit[cut].push_back(late);
+        auto effectsErased = p;
+        for (auto& operation : effectsErased.operations) operation.accesses.clear();
+        oahs_oracle::Verdict eventVerdict;
+        require(!readerTraceOrder(effectsErased, noCredit, {0,1,2,3,4,5,0,1,2,3,4,5},
+                                 supportOrder, &eventVerdict) &&
+                eventVerdict.hazards && eventVerdict.balanced && eventVerdict.acyclic && !eventVerdict.rearm,
+                "missing Y readiness-consumption evidence was not isolated");
+        require(!o::checkCausalFrontier(effectsErased, noCredit).accepted,
+                "staged checker inferred untransferred consumption credit");
+        // Capacity is decided after composition: two distinct readiness keys
+        // but only one reverse key must suffice, including repeated entries.
+        auto tight = p;
+        tight.target.keys[unsigned(P)][unsigned(Q)] = {0,1};
+        tight.target.keys[unsigned(Q)][unsigned(P)] = {0};
+        const auto fits = o::constructSelectedPlan(tight, {}, composed);
+        const auto fails = o::constructSelectedPlan(tight, {}, separate);
+        require(fits.success && fits.channels.size() == 3 && fits.work.rejectedResourceProposals == 0 &&
+                fails.work.rejectedResourceProposals == 1, "shared interface allocated private returns first");
+        // Erasing either readiness or the supporting return must fail. Empty
+        // children above also exercise old-writer WAW without a payload reader.
+        for (const auto& channel : plan.channels) {
+            auto broken = plan.commands;
+            for (auto& word : broken) word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+                return (command.kind == o::Command::Publish || command.kind == o::Command::Acquire) &&
+                    command.source == channel.source && command.observer == channel.observer && command.key == channel.key;
+            }), word.end());
+            require(!o::checkCausalFrontier(p, broken).accepted, "missing composed support was credited");
+            oahs_oracle::PayloadOrder order;
+            require(!readerTraceOrder(p, broken, {0,1,2,3,4,5,0,1,2,3,4,5}, order),
+                    "independent oracle accepted missing shared-return support");
+        }
+    }
+    // Qualification boundaries: a later Y reader, actual reload, independent
+    // reader engine, or possibly skipped child cannot borrow the X interface.
+    for (unsigned boundary = 0; boundary != 4; ++boundary) {
+        auto input = multiReaderInput(boundary == 0);
+        if (boundary == 1) {
+            input.operations.push_back(op(P, {{0,false,true}}));
+            auto& sequence = input.body.children.front().children;
+            sequence.insert(sequence.begin() + 4, leaf(input.operations.size() - 1));
+        }
+        if (boundary == 2) input.operations[4].pipe = o::Pipe::M;
+        auto p = readerRegionProgram(input);
+        if (boundary == 3) for (auto& loop : p.observed->loops)
+            if (std::any_of(loop.sites.begin(), loop.sites.end(),
+                    [&](auto site) { return p.observed->sites[site].operation == 3; })) loop.atLeastOnce = false;
+        const auto result = o::constructSelectedPlan(p, {}, composed);
+        require(result.success && result.work.sharedReaderReturns == 0,
+                "unqualified lifetime borrowed a return: " + std::to_string(boundary) + " " + result.reason);
+    }
+    // Ordinary construction adds real outward publications before, between,
+    // and after the reader frontiers. Compare ALL payloads, including R's
+    // receipt, so equal ordering inside the P/Q child is not enough to pass.
+    for (unsigned position : {2u, 4u, 5u}) {
+        auto input = multiReaderInput(false);
+        input.cells.push_back(base(3).cells[2]);
+        input.operations.push_back(op(Q, {{2,false,true}}));
+        input.operations.push_back(op(o::Pipe::MTE3, {{2,true,false}}));
+        auto& sequence = input.body.children.front().children;
+        sequence.insert(sequence.begin() + position, {leaf(6), leaf(7)});
+        const auto p = readerRegionProgram(input);
+        const auto before = o::constructSelectedPlan(p, {}, separate);
+        const auto after = o::constructSelectedPlan(p, {}, composed);
+        require(before.success && after.success && after.work.sharedReaderReturns == 1,
+                "outward-publication case did not exercise sharing: " + before.reason + after.reason);
+        require(std::any_of(after.ledger.begin(), after.ledger.end(), [](const auto& endpoint) {
+            return endpoint.command.kind == o::Command::Publish && endpoint.command.observer == o::Pipe::MTE3;
+        }), "outward publication missing from complete comparison");
+        std::vector<unsigned> trace;
+        for (unsigned generation = 0; generation != 3; ++generation) {
+            for (unsigned i = 0; i != 6; ++i) {
+                if (i == position) trace.insert(trace.end(), {6,7});
+                trace.push_back(i);
+            }
+        }
+        oahs_oracle::PayloadOrder a, b;
+        require(readerTraceOrder(p, before.commands, trace, a) && readerTraceOrder(p, after.commands, trace, b) && a == b,
+                "sharing changed outward payload ordering or key legality");
+        ++paths;
+    }
+    // Cell enumeration must not affect support ownership. This order first
+    // composes cell 0 into 1, then carries both into the surviving cell 2
+    // return; no readiness or supported-cell identity may disappear.
+    auto chain = base(3, 6);
+    chain.operations = {op(P, {{2,false,true}}), op(P, {{1,false,true}}), op(P, {{0,false,true}}),
+                        op(Q, {{2,true,false}}), op(Q, {{1,true,false}}), op(Q, {{0,true,false}}),
+                        op(Q, {{1,true,false}}), op(Q, {{2,true,false}}), op(Q, {})};
+    std::vector<o::Region> sequence{leaf(0),leaf(1),leaf(2)};
+    for (unsigned i = 3; i != 8; ++i) sequence.push_back({o::Region::For, {seq({leaf(i)})}, 0, true});
+    sequence.push_back(leaf(8));
+    chain.body = {o::Region::For, {{o::Region::Sequence, sequence}}, 0, true};
+    const auto p = readerRegionProgram(chain);
+    const auto privateChain = o::constructSelectedPlan(p, {}, separate);
+    const auto sharedChain = o::constructSelectedPlan(p, {}, composed);
+    require(privateChain.success && sharedChain.success && privateChain.channels.size() == 6 &&
+            sharedChain.channels.size() == 4 && sharedChain.work.sharedReaderReturns == 2,
+            "chained required-return support lost its surviving owner");
+    const auto survivor = std::find_if(sharedChain.channels.begin(), sharedChain.channels.end(),
+        [&](const auto& channel) { return channel.source == Q; });
+    require(survivor != sharedChain.channels.end() && survivor->cells == std::vector<unsigned>({0,1,2}),
+            "chained support did not retain all physical identities");
+    oahs_oracle::PayloadOrder a, b;
+    const std::vector<unsigned> trace{0,1,2,3,4,5,6,7,8,0,1,2,3,4,5,6,7,8};
+    require(readerTraceOrder(p, privateChain.commands, trace, a) &&
+            readerTraceOrder(p, sharedChain.commands, trace, b) && a == b,
+            "chained return changed complete ordering or event legality");
+    ++paths;
+    std::cout << "shared-return equal-order paths=" << paths << '\n';
 }
 
 void independentBankEpisodes()
@@ -1387,6 +1616,7 @@ int main()
     lastReaderWithinChild();
     retainedReaderRegions();
     retainedProducerCohort();
+    sharedReaderReturns();
     for (unsigned slots = 1; slots <= 4; ++slots) {
         checkSlots(slots);
     }

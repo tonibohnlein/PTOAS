@@ -837,6 +837,10 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
                  << " binding_probes=" << work.bindingProbes
                  << " binding_choices=" << work.bindingChoices
                  << " recurring=" << work.recurringChannels
+                 << " share_reader_returns=" << options.shareReaderReturns
+                 << " shared_returns=" << work.sharedReaderReturns
+                 << " return_sharing_queries=" << work.returnSharingQueries
+                 << " return_sharing_sites=" << work.returnSharingSiteVisits
                  << " recurring_trials=" << work.recurringTrials
                  << " recurring_removed=" << work.redundantRecurringChannels
                  << " recurring_analysis_sites=" << work.recurringAnalysisSites
@@ -1062,6 +1066,7 @@ int main(int argc, char **argv) {
       if (flag == "--no-recurring-trials") options.recurringOmissionTrials = false;
       else if (flag == "--no-helper-trials") options.finalHelperTrials = false;
       else if (flag == "--no-frontier-motion") options.movingFrontiers = false;
+      else if (flag == "--no-reader-return-sharing") options.shareReaderReturns = false;
       else if (flag == "--source-gaps") options.sourceGaps = true;
       else if (flag == "--defer-acyclic-acks") options.deferredAcyclicAcknowledgments = true;
       else if (flag == "--class-invariant-inputs") options.classInvariantInputs = true;

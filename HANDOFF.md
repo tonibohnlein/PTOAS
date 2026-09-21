@@ -7,10 +7,89 @@ Updated: 2026-09-21
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: native static FIFO slots and separate relay receipt deadlines
+- Current milestone: required-return sharing before private reverse allocation
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Local milestone: composed required returns (2026-09-21)
+
+[Required-return sharing](docs/designs/oahs-required-return-sharing.md) is now
+implemented on `21f95f9b7`. A closed reader-region cohort can use X's required
+return for Y when that existing receipt precedes Y's overwrite. Separate
+readiness and X's endpoint positions remain intact; selection precedes key
+allocation, and the exact staged protocol must prove completion and rearming.
+The global producer-support safeguard remains in force. No deletion search is
+added. `--no-reader-return-sharing` is a diagnostic ablation, not a pass mode.
+
+Twenty independent finite comparisons preserve full payload-order sets. The
+reversed-deadline mutation is safe but adds four relations and is declined by
+selection. Missing readiness-consumption credit is rejected even after erasing
+payload effects. Empty/varying children, repeated entries, reloads, independent
+readers, outward publications and chained support are covered.
+
+All 23 portable suites, the final focused cyclic suite, both native executables,
+and the new native FileCheck/order regression pass. Seven native variant pairs
+pass. The positive witness keeps all 602 payload relations while reducing
+executed pairs 10→7 and reserved channels 4→3. Replay remains 324 evaluations;
+one structural sharing query visits 63 sites.
+
+The 176-run paired corpus passes: all 88 plans remain byte-identical to the
+frozen `21f95f9b7` executable. Its aggregate replay and trial counts are unchanged,
+and no input reaches a sharing propagation. Artifacts and exact commands:
+`../return-sharing-work/`. No new corpus device campaign or speedup is claimed.
+The already-running device work stays on its pinned source snapshot.
+
+Next: obtain a real retained-input/preload case admitted by this support rule,
+or use the pending KDA packet to identify a concrete missing qualification.
+Joint first/last observation work remains parked as requested. General moving-
+frontier certification and scoped producer support are still open.
+
+## Active diagnosis: GLM KDA projection
+
+The [initial KDA attribution](docs/designs/oahs-kda-projection-diagnosis.md)
+verifies matched prepared-input hashes and localizes changed binaries to the
+main AIC/AIV pair; pad/zero binaries match. Saved spans place nearly all extra
+~80us in the scheduler dispatch/execution window, not the orchestrator phase.
+Actual orchestration sources have different hashes and must be inspected.
+The local report bundle lacks prepared plans/source, so compiler attribution
+requires the [small remote artifact packet](test/benchmarks/kda_projection/DEVICE_TASK.md).
+The request exports preserved files without rebuilding; a short rotated timing
+confirmation is separate. No compiler change is justified yet. Raw local
+analysis is under `../kda-projection-work/`.
+
+## Wide device sweep received
+
+Audited the report-only `oahs-full-20260921-report.tar.gz`; see
+[findings and evidence boundaries](docs/designs/oahs-full-sweep-20260921-review.md).
+Frozen compiler `2cc458cbe`: 48 original-entry and 77 isolated configurations
+(54 normalized kernel groups). All 164 manifest hashes and 250 arm summaries
+recomputed from 25,000 raw samples agree. The strongest new lead is GLM KDA
+projection, 237.389 -> 316.950 us, followed by decode compressor ratio4 and
+DeepSeek RMSNorm. Attribution needs the prepared/kernel artifacts from the
+separate full archive. Several dramatic isolated differences have identical
+binaries and cannot be compiler effects.
+
+Qwen's authentic two-layer coupled prefill passes both arms at seeds7/23. Its
+runtime may support the pending FIFO task after exact input/contract matching;
+this older measurement does not validate `21f95f9b7`. The latest TODO prioritizes
+these concrete misses and classifying 23 handoff-codegen diagnostic records.
+No new compiler changes or device runs were made during the report audit.
+
+## Review reconciliation after the FIFO commit
+
+The reviews through `d1bf07ee5` are reconciled against `21f95f9b7` in the
+[top-priority TODO section](docs/designs/oahs-todo.md#review-reconciliation-at-21f95f9b7-2026-09-21).
+Source inspection confirms the remaining joint first/last observation, global
+producer-support and fixed guarded word-order limits. The newer FIFO and
+reused-key gap implementation supersedes the reviews' corresponding absences.
+A read-only prepared-input scan finds attention shape updates in AIV only;
+LM head updates its real accumulator. There is no demonstrated unrelated-
+descriptor ACC opportunity in those examples. Next local priorities are a
+missed-opportunity diagnosis and the documented required-return-sharing witness;
+joint first/last implementation remains parked for the pending device work.
+This reconciliation changes documentation only; the device candidate stays
+`21f95f9b7`, and no new native or timing claim is made.
 
 ## Current local continuation: source gaps, attention and grouping
 

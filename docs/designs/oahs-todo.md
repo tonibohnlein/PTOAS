@@ -6,6 +6,119 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
+## Completed local milestone: required-return sharing
+
+[Required-return sharing](oahs-required-return-sharing.md) selects a composed
+reader-region return before private-key allocation, with separate readiness
+and unchanged supporting endpoints. Actual staged words prove producer support,
+matching and rearming. The reversed-deadline case declines rather than moving
+a wait. Twenty finite comparisons, seven paired native variants, all portable
+and native suites pass. Native witness: equal 602 relations, pairs 10→7, reverse
+keys 2→1. All 88 paired corpus plans remain unchanged from `21f95f9b7`.
+
+Next applicability work needs a real retained-input/preload witness or a
+specific refusal in the KDA source packet. Do not schedule another broad device
+campaign for unchanged plans. Global producer support, multi-occurrence return
+frontiers and ambiguous shared observations remain conservative boundaries.
+
+## Device follow-up: KDA projection attribution
+
+[Initial diagnosis](oahs-kda-projection-diagnosis.md): identical prepared inputs;
+only main AIC/AIV binaries differ, pad/zero binaries match. Scheduler window
+202.880 ->281.390us accounts for almost all whole-entry increase. This is not
+per-pipe or per-task attribution. Orchestration hashes differ and semantic
+comparison remains required. Await the small measured-case source packet in
+[the remote task](../../test/benchmarks/kda_projection/DEVICE_TASK.md); then
+reconstruct current output and identify exact extra physical dependencies.
+Do not choose a fix from the timing ratio alone or substitute a different kernel.
+
+## Device sweep triage: new workload evidence (2026-09-21)
+
+The [audited full-sweep report](oahs-full-sweep-20260921-review.md) takes priority
+for choosing the next real native diagnostic. It measures frozen `2cc458cbe`,
+not the latest FIFO commit. All report hashes and 250 raw-sample summaries match.
+Prioritize GLM KDA projection (237.389 -> 316.950 us), then DeepSeek decode
+compressor ratio4 and RMSNorm. Obtain prepared plans and per-kernel mapping from
+the device's full archive before attributing the extra runtime to a mechanism.
+The local download contains results/manifests, not those code artifacts.
+
+Authentic two-layer Qwen prefill now passes both arms/seeds; reuse its coupled
+runtime for the pending attention task after exact fixture/ABI/queue matching.
+Keep frozen device candidates unchanged. Do not infer attention48/49 timings
+from the unrelated `qkpv_plan` rows28–31. Small isolated measurements include
+large identical-binary artifacts; request short controlled follow-ups, not
+another broad sweep. Classify the 23 handoff-codegen blocker records using full
+stderr and prepared inputs separately from performance work.
+
+## Review reconciliation at `21f95f9b7` (2026-09-21)
+
+This section takes priority over older implementation-order recommendations
+below. The two reviews inspected only through `d1bf07ee5`; their finite-model
+results are proposals, not current native or device measurements.
+
+**Already addressed:** exact proposal checking/commit ordering, unnecessary
+legacy-prefix work and the conditional deferred-ack admission gap. The newer
+`21f95f9b7` additionally supports checked reused-key word-start gaps (opt-in),
+static FIFO cursor identity and separate relay deadlines (ordinary handoff).
+The attention diagnosis now has changed native plans; do not repeat the older
+claim that all current corpus plans are unchanged. Coupled device validation
+of the two changed single-block AIC variants remains pending. Generic interior
+source gaps, arbitrary slot recurrences and contextual frontier-motion proof
+are not solved by that commit.
+
+### Next local work, guided by an actual missed opportunity
+
+1. **Opportunity diagnosis before broadening admission.** Use existing cell-use,
+   owner/observation, source and decision views to report the physical generation,
+   first/last frontier, next conflicting use and exact refusal. Distinguish no
+   opportunity, observation/occurrence limit, missing support, unavailable key
+   certificate and already-acquired completion. Start with retained-input test
+   cases and available retained-A/preload references; do not add a second causal
+   analysis or claim a native benefit from a model-only example.
+2. **Required-return sharing: bounded implementation complete.** See the
+   [implementation and evidence](oahs-required-return-sharing.md). The existing
+   positive now selects sharing, while reversed deadlines retain private
+   returns. Completion, readiness consumption, outward effects and real reuse
+   are checked. Broaden only for a concrete missed lifetime; no subset-deletion
+   search or relaxation of the producer-support safeguard.
+3. **Joint first/last observations: design now, implementation after the pending
+   last-reader device work as previously requested.** Collect endpoint roles per
+   original owner before refinement. Start with straight nonempty unit-step
+   children, preserving single/first/interior/last cases, including a one-trip
+   visit that is both first and last. Preserve early producer publication,
+   independent reader prefix/suffix and actual rearming. Check repeated entry,
+   reload and later-reader negatives; compare with both individual controls.
+   Exact word-gap support must survive composition rather than append a release
+   behind an unrelated wait.
+4. **Support-driven endpoint words and certified grouping.** Fixed guarded
+   publication-first ordering remains conservative: a valid request-order
+   proposal can be declined after canonicalization. Derive same-engine receipt
+   prerequisites and early-release constraints for a bounded new endpoint batch;
+   preserve authored/committed order and validate the exact deterministic word.
+   Never infer a hardware edge from traversal order on different engines.
+   Tie motion certificates to outward publications, consumption and neighboring
+   key uses; invalidate on edits. Keep this distinct from mandatory safety checks.
+5. **Lowering precision, witness first.** Descriptor-scoped ACC qualification,
+   address-dependent recurrence slices and qualified existing drain credit remain
+   open. A read-only scan of the available MAT-campaign prepared inputs found
+   attention `set_validshape` only in AIV functions (rows44–49); these cannot
+   trigger the function-local ACC veto in their separate AIC companions.
+   `gemm_eltwise__0` likewise updates only AIV. LM head row6 updates the actual
+   ACC `%6` before output, so it is not an unrelated-descriptor positive example.
+   This scan does not establish reaching descriptor state or cover every corpus.
+   Find a concrete cube qualification miss before prioritizing an ACC change.
+   Static FIFO slots do not fix the general `SyncSlotMapping::derive()` loop-wide
+   recurrence/LCM restriction. Keep independent address slices separate from
+   event capacity; do not merely increase the period cap.
+6. **Scoped producer support/resource ownership, later.** Function-wide written
+   cells can reject unrelated prelude work, but retain `repairFreeProducers`
+   until a support-interval certificate covers every repair that could move.
+   Preserve the X/Y fence-relocation negative and actual event lifecycle state.
+
+No new code, linked tests or device results are claimed by this review
+reconciliation. Do not substitute local follow-ups into the dispatched device
+candidate. Equal-coverage tuning stays behind a positive selection witness.
+
 ## Active continuation after `d1bf07ee5`
 
 1. **Wait for the device agent** before extending the last-reader experiment.

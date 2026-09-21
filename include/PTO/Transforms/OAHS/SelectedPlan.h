@@ -138,6 +138,8 @@ struct SelectedWork {
     std::size_t sourceHandles = 0, acknowledgments = 0, commonCutTransfers = 0;
     std::size_t recurringChannels = 0;
     std::size_t recurringTrials = 0, redundantRecurringChannels = 0;
+    std::size_t sharedReaderReturns = 0, returnSharingQueries = 0;
+    uint64_t returnSharingSiteVisits = 0;
     uint64_t recurringAnalysisSites = 0;
     // Qualification runs once in this constructor. Native admission queries
     // are outside this timer, as is selected replay. Final helper trials are
@@ -185,6 +187,8 @@ struct SelectedOptions {
     bool recurringOmissionTrials = true;
     bool finalHelperTrials = true;
     bool movingFrontiers = true;
+    // Diagnostic ablation; ordinary construction composes certified returns.
+    bool shareReaderReturns = true;
     bool sourceGaps = false;
     bool deferredAcyclicAcknowledgments = false;
     bool classInvariantInputs = false;
