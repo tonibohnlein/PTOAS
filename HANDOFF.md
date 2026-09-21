@@ -12,6 +12,29 @@ Updated: 2026-09-21
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
 
+## Rebase compatibility repair (2026-09-21)
+
+The rebase at `9f2063c22` completed and contains `origin/main` at
+`6d744afb5`. Native compilation exposed obsolete PTO `IntToPtrOp` and
+`PtrToIntOp` references in `SyncOriginClosure.h`. Upstream now represents
+both directions with `CastPtrOp`; qualifying the names with `mlir::LLVM`
+would target different operations and is not the repair. Origin closure now
+follows pointer–integer–pointer `castptr` round trips to the original pointer,
+matching the shared translator. A native regression requires both entry and
+backedge storage roots to survive a round trip of a loop-carried pointer.
+
+Validation: rebuilt all 21 OAHS/InsertSync objects and linked both native test
+executables against a dedicated current-source sync archive and rebuilt
+PTOIR/PTOAnalysis libraries. Both suites exit 0, including the new regression.
+This is focused native sync validation, not a completed full backend build.
+Evidence: `../kda-first-write-work/rebase-{native,selected}-test.log`.
+
+The unfinished first-write experiment is parked, not included in this repair:
+`../kda-first-write-work/parked-first-write/` contains tracked/untracked file
+manifests and saved contents. Resume it on this rebased branch after delivering
+the compatibility fix; do not import the other branch's mixed-producer change
+or global correspondence guard.
+
 ## Relay binding before ranking (2026-09-21)
 
 Committed the preceding relay correction and campaign audit as `91fc0e728`.

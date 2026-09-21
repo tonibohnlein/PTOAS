@@ -511,6 +511,47 @@ module attributes {pto.target_arch = "a3"} {
   });
 }
 
+// A castptr round trip of a carried pointer must retain both the entry and
+// backedge origins. Merely copying the translator's initial root loses B.
+static void testCarriedPointerRoundTrip(MLIRContext &context) {
+  auto module = parseSourceString<ModuleOp>(R"mlir(
+module {
+  func.func @origins(%a: !pto.ptr<f32>, %b: !pto.ptr<f32>, %n: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %last = scf.for %i = %zero to %n step %one
+        iter_args(%slot = %a) -> (!pto.ptr<f32>) {
+      %addr = pto.castptr %slot : !pto.ptr<f32> -> i64
+      %roundtrip = pto.castptr %addr : i64 -> !pto.ptr<ui32>
+      scf.yield %b : !pto.ptr<f32>
+    }
+    return
+  }
+})mlir", &context);
+  require(bool(module));
+  auto function = module->lookupSymbol<func::FuncOp>("origins");
+  Buffer2MemInfoMap buffers;
+  for (unsigned i = 0; i < 2; ++i) {
+    Value root = function.getArgument(i);
+    buffers[root].push_back(std::make_unique<BaseMemInfo>(
+        root, root, AddressSpace::GM, SmallVector<uint64_t>{0}, 128));
+  }
+  SyncIRs phases;
+  require(succeeded(closeStructuredSyncOrigins(function, phases, buffers)));
+  Value roundtrip;
+  function.walk([&](CastPtrOp op) {
+    if (isa<PtrType>(op.getResult().getType())) roundtrip = op.getResult();
+  });
+  require(roundtrip && buffers[roundtrip].size() == 2);
+  bool entry = false, backedge = false;
+  for (const auto &info : buffers[roundtrip]) {
+    entry |= info->rootBuffer == function.getArgument(0);
+    backedge |= info->rootBuffer == function.getArgument(1);
+    require(!info->aliasesUnknownRange && info->allocateSize == 128);
+  }
+  require(entry && backedge);
+}
+
 int main(int argc, char **argv) {
   DialectRegistry registry;
   MLIRContext context(registry);
@@ -569,6 +610,7 @@ int main(int argc, char **argv) {
     llvm::errs() << "usage: pto-oahs-native-test [--analyze INPUT]\n";
     return 2;
   }
+  testCarriedPointerRoundTrip(context);
   testSharedSemantics(context);
   testPreservedProtocols(context);
   testPreservedCollectives(context);

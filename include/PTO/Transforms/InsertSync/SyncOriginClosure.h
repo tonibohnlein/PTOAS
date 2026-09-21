@@ -126,7 +126,15 @@ inline LogicalResult closeStructuredSyncOrigins(
     } else if (auto view = dyn_cast<AddPtrOp>(op)) {
       edge(view.getResult(), view.getPtr());
     } else if (auto view = dyn_cast<CastPtrOp>(op)) {
-      edge(view.getResult(), view.getInput());
+      // The generic scalar surface expresses pointer/integer round trips
+      // with castptr in both directions. Match the shared translator contract.
+      auto roundTrip = view.getInput().getDefiningOp<CastPtrOp>();
+      if (isa<PtrType>(view.getResult().getType()) && roundTrip &&
+          isa<IntegerType>(roundTrip.getResult().getType()) &&
+          isa<PtrType>(roundTrip.getInput().getType()))
+        edge(view.getResult(), roundTrip.getInput());
+      else
+        edge(view.getResult(), view.getInput());
     } else if (auto view = dyn_cast<TReshapeOp>(op)) {
       edge(view.getResult(), view.getSrc());
     } else if (auto view = dyn_cast<BitcastOp>(op)) {
@@ -136,9 +144,6 @@ inline LogicalResult closeStructuredSyncOrigins(
     } else if (auto select = dyn_cast<arith::SelectOp>(op)) {
       edge(select.getResult(), select.getTrueValue());
       edge(select.getResult(), select.getFalseValue());
-    } else if (auto cast = dyn_cast<IntToPtrOp>(op)) {
-      if (auto roundTrip = cast.getAddr().getDefiningOp<PtrToIntOp>())
-        edge(cast.getResult(), roundTrip.getPtr());
     }
   });
   // Mark the entire forward slice of loop-carried handles before origin work.
