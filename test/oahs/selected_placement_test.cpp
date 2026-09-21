@@ -194,6 +194,38 @@ void deferredAcknowledgment() {
     plan = o::constructSelectedPlan(p,{},after);
     require(plan.success, "real later reuse lost its repair: " + plan.reason);
     require(bool(oahs_oracle::graph(p,plan.commands,{0,1,2,3,4,5})), "real reuse lacks consumption evidence");
+
+    // The common consumption is exactly once, but a later publication inside
+    // a branch is outside F7's straight-corridor repair vocabulary.
+    p.body = seq({leaf(0), {o::Region::Choice,{leaf(1),seq({})}}, leaf(2),leaf(3),
+                  {o::Region::Choice,{seq({leaf(4),leaf(5)}),seq({})}}});
+    baseline = o::constructSelectedPlan(p,{},before);
+    plan = o::constructSelectedPlan(p,{},after);
+    require(baseline.success, "closed conditional-reuse baseline failed: " + baseline.reason);
+    require(plan.success, "conditional future key reuse lost its repair: " + plan.reason);
+    require(plan.work.deferredAcknowledgments == 0 &&
+            plan.work.acknowledgments == baseline.work.acknowledgments,
+            "unsupported conditional repair must retain the closed policy");
+    require(o::checkCausalFrontier(p,plan.commands).accepted, "conditional-reuse cold check failed");
+    for (auto visits : {std::vector<unsigned>{0,1,2,3,4,5}, std::vector<unsigned>{0,2,3,4,5},
+                        std::vector<unsigned>{0,1,2,3}, std::vector<unsigned>{0,2,3}}) {
+        require(bool(oahs_oracle::graph(p,baseline.commands,visits)), "closed conditional-reuse oracle failed");
+        require(bool(oahs_oracle::graph(p,plan.commands,visits)), "conditional reuse lacks real rearming");
+    }
+    auto broken = plan.commands;
+    for (auto& word : broken) word.erase(std::remove_if(word.begin(),word.end(),[&](const auto& command) {
+        return (command.kind == o::Command::Publish || command.kind == o::Command::Acquire) &&
+               command.source == Q && command.observer == P;
+    }),word.end());
+    require(!o::checkCausalFrontier(p,broken).accepted &&
+            !bool(oahs_oracle::graph(p,broken,{0,1,2,3,4,5})),
+            "conditional reuse must reject missing consumption support");
+    after.finalHelperTrials = true;
+    plan = o::constructSelectedPlan(p,{},after);
+    require(plan.success, "conditional-reuse final helper trials failed: " + plan.reason);
+    for (auto visits : {std::vector<unsigned>{0,1,2,3,4,5}, std::vector<unsigned>{0,2,3,4,5},
+                        std::vector<unsigned>{0,1,2,3}, std::vector<unsigned>{0,2,3}})
+        require(bool(oahs_oracle::graph(p,plan.commands,visits)), "helper pruning lost conditional rearming");
 }
 void wordGapBaseline() {
     auto p = base(3, 4);

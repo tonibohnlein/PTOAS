@@ -666,6 +666,16 @@ Completed entry-protocol keys can be reused only with actual consumption credit
 and the full protocol check, never merely because a lexical region ended.
 See [qualification, measurements and limits](oahs-first-consumer-placement.md).
 
+## Last-reader release within a child
+
+A straight, nonempty reader child can expose a final-visit post-read source
+before unrelated trailing work. Native qualification supplies an original
+`LoopHasNext` observation; nearest physical-use roles and balanced participation
+select the earlier source for the existing complete reader-region cycle.
+The child exit remains its lifecycle boundary. Actual readiness/return commands
+still establish completion and rearming under staged and final validation.
+See [scope, ordering checks and cost](oahs-last-reader-placement.md).
+
 
 ## Placement-oriented experimental views (working tree after 8afb)
 

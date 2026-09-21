@@ -211,6 +211,12 @@ bool Constructor::needsCommonAcknowledgment(const State& afterForward, Id key) c
     if (options.deferredAcyclicAcknowledgments &&
         std::none_of(control.components.begin(), control.components.end(),
                      [](const auto& component) { return component.cyclic; }) &&
+        // Exactly-once consumption does not establish that F7 can repair a
+        // future key use. Its acknowledgment placer needs a straight corridor
+        // from this consumption to the next publication. Until conditional
+        // repair is qualified, retain the closed exchange before any branch.
+        // This is a shared original-control fact, not future consumption credit.
+        control.straight(current, control.graph.exit) &&
         control.wordOccurrences[control.canonicalCut[current]].size() == 1 &&
         control.lookahead.balancedTransfer({control.graph.entry}, current,
                                           control.graph.entry, control.graph.exit)) {

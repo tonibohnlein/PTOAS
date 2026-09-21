@@ -9,6 +9,7 @@
 #include "ObservationUnion.h"
 #include "NativeFirstUse.h"
 #include "NativeFirstConsumer.h"
+#include "NativeLastReader.h"
 #include "NativeFifoSlots.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
@@ -406,6 +407,7 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
   }
   native_detail::importFirstConsumers(out.program, loops, ids, out.loopOwners, out.observationNotes,
       policy == ObservationPolicy::ClassInvariantInputs);
+  native_detail::importLastReaders(out.program, loops, ids, out.loopOwners, out.observationNotes);
   native_detail::importFirstUse(function, out.program, ids, out.observationNotes);
   if (out.loopOwners.empty())
     native_detail::importFifoSlots(function, out.program, out.payload, out.observationNotes);

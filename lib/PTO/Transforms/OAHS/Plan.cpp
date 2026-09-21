@@ -960,4 +960,5 @@ std::vector<Cut> StorageFrontierAnalysis::corridor(std::size_t s, Pipe pipe,
 #include "ObservedFrontend.h"
 #include "BankOccurrenceFrontend.h"
 #include "FirstUseFrontend.h"
+#include "LastVisitFrontend.h"
 #include "FifoSlotFrontend.h"
