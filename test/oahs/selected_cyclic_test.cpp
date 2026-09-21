@@ -658,6 +658,142 @@ void readerRegionCycles()
     }), "regenerated reader input admitted as invariant");
 }
 
+// Final original visits expose the physical release before trailing Q work.
+void lastReaderWithinChild()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
+    auto input = base(2, 6);
+    input.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}}),
+                        op(Q, {{1, true, false}})};
+    input.body = {o::Region::For, {seq({leaf(0),
+        {o::Region::For, {seq({leaf(1), leaf(2)})}, 0, true}})}, 0, true};
+    auto original = readerRegionProgram(input);
+    const auto child = std::find_if(original.observed->loops.begin(), original.observed->loops.end(),
+        [&](const auto& loop) {
+            return std::none_of(loop.sites.begin(),loop.sites.end(),[&](auto site) {
+                return original.observed->sites[site].operation == 0;
+            });
+        });
+    require(child != original.observed->loops.end(), "last-reader child missing");
+    const auto owner = child->owner;
+    const auto read = *std::find_if(child->sites.begin(),child->sites.end(),[&](auto site) {
+        return original.observed->sites[site].operation == 1;
+    });
+    const auto anchor = original.observed->sites[read].successors.front();
+    auto refined = o::refineLastVisit(original, owner, {anchor});
+    require(refined.success, refined.reason);
+    const auto& p = refined.program;
+    auto baseline = accepted(original), plan = accepted(p);
+    require(plan.channels.size() == 2, "last-reader cycle not selected");
+    require(std::any_of(plan.channels.begin(), plan.channels.end(), [&](const auto& channel) {
+        return channel.source == Q && std::any_of(channel.publications.begin(), channel.publications.end(),
+            [&](auto cut) {
+                const auto& word = p.observed->observations[p.observed->sites[cut].observation];
+                return std::any_of(word.atoms.begin(), word.atoms.end(), [&](const auto& a) {
+                    return a.kind == o::ObservationAtom::LoopHasNext && a.owner == owner && a.value == 0;
+                });
+            });
+    }), "release remained at the child exit");
+    auto evaluate = [&](const o::Program& program, const o::Commands& commands,
+                        const std::vector<unsigned>& expected, oahs_oracle::PayloadOrder& order,
+                        const std::vector<std::pair<unsigned,unsigned>>& forbidden) {
+        const auto& g = *program.observed;
+        std::vector<o::Cut> path;
+        std::set<std::pair<o::Cut,unsigned>> active, dead;
+        std::function<bool(o::Cut,unsigned)> walk = [&](o::Cut at, unsigned offset) {
+            const auto key = std::make_pair(at,offset);
+            if (active.count(key) || dead.count(key)) return false;
+            const auto& site = g.sites[at];
+            if (site.operation != o::NoControlId) {
+                if (offset == expected.size() || site.operation != expected[offset]) return false;
+                ++offset;
+            }
+            path.push_back(at);
+            if (at == g.exit && offset == expected.size()) return true;
+            active.insert(key);
+            for (auto next : site.successors) if (walk(next,offset)) return true;
+            active.erase(key); dead.insert(key); path.pop_back(); return false;
+        };
+        require(walk(g.entry,0), "last-reader trace missing");
+        auto flat = program; flat.observed.reset(); flat.body = {}; flat.operations.clear();
+        o::Commands words; std::vector<o::Command> pending;
+        for (auto cut : path) {
+            const auto observation = g.sites[cut].observation;
+            if (observation != o::NoControlId) for (const auto& atom : g.observations[observation].atoms) {
+                if (atom.kind != o::ObservationAtom::LoopHasNext || atom.owner != owner) continue;
+                bool more = false;
+                for (auto i = flat.operations.size(); i < expected.size() && expected[i] != 0; ++i)
+                    more |= expected[i] == 1;
+                require(atom.value == unsigned(more), "final observation differs from original remaining visits");
+            }
+            pending.insert(pending.end(),commands[cut].begin(),commands[cut].end());
+            const auto op = g.sites[cut].operation;
+            if (op == o::NoControlId) continue;
+            flat.operations.push_back(program.operations[op]);
+            words.push_back(std::move(pending)); pending.clear();
+        }
+        words.push_back(std::move(pending));
+        std::vector<unsigned> visits(flat.operations.size()); std::iota(visits.begin(),visits.end(),0);
+        return bool(oahs_oracle::graph(flat,words,visits,forbidden,nullptr,nullptr,&order));
+    };
+    unsigned removed = 0, paths = 0;
+    for (auto lengths : std::vector<std::vector<unsigned>>{{}, {1}, {2}, {4}, {1,3}, {3,1}, {2,4,1}}) {
+        std::vector<unsigned> expected;
+        std::vector<std::pair<unsigned,unsigned>> forbidden;
+        for (auto length : lengths) {
+            if (!expected.empty()) forbidden.emplace_back(expected.size()-1,expected.size());
+            expected.push_back(0);
+            for (unsigned i = 0; i < length; ++i) expected.insert(expected.end(),{1,2});
+        }
+        oahs_oracle::PayloadOrder before, after;
+        require(evaluate(original,baseline.commands,expected,before,{}), "last-reader baseline oracle failed");
+        require(evaluate(p,plan.commands,expected,after,forbidden), "trailing Q work still gates the next P write");
+        require(std::includes(before.begin(),before.end(),after.begin(),after.end()), "last-reader placement added order");
+        removed += before.size()-after.size(); ++paths;
+        if (!forbidden.empty()) {
+            oahs_oracle::PayloadOrder ignored;
+            require(!evaluate(original,baseline.commands,expected,ignored,forbidden), "baseline lacks the discriminating edge");
+        }
+    }
+    require(removed != 0, "last-reader placement removed no ordering");
+    for (const auto& channel : plan.channels) {
+        auto broken = plan.commands;
+        for (auto& word : broken) word.erase(std::remove_if(word.begin(),word.end(),[&](const auto& command) {
+            return (command.kind == o::Command::Publish || command.kind == o::Command::Acquire) &&
+                command.source == channel.source && command.observer == channel.observer && command.key == channel.key;
+        }),word.end());
+        require(!o::checkCausalFrontier(p,broken).accepted, "last-reader cycle inferred missing support");
+        oahs_oracle::PayloadOrder ignored;
+        require(!evaluate(p,broken,{0,1,2,0,1,2},ignored,{}), "last-reader independent oracle inferred missing support");
+    }
+    auto empty = original;
+    for (auto& loop : empty.observed->loops) if (loop.owner == owner) loop.atLeastOnce = false;
+    require(!o::refineLastVisit(empty,owner,{anchor}).success, "unknown/empty loop admitted as nonempty");
+    require(!o::refineLastVisit(p,owner,{anchor}).success, "last-visit refinement repeated");
+    auto guarded = original;
+    guarded.observed->sites[read].successors.push_back(anchor);
+    require(!o::refineLastVisit(guarded,owner,{anchor}).success, "guarded body admitted as a straight last visit");
+    auto repeated = plan.commands;
+    for (const auto& channel : plan.channels) if (channel.source == Q)
+        for (auto cut : channel.publications) {
+            const auto& observation = p.observed->observations[p.observed->sites[cut].observation];
+            if (observation.atoms.empty()) continue;
+            for (const auto& command : plan.commands[cut])
+                if (command.kind == o::Command::Publish && command.source == Q && command.observer == P)
+                    repeated[anchor].push_back(command);
+        }
+    require(!o::checkCausalFrontier(p,repeated).accepted, "release on every body visit passed the checker");
+    oahs_oracle::PayloadOrder ignored;
+    require(!evaluate(p,repeated,{0,1,2,1,2,0,1,2},ignored,{}), "oracle accepted repeated release");
+    auto laterRead = p; laterRead.operations[2].accesses = {{0,true,false}};
+    const auto fallback = accepted(laterRead);
+    for (const auto& channel : fallback.channels) if (channel.source == Q)
+        for (auto cut : channel.publications)
+            require(p.observed->observations[p.observed->sites[cut].observation].atoms.empty(),
+                    "later physical read ignored by early release");
+    std::cout << "last-reader paths=" << paths << " removed-payload-relations=" << removed << '\n';
+}
+
 // One generation is read by two children, followed by its next overwrite.
 // Region summaries guide endpoints; only the realized cycle grants credit.
 void retainedReaderRegions()
@@ -1248,6 +1384,7 @@ int main()
     guardedReaderEpisode();
     independentBankEpisodes();
     readerRegionCycles();
+    lastReaderWithinChild();
     retainedReaderRegions();
     retainedProducerCohort();
     for (unsigned slots = 1; slots <= 4; ++slots) {

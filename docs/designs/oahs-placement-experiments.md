@@ -88,13 +88,34 @@ none added. The old unrelated reader no longer gates the overwrite.
 ### 4. Deferred acknowledgment — restricted acyclic experiment
 
 `--defer-acyclic-acks` requires acyclic control, a unique command word and an
-exactly-once acquisition. It preserves empty-but-not-known-consumed key state
+exactly-once acquisition with a straight continuation to exit. It preserves empty-but-not-known-consumed key state
 after the forward handoff. Later actual key reuse still invokes ordinary F7.
 The one-key reuse regression checks the necessary consumption path. Optional
 acquisitions and recurring cases retain the closed fallback.
 
 The native conditional witness executes 5 versus 4 pairs; it removes three
 payload dependencies on the false arm and two on the true arm, adding none.
+
+The continuation restriction was added after a linked regression on
+`2cc458cbe1e5aff6f77ffc6fea62b13686f38a94`. With one forward key, an optional
+producer followed by an unconditional consumption and a later conditional
+producer/consumer succeeds under the closed policy, but deferral fails with
+`no reusable key or nonrecursive consumption acknowledgment`. The old
+consumption is exactly once; the later branch is outside F7's straight-corridor
+repair vocabulary.
+
+Admission now uses the existing `Control::straight(current, exit)` index and
+retains the immediate helper before a future branch. This adds a constant-time
+control query, no new analysis state or scan. It deliberately also retains the
+helper when a future branch would not reuse the key. Conditional repair and
+more precise future-use admission remain open; this is not a general resource
+feasibility certificate. The option remains disabled by default.
+
+The linked test checks all four combinations of the two choices, with final
+helper trials both disabled and enabled. Removing the actual reverse transfers
+is rejected by the causal checker and independent graph oracle. The existing
+straight-line deferral and real-reuse tests remain active. See `HANDOFF.md` for
+the current validation record; no device speedup is claimed for this fix.
 
 ### 5. Access-class invariance — native admission experiment
 

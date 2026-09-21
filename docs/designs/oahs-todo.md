@@ -31,23 +31,24 @@ priority over the broader milestones below.
    state/endpoint tests pass; the old behavior fails the regression. All 88
    corpus plans and causal evaluation counts remain unchanged. This records
    work eliminated, not a measured wall-time speedup; no device timing needed.
-3. **Test deferred acknowledgments across conditional future key reuse.**
-   With one forward key, compare closed and deferred policies when the old
-   consumption is unconditional but the next publication is inside a branch.
-   Current exactly-once admission does not itself prove that the straight-only
-   repair can reach that future publication. This is an unexecuted admission
-   hypothesis, not a demonstrated unsafe plan. Keep the option disabled by
-   default; qualify a repair or retain the helper where necessary.
-4. **Qualify the last participating read inside a child.** The retained-input
-   extension finds the last reader child, but its release still uses child exit.
-   First construct `Q reads X; Q does unrelated work` in a counted reader loop
-   and test whether an original last-visit observation permits one release
-   before the final unrelated operation. Share physical-use/control views;
-   keep endpoint selection and actual credit in construction. Require exactly
-   once participation, zero/one/many-trip and re-entry coverage, source-prefix
-   and rearming checks, and no added full payload relations. A repeated body
-   cut alone is not an exactly-once last-use frontier. Find a native witness
-   before preparing device timing.
+3. **Implemented locally: bound deferred acknowledgment admission.**
+   The linked one-key conditional-reuse test reproduces refusal after deferral
+   while the closed baseline succeeds. Admission now requires a straight
+   continuation to exit using the existing control index; it retains the helper
+   before future branching. All four choice combinations and missing-support
+   negatives are checked. The option stays disabled by default. More precise
+   future-use admission or qualified conditional repair remains open; this
+   conservative fix can retain a helper even without a later key reuse.
+4. **Implemented locally: last read inside a straight nonempty child.**
+   A qualified final-visit observation exposes the post-read source before
+   trailing work. The existing physical-use/control views prove no later read
+   and exactly-once participation; the selected cycle provides actual credit.
+   Portable and native witnesses remove ordering with no additions. Native
+   admission currently requires constant nonnegative bounds and unit step;
+   guarded, empty/unknown and already-refined children retain the fallback.
+   See [scope, proof checks and construction cost](oahs-last-reader-placement.md).
+   Combining with other occurrence vocabularies and non-unit steps remains
+   open. Keep any device follow-up separate from the dispatched campaign.
 
 The contextual frontier-motion certificate remains a separate open quality
 task. Equal-coverage selection remains experimental until a test demonstrates
@@ -68,9 +69,9 @@ repetitions are needed for isolation. Correct coverage is 35 successful placemen
 constructions plus one expected refusal; MAT owns the 264-row matrix. Repair
 source-manifest and effective-optimization probes before new bundles.
 
-**Open device campaign (user confirms no overnight run):**
+**Open device campaign (user confirms the remote agent is running it):**
 [consolidated task](../../test/benchmarks/open_experiments/DEVICE_TASK.md).
-Use the root current compiler snapshot, all free devices, and a durable ready
+Keep the dispatched `2cc458cbe` snapshot fixed, use all free devices and a durable ready
 queue; retain warmups and cap timing at 20 measured invocations per arm.
 
 | Workstream | Status / next action |

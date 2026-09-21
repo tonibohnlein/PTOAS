@@ -531,7 +531,7 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
         if (std::any_of(writes.begin(), writes.end(), [&](Cut site) {
                 return !c.components[c.component[site]].cyclic;
             })) continue;
-        struct ReaderRegion { Cut entry, acquisition, exit; };
+        struct ReaderRegion { Cut entry, acquisition, exit, publication; };
         std::vector<ReaderRegion> regions;
         std::set<Cut> covered;
         for (const auto& loop : p.observed->loops) {
@@ -562,7 +562,33 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
                 acquisition = c.canonicalCut[*input];
             }
             if (!c.graph.legalCuts[loop.exit]) { admitted = false; break; }
-            regions.push_back({loop.entry, acquisition, loop.exit});
+            // A final-visit observation can expose the last physical reader
+            // before unrelated trailing work. Query the same cell/control
+            // view; no lexical boundary or observation supplies completion.
+            Cut publication = c.canonicalCut[loop.exit];
+            std::vector<std::pair<Cut, Cut>> lastCandidates;
+            for (auto site : local) {
+                const auto afterRead = c.after(site);
+                if (afterRead == NoAnalysisId || !members.count(afterRead)) continue;
+                const auto observation = p.observed->sites[afterRead].observation;
+                if (observation == NoAnalysisId) continue;
+                const auto& atoms = p.observed->observations[observation].atoms;
+                if (std::any_of(atoms.begin(), atoms.end(), [&](const auto& atom) {
+                        return atom.kind == ObservationAtom::LoopHasNext && atom.owner == loop.owner &&
+                               atom.parameter == 1 && atom.value == 0;
+                    })) lastCandidates.emplace_back(site, c.canonicalCut[afterRead]);
+            }
+            if (!lastCandidates.empty()) {
+                std::vector<unsigned> lastRoles(c.graph.sites.size());
+                for (auto site : local) lastRoles[site] = 1;
+                lastRoles[loop.exit] = 2;
+                const auto following = nearestRoles(c, lastRoles, true);
+                std::set<Cut> lastCuts;
+                for (auto [site, cut] : lastCandidates) if (following[site] == 2) lastCuts.insert(cut);
+                if (lastCuts.size() == 1 && balanced(c, {c.canonicalCut[loop.entry]}, {*lastCuts.begin()}))
+                    publication = *lastCuts.begin();
+            }
+            regions.push_back({loop.entry, acquisition, loop.exit, publication});
             covered.insert(local.begin(), local.end());
         }
         if (!admitted || covered != reads) continue;
@@ -585,7 +611,7 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
             if (predecessor == 2) firstConsumers.insert(region.acquisition);
             else if (predecessor != 1) { admitted = false; break; }
             const auto successor = afterRoles[region.exit] ? afterRoles[region.exit] : next[region.exit];
-            if (successor && !(successor & ~6u)) publications.insert(c.canonicalCut[region.exit]);
+            if (successor && !(successor & ~6u)) publications.insert(region.publication);
             else if (successor != 1) { admitted = false; break; }
         }
         const bool retainsAcrossChildren = firstConsumers.size() < regions.size();

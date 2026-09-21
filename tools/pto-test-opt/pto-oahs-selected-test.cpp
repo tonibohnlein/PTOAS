@@ -246,6 +246,69 @@ module attributes {pto.target_arch = "a3"} {
   }
   return true;
 }
+bool lastReaderPlacement(MLIRContext &context) {
+  const std::string fixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @last_reader(%src: !pto.partition_tensor_view<1x32xf32>, %n: index, %active: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %bound = arith.constant 256 : index
+    %step = arith.constant 128 : index
+    %lo = arith.constant 3 : index
+    %hi = arith.constant 6 : index
+    %one = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 128 : i64
+    %addr2 = arith.constant 256 : i64
+    %a = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %addr1 : !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %addr2 : !pto.tile_buf<vec, 1x32xf32>
+    scf.for %tile = %zero to %bound step %step {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+      scf.for %i = %lo to %hi step %one {
+        pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+        pto.tadd ins(%c, %c : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+      }
+    }
+    return
+  }
+}
+)mlir";
+  for (unsigned variant = 0; variant < 9; ++variant) {
+    auto source = fixture;
+    auto replace = [&](const std::string &a, const std::string &b) {
+      source.replace(source.find(a), a.size(), b);
+    };
+    const std::string read = "pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)";
+    if (variant == 1) replace("%lo to %hi", "%lo to %lo");
+    if (variant == 2) replace("%lo to %hi", "%lo to %n");
+    if (variant == 3) replace("%one = arith.constant 1", "%one = arith.constant 2");
+    if (variant == 4) replace(read, "scf.if %active { " + read + " }");
+    if (variant == 5) replace(read, "pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)\n" + read);
+    if (variant == 6) replace("ins(%c, %c", "ins(%a, %a");
+    if (variant == 7) replace("%lo = arith.constant 3", "%lo = arith.constant -1");
+    if (variant == 8) replace("%hi = arith.constant 6", "%hi = arith.constant 4");
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module), "parse last-reader fixture")) return false;
+    auto function = module->lookupSymbol<func::FuncOp>("last_reader");
+    oahs::NativeAnalysis input;
+    if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, input)), "import last reader")) return false;
+    const bool qualified = input.program.observed->qualification.find("last-visit-words-v1") != std::string::npos;
+    if (!check(qualified == (variant == 0 || variant == 8), "last reader must have qualified final participation and trailing work")) return false;
+    if (!qualified) continue;
+    oahs::SelectedPlan report;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report)), "last-reader construction/reconstruction")) return false;
+    bool selected = false;
+    for (const auto &channel : report.channels) if (channel.source == oahs::Pipe::V && channel.observer == oahs::Pipe::MTE2)
+      for (auto cut : channel.publications) {
+        const auto observation = input.program.observed->sites[cut].observation;
+        for (const auto &atom : input.program.observed->observations[observation].atoms)
+          selected |= atom.kind == oahs::ObservationAtom::LoopHasNext && atom.value == 0;
+      }
+    if (!check(selected, "last-reader release must use the final visit")) return false;
+  }
+  return true;
+}
 bool positive(MLIRContext &context, const char *source, StringRef name) {
   auto module = parseSourceString<ModuleOp>(source, &context);
   if (!check(bool(module), "parse positive input")) { return false; }
@@ -949,6 +1012,6 @@ int main(int argc, char **argv) {
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
-                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && firstConsumerPlacement(context);
+                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && firstConsumerPlacement(context) && lastReaderPlacement(context);
   return passed ? 0 : 1;
 }

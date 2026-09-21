@@ -68,6 +68,11 @@ struct FirstUseRegion {
   std::vector<std::size_t> decisions, backedgeOwners;
 };
 ObservedImport refineFirstUse(const Program &, const FirstUseRegion &);
+// A frontend-proved nonempty counted loop with an unrefined straight body.
+// Expose final/nonfinal visit words only at the supplied original anchors.
+// No payload, runtime history, or completion assertion is introduced.
+ObservedImport refineLastVisit(const Program &, std::size_t owner,
+                               const std::vector<std::size_t> &anchors);
 // Carry only the finite bank identity across a region. Unlike counted first/tail
 // refinement this adds no elapsed/remaining modes. Child occurrence interfaces
 // retain their own modes and shared physical phases. Invariant effects are not

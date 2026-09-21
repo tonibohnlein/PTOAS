@@ -7,10 +7,76 @@ Updated: 2026-09-21
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: exact proposal ordering and removal of unused replay-prefix comparison implemented locally
+- Current milestone: qualified last-reader release within a straight child
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Completed locally: release before trailing child work
+
+The [last-reader placement](docs/designs/oahs-last-reader-placement.md) extends
+the existing reader-region cycle with a separate physical publication frontier.
+A compact final/nonfinal visit projection shares original payloads and ordinary
+words. Cell-use succession and balanced participation select the post-read
+source only when no later read remains and it executes once per child entry.
+Actual selected readiness/return transfers still supply completion and rearming.
+
+Native admission is restricted to straight nonempty leaf children inside a
+parent loop, constant nonnegative bounds, unit step, invariant input and an
+inactive producer engine. Already-refined, guarded, empty/unknown and non-unit
+cases keep their previous handling. No new constructor option is introduced.
+
+Validation: 23/23 portable suites, both native diagnostic executables, nine
+native admission variants and four native/FileCheck fixtures pass. Seven
+portable traces remove 52 full payload relations with none added. The native
+witness removes four relations, retains five executed event pairs, and keeps
+the genuine V barriers. Missing support and repeated publication mutations
+are rejected. All 88 corpus modules (97 functions) construct/reconstruct with
+byte-identical plans to `2cc458cbe`; GEMM and attention are unchanged.
+
+The native witness adds three analytical sites and increases replay 89 -> 130;
+this is a placement improvement with an explicit construction cost. It has no
+device timing yet and does not change any existing corpus plan. Artifacts:
+`../last-reader-work/`, including an importer-disabled child-exit control and
+independent emitted-plan ordering comparison. Keep the remote campaign on its
+dispatched revision; there is no reason to restart it for identical corpus plans.
+
+Next: obtain a useful native workload with trailing reader work before extending
+this qualifier to non-unit steps or combining it with first-consumer/bank
+observations. The contextual frontier-motion certificate is still open. Any
+targeted device follow-up should measure the new guard cost as well as overlap.
+
+## Local continuation: conditional key reuse
+
+The device agent is running the dispatched `2cc458cbe` task. These working-tree
+changes are a separate local candidate; do not change its frozen source or arms.
+
+The next linked regression reproduced the review's admission issue: with one
+forward key, an optional producer, a common consumption and a later conditional
+producer/consumer, the closed policy succeeds but deferred acknowledgment fails
+with `no reusable key or nonrecursive consumption acknowledgment`.
+
+The opt-in policy now requires `Control::straight(current, graph.exit)` before
+deferring. This reuses the original-control corridor index to ensure the
+continuation stays within the current repair vocabulary. It retains the closed
+exchange before a future branch, including branches that might not reuse the
+key. No conditional repair, hypothetical consumption credit, new analysis
+state or default-policy change is introduced.
+
+Tests cover both choices independently, final helper trials on/off, cold
+checking and independent graph checks. Removing the reverse transfers is
+rejected. Straight-line deferral and actual-key-reuse tests still pass.
+All 23 portable suites pass, with the final expanded placement test rerun after
+adding helper-pruning assertions. Both native diagnostic executables pass.
+The existing native deferred-ack fixture constructs/reconstructs under default
+and deferred options; both plans are byte-identical to the saved placement
+microkernel plans. No full corpus rerun or new device measurement was performed
+for this opt-in admission restriction. Validation artifacts:
+`../deferred-branch-work/`.
+
+The restricted last-reader follow-up is implemented above. The general
+frontier-motion certificate remains open. More precise deferred-ack admission
+is parked until an actual provider example justifies it.
 
 ## Completed locally: exact proposal ordering and replay accounting
 
@@ -37,14 +103,11 @@ fail when linked against the old behaviors. See [results and limits](docs/design
 Artifacts: `../review-fixes-work/`. No new device measurement is needed for
 these identical plans; this milestone is included in the accompanying commit.
 
-Next test deferred acknowledgment across conditional future key reuse. See the
+The conditional future-key-reuse follow-up is recorded above. See the
 [ordered TODO amendments](docs/designs/oahs-todo.md#review-amendments-checked-at-6b1b32f46).
 
-The next placement opportunity is a qualified last participating reader inside
-a child, before unrelated trailing work. Current retained-generation support
-finds the last reader child but still publishes at its exit. This needs an
-exactly-once original observation and independent ordering tests, not merely
-moving a return to a repeated body cut. This placement extension remains open.
+The former last-reader TODO is now implemented for the restricted scope above;
+general guarded participation and composition with other refinements remain open.
 
 ## Current local follow-up: complete producer cohorts
 

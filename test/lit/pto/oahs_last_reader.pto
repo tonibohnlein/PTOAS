@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// The input release belongs after its final physical read, before trailing V work.
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
+module attributes {pto.target_arch = "a3"} {
+  func.func @last_reader(%src: !pto.partition_tensor_view<1x32xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %bound = arith.constant 256 : index
+    %step = arith.constant 128 : index
+    %lo = arith.constant 3 : index
+    %hi = arith.constant 6 : index
+    %one = arith.constant 1 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 128 : i64
+    %addr2 = arith.constant 256 : i64
+    %a = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %addr1 : !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %addr2 : !pto.tile_buf<vec, 1x32xf32>
+    scf.for %tile = %zero to %bound step %step {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+      scf.for %i = %lo to %hi step %one {
+        pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+        pto.tadd ins(%c, %c : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+      }
+    }
+    return
+  }
+}
+// CHECK-LABEL: func.func @last_reader
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <[[FREE:EVENT_ID[0-9]+]]>]
+// CHECK: scf.for
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <[[FREE]]>]
+// CHECK-NEXT: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK-NEXT: scf.for [[IV:%[a-zA-Z0-9_]+]] =
+// CHECK: pto.barrier <PIPE_V>
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: [[REMAIN:%[a-zA-Z0-9_]+]] = arith.subi {{.*}}, [[IV]] : index
+// CHECK: [[LAST:%[a-zA-Z0-9_]+]] = arith.cmpi sle, [[REMAIN]], {{.*}} : index
+// CHECK-NEXT: scf.if [[LAST]]
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <[[FREE]]>]
+// CHECK-NEXT: pto.barrier <PIPE_V>
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: }
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <[[FREE]]>]
