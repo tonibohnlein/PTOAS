@@ -130,6 +130,8 @@ struct SelectedWork {
     uint64_t frontierVisits = 0, selectedUpdates = 0, replaySiteEvaluations = 0;
     uint64_t forwardSiteEvaluations = 0;
     uint64_t keyQueries = 0, invariantSiteEvaluations = 0;
+    uint64_t relayPreparationSites = 0, relayTrialSites = 0;
+    std::size_t relayTrials = 0, splitRelays = 0;
     // Total portable construction includes model/control/storage preparation and
     // final validation. It excludes native import/emission and test references.
     uint64_t elapsedMicroseconds = 0, preparationMicroseconds = 0;

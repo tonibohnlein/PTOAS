@@ -371,7 +371,7 @@ Group Constructor::sourceGroup(
                 return fact.publication == selected->cut && fact.source == source;
             })) {
         const auto covered = coverage(selected->cut, source, all, true);
-        const auto key = virginAtStart(selected->cut, source, observer);
+        const auto key = reusableAtStart(selected->cut, source, observer);
         if (key != NoAnalysisId && std::includes(covered.begin(), covered.end(), needed.begin(), needed.end())) {
             group.publication = selected->cut;
             group.atWordStart = true;

@@ -141,7 +141,9 @@ mlir::pto::getSyncProtocolModel(Operation *op) {
                                       : cast<TPopOp>(op).getSplit() == 0;
   const auto space = cast<AddressSpaceAttr>(type.getMemorySpace()).getAddressSpace();
   if (direction == 3 && init.getSlotNum() == 2 && unsplit &&
-      space == AddressSpace::VEC && init.getNosplitAttr() &&
+      (space == AddressSpace::VEC ||
+       (model.kind == SyncProtocolModel::Send && space == AddressSpace::ACC) ||
+       (model.kind == SyncProtocolModel::Receive && space == AddressSpace::MAT)) && init.getNosplitAttr() &&
       init.getNosplitAttr().getValue()) {
     const auto bits = type.getElementType().getIntOrFloatBitWidth();
     uint64_t bytes = bits / 8;

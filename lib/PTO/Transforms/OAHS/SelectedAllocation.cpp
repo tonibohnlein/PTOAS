@@ -155,7 +155,7 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
     }
     return true;
 }
-Id Constructor::virginAtStart(Cut cut, Pipe source, Pipe observer) const
+Id Constructor::reusableAtStart(Cut cut, Pipe source, Pipe observer) const
 {
     if (cut == current || !control.straight(cut, current) ||
         control.components[control.component[cut]].cyclic ||
@@ -166,13 +166,19 @@ Id Constructor::virginAtStart(Cut cut, Pipe source, Pipe observer) const
         const auto& e = frontier.keys()[key];
         if (e.source != source || e.observer != observer || closedKeys.count(key) ||
             recurringKeys.count(key) || !canPublish(cache.cuts[cut].incoming, key)) continue;
-        // No neighboring selected generation exists. Reuse/recurring gaps need
-        // their own certificates and deliberately stay on the existing path.
+        // Source-time emptiness is insufficient: canPublish above also proves
+        // the preceding consumption. Bound this reuse certificate to a straight,
+        // acyclic history with no selected use at or after the proposed gap.
+        // In particular, an endpoint in this word follows the gap, even when
+        // the post-word state would certify reuse.
         if (std::none_of(ledger.records().begin(), ledger.records().end(), [&](const auto& record) {
                 const auto& command = record.command;
                 return ledger.active(record.id) && command.kind != Command::Barrier &&
                     command.kind != Command::BarrierAll && command.source == source &&
-                    command.observer == observer && command.key == e.key;
+                    command.observer == observer && command.key == e.key &&
+                    (record.cut == cut || !control.straight(record.cut, cut) ||
+                     control.components[control.component[record.cut]].cyclic ||
+                     control.wordOccurrences[control.canonicalCut[record.cut]].size() != 1);
             })) return key;
     }
     return NoAnalysisId;
@@ -180,7 +186,7 @@ Id Constructor::virginAtStart(Cut cut, Pipe source, Pipe observer) const
 Id Constructor::helperFreeBinding(const Group& group, Pipe observer) const
 {
     if (group.atWordStart) return group.version == ledger.version()
-        ? virginAtStart(group.publication, group.source, observer) : NoAnalysisId;
+        ? reusableAtStart(group.publication, group.source, observer) : NoAnalysisId;
     // Structured F3 queries already supply a complete candidate certificate.
     // Reuse it without another solve, only if it needs no reverse helper.
     if (!group.publications.empty()) return group.version == ledger.version() &&
@@ -495,11 +501,169 @@ bool Constructor::settleRearming(const SelectedDecision& decision)
     return !changed || update();
 }
 
+// A qualified FIFO cohort supplies only the physical send/pop correspondence.
+// Select a relay prefix separately from the final receipt deadline. This is an
+// optional staged construction, not a rewrite of a completed plan.
+std::optional<bool> Constructor::splitRelay(const Group& group, Pipe observer, RequirementStage stage)
+{
+    if (!program.staticFifoSlots || group.common || group.publication == current ||
+        !control.straight(group.publication, current) || route(group.source, observer).size() != 3)
+        return std::nullopt;
+    const auto& slots = *program.staticFifoSlots;
+    if (group.requirements.empty() ||
+        std::any_of(group.requirements.begin(), group.requirements.end(), [&](const auto& r) {
+            return !r.sourceWrite || std::find(slots.cells.begin(), slots.cells.end(), r.cell) == slots.cells.end();
+        }))
+        return std::nullopt;
+    auto unique = [&](Cut cut) { return control.wordOccurrences[control.canonicalCut[cut]].size() == 1; };
+    if (!unique(group.publication) || !unique(current))
+        return std::nullopt;
+    // Do not gate intervening sends of another bank through an earlier bank's
+    // receipt. The immutable shared-slot view identifies this lower bound; it
+    // does not enlarge the publication or grant the other bank's completion.
+    Cut lower = group.publication;
+    for (Cut at = 0; at < control.graph.sites.size(); ++at) {
+        ++result.work.relayPreparationSites;
+        const auto op = control.graph.operations[at];
+        if (op == NoAnalysisId || program.operations[op].pipe != group.source ||
+            std::find(slots.writes.begin(), slots.writes.end(), op) == slots.writes.end() ||
+            !control.straight(group.publication, at) || !control.straight(at, current))
+            continue;
+        const auto after = control.after(at);
+        if (after != NoAnalysisId && control.straight(after, current) &&
+            control.position[after] > control.position[lower])
+            lower = after;
+    }
+    auto eligible = [&](Pipe a, Pipe b) {
+        for (Id key = 0; key < frontier.keys().size(); ++key)
+            if (frontier.keys()[key].source == a && frontier.keys()[key].observer == b && !closedKeys.count(key))
+                return true;
+        return false;
+    };
+    Pipe middle = Pipe::Count;
+    Cut relay = current;
+    std::set<Id> incidental;
+    const auto* sourceFacts = cache.cuts[group.publication].before.causal.facts();
+    if (!sourceFacts)
+        return std::nullopt;
+    for (unsigned candidate = 0; candidate < PipeCount; ++candidate) {
+        if (Pipe(candidate) == group.source || Pipe(candidate) == observer ||
+            !eligible(group.source, Pipe(candidate)) || !eligible(Pipe(candidate), observer))
+            continue;
+        Cut gap = current;
+        for (Cut at = 0; at < control.graph.sites.size(); ++at) {
+            ++result.work.relayPreparationSites;
+            if (!control.straight(lower, at) || !control.straight(at, current) ||
+                control.position[at] >= control.position[gap])
+                continue;
+            auto op = control.graph.operations[at];
+            bool issues = op != NoAnalysisId && program.operations[op].pipe == Pipe(candidate);
+            for (auto id : ledger.word(at)) {
+                const auto& c = ledger.endpoint(id).command;
+                issues |= c.kind == Command::BarrierAll ||
+                          (c.kind == Command::Acquire ? c.observer : c.source) == Pipe(candidate);
+            }
+            if (issues && unique(at))
+                gap = at;
+        }
+        if (gap == group.publication || !legalCommandCut(program, gap))
+            continue;
+        const auto& state = gap == current ? cache.cuts[gap].before : cache.cuts[gap].incoming;
+        const auto* facts = state.causal.facts();
+        if (!facts)
+            continue;
+        std::set<Id> extra;
+        for (const auto& [access, reach] : facts->history.present()) {
+            if (!frontierContains(reach, PipeCount + candidate))
+                continue;
+            const auto* original = sourceFacts->history.find(access);
+            const bool fresh = !control.lookahead.hasIssueBetween(
+                control.frame[group.publication], access, control.position[group.publication], control.position[gap]);
+            if (!fresh || !original || !frontierContains(*original, PipeCount + unsigned(group.source)))
+                extra.insert(access);
+        }
+        // Strict subset, then latest gap for equal incidental coverage. This
+        // ranks placements; it is not a general no-broader-order theorem.
+        if (middle == Pipe::Count ||
+            (extra.size() < incidental.size() &&
+             std::includes(incidental.begin(), incidental.end(), extra.begin(), extra.end())) ||
+            (extra == incidental && control.position[gap] > control.position[relay])) {
+            middle = Pipe(candidate);
+            relay = gap;
+            incidental = std::move(extra);
+        }
+    }
+    if (middle == Pipe::Count)
+        return std::nullopt;
+    auto keyFor = [&](Pipe a, Pipe b, Cut pub, Cut wait, const State& state, bool atStart) {
+        for (Id key = 0; key < frontier.keys().size(); ++key) {
+            const auto& e = frontier.keys()[key];
+            if (e.source != a || e.observer != b || closedKeys.count(key))
+                continue;
+            ++result.work.keyQueries;
+            if (!canPublish(state, key) || !clearInterval(key, pub, wait))
+                continue;
+            if (atStart && std::any_of(ledger.word(pub).begin(), ledger.word(pub).end(), [&](Id id) {
+                    const auto& c = ledger.endpoint(id).command;
+                    return (c.kind == Command::Publish || c.kind == Command::Acquire) && c.source == a &&
+                           c.observer == b && c.key == e.key;
+                }))
+                continue;
+            return key;
+        }
+        return NoAnalysisId;
+    };
+    const auto first =
+        keyFor(group.source, middle, group.publication, relay, cache.cuts[group.publication].before, false);
+    const auto second = keyFor(
+        middle, observer, relay, current, relay == current ? cache.cuts[relay].before : cache.cuts[relay].incoming,
+        relay != current);
+    if (first == NoAnalysisId || second == NoAnalysisId)
+        return std::nullopt;
+    const auto request = result.decisions.size();
+    auto materialize = [&](Ledger& target) {
+        std::vector<Id> ids;
+        ids.push_back(target.append(
+            group.publication, {Command::Publish, group.source, middle, frontier.keys()[first].key},
+            EndpointPurpose::Completion, request));
+        const Command acquire{Command::Acquire, group.source, middle, frontier.keys()[first].key};
+        ids.push_back(
+            relay == current ? target.append(relay, acquire, EndpointPurpose::Completion, request) :
+                               target.prepend(relay, acquire, EndpointPurpose::Completion, request));
+        ids.push_back(target.after(
+            ids.back(), {Command::Publish, middle, observer, frontier.keys()[second].key}, EndpointPurpose::Completion,
+            request, NoAnalysisId));
+        ids.push_back(target.append(
+            current, {Command::Acquire, middle, observer, frontier.keys()[second].key}, EndpointPurpose::Completion,
+            request));
+        return ids;
+    };
+    auto proposed = ledger;
+    materialize(proposed);
+    ++result.work.relayTrials;
+    auto check = analyze(program, proposed.commands(), {false});
+    result.work.relayTrialSites += check.stats.siteEvaluations;
+    if (!check.complete || !check.diagnostics.empty() || !check.protocol.empty() || !check.phaseResources.empty())
+        return std::nullopt;
+    SelectedDecision decision;
+    decision.consumer = current;
+    decision.publication = group.publication;
+    decision.source = group.source;
+    decision.observer = observer;
+    decision.stage = stage;
+    decision.required = group.requirements;
+    decision.endpoints = materialize(ledger);
+    ++result.work.splitRelays;
+    if (!update() || !settleRearming(decision))
+        return false;
+    result.decisions.push_back(std::move(decision));
+    return true;
+}
 bool Constructor::bind(Group& group, RequirementStage stage)
 {
     const auto observer = program.operations[control.graph.operations[current]].pipe;
     if (group.atWordStart) {
-        const auto key = virginAtStart(group.publication, group.source, observer);
+        const auto key = reusableAtStart(group.publication, group.source, observer);
         if (group.version != ledger.version() || key != group.forwardKey || key == NoAnalysisId)
             return fail(SelectedFailure::SelectedUpdate, "stale source-gap binding", current);
         const auto covered = coverage(group.publication, group.source, group.requirements, true);
@@ -577,6 +741,7 @@ bool Constructor::bind(Group& group, RequirementStage stage)
     if (group.bindingCertified && (group.version != ledger.version() ||
         helperFreeBinding(group, observer) != group.forwardKey))
         return fail(SelectedFailure::SelectedUpdate, "stale equal-coverage certificate", current);
+    if (auto split = splitRelay(group, observer, stage)) return *split;
     const auto path = route(group.source, observer);
     if (path.empty()) {
         return fail(SelectedFailure::EventResource, "no eligible engine route for the required completion", current);

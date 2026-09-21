@@ -88,6 +88,10 @@ struct AlternatingSlotRegion {
   uint64_t slotBytes = 0;
   std::vector<std::size_t> reads, writes;
 };
+// No control expansion: independently propagate both cursors and require one
+// physical slot for every static access on every original path. Ambiguity
+// declines; this grants neither queue completion nor event rearming credit.
+ObservedImport refineStaticSlots(const Program &, const AlternatingSlotRegion &);
 ObservedImport refineAlternatingSlots(const Program &, const AlternatingSlotRegion &);
 struct ObservedWord {
   OriginalObservation observation;

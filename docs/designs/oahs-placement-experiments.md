@@ -23,14 +23,18 @@ The first linked placement improvement follows this chain:
 ```
 indexed physical requirement and publication cut
   -> current coverage at the post-origin gap
-  -> virgin-key / occurrence certificate at that gap
+  -> source-time rearming / selected-use certificate at that gap
   -> SET before unrelated incoming WAIT
   -> replay + cold check + independent forbidden-relation test
 ```
 
 `SelectedSource.postOrigin` exposes the stable word-start boundary. Ordinary
-post-word snapshots remain available. This first experiment supports only
-acyclic, unique-word, straight-corridor sources with a virgin eligible key.
+post-word snapshots remain available. The experiment supports acyclic,
+unique-word, straight-corridor sources. A previously used key is eligible only
+when the incoming state proves emptiness and preceding consumption, and every
+selected use of that key lies strictly earlier on the same qualified corridor.
+Same-word, later, branch-shared and recurring uses retain the fallback. See
+[the reused-key extension](oahs-reused-source-gaps.md).
 It is not general arbitrary-gap or recurring-key placement, and never sorts
 all SETs ahead of WAITs. A wait supplying necessary credit must remain before
 the publication that carries that credit.

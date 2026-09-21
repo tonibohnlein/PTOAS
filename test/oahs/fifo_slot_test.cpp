@@ -42,6 +42,80 @@ o::Program fixture()
     p.target.barrierAll = true;
     return p;
 }
+void staticCursorSlots()
+{
+    auto p = base(2);
+    for (unsigned i = 0; i < 8; ++i) {
+        p.operations.push_back(
+            op(i < 4 ? o::Pipe::FIX : o::Pipe::MTE2, {{0, i >= 4, i < 4, false}, {1, true, false, false}}));
+        p.operations.back().original = i;
+    }
+    o::ObservedControl q;
+    q.qualification = "independent producer/consumer cursors across three phases";
+    q.scopes = {{0, o::NoControlId, o::NoControlId}, {1, 0, o::NoControlId}};
+    q.entry = 0;
+    q.exit = 11;
+    q.sites.resize(12);
+    const std::vector<std::vector<std::size_t>> edges = {{1, 11}, {2}, {3}, {4, 8}, {5}, {6},
+                                                         {7},     {3}, {9}, {10},   {0}, {}};
+    for (unsigned i = 0; i < q.sites.size(); ++i) {
+        q.sites[i].successors = edges[i];
+        q.sites[i].observation = i;
+        q.observations.push_back({i, {}, true});
+    }
+    const unsigned sites[] = {1, 2, 4, 5, 6, 7, 8, 9};
+    for (unsigned i = 0; i < 8; ++i)
+        q.sites[sites[i]].operation = i;
+    q.sites[7].backedgeOwners = {1};
+    q.sites[10].backedgeOwners = {0};
+    p.observed = std::move(q);
+    o::AlternatingSlotRegion region{0, 2, 128, {4, 5, 6, 7}, {0, 1, 2, 3}};
+    auto r = o::refineStaticSlots(p, region);
+    require(r.success, "static cursor refinement: " + r.reason);
+    require(
+        r.program.observed->sites.size() == p.observed->sites.size() &&
+            r.program.operations.size() == p.operations.size() && !r.program.alternatingSlots,
+        "static slots must not expand control or install an alternating protocol");
+    for (unsigned i = 0; i < 8; ++i) {
+        const auto& a = r.program.operations[i].accesses;
+        require(
+            a[0].cell == 2 + i % 2 && !a[0].definiteWrite && a[1].cell == 1,
+            "independent send/pop cursors and unrelated effects");
+    }
+    // Independently count participating operations, across empty, short,
+    // repeated and varying-length entries. No reset at a child boundary.
+    for (unsigned first = 0; first < 4; ++first)
+        for (unsigned second = 0; second < 4; ++second) {
+            std::vector<unsigned> visits;
+            for (auto length : {first, second}) {
+                visits.insert(visits.end(), {0, 1});
+                for (unsigned j = 0; j < length; ++j)
+                    visits.insert(visits.end(), {2, 3, 4, 5});
+                visits.insert(visits.end(), {6, 7});
+            }
+            unsigned reads = 0, writes = 0;
+            for (auto op : visits) {
+                auto slot = (op < 4 ? writes++ : reads++) % 2;
+                require(r.program.operations[op].accesses[0].cell == 2 + slot, "phase-boundary cursor mismatch");
+            }
+        }
+    auto skipped = p;
+    skipped.observed->sites[3].successors.push_back(5);
+    require(!o::refineStaticSlots(skipped, region).success, "skipped send must not retain static slot identity");
+    auto extra = region;
+    extra.reads.pop_back();
+    require(!o::refineStaticSlots(p, extra).success, "unrepresented FIFO user must decline");
+    extra = region;
+    extra.writes.push_back(4);
+    require(!o::refineStaticSlots(p, extra).success, "op cannot advance both cursor roles");
+    extra = region;
+    extra.slotBytes = std::numeric_limits<uint64_t>::max();
+    require(!o::refineStaticSlots(p, extra).success, "slot offset overflow must decline");
+    require(!o::refineStaticSlots(r.program, region).success, "already split root must not be refined twice");
+    require(
+        !o::refineStaticSlots(fixture(), {0, 2, 128, {0}, {2}}).success,
+        "one send/pop per repeated body requires a changing slot observation");
+}
 void checkTraces(const o::Program& p, const o::Commands& commands)
 {
     const auto& q = *p.observed;
@@ -93,6 +167,7 @@ void checkTraces(const o::Program& p, const o::Commands& commands)
 } // namespace
 int main()
 {
+    staticCursorSlots();
     auto p = fixture();
     o::AlternatingSlotRegion region{0, 2, 128, {0}, {2}};
     auto refined = o::refineAlternatingSlots(p, region);

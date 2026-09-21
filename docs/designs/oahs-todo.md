@@ -6,6 +6,31 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
+## Active continuation after `d1bf07ee5`
+
+1. **Wait for the device agent** before extending the last-reader experiment.
+   Do not restart its pinned campaign for this local work.
+2. **Implemented locally, opt-in:** word-start publications can reuse a key
+   with actual incoming consumption knowledge and strictly earlier selected
+   uses on an acyclic straight corridor. The one-key constructor witness
+   removes four full payload relations with no additions; missing/late credit
+   and neighboring-use negatives are checked. See [scope and evidence](oahs-reused-source-gaps.md).
+   General interior/recurring gaps and useful changed native cases remain open.
+3. **Implemented: native static FIFO slots and split relay deadlines.**
+   Both single-block AIC variants now select the narrow early receive path and
+   forward the later slot's completion before unrelated relay work. The source,
+   relay gap and final receipt are checked separately; actual selected paths
+   still establish rearming. Native reconstruction and twelve finite cases
+   pass, with no added checked order. See [implementation and limits](oahs-static-fifo-relays.md).
+   **Next:** coupled AIC/AIV numerical and queue-progress qualification before
+   performance claims. Preserve the manual reference's actual overload and
+   contract; do not time isolated halves. General changing-slot observations,
+   multiple FIFO handles, UnitFlag and arbitrary relay optimality remain open.
+4. **Grouping certificate still open:** supplied before/between/after export
+   tests distinguish order-preserving and broader cases. Qualify exact ordered
+   words and neighboring keys, and invalidate on relevant later edits. No
+   blanket same-cut export veto, safety-only certificate or new default policy.
+
 ## Authoritative next order: placement campaign complete
 
 ### Review amendments checked at `6b1b32f46`

@@ -174,6 +174,75 @@ bool fifoSlotQualification(MLIRContext &context) {
   }
   return true;
 }
+bool staticFifoSlotQualification(MLIRContext& context)
+{
+    const std::string fixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @static_fifo(%gm: !pto.ptr<f32, gm>, %n: index, %active: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %base = arith.constant 0 : i32
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %pipe = pto.initialize_l2g2l_pipe{dir_mask = 3, slot_size = 1024,
+      slot_num = 2, local_slot_num = 1, flag_base = 0, nosplit = true}
+      (%gm : !pto.ptr<f32, gm>, %base : i32, %base : i32) -> !pto.pipe
+    %out = pto.alloc_tile addr = %addr : !pto.tile_buf<acc, 16x16xf32>
+    scf.for %i = %zero to %n step %one {
+      scf.if %active {
+        pto.tpush(%out, %pipe : !pto.tile_buf<acc, 16x16xf32>, !pto.pipe) {split = 0}
+        pto.tpush(%out, %pipe : !pto.tile_buf<acc, 16x16xf32>, !pto.pipe) {split = 0}
+        %a = pto.declare_tile -> !pto.tile_buf<mat, 16x16xf32>
+        %b = pto.declare_tile -> !pto.tile_buf<mat, 16x16xf32>
+        pto.tpop(%a, %pipe : !pto.tile_buf<mat, 16x16xf32>, !pto.pipe) {split = 0}
+        pto.tpop(%b, %pipe : !pto.tile_buf<mat, 16x16xf32>, !pto.pipe) {split = 0}
+        pto.tfree(%pipe : !pto.pipe) {split = 0}
+      }
+    }
+    return
+  }
+})mlir";
+    for (unsigned variant = 0; variant < 5; ++variant) {
+        auto source = fixture;
+        auto replace = [&](const std::string& from, const std::string& to) {
+            source.replace(source.find(from), from.size(), to);
+        };
+        if (variant == 1)
+            replace("pto.tpush(%out, %pipe : !pto.tile_buf<acc, 16x16xf32>, !pto.pipe) {split = 0}", "");
+        if (variant == 2)
+            replace("slot_size = 1024", "slot_size = 512");
+        if (variant == 3)
+            replace("nosplit = true", "nosplit = false");
+        if (variant == 4)
+            replace("{split = 0}", "{split = 1}");
+        auto module = parseSourceString<ModuleOp>(source, &context);
+        if (!check(bool(module), "parse static FIFO fixture"))
+            return false;
+        auto function = module->lookupSymbol<func::FuncOp>("static_fifo");
+        oahs::NativeAnalysis input;
+        if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, input)), "import static FIFO fixture"))
+            return false;
+        if (!check(bool(input.program.staticFifoSlots) == (variant == 0), "static FIFO qualification boundary"))
+            return false;
+        if (variant)
+            continue;
+        const auto& slots = *input.program.staticFifoSlots;
+        if (!check(
+                slots.cells.size() == 2 && slots.reads.size() == 2 && slots.writes.size() == 2,
+                "shared static slot view"))
+            return false;
+        for (unsigned slot = 0; slot < 2; ++slot)
+            for (auto operation : {slots.reads[slot], slots.writes[slot]}) {
+                if (!check(
+                        llvm::any_of(
+                            input.program.operations[operation].accesses,
+                            [&](auto access) { return access.cell == slots.cells[slot] && !access.definiteWrite; }),
+                        "send and receive must share the same physical slot"))
+                    return false;
+            }
+    }
+    return true;
+}
 bool firstConsumerPlacement(MLIRContext &context) {
   const std::string fixture = R"mlir(
 module attributes {pto.target_arch = "a3"} {
@@ -740,6 +809,8 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
                  << " updates=" << work.selectedUpdates << " replay=" << work.replaySiteEvaluations
                  << " microseconds=" << work.elapsedMicroseconds
                  << " forward=" << work.forwardSiteEvaluations << " visits=" << work.frontierVisits
+                 << " split_relays=" << work.splitRelays << " relay_trials=" << work.relayTrials
+                 << " relay_trial_sites=" << work.relayTrialSites << " relay_preparation=" << work.relayPreparationSites
                  << " key_queries=" << work.keyQueries << " invariant=" << work.invariantSiteEvaluations
                  << " prepare_microseconds=" << work.preparationMicroseconds
                  << " sites=" << work.constructedSites << " words=" << work.commandWords
@@ -1012,6 +1083,6 @@ int main(int argc, char **argv) {
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
-                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && firstConsumerPlacement(context) && lastReaderPlacement(context);
+                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && staticFifoSlotQualification(context) && firstConsumerPlacement(context) && lastReaderPlacement(context);
   return passed ? 0 : 1;
 }

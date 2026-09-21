@@ -345,7 +345,7 @@ private:
     Group sourceGroup(Pipe, const std::vector<FrontierRequirement>&,
                       const std::vector<FrontierRequirement>&, const std::set<Id>* promotion = nullptr);
     std::set<Id> coverage(Cut, Pipe, const std::vector<FrontierRequirement>&, bool atStart = false) const;
-    Id virginAtStart(Cut, Pipe, Pipe) const;
+    Id reusableAtStart(Cut, Pipe, Pipe) const;
     Id helperFreeBinding(const Group&, Pipe) const;
     bool freshBetween(Cut, Cut, Id) const;
     bool sourceFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&,
@@ -361,6 +361,7 @@ private:
     bool canPublish(const State&, Id) const;
     bool clearInterval(Id, Cut, Cut) const;
     std::vector<Pipe> route(Pipe, Pipe) const;
+    std::optional<bool> splitRelay(const Group&, Pipe, RequirementStage);
     bool recurring(const std::vector<RecurringRequirement>&);
     bool finish();
 };

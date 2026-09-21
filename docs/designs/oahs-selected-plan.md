@@ -43,6 +43,19 @@ Ordinary completion endpoint `request` IDs index `decisions`. Endpoints with
 purpose `RecurringCompletion` index `channels`. Both kinds coexist in the same
 ledger; `channels` contains qualified physical access-role requests. Neither table supplies completion to the checker.
 
+## Qualified static FIFO relays
+
+A lowering-qualified two-slot FIFO can expose one static slot for every send
+and receive without changing control or adding guards. Its shared physical-use
+view feeds ordinary storage analysis. For an indirect readiness requirement,
+construction can separate the source publication, intermediate forwarding gap
+and final receive deadline. Candidate keys use actual source-time consumption
+credit and neighboring-use checks; exact staged words are protocol-checked
+before commit, and their full analysis work is counted separately. Unsupported
+cases retain ordinary binding. Prefix-coverage ranking is a heuristic; native
+payload-order comparisons are not a general least-order theorem.
+See [implementation and evidence](oahs-static-fifo-relays.md).
+
 ## Independent physical-bank episodes
 
 The guarded episode analysis also supports an independent cohort whose banks

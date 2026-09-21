@@ -17,7 +17,7 @@ namespace mlir::pto::oahs::native_detail {
 inline void importFifoSlots(
     func::FuncOp function, Program& p, llvm::ArrayRef<mlir::Operation*> payload, std::vector<std::string>& notes)
 {
-    if (!p.observed || p.alternatingSlots)
+    if (!p.observed || p.alternatingSlots || p.staticFifoSlots)
         return;
     for (const auto& observation : p.observed->observations)
         if (!observation.atoms.empty())
@@ -64,7 +64,13 @@ inline void importFifoSlots(
                 return;
     }
     region.cell = cell;
-    auto refined = refineAlternatingSlots(p, region);
+    auto refined = refineStaticSlots(p, region);
+    if (refined.success) {
+        p = std::move(refined.program);
+        notes.push_back("qualified static FIFO cursor slots; original graph unchanged");
+        return;
+    }
+    refined = refineAlternatingSlots(p, region);
     if (!refined.success) {
         notes.push_back("kept pooled FIFO effects: " + refined.reason);
         return;

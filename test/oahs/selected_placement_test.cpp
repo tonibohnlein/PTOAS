@@ -12,6 +12,44 @@
 using namespace selected_test;
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void reusedGapCertificates() {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        // All states are obtained by production replay of actual endpoints.
+        // Modes: earlier return, no return, return in the source word,
+        // next generation in the source word, next generation after the gap.
+        for (unsigned mode = 0; mode < 5; ++mode) {
+            auto p = base(1, 1);
+            for (unsigned i = 0; i < 8; ++i) p.operations.push_back(op(Q, {{0,true,false}}));
+            Commands words(commandCutCount(p));
+            words[0] = {{Command::Publish,Q,P,0}};
+            words[1] = {{Command::Acquire,Q,P,0}};
+            if (mode != 1) {
+                words[2] = {{Command::Publish,P,Q,0}};
+                words[mode == 2 ? 4 : 3] = {{Command::Acquire,P,Q,0}};
+            }
+            if (mode >= 3) {
+                words[mode == 3 ? 4 : 5] = {{Command::Publish,Q,P,0}};
+                words[6] = {{Command::Acquire,Q,P,0}};
+            }
+            Constructor c(p);
+            std::string reason;
+            require(c.ledger.initialize(words, reason), reason);
+            c.current = 7; c.activeComponent = c.control.component[c.current];
+            require(c.replay(), "gap certificate fixture replay failed: " + c.result.reason);
+            Id key = NoAnalysisId;
+            for (Id i = 0; i < c.frontier.keys().size(); ++i) {
+                const auto& candidate = c.frontier.keys()[i];
+                if (candidate.source == Q && candidate.observer == P && candidate.key == 0) key = i;
+            }
+            require(key != NoAnalysisId, "missing gap fixture key");
+            require(c.canPublish(c.cache.cuts[4].incoming,key) == (mode == 0 || mode >= 3),
+                    "gap fixture did not distinguish occupancy from rearming");
+            if (mode == 2) require(c.canPublish(c.cache.cuts[4].before,key),
+                    "source word did not supply the deliberately too-late credit");
+            require((c.reusableAtStart(4,Q,P) != NoAnalysisId) == (mode == 0),
+                    "gap accepted missing/late rearming or a neighboring selected use");
+        }
+    }
     static void proposalWordOrder() {
         const auto P = Pipe::MTE2, Q = Pipe::V;
         auto p = base(1, 1);
@@ -260,12 +298,52 @@ void wordGapBaseline() {
     require(!o::checkCausalFrontier(p,broken).accepted, "gap admission invented missing readiness");
 
 }
+void reusedSourceGap() {
+    // Q->P has one key. Its first use transfers W; the later X readiness
+    // (P->Q) can carry the consumption back before Q's X-release source.
+    auto p = base(4, 1);
+    p.operations = {op(Q,{{3,false,true}}), op(P,{{3,true,false}}),
+        op(R,{{1,true,false}}), op(P,{{0,false,true}}),
+        op(Q,{{0,true,false},{2,false,true}}), op(Q,{{1,false,true}}), op(P,{{0,false,true}})};
+    o::SelectedOptions options; options.sourceGaps = true; options.finalHelperTrials = false;
+    const auto plan = o::constructSelectedPlan(p,{},options);
+    require(plan.success, "reused-key source gap construction failed: " + plan.reason);
+    require(bool(oahs_oracle::graph(p,plan.commands,{0,1,2,3,4,5,6},{{2,6}})),
+            "reused-key X release imported unrelated Y completion");
+    auto baselineOptions = options; baselineOptions.sourceGaps = false;
+    const auto baseline = o::constructSelectedPlan(p,{},baselineOptions);
+    require(baseline.success,baseline.reason);
+    oahs_oracle::PayloadOrder before, after;
+    require(bool(oahs_oracle::graph(p,baseline.commands,{0,1,2,3,4,5,6},{},nullptr,nullptr,&before)) &&
+            bool(oahs_oracle::graph(p,plan.commands,{0,1,2,3,4,5,6},{},nullptr,nullptr,&after)),
+            "reused gap ordering comparison failed");
+    require(before != after && std::includes(before.begin(),before.end(),after.begin(),after.end()),
+            "reused gap added payload order");
+    unsigned publications = 0;
+    for (const auto& word : plan.commands) for (const auto& command : word)
+        publications += command.kind == o::Command::Publish && command.source == Q &&
+                        command.observer == P && command.key == 0;
+    require(publications >= 2, "source-gap witness did not reuse the one eligible key");
+    auto broken = plan.commands;
+    for (auto& word : broken) word.erase(std::remove_if(word.begin(),word.end(),[&](const auto& command) {
+        return (command.kind == o::Command::Publish || command.kind == o::Command::Acquire) &&
+               command.source == P && command.observer == Q;
+    }),word.end());
+    require(!o::checkCausalFrontier(p,broken).accepted &&
+            !bool(oahs_oracle::graph(p,broken,{0,1,2,3,4,5,6})),
+            "reused gap invented its readiness/rearming support");
+    std::cout << "reused_gap_relations=" << before.size() << "->" << after.size() << '\n';
+    require(std::any_of(plan.decisions.begin(),plan.decisions.end(),[&](const auto& decision) {
+        return decision.source == Q && decision.observer == P && decision.consumer == 6 &&
+               decision.publicationAtWordStart;
+    }), "reused release did not select the source gap");
+}
 // Supplied-protocol witness for the *contextual* merge certificate. It does
 // not claim the constructor emits either plan: all fixed endpoints are explicit.
 void commonFrontierContext() {
     using C = o::Command;
     unsigned cases = 0;
-    for (unsigned episodes : {1u, 2u, 4u}) for (bool outwardBetween : {false, true}) {
+    for (unsigned episodes : {1u, 2u, 4u}) for (unsigned outwardPosition : {0u, 1u, 2u}) {
         auto p = base(3, 4);
         for (unsigned i = 0; i < episodes; ++i) {
             p.operations.push_back(op(Q, {{2,false,true}})); // z producer
@@ -292,15 +370,17 @@ void commonFrontierContext() {
             }
             add(separate,start+2,C::Publish,P,Q,0); // early A source
             add(separate,start+3,C::Publish,P,Q,1); // later B source
+            if (outwardPosition == 0) add(separate,start+3,C::Publish,Q,R);
             add(separate,start+3,C::Acquire,P,Q,0);
-            if (outwardBetween) add(separate,start+3,C::Publish,Q,R);
+            if (outwardPosition == 1) add(separate,start+3,C::Publish,Q,R);
             add(separate,start+3,C::Acquire,P,Q,1);
-            if (!outwardBetween) add(separate,start+3,C::Publish,Q,R);
+            if (outwardPosition == 2) add(separate,start+3,C::Publish,Q,R);
             // One later source, same consumer cut. Both original waits are
             // sufficient for the Q payload, but their intermediate export differs.
             add(merged,start+3,C::Publish,P,Q);
+            if (outwardPosition == 0) add(merged,start+3,C::Publish,Q,R);
             add(merged,start+3,C::Acquire,P,Q);
-            add(merged,start+3,C::Publish,Q,R);
+            if (outwardPosition != 0) add(merged,start+3,C::Publish,Q,R);
         }
         for (auto* commands : {&separate, &merged}) {
             add(*commands,p.operations.size(),C::Acquire,Q,P);
@@ -316,7 +396,7 @@ void commonFrontierContext() {
         require(o::checkCausalFrontier(p,separate).accepted &&
                 o::checkCausalFrontier(p,merged).accepted,
                 "production checker disagrees with supplied frontier protocols");
-        if (!outwardBetween) {
+        if (outwardPosition != 1) {
             require(oldOrder == newOrder, "private common consumer changed payload order");
         } else {
             require(std::includes(newOrder.begin(),newOrder.end(),oldOrder.begin(),oldOrder.end()) &&
@@ -341,11 +421,11 @@ void commonFrontierContext() {
             require(!o::checkCausalFrontier(p,broken).accepted,
                     "production checker accepted missing return");
         }
-        std::cout << "frontier_context episodes=" << episodes << " outward_between=" << outwardBetween
+        std::cout << "frontier_context episodes=" << episodes << " outward_position=" << outwardPosition
                   << " relations=" << oldOrder.size() << "->" << newOrder.size() << '\n';
         ++cases;
     }
-    require(cases == 6, "frontier context campaign incomplete");
+    require(cases == 9, "frontier context campaign incomplete");
 }
 
 void noMotionAndRandom() {
@@ -379,9 +459,10 @@ void noMotionAndRandom() {
 }
 }
 int main() {
+    o::selected::ReplayTestAccess::reusedGapCertificates();
     o::selected::ReplayTestAccess::proposalWordOrder();
     o::selected::ReplayTestAccess::proposalOmissionWords();
     o::selected::ReplayTestAccess::invalidProposal();
     o::selected::ReplayTestAccess::uncoveredProducerProposal();
-    starvation(); wordGapBaseline(); deferredAcknowledgment(); commonFrontierContext(); noMotionAndRandom();
+    starvation(); wordGapBaseline(); reusedSourceGap(); deferredAcknowledgment(); commonFrontierContext(); noMotionAndRandom();
 }
