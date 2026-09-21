@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <map>
 #include <numeric>
+#include <set>
 #include <limits>
 #include <stdexcept>
 #include <tuple>
@@ -30,6 +31,9 @@ struct PrefixProbe {
 };
 struct Verdict { bool hazards=true, rearm=true, balanced=true, acyclic=true;
   explicit operator bool() const { return hazards && rearm && balanced && acyclic; } };
+// Payload vertex 2*i is visit i's launch; 2*i+1 is its finish. Export the
+// complete strict relation for paired-plan tests, not only its cardinality.
+using PayloadOrder = std::set<std::pair<unsigned, unsigned>>;
 // Independent finite graph: all command launches are ordered per engine;
 // publication depends on source prefix finishes, but does not gate launches.
 // Edges never include the memory demands or physical-key reuse obligations.
@@ -37,7 +41,7 @@ inline Verdict graph(const o::Program &truth, const o::Commands &commands,
               const std::vector<unsigned> &visits,
               const std::vector<std::pair<unsigned,unsigned>> &forbidden = {},
               std::vector<UncoveredConflict> *uncovered = nullptr,
-              PrefixProbe *prefix = nullptr) {
+              PrefixProbe *prefix = nullptr, PayloadOrder *payloadOrder = nullptr) {
   using K=std::tuple<o::Pipe,o::Pipe,unsigned>;
   std::vector<std::vector<unsigned>> edges;
   auto vertex=[&]() { edges.emplace_back(); return unsigned(edges.size()-1); };
@@ -139,6 +143,14 @@ inline Verdict graph(const o::Program &truth, const o::Commands &commands,
   }
   for(auto [a,b]:rearms) v.rearm &= reaches(a,b);
   for(auto [a,b]:forbidden) v.hazards &= !reaches(dones.at(a), starts.at(b));
+  if (payloadOrder) {
+    payloadOrder->clear();
+    for (unsigned a = 0; a < 2 * visits.size(); ++a)
+      for (unsigned b = 0; b < 2 * visits.size(); ++b)
+        if (a != b && reaches(a % 2 ? dones[a / 2] : starts[a / 2],
+                              b % 2 ? dones[b / 2] : starts[b / 2]))
+          payloadOrder->emplace(a, b);
+  }
   return v;
 }
 

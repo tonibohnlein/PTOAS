@@ -9,7 +9,6 @@
 #include "GraphOracle.h"
 #include <functional>
 #include <numeric>
-#include <numeric>
 #include <set>
 using namespace selected_test;
 namespace {
@@ -540,16 +539,8 @@ void guardedReaderEpisode()
 // exercises unrefined control: no residue modes, loop unrolling or new guards.
 // Repeated readers keep a single input generation until their own child exit.
 // The next first-bank write must not acquire the second child's reader prefix.
-void readerRegionCycles()
+o::Program readerRegionProgram(o::Program input)
 {
-    const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
-    auto input = base(2, 6);
-    input.operations = {op(P, {{0, false, true}}), op(P, {{1, false, true}}),
-                        op(Q, {{0, true, false}}), op(Q, {{0, true, false}}),
-                        op(Q, {{1, true, false}}), op(Q, {{1, true, false}})};
-    input.body = {o::Region::For, {seq({leaf(0), leaf(1),
-        {o::Region::For, {seq({leaf(2), leaf(3)})}, 0, true},
-        {o::Region::For, {seq({leaf(4), leaf(5)})}, 0, true}})}, 0, true};
     auto imported = o::addStructuredBoundaryCuts(input);
     require(imported.success, imported.reason);
     auto& p = imported.program;
@@ -583,6 +574,21 @@ void readerRegionCycles()
         loop.sites.assign(seen.begin(), seen.end());
         g.loops.push_back(std::move(loop));
     }
+    return p;
+}
+
+void readerRegionCycles()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
+    auto input = base(2, 6);
+    input.operations = {op(P, {{0, false, true}}), op(P, {{1, false, true}}),
+                        op(Q, {{0, true, false}}), op(Q, {{0, true, false}}),
+                        op(Q, {{1, true, false}}), op(Q, {{1, true, false}})};
+    input.body = {o::Region::For, {seq({leaf(0), leaf(1),
+        {o::Region::For, {seq({leaf(2), leaf(3)})}, 0, true},
+        {o::Region::For, {seq({leaf(4), leaf(5)})}, 0, true}})}, 0, true};
+    auto p = readerRegionProgram(input);
+    const auto& g = *p.observed;
     const auto plan = accepted(p);
     require(plan.channels.size() == 4 && plan.work.recurringTrials == 0,
             "reader regions need two complete cycles without omission trials");
@@ -650,6 +656,321 @@ void readerRegionCycles()
     require(std::none_of(conservative.channels.begin(), conservative.channels.end(), [](const auto& channel) {
         return std::find(channel.cells.begin(), channel.cells.end(), 0) != channel.cells.end();
     }), "regenerated reader input admitted as invariant");
+}
+
+// One generation is read by two children, followed by its next overwrite.
+// Region summaries guide endpoints; only the realized cycle grants credit.
+void retainedReaderRegions()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
+    auto input = base(2, 6);
+    input.operations = {op(P, {{0, false, true}}), op(Q, {}),
+                        op(Q, {{0, true, false}}), op(Q, {{0, true, false}}),
+                        op(Q, {{0, true, false}}), op(Q, {{0, true, false}})};
+    input.body = {o::Region::For, {seq({leaf(0),
+        {o::Region::For, {seq({leaf(2), leaf(3)})}, 0, true},
+        {o::Region::For, {seq({leaf(4), leaf(5)})}, 0, true}, leaf(1)})}, 0, true};
+    auto p = readerRegionProgram(input);
+    const auto plan = accepted(p);
+    require(plan.channels.size() == 2 && plan.work.recurringTrials == 0,
+            "retained input needs one complete cycle across both children");
+    for (const auto& channel : plan.channels) {
+        require(channel.cells == std::vector<unsigned>{0}, "unrelated writer joined retained cycle");
+        require(channel.publications.size() == (channel.source == P ? 1u : 2u),
+                "retained input published at an intermediate child boundary");
+        require(channel.acquisitions.size() == (channel.source == P ? 1u : 2u),
+                "retained readiness reacquired for the second child");
+    }
+    o::SelectedOptions ordinary;
+    ordinary.recurring = false;
+    const auto baseline = o::constructSelectedPlan(p, {}, ordinary);
+    require(baseline.success, baseline.reason);
+    const auto& g = *p.observed;
+    auto premature = plan.commands;
+    const auto& release = *std::find_if(plan.channels.begin(), plan.channels.end(),
+        [&](const auto& channel) { return channel.source == Q; });
+    std::vector<o::Cut> children;
+    for (const auto& loop : g.loops) {
+        if (std::any_of(loop.sites.begin(), loop.sites.end(), [&](auto site) {
+                return g.sites[site].operation == 0;
+            })) continue;
+        children.push_back(loop.exit);
+    }
+    require(children.size() == 2, "retained fixture child count");
+    const auto early = o::canonicalCommandCut(p, children.front());
+    const auto late = o::canonicalCommandCut(p, children.back());
+    auto& word = premature[late];
+    auto endpoint = std::find_if(word.begin(), word.end(), [&](const auto& command) {
+        return command.kind == o::Command::Publish && command.source == Q &&
+            command.observer == P && command.key == release.key;
+    });
+    require(endpoint != word.end(), "last-reader release missing");
+    const auto command = *endpoint;
+    word.erase(endpoint); premature[early].push_back(command);
+    require(!o::checkCausalFrontier(p, premature).accepted,
+            "release after first child incorrectly covers the second child");
+    unsigned removed = 0;
+    for (const auto& lengths : std::vector<std::vector<unsigned>>{{}, {1, 1}, {0, 2}, {3, 0},
+            {0, 0}, {1, 3, 2, 1}, {2, 0, 0, 3}, {3, 2, 1, 4}}) {
+        std::vector<unsigned> expected;
+        for (unsigned pair = 0; pair < lengths.size(); pair += 2) {
+            expected.push_back(0);
+            for (unsigned i = 0; i < lengths[pair]; ++i) expected.insert(expected.end(), {2, 3});
+            for (unsigned i = 0; i < lengths[pair + 1]; ++i) expected.insert(expected.end(), {4, 5});
+            expected.push_back(1);
+        }
+        std::vector<o::Cut> path;
+        std::set<std::pair<o::Cut, unsigned>> active, dead;
+        std::function<bool(o::Cut, unsigned)> walk = [&](o::Cut at, unsigned offset) {
+            const auto key = std::make_pair(at, offset);
+            if (active.count(key) || dead.count(key)) return false;
+            const auto operation = g.sites[at].operation;
+            if (operation != o::NoControlId) {
+                if (offset == expected.size() || operation != expected[offset]) return false;
+                ++offset;
+            }
+            path.push_back(at);
+            if (at == g.exit && offset == expected.size()) return true;
+            active.insert(key);
+            for (auto next : g.sites[at].successors) if (walk(next, offset)) return true;
+            active.erase(key); dead.insert(key); path.pop_back(); return false;
+        };
+        require(walk(g.entry, 0), "retained-reader varying-length trace missing");
+        auto flatten = [&](const o::Commands& commands, oahs_oracle::PayloadOrder& order) {
+            auto flat = p; flat.observed.reset(); flat.body = {}; flat.operations.clear();
+            o::Commands words; std::vector<o::Command> pending;
+            for (auto cut : path) {
+                pending.insert(pending.end(), commands[cut].begin(), commands[cut].end());
+                const auto operation = g.sites[cut].operation;
+                if (operation == o::NoControlId) continue;
+                flat.operations.push_back(p.operations[operation]);
+                words.push_back(std::move(pending)); pending.clear();
+            }
+            words.push_back(std::move(pending));
+            std::vector<unsigned> visits(flat.operations.size()); std::iota(visits.begin(), visits.end(), 0);
+            return oahs_oracle::graph(flat, words, visits, {}, nullptr, nullptr, &order);
+        };
+        oahs_oracle::PayloadOrder before, after;
+        require(bool(flatten(baseline.commands, before)) && bool(flatten(plan.commands, after)),
+                "retained cycle failed independent memory/balance/rearming checks");
+        require(std::includes(before.begin(), before.end(), after.begin(), after.end()),
+                "retained cycle introduced payload ordering");
+        if (lengths.size() >= 4 && lengths[1]) {
+            oahs_oracle::PayloadOrder bad;
+            require(!flatten(premature, bad), "independent oracle accepted premature child release");
+        }
+        removed += before.size() - after.size();
+    }
+    require(removed != 0, "retained cycle did not improve the broad ordinary repair");
+    for (const auto& channel : plan.channels) {
+        auto broken = plan.commands;
+        for (auto& word : broken) word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+            return command.source == channel.source && command.observer == channel.observer &&
+                command.key == channel.key && (command.kind == o::Command::Publish || command.kind == o::Command::Acquire);
+        }), word.end());
+        require(!o::checkCausalFrontier(p, broken).accepted, "retained generation credited without actual transfer");
+    }
+    auto independent = p;
+    independent.operations[4].pipe = o::Pipe::M;
+    const auto separate = accepted(independent);
+    require(separate.channels.empty(), "independent engine completion inferred from final reader");
+    auto reloaded = input;
+    reloaded.operations.push_back(op(P, {{0, false, true}}));
+    reloaded.body.children[0].children.insert(reloaded.body.children[0].children.begin() + 2, leaf(6));
+    const auto reloadPlan = accepted(readerRegionProgram(reloaded));
+    require(reloadPlan.channels.size() == 2, "reloaded input lost complete per-generation cycle");
+    for (const auto& channel : reloadPlan.channels) if (channel.source == P)
+        require(channel.publications.size() == 2 && channel.acquisitions.size() == 2,
+                "old readiness was retained across an actual reload");
+    auto unrelated = input;
+    unrelated.operations[1] = op(P, {{1, false, true}});
+    // Put the unrelated write after the retained write: removing the earlier
+    // producer fence must not move its repair across the current generation.
+    unrelated.body.children[0].children.pop_back();
+    unrelated.body.children[0].children.insert(unrelated.body.children[0].children.begin() + 1, leaf(1));
+    const auto declined = accepted(readerRegionProgram(unrelated));
+    require(declined.channels.empty(), "uncertified producer-fence motion admitted");
+    std::cout << "retained-reader paths=8 removed-payload-relations=" << removed << '\n';
+}
+
+// Original observed paths are flattened only in the independent test oracle.
+// Production qualification never enumerates child lengths or parent visits.
+bool readerTraceOrder(const o::Program& p, const o::Commands& commands,
+                      const std::vector<unsigned>& expected, oahs_oracle::PayloadOrder& order)
+{
+    const auto& g = *p.observed;
+    std::vector<o::Cut> path;
+    std::set<std::pair<o::Cut, unsigned>> active, dead;
+    std::function<bool(o::Cut, unsigned)> walk = [&](o::Cut at, unsigned offset) {
+        const auto key = std::make_pair(at, offset);
+        if (active.count(key) || dead.count(key)) return false;
+        const auto operation = g.sites[at].operation;
+        if (operation != o::NoControlId) {
+            if (offset == expected.size() || operation != expected[offset]) return false;
+            ++offset;
+        }
+        path.push_back(at);
+        if (at == g.exit && offset == expected.size()) return true;
+        active.insert(key);
+        for (auto next : g.sites[at].successors) if (walk(next, offset)) return true;
+        active.erase(key); dead.insert(key); path.pop_back(); return false;
+    };
+    require(walk(g.entry, 0), "multi-input original path missing");
+    auto flat = p; flat.observed.reset(); flat.body = {}; flat.operations.clear();
+    o::Commands words; std::vector<o::Command> pending;
+    for (auto cut : path) {
+        pending.insert(pending.end(), commands[cut].begin(), commands[cut].end());
+        const auto operation = g.sites[cut].operation;
+        if (operation == o::NoControlId) continue;
+        flat.operations.push_back(p.operations[operation]);
+        words.push_back(std::move(pending)); pending.clear();
+    }
+    words.push_back(std::move(pending));
+    std::vector<unsigned> visits(flat.operations.size()); std::iota(visits.begin(), visits.end(), 0);
+    return bool(oahs_oracle::graph(flat, words, visits, {}, nullptr, nullptr, &order));
+}
+
+o::Program multiReaderInput(bool secondRetained)
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
+    auto input = base(2, 6);
+    input.operations = {op(P, {{0, false, true}}), op(P, {{1, false, true}}),
+                        op(Q, {{0, true, false}}), op(Q, {{1, true, false}}),
+                        op(Q, {{0, true, false}}), op(Q, {{1, true, false}}), op(Q, {})};
+    input.body = {o::Region::For, {seq({leaf(0), leaf(1),
+        {o::Region::For, {seq({leaf(2)})}, 0, true},
+        {o::Region::For, {seq({leaf(3)})}, 0, true},
+        {o::Region::For, {seq({leaf(4)})}, 0, true}})}, 0, true};
+    auto& sequence = input.body.children.front().children;
+    if (secondRetained) sequence.push_back({o::Region::For, {seq({leaf(5)})}, 0, true});
+    else input.operations.erase(input.operations.begin() + 5);
+    sequence.push_back(leaf(secondRetained ? 6 : 5));
+    return input;
+}
+
+void retainedProducerCohort()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
+    unsigned paths = 0, removed = 0;
+    for (bool secondRetained : {false, true}) {
+        auto input = multiReaderInput(secondRetained);
+        const auto p = readerRegionProgram(input);
+        const auto plan = accepted(p);
+        require(plan.channels.size() == 4 && plan.work.recurringTrials == 0,
+                "multi-input reader cohort lost separate complete cycles");
+        require(plan.work.rejectedSupportProposals == 0 &&
+                std::none_of(plan.fences.begin(), plan.fences.end(), [&](const auto& f) { return f.observer == P; }),
+                "accepted producer cohort still needs a local repair");
+        std::set<std::vector<o::Cut>> sources, consumers, releases;
+        for (const auto& channel : plan.channels) {
+            if (channel.source == P) {
+                sources.insert(channel.publications); consumers.insert(channel.acquisitions);
+            } else releases.insert(channel.publications);
+        }
+        require(sources.size() == 2 && consumers.size() == 2 && releases.size() == 2,
+                "distinct readiness or last-reader boundaries were merged");
+        o::SelectedOptions ordinary; ordinary.recurring = false;
+        const auto baseline = o::constructSelectedPlan(p, {}, ordinary);
+        require(baseline.success, baseline.reason);
+        for (const auto& lengths : std::vector<std::vector<unsigned>>{
+                {}, {1,1,1,1}, {0,2,3,0}, {3,0,0,2}, {0,0,0,0},
+                {1,3,2,1, 2,0,1,3}, {0,0,0,0, 2,1,0,3}, {3,2,1,4, 1,4,3,2}}) {
+            std::vector<unsigned> expected;
+            for (unsigned entry = 0; entry < lengths.size(); entry += 4) {
+                expected.insert(expected.end(), {0,1});
+                for (unsigned child = 0; child < (secondRetained ? 4u : 3u); ++child)
+                    expected.insert(expected.end(), lengths[entry + child], 2 + child);
+                expected.push_back(secondRetained ? 6 : 5);
+            }
+            oahs_oracle::PayloadOrder before, after;
+            require(readerTraceOrder(p, baseline.commands, expected, before) &&
+                    readerTraceOrder(p, plan.commands, expected, after),
+                    "multi-input trace violates memory, balance or rearming");
+            require(std::includes(before.begin(), before.end(), after.begin(), after.end()),
+                    "multi-input admission moved a repair and added payload ordering");
+            if (!lengths.empty() && lengths[0])
+                require(!after.count({3,4}), "later Y load gates the first X extraction");
+            removed += before.size() - after.size();
+            ++paths;
+        }
+        unsigned missingSupportFailures = 0;
+        for (const auto& channel : plan.channels) {
+            auto broken = plan.commands;
+            for (auto& word : broken) word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+                return command.source == channel.source && command.observer == channel.observer &&
+                    command.key == channel.key && (command.kind == o::Command::Publish || command.kind == o::Command::Acquire);
+            }), word.end());
+            const auto accepted = o::checkCausalFrontier(p, broken).accepted;
+            oahs_oracle::PayloadOrder bad;
+            const std::vector<unsigned> visits = secondRetained
+                ? std::vector<unsigned>{0,1,2,3,4,5,6,0,1,2,3,4,5,6}
+                : std::vector<unsigned>{0,1,2,3,4,5,0,1,2,3,4,5};
+            require(readerTraceOrder(p, broken, visits, bad) == accepted,
+                    "independent oracle disagrees on removed multi-input support");
+            if (!accepted) ++missingSupportFailures;
+            if (channel.source == P || channel.cell == 0)
+                require(!accepted, "required readiness/early X return was inferred without its transfer");
+        }
+        // An earlier Y reader can already be covered by X's later return.
+        // That optional sharing is deliberately not a channel-deletion policy.
+        require(missingSupportFailures >= 3, "missing-support negatives were not discriminating");
+        const auto release = std::find_if(plan.channels.begin(), plan.channels.end(),
+            [&](const auto& channel) { return channel.source == Q && channel.cell == 0; });
+        auto premature = plan.commands;
+        const auto& graph = *p.observed;
+        const auto firstChild = std::find_if(graph.loops.begin(), graph.loops.end(), [&](const auto& loop) {
+            return std::any_of(loop.sites.begin(), loop.sites.end(), [&](auto site) { return graph.sites[site].operation == 2; }) &&
+                std::none_of(loop.sites.begin(), loop.sites.end(), [&](auto site) { return graph.sites[site].operation == 0; });
+        });
+        require(firstChild != graph.loops.end(), "first X child missing");
+        const auto early = o::canonicalCommandCut(p, firstChild->exit);
+        for (auto cut : release->publications) {
+            if (cut == o::canonicalCommandCut(p, graph.entry)) continue;
+            auto& word = premature[cut];
+            auto publication = std::find_if(word.begin(), word.end(), [&](const auto& command) {
+                return command.kind == o::Command::Publish && command.source == Q &&
+                    command.observer == P && command.key == release->key;
+            });
+            require(publication != word.end(), "X release not found");
+            const auto command = *publication; word.erase(publication); premature[early].push_back(command);
+        }
+        require(!o::checkCausalFrontier(p, premature).accepted, "multi-input X released after only its first child");
+        oahs_oracle::PayloadOrder prematureOrder;
+        const std::vector<unsigned> repeated = secondRetained
+            ? std::vector<unsigned>{0,1,2,3,4,5,6,0,1,2,3,4,5,6}
+            : std::vector<unsigned>{0,1,2,3,4,5,0,1,2,3,4,5};
+        require(!readerTraceOrder(p, premature, repeated, prematureOrder), "independent oracle accepted premature multi-input release");
+        auto reload = input;
+        reload.operations.push_back(op(P, {{0, false, true}}));
+        auto& sequence = reload.body.children.front().children;
+        sequence.insert(sequence.begin() + 4, leaf(reload.operations.size() - 1));
+        const auto reloaded = accepted(readerRegionProgram(reload));
+        for (const auto& channel : reloaded.channels) if (channel.cell == 0 && channel.source == P)
+            require(channel.publications.size() == 2 && channel.acquisitions.size() == 2,
+                    "multi-input readiness survived an actual X reload");
+        auto tight = input;
+        tight.target.keys[unsigned(P)][unsigned(Q)] = {0, 1};
+        tight.target.keys[unsigned(Q)][unsigned(P)] = {0};
+        const auto tightProgram = readerRegionProgram(tight);
+        const auto fallback = o::constructSelectedPlan(tightProgram);
+        const auto tightOrdinary = o::constructSelectedPlan(tightProgram, {}, ordinary);
+        require(fallback.channels.empty() && fallback.work.rejectedResourceProposals == 1,
+                "partial multi-input cohort escaped capacity fallback");
+        require(fallback.success == tightOrdinary.success && fallback.reason == tightOrdinary.reason,
+                "capacity fallback changed ordinary construction's outcome");
+        auto uncovered = input;
+        uncovered.operations[3].accesses.clear(); uncovered.operations[5].accesses.clear();
+        const auto declined = accepted(readerRegionProgram(uncovered));
+        require(declined.channels.empty(), "uncovered Y writer allowed X's fence to move");
+        auto independent = input;
+        independent.operations[4].pipe = o::Pipe::M;
+        const auto otherReader = accepted(readerRegionProgram(independent));
+        require(std::none_of(otherReader.channels.begin(), otherReader.channels.end(),
+                    [](const auto& channel) { return channel.cell == 0; }),
+                "independent X reader was covered by a different engine's release");
+    }
+    require(removed != 0, "multi-input cycle did not recover any payload independence");
+    std::cout << "retained-cohort paths=" << paths << " removed-payload-relations=" << removed << '\n';
 }
 
 void independentBankEpisodes()
@@ -927,6 +1248,8 @@ int main()
     guardedReaderEpisode();
     independentBankEpisodes();
     readerRegionCycles();
+    retainedReaderRegions();
+    retainedProducerCohort();
     for (unsigned slots = 1; slots <= 4; ++slots) {
         checkSlots(slots);
     }

@@ -371,6 +371,35 @@ std::vector<RecurringRequirement> qualifyPipelineCycle(
     return out;
 }
 
+// Nearest storage role over the original control graph. Callers provide
+// physical accesses or qualified region boundaries, never selected credit.
+// Reader=1, writer=2, invocation boundary=4: constant-height propagation.
+std::vector<unsigned> nearestRoles(const Control& c, const std::vector<unsigned>& roles, bool backward)
+{
+    const auto n = c.graph.sites.size();
+    std::vector<unsigned> facts(n);
+    std::deque<Cut> todo;
+    std::vector<bool> queued(n);
+    auto add = [&](Cut site, unsigned bits) {
+        const auto joined = facts[site] | bits;
+        if (facts[site] == joined) return;
+        facts[site] = joined;
+        if (!queued[site]) { queued[site] = true; todo.push_back(site); }
+    };
+    auto edges = [&](Cut site) -> const std::vector<Id>& {
+        return backward ? c.predecessors[site] : c.graph.sites[site].successors;
+    };
+    for (Cut site = 0; site < n; ++site)
+        if (roles[site]) for (auto next : edges(site)) add(next, roles[site]);
+    add(backward ? c.graph.exit : c.graph.entry, 4);
+    while (!todo.empty()) {
+        const auto site = todo.front(); todo.pop_front(); queued[site] = false;
+        if (roles[site]) continue;
+        for (auto next : edges(site)) add(next, facts[site]);
+    }
+    return facts;
+}
+
 // Derive complete guarded producer/reader episodes before assigning physical
 // event keys. A skipped branch preserves the bank release token, so the next
 // participating writer is paired with the preceding participating reader.
@@ -405,35 +434,7 @@ std::vector<RecurringRequirement> qualifyGuardedBanks(const Program& p, const Co
             cyclic |= c.components[c.component[site]].cyclic;
         }
         if (!admitted || !cyclic || writer == Pipe::Count || reader == Pipe::Count || writer == reader) continue;
-        // Nearest access ROLE on every original path, in each direction. The
-        // boundary bit is distinct from either engine. At most three bits can
-        // be added per site; no source/target pairs or guard products are built.
-        auto nearest = [&](bool backward) {
-            std::vector<unsigned> facts(n);
-            std::deque<Cut> todo;
-            std::vector<bool> queued(n);
-            auto add = [&](Cut site, unsigned bits) {
-                const auto joined = facts[site] | bits;
-                if (facts[site] == joined) return;
-                facts[site] = joined;
-                if (!queued[site]) { queued[site] = true; todo.push_back(site); }
-            };
-            auto edges = [&](Cut site) -> const std::vector<Id>& {
-                return backward ? c.predecessors[site] : c.graph.sites[site].successors;
-            };
-            for (auto [site, ignored] : incidences[cell]) {
-                (void)ignored;
-                for (auto next : edges(site)) add(next, roles[site]);
-            }
-            add(backward ? c.graph.exit : c.graph.entry, 4);
-            while (!todo.empty()) {
-                const auto site = todo.front(); todo.pop_front(); queued[site] = false;
-                if (roles[site]) continue;
-                for (auto next : edges(site)) add(next, facts[site]);
-            }
-            return facts;
-        };
-        const auto previous = nearest(false), next = nearest(true);
+        const auto previous = nearestRoles(c, roles, false), next = nearestRoles(c, roles, true);
         RecurringRequirement ready, release;
         ready.qualifiedCycle = release.qualifiedCycle = true;
         release.storageRelease = true;
@@ -481,16 +482,21 @@ std::vector<RecurringRequirement> qualifyGuardedBanks(const Program& p, const Co
     return out;
 }
 
-// A reader-only child retains one storage generation across its visits. Its
-// original exit observes all participating reads without observing a later
-// sibling's work. Its first observer must consume this invariant input: entry
-// readiness therefore crosses no independent observer work. Select both
-// directions so actual readiness supports the return and its rearming.
+// Reader-only children can retain one storage generation across their visits
+// and siblings. The first qualified reader acquires readiness; the last child
+// exit releases the generation before subsequent unrelated reader-pipe work.
+// Select both directions so actual readiness supports return and rearming.
 std::vector<RecurringRequirement> qualifyReaderRegionCycles(
     const Program& p, const Control& c, const std::vector<RecurringRequirement>& selected)
 {
     std::vector<RecurringRequirement> out;
     if (!p.observed) return out;
+    struct Candidate {
+        RecurringRequirement ready, release;
+        std::set<Cut> writes;
+        bool retained;
+    };
+    std::vector<Candidate> candidates;
     std::set<unsigned> owned;
     for (const auto& request : selected)
         owned.insert(request.cells.begin(), request.cells.end());
@@ -525,8 +531,8 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
         if (std::any_of(writes.begin(), writes.end(), [&](Cut site) {
                 return !c.components[c.component[site]].cyclic;
             })) continue;
-        std::set<Cut> publications{c.canonicalCut[c.graph.entry]};
-        std::set<Cut> firstConsumers;
+        struct ReaderRegion { Cut entry, acquisition, exit; };
+        std::vector<ReaderRegion> regions;
         std::set<Cut> covered;
         for (const auto& loop : p.observed->loops) {
             if (!loop.atLeastOnce || loop.bodyEntry == NoAnalysisId ||
@@ -544,21 +550,48 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
             const auto facts = std::find_if(c.loopEntries.begin(), c.loopEntries.end(),
                 [&](const auto& entry) { return entry.entry == loop.entry; });
             if (facts == c.loopEntries.end() || facts->issuedPipes.count(writer)) continue;
+            Cut acquisition;
             const auto& first = facts->firstConsumers[unsigned(reader)];
             if (!first.empty() && std::all_of(first.begin(), first.end(), [&](Cut site) {
                     return reads.count(site);
-                })) firstConsumers.insert(c.canonicalCut[loop.entry]);
+                })) acquisition = c.canonicalCut[loop.entry];
             else {
                 const auto input = std::find_if(facts->firstInputConsumers.begin(), facts->firstInputConsumers.end(),
                     [&](Cut site) { return reads.count(site); });
                 if (input == facts->firstInputConsumers.end()) continue;
-                firstConsumers.insert(c.canonicalCut[*input]);
+                acquisition = c.canonicalCut[*input];
             }
             if (!c.graph.legalCuts[loop.exit]) { admitted = false; break; }
-            publications.insert(c.canonicalCut[loop.exit]);
+            regions.push_back({loop.entry, acquisition, loop.exit});
             covered.insert(local.begin(), local.end());
         }
         if (!admitted || covered != reads) continue;
+        // Compose reader-only children by physical generation. A sibling exit
+        // is a use boundary, not automatically a release; the following child
+        // retains readiness unless an intervening writer starts a new phase.
+        std::vector<unsigned> beforeRoles(c.graph.sites.size()), afterRoles(beforeRoles.size());
+        for (auto site : writes) beforeRoles[site] = afterRoles[site] = 2;
+        for (const auto& region : regions) {
+            beforeRoles[region.exit] |= 1;
+            afterRoles[region.entry] |= 1;
+        }
+        const auto previous = nearestRoles(c, beforeRoles, false);
+        const auto next = nearestRoles(c, afterRoles, true);
+        std::set<Cut> firstConsumers, publications{c.canonicalCut[c.graph.entry]};
+        for (const auto& region : regions) {
+            // Native sibling exit/entry anchors can be the same original cut.
+            // That boundary itself is the neighboring role in this view.
+            const auto predecessor = beforeRoles[region.entry] ? beforeRoles[region.entry] : previous[region.entry];
+            if (predecessor == 2) firstConsumers.insert(region.acquisition);
+            else if (predecessor != 1) { admitted = false; break; }
+            const auto successor = afterRoles[region.exit] ? afterRoles[region.exit] : next[region.exit];
+            if (successor && !(successor & ~6u)) publications.insert(c.canonicalCut[region.exit]);
+            else if (successor != 1) { admitted = false; break; }
+        }
+        const bool retainsAcrossChildren = firstConsumers.size() < regions.size();
+        // Mixed first/retained or last/non-last paths need an original
+        // participation witness; do not introduce an event-derived guard.
+        if (!admitted) continue;
         RecurringRequirement returned;
         returned.cell = cell; returned.cells = {cell};
         returned.source = reader; returned.observer = writer;
@@ -583,9 +616,57 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
                                  ready.publications.end());
         if (admitted && balanced(c, ready.publications, ready.acquisitions, true) &&
             balanced(c, returned.publications, returned.acquisitions, true)) {
-            out.push_back(std::move(ready));
-            out.push_back(std::move(returned));
+            candidates.push_back({std::move(ready), std::move(returned), std::move(writes), retainsAcrossChildren});
         }
+    }
+    // A retained child can remove a producer fence. Do not let an uncovered
+    // write move the remaining fence after the next generation. Index complete
+    // candidates first; multi-input admission needs a closed producer cohort,
+    // not a per-cell assertion that the other cycles will appear later.
+    std::map<Pipe, std::set<unsigned>> written;
+    std::set<Pipe> exclusive;
+    for (const auto& operation : p.operations) {
+        for (const auto& access : operation.accesses) {
+            if (access.write) written[operation.pipe].insert(access.cell);
+            if (p.cells[access.cell].exclusive) exclusive.insert(operation.pipe);
+        }
+    }
+    std::map<unsigned, Id> byCell;
+    for (Id i = 0; i < candidates.size(); ++i) byCell.emplace(candidates[i].ready.cell, i);
+    std::map<Pipe, bool> closedCohorts;
+    for (const auto& candidate : candidates) {
+        const auto producer = candidate.ready.source;
+        const auto& cells = written[producer];
+        if (candidate.retained && cells.size() > 1 && !closedCohorts.count(producer)) {
+            bool closed = true;
+            Cut anchor = NoAnalysisId;
+            for (auto cell : cells) {
+                const auto found = byCell.find(cell);
+                if (found == byCell.end()) { closed = false; break; }
+                const auto& support = candidates[found->second];
+                // First extension: one straight producer corridor, one writer
+                // occurrence per cell, and one reader engine. Reloads and
+                // branch-dependent producer sequences retain the old fallback.
+                if (support.ready.source != producer || support.ready.observer != candidate.ready.observer ||
+                    support.writes.size() != 1) { closed = false; break; }
+                const auto site = *support.writes.begin();
+                if (anchor == NoAnalysisId) anchor = site;
+                else if (!c.straight(anchor, site) && !c.straight(site, anchor)) { closed = false; break; }
+            }
+            closedCohorts.emplace(producer, closed);
+        }
+    }
+    for (auto& candidate : candidates) {
+        const auto producer = candidate.ready.source;
+        if (candidate.retained && exclusive.count(producer)) continue;
+        if (candidate.retained && written[producer].size() > 1) {
+            if (!closedCohorts.at(producer)) continue;
+            // This is a conditional support assertion. The single staged
+            // mandatory solve below must discharge it before any reservation.
+            candidate.ready.repairFreeProducers.insert(producer);
+        }
+        out.push_back(std::move(candidate.ready));
+        out.push_back(std::move(candidate.release));
     }
     return out;
 }
@@ -948,6 +1029,7 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
         if (duplicate == requests.end()) requests.push_back(std::move(request));
         else {
             duplicate->qualifiedCycle &= request.qualifiedCycle;
+            duplicate->repairFreeProducers.insert(request.repairFreeProducers.begin(), request.repairFreeProducers.end());
             duplicate->cells.insert(duplicate->cells.end(), request.cells.begin(), request.cells.end());
             std::sort(duplicate->cells.begin(), duplicate->cells.end());
             duplicate->cells.erase(std::unique(duplicate->cells.begin(), duplicate->cells.end()),
@@ -1249,6 +1331,17 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
     if (!selected->complete || !selected->diagnostics.empty() ||
         !selected->protocol.empty() || !selected->phaseResources.empty()) {
         ++result.work.rejectedProtocolProposals;
+        return true;
+    }
+    std::set<Pipe> repairFreeProducers;
+    for (const auto& request : requests)
+        repairFreeProducers.insert(request.repairFreeProducers.begin(), request.repairFreeProducers.end());
+    if (std::any_of(selected->residuals.begin(), selected->residuals.end(), [&](const auto& residual) {
+            return repairFreeProducers.count(program.operations[residual.demand.consumer].pipe);
+        })) {
+        // The protocol may be safe while its missing producer repair would
+        // broaden ordering. Decline unchanged; do not move or invent a fence.
+        ++result.work.rejectedSupportProposals;
         return true;
     }
     // An exactly fitting cohort can strand an uncovered ordinary demand.

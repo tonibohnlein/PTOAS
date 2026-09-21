@@ -91,8 +91,10 @@ Disable downstream automatic synchronization for manual and already-synchronized
 arms. Source Ascend C and PTO may require distinct frontends: record that
 difference and use original-versus-matched-manual to expose its cost.
 
-After all compared arms pass correctness, use 180 samples per arm in six
-balanced rotated rounds. Warm up consistently. Use all eight allocated devices
+After all compared arms pass correctness, use 10 untimed warmup launches and
+20 measured launches per arm total, in two rotated rounds of ten. Do not nest
+large launch batches or repeat timing for every correctness seed. Extend only
+for a specific unresolved decision. Use all eight allocated devices
 for independent comparisons. Serialize timed/profiled jobs only on the same
 device; each matched comparison must run all of its arms on that device.
 Record device identity and retain per-device results rather than pooling raw

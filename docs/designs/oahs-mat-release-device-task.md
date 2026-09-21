@@ -87,8 +87,10 @@ slots checked). Preserve untouched-output, guard and nonfinite checks and the
 existing justified numerical criterion. Do not loosen tolerances. An arm that
 fails is unqualified and must not contribute a speedup claim.
 
-Use 180 timing samples/arm, six balanced rotated rounds, identical launch
-parameters, warm-up and device state. Report medians, IQRs, per-round medians and
+For new follow-ups, use 10 untimed warmup launches and 20 measured launches/arm
+in two rotated rounds, with identical launch parameters and device state.
+Keep completed campaign measurements. The scheduling addendum supersedes the
+original larger sample budget; do not add nested large batches. Report medians, IQRs, per-round medians and
 ratios against baseline and existing. For LM head report full launch coverage;
 local one-/two-tile traces are bounded diagnostics, not a full numerical run.
 

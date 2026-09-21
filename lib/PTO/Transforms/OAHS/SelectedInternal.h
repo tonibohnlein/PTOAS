@@ -178,6 +178,10 @@ struct RecurringRequirement {
     // remain eligible for conservative redundancy trials.
     bool qualifiedCycle = false;
     bool storageRelease = false;
+    // Multi-input retained-reader admission requires the staged ledger to
+    // cover every payload requirement on this producer. Otherwise removing
+    // one local repair could move a remaining repair past a new write.
+    std::set<Pipe> repairFreeProducers;
 };
 struct OccurrenceMode {
     Id owner = NoAnalysisId;

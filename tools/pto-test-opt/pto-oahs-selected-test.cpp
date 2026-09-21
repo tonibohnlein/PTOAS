@@ -696,6 +696,7 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
                  << " proposal_microseconds=" << work.proposalCheckMicroseconds
                  << " rejected_protocol=" << work.rejectedProtocolProposals
                  << " rejected_resource=" << work.rejectedResourceProposals
+                 << " rejected_support=" << work.rejectedSupportProposals
                  << " gap_publications=" << work.gapPublications
                  << " deferred_acks=" << work.deferredAcknowledgments
                  << " equal_coverage_pairs=" << work.equalCoveragePairs

@@ -12,6 +12,26 @@
 using namespace selected_test;
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void uncoveredProducerProposal() {
+        auto p = base(2);
+        p.operations = {op(Pipe::MTE2, {{0, false, true}}), op(Pipe::MTE2, {{0, false, true}}),
+                        op(Pipe::V, {{1, false, true}}), op(Pipe::MTE2, {{1, true, false}})};
+        Constructor c(p);
+        std::string reason;
+        require(c.ledger.initialize({}, reason), reason);
+        const auto version = c.ledger.version();
+        RecurringRequirement supported;
+        supported.cell = 1; supported.cells = {1}; supported.source = Pipe::V; supported.observer = Pipe::MTE2;
+        supported.publications = {3}; supported.acquisitions = {3}; supported.qualifiedCycle = true;
+        supported.repairFreeProducers.insert(Pipe::MTE2);
+        require(c.recurring({supported}), "uncovered producer proposal escaped optional fallback");
+        require(c.result.work.rejectedSupportProposals == 1 && c.result.work.rejectedProtocolProposals == 0,
+                "valid event protocol hid an uncovered producer repair");
+        require(c.ledger.version() == version && c.ledger.records().empty() &&
+                c.recurringKeys.empty() && c.result.channels.empty() && !c.needsContextualReplay,
+                "rejected producer support leaked committed state");
+        require(c.run({}).success, "ordinary construction failed after support rejection");
+    }
     static void invalidProposal() {
         auto p = base(1);
         p.operations = {op(Pipe::MTE2, {{0, false, true}}), op(Pipe::V, {{0, true, false}})};
@@ -115,6 +135,94 @@ void wordGapBaseline() {
     require(!o::checkCausalFrontier(p,broken).accepted, "gap admission invented missing readiness");
 
 }
+// Supplied-protocol witness for the *contextual* merge certificate. It does
+// not claim the constructor emits either plan: all fixed endpoints are explicit.
+void commonFrontierContext() {
+    using C = o::Command;
+    unsigned cases = 0;
+    for (unsigned episodes : {1u, 2u, 4u}) for (bool outwardBetween : {false, true}) {
+        auto p = base(3, 4);
+        for (unsigned i = 0; i < episodes; ++i) {
+            p.operations.push_back(op(Q, {{2,false,true}})); // z producer
+            p.operations.push_back(op(P, {{0,false,true}})); // A
+            p.operations.push_back(op(P, {{1,false,true}})); // B
+            p.operations.push_back(op(Q, {{0,true,false},{1,true,false}}));
+            p.operations.push_back(op(R, {{2,true,false}}));
+        }
+        o::Commands separate(p.operations.size()+1), merged(p.operations.size()+1);
+        auto add = [](o::Commands& commands, unsigned cut, C::Kind kind,
+                      o::Pipe source, o::Pipe observer, unsigned key = 0) {
+            commands[cut].push_back({kind,source,observer,key});
+        };
+        for (unsigned i = 0; i < episodes; ++i) {
+            const unsigned start = 5*i;
+            for (auto* commands : {&separate, &merged}) {
+                if (i) {
+                    add(*commands,start,C::Acquire,R,Q);
+                    add(*commands,start+1,C::Acquire,Q,P);
+                }
+                add(*commands,start+4,C::Publish,Q,P); // actual AB reader return
+                add(*commands,start+4,C::Acquire,Q,R);
+                add(*commands,start+5,C::Publish,R,Q); // actual z reader return
+            }
+            add(separate,start+2,C::Publish,P,Q,0); // early A source
+            add(separate,start+3,C::Publish,P,Q,1); // later B source
+            add(separate,start+3,C::Acquire,P,Q,0);
+            if (outwardBetween) add(separate,start+3,C::Publish,Q,R);
+            add(separate,start+3,C::Acquire,P,Q,1);
+            if (!outwardBetween) add(separate,start+3,C::Publish,Q,R);
+            // One later source, same consumer cut. Both original waits are
+            // sufficient for the Q payload, but their intermediate export differs.
+            add(merged,start+3,C::Publish,P,Q);
+            add(merged,start+3,C::Acquire,P,Q);
+            add(merged,start+3,C::Publish,Q,R);
+        }
+        for (auto* commands : {&separate, &merged}) {
+            add(*commands,p.operations.size(),C::Acquire,Q,P);
+            add(*commands,p.operations.size(),C::Acquire,R,Q);
+        }
+        std::vector<unsigned> visits(p.operations.size());
+        std::iota(visits.begin(),visits.end(),0);
+        oahs_oracle::PayloadOrder oldOrder, newOrder;
+        require(bool(oahs_oracle::graph(p,separate,visits,{},nullptr,nullptr,&oldOrder)),
+                "separate-frontier fixture lacks memory/balance/rearming");
+        require(bool(oahs_oracle::graph(p,merged,visits,{},nullptr,nullptr,&newOrder)),
+                "merged-frontier fixture lacks memory/balance/rearming");
+        require(o::checkCausalFrontier(p,separate).accepted &&
+                o::checkCausalFrontier(p,merged).accepted,
+                "production checker disagrees with supplied frontier protocols");
+        if (!outwardBetween) {
+            require(oldOrder == newOrder, "private common consumer changed payload order");
+        } else {
+            require(std::includes(newOrder.begin(),newOrder.end(),oldOrder.begin(),oldOrder.end()) &&
+                    oldOrder != newOrder, "outward publication did not expose broader order");
+            for (unsigned i = 0; i < episodes; ++i) {
+                const auto unwanted = std::make_pair(2*(5*i+2)+1,2*(5*i+4));
+                require(!oldOrder.count(unwanted) && newOrder.count(unwanted),
+                        "later B load must newly gate the unrelated z reader");
+            }
+        }
+        // Delete a complete return channel so event balance alone cannot mask
+        // the loss of real reuse and forward-key consumption evidence.
+        if (episodes > 1) {
+            auto broken = merged;
+            for (auto& word : broken)
+                word.erase(std::remove_if(word.begin(),word.end(),[&](const C& c) {
+                    return c.source == Q && c.observer == P;
+                }),word.end());
+            const auto verdict = oahs_oracle::graph(p,broken,visits);
+            require(verdict.balanced && !verdict.hazards && !verdict.rearm,
+                    "missing return must lose memory and rearming despite balanced tokens");
+            require(!o::checkCausalFrontier(p,broken).accepted,
+                    "production checker accepted missing return");
+        }
+        std::cout << "frontier_context episodes=" << episodes << " outward_between=" << outwardBetween
+                  << " relations=" << oldOrder.size() << "->" << newOrder.size() << '\n';
+        ++cases;
+    }
+    require(cases == 6, "frontier context campaign incomplete");
+}
+
 void noMotionAndRandom() {
     auto p = base(2,4);
     p.operations = {op(P,{{0,false,true}}),op(P,{{1,false,true}}),op(Q,{{0,true,false},{1,true,false}})};
@@ -147,5 +255,6 @@ void noMotionAndRandom() {
 }
 int main() {
     o::selected::ReplayTestAccess::invalidProposal();
-    starvation(); wordGapBaseline(); deferredAcknowledgment(); noMotionAndRandom();
+    o::selected::ReplayTestAccess::uncoveredProducerProposal();
+    starvation(); wordGapBaseline(); deferredAcknowledgment(); commonFrontierContext(); noMotionAndRandom();
 }

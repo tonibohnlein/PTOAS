@@ -34,8 +34,10 @@ arms. Do not combine experimental flags unless a task explicitly asks for it.
    hash inputs and initialize output/guards with sentinels; check untouched,
    guard and nonfinite outputs. A failed or unsupported arm is a recorded
    failure, not a timing result. Reuse each seed's oracle across all arms.
-6. Timing: six balanced rotated rounds, 180 samples per arm, same binary/launch
-   shape/scalars/warm-up. Use all eight remote devices for independent matched
+6. Timing: 10 untimed warmup launches, then 20 measured launches per arm total
+   in two rounds of ten with rotated arm order. Same binary/launch
+   shape/scalars/warm-up; no nested large launch batches or timing per correctness
+   seed. Extend sampling only for a specific unresolved decision. Use all eight remote devices for independent matched
    comparisons; serialize timed/profiled work only within each device. Run all
    compared arms on the same device and retain per-device results.
    Report medians, IQRs, round medians and identical-binary controls. These tiny
