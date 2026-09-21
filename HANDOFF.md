@@ -7,10 +7,44 @@ Updated: 2026-09-21
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: multi-input retained-reader cohort implemented locally; validation recorded below
+- Current milestone: exact proposal ordering and removal of unused replay-prefix comparison implemented locally
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Completed locally: exact proposal ordering and replay accounting
+
+The review intake checked at `6b1b32f46` confirms that recurring precommit
+analysis uses request-order words while guarded commitment partitions
+publications before acquisitions. This mismatch is now fixed: one materializer
+supplies the exact canonical ordered endpoints for mandatory protocol,
+producer-support/resource checks, omission trials, and commitment. The linked
+reciprocal witness rejects before changing the ledger or reservations; ordinary
+fallback succeeds. Accepted omission trials retain their exact checked endpoints.
+
+Certified sibling replay now skips the old prefix comparison unless tracing is
+requested. `prefix_queries` and `prefix_span_examinations` account for actual
+queries; `sibling_comparison` labels whether the extra-sibling statistic is
+measured. Full states/aggregates agree across untraced, traced, prefix-only and
+cold replay. On partial attention, 24,827 AIC and 177,875 AIV legacy span
+examinations are skipped, with identical PTO and causal evaluation counts.
+
+All 23 portable suites, native diagnostics, two retained-input native/FileCheck
+fixtures and serial hooks pass. All 88 corpus modules (97 functions) construct
+and reconstruct; every plan is byte-identical to `6b1b32f46`. Selected update,
+replay, recurring-trial and rejection counts are unchanged. Both new regressions
+fail when linked against the old behaviors. See [results and limits](docs/designs/oahs-review-amendments.md).
+Artifacts: `../review-fixes-work/`. No new device measurement is needed for
+these identical plans; this milestone is included in the accompanying commit.
+
+Next test deferred acknowledgment across conditional future key reuse. See the
+[ordered TODO amendments](docs/designs/oahs-todo.md#review-amendments-checked-at-6b1b32f46).
+
+The next placement opportunity is a qualified last participating reader inside
+a child, before unrelated trailing work. Current retained-generation support
+finds the last reader child but still publishes at its exit. This needs an
+exactly-once original observation and independent ordering tests, not merely
+moving a return to a repeated body cut. This placement extension remains open.
 
 ## Current local follow-up: complete producer cohorts
 
@@ -28,7 +62,7 @@ counterexample still declines. The native A3 witness preserves five V barriers
 and removes 16 relations while executed pairs grow 6 -> 10. All 88 corpus plans
 remain byte-identical to the frozen retained-reader baseline. Two observable
 microkernels are prepared for a separate small device task; no device result is
-claimed. Artifacts: `../retained-multi-work/`. Changes remain uncommitted.
+claimed. Artifacts: `../retained-multi-work/`. Committed in `6b1b32f46`.
 
 ## Current local follow-up: retained reader children
 
@@ -41,7 +75,7 @@ payload relations with no additions; reload, independent-reader, missing-support
 and premature-release negatives pass. All 23 portable suites, native diagnostics
 and the native pass/FileCheck test pass. A serial 88-module native sweep passes
 construction/reconstruction with all plans byte-identical to the committed
-sibling-replay baseline. These are uncommitted local changes.
+sibling-replay baseline. Included in `6b1b32f46`.
 
 A new negative limits admission: removing an X fence can move an uncovered Y
 fence after the new X write. That initial extension required a single producer
@@ -61,16 +95,25 @@ This is supplied-protocol evidence, not a reproduced native constructor defect.
 The next step is exact proposal/word-order qualification before enabling a
 narrow moving-frontier certificate. Production placement is unchanged.
 
-## Prepared overnight corpus task
+## Consolidated open device campaign
 
-The [overnight task](test/benchmarks/corpus_nightly/DEVICE_TASK.md) compares only
-current default handoff with existing InsertSync. It targets broad pypto-lib
-kernel coverage and separately labelled runnable model entries, with all free
-remote devices, 10 warmups and 20 measured invocations per arm, no variant sweep.
-The self-contained source/input/harness package is under
-`../device-handoffs/oahs-corpus-nightly-d6e9-snapshot/`; its manifest identifies
-the uncommitted compiler snapshot and 88 current plan pins. Preparation does not
-mean dispatch or device qualification. Preserve the existing campaign evidence.
+The user confirms the planned overnight sweep did not run. The new
+[master device task](test/benchmarks/open_experiments/DEVICE_TASK.md) supersedes
+older dispatch instructions. It covers broad corpus/model measurements, the two
+retained-input cases, retained-A and cross-tile-preload references, resumed UF=0
+manual attention, authentic coupled Qwen attention if available, and a low-priority
+no-motion GEMM control. Completed MAT/placement/barrier-isolation campaigns stay
+closed. First queue ready work on all free devices; do not wait for transcription.
+
+The self-contained archive is `../device-handoffs/oahs-open-experiments.tar.gz`,
+with a detached checksum. It supplies a current compiler tree including these two
+review fixes, immutable older input/harness bundles, pinned reference sources,
+evidence and dispatch instructions. The root compiler overrides stale compiler
+pins in the enclosed tasks (except the retained-input historical baseline).
+Use hashes to identify the snapshot, not its base commit alone. The task requires
+10 warmups and 20 measured invocations per arm, a durable coordinator, all free
+cards, progress/job records and an eight-hour cap including final packaging.
+Preparation is not dispatch or evidence that a remote job started.
 
 ## Remote scheduling: all eight devices
 

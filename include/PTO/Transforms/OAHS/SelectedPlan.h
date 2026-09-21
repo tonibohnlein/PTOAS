@@ -172,6 +172,9 @@ struct SelectedWork {
     // Whole-original-graph contextual solves, and updates that reused nothing.
     std::size_t contextualReplays = 0, unreusedUpdates = 0;
     uint64_t replayInvalidationSites = 0, replayInvalidationEdges = 0, replaySharedWordOccurrences = 0;
+    uint64_t replayPrefixQueries = 0, replayPrefixSpanExaminations = 0;
+    // Components beyond the legacy reusable prefix, measured only with tracing
+    // on the sibling path. Zero without tracing does not mean no sibling reuse.
     std::size_t siblingReusedComponents = 0;
 };
 // These switches never disable mandatory checking or native reconstruction.

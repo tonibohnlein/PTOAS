@@ -8,6 +8,53 @@ advancing acquisition deadlines.
 
 ## Authoritative next order: placement campaign complete
 
+### Review amendments checked at `6b1b32f46`
+
+The reviews of `8afb90f17` through `d6e9b5365` identified two source-level
+issues present after the retained-input commit. Both are now fixed locally;
+see [implementation and validation](oahs-review-amendments.md). This order takes
+priority over the broader milestones below.
+
+1. **Implemented: exact proposal materialization.** `recurring()` previously
+   checked request order but committed guarded publication-first order.
+   One canonical ordered endpoint population now supplies
+   the words for mandatory checking, producer-support and resource admission, omission
+   trials, and commitment. The `repairFreeProducers` check now sees the committed
+   ordering. The linked reciprocal-rearming witness rejects atomically; positive
+   and omission tests check exact accepted words and channel identity. The old
+   implementation fails the new regression. The reviews do not
+   demonstrate an unsafe native emission; final validation remains required.
+2. **Implemented: skip unused prefix comparison in normal sibling replay.**
+   `contextualReplay()` calls the legacy prefix calculation only for prefix-only
+   reuse/fallback or explicit tracing. Comparison availability and actual query
+   work are separately reported. Chained-word scaling and full cached/cold
+   state/endpoint tests pass; the old behavior fails the regression. All 88
+   corpus plans and causal evaluation counts remain unchanged. This records
+   work eliminated, not a measured wall-time speedup; no device timing needed.
+3. **Test deferred acknowledgments across conditional future key reuse.**
+   With one forward key, compare closed and deferred policies when the old
+   consumption is unconditional but the next publication is inside a branch.
+   Current exactly-once admission does not itself prove that the straight-only
+   repair can reach that future publication. This is an unexecuted admission
+   hypothesis, not a demonstrated unsafe plan. Keep the option disabled by
+   default; qualify a repair or retain the helper where necessary.
+4. **Qualify the last participating read inside a child.** The retained-input
+   extension finds the last reader child, but its release still uses child exit.
+   First construct `Q reads X; Q does unrelated work` in a counted reader loop
+   and test whether an original last-visit observation permits one release
+   before the final unrelated operation. Share physical-use/control views;
+   keep endpoint selection and actual credit in construction. Require exactly
+   once participation, zero/one/many-trip and re-entry coverage, source-prefix
+   and rearming checks, and no added full payload relations. A repeated body
+   cut alone is not an exactly-once last-use frontier. Find a native witness
+   before preparing device timing.
+
+The contextual frontier-motion certificate remains a separate open quality
+task. Equal-coverage selection remains experimental until a test demonstrates
+`bindingChoices > 0` with certified benefit. Neither is resolved by safety-only
+proposal validation. MAT-cycle device improvements and unchanged-sibling replay
+are completed mechanisms, not new work to repeat.
+
 See [implemented mechanisms and evidence limits](oahs-placement-experiments.md)
 and [isolated device tasks](../../test/benchmarks/placement/DEVICE_TASKS.md).
 This status supersedes the historical campaign priorities below. See the
@@ -21,11 +68,25 @@ repetitions are needed for isolation. Correct coverage is 35 successful placemen
 constructions plus one expected refusal; MAT owns the 264-row matrix. Repair
 source-manifest and effective-optimization probes before new bundles.
 
-**Prepared, not dispatched here:** [overnight broad-corpus performance task](../../test/benchmarks/corpus_nightly/DEVICE_TASK.md).
-Two arms only: current default handoff and existing. Prioritize distinct families,
-qualified original model runners and reusable harnesses; keep 20 measured
-invocations per arm and separate kernel/model scopes. The self-contained package
-ships source pins, 96 inventoried modules (88 A3) and 88 current handoff plans.
+**Open device campaign (user confirms no overnight run):**
+[consolidated task](../../test/benchmarks/open_experiments/DEVICE_TASK.md).
+Use the root current compiler snapshot, all free devices, and a durable ready
+queue; retain warmups and cap timing at 20 measured invocations per arm.
+
+| Workstream | Status / next action |
+| --- | --- |
+| D1 broad pypto-lib/PyPTO kernels and models | Sweep not run; prioritize distinct new families, post-RMSNorm22/23 and runnable original models. |
+| D2 retained-input microkernels | Two host-qualified cases; device correctness/timing outstanding. |
+| D3 retained-A reference | No completed matched comparison received; qualify source adoption. |
+| D4 cross-tile-preload reference | No completed matched comparison received; qualify source adoption. |
+| D5 manual attention | UF=0/UF=1 correctness reported; resume matched UF=0 PTO transcription and current automatic arms. |
+| D6 coupled Qwen attention | Gated on authentic coupled runtime; part of D1, not standalone halves. |
+| D7 no-motion GEMM | Optional low-priority command-cost control; previous evidence was host-only. |
+
+Completed MAT, placement microkernel and conditional-MTE2 isolation campaigns
+are not reopened. Source-gap/deferred/class-invariance microtimings remain
+unresolved; another small noisy sweep is not a priority. The latest proposal/
+replay fixes preserve corpus plans and need no separate device arm.
 
 0. **Complete:** MAT family device campaign. All five projections beat existing;
    GEMM parity holds. No resolved MTE2-omission benefit. See the

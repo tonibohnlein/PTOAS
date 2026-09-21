@@ -717,6 +717,9 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
                  << " loop_entry_preparation_sites=" << work.loopEntryPreparationSites
                  << " contextual=" << work.contextualReplays
                  << " sibling_reuse=" << options.siblingReplayReuse
+                 << " prefix_queries=" << work.replayPrefixQueries
+                 << " prefix_span_examinations=" << work.replayPrefixSpanExaminations
+                 << " sibling_comparison=" << options.traceReplay
                  << " sibling_components=" << work.siblingReusedComponents
                  << " invalidation_sites=" << work.replayInvalidationSites
                  << " invalidation_edges=" << work.replayInvalidationEdges

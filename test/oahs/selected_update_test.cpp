@@ -137,6 +137,60 @@ struct ReplayTestAccess {
                 "unchanged traversal revisits growing cyclic prefixes");
         require(coldWork > incrementalWork, "test did not exercise saved replay work");
     }
+    static void prefixComparisonCost(unsigned words) {
+        const auto P = Pipe::MTE2;
+        auto p = base(1);
+        p.operations = {op(P, {{0, true, false}})};
+        ObservedControl graph;
+        graph.qualification = "chained shared-word prefix comparison";
+        graph.entry = 0; graph.exit = 2 * words + 1;
+        for (Id site = 0; site <= graph.exit; ++site) {
+            graph.observations.push_back({site, {}, true});
+            graph.sites.push_back({site == 1 ? 0 : NoControlId, site, {}, {}, 0});
+            if (site < graph.exit) graph.sites.back().successors = {site + 1};
+        }
+        for (Id word = 0; word < words; ++word)
+            graph.sites[2 * word + 3].observation = 2 * word;
+        p.observed = std::move(graph);
+        Constructor c(p);
+        require(c.control.complete && c.frontier.complete(), c.control.reason + " / " + c.frontier.reason());
+        c.needsContextualReplay = true;
+        std::string reason;
+        require(c.ledger.initialize({}, reason), reason);
+        for (Id word = 0; word < words; ++word)
+            c.ledger.append(2 * word, {Command::Barrier, P, P, 0}, EndpointPurpose::Fixed);
+        c.current = c.control.graph.exit;
+        c.activeComponent = c.control.component[c.current];
+        require(c.replay(), c.cache.reason);
+        c.ledger.clearChanges();
+        c.ledger.append(2 * words, {Command::Barrier, P, P, 0}, EndpointPurpose::Fixed);
+        const auto original = c.cache;
+        const auto before = c.result.work;
+        require(c.replay(), c.cache.reason);
+        const auto reused = c.cache;
+        require(c.result.work.replayPrefixQueries == before.replayPrefixQueries &&
+                c.result.work.replayPrefixSpanExaminations == before.replayPrefixSpanExaminations,
+                "normal sibling replay still computes the legacy comparison prefix");
+        const auto visits = c.result.work.replayInvalidationSites - before.replayInvalidationSites;
+        require(visits <= c.control.graph.sites.size(), "invalidation revisited a shared-word site");
+        c.cache = original;
+        c.options.traceReplay = true;
+        require(c.replay(), c.cache.reason);
+        identical(reused, c.cache);
+        const auto scans = c.result.work.replayPrefixSpanExaminations - before.replayPrefixSpanExaminations;
+        require(scans >= uint64_t(words) * words,
+                "comparison fixture did not exercise chained quadratic widening");
+        c.cache = original;
+        c.options.traceReplay = false;
+        c.options.siblingReplayReuse = false;
+        require(c.replay(), c.cache.reason);
+        identical(reused, c.cache);
+        c.cache = {};
+        require(c.replay(), c.cache.reason);
+        identical(reused, c.cache);
+        std::cout << "shared_words=" << words << " comparison_spans=" << scans
+                  << " invalidation_sites=" << visits << '\n';
+    }
     static void dischargeRestore()
     {
         const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE3;
@@ -290,8 +344,21 @@ struct ReplayTestAccess {
         auto compare = [&](bool expected, bool saves) {
             const auto original = c.cache;
             c.options.siblingReplayReuse = true;
+            c.options.traceReplay = false;
+            const auto prefixQueries = c.result.work.replayPrefixQueries;
+            const bool untraced = c.replay();
+            const auto normal = c.cache;
+            if (original.contextualFixedPoint)
+                require(c.result.work.replayPrefixQueries == prefixQueries,
+                        "normal sibling update ran the comparison prefix");
+            c.cache = original;
+            c.options.traceReplay = true;
             const bool incremental = c.replay();
             const auto reused = c.cache;
+            require(untraced == incremental, "trace comparison changed replay acceptance");
+            if (incremental) identical(normal, reused);
+            else require(normal.failureCut == reused.failureCut && normal.reason == reused.reason,
+                         "trace comparison changed replay refusal");
             const auto trace = c.result.replayTraces.back();
             c.options.siblingReplayReuse = false;
             c.cache = original;
@@ -609,6 +676,8 @@ void recurringRoleIsolation()
 int main()
 {
     o::selected::ReplayTestAccess::dischargeRestore();
+    for (unsigned words : {32u, 128u, 512u})
+        o::selected::ReplayTestAccess::prefixComparisonCost(words);
     sourceTimeAndNeighbors();
     retirementAlternatives();
     joinedPrecisionBoundary();

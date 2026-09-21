@@ -1,0 +1,58 @@
+{
+  "schema": "oahs-open-experiments-v1",
+  "total_hours": 8,
+  "packaging_minutes": 20,
+  "allocated_devices": 8,
+  "measured_invocations_per_arm": 20,
+  "workstreams": [
+    {
+      "id": "D1",
+      "name": "broad_corpus",
+      "priority": 1,
+      "cap_minutes": 480,
+      "initial_status": "not_run_overnight"
+    },
+    {
+      "id": "D2",
+      "name": "retained_children",
+      "priority": 1,
+      "cap_minutes": 45,
+      "initial_status": "host_ready_device_unrun"
+    },
+    {
+      "id": "D3",
+      "name": "retained_a_reference",
+      "priority": 2,
+      "cap_minutes": 90,
+      "initial_status": "no_completed_comparison_received"
+    },
+    {
+      "id": "D4",
+      "name": "cross_tile_preload_reference",
+      "priority": 2,
+      "cap_minutes": 90,
+      "initial_status": "no_completed_comparison_received"
+    },
+    {
+      "id": "D5",
+      "name": "manual_attention",
+      "priority": 2,
+      "cap_minutes": 90,
+      "initial_status": "manual_uf0_uf1_qualified_reported_transcription_pending"
+    },
+    {
+      "id": "D6",
+      "name": "coupled_qwen_attention",
+      "priority": 2,
+      "cap_minutes": 30,
+      "initial_status": "authentic_harness_required"
+    },
+    {
+      "id": "D7",
+      "name": "no_motion_gemm",
+      "priority": 3,
+      "cap_minutes": 30,
+      "initial_status": "optional_host_control_not_device_timed"
+    }
+  ]
+}

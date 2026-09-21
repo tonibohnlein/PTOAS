@@ -1,0 +1,15 @@
+Run the attached consolidated OAHS open-experiments campaign now, up to 8 hours.
+Nothing ran in the planned overnight sweep. Read root DEVICE_TASK.md first: it
+supersedes older nested task pins/scheduling. Verify manifests and use the root
+current compiler snapshot. Use all free devices among the eight, with matched
+arms on one device and a persistent, checkpointed coordinator. Start ready work
+without waiting for another reply and report the first actual job ID/device.
+Prioritize broad default-handoff vs existing coverage and the two retained-input
+cases. Resume the three manual-reference adoptions; keep authentic coupled Qwen
+attention gated on its real runtime. A small no-motion GEMM control is lower
+priority. Preserve completed campaigns. Keep warmups, but use only 20 measured
+invocations per arm; no large repetition sweeps. Return a verified report/archive/
+checksum, including exact blockers and partial progress before the deadline.
+All project inputs, compiler/reference/framework sources and reusable harnesses
+are attached. LLVM/CANN/drivers and compatible configured dependencies remain
+remote environment prerequisites; no access to my local workspace is needed.
