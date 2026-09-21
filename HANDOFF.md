@@ -7,10 +7,52 @@ Updated: 2026-09-21
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: required-return sharing before private reverse allocation
+- Current milestone: joint first/final reader qualification on native down_proj
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Joint first/final reader implementation (2026-09-21)
+
+The user authorized implementing the [diagnosed down_proj opportunity](docs/designs/oahs-blocked-down-last-reader.md).
+[Joint reader qualification](docs/designs/oahs-joint-reader-prefix.md) now collects
+B0 first-consumer and A0 final-reader requirements before changing the original
+owner. It preserves step-128 final participation, the single-visit case and the
+conditional suffix's original payload/command identities. Actual selected
+readiness/return cycles and the unchanged native reconstruction checker validate
+completion, matching, rearming and emitted guards. No new pass mode.
+
+Down_proj's existing A0 return is emitted after the final A0 extraction and
+before the unrelated B0 wait; the same qualifier also advances other admitted
+child releases. Eighteen independent native-plan traces check 73,449 conflicts
+per arm, remove 214 full payload relations, add none, and preserve every path's
+executed SET/WAIT and fence counts. This is compiler output, superseding the
+older supplied-plan diagnosis. No numerical/device speedup is claimed.
+
+All 23 portable suites and native construction/reconstruction checks pass.
+The final 88-input/97-function corpus check passes; eleven projection plans
+change and 77 remain identical. All 37 projection-family paths preserve executed
+sync/fence counts and remove 1,414 full payload relations with none added;
+511,187 local conflicts are checked per arm. Six emitted-plan negatives reject
+missing/premature/repeated support and wrong final distance. Direct C++ lowering
+and the live-pass trace regressions pass. Final evidence is under
+`../joint-reader-work/corpus-final/` and the report linked above.
+The final first-prefix minimization leaves all candidate plans identical to
+the initial joint implementation. Final
+analysis sites increase 181 ->262; replay 13,563 ->16,950. This is added ordering
+precision, not a compile-performance claim.
+
+Artifacts: `../joint-reader-work/`; baseline executable is frozen at `2a130aefe`
+plus the read-only diagnostic. The first/final frontend shares suffix words and
+physical operations but retains separate analytical final-continuation sites
+so exit/backedge correlation is not lost. First-prefix copying stops after the
+last first-consumer and its following source anchor.
+
+Next: commit/push when requested, then send the
+[short matched down_proj device task](test/benchmarks/joint_reader/DEVICE_TASK.md).
+It uses repository checkouts, the existing qualified harness, correctness first,
+10 warmups per round and 20 timing samples per arm. Existing frozen device
+campaigns remain independent. Guard cost may outweigh the extra overlap.
 
 ## Local milestone: composed required returns (2026-09-21)
 
@@ -42,7 +84,7 @@ The already-running device work stays on its pinned source snapshot.
 
 Next: obtain a real retained-input/preload case admitted by this support rule,
 or use the pending KDA packet to identify a concrete missing qualification.
-Joint first/last observation work remains parked as requested. General moving-
+Joint first/last observation work is now implemented above. General moving-
 frontier certification and scoped producer support are still open.
 
 ## Active diagnosis: GLM KDA projection
@@ -80,14 +122,14 @@ No new compiler changes or device runs were made during the report audit.
 
 The reviews through `d1bf07ee5` are reconciled against `21f95f9b7` in the
 [top-priority TODO section](docs/designs/oahs-todo.md#review-reconciliation-at-21f95f9b7-2026-09-21).
-Source inspection confirms the remaining joint first/last observation, global
+At that review, source inspection confirmed the joint first/last observation, global
 producer-support and fixed guarded word-order limits. The newer FIFO and
 reused-key gap implementation supersedes the reviews' corresponding absences.
 A read-only prepared-input scan finds attention shape updates in AIV only;
 LM head updates its real accumulator. There is no demonstrated unrelated-
-descriptor ACC opportunity in those examples. Next local priorities are a
-missed-opportunity diagnosis and the documented required-return-sharing witness;
-joint first/last implementation remains parked for the pending device work.
+descriptor ACC opportunity in those examples. The diagnosis, required-return
+sharing and bounded joint first/final implementation have since completed above;
+the historical implementation pause no longer applies.
 This reconciliation changes documentation only; the device candidate stays
 `21f95f9b7`, and no new native or timing claim is made.
 

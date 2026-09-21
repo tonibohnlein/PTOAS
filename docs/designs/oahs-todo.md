@@ -6,6 +6,27 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
+## Current milestone: joint first/final native reader endpoints
+
+[Implementation and evidence](oahs-joint-reader-prefix.md) now realize the
+[down_proj lifetime](oahs-blocked-down-last-reader.md). B0's first acquisition
+and A0's final publication coexist with step 128 and conditional matrix suffixes.
+The compiler emits the narrow release; the reconstructed staged protocol and
+18 independent traces pass (214 full relations removed, none added, executed
+sync/fence populations unchanged). The original implementation pause is
+superseded by the user's explicit instruction to implement this opportunity.
+
+- Host qualification complete: 88/88 inputs pass, 11 projection plans change;
+  37 family paths remove 1,414 full relations and add none with equal executed
+  event/fence populations. Compiler work increases and is recorded explicitly.
+- Run the [short matched device task](../../test/benchmarks/joint_reader/DEVICE_TASK.md)
+  after commit/push. Measure the extra guard cost; do not infer a speedup from
+  the static ordering reduction. No broad device sweep is needed.
+- Keep guarded participation, arbitrary same-word endpoint composition, broader
+  active-producer support and generic frontier-motion certificates open.
+- Treat the larger analytical graph and replay work as measured costs. Shared
+  suffix words do not remove the need to preserve final/continuation identity.
+
 ## Completed local milestone: required-return sharing
 
 [Required-return sharing](oahs-required-return-sharing.md) selects a composed
@@ -16,8 +37,9 @@ a wait. Twenty finite comparisons, seven paired native variants, all portable
 and native suites pass. Native witness: equal 602 relations, pairs 10→7, reverse
 keys 2→1. All 88 paired corpus plans remain unchanged from `21f95f9b7`.
 
-Next applicability work needs a real retained-input/preload witness or a
-specific refusal in the KDA source packet. Do not schedule another broad device
+Return-sharing applicability work still needs a real retained-input/preload
+witness or a specific refusal in the KDA source packet. The down_proj target
+above concerns last-reader placement, not return sharing. Do not schedule another broad device
 campaign for unchanged plans. Global producer support, multi-occurrence return
 frontiers and ambiguous shared observations remain conservative boundaries.
 
@@ -81,15 +103,12 @@ are not solved by that commit.
    returns. Completion, readiness consumption, outward effects and real reuse
    are checked. Broaden only for a concrete missed lifetime; no subset-deletion
    search or relaxation of the producer-support safeguard.
-3. **Joint first/last observations: design now, implementation after the pending
-   last-reader device work as previously requested.** Collect endpoint roles per
-   original owner before refinement. Start with straight nonempty unit-step
-   children, preserving single/first/interior/last cases, including a one-trip
-   visit that is both first and last. Preserve early producer publication,
-   independent reader prefix/suffix and actual rearming. Check repeated entry,
-   reload and later-reader negatives; compare with both individual controls.
-   Exact word-gap support must survive composition rather than append a release
-   behind an unrelated wait.
+3. **Joint first/last observations: bounded implementation completed above.**
+   Original positive steps, single-visit coincidence and conditional suffixes
+   are qualified together. B0 first acquisition and A0 final publication now
+   coexist on real down_proj. Remaining extensions are guarded participating
+   readers, shared first/final word anchors and active-producer support; require
+   another concrete missed lifetime before relaxing those boundaries.
 4. **Support-driven endpoint words and certified grouping.** Fixed guarded
    publication-first ordering remains conservative: a valid request-order
    proposal can be declined after canonicalization. Derive same-engine receipt

@@ -579,7 +579,7 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
                 const auto& atoms = p.observed->observations[observation].atoms;
                 if (std::any_of(atoms.begin(), atoms.end(), [&](const auto& atom) {
                         return atom.kind == ObservationAtom::LoopHasNext && atom.owner == loop.owner &&
-                               atom.parameter == 1 && atom.value == 0;
+                               atom.parameter == loop.lastVisitDistance && atom.value == 0;
                     })) lastCandidates.emplace_back(site, c.canonicalCut[afterRead]);
             }
             if (!lastCandidates.empty()) {

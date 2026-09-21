@@ -9,6 +9,7 @@
 // Keep original non-unit loops, initializer choices, and sibling bank uses.
 // RUN: pto-test-opt --pto-insert-sync=algorithm=handoff %s -o %t
 // RUN: %python %S/../../oahs/check_projection_trace.py %t --require-early-mat --require-early-release
+// RUN: %python %S/../../oahs/check_joint_reader_trace.py %t
 module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<cube>, pto.target_arch = "a3"} {
   func.func @down_proj(%arg0: !pto.ptr<f32, gm>, %arg1: !pto.ptr<bf16, gm>, %arg2: !pto.ptr<bf16, gm>, %arg3: index, %arg4: index, %arg5: index, %arg6: index, %arg7: index, %arg8: i32, %arg9: i32) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
     %c0_i64 = arith.constant 0 : i64

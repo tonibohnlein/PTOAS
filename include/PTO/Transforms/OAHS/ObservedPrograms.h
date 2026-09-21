@@ -73,6 +73,17 @@ ObservedImport refineFirstUse(const Program &, const FirstUseRegion &);
 // No payload, runtime history, or completion assertion is introduced.
 ObservedImport refineLastVisit(const Program &, std::size_t owner,
                                const std::vector<std::size_t> &anchors);
+// Joint first-consumer/final-reader vocabulary from one original owner.
+// The frontend certifies positive-step arithmetic and whether there is one
+// visit. Only endpoint words gain predicates; physical phases and suffix words
+// stay shared. Analytical final continuations retain their exit correspondence.
+struct ReaderVisitRegion {
+  std::size_t owner = NoControlId;
+  std::vector<std::size_t> firstConsumers, lastPublications;
+  uint64_t step = 1;
+  bool singleVisit = false;
+};
+ObservedImport refineReaderVisits(const Program &, const ReaderVisitRegion &);
 // Carry only the finite bank identity across a region. Unlike counted first/tail
 // refinement this adds no elapsed/remaining modes. Child occurrence interfaces
 // retain their own modes and shared physical phases. Invariant effects are not
