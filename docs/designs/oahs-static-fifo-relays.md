@@ -42,9 +42,14 @@ For a non-common-cut two-hop transfer of a qualified slot's writer completion:
 3. For each eligible intermediate engine, find its first command or payload
    after that bound. Forward before that word's unrelated activity; if there
    is no earlier activity, forward at the final consumer.
-4. Compare actual prefix coverage beyond the source's fresh completion.
-   Prefer a strict subset; for equal sets prefer the later relay gap. Keep
-   incomparable choices deterministic.
+4. Compare actual prefix coverage beyond the source's fresh completion,
+   excluding completion already acquired or required at the receiver. Also
+   compare new prerequisites on crossed middle work and selected endpoints.
+   Prefer a subset in both views; for equal sets prefer the later relay gap.
+   Keep incomparable choices deterministic. Protect an already selected receipt
+   to the same receiver from a later receipt prepended into its word; use the
+   final deadline when that early gap would broaden the earlier receipt.
+   See the [bounded correction and tests](oahs-relay-selection.md).
 5. Bind both keys using actual empty/consumed state and neighboring selected
    uses at the exact source gaps. An early relay uses the incoming word state,
    not the broader post-word state.
@@ -62,10 +67,11 @@ pending payload obligations but rejects protocol/phase failures. It grants no
 prospective rearming credit. The selector currently requires existing key
 credit before probing; it does not search all helper-augmented bindings.
 
-The coverage comparison is a placement heuristic, **not a general no-added-order
-certificate or a least-order theorem**. In particular, moving a relay's gate
-can delay work on that intermediate engine. Complete payload-order comparisons
-remain an explicit acceptance check for the tested native cases.
+The two-view comparison is a placement heuristic, **not a general no-added-order
+certificate or a least-order theorem**. It accounts for crossed middle gates
+and existing outward publications, but does not certify arbitrary future edits
+or complete open event interfaces. Complete payload-order comparisons remain
+an explicit acceptance check for the tested native cases.
 
 ## Result on single-block attention
 

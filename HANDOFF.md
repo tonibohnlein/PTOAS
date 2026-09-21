@@ -7,10 +7,56 @@ Updated: 2026-09-21
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: return-query hoist and linked relay-quality witnesses
+- Current milestone: bounded relay-selection correction, host validated
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Joint-reader device result received (2026-09-21)
+
+The [audited down_proj campaign](docs/designs/oahs-joint-reader-device-intake.md)
+compares `2a130aefe` with `a0c1d761e`: all 12 correctness cases / 24 launches
+pass, with identical paired output hashes. Local archive verification and graph
+replay reproduce 214 removed relations, none added and unchanged sync counts.
+Performance is unresolved: candidate ratios 0.9085/0.9119 are accompanied by
+identical-baseline control ratios 0.9123/0.8618 on devices 0/1. Device correctness
+is complete; qualify the timing method before further performance repetitions. This does
+not validate the separate coupled attention candidate. Raw intake lives in
+`../joint-reader-device-work/`; no new device run was performed locally.
+
+## Bounded relay-selection correction (2026-09-21)
+
+On `bec7dfe37`, [relay selection](docs/designs/oahs-relay-selection.md) now
+compares incidental receiver history and newly gated intermediate work/selected
+endpoints separately. Current required or acquired completion is useful only
+with occurrence freshness. Incomparable views keep the deterministic incumbent;
+no relation-count score or new mode is introduced. A later receipt also cannot
+be prepended into an earlier selected forwarding word to the same receiver when
+it would broaden that receipt. Actual staged protocol/key checks remain intact.
+
+Both linked witnesses are addressed: the avoidable case selects five pairs and
+30 full relations instead of 34; the incomparable case keeps the late route
+without claiming dominance over the old early route. Added tests distinguish
+pending from acquired receiver credit and outward SETs before/after a supporting
+WAIT. A pending-credit case selects one composed transfer, avoiding a separate
+required transfer. Twenty-one balanced deletion negatives lose memory support.
+This remains a bounded placement heuristic, not the general frontier-motion
+or open-interface certificate.
+
+All 24 portable suites, the expanded relay suite, both native test executables
+and all twelve finite attention cases pass. All 88 corpus plans / 97 functions
+remain byte-identical to `b2d8482fc`, preserving the existing attention and
+joint-reader improvements. Aggregate replay stays 3,262,799; each affected AIC
+retains two staged solves / 1,318 evaluations. Shared corridor scans reduce
+relay-preparation site visits 1,434→1,020; history comparisons remain additional
+work, so this is not a compiler wall-time claim.
+
+Evidence and frozen baseline driver: `../relay-selection-work/`. No new native
+plan or device speedup is claimed; the four device tasks keep their pinned arms.
+Next local options: a discriminating physical-binding feasibility case before
+ranking, or a real missed lifetime from the requested KDA artifacts. Second-leg
+credit from the first receipt and general contextual motion remain open. Do not
+expand the policy solely to improve synthetic command counts.
 
 ## Attention device handoff prepared (2026-09-21)
 
@@ -56,13 +102,9 @@ pass construction/reconstruction and remain byte-identical to `a0c1d761e`.
 Aggregate replay stays 3,262,799; no corpus case reaches a sharing query.
 Evidence, frozen baseline library/driver and commands: `../return-query-relay-work/`.
 
-Next: design the bounded relay-selection correction using these reproductions.
-It must distinguish destination-required/already-acquired completion from
-incidental completion and account for newly gated middle payloads and outward
-publications. Do not claim dominance for the incomparable witness or add a
-whole-program comparison per candidate. Positive binding before ranking and
-first-receipt support for second-key reuse are separate extensions. Preserve
-the native attention control; pending device campaigns keep their pinned source.
+The bounded relay-selection follow-up is now implemented above. Positive binding
+before ranking and first-receipt support for second-key reuse remain separate
+extensions. Preserve the native attention control and pinned device sources.
 
 ## Joint first/final reader implementation (2026-09-21)
 

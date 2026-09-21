@@ -4,6 +4,10 @@ Base: `a0c1d761e`, 2026-09-21. This amendment hoists one repeated structural
 query and reproduces the two relay-quality review witnesses. Relay selection,
 physical binding, target admission and defaults are unchanged.
 
+Subsequent work implements the [bounded relay-selection correction](oahs-relay-selection.md).
+The selected-plan reproductions below describe the original `b2d8482fc` milestone;
+their comparison models remain regression controls for that correction.
+
 ## Return sharing: one propagation per candidate being replaced
 
 For a fixed Y candidate, the role graph marks Y's release and every write on

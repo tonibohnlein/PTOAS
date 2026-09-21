@@ -150,7 +150,8 @@ Native first/last requests at the same word are conservatively declined; this
 case has distinct physical anchors. Standalone last-reader qualification keeps
 its previous restricted admission.
 
-There is no device latency claim. The
-[short matched down_proj task](../../test/benchmarks/joint_reader/DEVICE_TASK.md)
-uses the existing qualified harness, correctness before timing, warmups and
-20 samples per arm. Commit/push the implementation before dispatching that task.
+The [short matched down_proj task](../../test/benchmarks/joint_reader/DEVICE_TASK.md)
+has returned: [audited device results](oahs-joint-reader-device-intake.md) pass
+all 12 correctness cases / 24 launches. There is still no device latency claim:
+the identical-binary controls show changes comparable to the apparent candidate
+benefit. Qualify the timing method before further performance measurements.

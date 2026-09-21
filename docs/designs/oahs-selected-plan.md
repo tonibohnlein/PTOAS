@@ -52,9 +52,12 @@ construction can separate the source publication, intermediate forwarding gap
 and final receive deadline. Candidate keys use actual source-time consumption
 credit and neighboring-use checks; exact staged words are protocol-checked
 before commit, and their full analysis work is counted separately. Unsupported
-cases retain ordinary binding. Prefix-coverage ranking is a heuristic; native
-payload-order comparisons are not a general least-order theorem.
-See [implementation and evidence](oahs-static-fifo-relays.md).
+cases retain ordinary binding. Ranking compares incidental receiver completion
+and new middle-engine prerequisites separately, and protects earlier receipts
+to the same receiver. Incomparable views keep the deterministic incumbent.
+This remains a bounded heuristic; native payload-order comparisons are not a
+general least-order theorem. See [implementation and evidence](oahs-static-fifo-relays.md)
+and [the relay-selection correction](oahs-relay-selection.md).
 
 ## Independent physical-bank episodes
 

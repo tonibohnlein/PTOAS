@@ -6,7 +6,35 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
-## Current milestone: bounded relay-selection correction
+## Current status at a glance — 2026-09-21
+
+This summary supersedes older scheduling/status statements below. Those sections
+retain historical context, not a live remote queue.
+
+- **Latest local implementation:** bounded relay-selection correction is complete
+  and host-tested. It improves the
+  discriminating witnesses and preserves all 88 corpus plans. No new device arm
+  is needed for those unchanged native outputs.
+- **Joint-reader down_proj device task:** completed; correctness passed all
+  12 cases / 24 launches. Performance unresolved. Further timing requires a
+  qualified measurement method, not more repetitions of the completed task.
+- **Outstanding focused handoffs:** coupled attention FIFO/relay validation,
+  KDA measured-case artifact/attribution work, and retained-input microkernels.
+  No returned results for these are recorded locally; current remote job state
+  is unknown. Their committed task files are linked in the sections below.
+- **Next local implementation:** first reproduce a preferred relay route that
+  cannot bind its event keys while another route can; then use read-only key
+  feasibility before ranking. If the KDA source packet arrives, prioritize its
+  concrete native diagnosis instead.
+- **Larger backlog:** contextual frontier-motion certificates, broader exact
+  source gaps/observation composition, scoped producer support/key ownership,
+  and witness-driven lowering precision. These are not all active projects.
+- **Closed campaigns:** MAT family, placement microkernels, conditional MTE2
+  isolation, broad full sweep, and joint-reader correctness. Reference adoption
+  (retained-A, cross-tile preload, manual attention) remains separate backlog;
+  task files alone do not establish dispatch or execution.
+
+## Current milestone: bounded relay-selection correction — host complete
 
 [The return-query hoist and both linked review witnesses](oahs-return-query-relay-review.md)
 are complete. At 32 sharing candidates, propagation drops 496→31 queries and
@@ -14,24 +42,27 @@ are complete. At 32 sharing candidates, propagation drops 496→31 queries and
 native tests and 88-input/97-function corpus checks pass; every corpus plan is
 byte-identical to `a0c1d761e`. No corpus case reaches the sharing query.
 
-The new linked relay tests reproduce the actual ordinary constructor's choice:
-one exchanges four relations for four others (incomparable orders); the other
-admits a five-pair alternative removing four relations with none added.
-Thirteen missing-support negatives retain matching but fail memory coverage.
-Production relay selection is unchanged.
+The [bounded selection correction](oahs-relay-selection.md) now selects the
+five-pair / 30-relation route in the avoidable witness and handles the other
+case as an incomparable tradeoff. Required/acquired receiver history, crossed
+middle gates and actual endpoint prefixes inform separate set comparisons.
+Later receipts cannot silently broaden earlier forwarding to the same receiver.
+Twenty-one balanced deletion negatives fail memory coverage; useful early
+forwarding remains admitted when middle work and outward publication already
+have the necessary credit.
 
-- Design the correction around both destination completion and newly gated
-  intermediate payloads/outward publications. Required or already-acquired
-  completion must not be treated uniformly as incidental history.
-- Keep the incomparable case explicit: fewer forwarded histories do not prove
-  order improvement. Update the diagnostic selected-plan expectations when
-  implementing a correction; retain independent full-set comparisons.
-- Preserve the native attention benefit as a control. Do not introduce
-  whole-program order comparisons per relay candidate.
-- Positive physical binding before ranking and applying the first receipt in
-  private state before second-leg rearming remain separate bounded extensions.
-- No device campaign is needed for the hoist's unchanged plans. Existing FIFO
-  and joint-reader device tasks retain their pinned candidates.
+- Validation complete: all 24 portable suites, final focused relay tests, both
+  native executables and twelve finite attention cases pass. All 88 corpus plans
+  / 97 functions remain unchanged, including the existing attention benefit.
+- Keep the incomparable case and general ordering-certificate boundary explicit.
+  This is a bounded ranking policy, not a proof about all future endpoint edits.
+- Next bounded extension: reproduce a preferred-but-unbindable route with a
+  usable alternative, then qualify actual key feasibility before ranking.
+  First-receipt support for second-leg rearming is a separate extension.
+- Alternatively, use the KDA artifacts or a concrete retained-input lifetime to
+  identify a useful native miss before broadening support/occurrence admission.
+- No new device campaign is needed for these unchanged native plans. Existing
+  FIFO and joint-reader device tasks retain their pinned candidates.
 
 ## Completed host milestone: joint first/final native reader endpoints
 
@@ -46,9 +77,11 @@ superseded by the user's explicit instruction to implement this opportunity.
 - Host qualification complete: 88/88 inputs pass, 11 projection plans change;
   37 family paths remove 1,414 full relations and add none with equal executed
   event/fence populations. Compiler work increases and is recorded explicitly.
-- Run the [short matched device task](../../test/benchmarks/joint_reader/DEVICE_TASK.md)
-  after commit/push. Measure the extra guard cost; do not infer a speedup from
-  the static ordering reduction. No broad device sweep is needed.
+- The [short device task](../../test/benchmarks/joint_reader/DEVICE_TASK.md)
+  is complete: [audited results](oahs-joint-reader-device-intake.md) pass all
+  12 correctness cases / 24 launches. Performance remains unresolved because
+  identical-binary controls drift by 9–14%. Qualify the measurement method
+  before further timing; no broad sweep or extra repetitions are warranted.
 - Keep guarded participation, arbitrary same-word endpoint composition, broader
   active-producer support and generic frontier-motion certificates open.
 - Treat the larger analytical graph and replay work as measured costs. Shared
@@ -263,14 +296,15 @@ repetitions are needed for isolation. Correct coverage is 35 successful placemen
 constructions plus one expected refusal; MAT owns the 264-row matrix. Repair
 source-manifest and effective-optimization probes before new bundles.
 
-**Open device campaign (user confirms the remote agent is running it):**
+**Historical consolidated campaign plan (superseded by the current summary):**
 [consolidated task](../../test/benchmarks/open_experiments/DEVICE_TASK.md).
-Keep the dispatched `2cc458cbe` snapshot fixed, use all free devices and a durable ready
-queue; retain warmups and cap timing at 20 measured invocations per arm.
+The broad `2cc458cbe` sweep has since returned and was audited above. This table
+preserves the remaining reference work; it is not a live queue or instruction
+to rerun the sweep. New focused tasks use their own frozen source pins.
 
 | Workstream | Status / next action |
 | --- | --- |
-| D1 broad pypto-lib/PyPTO kernels and models | Sweep not run; prioritize distinct new families, post-RMSNorm22/23 and runnable original models. |
+| D1 broad pypto-lib/PyPTO kernels and models | Complete; audited report received. Follow up concrete misses, starting with KDA. |
 | D2 retained-input microkernels | Two host-qualified cases; device correctness/timing outstanding. |
 | D3 retained-A reference | No completed matched comparison received; qualify source adoption. |
 | D4 cross-tile-preload reference | No completed matched comparison received; qualify source adoption. |

@@ -8,6 +8,7 @@
 #include "SelectedInternal.h"
 #include <algorithm>
 #include <deque>
+#include <tuple>
 
 namespace mlir::pto::oahs::selected {
 bool Constructor::canPublish(const State& state, Id key) const
@@ -543,19 +544,41 @@ std::optional<bool> Constructor::splitRelay(const Group& group, Pipe observer, R
     Pipe middle = Pipe::Count;
     Cut relay = current;
     std::set<Id> incidental;
+    // Distinguish payload deadlines from selected endpoint identities. A smaller
+    // forwarded prefix must not win by imposing new prerequisites elsewhere.
+    using Gate = std::tuple<bool, Id, Id>;
+    std::set<Gate> gated;
     const auto* sourceFacts = cache.cuts[group.publication].before.causal.facts();
     if (!sourceFacts)
         return std::nullopt;
+    const auto* receiverFacts = cache.cuts[current].before.causal.facts();
+    if (!receiverFacts) return std::nullopt;
+    std::set<Id> needed;
+    for (const auto& r : residual()) needed.insert(accessClass(r));
+    std::vector<Id> sourceHistory;
+    for (const auto& [access, reach] : sourceFacts->history.present())
+        if (frontierContains(reach, PipeCount + unsigned(group.source))) sourceHistory.push_back(access);
+    auto subset = [](const auto& a, const auto& b) {
+        return std::includes(b.begin(), b.end(), a.begin(), a.end());
+    };
+    // Share the immutable straight corridor between the bounded candidate
+    // queries. No per-candidate whole-program propagation or order closure.
+    std::vector<Cut> corridor;
+    for (Cut at = 0; at < control.graph.sites.size(); ++at) {
+        ++result.work.relayPreparationSites;
+        if (control.straight(lower, at) && control.straight(at, current)) corridor.push_back(at);
+    }
+    std::sort(corridor.begin(), corridor.end(), [&](Cut a, Cut b) {
+        return control.position[a] < control.position[b];
+    });
     for (unsigned candidate = 0; candidate < PipeCount; ++candidate) {
         if (Pipe(candidate) == group.source || Pipe(candidate) == observer ||
             !eligible(group.source, Pipe(candidate)) || !eligible(Pipe(candidate), observer))
             continue;
         Cut gap = current;
-        for (Cut at = 0; at < control.graph.sites.size(); ++at) {
+        for (auto at : corridor) {
             ++result.work.relayPreparationSites;
-            if (!control.straight(lower, at) || !control.straight(at, current) ||
-                control.position[at] >= control.position[gap])
-                continue;
+            if (at == current) break;
             auto op = control.graph.operations[at];
             bool issues = op != NoAnalysisId && program.operations[op].pipe == Pipe(candidate);
             for (auto id : ledger.word(at)) {
@@ -563,11 +586,44 @@ std::optional<bool> Constructor::splitRelay(const Group& group, Pipe observer, R
                 issues |= c.kind == Command::BarrierAll ||
                           (c.kind == Command::Acquire ? c.observer : c.source) == Pipe(candidate);
             }
-            if (issues && unique(at))
+            if (issues && unique(at)) {
                 gap = at;
+                break;
+            }
         }
         if (gap == group.publication || !legalCommandCut(program, gap))
             continue;
+        // A later receipt must not be prepended ahead of an already selected
+        // forwarding publication to this same receiver when that broadens the
+        // earlier receipt. Retain the final deadline for this middle engine.
+        // Other outward interfaces are compared below, not presumed harmless.
+        const auto gapBegin = std::lower_bound(corridor.begin(), corridor.end(), gap, [&](Cut a, Cut b) {
+            return control.position[a] < control.position[b];
+        });
+        bool widensReceipt = false;
+        if (gap != current) for (auto atIt = gapBegin; atIt != corridor.end() && !widensReceipt; ++atIt) {
+            const auto at = *atIt;
+            ++result.work.relayPreparationSites;
+            for (auto id : ledger.word(at)) {
+                const auto& command = ledger.endpoint(id).command;
+                if (command.kind != Command::Publish || command.source != Pipe(candidate) ||
+                    command.observer != observer) continue;
+                const auto found = cache.afterEndpoint.find(id);
+                const auto* published = found == cache.afterEndpoint.end() ? nullptr : found->second.causal.facts();
+                for (auto access : sourceHistory) {
+                    const auto* reach = published ? published->history.find(access) : nullptr;
+                    if (!freshBetween(group.publication, at, access) || !reach ||
+                        !frontierContains(*reach, PipeCount + candidate)) {
+                        widensReceipt = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (widensReceipt) {
+            if (!legalCommandCut(program, current)) continue;
+            gap = current;
+        }
         const auto& state = gap == current ? cache.cuts[gap].before : cache.cuts[gap].incoming;
         const auto* facts = state.causal.facts();
         if (!facts)
@@ -576,21 +632,56 @@ std::optional<bool> Constructor::splitRelay(const Group& group, Pipe observer, R
         for (const auto& [access, reach] : facts->history.present()) {
             if (!frontierContains(reach, PipeCount + candidate))
                 continue;
+            const auto* received = receiverFacts->history.find(access);
+            // Only the same occurrence can be treated as already acquired or
+            // required at this deadline. This scoring view grants no receipt.
+            if (freshBetween(gap, current, access) &&
+                (needed.count(access) || (received && frontierContains(*received, unsigned(observer)))))
+                continue;
             const auto* original = sourceFacts->history.find(access);
             const bool fresh = !control.lookahead.hasIssueBetween(
                 control.frame[group.publication], access, control.position[group.publication], control.position[gap]);
             if (!fresh || !original || !frontierContains(*original, PipeCount + unsigned(group.source)))
                 extra.insert(access);
         }
-        // Strict subset, then latest gap for equal incidental coverage. This
-        // ranks placements; it is not a general no-broader-order theorem.
+        std::set<Gate> newGates;
+        auto inspectGate = [&](bool endpoint, Id identity, Cut at, const State* before, unsigned port) {
+            const auto* known = before ? before->causal.facts() : nullptr;
+            for (auto access : sourceHistory) {
+                const auto* reach = known ? known->history.find(access) : nullptr;
+                if (!freshBetween(group.publication, at, access) || !reach || !frontierContains(*reach, port))
+                    newGates.emplace(endpoint, identity, access);
+            }
+        };
+        if (gap != current) for (auto atIt = gapBegin; atIt != corridor.end(); ++atIt) {
+            const auto at = *atIt;
+            ++result.work.relayPreparationSites;
+            // Include the final cut's existing word: the late alternative would
+            // acquire after it. Actual endpoint states preserve intra-word order.
+            for (auto id : ledger.word(at)) {
+                const auto& command = ledger.endpoint(id).command;
+                const auto pipe = command.kind == Command::Acquire ? command.observer : command.source;
+                if (command.kind != Command::BarrierAll && pipe != Pipe(candidate)) continue;
+                const auto found = cache.afterEndpoint.find(id);
+                inspectGate(true, id, at, found == cache.afterEndpoint.end() ? nullptr : &found->second,
+                    command.kind == Command::Publish ? PipeCount + candidate : candidate);
+            }
+            const auto op = control.graph.operations[at];
+            if (at != current && op != NoAnalysisId && program.operations[op].pipe == Pipe(candidate))
+                inspectGate(false, at, at, &cache.cuts[at].before, candidate);
+        }
+        // Compare both sets, never a weighted count. Keep the first candidate
+        // when the choices trade forwarded history for newly gated work. Equal
+        // views retain the latest-gap tie. This is a bounded placement heuristic,
+        // not a certificate for arbitrary future edits or complete event interfaces.
+        const bool noWorse = subset(extra, incidental) && subset(newGates, gated);
         if (middle == Pipe::Count ||
-            (extra.size() < incidental.size() &&
-             std::includes(incidental.begin(), incidental.end(), extra.begin(), extra.end())) ||
-            (extra == incidental && control.position[gap] > control.position[relay])) {
+            (noWorse && (extra != incidental || newGates != gated ||
+                        control.position[gap] > control.position[relay]))) {
             middle = Pipe(candidate);
             relay = gap;
             incidental = std::move(extra);
+            gated = std::move(newGates);
         }
     }
     if (middle == Pipe::Count)
