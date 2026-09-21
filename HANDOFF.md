@@ -7,10 +7,50 @@ Updated: 2026-09-21
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: joint first/final reader qualification on native down_proj
+- Current milestone: return-query hoist and linked relay-quality witnesses
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Return-query hoist and relay reproductions (2026-09-21)
+
+On committed base `a0c1d761e`, the repeated return-sharing propagation is now
+computed lazily once per Y candidate, after the first supporter passes cheap
+filters. No selected endpoint or relay policy changes. The linked scaling
+fixture reaches actual candidate formation: 32 candidates use 31 queries and
+24,330 visits instead of 496 queries and 389,205 visits. Selected requests remain
+identical. See [implementation and evidence](docs/designs/oahs-return-query-relay-review.md).
+
+Both review relay witnesses now reproduce through the linked ordinary
+constructor, independently checked by `GraphOracle.h`:
+
+- Independent middle work: two pairs and 15 relations in both plans, but four
+  relations removed and four added. The orders are incomparable.
+- Required receiver history: the constructor selects five pairs / 34 relations;
+  a supplied alternative keeps five pairs and removes four relations, adding
+  none. The extra reader completion was already required at the receiver.
+
+Thirteen balanced complete-leg deletions fail memory coverage. These fixtures
+provide a qualified portable slot view; they are not native FIFO import or
+coupled-device runs. Keys are virgin, so nontrivial rearming remains a separate
+boundary. The tests characterize the current heuristic deliberately; update
+their selected-plan expectations when correcting it, preserving the independent
+model comparisons.
+
+All 24 portable suites and both native test executables pass. The positive
+native sharing plan matches the frozen base byte-for-byte; its private/shared
+control retains 602 relations and 10→7 pairs. All 88 corpus plans / 97 functions
+pass construction/reconstruction and remain byte-identical to `a0c1d761e`.
+Aggregate replay stays 3,262,799; no corpus case reaches a sharing query.
+Evidence, frozen baseline library/driver and commands: `../return-query-relay-work/`.
+
+Next: design the bounded relay-selection correction using these reproductions.
+It must distinguish destination-required/already-acquired completion from
+incidental completion and account for newly gated middle payloads and outward
+publications. Do not claim dominance for the incomparable witness or add a
+whole-program comparison per candidate. Positive binding before ranking and
+first-receipt support for second-key reuse are separate extensions. Preserve
+the native attention control; pending device campaigns keep their pinned source.
 
 ## Joint first/final reader implementation (2026-09-21)
 
@@ -48,7 +88,7 @@ physical operations but retains separate analytical final-continuation sites
 so exit/backedge correlation is not lost. First-prefix copying stops after the
 last first-consumer and its following source anchor.
 
-Next: commit/push when requested, then send the
+Committed by the user as `a0c1d761e`; device qualification remains the
 [short matched down_proj device task](test/benchmarks/joint_reader/DEVICE_TASK.md).
 It uses repository checkouts, the existing qualified harness, correctness first,
 10 warmups per round and 20 timing samples per arm. Existing frozen device

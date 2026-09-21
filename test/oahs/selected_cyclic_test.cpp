@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedTestSupport.h"
 #include "GraphOracle.h"
+#include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
 #include <functional>
 #include <numeric>
 #include <set>
@@ -1243,6 +1244,64 @@ void retainedProducerCohort()
     std::cout << "retained-cohort paths=" << paths << " removed-payload-relations=" << removed << '\n';
 }
 
+// Exercise candidate formation and the production qualifier, before capacity
+// or staged protocol checks. Ordered reader phases make every sharing pair
+// decline, so successful early exits cannot conceal repeated propagation.
+void returnSharingScaling(bool checkBound = true)
+{
+    for (unsigned cells : {2u, 4u, 8u, 16u, 32u}) {
+        auto input = base(cells, cells);
+        o::Region sequence{o::Region::Sequence, {}};
+        for (unsigned cell = 0; cell < cells; ++cell) {
+            input.operations.push_back(op(o::Pipe::MTE2, {{cell,false,true}}));
+            sequence.children.push_back(leaf(cell));
+        }
+        for (unsigned cell = 0; cell < cells; ++cell) for (unsigned child = 0; child < 2; ++child) {
+            const auto phase = unsigned(input.operations.size());
+            input.operations.push_back(op(o::Pipe::MTE1, {{cell,true,false}}));
+            sequence.children.push_back({o::Region::For, {leaf(phase)}, 0, true});
+        }
+        input.body = {o::Region::For, {sequence}, 0, true};
+        const auto p = readerRegionProgram(input);
+        const o::selected::Control control(p);
+        const o::StorageFrontierAnalysis storage(p);
+        const o::selected::RequirementFrontiers frontiers(p,control,storage);
+        require(control.complete && storage.complete() && frontiers.complete(), "scaling analyses failed");
+        o::SelectedWork work;
+        const auto requests = o::selected::qualifyCyclicFrontiers(p,control,frontiers,true,true,true,&work);
+        const auto privateReturns = o::selected::qualifyCyclicFrontiers(p,control,frontiers,true,true,false);
+        require(requests.size() == 2*cells && requests.size() == privateReturns.size(),
+                "scaling fixture did not retain every private return");
+        for (unsigned i=0; i<requests.size(); ++i) {
+            const auto &a=requests[i], &b=privateReturns[i];
+            require(a.source==b.source && a.observer==b.observer && a.cells==b.cells &&
+                    a.publications==b.publications && a.acquisitions==b.acquisitions &&
+                    a.repairFreeProducers==b.repairFreeProducers && !a.sharedReturns,
+                    "query reuse changed selected requirement endpoints/support");
+        }
+        std::cout << "return-query cells=" << cells << " sites=" << control.graph.sites.size()
+                  << " queries=" << work.returnSharingQueries << " visits=" << work.returnSharingSiteVisits << '\n';
+        if (checkBound) require(work.returnSharingQueries == cells-1,
+                "return sharing must propagate once per eligible victim, not once per supporter");
+        if (cells <= 4) {
+            o::SelectedOptions options;
+            options.recurringOmissionTrials=options.finalHelperTrials=false;
+            const auto shared=o::constructSelectedPlan(p,{},options);
+            options.shareReaderReturns=false;
+            const auto separate=o::constructSelectedPlan(p,{},options);
+            require(shared.success && separate.success && shared.channels.size()==2*cells,
+                    "scaling constructor did not install the private protocol");
+            for(unsigned cut=0; cut<shared.commands.size(); ++cut) {
+                const auto &a=shared.commands[cut], &b=separate.commands[cut];
+                require(a.size()==b.size(),"scaling selected words differ");
+                for(unsigned i=0;i<a.size();++i)
+                    require(a[i].kind==b[i].kind && a[i].source==b[i].source &&
+                            a[i].observer==b[i].observer && a[i].key==b[i].key,"scaling selected word order differs");
+            }
+        }
+    }
+}
+
 void sharedReaderReturns()
 {
     const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
@@ -1723,8 +1782,11 @@ void carriedBankEffects(bool reentered, unsigned banks)
     require(!o::refineCountedLoop(input.program, malformed).success, "geometry conferred full-write credit");
 }
 } // namespace
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--return-query-report") {
+        returnSharingScaling(false); return 0;
+    }
     for (unsigned banks : {2u, 3u}) {
         carriedBankEffects(false, banks);
         carriedBankEffects(true, banks);
@@ -1743,6 +1805,7 @@ int main()
     retainedReaderRegions();
     retainedProducerCohort();
     sharedReaderReturns();
+    returnSharingScaling();
     for (unsigned slots = 1; slots <= 4; ++slots) {
         checkSlots(slots);
     }
