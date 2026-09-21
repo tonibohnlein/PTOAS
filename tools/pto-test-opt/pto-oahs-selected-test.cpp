@@ -942,6 +942,10 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
                  << " helper_microseconds=" << work.helperCompositionMicroseconds
                  << " final_sites=" << work.finalCertificateSiteEvaluations
                  << " final_microseconds=" << work.finalCertificateMicroseconds
+                 << " choice_transfers=" << work.choiceTransfers
+                 << " choice_trials=" << work.choiceTrials
+                 << " choice_analysis_sites=" << work.choiceAnalysisSites
+                 << " choice_preparation_sites=" << work.choicePreparationSites
                  << " loop_entry_transfers=" << work.loopEntryTransfers
                  << " loop_entry_analysis_sites=" << work.loopEntryAnalysisSites
                  << " loop_entry_preparation_sites=" << work.loopEntryPreparationSites
@@ -1194,6 +1198,51 @@ bool frontierFile(MLIRContext &context, const char *path, bool observations = fa
   return accepted;
 }
 } // namespace
+bool choiceConsumerPlacement(MLIRContext &context) {
+  const char *source = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @choice_banks(%src: !pto.partition_tensor_view<1x32xf32>, %choose: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %x = arith.constant 0 : i64
+    %y = arith.constant 128 : i64
+    %z = arith.constant 256 : i64
+    %w = arith.constant 384 : i64
+    %a = pto.alloc_tile addr = %x : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %y : !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %z : !pto.tile_buf<vec, 1x32xf32>
+    %other = pto.alloc_tile addr = %w : !pto.tile_buf<vec, 1x32xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+    scf.if %choose {
+      pto.tabs ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    } else {
+      pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    }
+    pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%other : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+})mlir";
+  auto module = parseSourceString<ModuleOp>(source, &context);
+  if (!module) return false;
+  auto function = *module->getOps<func::FuncOp>().begin();
+  oahs::SelectedPlan report;
+  if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report)),
+             "choice readiness construction/reconstruction")) return false;
+  if (!check(report.work.choiceTransfers == 1, "native choice readiness not selected")) return false;
+  unsigned loads = 0; bool early = false, outside = false;
+  function.walk([&](Operation *op) {
+    if (isa<TLoadOp>(op)) ++loads;
+    if (auto set = dyn_cast<SetFlagOp>(op))
+      early |= loads == 1 && set.getSrcPipe().getPipe() == PIPE::PIPE_MTE2 &&
+               set.getDstPipe().getPipe() == PIPE::PIPE_V;
+    if (auto wait = dyn_cast<WaitFlagOp>(op))
+      outside |= loads == 2 && !op->getParentOfType<scf::IfOp>() &&
+                 wait.getSrcPipe().getPipe() == PIPE::PIPE_MTE2 &&
+                 wait.getDstPipe().getPipe() == PIPE::PIPE_V;
+  });
+  return check(early && outside, "native bank readiness lost its early source or common choice receipt");
+}
+
 int main(int argc, char **argv) {
   MLIRContext context;
   context.disableMultithreading();
@@ -1206,6 +1255,7 @@ int main(int argc, char **argv) {
       else if (flag == "--no-helper-trials") options.finalHelperTrials = false;
       else if (flag == "--no-frontier-motion") options.movingFrontiers = false;
       else if (flag == "--no-reader-return-sharing") options.shareReaderReturns = false;
+      else if (flag == "--no-choice-consumer-frontiers") options.choiceConsumerFrontiers = false;
       else if (flag == "--source-gaps") options.sourceGaps = true;
       else if (flag == "--defer-acyclic-acks") options.deferredAcyclicAcknowledgments = true;
       else if (flag == "--class-invariant-inputs") options.classInvariantInputs = true;
@@ -1230,6 +1280,6 @@ int main(int argc, char **argv) {
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
-                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && staticFifoSlotQualification(context) && firstConsumerPlacement(context) && lastReaderPlacement(context) && jointReaderPlacement(context);
+                      choiceConsumerPlacement(context) && slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && staticFifoSlotQualification(context) && firstConsumerPlacement(context) && lastReaderPlacement(context) && jointReaderPlacement(context);
   return passed ? 0 : 1;
 }

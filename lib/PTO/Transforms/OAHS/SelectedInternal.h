@@ -51,6 +51,15 @@ struct Control {
         std::set<Id> issuedClasses;
     };
     std::vector<LoopEntryFacts> loopEntries;
+    struct ChoiceFrontier {
+        Cut entry;
+        Pipe observer;
+        std::vector<Cut> consumers, crossedWords;
+        std::set<Id> issuedClasses;
+    };
+    std::vector<ChoiceFrontier> choiceFrontiers;
+    std::vector<std::vector<Id>> choicesAtConsumer;
+    uint64_t choicePreparationSites = 0;
     std::set<Cut> firstPrefixWords;
     uint64_t loopEntryPreparationSites = 0;
     // Memo of canonicalCommandCut, and the sites sharing each canonical word,
@@ -280,6 +289,7 @@ struct Group {
     Cut entryAcquisition = NoAnalysisId;
     Id entryReturnKey = NoAnalysisId;
     bool entryRepeats = false;
+    bool choiceAcquisition = false;
 };
 
 class Constructor {
@@ -354,6 +364,8 @@ private:
                         const std::vector<FrontierRequirement>&, const std::set<Id>*) const;
     bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&,
                            const std::vector<FrontierRequirement>&, const std::set<Id>*);
+    bool choiceConsumerFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&,
+                                const std::vector<FrontierRequirement>&, const std::set<Id>*);
     bool consume();
     bool bind(Group&, RequirementStage);
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&, Id certifiedKey = NoAnalysisId);
@@ -361,6 +373,7 @@ private:
     bool needsCommonAcknowledgment(const State&, Id) const;
     Id reusable(Pipe, Pipe, const State&);
     bool canPublish(const State&, Id) const;
+    bool canPublishAt(Cut, Id) const;
     bool clearInterval(Id, Cut, Cut) const;
     std::vector<Pipe> route(Pipe, Pipe) const;
     std::optional<bool> splitRelay(const Group&, Pipe, RequirementStage);

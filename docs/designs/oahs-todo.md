@@ -6,6 +6,32 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
+## Latest local milestone: KDA choice frontiers — 2026-09-21
+
+This entry supersedes the older active-investigation/commit status below.
+On the rebased branch, [original-choice consumer frontiers](oahs-choice-consumer-frontiers.md)
+are implemented and host-tested. Ordinary construction preserves
+A readiness before independent B extraction while retaining B's later receipt.
+KDA removes 32 finite explicit payload relations, adds none, and passes native
+reconstruction. All 25 portable suites and both native suites pass; all 88 paired
+historical corpus modules pass with identical plans. Compiler work increases:
+two staged checks (5,144 sites), replay 184,538→189,813. Device validation remains
+needed for the changed KDA plan; current remote task status is not inferred.
+
+Remaining KDA priorities:
+
+1. Complete first-conflicting-write occurrence/rearming qualification without
+   broadening early source gaps. Current opt-in experiment still fails KDA;
+   keep it disabled and separate from the successful choice mechanism.
+2. Identify complete MAT readiness/reader-return support across phases before
+   local repair. Removing MTE2/M barrier groups currently fails validation.
+3. Explain why MTE1 repairs remain despite completed-plan redundancy, then
+   construct their support earlier if it reduces overhead efficiently. Their
+   diagnostic deletion removes no payload ordering; it is not an overlap gain.
+4. Measure the new KDA plan using matched coupled execution and the qualified
+   device methodology. Existing-pass rearming concern is unresolved on hardware;
+   do not weaken OAHS safety to match it or claim superiority from event counts.
+
 ## Current status at a glance — 2026-09-21
 
 This summary supersedes older scheduling/status statements below. Those sections

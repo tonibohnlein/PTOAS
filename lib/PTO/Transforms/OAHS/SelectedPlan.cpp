@@ -151,6 +151,7 @@ SelectedPlan Constructor::run(const Commands& fixed)
         result.work.sourceHandles = result.sources.size();
         result.work.constructedSites = control.graph.sites.size();
         result.work.loopEntryPreparationSites = control.loopEntryPreparationSites;
+        result.work.choicePreparationSites = control.choicePreparationSites;
         result.work.commandWords = commandCutCount(program);
         result.work.cells = program.cells.size();
         result.work.eligibleKeys = frontier.keys().size();

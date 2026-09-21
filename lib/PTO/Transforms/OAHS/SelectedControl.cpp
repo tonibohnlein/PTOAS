@@ -417,6 +417,56 @@ Control::Control(const Program& program)
             }
             firstPrefixWords.insert(canonicalCut[cut]);
         }
+    // Local first-observer frontiers of original alternatives. Inspect each
+    // straight arm prefix once per pipeline, not once per storage requirement.
+    // Empty arms, nested control and shared analytical words retain fallback.
+    choicesAtConsumer.resize(graph.sites.size());
+    std::set<Cut> choices;
+    for (const auto& context : graph.contexts)
+        if (context.kind == AnalysisContext::ThenArm || context.kind == AnalysisContext::ElseArm)
+            choices.insert(context.ownerSite);
+    for (auto entry : choices) {
+        if (entry >= graph.sites.size() || !reachable[entry] || !graph.legalCuts[entry] ||
+            wordOccurrences[canonicalCut[entry]].size() != 1 || graph.sites[entry].successors.size() != 2)
+            continue;
+        for (unsigned pipe = 0; pipe < PipeCount; ++pipe) {
+            ChoiceFrontier facts{entry, Pipe(pipe), {}, {}, {}};
+            bool qualified = true;
+            for (auto at : graph.sites[entry].successors) {
+                bool found = false;
+                std::set<Cut> visited;
+                while (visited.insert(at).second) {
+                    ++choicePreparationSites;
+                    const auto& context = graph.contexts[graph.cutContexts[at]];
+                    if (context.ownerSite != entry ||
+                        (context.kind != AnalysisContext::ThenArm && context.kind != AnalysisContext::ElseArm) ||
+                        wordOccurrences[canonicalCut[at]].size() != 1) break;
+                    facts.crossedWords.push_back(at);
+                    const auto operation = graph.operations[at];
+                    if (operation != NoAnalysisId) {
+                        const auto& op = program.operations[operation];
+                        if (op.pipe == Pipe(pipe)) {
+                            facts.consumers.push_back(at);
+                            found = true;
+                            break;
+                        }
+                        // A different pipeline's earlier payload could later
+                        // need an outward receipt from this observer. Do not
+                        // move the gate across such an unconstructed deadline.
+                        break;
+                    }
+                    if (graph.sites[at].successors.size() != 1 ||
+                        graph.sites[at].backedgeOwners.front() != NoAnalysisId) break;
+                    at = graph.sites[at].successors.front();
+                }
+                qualified &= found;
+            }
+            if (!qualified) continue;
+            for (auto consumer : facts.consumers)
+                choicesAtConsumer[consumer].push_back(choiceFrontiers.size());
+            choiceFrontiers.push_back(std::move(facts));
+        }
+    }
 }
 bool Control::straight(Id a, Id b) const
 {

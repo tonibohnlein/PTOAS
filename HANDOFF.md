@@ -7,10 +7,72 @@ Updated: 2026-09-21
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: relay key feasibility before ranking, host validated
+- Current milestone: original-choice readiness frontiers, host validated
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Active KDA goal and acceptance boundary (2026-09-21)
+
+User priority: develop an efficient, general lifetime/occurrence mechanism and
+look for overlap beyond existing InsertSync, rather than merely match its
+latency or event population. Work on this rebased branch; do not import the
+other branch's mixed-producer relaxation or global correspondence guard.
+
+The uncommitted first-write experiment separates a first-only receipt gap from
+ordinary shared post-access publication words. The bank-A/bank-B regression
+preserves all payload ordering on four finite paths (16 bank deadlines), and
+the native selected suite passes. Full KDA is **not accepted**: the latest
+experimental staged-rearming version still fails consumption-before-publication
+at cut 428. Its 12 staged rearming checks visit 152,103 sites. These extra full
+analyses are diagnostic scaffolding, not the intended efficient final policy.
+
+Next: unify occurrence matching and actual key-rearming support while preserving
+early source gaps. Require a useful native plan with no added local payload
+ordering, measure preparation/replay cost, and compare against current existing
+InsertSync on identical payloads before asking for device timing.
+
+A focused current-source existing-pass driver now generates
+`../kda-first-write-work/kda.existing.current.pto`. Both arms use the same archived
+KDA input with only eight obsolete scalar-load spellings migrated to current
+syntax. The ordinary finite checker stops on an unproved M-to-MTE1 key-0 rearm
+in existing; establish the applicable target/model contract before interpreting
+that as a correctness defect or reporting a qualified order comparison.
+Inspection now identifies the first existing-plan failure at generated line197:
+a loop-tail MTE1 consumption is followed by a new M publication with the same
+key, without a modeled return to M. Existing allocation checks nonoverlapping
+SyncIR intervals; direct flag lowering adds no acknowledgment. This occurs before
+the first queue push. The reduced boundary fails and a real reverse receipt
+repairs it in the finite model. This is not a demonstrated device failure or
+proof that the previously tested binary has the same sequence. Details:
+`../kda-first-write-work/existing-rearm-investigation.md`.
+
+Artifacts and logs: `../kda-first-write-work/` (build-existing.py,
+existing-driver.cpp, kda.split-rearm.log, split-rearm-suite.log). No current
+KDA speedup or device qualification is claimed.
+
+## KDA choice-frontier implementation — host complete
+
+[Local opportunities](test/benchmarks/kda_projection/LOCAL_OPPORTUNITIES.md)
+and [design](docs/designs/oahs-choice-consumer-frontiers.md) supersede the earlier
+diagnostic-only status. Ordinary construction now preserves an earlier source
+prefix across a qualified original choice whose two first consumers both need
+it. This is enabled by default, with `--no-choice-consumer-frontiers` for a
+matched control. It does not enable the unfinished first-write experiment.
+
+KDA construction/reconstruction passes: two boundaries improve, removing 32
+finite explicit payload relations with none added. Payloads and guards remain
+unchanged. Two staged checks cost 5,144 site evaluations; replay increases
+184,538→189,813. All 25 portable suites and both native suites pass. All 88 paired
+historical corpus modules construct/reconstruct with byte-identical plans.
+Artifacts: `../kda-first-write-work/choice-corpus-final/` and
+`kda.choice-final.{pto,log,order.json}`. No device result is claimed.
+
+The separate MTE1-barrier deletion diagnostic verifies but removes zero payload
+relations. It is an overhead lead, not demonstrated lost overlap, and is not
+installed. MTE2/M group deletions fail. Next quality work should target complete
+MAT cycles or qualified first conflicting writes with actual rearming support.
+Do not copy the other KDA branch's mixed-producer relaxation/global guard.
 
 ## Rebase compatibility repair (2026-09-21)
 

@@ -160,6 +160,8 @@ struct SelectedWork {
     uint64_t rearmingPairVisits = 0, rearmingQuerySites = 0;
     uint64_t loopEntryAnalysisSites = 0;
     uint64_t loopEntryPreparationSites = 0;
+    uint64_t choicePreparationSites = 0, choiceAnalysisSites = 0;
+    std::size_t choiceTrials = 0, choiceTransfers = 0;
     // Dimensions of the graph actually constructed over, recorded once. They
     // separate refinement expansion from repeated visits and state-copy cost;
     // they are not work allowances and never affect a decision.
@@ -189,6 +191,7 @@ struct SelectedOptions {
     bool movingFrontiers = true;
     // Diagnostic ablation; ordinary construction composes certified returns.
     bool shareReaderReturns = true;
+    bool choiceConsumerFrontiers = true;
     bool sourceGaps = false;
     bool deferredAcyclicAcknowledgments = false;
     bool classInvariantInputs = false;

@@ -333,6 +333,113 @@ bool Constructor::loopEntryFrontier(
     }
     return false;
 }
+bool Constructor::choiceConsumerFrontier(
+    Pipe source, const std::vector<FrontierRequirement>& required, Group& group,
+    const std::vector<FrontierRequirement>& all, const std::set<Id>* promotion)
+{
+    if (!options.choiceConsumerFrontiers || required.empty()) return false;
+    const auto observer = program.operations[control.graph.operations[current]].pipe;
+    for (auto index : control.choicesAtConsumer[current]) {
+        const auto& choice = control.choiceFrontiers[index];
+        if (choice.observer != observer) continue;
+        // Every arm's first observer payload must need this completion. An
+        // optional consumer or independent observer prefix cannot justify
+        // moving a receipt to the original choice boundary.
+        if (!std::all_of(choice.consumers.begin(), choice.consumers.end(), [&](Cut cut) {
+                const auto& op = program.operations[control.graph.operations[cut]];
+                return std::all_of(required.begin(), required.end(), [&](const auto& r) {
+                    return std::any_of(op.accesses.begin(), op.accesses.end(), [&](const auto& a) {
+                        return a.cell == r.cell && (a.write || (a.read && r.sourceWrite));
+                    });
+                });
+            })) continue;
+        // Include deadline words: an outward publication before the payload
+        // must not acquire prerequisites merely because both payload arms need
+        // them. Existing commands at entry precede the appended receipt.
+        if (std::any_of(choice.crossedWords.begin(), choice.crossedWords.end(), [&](Cut cut) {
+                return std::any_of(ledger.word(cut).begin(), ledger.word(cut).end(), [&](Id id) {
+                    const auto& command = ledger.endpoint(id).command;
+                    return command.kind == Command::BarrierAll ||
+                        (command.kind == Command::Publish && command.source == observer);
+                });
+            })) continue;
+        const SelectedSource* selected = nullptr;
+        for (const auto& handle : result.sources) {
+            if (handle.pipe != source || handle.version != cache.version || !handle.snapshot.reachable() ||
+                handle.cut == choice.entry || !control.straight(handle.cut, choice.entry) ||
+                control.wordOccurrences[control.canonicalCut[handle.cut]].size() != 1) continue;
+            const auto& snapshot = cache.cuts[handle.cut].before.causal;
+            if (!snapshot.reachable()) continue;
+            if (!std::all_of(required.begin(), required.end(), [&](const auto& r) {
+                    const auto access = accessClass(r);
+                    const auto* history = snapshot.facts()->history.find(access);
+                    return !choice.issuedClasses.count(access) &&
+                        freshBetween(handle.cut, choice.entry, access) && history &&
+                        frontierContains(*history, PipeCount + unsigned(source));
+                })) continue;
+            if (!selected || control.position[handle.cut] < control.position[selected->cut]) selected = &handle;
+        }
+        if (!selected) continue;
+        const auto publication = selected->cut;
+        std::set<Id> covered;
+        for (const auto& r : all) {
+            const auto access = accessClass(r);
+            const auto* history = selected->snapshot.facts()->history.find(access);
+            if (!choice.issuedClasses.count(access) && freshBetween(publication, choice.entry, access) &&
+                history && frontierContains(*history, PipeCount + unsigned(source))) covered.insert(access);
+        }
+        if (promotion && std::none_of(promotion->begin(), promotion->end(),
+                [&](Id access) { return covered.count(access); })) continue;
+        // Read-only physical feasibility before one exact staged solve. No
+        // helper search or hypothetical future consumption credit. Existing
+        // selected returns may prove reuse, including a loop's backedge.
+        Id key = NoAnalysisId;
+        for (Id candidate = 0; candidate < frontier.keys().size(); ++candidate) {
+            const auto& identity = frontier.keys()[candidate];
+            if (identity.source != source || identity.observer != observer ||
+                closedKeys.count(candidate) || recurringKeys.count(candidate)) continue;
+            ++result.work.keyQueries;
+            if (canPublishAt(publication, candidate) && clearInterval(candidate, publication, choice.entry)) {
+                key = candidate;
+                break;
+            }
+        }
+        if (key == NoAnalysisId) continue;
+        // Narrowing a broad prefix leaves completion of crossed source work
+        // for a later receipt (bank B in the motivating case). Require an
+        // actual helper-free key at that broad boundary, not merely nominal
+        // pool capacity. Otherwise splitting can starve ordinary repair or
+        // introduce a reverse wait through the first consumer's completion.
+        const bool lateBinding = std::any_of(frontier.keys().begin(), frontier.keys().end(),
+            [&](const auto& identity) {
+                const auto other = Id(&identity - frontier.keys().data());
+                return other != key && identity.source == source && identity.observer == observer &&
+                    !closedKeys.count(other) && !recurringKeys.count(other) &&
+                    canPublishAt(choice.entry, other);
+            });
+        if (!lateBinding) continue;
+        auto commands = ledger.commands();
+        commands[publication].push_back({Command::Publish, source, observer, frontier.keys()[key].key});
+        commands[choice.entry].push_back({Command::Acquire, source, observer, frontier.keys()[key].key});
+        const auto trial = analyze(program, commands, {false});
+        ++result.work.choiceTrials;
+        result.work.choiceAnalysisSites += trial.stats.siteEvaluations;
+        // Payload requirements not yet visited remain explicit residuals.
+        // Protocol admission includes every represented visit and neighboring
+        // key use. A rejection has changed no ledger state or reservation.
+        if (!trial.complete || !trial.diagnostics.empty() || !trial.protocol.empty() ||
+            !trial.phaseResources.empty()) return false;
+        group.publication = publication;
+        group.publications = {publication};
+        group.entryAcquisition = choice.entry;
+        group.forwardKey = key;
+        group.version = ledger.version();
+        group.coverage = std::move(covered);
+        group.choiceAcquisition = true;
+        return true;
+    }
+    return false;
+}
 Group Constructor::sourceGroup(
     Pipe source, const std::vector<FrontierRequirement>& required,
     const std::vector<FrontierRequirement>& all, const std::set<Id>* promotion)
@@ -382,6 +489,7 @@ Group Constructor::sourceGroup(
         }
     }
     const bool comparable = selected != nullptr;
+    if (!comparable && choiceConsumerFrontier(source, required, group, all, promotion)) return group;
     if (!comparable && sourceFrontier(source, required, group, all, promotion)) return group;
     if (!comparable && loopEntryFrontier(source, required, group, all, promotion)) return group;
     group.publication = comparable ? selected->cut : current;

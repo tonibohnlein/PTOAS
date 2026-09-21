@@ -23,6 +23,16 @@ bool Constructor::canPublish(const State& state, Id key) const
            (frontierContains(facts.reach[consumption], source) ||
             frontierContains(facts.reach[consumption], PipeCount + source));
 }
+bool Constructor::canPublishAt(Cut cut, Id key) const
+{
+    // One emitted word may execute in both the peeled first visit and later
+    // visits. Publisher knowledge at only the later visit cannot rearm its
+    // first publication after a preceding sibling.
+    for (auto occurrence : control.wordOccurrences[control.canonicalCut[cut]])
+        if (control.reachable[occurrence] && !canPublish(cache.cuts[occurrence].before, key))
+            return false;
+    return true;
+}
 Id Constructor::reusable(Pipe source, Pipe observer, const State& state)
 {
     for (Id key = 0; key < frontier.keys().size(); ++key) {
@@ -806,7 +816,8 @@ bool Constructor::bind(Group& group, RequirementStage stage)
             {Command::Acquire, group.source, observer, key.key}, EndpointPurpose::Completion, request);
         decision.endpoints.push_back(acquired);
         if (group.entryAcquisition != NoAnalysisId) {
-            ++result.work.loopEntryTransfers;
+            if (group.choiceAcquisition) ++result.work.choiceTransfers;
+            else ++result.work.loopEntryTransfers;
             needsContextualReplay = true;
             if (group.entryRepeats) {
                 entryProtocolKeys.insert(group.forwardKey);
