@@ -539,6 +539,98 @@ void entryWaitMustNotCrossPublication()
     require(accepted(p, fixed).work.loopEntryTransfers == 1,
             "publication after the consumer disabled useful early placement");
 }
+// Incoming reader completion is needed at the first conflicting write, not
+// before the observer exports an unrelated prefix. Supply an original
+// first-visit witness to distinguish occurrence precision from new causal state.
+void firstConflictingWriterAfterPublication()
+{
+    auto p = invariantLoopProgram();
+    p.operations[0].accesses = {{0, true, false}};
+    p.operations[2].accesses = {{0, false, true}};
+    p.operations.push_back(op(R, {}));
+    auto& q = *p.observed;
+    q.observations.push_back({8, {}, true});
+    q.sites.push_back({3, 8, {5}, {}, 0});
+    q.sites[4].successors[0] = 8;
+    q.loops.front().bodyEntry = 8;
+    q.loops.front().sites.push_back(8);
+    const std::vector<o::Command> relay{
+        {o::Command::Publish, Q, R, 0}, {o::Command::Acquire, Q, R, 0},
+        {o::Command::Publish, R, Q, 0}, {o::Command::Acquire, R, Q, 0}};
+    o::Commands fixed(o::commandCutCount(p));
+    fixed[8] = relay;
+    const auto baseline = accepted(p, fixed);
+    require(baseline.work.loopEntryTransfers == 0,
+            "external-reader receipt crossed an outward publication");
+
+    auto refined = p;
+    auto& r = *refined.observed;
+    // Original first/later participation: one prefix, then zero or more
+    // backedge visits. The outward-publication word stays shared.
+    r.sites.push_back({3, 8, {10}, {}, 0});
+    r.observations.push_back({10, {{o::ObservationAtom::LoopHasPrevious, 3, 1, 0}}, true});
+    r.sites.push_back({2, r.observations.size() - 1, {6}, {}, 0});
+    r.sites[3].successors = {9};
+    r.loops.front().bodyEntry = 9;
+    r.loops.front().sites.insert(r.loops.front().sites.end(), {9, 10});
+    fixed.resize(o::commandCutCount(refined));
+    fixed[9] = relay;
+    const auto selected = accepted(refined, fixed);
+    require(std::any_of(selected.commands[10].begin(), selected.commands[10].end(), [&](const auto& c) {
+        return c.kind == o::Command::Acquire && c.source == P && c.observer == Q;
+    }), "first conflicting writer did not receive incoming reader completion");
+    require(std::none_of(selected.commands[5].begin(), selected.commands[5].end(), [&](const auto& c) {
+        return c.kind == o::Command::Acquire && c.source == P && c.observer == Q;
+    }), "later writes reacquire the same invariant external reader");
+
+    auto evaluate = [&](const o::Program& program, const o::Commands& commands,
+                        const std::vector<o::Cut>& path, oahs_oracle::PayloadOrder& order) {
+        auto flat = program; flat.observed.reset(); flat.body = {}; flat.operations.clear();
+        o::Commands words; std::vector<o::Command> pending;
+        for (auto site : path) {
+            pending.insert(pending.end(), commands[site].begin(), commands[site].end());
+            const auto operation = program.observed->sites[site].operation;
+            if (operation == o::NoAnalysisId) continue;
+            flat.operations.push_back(program.operations[operation]);
+            words.push_back(std::move(pending)); pending.clear();
+        }
+        words.push_back(std::move(pending));
+        std::vector<unsigned> visits(flat.operations.size());
+        std::iota(visits.begin(), visits.end(), 0);
+        return bool(oahs_oracle::graph(flat, words, visits, {{0, 2}}, nullptr, nullptr, &order));
+    };
+    for (unsigned n : {1u, 2u, 5u}) {
+        std::vector<o::Cut> before{0, 1, 2, 3}, after{0, 1, 2, 3, 9, 10, 6};
+        for (unsigned i = 0; i < n; ++i) before.insert(before.end(), {4, 8, 5, 6});
+        for (unsigned i = 1; i < n; ++i) after.insert(after.end(), {4, 8, 5, 6});
+        before.insert(before.end(), {4, 7}); after.insert(after.end(), {4, 7});
+        oahs_oracle::PayloadOrder a, b;
+        require(evaluate(p, baseline.commands, before, a) && evaluate(refined, selected.commands, after, b),
+                "first-write protocol lost safety/rearming or gated the outward consumer");
+        require(std::includes(a.begin(), a.end(), b.begin(), b.end()),
+                "first-write receipt added payload ordering");
+    }
+    auto missing = selected.commands;
+    auto& word = missing[10];
+    word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& c) {
+        return c.kind == o::Command::Acquire && c.source == P && c.observer == Q;
+    }), word.end());
+    require(!o::checkCausalFrontier(refined, missing).accepted,
+            "first-write completion was assumed without its actual receipt");
+    auto broad = selected.commands;
+    const auto receipt = std::find_if(broad[10].begin(), broad[10].end(), [&](const auto& c) {
+        return c.kind == o::Command::Acquire && c.source == P && c.observer == Q;
+    });
+    broad[3].push_back(*receipt);
+    broad[10].erase(receipt);
+    require(o::checkCausalFrontier(refined, broad).accepted,
+            "broad first-write witness should remain safe");
+    oahs_oracle::PayloadOrder broadOrder;
+    require(!evaluate(refined, broad, {0, 1, 2, 3, 9, 10, 6, 4, 7}, broadOrder),
+            "broad entry receipt did not expose the forbidden outward ordering");
+    std::cout << "first-conflicting-write paths=3 repeated-receipt=0 broad-entry-safe-but-orders-export=1\n";
+}
+
 // A region with alternative first writers, re-entered after a foreign reader.
 // The source does no work inside the child; no kernel/opcode recognition is used.
 o::Program enclosingChoice()
@@ -633,5 +725,6 @@ int main()
     invariantLoopEntry();
     reuseOneShotEntryKey();
     entryWaitMustNotCrossPublication();
+    firstConflictingWriterAfterPublication();
     std::cout << "selected lookahead, deadline and terminal-return tests passed\n";
 }

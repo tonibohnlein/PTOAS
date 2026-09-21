@@ -315,6 +315,118 @@ module attributes {pto.target_arch = "a3"} {
   }
   return true;
 }
+bool firstWritePlacement(MLIRContext &context) {
+  const std::string fixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @first_write(%dst: !pto.partition_tensor_view<1x32xf32>, %n: index, %active: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %lo = arith.constant 3 : index
+    %hi = arith.constant 9 : index
+    %step = arith.constant 2 : index
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %x = arith.constant 0 : i64
+    %y = arith.constant 128 : i64
+    %z = arith.constant 256 : i64
+    %a = pto.alloc_tile addr = %x : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %y : !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %z : !pto.tile_buf<vec, 1x32xf32>
+    scf.for %entry = %zero to %n step %one {
+      pto.tstore ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%dst : !pto.partition_tensor_view<1x32xf32>)
+      scf.for %i = %lo to %hi step %step {
+        pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+        // INSERT
+        pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+      }
+    }
+    return
+  }
+})mlir";
+  for (unsigned variant = 0; variant < 8; ++variant) {
+    auto source = fixture;
+    auto replace = [&](const std::string &a, const std::string &b) {
+      source.replace(source.find(a), a.size(), b);
+    };
+    const std::string write = "pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)";
+    if (variant == 1) replace("%lo to %hi", "%lo to %lo");
+    if (variant == 2) replace("%lo to %hi", "%lo to %n");
+    if (variant == 3) replace("// INSERT", "pto.tstore ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%dst : !pto.partition_tensor_view<1x32xf32>)");
+    if (variant == 4) replace(write, "scf.if %active { " + write + " }");
+    if (variant == 5) replace("%hi = arith.constant 9", "%hi = arith.constant 4");
+    if (variant == 6) {
+      const std::string read = "pto.tstore ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%dst : !pto.partition_tensor_view<1x32xf32>)";
+      replace(read, "");
+      replace("    return", "    " + read + "\n    return");
+    } // A future-only reader is not a first-write reuse opportunity.
+    if (variant == 7) replace("// INSERT", "pto.tload ins(%dst : !pto.partition_tensor_view<1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)");
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module), "parse first-write fixture")) return false;
+    auto function = module->lookupSymbol<func::FuncOp>("first_write");
+    oahs::NativeAnalysis input;
+    if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, input)), "import first write")) return false;
+    const bool qualified = input.program.observed->qualification.find("first-consumer-prefix-v1") != std::string::npos;
+    if (!check(qualified == (variant == 0 || variant == 5 || variant == 7), "first write needs nonempty, unconditional, source-inactive participation")) return false;
+    if (!qualified) continue;
+    oahs::SelectedPlan report;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report)), "first-write construction/reconstruction")) return false;
+    bool firstReceipt = false, laterReceipt = false;
+    for (const auto &endpoint : report.ledger) {
+      if (endpoint.command.kind != oahs::Command::Acquire ||
+          endpoint.command.source != oahs::Pipe::MTE3 || endpoint.command.observer != oahs::Pipe::V) continue;
+      const auto observation = input.program.observed->sites[endpoint.cut].observation;
+      if (observation == oahs::NoControlId) continue;
+      for (const auto &atom : input.program.observed->observations[observation].atoms)
+        if (atom.kind == oahs::ObservationAtom::LoopHasPrevious) {
+          firstReceipt |= atom.value == 0;
+          laterReceipt |= atom.value != 0;
+        }
+    }
+    if (!check(firstReceipt && !laterReceipt, "external-reader receipt belongs only at the first conflicting write")) return false;
+    bool threshold = false;
+    function.walk([&](arith::CmpIOp cmp) {
+      auto constant = cmp.getRhs().getDefiningOp<arith::ConstantIndexOp>();
+      threshold |= constant && constant.value() == 5 && cmp.getPredicate() == arith::CmpIPredicate::slt;
+    });
+    if (!check(threshold, "first-write guard must retain original nonunit step")) return false;
+    if (variant == 7) {
+      bool priorExport = false, hoisted = false;
+      function.walk([&](mlir::Operation *op) {
+        priorExport |= isa<TLoadOp>(op);
+        if (auto wait = dyn_cast<WaitFlagOp>(op))
+          if (wait.getSrcPipe().getPipe() == PIPE::PIPE_MTE3 &&
+              wait.getDstPipe().getPipe() == PIPE::PIPE_V) hoisted |= !priorExport;
+      });
+      if (!check(priorExport && !hoisted, "native first-write receipt must stay after the earlier outward consumer")) return false;
+    }
+  }
+  for (unsigned mutation = 0; mutation != 2; ++mutation) {
+    auto module = parseSourceString<ModuleOp>(fixture, &context);
+    auto function = module->lookupSymbol<func::FuncOp>("first_write");
+    const auto before = text(function);
+    bool changed = false;
+    ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic &) { return success(); });
+    const auto status = oahs::testing::runSelectedHandoffSyncWithMutation(function, [&](func::FuncOp working) {
+      if (mutation == 0) {
+        WaitFlagOp victim;
+        working.walk([&](WaitFlagOp wait) {
+          if (!victim && wait.getSrcPipe().getPipe() == PIPE::PIPE_MTE3 &&
+              wait.getDstPipe().getPipe() == PIPE::PIPE_V) victim = wait;
+        });
+        if (victim) { victim.erase(); changed = true; }
+      } else {
+        working.walk([&](arith::CmpIOp cmp) {
+          if (!changed && cmp.getPredicate() == arith::CmpIPredicate::slt) {
+            cmp.setPredicate(arith::CmpIPredicate::sle); changed = true;
+          }
+        });
+      }
+    });
+    if (!check(changed && failed(status) && text(function) == before,
+               "missing first-write support or wrong occurrence guard must fail transactionally")) return false;
+  }
+  return true;
+}
+
 bool lastReaderPlacement(MLIRContext &context) {
   const std::string fixture = R"mlir(
 module attributes {pto.target_arch = "a3"} {
@@ -1067,7 +1179,7 @@ const char *occurrenceName(oahs::selected::RequirementOccurrence occurrence) {
   }
   return "?";
 }
-bool frontierFile(MLIRContext &context, const char *path, bool observations = false) {
+bool frontierFile(MLIRContext &context, const char *path, bool observations = false, bool explain = false) {
   auto module = parseSourceFile<ModuleOp>(path, &context);
   if (!module) return false;
   bool accepted = true;
@@ -1081,6 +1193,71 @@ bool frontierFile(MLIRContext &context, const char *path, bool observations = fa
     oahs::selected::Control control(imported.program);
     oahs::StorageFrontierAnalysis storage(imported.program);
     oahs::selected::RequirementFrontiers frontiers(imported.program, control, storage);
+    if (explain) {
+      const auto &p = imported.program;
+      llvm::outs() << "explain_function " << function.getSymName() << "\n";
+      for (std::size_t id = 0; id < p.operations.size(); ++id) {
+        llvm::outs() << "operation " << id << " pipe=" << pipeName(p.operations[id].pipe);
+        for (const auto &a : p.operations[id].accesses)
+          llvm::outs() << " cell=" << a.cell << ":" << a.read << a.write;
+        llvm::outs() << " native=";
+        imported.phases[id]->print(llvm::outs());
+        llvm::outs() << "\n";
+      }
+      for (oahs::Cut site = 0; site < oahs::commandCutCount(p); ++site) {
+        llvm::outs() << "site " << site << " operation=" << oahs::operationAtCut(p, site)
+                     << " word=" << oahs::canonicalCommandCut(p, site)
+                     << " cyclic=" << control.components[control.component[site]].cyclic << "\n";
+      }
+      for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
+        llvm::outs() << "cell_topology cell=" << cell << " space=" << p.cells[cell].addressSpace
+                     << " acyclic_writers=";
+        for (oahs::Cut site = 0; site < control.graph.sites.size(); ++site) {
+          const auto operation = control.graph.operations[site];
+          if (!control.reachable[site] || operation == oahs::NoAnalysisId ||
+              control.components[control.component[site]].cyclic) continue;
+          for (const auto &access : p.operations[operation].accesses)
+            if (access.cell == cell && access.write)
+              llvm::outs() << operation << "@" << site << ",";
+        }
+        llvm::outs() << "\n";
+      }
+      const auto plan = oahs::constructSelectedPlan(p);
+      accepted &= plan.success;
+      if (!plan.success) for (const auto &endpoint : plan.ledger)
+        llvm::outs() << "failed_endpoint id=" << endpoint.id << " cut=" << endpoint.cut
+                     << " kind=" << unsigned(endpoint.command.kind)
+                     << " source=" << pipeName(endpoint.command.source)
+                     << " observer=" << pipeName(endpoint.command.observer)
+                     << " key=" << endpoint.command.key << "\n";
+      auto requirements = [](const auto &rs) {
+        for (const auto &r : rs)
+          llvm::outs() << " requirement=" << r.cell << ":" << pipeName(r.source)
+                       << ":" << r.sourceWrite << ":" << r.consumer
+                       << ":" << r.consumerRead << r.consumerWrite;
+      };
+      for (const auto &f : plan.fences) {
+        llvm::outs() << "fence cut=" << f.cut << " observer=" << pipeName(f.observer);
+        requirements(f.residuals);
+        llvm::outs() << "\n";
+      }
+      for (const auto &d : plan.decisions) {
+        llvm::outs() << "decision consumer=" << d.consumer << " publication=" << d.publication
+                     << " source=" << pipeName(d.source) << " observer=" << pipeName(d.observer)
+                     << " common=" << d.commonCut << " enlarged=" << d.enlargedPrefix;
+        requirements(d.required);
+        llvm::outs() << "\n";
+      }
+      for (const auto &channel : plan.channels) {
+        llvm::outs() << "channel owner=" << channel.owner << " source=" << pipeName(channel.source)
+                     << " observer=" << pipeName(channel.observer) << " cell=" << channel.cell
+                     << " publications=";
+        for (auto cut : channel.publications) llvm::outs() << cut << ",";
+        llvm::outs() << " acquisitions=";
+        for (auto cut : channel.acquisitions) llvm::outs() << cut << ",";
+        llvm::outs() << "\n";
+      }
+    }
     if (!control.complete || !storage.complete() || !frontiers.complete()) {
       llvm::errs() << "frontier analysis failed for " << function.getSymName() << ": "
                    << (!control.complete ? control.reason :
@@ -1222,14 +1399,17 @@ int main(int argc, char **argv) {
   if (argc == 3 && StringRef(argv[1]) == "--observations") {
     return frontierFile(context, argv[2], true) ? 0 : 1;
   }
+  if (argc == 3 && StringRef(argv[1]) == "--explain") {
+    return frontierFile(context, argv[2], false, true) ? 0 : 1;
+  }
   if (argc != 1) {
-    llvm::errs() << "usage: pto-oahs-selected-test [--construct INPUT | --frontiers INPUT | --observations INPUT]\n";
+    llvm::errs() << "usage: pto-oahs-selected-test [--construct INPUT | --frontiers INPUT | --observations INPUT | --explain INPUT]\n";
     return 2;
   }
   const bool passed = positive(context, ordinary, "ordinary") && positive(context, loop, "loop") &&
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
-                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && staticFifoSlotQualification(context) && firstConsumerPlacement(context) && lastReaderPlacement(context) && jointReaderPlacement(context);
+                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && staticFifoSlotQualification(context) && firstConsumerPlacement(context) && firstWritePlacement(context) && lastReaderPlacement(context) && jointReaderPlacement(context);
   return passed ? 0 : 1;
 }

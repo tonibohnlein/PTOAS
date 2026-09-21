@@ -578,6 +578,116 @@ o::Program readerRegionProgram(o::Program input)
     return p;
 }
 
+// A physical cell's lifetime need not be wholly cyclic: prologue and tail
+// producers can surround repeated producer/reader-child episodes.
+void mixedProducerReaderRegions()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
+    auto input = base(1, 6);
+    input.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}}),
+                        op(P, {{0, false, true}}), op(Q, {{0, true, false}}),
+                        op(P, {{0, false, true}}), op(Q, {{0, true, false}})};
+    const auto child = [](unsigned read) {
+        return o::Region{o::Region::For, {leaf(read)}, 0, true};
+    };
+    input.body = seq({leaf(0), child(1),
+        {o::Region::For, {seq({leaf(2), child(3)})}, 0, true},
+        leaf(4), child(5)});
+    const auto p = readerRegionProgram(input);
+    const auto plan = accepted(p);
+    require(plan.channels.size() == 2,
+            "mixed acyclic/cyclic producers lost the complete reader-region cycle");
+    require(count(plan, o::Command::Barrier) == 0,
+            "complete mixed producer episodes still need an explicit pipe fence");
+    o::SelectedOptions ordinary;
+    ordinary.recurring = false;
+    const auto baseline = o::constructSelectedPlan(p, {}, ordinary);
+    require(baseline.success, baseline.reason);
+    o::SelectedOptions coldReplay;
+    coldReplay.siblingReplayReuse = false;
+    const auto cold = o::constructSelectedPlan(p, {}, coldReplay);
+    require(cold.success && cold.commands.size() == plan.commands.size(),
+            "mixed producer episodes fail prefix-only replay");
+    for (unsigned cut = 0; cut < plan.commands.size(); ++cut)
+        require(cold.commands[cut].size() == plan.commands[cut].size() &&
+            std::equal(cold.commands[cut].begin(), cold.commands[cut].end(), plan.commands[cut].begin(),
+                [](const auto& a, const auto& b) {
+                    return a.kind == b.kind && a.source == b.source &&
+                        a.observer == b.observer && a.key == b.key;
+                }), "mixed producer episodes differ under prefix-only replay");
+    const auto& g = *p.observed;
+    unsigned removed = 0;
+    for (unsigned outer : {0u, 1u, 3u}) for (unsigned reads : {0u, 1u, 3u}) {
+        std::vector<unsigned> expected{0};
+        expected.insert(expected.end(), reads, 1);
+        for (unsigned i = 0; i < outer; ++i) {
+            expected.push_back(2);
+            expected.insert(expected.end(), reads, 3);
+        }
+        expected.push_back(4);
+        expected.insert(expected.end(), reads, 5);
+        std::vector<o::Cut> path;
+        std::set<std::pair<o::Cut, unsigned>> active, dead;
+        std::function<bool(o::Cut, unsigned)> walk = [&](o::Cut at, unsigned offset) {
+            const auto key = std::make_pair(at, offset);
+            if (active.count(key) || dead.count(key)) return false;
+            const auto& node = g.sites[at];
+            if (node.operation != o::NoControlId) {
+                if (offset == expected.size() || node.operation != expected[offset]) return false;
+                ++offset;
+            }
+            path.push_back(at);
+            if (at == g.exit && offset == expected.size()) return true;
+            active.insert(key);
+            for (auto next : node.successors) if (walk(next, offset)) return true;
+            active.erase(key); dead.insert(key); path.pop_back(); return false;
+        };
+        require(walk(g.entry, 0), "mixed producer path missing");
+        auto evaluate = [&](const o::Commands& commands, oahs_oracle::PayloadOrder& order) {
+            auto flat = p; flat.observed.reset(); flat.body = {}; flat.operations.clear();
+            o::Commands words; std::vector<o::Command> pending;
+            for (auto cut : path) {
+                pending.insert(pending.end(), commands[cut].begin(), commands[cut].end());
+                const auto operation = g.sites[cut].operation;
+                if (operation == o::NoControlId) continue;
+                flat.operations.push_back(p.operations[operation]);
+                words.push_back(std::move(pending)); pending.clear();
+            }
+            words.push_back(std::move(pending));
+            std::vector<unsigned> visits(flat.operations.size());
+            std::iota(visits.begin(), visits.end(), 0);
+            return bool(oahs_oracle::graph(flat, words, visits, {}, nullptr, nullptr, &order));
+        };
+        oahs_oracle::PayloadOrder before, after;
+        require(evaluate(baseline.commands, before) && evaluate(plan.commands, after),
+                "mixed producer protocol failed independent graph checking");
+        require(std::includes(before.begin(), before.end(), after.begin(), after.end()),
+                "mixed producer qualification added payload ordering");
+        removed += before.size() - after.size();
+    }
+    for (const auto& channel : plan.channels) {
+        auto broken = plan.commands;
+        for (auto& word : broken)
+            word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+                return command.source == channel.source && command.observer == channel.observer &&
+                    command.key == channel.key &&
+                    (command.kind == o::Command::Publish || command.kind == o::Command::Acquire);
+            }), word.end());
+        require(!o::checkCausalFrontier(p, broken).accepted,
+                "mixed producer cycle accepted missing readiness/return support");
+    }
+    auto independent = p;
+    independent.operations[5].pipe = o::Pipe::M;
+    require(accepted(independent).channels.empty(),
+            "mixed producer cycle ignored an independent tail reader");
+    auto uncovered = input;
+    uncovered.operations.push_back(op(Q, {{0, true, false}}));
+    uncovered.body.children.push_back(leaf(6));
+    require(accepted(readerRegionProgram(uncovered)).channels.empty(),
+            "mixed producer cycle ignored a read outside its qualified children");
+    std::cout << "mixed-producer paths=9 removed-payload-relations=" << removed << '\n';
+}
+
 void readerRegionCycles()
 {
     const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
@@ -1799,6 +1909,7 @@ int main(int argc, char** argv)
     pipelineOperandSupport();
     guardedReaderEpisode();
     independentBankEpisodes();
+    mixedProducerReaderRegions();
     readerRegionCycles();
     lastReaderWithinChild();
     jointReaderVisits();

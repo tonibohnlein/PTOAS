@@ -2,6 +2,39 @@
 
 Updated: 2026-09-21
 
+## Latest: first-write WIP handoff, native regression still failing
+
+Read [the current checkpoint](docs/designs/oahs-kda-first-write-handoff.md)
+before the historical sections below. Native first-write qualification and
+bidirectional shared-word correspondence now let KDA construct/reconstruct,
+but the added native outward-publication fixture fails key rearming. The local
+explicit-command diagnostic finds 14 ordering relations removed and 2,552 added.
+This is not a parallelism win or merge-ready fix. Latest native suite FAILS;
+latest portable/corpus/device validation is not complete. Previous 24/24
+results below apply to the earlier mixed-only checkpoint, not this tree.
+The user requested a WIP push to `codex/kda-pipeline-parallelism` and a compact
+report/archive under `/opt/pypto/`. Next: baseline the small reproducer, resolve
+matching/rearming without broadening source prefixes, isolate added ordering,
+then rerun acceptance. No new device performance claim.
+
+## KDA linked qualification follow-up (local, not promoted)
+
+The [KDA investigation](docs/designs/oahs-kda-pipeline-investigation.md#follow-up-linked-mechanism-tests-local-not-promoted)
+now has two linked regressions. A mixed acyclic/cyclic producer prototype
+qualifies a complete reader cycle with unchanged full payload order on nine
+paths, but **does not change the native KDA plan**. A separate first-conflicting-
+write witness proves that existing causal state can carry one receipt across
+later writes while preserving an earlier outward publication. Moving the wait
+to entry is safe but demonstrably adds outward order.
+
+24/24 portable suites, native selected tests and KDA construction/reconstruction
+pass. Rebuilt bec7 and the local prototype both reproduce the prior a0 plan
+hash. No new latency result, full corpus run or promoted fix. Changes remain
+uncommitted in the separate development worktree; frozen campaigns are intact.
+Next: native first-conflicting-write occurrence qualification, including
+alternative first writes, with complete outward-order and missing-support tests.
+Do not treat the mixed-producer restriction alone as KDA's root cause.
+
 ## Device-server continuation: KDA diagnosis and joint-reader result
 
 Development worktree is now based on `bec7dfe37` on

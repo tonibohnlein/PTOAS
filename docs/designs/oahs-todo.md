@@ -1,6 +1,28 @@
 # OAHS implementation TODO
 
+## Latest first-write checkpoint: unresolved, do not promote
+
+See [handoff and reproducer](oahs-kda-first-write-handoff.md). Native occurrence
+qualification is implemented locally with original prior-reader witnesses and
+shared-word source/target correspondence. KDA constructs/reconstructs, but a
+small native outward-publication case fails rearming, and explicit-command
+order comparison adds 2,552 relations while removing 14. Latest native suite
+fails; final portable/corpus/device gates remain open. Next baseline/minimize
+the reproducer and separate qualification from conservative source fallback.
+Preserve early publications and actual consumption support. Earlier green
+mixed-only results below are historical, not validation of this WIP push.
+
 ## Device-server priority: KDA lifetime/placement investigation
+
+Local follow-up: the mixed-producer and first-conflicting-write regressions
+are now implemented; see [results and limits](oahs-kda-pipeline-investigation.md#follow-up-linked-mechanism-tests-local-not-promoted).
+The narrowed mixed-producer prototype passes 24 portable suites and native
+checks but leaves KDA byte-identical. Keep it unpromoted pending corpus/order
+qualification. The linked first-write witness succeeds with original first-
+visit information and preserves outward order; native import currently exposes
+invariant input reads, not the required conflicting writes. Next implement
+that occurrence qualification and demand a changed, independently checked KDA
+plan before device timing. No new completion state or broad entry hoist.
 
 See [current evidence](oahs-kda-pipeline-investigation.md). Frozen KDA latency
 regression is controlled and confirmed; native construction at a0c1d761e passes,

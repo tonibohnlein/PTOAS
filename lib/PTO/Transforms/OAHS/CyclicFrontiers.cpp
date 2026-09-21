@@ -532,8 +532,12 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
         }
         if (!admitted || writes.empty() || reads.empty() || writer == reader ||
             p.target.synchronous[unsigned(writer)] || p.target.synchronous[unsigned(reader)]) continue;
-        if (std::any_of(writes.begin(), writes.end(), [&](Cut site) {
-                return !c.components[c.component[site]].cyclic;
+        // A producer can belong to a prologue or tail as well as a cyclic
+        // component. Complete physical-role coverage and whole-invocation
+        // participation below, not SCC membership, establish the episode.
+        // Purely one-shot inputs keep their existing ordinary entry placement.
+        if (std::none_of(writes.begin(), writes.end(), [&](Cut site) {
+                return c.components[c.component[site]].cyclic;
             })) continue;
         struct ReaderRegion { Cut entry, acquisition, exit, publication; };
         std::vector<ReaderRegion> regions;

@@ -351,13 +351,20 @@ Group Constructor::sourceGroup(
         // once for an unconditional acquisition on all those visits.
         const auto& occurrences = control.wordOccurrences[control.canonicalCut[current]];
         const auto& publications = control.wordOccurrences[control.canonicalCut[handle.cut]];
-        if (control.firstPrefixWords.count(control.canonicalCut[current]) &&
-            std::any_of(occurrences.begin(), occurrences.end(), [&](Cut cut) {
+        const bool sharedWord = occurrences.size() > 1 || publications.size() > 1;
+        if (sharedWord && (std::any_of(occurrences.begin(), occurrences.end(), [&](Cut cut) {
                 return control.reachable[cut] &&
                     std::none_of(publications.begin(), publications.end(), [&](Cut publication) {
                         return control.reachable[publication] && control.straight(publication, cut);
                     });
-            })) continue;
+            }) || std::any_of(publications.begin(), publications.end(), [&](Cut publication) {
+                // The converse matters too: a shared source must not publish
+                // again on a later/final visit with no corresponding receipt.
+                return control.reachable[publication] &&
+                    std::none_of(occurrences.begin(), occurrences.end(), [&](Cut cut) {
+                        return control.reachable[cut] && control.straight(publication, cut);
+                    });
+            }))) continue;
         const auto covered = coverage(handle.cut, source, required);
         if (!std::includes(covered.begin(), covered.end(), needed.begin(), needed.end())) continue;
         if (!selected || control.position[handle.cut] < control.position[selected->cut]) selected = &handle;

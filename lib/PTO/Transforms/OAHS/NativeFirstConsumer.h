@@ -8,13 +8,15 @@
 #ifndef PTO_OAHS_NATIVE_FIRST_CONSUMER_H
 #define PTO_OAHS_NATIVE_FIRST_CONSUMER_H
 #include "NativeFirstUse.h"
+#include "PTO/Transforms/OAHS/StorageFrontiers.h"
 #include <limits>
 
 namespace mlir::pto::oahs::native_detail {
 // Collect first/final endpoint roles before refining one original owner.
 // The first-only fallback splits a straight prefix. Original positive bounds
 // prove entry; the backedge still admits arbitrarily many later visits. Only
-// invariant-input consumers get distinct first/later command observations.
+// invariant-input consumers and first writes conflicting with source-inactive
+// readers get distinct first/later command observations.
 // Other original words, physical operations and all completion histories stay
 // shared. This creates vocabulary, not synchronization or completion credit.
 inline void importFirstConsumers(
@@ -22,9 +24,14 @@ inline void importFirstConsumers(
     const DenseMap<mlir::Operation *, std::size_t> &ids,
     DenseMap<std::size_t, scf::ForOp> &owners,
     std::vector<std::string> &notes, bool classInvariant = false) {
+  // Snapshot the original storage view before cloning occurrence vocabulary.
+  // Marginal prior-reader witnesses only admit useful candidates; they grant
+  // no completion or rearming credit to the selected constructor.
+  StorageFrontierAnalysis storage(program);
   std::map<unsigned, std::set<Pipe>> writers;
-  for (const auto &op : program.operations) for (auto access : op.accesses)
+  for (const auto &op : program.operations) for (auto access : op.accesses) {
     if (access.write) writers[access.cell].insert(op.pipe);
+  }
   std::vector<std::vector<std::size_t>> predecessors(program.observed->sites.size());
   for (std::size_t at = 0; at < predecessors.size(); ++at)
     for (auto next : program.observed->sites[at].successors) predecessors[next].push_back(at);
@@ -112,7 +119,28 @@ inline void importFirstConsumers(
         if (cells.size() > 1) earlyInputs.insert(cells.begin(), cells.end());
       }
     }
-    if (earlyInputs.empty()) continue;
+    // Reader completion is invariant when its source pipe does not issue in
+    // this region, even though the receiving pipe repeatedly overwrites the
+    // cell. This is a candidate occurrence boundary only: source-time history,
+    // completion, balanced participation and rearming remain selected queries.
+    std::set<std::pair<unsigned, Pipe>> firstWriteRoles;
+    for (auto at : members) {
+      const auto op = old.sites[at].operation;
+      if (op == NoControlId) continue;
+      const auto &operation = program.operations[op];
+      for (auto access : operation.accesses) {
+        const auto &cell = program.cells[access.cell];
+        if (!access.write || cell.unknownRange || cell.exclusive) continue;
+        if (!storage.complete()) continue;
+        for (auto original : storage.sitesForOperation(op))
+          for (const auto &origin : storage.previousReaders(original, access.cell)) {
+            const auto reader = program.operations[origin.operation].pipe;
+            if (reader != operation.pipe && !bodyPipes.count(reader))
+              firstWriteRoles.insert({access.cell, operation.pipe});
+          }
+      }
+    }
+    if (earlyInputs.empty() && firstWriteRoles.empty()) continue;
     std::vector<std::size_t> prefix;
     std::set<std::size_t> consumers, seen;
     std::set<Pipe> issued;
@@ -132,8 +160,13 @@ inline void importFirstConsumers(
             readInputs.insert({a.cell, operation.pipe}).second)
           for (auto writer : writers[a.cell])
             invariant |= writer != operation.pipe && (classInvariant || !bodyPipes.count(writer));
-        // Entry acquisition already handles the first observer operation.
-        if (invariant && issued.count(operation.pipe)) {
+        bool firstWrite = false;
+        for (auto a : operation.accesses)
+          if (a.write) firstWrite |= firstWriteRoles.erase({a.cell, operation.pipe}) != 0;
+        // A first write needs its own deadline even when it is the observer's
+        // first payload: an earlier outward publication can forbid entry
+        // placement. Preserve that publication's original position.
+        if ((invariant && issued.count(operation.pipe)) || firstWrite) {
           consumers.insert(at);
           last = prefix.size();
         }
