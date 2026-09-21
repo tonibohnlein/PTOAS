@@ -317,6 +317,69 @@ void outwardBoundary(unsigned placement)
     std::cout << "outward_boundary placement=" << placement << '\n';
     compare("late_vs_selected", l, a);
 }
+// The default ranking prefers the late R route. A physically occupied key
+// must not hide the independently bindable T route, on either relay leg.
+void bindingAlternative(bool secondLeg, unsigned state = 0, bool reusedAlternative = false)
+{
+    auto p = fixture(false);
+    for (auto& row : p.target.keys)
+        for (auto& keys : row)
+            if (!keys.empty()) keys = {0};
+    const auto a = secondLeg ? R : P, b = secondLeg ? Q : R;
+    o::Commands fixed(p.observed->sites.size());
+    // Full at the source, empty but without return credit, or a future use
+    // within the first leg's interval. All are eligible directional keys.
+    fixed[before(p, state == 2 ? 3 : 1)] = {set(a, b, 0)};
+    fixed[state == 1 ? before(p, 2) : p.observed->exit] = {wait(a, b, 0)};
+    if (reusedAlternative) {
+        p.target.keys[unsigned(Q)][unsigned(T)] = {0};
+        fixed[before(p, 0)] = {set(T, Q, 0)};
+        auto& word = fixed[before(p, 1)];
+        word.insert(word.end(), {wait(T, Q, 0), set(Q, T, 0), wait(Q, T, 0)});
+    }
+    o::SelectedOptions options;
+    options.recurringOmissionTrials = options.finalHelperTrials = false;
+    auto control = o::constructSelectedPlan(p, {}, options);
+    require(control.success && control.work.splitRelays == 1, "unblocked relay control failed");
+    const auto unblocked = flatten(p, control.commands);
+    require(std::any_of(unblocked[2].begin(), unblocked[2].end(), [](const auto& c) {
+                return c.kind == o::Command::Publish && c.source == P && c.observer == R;
+            }), "fixture no longer prefers the route whose key is blocked");
+    auto selected = o::constructSelectedPlan(p, fixed, options);
+    std::cout << "binding_alternative second_leg=" << secondLeg << " state=" << state
+              << " reused=" << reusedAlternative << " success=" << selected.success
+              << " split=" << selected.work.splitRelays << " reason=" << selected.reason << std::endl;
+    require(selected.success, "occupied preferred route hid a bindable alternative");
+    require(o::checkCausalFrontier(p, selected.commands).accepted, "alternative binding cold check failed");
+    auto expected = flatten(p, fixed);
+    expected[2].push_back(set(P, T, 0));
+    expected[3].insert(expected[3].begin(), {wait(P, T, 0), set(T, Q, 0)});
+    expected[4].push_back(wait(T, Q, 0));
+    const auto actual = flatten(p, selected.commands);
+    require(selected.work.splitRelays == 1 && selected.work.relayTrials == 1 &&
+                pairs(actual) == (reusedAlternative ? 5u : 3u) && order(p, actual) == order(p, expected),
+            "binding alternative did not select the certified two-leg route");
+    missingSupport(p, actual, P, T, 0);
+    if (!reusedAlternative) missingSupport(p, actual, T, Q, 0);
+    else {
+        auto noReturn = actual;
+        for (auto& word : noReturn)
+            word.erase(std::remove_if(word.begin(), word.end(), [](const auto& c) {
+                return (c.kind == o::Command::Publish || c.kind == o::Command::Acquire) &&
+                       c.source == Q && c.observer == T;
+            }), word.end());
+        const auto verdict = evaluate(p, noReturn);
+        require(verdict.balanced && verdict.acyclic && !verdict.rearm && verdict.hazards,
+                "reused alternative did not require actual consumption return credit");
+    }
+    // The alternative must be genuinely selectable; failure of all candidates
+    // does not authorize a speculative receipt or extra staged searches.
+    auto unavailable = p;
+    unavailable.target.keys[unsigned(P)][unsigned(T)].clear();
+    const auto rejected = o::constructSelectedPlan(unavailable, fixed, options);
+    require(!rejected.success && rejected.work.relayTrials == 0 && rejected.work.splitRelays == 0,
+            "unqualified binding was staged despite no certified route");
+}
 } // namespace
 int main()
 {
@@ -327,4 +390,10 @@ int main()
     outwardBoundary(0);
     outwardBoundary(1);
     outwardBoundary(2);
+    bindingAlternative(false);
+    bindingAlternative(true);
+    bindingAlternative(false, 1);
+    bindingAlternative(true, 1);
+    bindingAlternative(false, 2);
+    bindingAlternative(false, 0, true);
 }

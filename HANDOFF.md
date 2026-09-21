@@ -7,10 +7,34 @@ Updated: 2026-09-21
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: bounded relay-selection correction, host validated
+- Current milestone: relay key feasibility before ranking, host validated
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Relay binding before ranking (2026-09-21)
+
+Committed the preceding relay correction and campaign audit as `91fc0e728`.
+The [binding amendment](docs/designs/oahs-relay-binding.md) now probes both
+physical legs at their exact gaps before ranking. Previously the preferred M
+route could fail binding and hide a usable MTE1 route. First- and second-leg
+occupied-key regressions reproduce failed construction on the frozen old core;
+both now select the alternate route with one staged solve. Tests also cover
+empty-but-unknown consumption, intervening use, and a reused alternate key with
+actual return credit. No hypothetical first-leg credit is granted to the second.
+
+All 24 portable suites, both native executables and twelve attention graph
+cases pass. All 88 corpus modules / 97 functions remain byte-identical to
+`91fc0e728`. Replay is unchanged at 3,262,799; four staged relay solves still use
+2,636 site evaluations. Key queries increase 823→835 (34→40 on each affected
+AIC). Evidence and frozen old driver/core: `../relay-binding-work/`.
+
+This is an admission improvement on discriminating fixtures, not a native
+speedup or a claim that the feasible alternate dominates an unavailable route.
+The new binding amendment remains uncommitted. No new device task is required.
+Next: use the KDA packet for a concrete native miss when it arrives; otherwise
+require a discriminating opportunity before extending second-leg receipt credit
+or scoped resource ownership. Existing device comparisons retain their pins.
 
 ## Joint-reader device result received (2026-09-21)
 

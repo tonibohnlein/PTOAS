@@ -50,7 +50,7 @@ and receive without changing control or adding guards. Its shared physical-use
 view feeds ordinary storage analysis. For an indirect readiness requirement,
 construction can separate the source publication, intermediate forwarding gap
 and final receive deadline. Candidate keys use actual source-time consumption
-credit and neighboring-use checks; exact staged words are protocol-checked
+credit and neighboring-use checks before placement ranking; exact staged words are protocol-checked
 before commit, and their full analysis work is counted separately. Unsupported
 cases retain ordinary binding. Ranking compares incidental receiver completion
 and new middle-engine prerequisites separately, and protects earlier receipts

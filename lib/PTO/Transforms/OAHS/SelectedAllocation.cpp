@@ -541,6 +541,28 @@ std::optional<bool> Constructor::splitRelay(const Group& group, Pipe observer, R
                 return true;
         return false;
     };
+    auto keyFor = [&](Pipe a, Pipe b, Cut pub, Cut wait, const State& state, bool atStart) {
+        for (Id key = 0; key < frontier.keys().size(); ++key) {
+            const auto& e = frontier.keys()[key];
+            if (e.source != a || e.observer != b || closedKeys.count(key))
+                continue;
+            ++result.work.keyQueries;
+            if (!canPublish(state, key) || !clearInterval(key, pub, wait))
+                continue;
+            if (atStart && std::any_of(ledger.word(pub).begin(), ledger.word(pub).end(), [&](Id id) {
+                    const auto& c = ledger.endpoint(id).command;
+                    return (c.kind == Command::Publish || c.kind == Command::Acquire) && c.source == a &&
+                           c.observer == b && c.key == e.key;
+                }))
+                continue;
+            return key;
+        }
+        return NoAnalysisId;
+    };
+    // Positive read-only certificates at the exact publication gaps. Unknown
+    // binding leaves this candidate out of ranking; it does not prove that no
+    // helper-augmented realization exists. Both legs still need current credit.
+    Id first = NoAnalysisId, second = NoAnalysisId;
     Pipe middle = Pipe::Count;
     Cut relay = current;
     std::set<Id> incidental;
@@ -628,6 +650,11 @@ std::optional<bool> Constructor::splitRelay(const Group& group, Pipe observer, R
         const auto* facts = state.causal.facts();
         if (!facts)
             continue;
+        const auto candidateFirst = keyFor(
+            group.source, Pipe(candidate), group.publication, gap, cache.cuts[group.publication].before, false);
+        if (candidateFirst == NoAnalysisId) continue;
+        const auto candidateSecond = keyFor(Pipe(candidate), observer, gap, current, state, gap != current);
+        if (candidateSecond == NoAnalysisId) continue;
         std::set<Id> extra;
         for (const auto& [access, reach] : facts->history.present()) {
             if (!frontierContains(reach, PipeCount + candidate))
@@ -680,36 +707,13 @@ std::optional<bool> Constructor::splitRelay(const Group& group, Pipe observer, R
                         control.position[gap] > control.position[relay]))) {
             middle = Pipe(candidate);
             relay = gap;
+            first = candidateFirst;
+            second = candidateSecond;
             incidental = std::move(extra);
             gated = std::move(newGates);
         }
     }
     if (middle == Pipe::Count)
-        return std::nullopt;
-    auto keyFor = [&](Pipe a, Pipe b, Cut pub, Cut wait, const State& state, bool atStart) {
-        for (Id key = 0; key < frontier.keys().size(); ++key) {
-            const auto& e = frontier.keys()[key];
-            if (e.source != a || e.observer != b || closedKeys.count(key))
-                continue;
-            ++result.work.keyQueries;
-            if (!canPublish(state, key) || !clearInterval(key, pub, wait))
-                continue;
-            if (atStart && std::any_of(ledger.word(pub).begin(), ledger.word(pub).end(), [&](Id id) {
-                    const auto& c = ledger.endpoint(id).command;
-                    return (c.kind == Command::Publish || c.kind == Command::Acquire) && c.source == a &&
-                           c.observer == b && c.key == e.key;
-                }))
-                continue;
-            return key;
-        }
-        return NoAnalysisId;
-    };
-    const auto first =
-        keyFor(group.source, middle, group.publication, relay, cache.cuts[group.publication].before, false);
-    const auto second = keyFor(
-        middle, observer, relay, current, relay == current ? cache.cuts[relay].before : cache.cuts[relay].incoming,
-        relay != current);
-    if (first == NoAnalysisId || second == NoAnalysisId)
         return std::nullopt;
     const auto request = result.decisions.size();
     auto materialize = [&](Ledger& target) {

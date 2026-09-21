@@ -60,10 +60,11 @@ structural visits are charged to `relayPreparationSites`; history comparisons
 also contribute work and are not a constant-time guarantee. No all-pairs
 transitive closure or completed-plan deletion search enters production.
 
-Physical binding is still checked after ranking, and the second leg still
-requires preexisting source-time rearming credit. Positive binding before
-ranking and private application of the first receipt for second-key reuse
-remain separate extensions.
+The subsequent [binding amendment](oahs-relay-binding.md) moves positive key
+queries before ranking and retains the chosen identities through staging.
+The second leg still requires preexisting source-time rearming credit. Private
+application of the first receipt for second-key reuse remains a separate
+extension.
 
 ## Discriminating linked tests
 

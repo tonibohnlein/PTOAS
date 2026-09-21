@@ -42,7 +42,11 @@ For a non-common-cut two-hop transfer of a qualified slot's writer completion:
 3. For each eligible intermediate engine, find its first command or payload
    after that bound. Forward before that word's unrelated activity; if there
    is no earlier activity, forward at the final consumer.
-4. Compare actual prefix coverage beyond the source's fresh completion,
+4. Before ranking, probe both legs' actual source-time key credit and selected
+   use intervals at these exact gaps. Retain their key identities with the
+   candidate; unsupported bindings leave ordinary fallback available. See
+   [binding admission and regressions](oahs-relay-binding.md).
+5. Compare actual prefix coverage beyond the source's fresh completion,
    excluding completion already acquired or required at the receiver. Also
    compare new prerequisites on crossed middle work and selected endpoints.
    Prefer a subset in both views; for equal sets prefer the later relay gap.
@@ -50,11 +54,10 @@ For a non-common-cut two-hop transfer of a qualified slot's writer completion:
    to the same receiver from a later receipt prepended into its word; use the
    final deadline when that early gap would broaden the earlier receipt.
    See the [bounded correction and tests](oahs-relay-selection.md).
-5. Bind both keys using actual empty/consumed state and neighboring selected
-   uses at the exact source gaps. An early relay uses the incoming word state,
-   not the broader post-word state.
-6. Materialize the four endpoints privately, check the complete event protocol
-   on the original graph, then commit those identical ordered endpoints.
+6. Materialize the winning keys and four endpoints privately without changing
+   their checked gaps. Check the complete event protocol on the original graph,
+   then commit those identical ordered endpoints. An early relay uses incoming
+   word state, not the broader post-word state.
    Failure leaves the ledger unchanged and ordinary binding remains available.
 7. Replay actual transfers, refresh the residual, and retain final cold and
    native reconstruction checks.

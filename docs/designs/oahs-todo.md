@@ -11,9 +11,10 @@ advancing acquisition deadlines.
 This summary supersedes older scheduling/status statements below. Those sections
 retain historical context, not a live remote queue.
 
-- **Latest local implementation:** bounded relay-selection correction is complete
-  and host-tested. It improves the
-  discriminating witnesses and preserves all 88 corpus plans. No new device arm
+- **Latest local implementation:** relay correction and campaign status are
+  committed as `91fc0e728`. The subsequent key-feasibility-before-ranking
+  amendment is implemented and host-tested, still uncommitted. It fixes the
+  admission witnesses and preserves all 88 corpus plans. No new device arm
   is needed for those unchanged native outputs.
 - **Joint-reader down_proj device task:** completed; correctness passed all
   12 cases / 24 launches. Performance unresolved. Further timing requires a
@@ -22,10 +23,9 @@ retain historical context, not a live remote queue.
   KDA measured-case artifact/attribution work, and retained-input microkernels.
   No returned results for these are recorded locally; current remote job state
   is unknown. Their committed task files are linked in the sections below.
-- **Next local implementation:** first reproduce a preferred relay route that
-  cannot bind its event keys while another route can; then use read-only key
-  feasibility before ranking. If the KDA source packet arrives, prioritize its
-  concrete native diagnosis instead.
+- **Next local investigation:** use the KDA source packet when it arrives to
+  identify a concrete native miss. First-receipt support for second-leg key reuse
+  and scoped resource ownership remain extensions requiring their own witnesses.
 - **Larger backlog:** contextual frontier-motion certificates, broader exact
   source gaps/observation composition, scoped producer support/key ownership,
   and witness-driven lowering precision. These are not all active projects.
@@ -34,7 +34,22 @@ retain historical context, not a live remote queue.
   (retained-A, cross-tile preload, manual attention) remains separate backlog;
   task files alone do not establish dispatch or execution.
 
-## Current milestone: bounded relay-selection correction — host complete
+## Current milestone: relay binding before ranking — host complete
+
+[Binding admission](oahs-relay-binding.md) now filters each candidate using the
+existing source-time/key-interval queries before comparing placement. Occupied
+first/second preferred legs reproduce a refusal on the old core and now select
+an available alternate. Empty-but-unknown consumption, intervening use, real
+return-supported reuse, missing memory support and missing rearming are checked.
+Only the winner receives a staged solve; unknown binding retains normal fallback.
+
+All 24 portable suites, both native executables and twelve attention finite cases
+pass. All 88 corpus modules / 97 functions are byte-identical to `91fc0e728`.
+Key queries increase 823→835; replay, staged solves and selected plans stay fixed.
+There is no new device candidate. The first receipt still does not prospectively
+rearm the second leg during the read-only probe.
+
+## Completed milestone: bounded relay-selection correction
 
 [The return-query hoist and both linked review witnesses](oahs-return-query-relay-review.md)
 are complete. At 32 sharing candidates, propagation drops 496→31 queries and
@@ -56,9 +71,8 @@ have the necessary credit.
   / 97 functions remain unchanged, including the existing attention benefit.
 - Keep the incomparable case and general ordering-certificate boundary explicit.
   This is a bounded ranking policy, not a proof about all future endpoint edits.
-- Next bounded extension: reproduce a preferred-but-unbindable route with a
-  usable alternative, then qualify actual key feasibility before ranking.
-  First-receipt support for second-leg rearming is a separate extension.
+- Positive key feasibility before ranking is now implemented above.
+  First-receipt support for second-leg rearming remains a separate extension.
 - Alternatively, use the KDA artifacts or a concrete retained-input lifetime to
   identify a useful native miss before broadening support/occurrence admission.
 - No new device campaign is needed for these unchanged native plans. Existing
