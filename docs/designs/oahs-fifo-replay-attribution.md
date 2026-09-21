@@ -150,7 +150,39 @@ mandatory. The ordinary non-contextual replay path is unchanged.
 `--prefix-replay` on the diagnostic driver selects the old prefix-only rule for
 controlled host comparisons; production defaults to sibling reuse. Tracing's
 `resume` still describes the old prefix boundary. `sibling_components` reports
-additional components reused beyond it.
+additional components reused beyond it **only when tracing is enabled on the
+sibling path**. Without tracing, no legacy-prefix comparison is performed;
+`sibling_comparison=0` labels the unmeasured comparison count. A zero count in
+that mode does not imply that no siblings were reused. Total reused components
+and causal evaluation counts retain their existing meaning.
+
+### Follow-up: avoid the legacy comparison scan
+
+Normal certified sibling replay no longer calls `reusablePrefix()` just to
+compute this comparison statistic. The old shared-word widening scan can take
+quadratic work for overlapping spans even though the sibling invalidation walk
+visits each represented site/edge once. `--trace-replay` deliberately retains
+the comparison; `--prefix-replay` still uses it to decide reuse. The ordinary
+non-contextual prefix path is unchanged.
+
+`prefix_queries` and `prefix_span_examinations` count actual legacy queries and
+span examinations in every mode. A warm certified sibling replay without
+tracing contributes zero to both. These are separate from invalidation and
+causal evaluation counts. No replay acceptance condition or reusable-set rule
+changes.
+
+The linked chained-word regression compares complete checkpoint and endpoint
+states across untraced sibling, traced sibling, prefix-only, and cold replay:
+
+| Shared words | Legacy comparison span examinations | Invalidation site visits |
+| ---: | ---: | ---: |
+| 32 | 2,178 | 66 |
+| 128 | 33,282 | 258 |
+| 512 | 526,338 | 1,026 |
+
+These are synthetic operation counts, not native timings or device speedups.
+The alternative/sequential sibling tests also compare traced and untraced
+updates, including real events, shared aggregates, deletion, failure and recovery.
 
 ### Work accounting and limits
 

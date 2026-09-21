@@ -332,7 +332,7 @@ private:
     bool partialSite(Id, Cut, std::vector<State>&, Replay&);
     bool replay();
     // The component prefix an update may keep, shared by both replay paths.
-    Id reusablePrefix(SelectedReplayTrace* = nullptr) const;
+    Id reusablePrefix(SelectedReplayTrace* = nullptr);
     std::vector<bool> reusableComponents(SelectedReplayTrace*);
     bool advance();
     void registerSource();

@@ -424,6 +424,14 @@ rejects invalid proposals without committing their state. Exact-fit admission
 also checks whether uncovered cross-engine demands lose their entire direct
 key direction; such a cohort declines to ordinary construction. This remains
 a conservative local admission test, not a complete future-allocation proof.
+The proposal is materialized as canonical ordered endpoints before analysis,
+including guarded publication-first ordering. Mandatory protocol, producer
+support and resource checks inspect those exact words. An omission trial uses
+the same materializer; an accepted trial retains its checked endpoint list.
+Commitment only assigns channel IDs and appends that list, with no later
+reordering. Existing ledger words retain their order before the new endpoints.
+This is necessary because moving a return publication before an acquisition
+can remove the consumption evidence that the return was supposed to carry.
 See [admission results and limits](oahs-placement-experiments.md). A cheap
 alternative-direction-path query identifies candidates for whole-channel
 omission, but gives no completion credit. Certified replay must retain every

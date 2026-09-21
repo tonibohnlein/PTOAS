@@ -12,6 +12,99 @@
 using namespace selected_test;
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void proposalWordOrder() {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(1, 1);
+        for (unsigned i = 0; i < 6; ++i) p.operations.push_back(op(P, {{0, true, false}}));
+        RecurringRequirement forward, reverse;
+        forward.cell = reverse.cell = 0;
+        forward.cells = reverse.cells = {0};
+        forward.source = P; forward.observer = Q;
+        reverse.source = Q; reverse.observer = P;
+        forward.publications = {0, 3}; forward.acquisitions = {1, 4};
+        reverse.publications = {1, 4}; reverse.acquisitions = {2, 5};
+        Commands ordered(commandCutCount(p));
+        ordered[0] = {{Command::Publish, P, Q, 0}};
+        ordered[1] = {{Command::Acquire, P, Q, 0}, {Command::Publish, Q, P, 0}};
+        ordered[2] = {{Command::Acquire, Q, P, 0}};
+        ordered[3] = ordered[0]; ordered[4] = ordered[1]; ordered[5] = ordered[2];
+        require(checkCausalFrontier(p, ordered).accepted &&
+                bool(oahs_oracle::graph(p, ordered, {0,1,2,3,4,5})),
+                "reciprocal request-order witness must be valid");
+        auto reordered = ordered;
+        std::reverse(reordered[1].begin(), reordered[1].end());
+        std::reverse(reordered[4].begin(), reordered[4].end());
+        require(!checkCausalFrontier(p, reordered).accepted &&
+                !bool(oahs_oracle::graph(p, reordered, {0,1,2,3,4,5})),
+                "publication-first witness must lose rearming");
+        for (bool trials : {false, true}) {
+            SelectedOptions options; options.recurringOmissionTrials = trials;
+            Constructor c(p, options);
+            std::string reason;
+            require(c.ledger.initialize({}, reason), reason);
+            const auto version = c.ledger.version();
+            require(c.recurring({forward, reverse}), "ordered rejection must remain optional");
+            require(c.result.work.rejectedProtocolProposals == 1 &&
+                    c.result.work.recurringTrials == 0,
+                    "mandatory admission checked request order instead of committed order");
+            require(c.ledger.version() == version && c.ledger.records().empty() &&
+                    c.recurringKeys.empty() && c.result.channels.empty() && !c.needsContextualReplay,
+                    "reordered proposal rejection leaked state");
+            require(c.run({}).success, "ordinary fallback after word-order rejection failed");
+        }
+        // Moving the returns to distinct later cuts yields valid canonical
+        // words. Commitment must retain that exact validated endpoint order.
+        reverse.publications = {2, 5};
+        ordered[1].pop_back(); ordered[4].pop_back();
+        ordered[2].insert(ordered[2].begin(), {Command::Publish, Q, P, 0});
+        ordered[5].insert(ordered[5].begin(), {Command::Publish, Q, P, 0});
+        Constructor c(p);
+        std::string reason;
+        require(c.ledger.initialize({}, reason), reason);
+        require(c.recurring({forward, reverse}) && c.result.channels.size() == 2,
+                "valid canonical proposal was declined");
+        const auto committed = c.ledger.commands();
+        for (Cut cut = 0; cut < ordered.size(); ++cut)
+            require(committed[cut].size() == ordered[cut].size() &&
+                    std::equal(committed[cut].begin(), committed[cut].end(), ordered[cut].begin(),
+                        [](const Command& a, const Command& b) {
+                            return a.kind == b.kind && a.source == b.source &&
+                                   a.observer == b.observer && a.key == b.key;
+                        }), "committed proposal differs from validated words");
+        require(checkCausalFrontier(p, committed).accepted &&
+                bool(oahs_oracle::graph(p, committed, {0,1,2,3,4,5})),
+                "accepted canonical proposal lost protocol validity");
+    }
+    static void proposalOmissionWords() {
+        const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE3;
+        auto p = base(1, 1);
+        for (unsigned i = 0; i < 4; ++i) p.operations.push_back(op(P, {{0, true, false}}));
+        RecurringRequirement direct, first, second;
+        direct.source = first.source = P; direct.observer = second.observer = Q;
+        first.observer = second.source = R;
+        direct.publications = first.publications = {0};
+        direct.acquisitions = second.acquisitions = {3};
+        first.acquisitions = {1}; second.publications = {2};
+        Constructor c(p);
+        std::string reason;
+        require(c.ledger.initialize({}, reason), reason);
+        require(c.recurring({direct, first, second}) && c.result.channels.size() == 2 &&
+                c.result.work.recurringTrials == 1 && c.result.work.redundantRecurringChannels == 1,
+                "fixture did not accept the indirect-route omission");
+        const auto words = c.ledger.commands();
+        require(words[0].size() == 1 && words[0][0].observer == R &&
+                words[1].size() == 1 && words[1][0].kind == Command::Acquire &&
+                words[2].size() == 1 && words[2][0].source == R &&
+                words[3].size() == 1 && words[3][0].source == R,
+                "omission committed stale endpoints or channel identities");
+        for (const auto& endpoint : c.ledger.records()) {
+            const auto& channel = c.result.channels.at(endpoint.request);
+            require(channel.source == endpoint.command.source && channel.observer == endpoint.command.observer,
+                    "omission failed to remap retained request to its channel");
+        }
+        require(checkCausalFrontier(p, words).accepted && bool(oahs_oracle::graph(p, words, {0,1,2,3})),
+                "accepted omission did not commit a valid checked plan");
+    }
     static void uncoveredProducerProposal() {
         auto p = base(2);
         p.operations = {op(Pipe::MTE2, {{0, false, true}}), op(Pipe::MTE2, {{0, false, true}}),
@@ -254,6 +347,8 @@ void noMotionAndRandom() {
 }
 }
 int main() {
+    o::selected::ReplayTestAccess::proposalWordOrder();
+    o::selected::ReplayTestAccess::proposalOmissionWords();
     o::selected::ReplayTestAccess::invalidProposal();
     o::selected::ReplayTestAccess::uncoveredProducerProposal();
     starvation(); wordGapBaseline(); deferredAcknowledgment(); commonFrontierContext(); noMotionAndRandom();

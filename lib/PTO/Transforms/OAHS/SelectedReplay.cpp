@@ -352,16 +352,20 @@ bool Constructor::contextualReplay()
     // Reuse only predecessor-closed components with unchanged equations, and
     // keep every nonempty shared word entirely on one side of invalidation.
     // Thus both cut states and complete endpoint aggregates remain valid.
-    const auto resume = reusablePrefix(options.traceReplay ? &trace : nullptr);
+    const bool siblingReuse = options.siblingReplayReuse && cache.contextualFixedPoint;
+    // The old prefix is only a comparison statistic on the sibling path. Its
+    // repeated shared-word widening must not be part of ordinary invalidation.
+    const bool comparePrefix = !siblingReuse || options.traceReplay;
+    const auto resume = comparePrefix ? reusablePrefix(options.traceReplay ? &trace : nullptr) : 0;
     auto reusable = std::vector<bool>(control.components.size());
-    if (options.siblingReplayReuse && cache.contextualFixedPoint)
+    if (siblingReuse)
         reusable = reusableComponents(options.traceReplay ? &trace : nullptr);
     else
         std::fill(reusable.begin(), reusable.begin() + resume, true);
     for (Id index = 0; fresh.success && index < reusable.size(); ++index) {
         if (!reusable[index]) continue;
         ++fresh.reusedComponents;
-        if (index >= resume) {
+        if (comparePrefix && index >= resume) {
             ++result.work.siblingReusedComponents;
             if (options.traceReplay) ++trace.siblingComponents;
         }
@@ -512,8 +516,9 @@ std::vector<bool> Constructor::reusableComponents(SelectedReplayTrace* trace)
     for (Id i = 0; i < reusable.size(); ++i) reusable[i] = !dirty[i];
     return reusable;
 }
-Id Constructor::reusablePrefix(SelectedReplayTrace* trace) const
+Id Constructor::reusablePrefix(SelectedReplayTrace* trace)
 {
+    ++result.work.replayPrefixQueries;
     if (!cache.success || cache.cuts.size() != control.graph.sites.size()) {
         return 0;
     }
@@ -560,6 +565,7 @@ Id Constructor::reusablePrefix(SelectedReplayTrace* trace) const
     while (widened) {
         widened = false;
         for (Cut word = 0; word < control.wordSpan.size(); ++word) {
+            ++result.work.replayPrefixSpanExaminations;
             const auto& span = control.wordSpan[word];
             if (span.first == NoAnalysisId || span.first >= resume || span.second < resume ||
                 ledger.word(word).empty()) {

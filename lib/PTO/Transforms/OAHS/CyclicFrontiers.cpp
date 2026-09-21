@@ -1286,21 +1286,37 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
         keys.push_back(selected);
     }
     std::vector<bool> retained(requests.size(), true);
-    auto candidate = [&]() {
-        auto commands = ledger.commands();
+    const bool guarded = std::all_of(requests.begin(), requests.end(), [](const auto& request) {
+        return request.owner == NoAnalysisId && request.period == 0;
+    });
+    struct PendingEndpoint { Cut cut; Command command; Id request; };
+    // Materialize the exact canonical words before checking. In particular a
+    // publication-first convention can remove consumption credit carried by a
+    // return, so it must never be applied only after admission.
+    auto materialize = [&]() {
+        std::vector<PendingEndpoint> endpoints;
         for (Id i = 0; i < requests.size(); ++i) {
             if (!retained[i]) continue;
             const auto& r = requests[i];
             const auto number = frontier.keys()[keys[i]].key;
-            auto add = [&](Cut cut, Command::Kind kind) {
-                for (auto site : control.wordOccurrences[control.canonicalCut[cut]])
-                    commands[site].push_back({kind, r.source, r.observer, number});
-            };
-            for (auto cut : r.publications) add(cut, Command::Publish);
-            for (auto cut : r.acquisitions) add(cut, Command::Acquire);
+            for (auto cut : r.publications)
+                endpoints.push_back({control.canonicalCut[cut], {Command::Publish, r.source, r.observer, number}, i});
+            for (auto cut : r.acquisitions)
+                endpoints.push_back({control.canonicalCut[cut], {Command::Acquire, r.source, r.observer, number}, i});
         }
+        if (guarded) std::stable_partition(endpoints.begin(), endpoints.end(), [](const auto& endpoint) {
+            return endpoint.command.kind == Command::Publish;
+        });
+        return endpoints;
+    };
+    auto candidate = [&](const std::vector<PendingEndpoint>& endpoints) {
+        auto commands = ledger.commands();
+        for (const auto& endpoint : endpoints)
+            for (auto site : control.wordOccurrences[endpoint.cut])
+                commands[site].push_back(endpoint.command);
         return commands;
     };
+    auto endpoints = materialize();
     auto alternativeRoute = [&](Id omitted) {
         // Immutable topology is only a cheap opportunity filter. Actual prefix,
         // occurrence, and consumption coverage must pass full replay below.
@@ -1324,7 +1340,7 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
     // Missing payload completion remains pending; invalid mandatory protocol
     // must not commit endpoints/reservations and poison ordinary construction.
     const auto checkStart = std::chrono::steady_clock::now();
-    std::optional<AnalysisResult> selected = analyze(program, candidate(), {false});
+    std::optional<AnalysisResult> selected = analyze(program, candidate(endpoints), {false});
     result.work.proposalCheckSites += selected->stats.siteEvaluations;
     result.work.proposalCheckMicroseconds += std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - checkStart).count();
@@ -1368,13 +1384,14 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
         if (requests[index].qualifiedCycle) continue;
         if (!alternativeRoute(index)) continue;
         if (!selected) {
-            selected = analyze(program, candidate(), {false});
+            selected = analyze(program, candidate(endpoints), {false});
             result.work.recurringAnalysisSites += selected->stats.siteEvaluations;
         }
         if (!selected->complete || !selected->diagnostics.empty() ||
             !selected->protocol.empty() || !selected->phaseResources.empty()) break;
         retained[index] = false;
-        auto trial = analyze(program, candidate(), {false});
+        auto trialEndpoints = materialize();
+        auto trial = analyze(program, candidate(trialEndpoints), {false});
         ++result.work.recurringTrials;
         result.work.recurringAnalysisSites += trial.stats.siteEvaluations;
         const auto before = requirementKeys(*selected), after = requirementKeys(trial);
@@ -1391,35 +1408,25 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
             });
         if (covered) {
             selected = std::move(trial);
+            endpoints = std::move(trialEndpoints);
             ++result.work.redundantRecurringChannels;
         } else retained[index] = true;
     }
-    const bool guarded = std::all_of(requests.begin(), requests.end(), [](const auto& request) {
-        return request.owner == NoAnalysisId && request.period == 0;
-    });
-    struct PendingEndpoint { Cut cut; Command command; Id channel; };
-    std::vector<PendingEndpoint> endpoints;
+    std::vector<Id> channels(requests.size(), NoAnalysisId);
     for (Id index = 0; index < requests.size(); ++index) {
         if (!retained[index]) continue;
         const auto& request = requests[index];
         reserved.insert(keys[index]);
         needsContextualReplay = true;
         const auto number = frontier.keys()[keys[index]].key;
-        const auto id = result.channels.size();
-        for (auto cut : request.publications)
-            endpoints.push_back({cut, {Command::Publish, request.source, request.observer, number}, id});
-        for (auto cut : request.acquisitions)
-            endpoints.push_back({cut, {Command::Acquire, request.source, request.observer, number}, id});
+        channels[index] = result.channels.size();
         result.channels.push_back({request.cell, number, request.cells, request.source, request.observer,
                                    request.publications, request.acquisitions, request.owner,
                                    request.period});
     }
-    if (guarded) std::stable_partition(endpoints.begin(), endpoints.end(), [](const auto& endpoint) {
-        return endpoint.command.kind == Command::Publish;
-    });
     for (const auto& endpoint : endpoints)
         ledger.append(endpoint.cut, endpoint.command, EndpointPurpose::RecurringCompletion,
-                      endpoint.channel);
+                      channels[endpoint.request]);
     result.work.recurringChannels = result.channels.size();
     // These are physical access roles, not definite-write/content certificates.
     // They are symbolic obligations, not assumed fresh-entry receipts.
