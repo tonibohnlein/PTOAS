@@ -722,6 +722,7 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
         if (!closedCohorts.count(producer) || !closedCohorts.at(producer) || exclusive.count(producer)) continue;
         const auto yRelease = bodyPublication(victim);
         if (yRelease == NoAnalysisId) continue;
+        std::optional<std::vector<unsigned>> previous;
         for (Id x = 0; x < candidates.size(); ++x) {
             if (x == y || !admitted[x] || shared[x]) continue;
             auto& support = candidates[x];
@@ -730,18 +731,23 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
             if (xRelease == NoAnalysisId || xRelease == yRelease ||
                 support.writes == victim.writes ||
                 !c.straight(*support.writes.begin(), *victim.writes.begin())) continue;
-            if (work) ++work->returnSharingQueries;
+            // The graph, producer writes and Y release do not depend on X.
+            // Materialize this immutable view only after the cheap supporter
+            // filters succeed, then reuse it for the remaining supporters.
+            if (!previous) {
+                if (work) ++work->returnSharingQueries;
+                // A writer or invocation boundary kills the correspondence.
+                // Empty children and varying visits use the same role view.
+                std::vector<unsigned> roles(c.graph.sites.size());
+                for (const auto& member : candidates) if (member.ready.source == producer)
+                    for (auto site : member.writes) roles[site] = 2;
+                roles[yRelease] = 1;
+                previous = nearestRoles(c, roles, false,
+                    work ? &work->returnSharingSiteVisits : nullptr);
+            }
             // Every path to X's release must cross Y's final-reader boundary
-            // in this generation. A writer or invocation boundary kills that
-            // correspondence. The existing nearest-role view handles empty
-            // reader children and varying visit counts without an unrolling.
-            std::vector<unsigned> roles(c.graph.sites.size());
-            for (const auto& member : candidates) if (member.ready.source == producer)
-                for (auto site : member.writes) roles[site] = 2;
-            roles[yRelease] = 1;
-            const auto previous = nearestRoles(c, roles, false,
-                work ? &work->returnSharingSiteVisits : nullptr);
-            if (previous[xRelease] != 1) continue;
+            // in this generation; reusing the query does not change that test.
+            if ((*previous)[xRelease] != 1) continue;
             support.release.cells.insert(support.release.cells.end(),
                 victim.release.cells.begin(), victim.release.cells.end());
             std::sort(support.release.cells.begin(), support.release.cells.end());

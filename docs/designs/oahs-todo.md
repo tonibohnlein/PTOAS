@@ -6,7 +6,34 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
-## Current milestone: joint first/final native reader endpoints
+## Current milestone: bounded relay-selection correction
+
+[The return-query hoist and both linked review witnesses](oahs-return-query-relay-review.md)
+are complete. At 32 sharing candidates, propagation drops 496→31 queries and
+389,205→24,330 site visits without changing requests. All 24 portable suites,
+native tests and 88-input/97-function corpus checks pass; every corpus plan is
+byte-identical to `a0c1d761e`. No corpus case reaches the sharing query.
+
+The new linked relay tests reproduce the actual ordinary constructor's choice:
+one exchanges four relations for four others (incomparable orders); the other
+admits a five-pair alternative removing four relations with none added.
+Thirteen missing-support negatives retain matching but fail memory coverage.
+Production relay selection is unchanged.
+
+- Design the correction around both destination completion and newly gated
+  intermediate payloads/outward publications. Required or already-acquired
+  completion must not be treated uniformly as incidental history.
+- Keep the incomparable case explicit: fewer forwarded histories do not prove
+  order improvement. Update the diagnostic selected-plan expectations when
+  implementing a correction; retain independent full-set comparisons.
+- Preserve the native attention benefit as a control. Do not introduce
+  whole-program order comparisons per relay candidate.
+- Positive physical binding before ranking and applying the first receipt in
+  private state before second-leg rearming remain separate bounded extensions.
+- No device campaign is needed for the hoist's unchanged plans. Existing FIFO
+  and joint-reader device tasks retain their pinned candidates.
+
+## Completed host milestone: joint first/final native reader endpoints
 
 [Implementation and evidence](oahs-joint-reader-prefix.md) now realize the
 [down_proj lifetime](oahs-blocked-down-last-reader.md). B0's first acquisition
