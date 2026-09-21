@@ -190,7 +190,8 @@ SelectedPlan Constructor::run(const Commands& fixed)
     }
     const auto qualificationStart = std::chrono::steady_clock::now();
     const auto channels = qualifyCyclicFrontiers(
-        program, control, requirements, ledger.records().empty(), options.movingFrontiers);
+        program, control, requirements, ledger.records().empty(), options.movingFrontiers,
+        options.shareReaderReturns, &result.work);
     result.work.recurringQualificationMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - qualificationStart).count();
     if (options.recurring && !channels.empty() && !recurring(channels)) return complete();

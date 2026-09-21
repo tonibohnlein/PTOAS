@@ -178,6 +178,7 @@ struct RecurringRequirement {
     // remain eligible for conservative redundancy trials.
     bool qualifiedCycle = false;
     bool storageRelease = false;
+    std::size_t sharedReturns = 0;
     // Multi-input retained-reader admission requires the staged ledger to
     // cover every payload requirement on this producer. Otherwise removing
     // one local repair could move a remaining repair past a new write.
@@ -256,7 +257,8 @@ private:
 // not commands or physical key choices. Empty means ordinary F1--F8 applies.
 std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     const Program&, const Control&, const RequirementFrontiers&,
-    bool allowGuardedEpisodes = true, bool movingFrontiers = true);
+    bool allowGuardedEpisodes = true, bool movingFrontiers = true,
+    bool shareReaderReturns = true, SelectedWork* work = nullptr);
 
 struct Group {
     Pipe source = Pipe::S;

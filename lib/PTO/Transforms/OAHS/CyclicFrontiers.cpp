@@ -374,9 +374,11 @@ std::vector<RecurringRequirement> qualifyPipelineCycle(
 // Nearest storage role over the original control graph. Callers provide
 // physical accesses or qualified region boundaries, never selected credit.
 // Reader=1, writer=2, invocation boundary=4: constant-height propagation.
-std::vector<unsigned> nearestRoles(const Control& c, const std::vector<unsigned>& roles, bool backward)
+std::vector<unsigned> nearestRoles(const Control& c, const std::vector<unsigned>& roles, bool backward,
+                                   uint64_t* visits = nullptr)
 {
     const auto n = c.graph.sites.size();
+    if (visits) *visits += n;
     std::vector<unsigned> facts(n);
     std::deque<Cut> todo;
     std::vector<bool> queued(n);
@@ -394,6 +396,7 @@ std::vector<unsigned> nearestRoles(const Control& c, const std::vector<unsigned>
     add(backward ? c.graph.exit : c.graph.entry, 4);
     while (!todo.empty()) {
         const auto site = todo.front(); todo.pop_front(); queued[site] = false;
+        if (visits) ++*visits;
         if (roles[site]) continue;
         for (auto next : edges(site)) add(next, facts[site]);
     }
@@ -487,7 +490,8 @@ std::vector<RecurringRequirement> qualifyGuardedBanks(const Program& p, const Co
 // exit releases the generation before subsequent unrelated reader-pipe work.
 // Select both directions so actual readiness supports return and rearming.
 std::vector<RecurringRequirement> qualifyReaderRegionCycles(
-    const Program& p, const Control& c, const std::vector<RecurringRequirement>& selected)
+    const Program& p, const Control& c, const std::vector<RecurringRequirement>& selected,
+    bool shareReturns, SelectedWork* work)
 {
     std::vector<RecurringRequirement> out;
     if (!p.observed) return out;
@@ -682,7 +686,9 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
             closedCohorts.emplace(producer, closed);
         }
     }
-    for (auto& candidate : candidates) {
+    std::vector<bool> admitted(candidates.size()), shared(candidates.size());
+    for (Id i = 0; i < candidates.size(); ++i) {
+        auto& candidate = candidates[i];
         const auto producer = candidate.ready.source;
         if (candidate.retained && exclusive.count(producer)) continue;
         if (candidate.retained && written[producer].size() > 1) {
@@ -691,8 +697,67 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
             // mandatory solve below must discharge it before any reservation.
             candidate.ready.repairFreeProducers.insert(producer);
         }
+        admitted[i] = true;
+    }
+    // Keep each readiness boundary. A later required reader return can also
+    // cover an earlier reader phase, but only if its existing acquisition is
+    // before the other's overwrite deadline. Never move the supporting wait.
+    // This selects a composed lifetime interface BEFORE allocating any keys;
+    // it is not an omission trial on a completed synchronization plan.
+    const auto entry = c.canonicalCut[c.graph.entry], exit = c.canonicalCut[c.graph.exit];
+    auto bodyPublication = [&](const Candidate& candidate) -> Cut {
+        const auto& release = candidate.release;
+        if (candidate.writes.size() != 1 || release.publications.size() != 2 ||
+            release.acquisitions.size() != 2 ||
+            !std::binary_search(release.publications.begin(), release.publications.end(), entry) ||
+            !std::binary_search(release.acquisitions.begin(), release.acquisitions.end(), exit))
+            return NoAnalysisId;
+        const auto cut = release.publications[release.publications.front() == entry ? 1 : 0];
+        return c.wordOccurrences[cut].size() == 1 ? cut : NoAnalysisId;
+    };
+    if (shareReturns) for (Id y = 0; y < candidates.size(); ++y) {
+        if (!admitted[y]) continue;
+        auto& victim = candidates[y];
+        const auto producer = victim.ready.source;
+        if (!closedCohorts.count(producer) || !closedCohorts.at(producer) || exclusive.count(producer)) continue;
+        const auto yRelease = bodyPublication(victim);
+        if (yRelease == NoAnalysisId) continue;
+        for (Id x = 0; x < candidates.size(); ++x) {
+            if (x == y || !admitted[x] || shared[x]) continue;
+            auto& support = candidates[x];
+            if (support.ready.source != producer || support.ready.observer != victim.ready.observer) continue;
+            const auto xRelease = bodyPublication(support);
+            if (xRelease == NoAnalysisId || xRelease == yRelease ||
+                support.writes == victim.writes ||
+                !c.straight(*support.writes.begin(), *victim.writes.begin())) continue;
+            if (work) ++work->returnSharingQueries;
+            // Every path to X's release must cross Y's final-reader boundary
+            // in this generation. A writer or invocation boundary kills that
+            // correspondence. The existing nearest-role view handles empty
+            // reader children and varying visit counts without an unrolling.
+            std::vector<unsigned> roles(c.graph.sites.size());
+            for (const auto& member : candidates) if (member.ready.source == producer)
+                for (auto site : member.writes) roles[site] = 2;
+            roles[yRelease] = 1;
+            const auto previous = nearestRoles(c, roles, false,
+                work ? &work->returnSharingSiteVisits : nullptr);
+            if (previous[xRelease] != 1) continue;
+            support.release.cells.insert(support.release.cells.end(),
+                victim.release.cells.begin(), victim.release.cells.end());
+            std::sort(support.release.cells.begin(), support.release.cells.end());
+            support.release.sharedReturns += 1 + victim.release.sharedReturns;
+            // The actual staged words must discharge ALL producer demands,
+            // including zero-reader WAW, plus event consumption/republication.
+            support.ready.repairFreeProducers.insert(producer);
+            shared[y] = true;
+            break;
+        }
+    }
+    for (Id i = 0; i < candidates.size(); ++i) {
+        if (!admitted[i]) continue;
+        auto& candidate = candidates[i];
         out.push_back(std::move(candidate.ready));
-        out.push_back(std::move(candidate.release));
+        if (!shared[i]) out.push_back(std::move(candidate.release));
     }
     return out;
 }
@@ -1012,7 +1077,7 @@ bool protocolCompatible(const Program& p, const Control& c,
 
 std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     const Program& p, const Control& c, const RequirementFrontiers& frontiers,
-    bool allowGuardedEpisodes, bool movingFrontiers)
+    bool allowGuardedEpisodes, bool movingFrontiers, bool shareReaderReturns, SelectedWork* work)
 {
     std::vector<RecurringRequirement> requests;
     if (!p.observed) return requests;
@@ -1056,6 +1121,7 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
         else {
             duplicate->qualifiedCycle &= request.qualifiedCycle;
             duplicate->repairFreeProducers.insert(request.repairFreeProducers.begin(), request.repairFreeProducers.end());
+            duplicate->sharedReturns += request.sharedReturns;
             duplicate->cells.insert(duplicate->cells.end(), request.cells.begin(), request.cells.end());
             std::sort(duplicate->cells.begin(), duplicate->cells.end());
             duplicate->cells.erase(std::unique(duplicate->cells.begin(), duplicate->cells.end()),
@@ -1268,7 +1334,8 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
         }
     }
     if (allowGuardedEpisodes)
-        for (auto& request : qualifyReaderRegionCycles(p, c, requests)) append(std::move(request));
+        for (auto& request : qualifyReaderRegionCycles(p, c, requests, shareReaderReturns, work))
+            append(std::move(request));
     // Distinct release publications retain their own prefixes. Matching bank
     // phases and a balanced merged token stream do not justify waiting for a
     // later reader at an earlier overwrite. Identical publication frontiers
@@ -1442,6 +1509,7 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
     for (Id index = 0; index < requests.size(); ++index) {
         if (!retained[index]) continue;
         const auto& request = requests[index];
+        result.work.sharedReaderReturns += request.sharedReturns;
         reserved.insert(keys[index]);
         needsContextualReplay = true;
         const auto number = frontier.keys()[keys[index]].key;
