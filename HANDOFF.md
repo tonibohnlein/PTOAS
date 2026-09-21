@@ -12,6 +12,18 @@ Updated: 2026-09-21
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
 
+## Attention device handoff prepared (2026-09-21)
+
+The missing [coupled FIFO/relay device task](test/benchmarks/attention_relay/DEVICE_TASK.md)
+is now written. It pins baseline `d1bf07ee5` and candidate `21f95f9b7`, exact
+row48/49 inputs and PTO-ISA `0c112d61`. The task includes investigating the
+reported separate-ring/shared-slot mismatch and building/qualifying an isolated
+adapter; the device agent need not ask for a separately supplied harness.
+It preserves the working runtime and requires authentic coupled numerical and
+queue-progress gates before two rotated timing rounds (20 samples per arm).
+Available devices may run independent matched blocks. Status is **prepared**;
+dispatch/current remote execution is not confirmed by this local change.
+
 ## Return-query hoist and relay reproductions (2026-09-21)
 
 On committed base `a0c1d761e`, the repeated return-sharing propagation is now
