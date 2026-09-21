@@ -1,0 +1,224 @@
+{
+  "split": {
+    "summaries": {
+      "existing": {
+        "median_us": 3.1,
+        "q1_us": 2.965,
+        "q3_us": 3.185,
+        "iqr_us": 0.2200000000000002
+      },
+      "handoff": {
+        "median_us": 3.09,
+        "q1_us": 3.035,
+        "q3_us": 3.14,
+        "iqr_us": 0.10499999999999998
+      },
+      "control": {
+        "median_us": 3.0309999999999997,
+        "q1_us": 2.9499999999999997,
+        "q3_us": 3.125,
+        "iqr_us": 0.17500000000000027
+      }
+    },
+    "warmup_stability": {
+      "existing": {
+        "accepted": false,
+        "relative_drift": -0.7017543859649122,
+        "relative_iqr": 1.669230769230769,
+        "qualification": "warning gate only; does not prove stationarity"
+      },
+      "handoff": {
+        "accepted": false,
+        "relative_drift": -0.060975609756097504,
+        "relative_iqr": 0.07717041800643093,
+        "qualification": "warning gate only; does not prove stationarity"
+      },
+      "control": {
+        "accepted": false,
+        "relative_drift": 0.053333333333333455,
+        "relative_iqr": 0.05430951618071138,
+        "qualification": "warning gate only; does not prove stationarity"
+      }
+    },
+    "round_medians": [
+      {
+        "existing": 3.1,
+        "handoff": 3.1500000000000004,
+        "control": 3.0309999999999997
+      },
+      {
+        "existing": 3,
+        "handoff": 3.12,
+        "control": 3.08
+      },
+      {
+        "existing": 3.12,
+        "handoff": 3.01,
+        "control": 3.04
+      }
+    ],
+    "round_ratios": [
+      1.0161290322580645,
+      1.04,
+      0.9647435897435896
+    ],
+    "control_round_ratios": [
+      0.9777419354838709,
+      1.0266666666666666,
+      0.9743589743589743
+    ],
+    "handoff_existing_ratio": 0.996774193548387,
+    "control_existing_ratio": 0.9777419354838709,
+    "status": "unstable_warmup",
+    "physical_device": "0",
+    "scope": "profiled_device_kernel_task"
+  },
+  "glm": {
+    "summaries": {
+      "existing": {
+        "median_us": 241.81,
+        "q1_us": 239.24400000000003,
+        "q3_us": 242.615,
+        "iqr_us": 3.370999999999981
+      },
+      "handoff": {
+        "median_us": 318.15999999999997,
+        "q1_us": 317.08925,
+        "q3_us": 319.45,
+        "iqr_us": 2.360749999999996
+      },
+      "control": {
+        "median_us": 238.9995,
+        "q1_us": 237.07,
+        "q3_us": 240.09425000000002,
+        "iqr_us": 3.0242500000000234
+      }
+    },
+    "warmup_stability": {
+      "existing": {
+        "accepted": true,
+        "relative_drift": 0.012962806066254329,
+        "relative_iqr": 0.013450692369207354,
+        "qualification": "warning gate only; does not prove stationarity"
+      },
+      "handoff": {
+        "accepted": true,
+        "relative_drift": 0.0002542380861207949,
+        "relative_iqr": 0.009666880597038456,
+        "qualification": "warning gate only; does not prove stationarity"
+      },
+      "control": {
+        "accepted": true,
+        "relative_drift": -0.0012640094379371414,
+        "relative_iqr": 0.005691639613811808,
+        "qualification": "warning gate only; does not prove stationarity"
+      }
+    },
+    "round_medians": [
+      {
+        "existing": 240.5995,
+        "handoff": 318.25,
+        "control": 235.41
+      },
+      {
+        "existing": 242.0095,
+        "handoff": 317.11,
+        "control": 239.9395
+      },
+      {
+        "existing": 241.94,
+        "handoff": 319.59000000000003,
+        "control": 239.13
+      }
+    ],
+    "round_ratios": [
+      1.3227375784238953,
+      1.3103204626264673,
+      1.320947342316277
+    ],
+    "control_round_ratios": [
+      0.978430960995347,
+      0.9914466167650444,
+      0.9883855501363974
+    ],
+    "handoff_existing_ratio": 1.3157437657665108,
+    "control_existing_ratio": 0.9883772383276126,
+    "status": "resolved_direction_in_this_run",
+    "physical_device": "0",
+    "scope": "device_runtime_wall_for_complete_projection_entry"
+  },
+  "split-confirmation": {
+    "summaries": {
+      "existing": {
+        "median_us": 3.0700000000000003,
+        "q1_us": 3,
+        "q3_us": 3.18,
+        "iqr_us": 0.18000000000000016
+      },
+      "handoff": {
+        "median_us": 3.17,
+        "q1_us": 3.095,
+        "q3_us": 3.2005000000000003,
+        "iqr_us": 0.10550000000000015
+      },
+      "control": {
+        "median_us": 3.05,
+        "q1_us": 2.9699999999999998,
+        "q3_us": 3.1550000000000002,
+        "iqr_us": 0.1850000000000005
+      }
+    },
+    "warmup_stability": {
+      "existing": {
+        "accepted": true,
+        "relative_drift": 0,
+        "relative_iqr": 0.029801324503311213,
+        "qualification": "warning gate only; does not prove stationarity"
+      },
+      "handoff": {
+        "accepted": false,
+        "relative_drift": -0.05882352941176472,
+        "relative_iqr": 0.0477815699658702,
+        "qualification": "warning gate only; does not prove stationarity"
+      },
+      "control": {
+        "accepted": false,
+        "relative_drift": 0.032467532467532534,
+        "relative_iqr": 0.1086261980830672,
+        "qualification": "warning gate only; does not prove stationarity"
+      }
+    },
+    "round_medians": [
+      {
+        "existing": 3.1100000000000003,
+        "handoff": 3.0700000000000003,
+        "control": 3.0700000000000003
+      },
+      {
+        "existing": 3.05,
+        "handoff": 3.18,
+        "control": 3.09
+      },
+      {
+        "existing": 3.1,
+        "handoff": 3.18,
+        "control": 2.98
+      }
+    ],
+    "round_ratios": [
+      0.9871382636655949,
+      1.0426229508196723,
+      1.0258064516129033
+    ],
+    "control_round_ratios": [
+      0.9871382636655949,
+      1.0131147540983607,
+      0.9612903225806452
+    ],
+    "handoff_existing_ratio": 1.03257328990228,
+    "control_existing_ratio": 0.9934853420195439,
+    "status": "unstable_warmup",
+    "physical_device": "0",
+    "scope": "profiled_device_kernel_task"
+  }
+}

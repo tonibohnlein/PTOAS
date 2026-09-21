@@ -1,5 +1,28 @@
 # OAHS implementation TODO
 
+## Device-server priority: KDA lifetime/placement investigation
+
+See [current evidence](oahs-kda-pipeline-investigation.md). Frozen KDA latency
+regression is controlled and confirmed; native construction at a0c1d761e passes,
+but latest latency remains unmeasured. First build general linked regressions
+for mixed acyclic/cyclic producer generations and first conflicting writes
+after an invariant external read. Preserve useful early publications and
+actual reuse deadlines; include outward-order and missing-support negatives.
+Do not infer the fix from barrier counts alone: OAHS has fewer total explicit
+commands but more MTE2/MTE1 barriers and repeated FIX/M exchanges. No production
+fix yet. The combined profiler failed during warmup; pipe attribution is open.
+
+Joint-reader device correctness is complete (24/24); both matched-card timing
+blocks fail to distinguish the candidate from identical-binary-control drift.
+Host order improvement is reproduced. Performance is unresolved; use a
+qualified duration method before another speedup claim. Report/archive paths
+are recorded in [device feedback](oahs-device-feedback-20260921.md).
+
+Attention relay: host gates pass, but coupled baseline qualification remains
+open (row48 nonfinite/incorrect output; row49 prelaunch HAL mapping failure).
+Preserve the pinned shared-slot contract. Resolve these separately before
+candidate correctness or latency work; do not substitute isolated halves.
+
 This list tracks implementation work that is not ready for the committed
 selected-plan design. Safety remains mandatory, but the acceptance criteria
 also protect useful payload ordering, resource availability, and construction

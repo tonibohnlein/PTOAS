@@ -2,6 +2,40 @@
 
 Updated: 2026-09-21
 
+## Device-server continuation: KDA diagnosis and joint-reader result
+
+Development worktree is now based on `bec7dfe37` on
+`codex/kda-pipeline-parallelism`. See
+[KDA pipeline investigation](docs/designs/oahs-kda-pipeline-investigation.md).
+Host attribution was performed at `a0c1d761e`, before this rebase.
+The controlled frozen-compiler KDA regression is confirmed, but latest HEAD
+has not been device-timed. Read-only attribution maps extra MTE2 fences to
+physical WAW residuals and a whole-cell cyclic-writer admission boundary.
+Executed AIC counts also expose repeated FIX/M repair: 76 versus four FIX→M
+pairs. No production fix is implemented. Next: linked generation-boundary and
+first-conflicting-consumer regressions with outward-order checks; recover a
+qualified profiling path before attributing the device penalty to one mechanism.
+
+Delegated joint-reader device task finished without changing its compiler:
+baseline `2a130aefe`, candidate `a0c1d761e`. Host gates exactly reproduce 18
+paths, 73,449 conflicts, 214 relations removed and zero added. All 24 numerical
+correctness launches pass (seeds 7/23, blocks 0/19, four pipelined slots), with
+matching paired output hashes. Two complete 120-launch timing/control blocks
+on devices 0/1 remain unresolved: apparent candidate gains of 9.15%/8.81% are
+matched or exceeded by identical-binary control gains of 8.77%/13.82%.
+No compiler speedup claim is justified. See the committed
+[device feedback and compact raw samples](docs/designs/oahs-device-feedback-20260921.md).
+The external `oahs-joint-reader-20260921.tar.gz` and detached `.sha256` (2.7 MB)
+are preserved; archive identity is recorded in that report.
+Next timing step requires qualified device-duration or state-correct batching
+with a passing identical-binary control, not more repetitions of this method.
+
+Attention relay execution has now been attempted, superseding the prepared-only
+status below. Host gates pass; row48 baseline produces nonfinite/incorrect
+outputs, while row49 is blocked before launch by logical-to-HAL device mapping.
+Candidate timing is disqualified until baseline qualification succeeds. The
+device feedback records the shared-slot versus separate-ring contract precisely.
+
 ## Checkout
 
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`

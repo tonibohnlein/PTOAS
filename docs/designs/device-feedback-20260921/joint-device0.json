@@ -1,0 +1,734 @@
+[
+  {
+    "arm": "baseline",
+    "mode": "timing",
+    "seed": 7,
+    "block": 0,
+    "command": [
+      "<campaign-root>/oahs-joint-reader-20260921/baseline/run",
+      "timing",
+      "7",
+      "1",
+      "0"
+    ],
+    "physical_device": "0",
+    "rc": 0,
+    "log": "round0-baseline.log",
+    "input_hashes": {
+      "hA": "04fc1c2f24342340950427c7b2f1d86f518d797e63f5867e79071f090c5f5ba8",
+      "hB": "91912e0d82218328ad4205fda5e009ca1aca909a22bce5edb6e470417c219034"
+    },
+    "samples": [
+      {
+        "phase": "warmup",
+        "index": 0,
+        "us": 843.980014
+      },
+      {
+        "phase": "warmup",
+        "index": 1,
+        "us": 47.320001
+      },
+      {
+        "phase": "warmup",
+        "index": 2,
+        "us": 56.32
+      },
+      {
+        "phase": "warmup",
+        "index": 3,
+        "us": 54.18
+      },
+      {
+        "phase": "warmup",
+        "index": 4,
+        "us": 54.499999
+      },
+      {
+        "phase": "warmup",
+        "index": 5,
+        "us": 54.299999
+      },
+      {
+        "phase": "warmup",
+        "index": 6,
+        "us": 54.340001
+      },
+      {
+        "phase": "warmup",
+        "index": 7,
+        "us": 55.160001
+      },
+      {
+        "phase": "warmup",
+        "index": 8,
+        "us": 54.639999
+      },
+      {
+        "phase": "warmup",
+        "index": 9,
+        "us": 53.98
+      },
+      {
+        "phase": "measured",
+        "index": 0,
+        "us": 54.359999
+      },
+      {
+        "phase": "measured",
+        "index": 1,
+        "us": 54.280002
+      },
+      {
+        "phase": "measured",
+        "index": 2,
+        "us": 55
+      },
+      {
+        "phase": "measured",
+        "index": 3,
+        "us": 54.400001
+      },
+      {
+        "phase": "measured",
+        "index": 4,
+        "us": 55.679999
+      },
+      {
+        "phase": "measured",
+        "index": 5,
+        "us": 55.399999
+      },
+      {
+        "phase": "measured",
+        "index": 6,
+        "us": 54.140002
+      },
+      {
+        "phase": "measured",
+        "index": 7,
+        "us": 55.020001
+      },
+      {
+        "phase": "measured",
+        "index": 8,
+        "us": 44.799998
+      },
+      {
+        "phase": "measured",
+        "index": 9,
+        "us": 54.38
+      }
+    ]
+  },
+  {
+    "arm": "candidate",
+    "mode": "timing",
+    "seed": 7,
+    "block": 0,
+    "command": [
+      "<campaign-root>/oahs-joint-reader-20260921/candidate/run",
+      "timing",
+      "7",
+      "1",
+      "0"
+    ],
+    "physical_device": "0",
+    "rc": 0,
+    "log": "round0-candidate.log",
+    "input_hashes": {
+      "hA": "04fc1c2f24342340950427c7b2f1d86f518d797e63f5867e79071f090c5f5ba8",
+      "hB": "91912e0d82218328ad4205fda5e009ca1aca909a22bce5edb6e470417c219034"
+    },
+    "samples": [
+      {
+        "phase": "warmup",
+        "index": 0,
+        "us": 896.96002
+      },
+      {
+        "phase": "warmup",
+        "index": 1,
+        "us": 52.439999
+      },
+      {
+        "phase": "warmup",
+        "index": 2,
+        "us": 52.340001
+      },
+      {
+        "phase": "warmup",
+        "index": 3,
+        "us": 42.739999
+      },
+      {
+        "phase": "warmup",
+        "index": 4,
+        "us": 52.359998
+      },
+      {
+        "phase": "warmup",
+        "index": 5,
+        "us": 52.900001
+      },
+      {
+        "phase": "warmup",
+        "index": 6,
+        "us": 56.880001
+      },
+      {
+        "phase": "warmup",
+        "index": 7,
+        "us": 52.700002
+      },
+      {
+        "phase": "warmup",
+        "index": 8,
+        "us": 52.220002
+      },
+      {
+        "phase": "warmup",
+        "index": 9,
+        "us": 52.379999
+      },
+      {
+        "phase": "measured",
+        "index": 0,
+        "us": 51.819999
+      },
+      {
+        "phase": "measured",
+        "index": 1,
+        "us": 52.019998
+      },
+      {
+        "phase": "measured",
+        "index": 2,
+        "us": 52.46
+      },
+      {
+        "phase": "measured",
+        "index": 3,
+        "us": 52.019998
+      },
+      {
+        "phase": "measured",
+        "index": 4,
+        "us": 52.099999
+      },
+      {
+        "phase": "measured",
+        "index": 5,
+        "us": 52.560002
+      },
+      {
+        "phase": "measured",
+        "index": 6,
+        "us": 42.199999
+      },
+      {
+        "phase": "measured",
+        "index": 7,
+        "us": 52.379999
+      },
+      {
+        "phase": "measured",
+        "index": 8,
+        "us": 52.099999
+      },
+      {
+        "phase": "measured",
+        "index": 9,
+        "us": 52.220002
+      }
+    ]
+  },
+  {
+    "arm": "control",
+    "mode": "timing",
+    "seed": 7,
+    "block": 0,
+    "command": [
+      "<campaign-root>/oahs-joint-reader-20260921/baseline/run",
+      "timing",
+      "7",
+      "1",
+      "0"
+    ],
+    "physical_device": "0",
+    "rc": 0,
+    "log": "round0-control.log",
+    "input_hashes": {
+      "hA": "04fc1c2f24342340950427c7b2f1d86f518d797e63f5867e79071f090c5f5ba8",
+      "hB": "91912e0d82218328ad4205fda5e009ca1aca909a22bce5edb6e470417c219034"
+    },
+    "samples": [
+      {
+        "phase": "warmup",
+        "index": 0,
+        "us": 907.41998
+      },
+      {
+        "phase": "warmup",
+        "index": 1,
+        "us": 57.920001
+      },
+      {
+        "phase": "warmup",
+        "index": 2,
+        "us": 57.319999
+      },
+      {
+        "phase": "warmup",
+        "index": 3,
+        "us": 57.039998
+      },
+      {
+        "phase": "warmup",
+        "index": 4,
+        "us": 55.879999
+      },
+      {
+        "phase": "warmup",
+        "index": 5,
+        "us": 45.24
+      },
+      {
+        "phase": "warmup",
+        "index": 6,
+        "us": 45.820002
+      },
+      {
+        "phase": "warmup",
+        "index": 7,
+        "us": 45.639999
+      },
+      {
+        "phase": "warmup",
+        "index": 8,
+        "us": 45.639999
+      },
+      {
+        "phase": "warmup",
+        "index": 9,
+        "us": 46.119999
+      },
+      {
+        "phase": "measured",
+        "index": 0,
+        "us": 45.880001
+      },
+      {
+        "phase": "measured",
+        "index": 1,
+        "us": 45.880001
+      },
+      {
+        "phase": "measured",
+        "index": 2,
+        "us": 46.039999
+      },
+      {
+        "phase": "measured",
+        "index": 3,
+        "us": 45.919999
+      },
+      {
+        "phase": "measured",
+        "index": 4,
+        "us": 46.100002
+      },
+      {
+        "phase": "measured",
+        "index": 5,
+        "us": 45.820002
+      },
+      {
+        "phase": "measured",
+        "index": 6,
+        "us": 45.899998
+      },
+      {
+        "phase": "measured",
+        "index": 7,
+        "us": 45.359999
+      },
+      {
+        "phase": "measured",
+        "index": 8,
+        "us": 45.940001
+      },
+      {
+        "phase": "measured",
+        "index": 9,
+        "us": 54.979999
+      }
+    ]
+  },
+  {
+    "arm": "control",
+    "mode": "timing",
+    "seed": 7,
+    "block": 0,
+    "command": [
+      "<campaign-root>/oahs-joint-reader-20260921/baseline/run",
+      "timing",
+      "7",
+      "1",
+      "0"
+    ],
+    "physical_device": "0",
+    "rc": 0,
+    "log": "round1-control.log",
+    "input_hashes": {
+      "hA": "04fc1c2f24342340950427c7b2f1d86f518d797e63f5867e79071f090c5f5ba8",
+      "hB": "91912e0d82218328ad4205fda5e009ca1aca909a22bce5edb6e470417c219034"
+    },
+    "samples": [
+      {
+        "phase": "warmup",
+        "index": 0,
+        "us": 822.220027
+      },
+      {
+        "phase": "warmup",
+        "index": 1,
+        "us": 53.679999
+      },
+      {
+        "phase": "warmup",
+        "index": 2,
+        "us": 51.36
+      },
+      {
+        "phase": "warmup",
+        "index": 3,
+        "us": 51.22
+      },
+      {
+        "phase": "warmup",
+        "index": 4,
+        "us": 41.439999
+      },
+      {
+        "phase": "warmup",
+        "index": 5,
+        "us": 46.179999
+      },
+      {
+        "phase": "warmup",
+        "index": 6,
+        "us": 41.700002
+      },
+      {
+        "phase": "warmup",
+        "index": 7,
+        "us": 56.400001
+      },
+      {
+        "phase": "warmup",
+        "index": 8,
+        "us": 40.920001
+      },
+      {
+        "phase": "warmup",
+        "index": 9,
+        "us": 46.700001
+      },
+      {
+        "phase": "measured",
+        "index": 0,
+        "us": 41.919999
+      },
+      {
+        "phase": "measured",
+        "index": 1,
+        "us": 41.8
+      },
+      {
+        "phase": "measured",
+        "index": 2,
+        "us": 45.72
+      },
+      {
+        "phase": "measured",
+        "index": 3,
+        "us": 50.379999
+      },
+      {
+        "phase": "measured",
+        "index": 4,
+        "us": 41.839998
+      },
+      {
+        "phase": "measured",
+        "index": 5,
+        "us": 41.340001
+      },
+      {
+        "phase": "measured",
+        "index": 6,
+        "us": 41.779999
+      },
+      {
+        "phase": "measured",
+        "index": 7,
+        "us": 51.139999
+      },
+      {
+        "phase": "measured",
+        "index": 8,
+        "us": 31.339999
+      },
+      {
+        "phase": "measured",
+        "index": 9,
+        "us": 41.919999
+      }
+    ]
+  },
+  {
+    "arm": "candidate",
+    "mode": "timing",
+    "seed": 7,
+    "block": 0,
+    "command": [
+      "<campaign-root>/oahs-joint-reader-20260921/candidate/run",
+      "timing",
+      "7",
+      "1",
+      "0"
+    ],
+    "physical_device": "0",
+    "rc": 0,
+    "log": "round1-candidate.log",
+    "input_hashes": {
+      "hA": "04fc1c2f24342340950427c7b2f1d86f518d797e63f5867e79071f090c5f5ba8",
+      "hB": "91912e0d82218328ad4205fda5e009ca1aca909a22bce5edb6e470417c219034"
+    },
+    "samples": [
+      {
+        "phase": "warmup",
+        "index": 0,
+        "us": 805.480003
+      },
+      {
+        "phase": "warmup",
+        "index": 1,
+        "us": 44.980001
+      },
+      {
+        "phase": "warmup",
+        "index": 2,
+        "us": 44.920001
+      },
+      {
+        "phase": "warmup",
+        "index": 3,
+        "us": 45.419998
+      },
+      {
+        "phase": "warmup",
+        "index": 4,
+        "us": 34.060001
+      },
+      {
+        "phase": "warmup",
+        "index": 5,
+        "us": 43.419998
+      },
+      {
+        "phase": "warmup",
+        "index": 6,
+        "us": 45.52
+      },
+      {
+        "phase": "warmup",
+        "index": 7,
+        "us": 43.04
+      },
+      {
+        "phase": "warmup",
+        "index": 8,
+        "us": 44.980001
+      },
+      {
+        "phase": "warmup",
+        "index": 9,
+        "us": 42.539999
+      },
+      {
+        "phase": "measured",
+        "index": 0,
+        "us": 45.680001
+      },
+      {
+        "phase": "measured",
+        "index": 1,
+        "us": 45.639999
+      },
+      {
+        "phase": "measured",
+        "index": 2,
+        "us": 42.76
+      },
+      {
+        "phase": "measured",
+        "index": 3,
+        "us": 44.780001
+      },
+      {
+        "phase": "measured",
+        "index": 4,
+        "us": 42.84
+      },
+      {
+        "phase": "measured",
+        "index": 5,
+        "us": 44.96
+      },
+      {
+        "phase": "measured",
+        "index": 6,
+        "us": 43.960001
+      },
+      {
+        "phase": "measured",
+        "index": 7,
+        "us": 40.180001
+      },
+      {
+        "phase": "measured",
+        "index": 8,
+        "us": 33.580001
+      },
+      {
+        "phase": "measured",
+        "index": 9,
+        "us": 33.199999
+      }
+    ]
+  },
+  {
+    "arm": "baseline",
+    "mode": "timing",
+    "seed": 7,
+    "block": 0,
+    "command": [
+      "<campaign-root>/oahs-joint-reader-20260921/baseline/run",
+      "timing",
+      "7",
+      "1",
+      "0"
+    ],
+    "physical_device": "0",
+    "rc": 0,
+    "log": "round1-baseline.log",
+    "input_hashes": {
+      "hA": "04fc1c2f24342340950427c7b2f1d86f518d797e63f5867e79071f090c5f5ba8",
+      "hB": "91912e0d82218328ad4205fda5e009ca1aca909a22bce5edb6e470417c219034"
+    },
+    "samples": [
+      {
+        "phase": "warmup",
+        "index": 0,
+        "us": 818.920016
+      },
+      {
+        "phase": "warmup",
+        "index": 1,
+        "us": 56.260001
+      },
+      {
+        "phase": "warmup",
+        "index": 2,
+        "us": 44.399999
+      },
+      {
+        "phase": "warmup",
+        "index": 3,
+        "us": 46.259999
+      },
+      {
+        "phase": "warmup",
+        "index": 4,
+        "us": 45.04
+      },
+      {
+        "phase": "warmup",
+        "index": 5,
+        "us": 44.520002
+      },
+      {
+        "phase": "warmup",
+        "index": 6,
+        "us": 44.9
+      },
+      {
+        "phase": "warmup",
+        "index": 7,
+        "us": 44.920001
+      },
+      {
+        "phase": "warmup",
+        "index": 8,
+        "us": 45.139998
+      },
+      {
+        "phase": "warmup",
+        "index": 9,
+        "us": 45.200001
+      },
+      {
+        "phase": "measured",
+        "index": 0,
+        "us": 45.52
+      },
+      {
+        "phase": "measured",
+        "index": 1,
+        "us": 45.839999
+      },
+      {
+        "phase": "measured",
+        "index": 2,
+        "us": 44.860002
+      },
+      {
+        "phase": "measured",
+        "index": 3,
+        "us": 45.359999
+      },
+      {
+        "phase": "measured",
+        "index": 4,
+        "us": 45.680001
+      },
+      {
+        "phase": "measured",
+        "index": 5,
+        "us": 46.379998
+      },
+      {
+        "phase": "measured",
+        "index": 6,
+        "us": 44
+      },
+      {
+        "phase": "measured",
+        "index": 7,
+        "us": 44.799998
+      },
+      {
+        "phase": "measured",
+        "index": 8,
+        "us": 44.640001
+      },
+      {
+        "phase": "measured",
+        "index": 9,
+        "us": 56.960002
+      }
+    ]
+  }
+]

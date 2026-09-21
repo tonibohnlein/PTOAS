@@ -1,0 +1,742 @@
+[
+  {
+    "arm": "existing",
+    "phase": "correctness",
+    "round": -1,
+    "seed": 7,
+    "launches": 1,
+    "device_us": 629.939,
+    "correct": true,
+    "fixture_sha256": "b3e3d6c60451a0649be8cb20e3a494f1074de6a8ca5f568d1c337cdf67dcb5d6"
+  },
+  {
+    "arm": "existing",
+    "phase": "correctness",
+    "round": -1,
+    "seed": 7,
+    "launches": 1,
+    "device_us": 351.62,
+    "correct": true,
+    "fixture_sha256": "b3e3d6c60451a0649be8cb20e3a494f1074de6a8ca5f568d1c337cdf67dcb5d6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "correctness",
+    "round": -1,
+    "seed": 7,
+    "launches": 1,
+    "device_us": 322.78,
+    "correct": true,
+    "fixture_sha256": "b3e3d6c60451a0649be8cb20e3a494f1074de6a8ca5f568d1c337cdf67dcb5d6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "correctness",
+    "round": -1,
+    "seed": 7,
+    "launches": 1,
+    "device_us": 321.219,
+    "correct": true,
+    "fixture_sha256": "b3e3d6c60451a0649be8cb20e3a494f1074de6a8ca5f568d1c337cdf67dcb5d6"
+  },
+  {
+    "arm": "existing",
+    "phase": "correctness",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 428.859,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "correctness",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 237.98,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "correctness",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 327.02,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "correctness",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 317.039,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 237.08,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 323.9,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 236.839,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 237.12,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 327.2,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 248.44,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 238.42,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 319.64,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 243.52,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 235.12,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 320.96,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 240.84,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 241.16,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 321.8,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 236.16,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 235.8,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 317.64,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 237.34,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 236.06,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 318.599,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 249.219,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 235.899,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 318.68,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 238.34,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 239.14,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 315.96,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 237.04,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 239.12,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 321.72,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "warmup",
+    "round": -1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 236.64,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "measured",
+    "round": 0,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 241.9,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "measured",
+    "round": 0,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 242.28,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "measured",
+    "round": 0,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 237.58,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "measured",
+    "round": 0,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 239.299,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "measured",
+    "round": 0,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 317.32,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "measured",
+    "round": 0,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 319.18,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "measured",
+    "round": 0,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 323.94,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "measured",
+    "round": 0,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 317.159,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "measured",
+    "round": 0,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 234.48,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "measured",
+    "round": 0,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 239.079,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "measured",
+    "round": 0,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 235.34,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "measured",
+    "round": 0,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 235.48,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "measured",
+    "round": 1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 239.8,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "measured",
+    "round": 1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 243.54,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "measured",
+    "round": 1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 240.079,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "measured",
+    "round": 1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 238.92,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "measured",
+    "round": 1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 316.2,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "measured",
+    "round": 1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 315.74,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "measured",
+    "round": 1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 318.02,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "measured",
+    "round": 1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 318.3,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "measured",
+    "round": 1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 240.399,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "measured",
+    "round": 1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 236.44,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "measured",
+    "round": 1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 245.42,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "measured",
+    "round": 1,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 243.62,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "measured",
+    "round": 2,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 247.94,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "measured",
+    "round": 2,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 239.079,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "measured",
+    "round": 2,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 241.72,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "existing",
+    "phase": "measured",
+    "round": 2,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 242.16,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "measured",
+    "round": 2,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 316.88,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "measured",
+    "round": 2,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 320.26,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "measured",
+    "round": 2,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 321.52,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "handoff",
+    "phase": "measured",
+    "round": 2,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 318.92,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "measured",
+    "round": 2,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 238.12,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "measured",
+    "round": 2,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 247.6,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "measured",
+    "round": 2,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 237.6,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  },
+  {
+    "arm": "control",
+    "phase": "measured",
+    "round": 2,
+    "seed": 23,
+    "launches": 1,
+    "device_us": 240.14,
+    "correct": true,
+    "fixture_sha256": "4b6206301390389d9810284efa6795a490cc0f58a11b61456325681e6f74bfa6"
+  }
+]
