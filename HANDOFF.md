@@ -1,18 +1,83 @@
 # OAHS current handoff
 
-Updated: 2026-09-20
+Updated: 2026-09-21
 
 ## Checkout
 
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: MAT campaign complete; placement device task dispatched; certified sibling replay reuse implemented locally
+- Current milestone: multi-input retained-reader cohort implemented locally; validation recorded below
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
 
+## Current local follow-up: complete producer cohorts
+
+[Multi-input retained-reader admission](docs/designs/oahs-retained-producer-cohort.md)
+now replaces the single-producer-write-cell restriction with a narrow closed
+cohort: one straight writer corridor, complete per-cell cycles, separate source
+and reader boundaries, and no uncovered producer requirement in the actual
+staged ledger. An unmet support premise declines without endpoint/reservation
+changes; `rejected_support` is separately reported. No new mode or solve beyond
+the existing mandatory proposal check.
+
+All 23 portable suites and native diagnostics pass. Sixteen multi-input traces
+remove 164 full payload relations with none added; the original X/Y fence-motion
+counterexample still declines. The native A3 witness preserves five V barriers
+and removes 16 relations while executed pairs grow 6 -> 10. All 88 corpus plans
+remain byte-identical to the frozen retained-reader baseline. Two observable
+microkernels are prepared for a separate small device task; no device result is
+claimed. Artifacts: `../retained-multi-work/`. Changes remain uncommitted.
+
+## Current local follow-up: retained reader children
+
+[Retained-generation composition](docs/designs/oahs-retained-reader-children.md)
+now reuses the existing nearest-role/control view to identify the first and last
+reader child of one physical generation. A native A3 fixture reproduces the old
+miss: the new plan acquires once, releases after both children before unrelated
+V work, and preserves all three V barriers. Eight portable traces remove 62 full
+payload relations with no additions; reload, independent-reader, missing-support
+and premature-release negatives pass. All 23 portable suites, native diagnostics
+and the native pass/FileCheck test pass. A serial 88-module native sweep passes
+construction/reconstruction with all plans byte-identical to the committed
+sibling-replay baseline. These are uncommitted local changes.
+
+A new negative limits admission: removing an X fence can move an uncovered Y
+fence after the new X write. That initial extension required a single producer
+write cell. The closed-cohort qualification above now admits a bounded multi-input
+case without leaving the producer repair pending. Read-only GM inputs are allowed. Artifacts: `../retained-generation-work/`.
+
+## Current local follow-up: contextual frontier-motion witness
+
+The [common-frontier regression](docs/designs/oahs-frontier-motion-context.md)
+now distinguishes a private common consumer from an outward publication between
+its two readiness acquisitions. Six finite contexts (one/two/four episodes)
+compare complete payload-order sets and check real return/rearming paths. Both
+plans can be safe while the merged plan adds B-load -> unrelated R-reader order.
+A linked two-layout qualifier probe does not reproduce the bad order: its
+outward role precedes both readiness roles. All 23 portable suites pass.
+This is supplied-protocol evidence, not a reproduced native constructor defect.
+The next step is exact proposal/word-order qualification before enabling a
+narrow moving-frontier certificate. Production placement is unchanged.
+
+## Prepared overnight corpus task
+
+The [overnight task](test/benchmarks/corpus_nightly/DEVICE_TASK.md) compares only
+current default handoff with existing InsertSync. It targets broad pypto-lib
+kernel coverage and separately labelled runnable model entries, with all free
+remote devices, 10 warmups and 20 measured invocations per arm, no variant sweep.
+The self-contained source/input/harness package is under
+`../device-handoffs/oahs-corpus-nightly-d6e9-snapshot/`; its manifest identifies
+the uncommitted compiler snapshot and 88 current plan pins. Preparation does not
+mean dispatch or device qualification. Preserve the existing campaign evidence.
+
 ## Remote scheduling: all eight devices
+
+**Repetition update:** retain 10 warmup launches, then use 20 measured launches
+per arm total in two rotated rounds. No nested large batches or timing for every
+correctness seed. Keep completed evidence; increase sampling only for a specific
+unresolved decision. This overrides the old 100–180-sample task guidance.
 
 Use all eight allocated remote devices for independent matched comparisons;
 serialize timing/profiling only within each device. Keep each comparison's arms
@@ -21,10 +86,34 @@ on the same device and report results by device. See the
 be sent alongside the immutable MAT/placement archives. Their contents and hashes
 remain unchanged. Remote CPU/reference work uses the remote host's own capacity.
 
-## While the new device task runs
+## Completed placement campaign and barrier isolation
 
-The user has dispatched the placement/admission device task. Keep its source
-snapshot fixed. The [local TODO order](docs/designs/oahs-todo.md#local-work-while-the-new-device-task-runs)
+See [placement intake](docs/designs/oahs-placement-device-results.md) and
+[conditional MTE2 isolation](docs/designs/oahs-conditional-mte2-isolation.md).
+The barrier-only follow-up completed on card0: 12 runs/48 launches, no timing.
+Existing fails three taken-path seeds; adding only the conditional MTE2 barrier
+repairs all three; OAHS default passes. False-path controls all pass. The archive
+hash and all 32 manifest entries verify, as do exact one-line PTO/C++ mutations,
+raw results, matching inputs and build/hash records. Artifact binaries are not
+included in this smaller archive. Audit: `../mte2-isolation-review/`.
+
+The earlier dedicated failure-probe and row22 correctness/hash logs are recovered.
+The 264-row matrix belongs to MAT; placement has 36 attempts: 35 successes and
+one expected default class-invariant refusal. No-motion GEMM was host-only by
+design, with no device job or samples. Its status is closed, not an overdue run.
+The original placement archive remains immutable; its local standalone report
+has no appended erratum, but the isolation report records the correction.
+
+No campaign jobs remain. Keep the existing failing arm excluded from timing.
+The next separate correctness task is a local existing-pass conditional-WAW
+regression and source diagnosis; OAHS already has the required barrier. No new
+device sweep is needed for this isolation. Local retained-generation work above
+continues independently.
+
+## Completed sibling replay work
+
+The placement/admission device campaign is complete. Keep its source
+snapshot fixed. The [local TODO order](docs/designs/oahs-todo.md#local-work-after-the-placement-campaign)
 now has concrete deliverables and exit gates. Local opt-in `--trace-replay`
 attributes FIFO work without changing replay or emitted plans. See
 [FIFO replay attribution](docs/designs/oahs-fifo-replay-attribution.md): 99.5% of
@@ -47,14 +136,14 @@ state comparisons for alternative/sequential loops, shared words, real events,
 failed edits and recovery. Native diagnostic tests pass. The dependency walk is
 counted separately; `--prefix-replay` retains the old rule for comparisons.
 Artifacts and serial reproducer: `/home/toni/work/pypto3_sync_more/sibling-replay-work/`.
-Initial attribution remains in `fifo-replay-work/`. The running device campaign
+Initial attribution remains in `fifo-replay-work/`. The completed device snapshot
 is unchanged; identical selected plans need no new device timing for this change.
 Three matched serial host rounds on partial attention give 24.568 s prefix-only
 versus 18.304 s sibling-reuse median diagnostic wall time (paired reductions
 19.8–25.5%). This measures local construction/reconstruction, not device latency.
 
 The next local priorities are a contextual frontier-motion certificate and a
-current native retained-generation witness. Further replay work must target the
+real corpus witness for the bounded multi-input retained-generation interface. Further replay work must target the
 remaining fixed point within an edited loop; sibling reuse does not solve that.
 
 ## Completed MAT family device campaign
@@ -130,7 +219,7 @@ Shared views use the existing deadline-indexed requirement frontiers, native
 cell/loop effects, original control and selected replay/key state. No additional
 completion authority or eager per-cell channel allocation is introduced.
 
-These placement/admission changes have no device result yet. The separate
+The completed placement results are summarized above. The separate
 MAT campaign now reports down_proj at 25.792 us versus 30.077 existing and
 31.646 fe1, with 36/36 correctness passes. The retained-fence control is
 25.704 us: MTE2 omission has no measurable benefit in this comparison. See

@@ -6,32 +6,47 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
-## Authoritative next order: device tasks dispatched at 9f30b9fd8
+## Authoritative next order: placement campaign complete
 
 See [implemented mechanisms and evidence limits](oahs-placement-experiments.md)
 and [isolated device tasks](../../test/benchmarks/placement/DEVICE_TASKS.md).
-This status supersedes the historical campaign priorities below.
+This status supersedes the historical campaign priorities below. See the
+[placement campaign intake](oahs-placement-device-results.md): host claims
+reproduced, OAHS correctness gates passed, latency differences unresolved.
+The returned archives pass local audits. The [conditional MTE2 isolation](oahs-conditional-mte2-isolation.md)
+is complete: existing fails, a one-barrier mutation repairs it, and OAHS passes.
+Next preserve a local existing-pass conditional-WAW regression and trace its
+construction decision before implementing a general repair. No more device
+repetitions are needed for isolation. Correct coverage is 35 successful placement
+constructions plus one expected refusal; MAT owns the 264-row matrix. Repair
+source-manifest and effective-optimization probes before new bundles.
+
+**Prepared, not dispatched here:** [overnight broad-corpus performance task](../../test/benchmarks/corpus_nightly/DEVICE_TASK.md).
+Two arms only: current default handoff and existing. Prioritize distinct families,
+qualified original model runners and reusable harnesses; keep 20 measured
+invocations per arm and separate kernel/model scopes. The self-contained package
+ships source pins, 96 inventoried modules (88 A3) and 88 current handoff plans.
 
 0. **Complete:** MAT family device campaign. All five projections beat existing;
    GEMM parity holds. No resolved MTE2-omission benefit. See the
    [final results and audit](oahs-mat-device-final-results.md). Obtain the detached
-   checksum matching the downloaded final archive. The isolated new device task
-   has now been dispatched; keep its snapshot fixed.
+   checksum matching the downloaded final archive. The placement campaign
+   is also complete; retain both snapshots.
 1. **Implemented locally:** staged optional-proposal rejection, conservative
    exact-fit admission, separate trial controls/counters and next-provider-only
    selection. Default corpus is unchanged. General scoped recurring-key reuse
    and complete future-allocation admission remain open.
-2. **Device task dispatched:** native source-gap witness with unchanged pair count,
+2. **Host/device correctness reproduced; latency unresolved:** native source-gap witness with unchanged pair count,
    forbidden dependency removed. Extend beyond acyclic virgin-key word-start
    gaps only with exact coverage/participation/rearming certificates.
-3. **Ready as a separate control:** no-motion grouping. GEMM adds commands with
-   identical checked ordering. Legacy motion remains default; obtain a specific
-   contextual certificate or accept the measured no-motion cost before changing
-   the default policy.
-4. **Device task dispatched:** deferred acyclic acknowledgment, with both branch
+3. **Host-only as designed:** no-motion grouping. GEMM adds
+   commands with identical checked ordering. No device timing was requested or run. A small isolated comparison is optional;
+   microkernel timing does not establish that GEMM's extra commands are free.
+   Legacy motion remains default pending a contextual certificate/cost decision.
+4. **OAHS device correctness reproduced; latency unresolved:** deferred acyclic acknowledgment, with both branch
    outcomes and a real-key-reuse regression. Optional acquisitions and recurring
    cases retain the conservative fallback.
-5. **Device correctness task dispatched:** access-class invariant first-consumer
+5. **Device correctness reproduced; latency unresolved:** access-class invariant first-consumer
    fixture with disjoint producer work. Default OAHS refuses this input; do not
    claim a matched-default speedup. General guarded/cross-child qualification
    remains future work.
@@ -48,14 +63,24 @@ inside an edited component remain unfinished cost work. Three matched local host
 rounds reduce median construction/reconstruction wall time from 24.568 to
 18.304 seconds; this is not a device performance result.
 
-## Local work while the new device task runs
+## Local work after the placement campaign
 
-Keep source/binary identities for the dispatched experiments fixed. Local
+Keep source/binary identities for the completed experiments fixed. Local
 follow-ups are separate candidates, with no automatic substitution into that
 campaign. FIFO replay attribution and sibling reuse are implemented; see the
 [findings and replay certificate requirements](oahs-fifo-replay-attribution.md).
-The next bounded quality task is a narrow contextual frontier-motion certificate;
-the retained-generation task needs a concrete current native miss first.
+The next bounded quality task is a narrow contextual frontier-motion certificate.
+Its [outward-publication witness](oahs-frontier-motion-context.md) now has complete
+payload-order comparisons and real key-reuse negatives. Exact constructor
+proposal/word-order reproduction remains open; the supplied plans alone do not
+prove a native defect. A linked two-layout probe exports before both waits and
+does not reproduce it. Avoid a blanket same-cut-export veto. The
+retained-generation task now has a native witness and a bounded implementation:
+see [reader-child composition](oahs-retained-reader-children.md). The [multi-input extension](oahs-retained-producer-cohort.md) now admits complete
+producer cohorts in one straight writer corridor. Its staged support check declines
+if any producer payload requirement remains; the uncovered X/Y counterexample
+still declines. All 88 corpus plans remain unchanged. The next boundary is an
+actual corpus miss outside that qualified scope, not merely allowing more cells.
 
 ### Deliverables and exit gates
 
@@ -63,8 +88,8 @@ the retained-generation task needs a concrete current native miss first.
 | --- | --- | --- |
 | **L1: replay attribution (implemented)** | Opt-in per-solve trace: changed words, active/restart component, shared-word widening, reused sites, unique/repeated visits, per-component work and elapsed time. Partial AIV plus AIC/projection/RMS/GEMM controls reproduced. | All five modules retain identical PTO; counts reconcile. 64 edits confined to one AIV branch spend 202,944 evaluations in its unmodified alternative loop. |
 | **L2: sibling replay reuse (implemented)** | Reuse unchanged predecessor-closed components; invalidate entire shared nonempty words. Dependency-walk work is separately counted. | Complete cached/cold checkpoint and endpoint comparisons pass, including failure/recovery. 23/23 suites pass; 88/88 native plans are unchanged. AIV replay falls 25.2%; active-loop fixed-point work remains. |
-| **L3: frontier-motion certificate** | A narrow moving-frontier rule with an outward-publication counterexample. | Prove contextual ordering, not only memory safety; independent finite oracle rejects the broadened plan. Use the pending no-motion device control to assess command cost. |
-| **L4: retained-generation placement** | Current-source witness and shared lifecycle view for one generation across two children. | Separate positive persistence from reload, premature release and independent-reader negatives. Record analysis fact → endpoint choice → ordering change. |
+| **L3: frontier-motion certificate** | A narrow moving-frontier rule with an outward-publication counterexample. | Prove contextual ordering, not only memory safety; independent finite oracle rejects the broadened plan. A separate no-motion device control would be needed to assess runtime command cost. |
+| **L4: retained-generation placement (bounded implementation)** | Shared nearest-role view selects one cycle across children; native A3 witness and eight portable traces pass. Single-cell and qualified multi-input cohorts; actual producer support checked before commit. | Separate positive persistence from reload, premature release and independent-reader negatives. Record analysis fact → endpoint choice → ordering change. |
 | **L5: lowering facts** | First a qualified intrinsic-drain witness; next descriptor-scoped valid shapes; then address-sliced slot relations. | Each is a separate candidate with exact lowering scope and positive/negative importer tests; no inferred event reset, whole-M completion or joint bank-mode product. |
 
 Device dispatch is conditional: identical emitted plans from L2 need host
@@ -80,8 +105,8 @@ preparing source-complete device tasks. Keep the current device archive immutabl
    loop history or weaken checks. Keep quality work below ahead of a broader
    rewrite of the fixed-point solver.
 2. **Certify useful frontier motion.** The generic default coalescer still lacks
-   a general contextual no-added-order certificate. The no-motion device arm
-   measures its cost; locally prove a narrow admitted case, including outward
+   a general contextual no-added-order certificate. The no-motion device cost is
+   still unreported; locally prove a narrow admitted case, including outward
    publications and event generations. A safety check alone is insufficient.
 3. **Extend shared lifecycle views from a real native miss.** Carry an invariant
    generation across sibling/guarded regions while preserving its last-reader

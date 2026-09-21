@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// Two physical generations retain separate first/last reader frontiers.
+// The release precedes unrelated V work, with genuine V barriers retained.
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' | FileCheck %s
+module attributes {pto.target_arch = "a3"} {
+  func.func @retained_multi_children(%src: !pto.partition_tensor_view<1x32xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %bound = arith.constant 256 : index
+    %step = arith.constant 128 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 128 : i64
+    %addr2 = arith.constant 256 : i64
+    %addr3 = arith.constant 384 : i64
+    %d = pto.alloc_tile addr = %addr3 : !pto.tile_buf<vec, 1x32xf32>
+    %a = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %addr1 : !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %addr2 : !pto.tile_buf<vec, 1x32xf32>
+    scf.for %tile = %zero to %bound step %step {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+      scf.for %i = %zero to %bound step %step {
+        pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+      }
+      scf.for %k = %zero to %bound step %step {
+        pto.tadd ins(%b, %b : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+      }
+      scf.for %j = %zero to %bound step %step {
+        pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+      }
+      scf.for %l = %zero to %bound step %step {
+        pto.tadd ins(%b, %b : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+      }
+      pto.tadd ins(%c, %c : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%d : !pto.tile_buf<vec, 1x32xf32>)
+    }
+    return
+  }
+}
+// CHECK-LABEL: func.func @retained_multi_children
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <[[XFREE:EVENT_ID[0-9]+]]>]
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <[[YFREE:EVENT_ID[0-9]+]]>]
+// CHECK: scf.for
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <[[XFREE]]>]
+// CHECK-NEXT: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <[[XREADY:EVENT_ID[0-9]+]]>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <[[YFREE]]>]
+// CHECK-NEXT: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <[[YREADY:EVENT_ID[0-9]+]]>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <[[XREADY]]>]
+// CHECK-NEXT: scf.for
+// CHECK-NEXT: pto.barrier <PIPE_V>
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <[[YREADY]]>]
+// CHECK-NEXT: scf.for
+// CHECK-NEXT: pto.barrier <PIPE_V>
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: }
+// CHECK-NEXT: scf.for
+// CHECK-NEXT: pto.barrier <PIPE_V>
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <[[XFREE]]>]
+// CHECK-NEXT: scf.for
+// CHECK-NEXT: pto.barrier <PIPE_V>
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <[[YFREE]]>]
+// CHECK-NEXT: pto.barrier <PIPE_V>
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <[[XFREE]]>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <[[YFREE]]>]
+// CHECK-NEXT: pto.barrier <PIPE_ALL>

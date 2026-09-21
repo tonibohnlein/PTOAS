@@ -6,6 +6,30 @@ source snapshots, binaries, inputs, correctness gates and measurement arms.
 Send this addendum alongside immutable archived task instructions; do not
 rewrite an archive that a running campaign has already verified.
 
+## Lightweight measurements: supersedes earlier sample counts
+
+User update, 2026-09-20: this is an exploratory campaign. Keep warmup, but do
+not routinely run 100–180 measured launches per kernel/arm.
+
+- Start with **10 untimed warmup launches and 20 measured launches per arm in
+  total**, split into two rounds of ten with rotated arm order. Keep the launch
+  configuration, binary and timing scope identical across arms. If warmup is
+  visibly insufficient, extend warmup rather than silently timing cold work.
+- A measured launch is one kernel invocation. Do not put another 100/1500-launch
+  loop inside every sample, or repeat the timing campaign for every correctness
+  seed. Report actual total launches, including any timer batching needed for
+  very short kernels. Batching must use an explicit small total launch budget.
+- Preserve the existing correctness and repeat-entry gates. Generate each
+  numerical reference once and reuse it across arms; warmup is not validation.
+- Retain completed results. Apply this lower budget to remaining/new work; do
+  not rerun a completed large sample merely to match the new count.
+- Report medians, spread and the two round medians. If the difference is
+  unresolved, say so. Collect more only for a specific decision that needs it;
+  no automatic large repeat campaign or redundant eight-device replication.
+
+This addendum overrides repetition counts in already dispatched task archives;
+source snapshots, hashes, correctness gates and per-device matching stay fixed.
+
 ## Work queue
 
 - Discover the eight allocated devices and maintain a worker/queue for each.

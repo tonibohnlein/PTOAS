@@ -143,6 +143,7 @@ struct SelectedWork {
     uint64_t recurringQualificationMicroseconds = 0;
     uint64_t proposalCheckSites = 0, proposalCheckMicroseconds = 0;
     std::size_t rejectedProtocolProposals = 0, rejectedResourceProposals = 0;
+    std::size_t rejectedSupportProposals = 0;
     std::size_t gapPublications = 0, deferredAcknowledgments = 0;
     std::size_t equalCoveragePairs = 0, bindingProbes = 0, bindingChoices = 0;
     std::size_t helperCompositionTrials = 0;
