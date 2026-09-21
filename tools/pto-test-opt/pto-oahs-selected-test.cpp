@@ -378,6 +378,98 @@ module attributes {pto.target_arch = "a3"} {
   }
   return true;
 }
+bool jointReaderPlacement(MLIRContext &context) {
+  const std::string fixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @joint_reader(%src: !pto.partition_tensor_view<1x32xf32>, %n: index, %active: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %bound = arith.constant 256 : index
+    %step = arith.constant 128 : index
+    %lo = arith.constant 3 : index
+    %hi = arith.constant 259 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 128 : i64
+    %addr2 = arith.constant 256 : i64
+    %addr3 = arith.constant 384 : i64
+    %a = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %addr1 : !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %addr2 : !pto.tile_buf<vec, 1x32xf32>
+    %d = pto.alloc_tile addr = %addr3 : !pto.tile_buf<vec, 1x32xf32>
+    scf.for %tile = %zero to %bound step %step {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+      scf.for %i = %lo to %hi step %step {
+        pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+        pto.tadd ins(%b, %b : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%d : !pto.tile_buf<vec, 1x32xf32>)
+        pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+        pto.tadd ins(%b, %b : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%d : !pto.tile_buf<vec, 1x32xf32>)
+        scf.if %active {
+          pto.tadd ins(%d, %d : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+        }
+      }
+    }
+    return
+  }
+}
+)mlir";
+  for (unsigned variant = 0; variant < 10; ++variant) {
+    auto source = fixture;
+    auto replace = [&](const std::string &a, const std::string &b) { source.replace(source.find(a), a.size(), b); };
+    if (variant == 1) replace("%hi = arith.constant 259", "%hi = arith.constant 4"); // first AND final
+    if (variant == 2) replace("%lo to %hi", "%lo to %lo");
+    if (variant == 3) replace("%lo to %hi", "%lo to %n");
+    if (variant == 4) replace("%lo = arith.constant 3", "%lo = arith.constant -1");
+    if (variant == 5) replace("scf.if %active {", "scf.if %active { pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)");
+    if (variant == 6) replace("ins(%d, %d", "ins(%a, %a"); // suffix path still reads A
+    if (variant == 7) replace("%hi = arith.constant 259", "%hi = arith.constant 260"); // visits 3,131,259
+    if (variant == 8) {
+      replace("%lo = arith.constant 3", "%lo = arith.constant 9223372036854775600");
+      replace("%hi = arith.constant 259", "%hi = arith.constant 9223372036854775807"); // final increment overflows
+    }
+    if (variant == 9) replace("%step = arith.constant 128", "%step = arith.constant 1");
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module), "parse joint reader fixture")) return false;
+    auto function = module->lookupSymbol<func::FuncOp>("joint_reader");
+    oahs::NativeAnalysis input;
+    if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function,input)), "import joint reader")) return false;
+    const bool qualified = input.program.observed->qualification.find("joint-reader-prefix-v1") != std::string::npos;
+    if (!check(qualified == (variant == 0 || variant == 1 || variant == 7 || variant == 9),
+               "joint reader must preserve bounds, suffix accesses and generation")) {
+      llvm::errs() << "joint variant=" << variant << " qualified=" << qualified << "\n";
+      return false;
+    }
+    if (!qualified) continue;
+    oahs::SelectedPlan report;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function,{},&report)),
+               "joint reader construction/reconstruction")) return false;
+    bool first = false, final = false;
+    function.walk([&](arith::CmpIOp cmp) {
+      auto constant = cmp.getRhs().getDefiningOp<arith::ConstantIndexOp>();
+      first |= constant && constant.value() == (variant == 9 ? 4 : 131) && cmp.getPredicate() == arith::CmpIPredicate::slt;
+      auto distance = cmp.getLhs().getDefiningOp<arith::SubIOp>();
+      final |= distance && constant && constant.value() == (variant == 9 ? 1 : 128) && cmp.getPredicate() == arith::CmpIPredicate::sle;
+    });
+    if (!check(first && final,"joint native guards use original lower/upper/step")) return false;
+  }
+  // Emission validation must reject a malformed final predicate, even when
+  // selected endpoints themselves were valid and the edited IR still parses.
+  auto module = parseSourceString<ModuleOp>(fixture, &context);
+  auto function = module->lookupSymbol<func::FuncOp>("joint_reader");
+  const auto before = text(function);
+  bool changed = false;
+  ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic &) { return success(); });
+  const auto status = oahs::testing::runSelectedHandoffSyncWithMutation(function,[&](func::FuncOp working) {
+    working.walk([&](arith::CmpIOp cmp) {
+      if (!changed && cmp.getPredicate() == arith::CmpIPredicate::sle &&
+          cmp.getLhs().getDefiningOp<arith::SubIOp>()) {
+        cmp.setPredicate(arith::CmpIPredicate::slt); changed = true;
+      }
+    });
+  });
+  return check(changed && failed(status) && text(function) == before,
+               "changed final predicate must fail transactionally");
+}
 bool positive(MLIRContext &context, const char *source, StringRef name) {
   auto module = parseSourceString<ModuleOp>(source, &context);
   if (!check(bool(module), "parse positive input")) { return false; }
@@ -975,7 +1067,7 @@ const char *occurrenceName(oahs::selected::RequirementOccurrence occurrence) {
   }
   return "?";
 }
-bool frontierFile(MLIRContext &context, const char *path) {
+bool frontierFile(MLIRContext &context, const char *path, bool observations = false) {
   auto module = parseSourceFile<ModuleOp>(path, &context);
   if (!module) return false;
   bool accepted = true;
@@ -995,6 +1087,53 @@ bool frontierFile(MLIRContext &context, const char *path) {
                        !storage.complete() ? storage.reason() : frontiers.reason()) << "\n";
       accepted = false;
       return;
+    }
+    if (observations) {
+      // Report the existing importer/control views. These are observations and
+      // candidate frontiers, not a second lifetime analysis or completion proof.
+      for (const auto &note : imported.observationNotes)
+        llvm::outs() << "observation_note\t" << note << "\n";
+      for (const auto &loop : imported.program.observed->loops) {
+        llvm::outs() << "reader_owner\t" << loop.owner
+                     << "\tentry\t" << loop.entry << "\texit\t" << loop.exit
+                     << "\tfirst_visit_sites\t" << loop.firstVisitPrefix.size();
+        if (loop.entry < imported.cuts.size())
+          if (auto original = dyn_cast_or_null<scf::ForOp>(imported.cuts[loop.entry])) {
+            auto bound = [](Value value) {
+              if (auto constant = value.getDefiningOp<arith::ConstantIndexOp>())
+                llvm::outs() << constant.value();
+              else llvm::outs() << "unknown";
+            };
+            llvm::outs() << "\tlower\t"; bound(original.getLowerBound());
+            llvm::outs() << "\tupper\t"; bound(original.getUpperBound());
+            llvm::outs() << "\tstep\t"; bound(original.getStep());
+            unsigned choices = 0;
+            original.walk([&](scf::IfOp) { ++choices; });
+            llvm::outs() << "\toriginal_choices\t" << choices;
+          }
+        std::set<oahs::Cut> finalWords;
+        for (auto site : loop.sites) {
+          const auto observation = imported.program.observed->sites[site].observation;
+          if (observation == oahs::NoAnalysisId) continue;
+          for (const auto &atom : imported.program.observed->observations[observation].atoms)
+            if (atom.kind == oahs::ObservationAtom::LoopHasNext && atom.owner == loop.owner && atom.value == 0)
+              finalWords.insert(control.canonicalCut[site]);
+        }
+        llvm::outs() << "\tfinal_visit_words\t" << finalWords.size() << "\tfirst_input_sites";
+        for (const auto &entry : control.loopEntries) if (entry.entry == loop.entry)
+          for (auto site : entry.firstInputConsumers) llvm::outs() << "\t" << site;
+        llvm::outs() << "\n";
+        for (const auto &entry : control.loopEntries) if (entry.entry == loop.entry)
+          for (auto site : entry.firstInputConsumers) {
+            const auto phase = imported.program.observed->sites[site].operation;
+            if (phase == oahs::NoAnalysisId) continue;
+            llvm::outs() << "first_input\towner\t" << loop.owner << "\tsite\t" << site
+                         << "\tphase\t" << phase << "\tread_cells";
+            for (const auto &access : imported.program.operations[phase].accesses)
+              if (access.read) llvm::outs() << "\t" << access.cell;
+            llvm::outs() << "\n";
+          }
+      }
     }
     struct Aggregate {
       std::size_t count = 0;
@@ -1080,14 +1219,17 @@ int main(int argc, char **argv) {
   if (argc == 3 && StringRef(argv[1]) == "--frontiers") {
     return frontierFile(context, argv[2]) ? 0 : 1;
   }
+  if (argc == 3 && StringRef(argv[1]) == "--observations") {
+    return frontierFile(context, argv[2], true) ? 0 : 1;
+  }
   if (argc != 1) {
-    llvm::errs() << "usage: pto-oahs-selected-test [--construct INPUT | --frontiers INPUT]\n";
+    llvm::errs() << "usage: pto-oahs-selected-test [--construct INPUT | --frontiers INPUT | --observations INPUT]\n";
     return 2;
   }
   const bool passed = positive(context, ordinary, "ordinary") && positive(context, loop, "loop") &&
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
-                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && staticFifoSlotQualification(context) && firstConsumerPlacement(context) && lastReaderPlacement(context);
+                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && staticFifoSlotQualification(context) && firstConsumerPlacement(context) && lastReaderPlacement(context) && jointReaderPlacement(context);
   return passed ? 0 : 1;
 }

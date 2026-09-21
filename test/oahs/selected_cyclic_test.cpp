@@ -658,6 +658,131 @@ void readerRegionCycles()
     }), "regenerated reader input admitted as invariant");
 }
 
+// First readiness and final release share one original owner, including a
+// conditional suffix whose words must remain common to every visit.
+void jointReaderVisits()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::MTE1;
+    auto input = base(4, 6);
+    input.operations = {op(P, {{0,false,true}}), op(P, {{1,false,true}}),
+        op(Q, {{0,true,false}}), op(Q, {{1,true,false}}),
+        op(Q, {{0,true,false}}), op(Q, {{1,true,false}}),
+        op(o::Pipe::M, {{2,true,false}}), op(o::Pipe::M, {{3,true,false}})};
+    input.body = {o::Region::For, {seq({leaf(0), leaf(1),
+        {o::Region::For, {seq({leaf(2),leaf(3),leaf(4),leaf(5),
+            {o::Region::Choice,{leaf(6),leaf(7)}}})},0,true}})},0,true};
+    const auto original = readerRegionProgram(input);
+    const auto &old = *original.observed;
+    const auto child = std::find_if(old.loops.begin(),old.loops.end(),[&](const auto &loop) {
+        return std::none_of(loop.sites.begin(),loop.sites.end(),[&](auto site) {
+            return old.sites[site].operation == 0;
+        });
+    });
+    require(child != old.loops.end(), "joint reader child missing");
+    auto siteOf = [&](unsigned phase) {
+        return std::size_t(std::find_if(old.sites.begin(),old.sites.end(),[&](const auto &site) {
+            return site.operation == phase;
+        })-old.sites.begin());
+    };
+    o::ReaderVisitRegion request;
+    request.owner = child->owner; request.step = 128;
+    request.firstConsumers = {siteOf(3)};
+    request.lastPublications = {old.sites[siteOf(4)].successors.front()};
+    unsigned paths = 0;
+    for (bool single : {false,true}) {
+        request.singleVisit = single;
+        const auto refined = o::refineReaderVisits(original,request);
+        require(refined.success, "joint reader refinement: " + refined.reason);
+        const auto &p = refined.program;
+        const auto &g = *p.observed;
+        require(p.operations.size() == original.operations.size(), "joint refinement copied payloads");
+        for (const auto &site : g.sites) if (site.operation == 6 || site.operation == 7)
+            require(site.observation == old.sites[siteOf(site.operation)].observation,
+                    "conditional suffix word was split by visit mode");
+        const auto plan = accepted(p);
+        bool first = false, final = false;
+        for (const auto &channel : plan.channels) {
+            for (auto cut : channel.acquisitions) for (const auto &a : g.observations[g.sites[cut].observation].atoms)
+                first |= a.owner == request.owner && a.kind == o::ObservationAtom::LoopHasPrevious && a.value == 0;
+            for (auto cut : channel.publications) for (const auto &a : g.observations[g.sites[cut].observation].atoms)
+                final |= a.owner == request.owner && a.kind == o::ObservationAtom::LoopHasNext && a.parameter == 128 && a.value == 0;
+        }
+        require(first && final, "joint endpoints did not both reach construction");
+        const auto lengths = single ? std::vector<std::vector<unsigned>>{{},{1},{1,1}} :
+            std::vector<std::vector<unsigned>>{{},{2},{3},{4},{2,3},{4,2}};
+        for (const auto &entries : lengths) {
+            const unsigned visits = std::accumulate(entries.begin(),entries.end(),0u);
+            for (unsigned mask = 0; mask < (1u << visits); ++mask) {
+                std::vector<unsigned> expected;
+                std::vector<std::pair<bool,bool>> modes;
+                unsigned bit = 0;
+                for (auto length : entries) {
+                    expected.insert(expected.end(),{0,1});
+                    modes.insert(modes.end(),2,{false,false});
+                    for (unsigned i=0; i<length; ++i) {
+                        expected.insert(expected.end(),{2,3,4,5,6+((mask>>bit++)&1u)});
+                        modes.insert(modes.end(),5,{i==0,i+1==length});
+                    }
+                }
+                std::vector<o::Cut> path;
+                std::set<std::pair<o::Cut,unsigned>> active, dead;
+                std::function<bool(o::Cut,unsigned)> walk = [&](o::Cut at,unsigned offset) {
+                    const auto key=std::make_pair(at,offset);
+                    if (active.count(key)||dead.count(key)) return false;
+                    const auto &site=g.sites[at];
+                    if (site.observation != o::NoControlId) for (const auto &a : g.observations[site.observation].atoms) {
+                        if (a.owner != request.owner) continue;
+                        if (a.kind == o::ObservationAtom::LoopHasPrevious &&
+                            (offset >= modes.size() || a.value != unsigned(!modes[offset].first))) return false;
+                        if (a.kind == o::ObservationAtom::LoopHasNext &&
+                            (offset >= modes.size() || a.value != unsigned(!modes[offset].second))) return false;
+                    }
+                    if (site.operation != o::NoControlId) {
+                        if (offset == expected.size() || site.operation != expected[offset]) return false;
+                        ++offset;
+                    }
+                    path.push_back(at);
+                    if(at==g.exit && offset==expected.size()) return true;
+                    active.insert(key);
+                    for(auto next:site.successors) if(walk(next,offset)) return true;
+                    active.erase(key);dead.insert(key);path.pop_back();return false;
+                };
+                require(walk(g.entry,0),"joint observations lost an original branch/visit trace");
+                auto flat=p;flat.observed.reset();flat.body={};flat.operations.clear();
+                o::Commands words;std::vector<o::Command> pending;
+                for(auto cut:path) {
+                    pending.insert(pending.end(),plan.commands[cut].begin(),plan.commands[cut].end());
+                    const auto phase=g.sites[cut].operation;
+                    if(phase==o::NoControlId) continue;
+                    flat.operations.push_back(p.operations[phase]);words.push_back(std::move(pending));pending.clear();
+                }
+                words.push_back(std::move(pending));
+                std::vector<unsigned> sequence(flat.operations.size());std::iota(sequence.begin(),sequence.end(),0);
+                require(bool(oahs_oracle::graph(flat,words,sequence)),"joint trace lost completion/matching/rearming");
+                ++paths;
+            }
+        }
+        for(const auto &channel:plan.channels) {
+            auto broken=plan.commands;
+            for(auto &word:broken) word.erase(std::remove_if(word.begin(),word.end(),[&](const auto &cmd) {
+                return (cmd.kind==o::Command::Publish || cmd.kind==o::Command::Acquire) &&
+                    cmd.source==channel.source && cmd.observer==channel.observer && cmd.key==channel.key;
+            }),word.end());
+            require(!o::checkCausalFrontier(p,broken).accepted,"joint reader accepted missing support");
+        }
+        require(!o::refineReaderVisits(p,request).success,"joint owner refined twice");
+    }
+    auto bad=request;bad.step=0;
+    require(!o::refineReaderVisits(original,bad).success,"zero-step final visit admitted");
+    bad=request;bad.lastPublications={siteOf(6)};
+    require(!o::refineReaderVisits(original,bad).success,"conditional last reader admitted as unconditional");
+    auto empty=original;
+    for(auto &loop:empty.observed->loops) if(loop.owner==request.owner) loop.atLeastOnce=false;
+    require(!o::refineReaderVisits(empty,request).success,"empty joint reader admitted");
+    require(paths>100,"joint branch/entry coverage missing");
+    std::cout << "joint-reader branch/entry paths=" << paths << "\n";
+}
+
 // Final original visits expose the physical release before trailing Q work.
 void lastReaderWithinChild()
 {
@@ -1614,6 +1739,7 @@ int main()
     independentBankEpisodes();
     readerRegionCycles();
     lastReaderWithinChild();
+    jointReaderVisits();
     retainedReaderRegions();
     retainedProducerCohort();
     sharedReaderReturns();

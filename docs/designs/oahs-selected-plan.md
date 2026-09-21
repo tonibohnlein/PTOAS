@@ -701,3 +701,19 @@ They share existing storage, control and selected-state views; first-pass facts
 never grant completion. See [scope, validation and controls](oahs-placement-experiments.md).
 The running MAT device snapshot is unchanged. Legacy generic frontier motion
 remains default, with an independently testable no-motion control.
+
+## Joint first/final reader prefix
+
+The native first-consumer importer can collect final-reader endpoints on the
+same original owner before refinement. Positive constant steps are retained
+in the final-distance predicate, with checked arithmetic and a distinct
+single-visit case. Only requested words gain predicates; conditional suffix
+payloads and command identities remain shared. Final analytical continuations
+remain separate to preserve exit/backedge correspondence.
+
+The existing reader-region cycle selector uses this qualified frontier and
+validates the exact staged readiness/return protocol. This moves down_proj's A0
+release before the unrelated B0 wait while retaining B0's first-consumer receipt.
+No receipt, completion or key credit comes from the new observation itself.
+The [implementation report](oahs-joint-reader-prefix.md) records the corpus
+ordering benefit, additional compiler work and pending device comparison.

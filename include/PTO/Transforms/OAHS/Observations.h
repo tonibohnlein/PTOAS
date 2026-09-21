@@ -63,6 +63,9 @@ struct ObservedLoop {
   // A frontend-qualified first-iteration prefix. Other words may remain shared
   // with later visits; they cannot consume a one-time publication repeatedly.
   std::vector<std::size_t> firstVisitPrefix = {};
+  // Qualified original distance for a final-visit observation. Legacy unit
+  // loops use one; a joint reader frontend supplies the original positive step.
+  uint64_t lastVisitDistance = 1;
 };
 struct ObservedControl {
   std::vector<ObservedSite> sites;

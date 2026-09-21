@@ -11,7 +11,8 @@
 #include <limits>
 
 namespace mlir::pto::oahs::native_detail {
-// Split only a straight first-iteration prefix. The original positive bounds
+// Collect first/final endpoint roles before refining one original owner.
+// The first-only fallback splits a straight prefix. Original positive bounds
 // prove entry; the backedge still admits arbitrarily many later visits. Only
 // invariant-input consumers get distinct first/later command observations.
 // Other original words, physical operations and all completion histories stay
@@ -143,6 +144,62 @@ inline void importFirstConsumers(
       at = site.successors[0];
     }
     if (!last) continue;
+    // Collect the other end of the lifetime on the SAME original owner,
+    // before either observation refinement claims it. The straight prefix may
+    // be followed by arbitrary acyclic choices; every suffix access is checked.
+    std::set<std::size_t> lastPublications;
+    if (loop->getParentOfType<scf::ForOp>() &&
+        *lower + ((*upper - *lower - 1) / *step) * *step <=
+            std::numeric_limits<int64_t>::max() - *step) {
+      std::map<unsigned, std::set<Pipe>> readers;
+      std::map<unsigned, std::size_t> lastRead;
+      std::set<unsigned> suffixReads;
+      const std::set<std::size_t> prefixSites(prefix.begin(), prefix.end());
+      for (auto site : members) {
+        const auto op = old.sites[site].operation;
+        if (op == NoControlId) continue;
+        for (auto a : program.operations[op].accesses) if (a.read) {
+          readers[a.cell].insert(program.operations[op].pipe);
+          if (!prefixSites.count(site)) suffixReads.insert(a.cell);
+        }
+      }
+      for (std::size_t i = 0; i < prefix.size(); ++i) {
+        const auto op = old.sites[prefix[i]].operation;
+        if (op != NoControlId) for (auto a : program.operations[op].accesses)
+          if (a.read) lastRead[a.cell] = i;
+      }
+      for (const auto &[cell, index] : lastRead) {
+        if (written.count(cell) || suffixReads.count(cell) || readers[cell].size() != 1 ||
+            writers[cell].size() != 1 || bodyPipes.count(*writers[cell].begin()) ||
+            program.cells[cell].exclusive || program.cells[cell].unknownRange ||
+            index + 1 >= prefix.size() || consumers.count(prefix[index + 1])) continue;
+        const auto reader = *readers[cell].begin();
+        bool trailing = false;
+        for (auto i = index + 1; i < prefix.size(); ++i) {
+          const auto op = old.sites[prefix[i]].operation;
+          trailing |= op != NoControlId && program.operations[op].pipe == reader;
+        }
+        if (trailing) lastPublications.insert(prefix[index + 1]);
+      }
+    }
+    if (!lastPublications.empty()) {
+      ReaderVisitRegion request;
+      request.owner = owner;
+      request.firstConsumers.assign(consumers.begin(), consumers.end());
+      request.lastPublications.assign(lastPublications.begin(), lastPublications.end());
+      request.step = uint64_t(*step);
+      request.singleVisit = *upper - *lower <= *step;
+      auto refined = refineReaderVisits(program, request);
+      if (refined.success) {
+        selected::Control control(refined.program);
+        if (control.complete) {
+          program = std::move(refined.program);
+          owners[owner] = loop;
+          notes.push_back("qualified joint first/final reader prefix: step " + std::to_string(*step));
+          continue;
+        }
+      }
+    }
     // Include the command anchor immediately after the final copied payload.
     // Joining at that anchor would otherwise erase its source publication cut.
     if (prefix.size() <= last) continue;
