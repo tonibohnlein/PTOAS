@@ -559,7 +559,8 @@ Group Constructor::sourceGroup(
                         return control.reachable[publication] && control.straight(publication, cut);
                     });
             })) continue;
-        if (options.finalReadSources && !control.finalReadGaps.empty() &&
+        if ((publications.size() > 1 || occurrences.size() > 1 ||
+                (options.finalReadSources && !control.finalReadGaps.empty())) &&
             !control.balancedWords(handle.cut, current)) continue;
         const auto covered = coverage(handle.cut, source, required);
         if (!std::includes(covered.begin(), covered.end(), needed.begin(), needed.end())) continue;

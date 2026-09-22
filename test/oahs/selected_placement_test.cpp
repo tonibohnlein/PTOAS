@@ -8,10 +8,71 @@
 #include "SelectedTestSupport.h"
 #include "GraphOracle.h"
 #include <array>
+#include <functional>
 #include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
 using namespace selected_test;
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void joinedConsumptionReturn() {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto input = base(3, 1);
+        input.operations = {op(P, {{0,false,true}}), op(Q, {{0,true,false}}),
+            op(Q, {{0,true,false}}), op(P, {{1,false,true}}),
+            op(P, {{2,false,true}}), op(Q, {{1,true,false}})};
+        input.body = seq({leaf(0), {Region::Choice, {leaf(1),leaf(2)}}, leaf(3), leaf(4), leaf(5)});
+        auto imported = addStructuredBoundaryCuts(input);
+        require(imported.success, imported.reason);
+        const auto& p = imported.program;
+        auto cut = [&](unsigned op) {
+            for (Cut i = 0; i < p.observed->sites.size(); ++i)
+                if (p.observed->sites[i].operation == op) return i;
+            return NoAnalysisId;
+        };
+        Commands fixed(commandCutCount(p));
+        const auto firstPublication = p.observed->sites[cut(0)].successors.front();
+        fixed[firstPublication] = {{Command::Publish,P,Q,0}};
+        fixed[cut(1)] = fixed[cut(2)] = {{Command::Acquire,P,Q,0}};
+        SelectedOptions options; options.finalHelperTrials = false;
+        const auto plan = constructSelectedPlan(p,fixed,options);
+        require(plan.success, "joined consumption construction: " + plan.reason);
+        require(plan.work.joinedAcknowledgments == 1 && plan.work.acknowledgmentChecks == 1,
+                "alternative consumptions did not select one checked return");
+        require(checkCausalFrontier(p,plan.commands).accepted, "joined return failed cold validation");
+        require(plan.decisions.back().publication == cut(4), "joined repair widened early source past unrelated load");
+        std::function<void(Cut,Program,Commands,std::vector<Command>)> walk;
+        walk = [&](Cut at, Program flat, Commands words, std::vector<Command> pending) {
+            pending.insert(pending.end(),plan.commands[at].begin(),plan.commands[at].end());
+            const auto& site = p.observed->sites[at];
+            if (site.operation != NoAnalysisId) {
+                flat.operations.push_back(p.operations[site.operation]);
+                words.push_back(std::move(pending)); pending.clear();
+            }
+            if (at == p.observed->exit) {
+                words.push_back(std::move(pending));
+                std::vector<unsigned> trace(flat.operations.size());
+                std::iota(trace.begin(),trace.end(),0);
+                require(bool(oahs_oracle::graph(flat,words,trace)), "joined return failed independent oracle");
+            } else for (auto next : site.successors) walk(next,flat,words,pending);
+        };
+        auto flat = p; flat.observed.reset(); flat.body = {}; flat.operations.clear();
+        walk(p.observed->entry,flat,{},{});
+        auto missing = plan.commands;
+        for (auto& word : missing)
+            word.erase(std::remove_if(word.begin(),word.end(),[&](const Command& c) {
+                return c.source == Q && c.observer == P;
+            }),word.end());
+        require(!checkCausalFrontier(p,missing).accepted, "missing joined consumption support was accepted");
+        auto unavailable = p;
+        unavailable.target.keys[unsigned(Q)][unsigned(P)].clear();
+        const auto refused = constructSelectedPlan(unavailable,fixed,options);
+        require(!refused.success && refused.commands.empty(), "joined return invented an unavailable reverse key");
+        // A branch which does not consume leaves a maybe-full key: a return
+        // must not turn this into empty occupancy.
+        auto unconsumed = fixed;
+        unconsumed[cut(2)].clear();
+        require(!constructSelectedPlan(p,unconsumed,options).success,
+                "joined return accepted an unconsumed branch");
+    }
     static void reusedGapCertificates() {
         const auto P = Pipe::MTE2, Q = Pipe::V;
         // All states are obtained by production replay of actual endpoints.
@@ -459,6 +520,7 @@ void noMotionAndRandom() {
 }
 }
 int main() {
+    o::selected::ReplayTestAccess::joinedConsumptionReturn();
     o::selected::ReplayTestAccess::reusedGapCertificates();
     o::selected::ReplayTestAccess::proposalWordOrder();
     o::selected::ReplayTestAccess::proposalOmissionWords();

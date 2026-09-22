@@ -8,21 +8,33 @@ advancing acquisition deadlines.
 
 ## Current priority: broad sweep follow-up
 
-1. Semantic fixes implemented: A3 non-exhausting tmrgsort and unchanged-address
-   FFTS configuration. route_sort passes. Next qk_pv blocker is the authored
-   cross-core wait contract; do not infer it from FFTS admission.
-2. hc_head key-3 borrow at 209→228 is checked and selected, including dormant
-   helper restoration. Next shortage: 215→230, with alternative-path consumption
-   support needed for other keys.
-3. KDA now constructs with early final-read sources. Its quality gate fails
-   (1784 removed, 706 added relations); identify those added paths before timing.
-4. RMSNorm/hc_pre: compare physical final scratch uses and entry exchanges.
-   Initial exact-plan full-tile diagnostics show broader handoff ordering.
-5. Attribute compressor across four changed kernels and pool/commit/norm
-   dispatch dependencies, retaining the 25%-finite kv golden qualification.
+The instruction policy is now **use existing InsertSync's translation**. No
+independent OAHS approval of instruction semantics is required. Keep the optional
+semantic audit separate from compilation. Instruction-effect corrections belong
+in the shared interfaces/translator; absence of a registered contribution is not
+an OAHS error.
 
-See [reproduction evidence and limits](oahs-sweep-followup.md). No compatibility
-fix may bypass effect admission or treat emptiness as consumption knowledge.
+2026-09-22 exact-input result: **19/19 construct and reconstruct**. The six
+constructor failures are fixed locally through general occurrence, participation
+and consumption-return handling. See [diagnosis](oahs-constructor-compatibility.md).
+The stricter instruction-admission gate remains removed; do not reintroduce it.
+
+Next acceptance work:
+
+1. Run full model builds and device correctness for the newly admitted sweep
+   kernels. Local evidence currently covers native construction/reconstruction.
+2. Compare complete ordering for changed partial-attention AIV plans in modules
+   44–47: each adds 15 static SET/WAIT pairs; replay grows 610,965 → 616,865.
+   All 88 corpus modules pass, 84 remain byte-identical. Refined
+   control now obtains full contextual states before selection; Qwen AIV needs
+   850,615 replay evaluations. Preserve correctness while reducing that work.
+3. Resume KDA's optional early-final-read quality gate (1784 relations removed,
+   706 added), then RMSNorm/hc_pre prefix attribution and compressor serialization
+   with its finite-25% kv golden limitation explicit.
+
+See [exact artifacts and instruction-policy change](oahs-sweep-followup.md#shared-translator-policy--2026-09-22).
+Runtime/lowering-model audits are separate work. No new timing claim follows
+from admitting these inputs or completing their synchronization plans.
 
 ## Implemented locally: ordinary final-read source
 

@@ -1,13 +1,13 @@
 # OAHS current handoff
 
-Updated: 2026-09-21
+Updated: 2026-09-22
 
 ## Checkout
 
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: original-choice readiness frontiers, host validated
+- Current milestone: shared translation and six constructor compatibility repairs, host validation
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
@@ -16,13 +16,39 @@ Verify the branch, HEAD, and working tree before continuing. A newer user commit
 
 See [exact reproductions, fixes and remaining gates](docs/designs/oahs-sweep-followup.md).
 
-- Exact route_sort now constructs/reconstructs after qualifying the A3
-  non-exhausting tmrgsort effect. FFTS same-address configuration is admitted through its operation-owned
-  `SyncConfigurationOpInterface` (no translator opcode classifier);
-  qk_pv next stops at an authored cross-core protocol contract.
-- hc_head borrows closed key 3 at 209→228 with staged helper restoration.
-  It next fails at 215→230: key 3 is live, key 2 overlaps, other keys need
-  consumption support across alternatives. Do not report complete acceptance.
+The instruction-model policy has been corrected: OAHS directly consumes
+`PTOIRTranslator::Build()` nodes, as existing InsertSync does. `describeSemantics()`
+is an optional audit, not an instruction-admission gate. Missing registrations
+contribute no additional sync effects; the original instructions remain in IR.
+Origin refresh follows the translator's fallback for incomplete optional metadata.
+The extra A3 notification admission code has been removed. The shared `tdivs`
+effect correction remains.
+
+Exact sweep recheck: **19/19 construct and reconstruct**. All six later
+constructor failures are fixed locally. See [diagnosis and mechanisms](docs/designs/oahs-constructor-compatibility.md).
+Refined occurrences now use complete contextual states before endpoint selection;
+ordinary shared words check participation and actual rearming; alternative
+consumptions can return their knowledge at the existing publication gap.
+Strict source-time key checks, cold checking and reconstruction remain active.
+No instruction-specific rule or unlimited-event assumption was added.
+
+Artifacts: `../sweep-followup-work/constructor-final-*` and the corresponding
+`translation-policy-cases/` / `translation-policy-corpus/` outputs. Both native
+suites and all 25 portable suites pass. The 88-module corpus constructs and
+reconstructs: 84 plans are byte-identical, four partial-attention modules
+(`prefill_fwd__44`–`__47`) change in their AIV functions. Each adds 15 static
+SET/WAIT pairs, with unchanged barriers; AIV replay grows 610,965 → 616,865.
+Their ordering and device-performance comparison remains open; this is a
+compatibility repair, not a synchronization-quality improvement claim.
+These are host construction/reconstruction results, not complete model builds
+or device tests. The earlier 13/19 report predates these constructor repairs.
+
+- `hc_head_reduce` now passes using two joined-consumption returns (two staged
+  checks, 1,568 analysis-site evaluations), while retaining the earlier key-3
+  reservation borrowing. The six errors were not proof of event-ID exhaustion.
+- Qwen AIV now completes with 850,615 replay evaluations in the exact decode
+  input. Full occurrence evaluation has a compile-time cost; reducing it while
+  preserving these states is follow-up work, not a claimed speedup here.
 - KDA first-write + final-read now constructs/reconstructs after protecting
   dormant helper ownership and checking the next publication when choosing a
   reverse key. Its quality gate still fails: 1784 relations removed, 706 added.
@@ -31,15 +57,9 @@ See [exact reproductions, fixes and remaining gates](docs/designs/oahs-sweep-fol
   prefixes; scratch aliases matter. Compressor attribution remains component-level
   work with the finite-25% kv validation limit explicit.
 
-Current artifacts are under `../sweep-followup-work/`. The native semantic
-suite and all 25 portable suites pass. The default corpus passes 88/88; 83 plans are identical, four differ only in
-event-key numbers, and one RMSNorm adds helpers with equal ordering in the tested
-finite trace (1968 relations). See the follow-up report for the comparison scope. No commit or device timing in this checkpoint.
-
-The configuration-interface amendment rebuilt PTOIR and the dependent native
-tests successfully. Both native suites pass; exact route_sort is unchanged from
-the previous fixed plan, and qk_pv retains only its separate authored-protocol
-rejection. See `config-interface-*.log` in the same artifact directory.
+Prior compatibility checkpoints and their corpus comparisons are historical;
+see the dated sections of the sweep follow-up report. Current acceptance does
+not require byte identity: changed plans need separate ordering and cost review.
 
 ## Latest implementation: final-read sources in ordinary construction
 

@@ -192,14 +192,14 @@ inline LogicalResult closeStructuredSyncOrigins(
   }
   for (auto &addition : additions) append(addition.first, std::move(addition.second));
   // Refresh from original operation effects, not from the old (possibly empty)
-  // translated use/def list. Completeness is checked separately by the caller.
+  // translated use/def list. Match the translator's precedence: incomplete
+  // optional protocol descriptions fall through to the ordinary interfaces.
   for (auto &entry : phases) {
     auto *phase = dyn_cast<CompoundInstanceElement>(entry.get());
     if (!phase) continue;
     SmallVector<Value> reads, writes;
-    if (auto protocol = getSyncProtocolModel(phase->elementOp)) {
-      if (!protocol->complete())
-        return phase->elementOp->emitError("incomplete protocol during origin closure");
+    if (auto protocol = getSyncProtocolModel(phase->elementOp);
+        protocol && protocol->complete()) {
       reads = protocol->reads;
       writes = protocol->writes;
     } else if (auto macro = getSyncMacroModel(phase->elementOp)) {

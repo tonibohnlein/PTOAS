@@ -140,6 +140,8 @@ struct SelectedWork {
     // Structural next-publication/actual-return queries, not full trial solves.
     std::size_t splitRearmingQueries = 0;
     uint64_t splitRearmingSites = 0;
+    std::size_t joinedAcknowledgments = 0, acknowledgmentChecks = 0;
+    uint64_t acknowledgmentCheckSites = 0;
     std::size_t recurringTrials = 0, redundantRecurringChannels = 0;
     std::size_t sharedReaderReturns = 0, returnSharingQueries = 0;
     uint64_t returnSharingSiteVisits = 0;

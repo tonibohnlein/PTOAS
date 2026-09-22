@@ -806,9 +806,8 @@ bool accumulatorOrdering(MLIRContext &context) {
     if (mutation == 4) {
       bool rejected = true;
       function.walk([&](TMatmulAccOp op) { rejected &= !syncAccumulatorOrder(op); });
-      if (!check(rejected && failed(oahs::analyzeHandoffSync(function, imported)),
+      if (!check(rejected,
                  "phase mode borrowed ordinary ACC credit")) return false;
-      continue;
     }
     if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)), "ACC import")) return false;
     const bool qualified = llvm::any_of(imported.program.cells, [](const auto &c) { return c.nativeMmadAccOrder; });
@@ -1135,6 +1134,9 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
                  << " first_write_consumers=" << options.firstWriteConsumers
                  << " split_rearming_queries=" << report.work.splitRearmingQueries
                  << " split_rearming_sites=" << report.work.splitRearmingSites
+                 << " joined_acknowledgments=" << work.joinedAcknowledgments
+                 << " acknowledgment_checks=" << work.acknowledgmentChecks
+                 << " acknowledgment_check_sites=" << work.acknowledgmentCheckSites
                  << " proposal_sites=" << work.proposalCheckSites
                  << " proposal_microseconds=" << work.proposalCheckMicroseconds
                  << " rejected_protocol=" << work.rejectedProtocolProposals

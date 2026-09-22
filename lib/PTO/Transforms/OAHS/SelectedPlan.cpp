@@ -16,6 +16,24 @@ Constructor::Constructor(const Program& p, SelectedOptions settings)
 {
     // Final-source proofs query every original occurrence, including exits.
     needsContextualReplay = options.finalReadSources && !control.finalReadGaps.empty();
+    // A word shared by first/repeated/final observations executes in several
+    // incoming contexts. The hypothesis-seeded traversal has only one of them
+    // when it first repairs the word; its local certificate is insufficient.
+    // Use the existing whole-original-control pending-effects evaluator before
+    // selecting endpoints, so both storage and key queries see every copy.
+    for (const auto& occurrences : control.wordOccurrences)
+        if (std::count_if(occurrences.begin(), occurrences.end(),
+                [&](Cut cut) { return control.reachable[cut]; }) > 1)
+            needsContextualReplay = true;
+    // Distinct observation words can also describe copies of one payload,
+    // such as a counted loop's first/interior/final continuations.
+    std::vector<bool> represented(program.operations.size());
+    for (Cut cut = 0; cut < control.graph.operations.size(); ++cut) {
+        const auto operation = control.graph.operations[cut];
+        if (!control.reachable[cut] || operation == NoAnalysisId) continue;
+        if (represented[operation]) needsContextualReplay = true;
+        represented[operation] = true;
+    }
 }
 bool Constructor::fail(SelectedFailure failure, std::string reason, Cut cut)
 {

@@ -202,6 +202,7 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
         if (oldWait != NoAnalysisId) break;
     }
     if (oldWait == NoAnalysisId) {
+        if (joinedAcknowledgment(source, observer, publication, key, decision)) return true;
         return fail(SelectedFailure::EventResource,
             "no reusable key or nonrecursive consumption acknowledgment", publication);
     }
@@ -236,6 +237,73 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
             "selected acknowledgment does not rearm its new publication", publication);
     }
     return true;
+}
+bool Constructor::joinedAcknowledgment(
+    Pipe source, Pipe observer, Cut publication, Id& key, SelectedDecision& decision)
+{
+    // Alternative paths may consume the same physical key at different WAITs.
+    // The joined consumer gate still knows that actual consumption. Return it
+    // at the existing publication deadline, without choosing one branch's WAIT
+    // as representative or moving the forward source behind its payload.
+    if (publication == current ||
+        (!cache.contextualFixedPoint && std::any_of(control.components.begin(), control.components.end(),
+            [](const Component& c) { return c.cyclic; })) || !cache.success ||
+        !control.straight(publication, current)) return false;
+    const auto& state = cache.cuts[publication].before;
+    if (!state.causal.reachable()) return false;
+    for (Id forward = 0; forward < frontier.keys().size(); ++forward) {
+        const auto& a = frontier.keys()[forward];
+        if (a.source != source || a.observer != observer || closedKeys.count(forward) ||
+            suspendedReturnKey(forward) || state.consumptions[forward].size() < 2 ||
+            state.causal.facts()->events[forward].occupancy != 1 ||
+            !clearInterval(forward, publication, current)) continue;
+        for (Id reverse = 0; reverse < frontier.keys().size(); ++reverse) {
+            const auto& b = frontier.keys()[reverse];
+            if (b.source != observer || b.observer != source || closedKeys.count(reverse) ||
+                suspendedReturnKey(reverse) || !canPublishAt(publication, reverse)) continue;
+            const Command publish{Command::Publish, observer, source, b.key};
+            const Command acquire{Command::Acquire, observer, source, b.key};
+            bool supported = true;
+            for (auto at : control.wordOccurrences[control.canonicalCut[publication]]) {
+                if (!control.reachable[at]) continue;
+                const auto offset = ledger.word(at).size();
+                auto sent = frontier.command(cache.cuts[at].before.causal, publish, {at, offset});
+                if (!sent.applied) { supported = false; break; }
+                auto received = frontier.command(sent.state, acquire, {at, offset + 1});
+                if (!received.applied) { supported = false; break; }
+                auto local = cache.cuts[at].before;
+                local.causal = received.state;
+                if (!canPublish(local, forward)) { supported = false; break; }
+            }
+            if (!supported) continue;
+            // Check the full exchange together: its forward receipt may be the
+            // path that rearms the reverse key on the next original visit.
+            Ledger trial = ledger;
+            trial.append(publication, publish, EndpointPurpose::ConsumptionAcknowledgment);
+            trial.append(publication, acquire, EndpointPurpose::ConsumptionAcknowledgment);
+            trial.append(publication, {Command::Publish, source, observer, a.key}, EndpointPurpose::Completion);
+            trial.append(current, {Command::Acquire, source, observer, a.key}, EndpointPurpose::Completion);
+            const auto checked = analyze(program, trial.commands(), {false});
+            ++result.work.acknowledgmentChecks;
+            result.work.acknowledgmentCheckSites += checked.stats.siteEvaluations;
+            if (!checked.complete || !checked.protocol.empty() || !checked.diagnostics.empty() ||
+                !checked.phaseResources.empty()) continue;
+            const auto request = result.decisions.size();
+            decision.endpoints.push_back(ledger.append(publication, publish,
+                EndpointPurpose::ConsumptionAcknowledgment, request));
+            decision.endpoints.push_back(ledger.append(publication, acquire,
+                EndpointPurpose::ConsumptionAcknowledgment, request));
+            // There is no single acknowledged endpoint. Keep this return
+            // explicit; the single-anchor online discharge does not apply.
+            decision.repairedForwardKey = a.key;
+            decision.repairReverseKey = b.key;
+            ++result.work.acknowledgments;
+            ++result.work.joinedAcknowledgments;
+            key = forward;
+            return true;
+        }
+    }
+    return false;
 }
 Id Constructor::reusableAtStart(Cut cut, Pipe source, Pipe observer) const
 {
@@ -632,9 +700,9 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     const bool repeated = std::any_of(acquisitionOccurrences.begin(), acquisitionOccurrences.end(), [&](Cut cut) {
         return control.reachable[cut] && control.components[control.component[cut]].cyclic;
     });
-    if (options.firstWriteConsumers && !closed && repeated &&
+    if (!closed && repeated &&
         (publicationOccurrences.size() > 1 || acquisitionOccurrences.size() > 1 ||
-            control.firstWriteWords.count(control.canonicalCut[publication])) &&
+            (options.firstWriteConsumers && control.firstWriteWords.count(control.canonicalCut[publication]))) &&
         !consumptionBeforeNextPublication(publication, current, key)) {
         // Certify a direct return at the actual new consumption. Its source
         // position never moves the forward publication behind unrelated work.

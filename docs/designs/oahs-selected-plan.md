@@ -320,6 +320,21 @@ memory-conflict edges. Event preconditions remain strict. Each edit checks all
 previously finalized requirements at convergence. No stale completion or
 provisional receipt escapes the selected ledger.
 
+The same contextual path is required from the start when a command word or
+original payload has multiple reachable analytical occurrences. A partially
+visited hypothesis traversal cannot certify all copies. Ordinary shared-word
+sources also require balanced participation and consumption-before-next-publication
+support, independently of the experimental first-write option.
+
+F7 can return consumption knowledge joined from alternative WAIT sites at an
+existing publication position. This requires an empty forward key, actual
+consumption knowledge at the reverse source, a usable reverse key and a checked
+complete exchange across all occurrences. It does not select one branch as
+representative. The initial implementation requires distinct publication and
+consumer cuts; common-cut repair retains the closed-exchange path. See
+[constructor compatibility](oahs-constructor-compatibility.md) for the exact
+admission, counters and regressions.
+
 Contextual replay reuses a predecessor-closed set of components from a successful
 whole-original-graph contextual fixed point. Invalidation starts at every
 reachable occurrence of every edited word. It closes under original control

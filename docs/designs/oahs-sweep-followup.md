@@ -1,8 +1,120 @@
 # Broad sweep follow-up: compatibility and independent workloads
 
 The device sweep compares existing and handoff at `7c48f4ab3`. Its timing
-results do not validate the uncommitted first-write/final-read experiments.
+results do not validate the opt-in first-write/final-read experiments.
 Local diagnostic artifacts: `../sweep-followup-work/`.
+
+## Shared-translator policy — 2026-09-22
+
+This supersedes the earlier instruction-admission work below. OAHS imports
+`CompoundInstanceElement` nodes directly from existing InsertSync's translator,
+without requiring `describeSemantics().complete()`. An instruction with no
+translated node contributes no sync effects. A pipeline node with no mapped
+memory effects remains an empty-effect pipeline node. Original operations,
+attributes and control are preserved; they are not marked pure for other passes.
+
+The new A3 notification-specific model was removed. The shared `tdivs` effect
+correction remains a normal instruction-interface fix. Structured origin refresh
+also follows the translator's precedence: incomplete optional protocol metadata
+falls back to ordinary effects instead of vetoing construction. Audit reports
+remain available but do not supply or withhold synchronization credit.
+
+The causal and emitted-plan checks still verify all represented dependencies and
+event generations. Native target/control/anchor representation limits also remain:
+multiple translated phases of one instruction need phase-aware native anchors;
+the adapter rejects that structural case rather than losing later phases.
+
+The 19 exact archived inputs now all pass semantic import; **13 construct and
+reconstruct**. The two async-prefetch modules now pass. Both Qwen AIC functions
+pass; their AIV companions get past cache invalidation and expose unresolved
+byte completion at cut 638. Other remaining failures are `topk_select` at cut 77
+and resource shortages in `hc_head_reduce` (215), `mtp_linear` (241), and
+`kernel_softmax_prepare` (111). These are constructor issues, not missing
+instruction approval. Exact results are `translation-policy-cases/summary.json`
+and per-case logs under the artifact directory.
+
+Regressions separate audit diagnostics from compilation and cover no-interface
+instructions, pipeline-only instructions, unmapped effects and preserved variants.
+The ACC phase-attribute case must import while retaining ordinary M barriers:
+removing the admission gate grants no additional native ACC-order credit.
+The checker and payload/control reconstruction have not been weakened.
+
+Both rebuilt native suites pass. The four former semantic-rejection fixtures
+now pass construction plus FileCheck; the malformed physical-translation
+fixture still fails with its original diagnostic. These fixture checks used
+the linked native constructor driver, not a full lit invocation. The native
+suite also rejects unsupported structured control without dropping its
+translated child phases. See `translation-policy-final-*-test.log` and
+`translation-policy-lit/` for these checks.
+
+Final corpus rerun: **88/88 pass, 88/88 byte-identical** to the preceding
+`default-corpus/` snapshot. Results are in
+`translation-policy-corpus/summary.json`; all constructor processes ran with
+at most two workers in aggregate. The 19-case rerun on the final binary retains
+the 13 successes and six constructor failures listed above.
+
+## Historical strict-admission recheck — 2026-09-22
+
+Base: `6a45e53dd`, followed by the scalar-division effect correction and
+preserved A3 block-notification model in the working tree. All 19 original
+handoff-only failures were rechecked using their exact archived prepared IR.
+Existing/handoff prepared files have identical SHA-256 values in every pair.
+The source archive is `oahs-sweep-7c48f4ab3-results.tar.gz`, SHA-256
+`2846b12187be19e47d7e4388e547a707d9ae21d06241bf05b0322966cfad01ca`.
+
+The committed base passed 4/19. The two new corrections pass **11/19** through
+`pto-oahs-selected-test --construct INPUT`, including emitted-command
+reconstruction. This is a native host synchronization gate, not a new full-model
+build or device result. Later kernels in the same models have not been inferred
+to pass from these representative modules.
+
+- Already passing at the base: dspark `indexer_score_topk_leaf`, `route_sort`,
+  `_topk_group_wave`, and MTP `route_sort`.
+- Newly passing: MTP `sample_apply_temperature`; dspark decode CSA/HCA/SWA and
+  prefill sparse attention; MTP decode CSA and decode indexer. Each archived
+  multi-function attention module is checked in full by the native driver.
+- `tdivs` now declares only its actual tile read and destination write, for
+  either input order. The scalar remains an SSA dependency; a scalar-producing
+  load retains its own effects. No generic unmapped effects are discarded.
+- Original block-mode A3 cross-core notifications use the lowering-owned
+  protocol model. They retain their original position/control and grant no
+  local completion. Flags do not consume the directional event pool. See
+  [the superseding translation policy](oahs-shared-semantics.md#original-cross-core-notifications-and-visibility-operations).
+
+Remaining failures, after both corrections:
+
+| Sweep case | Exact failing function | Current blocker |
+|---|---|---|
+| dspark hc_head | `hc_head_reduce` | No reusable key/nonrecursive acknowledgment, cut 215 |
+| MTP decode_hca | `prefetch_o_proj_w` | Async-prefetch context effects unrepresented |
+| MTP decode_swa | `prefetch_o_proj_w` | Same prepared prefetch module and blocker |
+| MTP mtp_projection | `mtp_linear` | No reusable key/nonrecursive acknowledgment, cut 241 |
+| Qwen decode_fwd | `attn_swpipe` | `cmo.cacheinvalid` visibility contract incomplete |
+| Qwen test_paged_attention_pypto | `attn_swpipe` | Same visibility-contract category |
+| Qwen topk_select | `topk_select` | Unresolved original byte completion, cut 77 |
+| PyPTO paged_multi | `kernel_softmax_prepare` | No reusable key/nonrecursive acknowledgment, cut 111 |
+
+Prefetch needs a real resource contract: the pinned manual-mode implementation
+uses an SDMA session, GM workspace, UB scratch at address zero and synchronization
+ID zero. It is not an empty-effect operation. Cache invalidation lowers to
+`dcci`; its preserved visibility behavior must be qualified independently.
+Neither gap is waived by the notification change. The four constructor failures
+remain separate from semantic import and require their actual residual/key state.
+
+Both rebuilt native suites pass, including tile/scalar and scalar/tile effects,
+notification qualification negatives and retained local MTE2 barriers across
+notifications. Logs, per-case plans, hashes and commands are in
+`compatibility-current/` (base), `compatibility-after/` (candidate),
+`compatibility-cases.json`, `recheck-compatibility-after.py` and
+`notification-final-*.log` under the artifact directory. No device claim follows
+from the source-qualified external protocol model; original peer matching and
+progress remain runtime premises.
+
+The paired 88-module host corpus passes 88/88 with all 88 plans byte-identical
+to the immediately preceding `default-corpus/` working baseline. Results are in
+`compatibility-corpus/summary.json`; the two-worker command is
+`python ../sweep-followup-work/check-compatibility-corpus.py`. This verifies no
+plan change in that corpus, separately from the seven newly admitted sweep cases.
 
 ## Priority and evidence requirements
 
@@ -249,3 +361,30 @@ plan to the preceding semantic fix. Exact qk_pv still rejects the separate
 authored protocols at lines 56 and 527, after passing configuration admission.
 Logs: `../sweep-followup-work/config-interface-{build,native,selected,route,qkpv}.log`.
 No constructor-policy change, broad corpus rerun or device run in this amendment.
+
+
+## Constructor compatibility repair — 2026-09-22
+
+This supersedes the six failures in the preceding 13/19 checkpoint. The final
+exact-input rerun passes **19/19 native constructions and emitted-command
+reconstructions**, including both Qwen AIC/AIV modules. The original matched
+prepared-input hashes are retained in `translation-policy-cases/summary.json`.
+
+[The diagnosis](oahs-constructor-compatibility.md) records three general fixes:
+complete incoming states for refined occurrences, participation/rearming for
+ordinary shared words, and a checked return for branch-alternative consumptions.
+The separate synchronous hypothesis regression prevents initial-root equality
+from granting hypothetical cross-engine completion. No opcode-specific
+constructor rule, event-ID pool expansion, checker relaxation, or backend
+fallback is introduced.
+
+Both linked native suites pass (`constructor-native-test.log`,
+`constructor-selected-test.log`). The exact-input run is
+`constructor-final-cases.log`. Corpus and portable validation totals are recorded
+in the current handoff. All artifacts live in `../sweep-followup-work/`.
+
+`hc_head_reduce` selects two joined-consumption returns, with two complete event
+checks and 1,568 analysis-site evaluations. Qwen decode AIV completes using
+850,615 selected replay evaluations. Those are construction-work measurements,
+not device timing or a compile-time improvement over a successful baseline.
+The preceding baseline failed, so its early failure time is not comparable.

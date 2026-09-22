@@ -359,6 +359,12 @@ FrontierStep CausalFrontier::assumePreviousAccesses(
         auto history = bits(model->ports());
         set(history, sourcePrefix);
         if (model->program.target.synchronous[unsigned(op.pipe)]) {
+            // A hypothetical prior synchronous access precedes this pipe's
+            // gate, not the other pipes' fresh invocation gates. As with the
+            // prefix above, their initial equality supplies no such credit.
+            const auto gate = unsigned(op.pipe);
+            data->facts.reach[gate] = bits(model->ports());
+            set(data->facts.reach[gate], gate);
             set(history, unsigned(op.pipe));
         }
         for (const auto& access : op.accesses) {

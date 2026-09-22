@@ -116,6 +116,27 @@ void generations()
     s = apply(f, s, pub(P, Q));
     CHECK(f.command(s, wait(P, Q), {0, 0}).applied);
 }
+void synchronousLoopHypothesis()
+{
+    auto p = base(3);
+    p.target.synchronous[unsigned(P)] = true;
+    p.operations[0].accesses = {{0, true, false}};
+    p.operations[1].pipe = Q;
+    p.operations[1].accesses = {{0, false, true}};
+    p.operations[2].pipe = Q;
+    o::CausalFrontier f(p);
+    auto seeded = f.assumePreviousAccesses(f.initial(), {0});
+    CHECK(seeded.applied);
+    CHECK(f.inspect(seeded.state, 0).applied);
+    CHECK(!f.inspect(seeded.state, 1).applied);
+    // An unrelated issue/fence must not transport initial-root equality as
+    // completion of a hypothetical read from a preceding loop visit.
+    auto s = issue(f, seeded.state, 2);
+    s = apply(f, s, fence(Q));
+    CHECK(!f.inspect(s, 1).applied);
+    s = apply(f, apply(f, s, pub(P, Q)), wait(P, Q));
+    CHECK(f.inspect(s, 1).applied);
+}
 void sharingAndReaders()
 {
     auto p = base(3);
@@ -336,6 +357,7 @@ int main()
 {
     primitives();
     generations();
+    synchronousLoopHypothesis();
     sharingAndReaders();
     joins();
     closedJoins();

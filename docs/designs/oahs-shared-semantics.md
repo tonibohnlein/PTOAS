@@ -1,62 +1,45 @@
 # Shared production synchronization semantics
 
-Both InsertSync constructors consume `PTOIRTranslator` physical records. The
-handoff adapter obtains semantic accounting from `describeSemantics()` instead
-of maintaining an independent ordinary-op registration list. The report is
-read-only and includes every original operation, its category, translated
-phases, and any missing contract. Run it again after an analysis refreshes the
-translated storage origins.
+Both InsertSync constructors consume `PTOIRTranslator::Build()` physical
+records. OAHS imports those nodes directly; it does not independently qualify
+instruction behavior. An operation without a translated synchronization node
+contributes no synchronization effects and remains in the original IR. No
+explicit "no effect" registration is required for this default.
 
-## Ordinary contract
+## Ordinary translation contract
 
-The ordinary compatibility contract is production's `OpPipeInterface` plus
-`MemoryEffectOpInterface`: one physical pipeline and explicitly declared byte
-reads/writes. Shared validation requires a translated phase with the declared
-pipeline, a mapped physical record for every effect, and a declaration for every
-translated effect. Valueless effects, non-default resources, missing effect
-interfaces, and effects lost during translation are gaps. An empty translated
-list by itself establishes nothing.
+The authoritative input is existing InsertSync's pipeline, memory-effect and
+physical-storage translation. A pipeline operation without a memory-effect
+interface can produce an empty-effect node; unmapped effects are handled by the
+shared translator. OAHS neither invents effects for skipped instructions nor
+uses an instruction whitelist to admit them. This default concerns only sync
+analysis: it does not mark operations pure for other MLIR transformations.
 
-An operation using this contract needs no handoff registration. For example,
-ordinary vector arithmetic, matrix extracts, matrix multiplication and
-accumulation, and ordinary FIX stores use their existing interfaces. Whole
-operation completion remains the model for ordinary accumulation; no block
-permission or UnitFlag completion credit is enabled.
+`describeSemantics()` remains a read-only audit. It reports missing declarations,
+unmapped effects, pipeline inconsistencies and unsupported protocol descriptions.
+Its result is **not** required by native construction. `SinglePhaseSyncOpInterface`
+and `SyncConfigurationOpInterface` qualifications are diagnostic information,
+not a second registration requirement for handoff.
 
-`SinglePhaseSyncOpInterface` is an optional lowering-owned restriction for
-variant-bearing operations. It can withhold the ordinary contract, as for
-special load/store forms. Non-default accumulation/store phase attributes also
-require a resource contract. These restrictions are applied by shared semantic
-extraction, independently of the constructor.
+The causal checker validates the represented physical dependencies and generated
+event protocol. It does not establish that instruction registrations completely
+describe hardware behavior. Translation errors, unsupported native target/control
+representations, and failed generated-plan validation still cause failure. In
+particular, the current native adapter requires one translated phase per original
+instruction: multiple phases need phase-aware emission anchors, and must never
+be reduced by silently taking only the first phase.
 
-This reuses the production abstraction as an explicit compatibility premise.
-It is not a claim that every hardware lowering has independently been proven
-complete. New lowering behavior must update its existing effect/pipeline or
-macro/resource description; absence of a constructor opcode case is expected.
+Shared registration corrections belong to the operation/translator layer and
+apply to both algorithms. New instructions need no OAHS-specific declaration.
 
 ## Preserved configuration
 
-`SyncConfigurationOpInterface` is an operation-owned declaration, queried by
-shared semantic extraction. The translator has no configuration-opcode list.
-The operation must qualify its original configuration lifetime; an empty gap
-means it can remain in place without a local asynchronous payload phase. A
-conflicting translated payload phase is rejected. This interface supplies no
-completion, event consumption, peer progress or memory-visibility credit.
-
-`SetFFTsOp` implements this interface. Its lowering calls
-`set_ffts_base_addr`, configuring the runtime flags address used by cross-core
-synchronization. The qualifier requires an unconditional entry setup before
-issued work and the same SSA address for every repeated setup. Changed-address
-reconfiguration and loop-only initialization require further contracts. Its
-original generic side effects remain unchanged, so unrelated optimization
-passes do not treat it as pure or freely movable.
-
-Existing InsertSync preserves this operation but creates no local dependency
-node for it: it has no ordinary pipeline interface. OAHS preserves it as well,
-but requires the explicit configuration contract to account for those effects.
-This is a difference in admission, not a new synchronization instruction or
-completion rule. Qualification of configuration does not admit the separate
-cross-core SET/WAIT protocol automatically.
+`SyncConfigurationOpInterface` provides an optional operation-owned audit of
+configuration lifetime. `SetFFTsOp` uses it to diagnose absent entry setup or
+changed-address configuration. Both algorithms preserve the operation and take
+its synchronization contribution from the shared translator. A missing or failed
+configuration audit does not veto OAHS import. Its generic MLIR side effects
+remain intact, and it supplies no local completion or event-consumption credit.
 
 The merge-sort correction similarly lives on `TMrgSortOp`'s shared memory-effect
 implementation. The A2/A3 non-exhausting lowering does not write the executed
@@ -88,21 +71,34 @@ annotation. There is no descriptor-opcode dispatch in the handoff adapter.
 
 ## Other semantics and compatibility
 
-Macro models retain their production phase population, but internal completion
-and private-event lifetime composition remain reported gaps. Authored events,
-visibility, calls, unrepresented ownership effects, and unsupported structured
-control are likewise explicit gaps. Native target/core admission is a separate
-check. These rows remain in coverage totals even when ordinary analysis grows.
+Shared macro/protocol descriptions remain translator inputs. Optional metadata
+is retained for reports and qualified placement refinements, without becoming
+an admission list. If a description is incomplete, structured origin refresh
+uses the same ordinary-effect fallback as the translator. It does not introduce
+an additional protocol-completeness rejection.
 
-Shared extraction also repairs missing atomic destination reads and queue
-payload/storage effects for `existing`. These corrections can change its
-synchronization where it previously missed a hazard. Default and explicit
-`existing` remain equivalent. Unsupported protocol descriptions leave the
-legacy translator behavior intact; handoff refuses incomplete descriptions.
-Handoff requires a complete report, then uses the
-[selected constructor](oahs-selected-plan.md), shared emission, and causal-frontier
+Registered atomic destination reads and queue payload/storage effects apply to
+both `existing` and `handoff`. The native adapter then uses the
+[selected constructor](oahs-selected-plan.md), shared emission and causal-frontier
 reconstruction. [Storage import](oahs-analysis.md) closes loop-carried origins
 and conservatively represents unknown local addresses.
+
+## Scalar division effects
+
+`TDivSOp` declares a read only on its tile input and a write on its destination.
+Its custom syntax accepts both tile/scalar and scalar/tile order. The scalar
+SSA value is not a memory access; any load producing that value retains its
+own effects. This correction is in the shared operation interface, with no
+translator or constructor exception for scalar operands. Native tests check
+both orders, exact effects and retained tile RAW/WAR synchronization.
+
+## Original cross-core notifications and visibility operations
+
+These retain existing InsertSync's translation behavior. The additional A3-only
+block-notification admission model was removed: it is not needed to preserve
+instructions with no translated local node. Original operands, attributes and
+control are preserved by native reconstruction. This supplies no newly inferred
+local completion, event consumption or peer progress.
 
 ## Inspection and regression gate
 
@@ -115,7 +111,9 @@ a successful coverage row.
 
 Regressions exercise operations with no handoff-specific declaration, the
 ordinary cube chain, missing translated effects, pipeline disagreement,
-variant refusal, analysis preservation, and transactional rejection. The local
+audit/construction separation, analysis preservation, and transactional rejection.
+Tests include an instruction without any sync interfaces, an empty-effect pipeline
+node and partially mapped effects, with no constructor registration. The local
 prefill population is evaluated with the original payload and contracts.
 
 ## Preserved A3 tile queues and atomic stores
@@ -152,8 +150,9 @@ qualification or an independent proof of the runtime protocol.
 
 Global-entry TALLOC/commit/release, A5 queues, odd-split/explicit-subblock
 overloads absent from the pinned source, and phase/quantized epilogues need
-their own complete descriptions. They remain explicit gaps, not ordinary empty
-byte effects. Scalar ownership effects are not silently treated as payload.
+their own descriptions to improve the shared translator. Missing descriptions
+remain visible in the audit but do not add an OAHS admission condition. The
+constructor uses whatever phases and physical effects existing InsertSync supplies.
 
 Atomic-add TSTORE has a source read and destination read/write. Its lowering
 scopes atomic mode setup/reset around the normal store command; the original

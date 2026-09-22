@@ -168,6 +168,56 @@ void regional()
     }
     require(removedReturns != 0, "re-entry acknowledgment mutation was not exercised");
 }
+void refinedLoopCompletion()
+{
+    // An inner counted loop has several original-control occurrences of its
+    // read/write. The outer continuation must see the final inner write, not
+    // the completed placeholder from a hypothesis-only traversal.
+    auto input = base(1, 2);
+    const auto V = o::Pipe::V;
+    input.operations = {op(V, {{0,false,true}}), op(V, {{0,true,false}}),
+        op(V, {{0,false,true}}), op(V, {{0,true,false}})};
+    input.body = {o::Region::For, {seq({leaf(0),
+        {o::Region::For, {seq({leaf(1),leaf(2)})},0,true},leaf(3)})},0,true};
+    const auto imported = o::addStructuredBoundaryCuts(input);
+    require(imported.success, imported.reason);
+    const auto& scopes = imported.program.observed->scopes;
+    const auto child = std::find_if(scopes.begin(),scopes.end(),[](const auto& scope) {
+        return scope.kind == o::AnalysisContext::ForBody && scope.parent != 0;
+    });
+    require(child != scopes.end(), "refined completion child missing");
+    const auto p = refine(imported.program,child->ownerSite);
+    o::SelectedOptions options; options.recurring = false;
+    const auto plan = o::constructSelectedPlan(p,{},options);
+    require(plan.success && o::checkCausalFrontier(p,plan.commands).accepted,
+            "refined continuation lost inner completion: " + plan.reason);
+    require(plan.work.contextualReplays != 0, "refined payloads used the partial hypothesis traversal");
+    auto broken = plan.commands;
+    for (auto& word : broken) word.clear();
+    require(!o::checkCausalFrontier(p,broken).accepted, "refined test has no real completion requirement");
+}
+void ordinaryRefinedRearming()
+{
+    auto body = base(1, 2);
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::V;
+    body.operations = {op(P, {{0,false,true}}),op(Q, {{0,true,false}})};
+    const auto imported = o::makePeriodicLoop(body,1,{});
+    require(imported.success, imported.reason);
+    o::SelectedOptions options;
+    options.recurring = options.recurringOmissionTrials = options.finalHelperTrials = false;
+    const auto plan = o::constructSelectedPlan(imported.program,{},options);
+    require(plan.success && o::checkCausalFrontier(imported.program,plan.commands).accepted,
+            "ordinary refined receipt failed rearming: " + plan.reason);
+    require(!options.firstWriteConsumers && plan.work.acknowledgments != 0,
+            "ordinary repeated words depend on the experimental first-write option");
+    auto broken = plan.commands;
+    for (auto& word : broken)
+        word.erase(std::remove_if(word.begin(),word.end(),[&](const auto& command) {
+            return command.source == Q && command.observer == P;
+        }),word.end());
+    require(!o::checkCausalFrontier(imported.program,broken).accepted,
+            "ordinary repeated receipt accepted without its return");
+}
 void contextual()
 {
     auto body = base(2, 8);
@@ -1792,6 +1842,8 @@ int main(int argc, char** argv)
         carriedBankEffects(true, banks);
     }
     regional();
+    refinedLoopCompletion();
+    ordinaryRefinedRearming();
     contextual();
     sharedRecurringPrefixes();
     distinctReleaseDeadlines();

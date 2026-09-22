@@ -381,6 +381,7 @@ private:
     bool bind(Group&, RequirementStage);
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&, Id certifiedKey = NoAnalysisId);
     bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&);
+    bool joinedAcknowledgment(Pipe, Pipe, Cut, Id&, SelectedDecision&);
     bool needsCommonAcknowledgment(const State&, Id) const;
     Id reusable(Pipe, Pipe, const State&);
     bool canPublish(const State&, Id) const;

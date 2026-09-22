@@ -348,8 +348,8 @@ struct ReplayTestAccess {
         identical(reused, c.cache);
         return {reused.reusedComponents, true};
     }
-    static void compare(const Program& program, Cut edit, Pipe pipe) {
-        require(compareEdit(program, edit, pipe, false).second, "edit was expected to hold");
+    static void compare(const Program& program, Cut edit, Pipe pipe, bool contextual = false) {
+        require(compareEdit(program, edit, pipe, contextual).second, "edit was expected to hold");
     }
     static void siblingReuse(unsigned length, bool sequential, bool sharedWord,
                              unsigned siblings = 2, unsigned prefixLength = 0) {
@@ -616,7 +616,7 @@ void sharedObservationReplay()
     graph.sites[0] = {o::NoControlId, 1, {3}, {}, 0};
     graph.sites[3] = {o::NoControlId, 2, {}, {}, 0};
     p.observed = graph;
-    o::selected::ReplayTestAccess::compare(p, 0, P);
+    o::selected::ReplayTestAccess::compare(p, 0, P, true);
     // A canonical member can be unreachable while another member is live.
     p.observed->sites[1].successors = {3};
     o::selected::ReplayTestAccess::compare(p, 0, P);
