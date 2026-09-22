@@ -6,6 +6,92 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
+## Current priority: broad sweep follow-up
+
+1. Semantic fixes implemented: A3 non-exhausting tmrgsort and unchanged-address
+   FFTS configuration. route_sort passes. Next qk_pv blocker is the authored
+   cross-core wait contract; do not infer it from FFTS admission.
+2. hc_head key-3 borrow at 209→228 is checked and selected, including dormant
+   helper restoration. Next shortage: 215→230, with alternative-path consumption
+   support needed for other keys.
+3. KDA now constructs with early final-read sources. Its quality gate fails
+   (1784 removed, 706 added relations); identify those added paths before timing.
+4. RMSNorm/hc_pre: compare physical final scratch uses and entry exchanges.
+   Initial exact-plan full-tile diagnostics show broader handoff ordering.
+5. Attribute compressor across four changed kernels and pool/commit/norm
+   dispatch dependencies, retaining the 25%-finite kv golden qualification.
+
+See [reproduction evidence and limits](oahs-sweep-followup.md). No compatibility
+fix may bypass effect admission or treat emptiness as consumption knowledge.
+
+## Implemented locally: ordinary final-read source
+
+`--final-read-sources` now uses an exactly-once final-only gap before the shared
+anchor word, with source-time coverage, source-time key reuse and actual return
+support. It preserves acknowledgment endpoints and protects the gap against
+later insertion. See [scope and validation](oahs-final-read-sources.md).
+
+Historical blocker (now resolved by neighboring-use checks): KDA's later retained role at cut 330 failed rearming. Distinguish
+missing support from occurrence matching. Identify the actual key and its next
+publication deadline; realize separate support there without widening the early
+source. The full no-added-order gate remains mandatory before device timing.
+
+Other corpus plans may change. Judge each changed plan by correctness and its
+complete ordering difference; byte identity is a diagnostic, not the goal.
+
+## Current gate: first-write KDA order inclusion
+
+Cross-control key-1 rearming, inactive key-0 borrowing and shared-occurrence F7
+matching now produce a full native KDA plan. Exact emission preserves repeated
+same-word generations. Host correctness passes, but the committed-plan comparison
+removes 1,512 relations and **adds 634** in the 1,727-payload case. Keep the
+experiment disabled and withhold its device task. Next: identify the actual
+return/export paths introducing M-completion → MTE2-load order and remove that
+broadening during selection, preserving all consumption support. Do not replace
+this requirement with smaller relation counts or a deletion search.
+
+The first added path is now attributed to an M→MTE1 acknowledgment exported
+through the MAT release. The linked supplied-plan witness keeps the acknowledgment
+and releases before it on the final read (2/3/4 visits, strict order inclusion).
+Next qualification: an exactly-once last-read source at that pre-acknowledgment
+gap for ordinary construction. The current top-level, step-64, conditional-suffix
+case is outside native last-reader admission. Relaxed online helper removal was
+reverted after a later rearming failure; do not treat immediate replay as a
+certificate for future binding. Full native ordering remains unchanged.
+
+## Working milestone: shared-word next-publication support
+
+The linked constructor regression reproduces the old missing-rearm failure.
+A structural must-path query now checks every occurrence of the new consumption
+against the next selected publication, including backedges and shared words.
+It uses an existing actual reverse receipt or selects a qualified return after
+the new consumption without moving the early source gap. The old experimental
+full-trial repair has been removed. Missing return evidence, insufficient reverse
+credit, repeated entries and complete order inclusion against late publication
+are covered. All 25 portable suites and the native selected suite pass.
+
+The disabled first-write KDA experiment gets past cut 428 but fails later at cut
+720 with no reusable key/nonrecursive acknowledgment. Do not promote it or fold
+it into the device sweep. Next work is a concrete physical-binding witness at
+that later boundary, followed by a bounded certificate or conservative admission.
+See [phase-support evidence](oahs-kda-phase-support.md). Default KDA output remains
+identical to the committed choice-frontier plan. Corpus result is recorded in
+`../kda-first-write-work/shared-rearm-corpus/summary.json`; the four changed
+attention AIV plans motivated gating the repair behind the disabled first-write
+option. Targeted reruns in `shared-rearm-gated-corpus/` restore all four baseline
+plans. General shared-word promotion remains unqualified.
+
+### Reservation reuse follow-up
+
+Implemented an inactive-interval certificate for fully materialized recurring
+keys, within the disabled first-write experiment. KDA now binds key 0 at cut 720
+without a helper and advances to cut 724. At 724 that borrowed key is correctly
+full; the remaining empty key 1 still needs a return after cut-400 consumption.
+Next: qualify that cross-control return while preserving the early gap, then
+require full native acceptance and no-added ordering before device timing.
+Do not globally free recurring reservations. See the phase-support note for
+ownership, interval, repeated-entry and missing-support regression coverage.
+
 ## Latest local milestone: KDA choice frontiers — 2026-09-21
 
 This entry supersedes the older active-investigation/commit status below.

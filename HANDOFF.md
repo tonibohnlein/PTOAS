@@ -12,6 +12,147 @@ Updated: 2026-09-21
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
 
+## Sweep follow-up: compatibility first
+
+See [exact reproductions, fixes and remaining gates](docs/designs/oahs-sweep-followup.md).
+
+- Exact route_sort now constructs/reconstructs after qualifying the A3
+  non-exhausting tmrgsort effect. FFTS same-address configuration is admitted through its operation-owned
+  `SyncConfigurationOpInterface` (no translator opcode classifier);
+  qk_pv next stops at an authored cross-core protocol contract.
+- hc_head borrows closed key 3 at 209→228 with staged helper restoration.
+  It next fails at 215→230: key 3 is live, key 2 overlaps, other keys need
+  consumption support across alternatives. Do not report complete acceptance.
+- KDA first-write + final-read now constructs/reconstructs after protecting
+  dormant helper ownership and checking the next publication when choosing a
+  reverse key. Its quality gate still fails: 1784 relations removed, 706 added.
+  Keep the experiment opt-in and preserve the early gap while diagnosing additions.
+- Exact RMSNorm/hc_pre local order comparisons identify broader entry/return
+  prefixes; scratch aliases matter. Compressor attribution remains component-level
+  work with the finite-25% kv validation limit explicit.
+
+Current artifacts are under `../sweep-followup-work/`. The native semantic
+suite and all 25 portable suites pass. The default corpus passes 88/88; 83 plans are identical, four differ only in
+event-key numbers, and one RMSNorm adds helpers with equal ordering in the tested
+finite trace (1968 relations). See the follow-up report for the comparison scope. No commit or device timing in this checkpoint.
+
+The configuration-interface amendment rebuilt PTOIR and the dependent native
+tests successfully. Both native suites pass; exact route_sort is unchanged from
+the previous fixed plan, and qk_pv retains only its separate authored-protocol
+rejection. See `config-interface-*.log` in the same artifact directory.
+
+## Latest implementation: final-read sources in ordinary construction
+
+The opt-in `--final-read-sources` path now selects a final-only source before an
+anchor's shared word. It uses the existing previous-reader frontier to require
+an actual overwrite deadline, qualifies original final-visit control, checks
+source-time coverage and key credit, and proves matching plus actual rearming
+across repeated entries. The storage view is shared with first-write analysis.
+The ledger protects the publication prefix by endpoint identity. Existing
+acknowledgments are retained by this binding; no new deletion trial is added.
+
+See [implementation and evidence](docs/designs/oahs-final-read-sources.md).
+The linked constructor fixture covers single/repeated visits and virgin/reused
+keys; 16 finite comparisons add no payload order. Native step-64 and single-visit
+cases select the source and reconstruct. All 25 portable suites pass.
+
+Full first-write KDA now constructs with the final-read source after the
+reservation/neighboring-use amendments described above. Keep both experiments
+opt-in: the latest local comparison removes 1784 relations but adds 706. The
+next KDA task is to remove those added paths while preserving the early release
+and actual rearming; no new device comparison is ready.
+
+Corpus byte identity is not an acceptance requirement for the experiment.
+Changed plans can be improvements: check safety, ordering sets, event resources
+and construction cost. The initial sweep's three changed plans selected no final
+source; follow-up qualification avoids refining inputs with no overwrite deadline
+and avoids changing replay mode when no final gap exists. Final sweep results
+are in the implementation note.
+
+## Current result: cross-control rearming and complete KDA plan
+
+The local first-write experiment now completes **construction and exact native
+reconstruction**. It qualifies the return after consumption at cut 400 to the
+early publication at cut 724, checks the return together with its actual forward
+receipt, and matches shared-word consumption occurrences for later F7 repairs.
+A native emission fix preserves distinct same-word event generations instead of
+signature-deduplicating the checked commands. Existing-pass emission is unchanged.
+
+**Quality gate failed:** against committed `7c48f4ab3`, the 1,727-payload finite
+KDA case removes 1,512 relations but adds 634 (including M completion → MTE2
+load). Keep the experiment disabled; do not send a new timing task. The goal is
+now to remove these added paths, not merely achieve resource admission. Two
+helper-pruning attribution variants did not resolve the issue and were reverted.
+
+25/25 portable suites and native selected tests pass. All 88 default corpus
+modules pass with byte-identical plans; default KDA also remains byte-identical. The phase-support note records the full outcome and artifact
+paths, superseding the historical cut-720/724 stopping points below.
+All work remains uncommitted; no device task for this experiment was issued.
+
+## Added-path diagnosis (latest local work)
+
+The first added path is M payload 12 -> M→MTE1 acknowledgment -> MAT release
+MTE1→MTE2 -> DMA payload 14. A linked supplied-plan regression preserves every
+acknowledgment but moves the final-reader release before it: 2/3/4 visits pass
+causal and independent rearming checks with strict payload-order inclusion.
+Deleting the acknowledgment instead fails rearming. This is a boundary witness,
+not a new native plan; the 634-added gate remains open.
+
+Source-corridor and relaxed online-helper diagnostic edits were reverted. The
+first changed no native commands; the second lost a later recurring consumption
+path at cut 330. Next: qualify the last participating read for ordinary source
+selection at the pre-acknowledgment gap, including top-level step-64 children and
+their conditional suffix. Do not remove helpers based only on immediate replay.
+See the phase-support note's latest section and `release-ack-*` artifact logs.
+
+## Latest commit and next investigation
+
+`7c48f4ab3` commits the validated choice-frontier mechanism without the unfinished
+first-write experiment. The isolated source passes all 25 portable suites and
+the rebuilt native selected suite; its KDA output matches the previous checked
+candidate byte-for-byte. The first-write working edits are restored separately.
+
+[Phase support investigation](docs/designs/oahs-kda-phase-support.md) now records
+an implemented linked shared-word repair. The old constructor fails the reduced
+case; a structural query over every consumption occurrence now certifies an
+existing later reverse receipt or inserts a source-time-qualified return after
+the new consumption. The early forward publication stays unchanged. No full
+trial solve is used by this repair. All 25 portable suites and the native selected
+suite pass; bank-A/bank-B checks pass four paths / 16 deadlines, no added order.
+
+Full KDA with the disabled first-write option passes the old cut-428 failure,
+then fails resource admission at cut 720. Keep the experiment disabled. Default
+KDA output is byte-identical to `7c48f4ab3`. The 88-module comparison initially exposed four changed attention AIV plans.
+The repair is now gated by the disabled first-write option; targeted reruns of
+all four restore byte-identical baseline plans. The other 84 had no query or
+plan changes. Logs: `shared-rearm-corpus/` and `shared-rearm-gated-corpus/` under
+`../kda-first-write-work/`. All 25 portable suites and native selected tests
+pass again after the admission correction. These new repair changes are uncommitted and unpushed.
+
+## Latest local reservation-reuse milestone
+
+The disabled first-write experiment now passes cut 720 by borrowing recurring
+MTE2→MTE1 key 0, retaining SET at word 418 (occurrence 720) and WAIT at word 444
+(occurrence 746). Endpoints 340/341 are the only endpoints for this transfer;
+no new acknowledgment is needed. Reservation ownership remains intact.
+
+Admission checks actual source-time credit at every occurrence, complete owner
+materialization, absence of owner/other key uses during the borrowed interval,
+and an actual return before every next publication across repeated entries.
+Lazy/fixed ownership remains excluded. Linked tests cover repeated visits,
+incomplete ownership, overlap and missing return, with finite ordering checks.
+
+Native KDA stops next at cut **724**, consumer **750**. Key 0 is correctly full
+there because the cut-720 transfer has not yet been consumed. Key 1 is still
+empty but lacks consumption knowledge from endpoint 313 at cut 400. Keep the
+qualified cross-control key-1 repair as the next alternative; do not move either
+early source gap or treat target-time emptiness as source credit.
+
+All 25 portable suites pass. Native validation and default comparison are
+recorded below in the phase-support note. Artifacts: `reservation-*` and
+`kda.reservation*` under `../kda-first-write-work/`. No full first-write KDA plan
+or device improvement is claimed. This work remains uncommitted.
+
 ## Active KDA goal and acceptance boundary (2026-09-21)
 
 User priority: develop an efficient, general lifetime/occurrence mechanism and
@@ -23,8 +164,8 @@ The uncommitted first-write experiment separates a first-only receipt gap from
 ordinary shared post-access publication words. The bank-A/bank-B regression
 preserves all payload ordering on four finite paths (16 bank deadlines), and
 the native selected suite passes. Full KDA is **not accepted**: the latest
-experimental staged-rearming version still fails consumption-before-publication
-at cut 428. Its 12 staged rearming checks visit 152,103 sites. These extra full
+earlier experimental staged-rearming version failed consumption-before-publication
+at cut 428. That version used 12 staged rearming checks visiting 152,103 sites. These extra full
 analyses are diagnostic scaffolding, not the intended efficient final policy.
 
 Next: unify occurrence matching and actual key-rearming support while preserving
