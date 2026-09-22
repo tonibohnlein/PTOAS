@@ -368,6 +368,13 @@ SyncSemanticReport PTOIRTranslator::describeSemantics() const {
     if (op->getNumRegions() || isa<BranchOpInterface>(op))
       return finish(SyncSemanticRecord::Unmodeled,
                     "unrepresented structured operation");
+    if (auto configuration = dyn_cast<SyncConfigurationOpInterface>(op)) {
+      if (!record.phases.empty())
+        return finish(SyncSemanticRecord::Configuration,
+                      "configuration contract conflicts with translated payload phases");
+      return finish(SyncSemanticRecord::Configuration,
+                    configuration.getSyncConfigurationGap());
+    }
     if (auto model = getSyncProtocolModel(op)) {
       record.protocol = *model;
       if (!model->complete())

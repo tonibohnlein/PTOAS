@@ -212,6 +212,78 @@ module attributes {pto.target_arch = "a3"} {
   require(text(variant) == original);
 }
 
+static void testConfigurationAndMergeSort(MLIRContext &context) {
+  const char *source = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @contracts(%ffts: !pto.ptr<i64, gm>,
+      %a: !pto.tile_buf<vec, 1x128xf32>, %b: !pto.tile_buf<vec, 1x128xf32>,
+      %tmp: !pto.tile_buf<vec, 1x256xf32>, %dst: !pto.tile_buf<vec, 1x256xf32>,
+      %other: !pto.ptr<i64, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %ex = arith.constant dense<0> : vector<4xi16>
+    pto.set_ffts %ffts : <i64, gm>
+    pto.tmrgsort ins(%a, %b, %tmp {exhausted = false} :
+      !pto.tile_buf<vec, 1x128xf32>, !pto.tile_buf<vec, 1x128xf32>,
+      !pto.tile_buf<vec, 1x256xf32>) outs(%dst, %ex :
+      !pto.tile_buf<vec, 1x256xf32>, vector<4xi16>)
+    return
+  }
+})mlir";
+  auto module = parseSourceString<ModuleOp>(source, &context);
+  require(bool(module));
+  auto function = module->lookupSymbol<func::FuncOp>("contracts");
+  SetFFTsOp setup; TMrgSortOp sort;
+  function.walk([&](SetFFTsOp op) { setup = op; });
+  function.walk([&](TMrgSortOp op) { sort = op; });
+  MemoryDependentAnalyzer aliases; SyncIRs translated; Buffer2MemInfoMap buffers;
+  PTOIRTranslator translator(translated, aliases, buffers, function, SyncAnalysisMode::NORMALSYNC);
+  require(succeeded(translator.Build()));
+  require(translator.describeSemantics().complete());
+  auto configuration = dyn_cast<SyncConfigurationOpInterface>(setup.getOperation());
+  require(bool(configuration) && configuration.getSyncConfigurationGap().empty());
+  unsigned configurationRecords = 0;
+  for (const auto &record : translator.describeSemantics().operations) {
+    if (record.operation != setup.getOperation()) continue;
+    require(record.kind == SyncSemanticRecord::Configuration && record.phases.empty());
+    ++configurationRecords;
+  }
+  require(configurationRecords == 1);
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  sort.getEffects(effects);
+  require(effects.size() == 5); // sources, tmp read/write, dst; no register write
+  sort.setExhausted(true);
+  require(!translator.describeSemantics().complete());
+  sort.setExhausted(false);
+  setup->moveAfter(sort);
+  require(!translator.describeSemantics().complete());
+  setup->moveBefore(sort);
+  OpBuilder builder(setup);
+  auto *duplicate = builder.clone(*setup);
+  require(translator.describeSemantics().complete());
+  duplicate->setOperand(0, function.getArgument(5));
+  require(!translator.describeSemantics().complete());
+  duplicate->erase();
+  require(translator.describeSemantics().complete());
+  // The same configuration may recur in original control. A loop-only setup
+  // is not an unconditional initialization, even if its value is invariant.
+  builder.setInsertionPointAfter(setup);
+  auto zero = builder.create<arith::ConstantIndexOp>(setup.getLoc(), 0);
+  auto one = builder.create<arith::ConstantIndexOp>(setup.getLoc(), 1);
+  auto two = builder.create<arith::ConstantIndexOp>(setup.getLoc(), 2);
+  auto loop = builder.create<scf::ForOp>(setup.getLoc(), zero, two, one);
+  builder.setInsertionPointToStart(loop.getBody());
+  builder.clone(*setup);
+  require(configuration.getSyncConfigurationGap().empty());
+  setup->moveBefore(loop.getBody()->getTerminator());
+  require(!configuration.getSyncConfigurationGap().empty());
+  setup->moveBefore(loop);
+  loop->erase();
+  require(succeeded(oahs::runHandoffSync(function)));
+  unsigned configurations = 0;
+  function.walk([&](SetFFTsOp) { ++configurations; });
+  require(configurations == 1);
+}
+
 static void testPreservedProtocols(MLIRContext &context) {
   const char *source = R"mlir(
 module attributes {pto.target_arch = "a3"} {
@@ -612,6 +684,7 @@ int main(int argc, char **argv) {
   }
   testCarriedPointerRoundTrip(context);
   testSharedSemantics(context);
+  testConfigurationAndMergeSort(context);
   testPreservedProtocols(context);
   testPreservedCollectives(context);
   const char *source = R"mlir(

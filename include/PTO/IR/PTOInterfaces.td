@@ -65,6 +65,22 @@ def SinglePhaseSyncOpInterface : OpInterface<"SinglePhaseSyncOpInterface"> {
   >];
 }
 
+def SyncConfigurationOpInterface : OpInterface<"SyncConfigurationOpInterface"> {
+  let cppNamespace = "::mlir::pto";
+  let description = [{
+    An operation-owned contract for preserved configuration, independent of
+    the automatic synchronization algorithm. The operation qualifies its
+    configuration lifetime against the original IR. Successful qualification
+    permits keeping it in place without a local payload phase; it supplies no
+    completion, event consumption, peer progress or memory visibility credit.
+    Generic side-effect declarations remain authoritative for other passes.
+  }];
+  let methods = [InterfaceMethod<
+    "Empty when the preserved configuration is qualified; otherwise the missing contract.",
+    "std::string", "getSyncConfigurationGap"
+  >];
+}
+
 def MacroSyncOpInterface : OpInterface<"MacroSyncOpInterface"> {
   let cppNamespace = "::mlir::pto";
   let description = [{

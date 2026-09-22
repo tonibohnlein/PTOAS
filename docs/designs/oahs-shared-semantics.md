@@ -34,6 +34,36 @@ It is not a claim that every hardware lowering has independently been proven
 complete. New lowering behavior must update its existing effect/pipeline or
 macro/resource description; absence of a constructor opcode case is expected.
 
+## Preserved configuration
+
+`SyncConfigurationOpInterface` is an operation-owned declaration, queried by
+shared semantic extraction. The translator has no configuration-opcode list.
+The operation must qualify its original configuration lifetime; an empty gap
+means it can remain in place without a local asynchronous payload phase. A
+conflicting translated payload phase is rejected. This interface supplies no
+completion, event consumption, peer progress or memory-visibility credit.
+
+`SetFFTsOp` implements this interface. Its lowering calls
+`set_ffts_base_addr`, configuring the runtime flags address used by cross-core
+synchronization. The qualifier requires an unconditional entry setup before
+issued work and the same SSA address for every repeated setup. Changed-address
+reconfiguration and loop-only initialization require further contracts. Its
+original generic side effects remain unchanged, so unrelated optimization
+passes do not treat it as pure or freely movable.
+
+Existing InsertSync preserves this operation but creates no local dependency
+node for it: it has no ordinary pipeline interface. OAHS preserves it as well,
+but requires the explicit configuration contract to account for those effects.
+This is a difference in admission, not a new synchronization instruction or
+completion rule. Qualification of configuration does not admit the separate
+cross-core SET/WAIT protocol automatically.
+
+The merge-sort correction similarly lives on `TMrgSortOp`'s shared memory-effect
+implementation. The A2/A3 non-exhausting lowering does not write the executed
+result; the other physical effects remain. Exhaustion-enabled and A5 variants
+retain conservative declarations. Neither constructor recognizes a particular
+kernel to obtain this distinction.
+
 ## Descriptor effects
 
 Pure `ViewLikeOpInterface` operations such as `pto.treshape` use the shared

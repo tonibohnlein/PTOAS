@@ -3039,11 +3039,17 @@ def TileValidColsOp : PTO_Op<"tile_valid_cols", [Pure]> {
 }
 
 //===----------------------------------------------------------------------===//
-// FFT Configuration Operation
+// Cross-core flag-address configuration
 //===----------------------------------------------------------------------===//
 
-def SetFFTsOp : PTO_Op<"set_ffts", [MemoryEffects<[MemRead, MemWrite]>]> {
+def SetFFTsOp : PTO_Op<"set_ffts", [MemoryEffects<[MemRead, MemWrite]>,
+    DeclareOpInterfaceMethods<SyncConfigurationOpInterface>]> {
   let summary = "Set FFTS/flags pointer for runtime (side-effecting).";
+  let description = [{
+    Configures the runtime flag base address through set_ffts_base_addr.
+    Preserve this configuration in its original order. The operation itself
+    does not wait for a peer, complete local payload work or consume an event.
+  }];
   let arguments = (ins PtrType:$ffts);
   let results = (outs);
 

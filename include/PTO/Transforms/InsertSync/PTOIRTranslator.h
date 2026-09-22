@@ -38,7 +38,7 @@ namespace pto {
 // treated as ordinary memory accesses.
 struct SyncSemanticRecord {
   enum Kind {
-    Ordinary, Storage, Descriptor, Control, Pure, Macro, Authored, Visibility, Protocol,
+    Ordinary, Storage, Descriptor, Control, Pure, Macro, Authored, Visibility, Protocol, Configuration,
     Unmodeled
   };
   Operation *operation = nullptr;

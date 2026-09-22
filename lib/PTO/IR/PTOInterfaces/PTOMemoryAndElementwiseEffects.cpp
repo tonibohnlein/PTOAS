@@ -195,7 +195,11 @@ void TMrgSortOp::getEffects(
     PTO_ADD_WRITE(effects, opnd);
   }
   auto executed = getExcutedMutable();
-  if (!executed.empty()) {
+  // A2/A3 GetExhaustedData<false> neither reads the status register nor
+  // writes the executed-count output. The true variant has an internal V->S
+  // event and still requires a richer synchronization contract.
+  if (!executed.empty() &&
+      (getExhausted() || getTargetArch(*this) == PTOArch::A5)) {
     PTO_ADD_WRITE(effects, executed[0]);
   }
 }

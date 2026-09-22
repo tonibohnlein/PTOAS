@@ -10,9 +10,40 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTOSyncUtils.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 
 using namespace mlir;
 using namespace mlir::pto;
+
+std::string SetFFTsOp::getSyncConfigurationGap() {
+  auto function = (*this)->getParentOfType<func::FuncOp>();
+  if (!function || function.getBody().empty())
+    return "FFTS configuration requires the original function entry block";
+  SetFFTsOp initial;
+  for (auto &op : function.getBody().front())
+    if (auto candidate = dyn_cast<SetFFTsOp>(&op)) { initial = candidate; break; }
+  if (!initial)
+    return "FFTS configuration requires an unconditional entry setup";
+  bool sameAddress = true;
+  function.walk([&](SetFFTsOp candidate) {
+    sameAddress &= candidate.getFfts() == initial.getFfts();
+  });
+  if (!sameAddress)
+    return "FFTS reconfiguration requires a scoped configuration contract";
+  // The lowering is set_ffts_base_addr(pointer), not a byte load/store or a
+  // local drain. Only admit initial setup before any issued payload/protocol.
+  for (auto &previous : function.getBody().front()) {
+    if (&previous == initial.getOperation()) break;
+    if (previous.getNumRegions() ||
+        (!isMemoryEffectFree(&previous) &&
+         !isa<SyncStorageOpInterface>(&previous)))
+      return "FFTS setup follows work requiring a configuration lifetime";
+  }
+  // Repeated original writes of the same SSA address preserve the configured
+  // value. Keep them in place, including loop/choice occurrences; do not use
+  // them as a completion or cross-core synchronization mechanism.
+  return std::string{};
+}
 
 FailureOr<SyncOpType> mlir::pto::parseSyncOpTypeLikeAttr(Attribute attr) {
   if (auto a = dyn_cast_or_null<PipeEventTypeAttr>(attr)) {
