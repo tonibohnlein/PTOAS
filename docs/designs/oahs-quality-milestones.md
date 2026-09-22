@@ -22,7 +22,7 @@ InsertSync is a comparison, not an ordering specification.
    and possible return support. Add each portion with a real construction
    consumer. Records prescribe obligations, not private event pairs, and do not
    become a second completion authority.
-3. **Active: rearming at its actual deadline.** Keep storage acquisition deadlines
+3. **Complete in bounded opt-in scope: rearming at its actual deadline.** Keep storage acquisition deadlines
    separate from the next applicable publication of a reused event key. Select
    actual required returns before unnecessary private acknowledgments. Retain
    unresolved rearming obligations without granting anticipated receipt credit.
@@ -113,15 +113,16 @@ separate work rather than prerequisites for finishing M3.
 
 ## M3 initial implementation and construction-cost gate
 
-The initial M3 slice makes the restricted acyclic deferral obligation explicit,
-retains lifecycle return candidates and links replay-validated republications to
-the actual old consumption. It preserves the existing opt-in policy scope; it
-is not completion of branch/shared-word deadline selection. The next slice
-extends it to mutually exclusive receipts with continuations that only merge.
-Existing occurrence and key certificates qualify fallback at the actual reuse
-gap. Constructor witnesses check required returns, a strict ordering improvement
-from delayed helper acquisition, and conservative skipped/conditional fallback.
-The policy remains opt-in and M3 remains active. See the
+M3 is complete at `e5fe6147a` for ordinary acyclic and qualified shared/branch
+receipts. Unresolved obligations retain actual consumption identities; required
+returns or balanced fallback helpers establish rearming at applicable deadlines.
+Conditional reuse, stale returns, earlier deadlines, shared returns and later
+edits have acceptance witnesses. The new native conditional witness removes
+ordering without additions on all four traces. All 27 portable suites, both
+native suites, 19 compatibility inputs, both 88-case corpus runs and six targeted
+plans pass. Existing corpus plans and default replay work counts are unchanged.
+The policy remains opt-in; general recurrence and ownership remain M4/M5 work.
+See `HANDOFF.md` for the pinned evidence and the
 [selected-plan account](oahs-selected-plan.md#milestone-3-explicit-deferred-rearming-initial-scope).
 
 The user also prioritized compiler cost after observing slow handoff compilation.

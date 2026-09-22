@@ -36,7 +36,7 @@ all crossed canonical-word dependencies. The common physical-use/lifetime view
 feeds ordinary placement, recurring qualification and binding decisions; it
 retains distinct readers, deadlines and potential returns without granting credit.
 
-Milestone 3 is active: retain unresolved rearming obligations until the selected
+Milestone 3 is complete in bounded opt-in scope: retain unresolved rearming obligations until the selected
 key's next applicable publication; prefer a required storage return when actual
 causal propagation establishes consumption before that deadline. Preserve the
 storage acquisition deadline separately. Do not enable a broad omission search
@@ -45,15 +45,16 @@ independent causal/reconstruction and corpus gates.
 
 ### M3 progress and compiler-cost investigation
 
-Explicit deferred-rearming records now retain actual consumption identities,
-physical keys, lifecycle return candidates and subsequent replay-validated
-publications. The opt-in scope now includes exactly-once shared receipts in an
-acyclic graph when their continuations only merge before exit. Qualified helper
-placement uses M2 occurrence correspondence and existing actual-consumption/key
-certificates. Required-return and helper witnesses pass independent ordering
-checks; skipped receipts and downstream branches retain closed fallback.
-Next qualify the remaining conditional deadlines and edit interactions; do not
-treat these records as a new completion authority or mark M3 complete.
+Explicit deferred-rearming records retain actual consumption identities,
+physical keys, lifecycle return candidates and replay-validated republications.
+Qualified shared receipts and conditional reuse now use balanced fallback
+boundaries prepared by analysis. Required returns supply credit only through
+actual propagation. Acceptance covers stale returns, earlier deadlines, shared
+returns, scarce keys and later edits, including a native strict ordering
+improvement without additions. All 27 portable suites, both native suites,
+19 compatibility inputs, both 88-case corpus runs and six targeted plans pass.
+Existing plans and default work counts remain unchanged. See `HANDOFF.md` for
+evidence at `e5fe6147a`. Next is M4; broader recurrence stays outside this scope.
 
 Profile-driven fixes skip provenance classification with no cross-engine
 residual and avoid copying complete selected states just to detect join changes.

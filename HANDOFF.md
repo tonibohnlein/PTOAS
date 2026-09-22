@@ -7,7 +7,7 @@ Updated: 2026-09-22
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: milestone 3 active; shared-receipt deferral and compiler-cost fixes implemented locally
+- Current milestone: milestone 3 complete in bounded opt-in scope at `e5fe6147a`; milestone 4 is next
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
@@ -23,7 +23,37 @@ validation is recorded in the foundation-slice sections below. Keep the
 first-write/final-read experiment opt-in until its complete ordering comparison
 passes.
 
-### Current M3 slice: shared receipts and their actual reuse deadlines
+### M3 completion: conditional deadlines and checked fallback
+
+Committed as `e5fe6147a` on top of `0b25d581b`. The bounded opt-in mechanism
+now covers exactly-once shared receipts and conditional reuse. Analysis prepares
+a legal common fallback before a downstream split in one reverse component pass.
+Construction retains unresolved consumption obligations and uses an actual
+required return when available; otherwise it balances a helper at the qualified
+deadline. Helper acquisition follows existing outward publications. Every reuse
+checks actual consumption and source-time key state; anticipated returns grant
+no credit. Skipped receipts and unqualified cyclic cases remain conservative.
+
+Final validation: **27 portable suites**, **2 native suites**, **19 compatibility
+inputs**, **88 default corpus cases**, **88 paired opt-in corpus cases**, and
+**6 targeted KDA/hc_pre/RMSNorm plans** passed. Compatibility, corpus and targeted
+plans remain identical to the preceding slice; default update/replay/forward
+counts are unchanged. The new native conditional witness strictly removes
+payload ordering with no additions across all four traces. Acceptance includes
+stale returns, earlier deadlines, shared returns, scarce keys and later edits.
+Evidence and pinned driver hashes:
+`/home/toni/work/pypto3_sync_more/oahs-m3-complete-work/validation-summary.json`.
+The campaign used the pre-commit source based on `0b25d581b`.
+
+The final test-header cleanup separates trace generation into `TraceOracle.h`
+without changing the graph checker; it removes the exception-dependent feature
+guard. This cleanup followed the campaign and is not a new production change.
+No device speedup or resolution of the GEMM-to-prefill gap is claimed. Deferral
+remains opt-in. Next: M4 coupled physical-lifetime protocols before residual
+repair and binding, including certified interaction with remaining repairs.
+Further cyclic replay cost reduction remains separate measured work.
+
+### Historical M3 slice: shared receipts and their actual reuse deadlines
 
 The existing checkout remains at user-committed `55e706384`; no new checkout or
 commit was made. This slice extends the opt-in acyclic policy beyond the initial
