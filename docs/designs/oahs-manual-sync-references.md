@@ -149,9 +149,11 @@ contains a shape-dependent PIPE_M barrier at lines 69–74. Other selected paths
 use `unitFlag`/accumulation-phase mechanisms. A source file with few visible M
 barriers is therefore not proof that issue order alone orders completion.
 
-Keep the current BF16 contract until the exact dtype, shape, target, instruction
-parameters and lowering are independently qualified. Access-local ordering and
-whole-operation completion remain different claims. Do not add hardware-specific
+Apply the documented ordinary ACC access contract described in
+[shared semantics](oahs-shared-semantics.md), including its shape, target and
+instruction-mode premises, without a synchronization-specific dtype allowlist.
+Phase/unitFlag mechanisms need their own qualification. Access-local ordering
+and whole-operation completion remain different claims. Do not add hardware-specific
 exceptions to the general theoretical paper merely to copy a reference count.
 
 ## Concrete work order

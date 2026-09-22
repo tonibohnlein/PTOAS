@@ -7,12 +7,62 @@ Updated: 2026-09-22
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: milestone 3 complete in bounded opt-in scope at `e5fe6147a`; milestone 4 is next
+- Current milestone: M3 complete at `e5fe6147a`; semantic correction sequence for M4/M5 active at `a9ae8cb05`
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
 
 ## Active quality work (2026-09-22)
+
+### Semantic generality: first deliverable complete, broader objective active
+
+The dependency-ordered [correction plan](docs/designs/oahs-semantic-corrections.md)
+maps the prefill audit to shared analyses. The first correction applies the
+documented ordinary ACC access contract without a dtype allowlist or identical-K
+restriction. Shared reaching descriptor state replaces the function-wide
+descriptor-update veto. Existing translated coordinates plus an exact
+address/layout certificate admit equivalent descriptors and identity views.
+The rule remains access-local: it grants no operand release, FIX completion or
+event-consumption credit. The causal core and independent checkers are unchanged.
+
+Native importer/constructor coverage includes 22 ACC variants and an access-scope
+negative that removes required operand/FIX acquisitions. **27/27 portable suites,
+both native suites, 88/88 corpus cases, 19/19 compatibility cases and six targeted
+KDA/hc_pre/RMSNorm plans pass.** The targeted plans are unchanged. Changed corpus
+plans (16), compatibility plans (1), and two original prefill plans differ only
+by removal of PIPE_M barriers; payload, control and event commands are identical.
+Complete ordering comparisons on 14 prefill traces add no relations. Qwen
+down-projection has 12→6 static M barriers; DeepSeek KV/score projection has
+16→8. SET/WAIT populations are unchanged. Constructor replay evaluations fall
+16950→11316 and 11202→5970 respectively. These are construction/order results,
+not device speedup measurements.
+
+Evidence, driver hashes, build recipes and source snapshot:
+`/home/toni/work/pypto3_sync_more/oahs-semantic-contract-work/`.
+Use `validation-summary.json`, `prefill-order.json` and
+`fence-erasure-certificates.json`. The trace frontend gained scalar `arith.andi`
+evaluation for the original inputs; the graph/order checker did not change.
+Focused native rebuilding reused the tested core within the aggregate two-worker
+limit. No full-project rebuild or sanitizer run. Final source cleanup only adds
+a direct standard header, wraps a test line and adds the trace frontend's missing
+license header after validation; no behavior changed.
+
+Separate source/evidence review found no blocking correctness issue in this
+bounded correction. Generality is explicitly unfinished: descriptor-read scalar
+facts (`get_validshape` round trips), structured forwarding and loop transfers,
+nonidentity view geometry, and the retained whole-cell ACC compatibility gate.
+The gate inventory records their replacement analyses. The research draft's
+target illustration now states the access-local premises and argument; no claim
+of universal composition was added. Concurrent AGENTS/todo edits were preserved.
+Changes are uncommitted.
+
+**Next:** step 2, independent physical-use relations from relevant selector and
+address slices. Extend shared scalar/geometry facts, preserve partial knowledge,
+and separate representability from event capacity. Start with one prefill bank
+lifetime and state the invariant before implementing. Do not expand the view
+recognizer or bypass the generation/support obligation retained for step 3.
+
+### Earlier milestone sequence
 
 The user authorized implementation of the publication-prefix certificate and
 regression coverage across the larger kernel corpus. The persistent sequence,

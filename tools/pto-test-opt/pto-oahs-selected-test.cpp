@@ -780,49 +780,198 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
+// Variants exercise one semantic contract through the real native importer and
+// constructor. They change representation, not the synchronization policy.
+std::pair<std::string, bool> accumulatorVariant(unsigned variant) {
+  std::string source = matrixInput;
+  bool expected = true;
+  auto replace = [&source](const std::string &from, const std::string &to) {
+    std::size_t at = 0;
+    while ((at = source.find(from, at)) != std::string::npos) {
+      source.replace(at, from.size(), to);
+      at += to.size();
+    }
+  };
+  const std::string aType = "!pto.tile_buf<left, 128x64xf16, valid=?x?, slayout=row_major>";
+  const std::string cType = "!pto.tile_buf<acc, 128x256xf32, valid=?x?, "
+                            "blayout=col_major, slayout=row_major, fractal=1024>";
+  std::string update = "    pto.set_validshape %a, %m, %k : " + aType + "\n";
+  if (variant == 1 || variant == 10) {
+    replace("128", variant == 1 ? "48" : "16");
+    replace("256", variant == 1 ? "48" : "160");
+    expected = variant == 10;
+  } else if (variant == 2) {
+    replace("valid_row = %m", "valid_row = %unknown");
+    expected = false;
+  } else if (variant == 3) {
+    source.insert(source.find("    pto.tmatmul ins"), update);
+  } else if (variant == 4) {
+    expected = false;
+  } else if (variant == 5 || variant == 6) {
+    replace("f16", variant == 5 ? "bf16" : "i8");
+    if (variant == 6) { replace("f32", "i32"); }
+  } else if (variant == 7) {
+    // A smaller reduction tail changes K but preserves output coverage.
+    std::string tail = source.substr(source.find("    %a ="), source.find("    %c =") - source.find("    %a ="));
+    for (const auto &names : {std::pair<std::string, std::string>{"%a =", "%at ="}, {"%b =", "%bt ="}}) {
+      tail.replace(tail.find(names.first), names.first.size(), names.second);
+    }
+    source.insert(source.find("    pto.tmatmul ins"), tail);
+    const auto begin = source.find("    pto.tmatmul.acc");
+    source.replace(source.find("%a, %b", begin), 6, "%at, %bt");
+    const auto start = source.find("    %at =");
+    source.insert(start, "    %kt = arith.constant 32 : index\n");
+    for (const std::string name : {"%at =", "%bt ="}) {
+      auto pos = source.find(name);
+      pos = source.find("%k", pos);
+      source.replace(pos, 2, "%kt");
+    }
+  } else if (variant == 8 || variant == 9) {
+    replace("constant 128 : index", variant == 8 ? "constant 96 : index" : "constant 127 : index");
+    replace("constant 256 : index", variant == 8 ? "constant 240 : index" : "constant 255 : index");
+    if (variant == 9) { replace("constant 64 : index", "constant 63 : index"); }
+  } else if (variant == 11) {
+    replace("constant 128 : index", "constant 31 : index");
+    replace("constant 256 : index", "constant 159 : index");
+    expected = false;
+  } else if (variant == 12) {
+    const auto at = source.find("    pto.tmatmul ins");
+    source.insert(at, "    %spare = pto.alloc_tile addr = %zero valid_row = %m valid_col = %k : " +
+                      aType + "\n    pto.set_validshape %spare, %unknown, %k : " + aType + "\n");
+  } else if (variant == 13 || variant == 14) {
+    update.replace(update.find("%m"), 2, "%unknown");
+    source.insert(source.find(variant == 13 ? "    pto.tmatmul.acc" : "    return"), update);
+    expected = variant == 14;
+  } else if (variant == 15 || variant == 16) {
+    const auto at = source.find("    pto.tmatmul ins");
+    const auto right = variant == 15 ? update : "    pto.set_validshape %a, %unknown, %k : " + aType + "\n";
+    source.insert(at, "    %cond = arith.cmpi eq, %unknown, %m : index\n    scf.if %cond {\n" +
+                      update + "    } else {\n" + right + "    }\n");
+    expected = variant == 15;
+  } else if (variant == 17) {
+    // Distinct SSA descriptors of one physical accumulator, with static valid
+    // shape on the view instead of explicit allocation operands.
+    std::string viewType = cType;
+    viewType.erase(viewType.find(", valid=?x?"), std::string(", valid=?x?").size());
+    const auto at = source.find("    pto.tmatmul.acc");
+    source.insert(at, "    %view = pto.treshape %c : " + cType + " -> " + viewType + "\n");
+    const auto dest = source.find("outs(%c", source.find("    pto.tmatmul.acc"));
+    source.replace(dest, std::string("outs(%c : " + cType).size(), "outs(%view : " + viewType);
+    replace(cType, viewType);
+    replace("%c = pto.alloc_tile addr = %zero valid_row = %m valid_col = %n",
+            "%c = pto.alloc_tile addr = %zero");
+  } else if (variant == 18) {
+    // Overlap without identical output identity cannot borrow access ordering.
+    const auto at = source.find("    pto.tmatmul.acc");
+    source.insert(at, "    %offset = arith.constant 1024 : i64\n"
+                      "    %other = pto.alloc_tile addr = %offset valid_row = %m valid_col = %n : " + cType + "\n");
+    source.replace(source.find("outs(%c", source.find("    pto.tmatmul.acc")), 7, "outs(%other");
+    expected = false;
+  } else if (variant == 19) {
+    replace("%m = arith.constant 128 : index", "%half = arith.constant 64 : index\n"
+                                                "    %m = arith.addi %half, %half : index");
+  } else if (variant == 20 || variant == 21) {
+    const auto at = source.find("    pto.tmatmul.acc");
+    const std::string offset = variant == 20 ? "%z" : "%unknown";
+    source.insert(at, "    %z = arith.constant 0 : index\n"
+                      "    %view = pto.subview %c[" + offset + ", %z] sizes [128, 256] : " +
+                      cType + " -> " + cType + "\n");
+    source.replace(source.find("outs(%c", source.find("    pto.tmatmul.acc")), 7, "outs(%view");
+    std::string staticType = cType;
+    staticType.erase(staticType.find(", valid=?x?"), std::string(", valid=?x?").size());
+    replace(cType, staticType);
+    replace("%c = pto.alloc_tile addr = %zero valid_row = %m valid_col = %n",
+            "%c = pto.alloc_tile addr = %zero");
+    expected = variant == 20;
+  }
+  return {source, expected};
+}
+
+bool accumulatorAccessScope(MLIRContext &context) {
+  std::string source = matrixInput;
+  const std::string acc = "!pto.tile_buf<acc, 128x256xf32, valid=?x?, "
+                          "blayout=col_major, slayout=row_major, fractal=1024>";
+  const std::string left = "!pto.tile_buf<left, 128x64xf16, valid=?x?, slayout=row_major>";
+  const std::string mat = "!pto.tile_buf<mat, 128x64xf16, valid=?x?, slayout=row_major>";
+  source.replace(source.find("%unknown: index"), std::string("%unknown: index").size(),
+                 "%unknown: index, %out: !pto.partition_tensor_view<128x256xf32>");
+  source.insert(source.find("    return"),
+      "    pto.tstore ins(%c : " + acc + ") outs(%out : !pto.partition_tensor_view<128x256xf32>)\n"
+      "    %z = arith.constant 0 : index\n"
+      "    %mat = pto.alloc_tile addr = %zero valid_row = %m valid_col = %k : " + mat + "\n"
+      "    pto.textract ins(%mat, %z, %z : " + mat + ", index, index) outs(%a : " + left + ")\n");
+  auto module = parseSourceString<ModuleOp>(source, &context);
+  if (!check(bool(module), "parse ACC access-scope fixture")) { return false; }
+  auto function = module->lookupSymbol<func::FuncOp>("matrix");
+  oahs::NativeAnalysis input;
+  if (!check(succeeded(oahs::analyzeHandoffSync(function, input)), "import ACC access scope")) { return false; }
+  oahs::CausalFrontier frontier(input.program);
+  const auto first = frontier.issue(frontier.initial(), 0);
+  const auto accumulated = frontier.issue(first.state, 1);
+  if (!check(first.applied && accumulated.applied && !frontier.inspect(accumulated.state, 2).applied &&
+             !frontier.inspect(accumulated.state, 3).applied,
+             "ACC ordering released operands or established FIX readiness")) { return false; }
+  oahs::SelectedPlan plan;
+  if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)),
+             "construct ACC access-scope fixture")) { return false; }
+  // Removing either required transfer must still be rejected by the unchanged
+  // independent causal checker, despite the new accumulator qualification.
+  bool fix = false, operand = false;
+  for (oahs::Cut cut = 0; cut < plan.commands.size(); ++cut) {
+    for (std::size_t index = 0; index < plan.commands[cut].size(); ++index) {
+      const auto &command = plan.commands[cut][index];
+      if (command.kind != oahs::Command::Acquire || command.source != oahs::Pipe::M ||
+          (command.observer != oahs::Pipe::FIX && command.observer != oahs::Pipe::MTE1)) { continue; }
+      auto damaged = plan.commands;
+      damaged[cut].erase(damaged[cut].begin() + index);
+      if (!check(!oahs::checkCausalFrontier(input.program, damaged).accepted,
+                 "missing matrix completion transfer was accepted")) { return false; }
+      fix |= command.observer == oahs::Pipe::FIX;
+      operand |= command.observer == oahs::Pipe::MTE1;
+    }
+  }
+  return check(fix && operand, "ACC fixture lost required FIX/operand transfers");
+}
+
 bool accumulatorOrdering(MLIRContext &context) {
-  for (unsigned mutation = 0; mutation < 5; ++mutation) {
-    std::string source = matrixInput;
-    if (mutation == 1) {
-      for (const std::string size : {"128", "256"}) {
-        std::size_t at = 0;
-        while ((at = source.find(size, at)) != std::string::npos) {
-          source.replace(at, size.size(), "16"); at += 2;
-        }
-      }
+  for (unsigned variant = 0; variant < 22; ++variant) {
+    const auto fixture = accumulatorVariant(variant);
+    auto module = parseSourceString<ModuleOp>(fixture.first, &context);
+    if (!check(bool(module), "parse ACC contract fixture")) {
+      llvm::errs() << "ACC variant=" << variant << "\n";
+      return false;
     }
-    if (mutation == 2) {
-      auto at = source.find("valid_row = %m");
-      source.replace(at, std::string("valid_row = %m").size(), "valid_row = %unknown");
-    }
-    if (mutation == 3) {
-      const auto at = source.find("    pto.tmatmul ins");
-      source.insert(at, "    pto.set_validshape %a, %m, %k : !pto.tile_buf<left, 128x64xf16, valid=?x?, slayout=row_major>\n");
-    }
-    auto module = parseSourceString<ModuleOp>(source, &context);
-    if (!check(bool(module), "parse ACC contract fixture")) return false;
     auto function = module->lookupSymbol<func::FuncOp>("matrix");
-    if (mutation == 4) function.walk([&](TMatmulAccOp op) {
-      op->setAttr("accPhase", AccPhaseAttr::get(&context, AccPhase::Final));
-    });
-    oahs::NativeAnalysis imported;
-    if (mutation == 4) {
-      bool rejected = true;
-      function.walk([&](TMatmulAccOp op) { rejected &= !syncAccumulatorOrder(op); });
-      if (!check(rejected,
-                 "phase mode borrowed ordinary ACC credit")) return false;
+    if (variant == 4) {
+      function.walk([&context](TMatmulAccOp op) {
+        op->setAttr("accPhase", AccPhaseAttr::get(&context, AccPhase::Final));
+      });
     }
-    if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)), "ACC import")) return false;
-    const bool qualified = llvm::any_of(imported.program.cells, [](const auto &c) { return c.nativeMmadAccOrder; });
-    if (!check(qualified == (mutation == 0), "native ACC qualification scope")) return false;
+    oahs::NativeAnalysis imported;
+    if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)), "ACC import")) { return false; }
+    const bool qualified = llvm::any_of(imported.program.operations, [&imported](const auto &op) {
+      if (!op.nativeMmadAccumulate) { return false; }
+      return llvm::all_of(op.accesses, [&imported](const auto &access) {
+        const auto &cell = imported.program.cells[access.cell];
+        return cell.addressSpace != std::to_string(unsigned(AddressSpace::ACC)) || cell.nativeMmadAccOrder;
+      });
+    });
+    if (!check(qualified == fixture.second, "native ACC qualification scope")) {
+      llvm::errs() << "ACC variant=" << variant << "\n";
+      return false;
+    }
     oahs::SelectedPlan plan;
-    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)), "construct ACC fixture")) return false;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)),
+               "construct ACC fixture")) { return false; }
     const auto barriers = std::count_if(plan.ledger.begin(), plan.ledger.end(), [](const auto &e) {
       return e.command.kind == oahs::Command::Barrier && e.command.source == oahs::Pipe::M;
     });
-    if (!check((barriers == 0) == (mutation == 0), "ACC fence required outside qualified contract")) return false;
+    if (!check((barriers == 0) == fixture.second, "ACC fence required outside qualified contract")) {
+      llvm::errs() << "ACC variant=" << variant << "\n";
+      return false;
+    }
   }
-  return true;
+  return accumulatorAccessScope(context);
 }
 bool firstUseOrdering(MLIRContext &context) {
   std::string original = matrixInput;

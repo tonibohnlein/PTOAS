@@ -5,6 +5,13 @@ Started 2026-09-22 at `b62b89de5`, following the comparison with research draft
 physical storage, original control and target event resources. Existing
 InsertSync is a comparison, not an ordering specification.
 
+Current work after M3 follows the dependency-ordered
+[semantic correction sequence](oahs-semantic-corrections.md), based on the
+2026-09-22 prefill audit. It refines M4/M5 prerequisites without reopening the
+accepted M1–M3 scope. The bounded ACC contract correction is validated; independent
+physical-use relations, generation/support intervals, endpoint composition and
+binding generality remain active work. Device improvement remains unmeasured.
+
 ## Milestones and acceptance
 
 1. **Accepted mechanism checkpoint: restricted publication-prefix certificate.** Establish a restricted

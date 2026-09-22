@@ -223,21 +223,37 @@ hard A3 collective's empty payload-effect population.
 `SyncAccumulatorOrdering.h` describes an access-order exception for ordinary
 A3 `TMATMUL` / `TMATMUL_ACC` lowering to `mad`, using actual valid M/N/K
 sizes. The [A2/A3-supported Mmad documentation](https://asc.gitcode.com/api/SIMD-API/basic_api/cube_compute_ISASI/mmad_compute/Mmad.html)
-states that consecutive K-axis accumulations need PIPE_M below
-`(m / 16) * (n / 16) == 10`, while sufficiently large shapes have native
+states that consecutive K-axis accumulations need PIPE_M when
+`(m / 16) * (n / 16) < 10`, while sufficiently large shapes have native
 write/read ordering. This is a development documentation source, checked on
-2026-09-17; the lowering correspondence is the A2/A3 `TMatmul.hpp` path in
+2026-09-22 at documentation master `ee1721f1b399`; the lowering correspondence is the A2/A3 `TMatmul.hpp` path in
 PTO ISA revision `0c112d61f41342bd0867ce1080c29f1590d72484`, also used by the
 shared source-qualified contracts above. This is not new device qualification.
 
-Admission is deliberately narrower: ordinary unspecified AccPhase, FP16 inputs
-and FP32 ACC, positive full valid dimensions divisible by 16 and at most 4095,
-matching K and result dimensions, a constant destination address, and an exact
-canonical ACC atom. All M accesses to that atom must have the same qualified
-physical destination, dimensions and layout. Unknown/mixed accesses keep their
-normal requirements. A function containing mutable valid-shape updates does not
-receive this exception. Small/dynamic sizes, partial valid shapes, mixed layouts,
-other matrix variants and UnitFlag/phase modes retain conservative behavior.
+Qualification uses ordinary unspecified AccPhase, supported instruction types,
+positive effective dimensions at most 4095, compatible output dimensions/layout,
+and exact translated ACC coordinates. There is no synchronization-specific dtype
+allowlist, identical-K condition, full-allocation condition or divisibility-by-16
+condition. The threshold uses the documented integer divisions on effective M
+and N; padded allocation dimensions do not replace them. Each call still checks
+compatible A/B reduction dimensions and output coverage.
+
+`SyncTileDescriptorState` prepares dimensions at original uses. Static type facts,
+explicit allocation/view dimensions and reaching descriptor assignments supply
+facts; equal branch results survive joins. A loop invalidates only descriptors
+it may mutate, and local definitions or assignments can reestablish them before
+a use. Unresolved dynamic forwarding or mutation yields unknown. Descriptor
+identity is separate from physical storage identity: metadata updates on a
+distinct view do not mutate every descriptor of the same bytes.
+
+The physical proof consumes `MemoryDependentAnalyzer::storageCoordinates` from
+shared translated origins, including address-preserving views. Equivalent
+accumulator input/output descriptors need matching coordinates, extent, layout
+and effective dimensions, not SSA identity. The current whole-cell compatibility
+certificate still requires every M access to a canonical ACC atom to share the
+qualified output coverage/layout; generation-scoped replacement is explicitly
+step 3 of [the correction sequence](oahs-semantic-corrections.md). Ambiguous
+footprints, incompatible layouts and unsupported modes retain ordinary ordering.
 
 Only an **accumulating consumer** may use this rule. A subsequent fresh matrix
 initialization still needs its ordinary prerequisite. The rule suppresses the
