@@ -1,7 +1,13 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// Licensed under the CANN Open Software License Agreement Version 2.0.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedTestSupport.h"
 #include "GraphOracle.h"
+#include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
 using namespace selected_test;
 namespace {
 constexpr auto P = o::Pipe::MTE1, Q = o::Pipe::M, R = o::Pipe::MTE2;
@@ -108,6 +114,123 @@ void positive()
         require(!o::verify(p, broken).success, "missing early readiness accepted");
     }
 }
+// The analysis splits a loop's final visit, while its ordinary command words
+// remain shared. Existing placement opportunities must survive that refinement.
+o::Program refinedFixture()
+{
+    auto p = fixture(true);
+    auto& g = *p.observed;
+    g.sites.resize(9);
+    g.observations.push_back({8, {}, true});
+    g.sites[8].observation = 8;
+    g.sites[8].successors = {0};
+    g.entry = 8;
+    g.sites[6].backedgeOwners = {8};
+    g.loops.push_back({8, 8, 7, {0, 1, 2, 3, 4, 5, 6}, 1, true});
+    return p;
+}
+o::Program refine(const o::Program& p)
+{
+    o::ReaderVisitRegion request;
+    request.owner = 8;
+    request.lastPublications = {2};
+    request.finalSourceGaps = true;
+    auto r = o::refineReaderVisits(p, request);
+    require(r.success, r.reason);
+    return r.program;
+}
+std::vector<o::Cut> visits(const o::Program& p, unsigned trips, unsigned mask, bool refined)
+{
+    const auto& g = *p.observed;
+    std::vector<o::Cut> path;
+    unsigned iteration = 0;
+    auto at = g.entry;
+    for (unsigned steps = 0; steps < 200; ++steps) {
+        path.push_back(at);
+        const auto& site = g.sites[at];
+        if (at == g.exit) {
+            return path;
+        }
+        if (site.operation == 4) {
+            ++iteration;
+        }
+        if (at == 0) {
+            at = site.successors[refined ? iteration + 1 == trips : iteration == trips];
+        } else if (site.observation == 3) {
+            at = site.successors[(mask >> iteration) & 1];
+        } else {
+            require(site.successors.size() == 1, "unexpected path fork");
+            at = site.successors.front();
+        }
+    }
+    require(false, "refined path did not terminate");
+    return {};
+}
+void sharedChoice()
+{
+    const auto original = refinedFixture();
+    const auto refined = refine(original);
+    const auto before = construct(original, true);
+    const auto after = construct(refined, true);
+    require(before.work.choiceTransfers == 1, "unrefined opportunity missing");
+    require(after.work.choiceTransfers == 1, "refinement lost choice placement");
+    for (unsigned trips : {1u, 2u, 4u}) {
+        for (unsigned mask = 0; mask < (1u << trips); ++mask) {
+            const auto a = order(original, before.commands, visits(original, trips, mask, false), true);
+            const auto b = order(refined, after.commands, visits(refined, trips, mask, true), true);
+            require(a == b, "analysis refinement changed complete payload order");
+        }
+    }
+    o::selected::Control control(refined);
+    require(control.complete, control.reason);
+    const auto& paired = control.correspondence(2, 3);
+    require(paired.qualified && paired.pairs.size() == 2, "shared visits not paired");
+    for (const auto& pair : paired.pairs) {
+        require(control.straight(pair.first, pair.second), "incorrect visit pairing");
+        require(&paired == &control.correspondence(pair.first, pair.second), "noncanonical query cache");
+    }
+    require(control.correspondence(2, 2).pairs.size() == 2, "identity omitted shared visit");
+    require(!control.correspondence(3, 2).qualified, "receipt before publication admitted");
+    // Only the final analytical choice has an empty arm. Qualification must
+    // inspect all copies instead of admitting the ordinary copy's evidence.
+    auto empty = refined;
+    const auto finalChoice = control.wordOccurrences[3].back();
+    empty.observed->sites[finalChoice].successors.back() = control.wordOccurrences[6].back();
+    o::selected::Control rejected(empty);
+    require(rejected.complete, rejected.reason);
+    require(rejected.choiceFrontiers.empty(), "empty final arm admitted");
+    // An outward publication in a shared consumer word also blocks moving its
+    // receipt in front of the choice. Initialize through the canonical ledger.
+    o::selected::Ledger fixed(refined, control.canonicalCut, control.wordSpan);
+    std::string reason;
+    require(fixed.initialize(o::Commands(o::commandCutCount(refined)), reason), reason);
+    fixed.append(4, {o::Command::Publish, Q, R, 0}, o::EndpointPurpose::Fixed);
+    fixed.append(4, {o::Command::Acquire, Q, R, 0}, o::EndpointPurpose::Fixed);
+    const auto blocked = o::constructSelectedPlan(refined, fixed.commands());
+    require(blocked.work.choiceTransfers == 0 && blocked.work.choiceTrials == 0,
+            "shared outward publication gained prerequisites");
+    // Ordinary fallback can decline this repeated shared exchange for lack of
+    // rearming. The placement rule must not bypass that independent check.
+    if (blocked.success) {
+        require(o::verify(refined, blocked.commands).success, "invalid fallback accepted");
+    }
+}
+void unmatchedOccurrences()
+{
+    auto p = fixture();
+    p.observed->sites[0].successors.push_back(3);
+    require(!o::selected::Control(p).correspondence(2, 3).qualified, "unmatched receipt admitted");
+    p = fixture();
+    p.observed->sites[2].successors.push_back(7);
+    require(!o::selected::Control(p).correspondence(2, 3).qualified, "unconsumed exit admitted");
+    p = fixture();
+    p.observed->sites[2].successors.push_back(1);
+    p.observed->sites[2].backedgeOwners = {o::NoControlId, 1};
+    require(!o::selected::Control(p).correspondence(2, 3).qualified, "double publication admitted");
+    p = fixture();
+    p.observed->sites[0].successors.push_back(7);
+    require(o::selected::Control(p).correspondence(2, 3).qualified, "skipped matched pair declined");
+}
 void tightCapacity()
 {
     auto p = fixture();
@@ -146,6 +269,8 @@ void negatives()
 int main()
 {
     positive();
+    sharedChoice();
+    unmatchedOccurrences();
     tightCapacity();
     negatives();
     std::cout << "choice consumer frontier tests passed\n";

@@ -17,10 +17,10 @@ InsertSync is a comparison, not an ordering specification.
    complete payload-order comparisons, unchanged causal/reconstruction checks,
    and the larger prepared-kernel corpus. Record remaining native misses rather
    than promoting an experiment whose ordering gate fails.
-2. **Active: common lifecycle and occurrence view.** Consolidate physical identity, producing/reading
+2. **Complete: common lifecycle and occurrence view.** Consolidate physical identity, producing/reading
    occurrences, last physical users, next overwrite, legal gaps, participation
-   and possible return support. Implement only the portion required by milestone
-   1 first. Records prescribe obligations, not private event pairs, and do not
+   and possible return support. Add each portion with a real construction
+   consumer. Records prescribe obligations, not private event pairs, and do not
    become a second completion authority.
 3. **Rearming at its actual deadline.** Keep storage acquisition deadlines
    separate from the next applicable publication of a reused event key. Select
@@ -109,6 +109,52 @@ order comparisons for changed native plans and corpus nonregressions. A KDA
 improvement, fewer ordering relations or a measured speedup is not required
 to finish milestone 1. Track performance improvements as a subsequent campaign
 using the shared mechanisms; device timing follows a qualified native candidate.
+
+## Milestone 2: shared occurrence foundation
+
+The first consumer of shared occurrence correspondence is original-choice
+placement. `Control::correspondence` returns the qualified pairs of analytical
+source and receipt occurrences for canonical words. The result describes
+original-control participation; it does not prescribe a key, declare a future
+return acquired or replace storage history. The prior `balancedWords` query now
+uses this relation too.
+
+Construction checks source coverage, access freshness and physical-key evidence
+at every paired occurrence. Choice qualification covers every copied arm and
+resolves its original scope owner through canonical word identity. A private
+trial appends through the canonical ledger rather than changing one analytical
+copy. This preserves existing placement when observation analysis refines a
+loop's final visit.
+
+The real-refiner portable witness compares complete payload order on 22 traces
+(1/2/4 visits and every branch sequence). All 26 portable suites pass. The native
+analysis-only KDA witness adds zero and removes 276 finite payload relations
+against the unrefined committed default; previously the refinement also added
+16. Final-read placement remains disabled in this comparison. This is mechanism
+and ordering evidence, not a timing result. See `HANDOFF.md` for the pinned native,
+compatibility and corpus results.
+
+Milestone 2 is complete. Exact-gap publication certification now proves every
+qualified source/publication occurrence separately, compares its causal
+interfaces, and retains the union of crossed canonical-word dependencies. A
+later edit in either analytical copy invalidates the proof. Shared-word
+constructor regressions compare complete order across both copies and branch
+arms; negative cases cover later physical readers, unmatched copies, same-key
+crossings and edits in a second copy.
+
+`RequirementFrontiers` now provides the common physical-use and lazy lifecycle
+view in `SelectedLifecycles.cpp`. Ordinary placement, recurring qualification and
+binding consume it. Binding decisions retain original requirements, release
+candidates, distinct storage deadlines and possible return deadlines. A
+multi-reader regression preserves independent reader origins and checks these
+links on an accepted construction. Possible returns remain analysis facts;
+actual causal propagation is the only source of acquired credit.
+
+The next milestone is rearming at the actual next applicable key-publication
+deadline. It must use these facts to select required returns before introducing
+private acknowledgments, without assuming their future consumption. Broader
+recurring selection and open ownership remain milestones 4 and 5. See
+`HANDOFF.md` for the final native and corpus acceptance evidence.
 
 ## Milestone 1 evidence and next action
 
@@ -213,8 +259,8 @@ The constructor's existing causal-frontier admission rejects unqualified typed
 resource, visibility, private-event and final-block effects before this query;
 the query consumes that admitted program and its unique physical-key population.
 
-Admission requires a single analytical occurrence of each endpoint word,
-balanced participation, no crossed endpoint of the same physical event key,
+Admission requires qualified correspondence for every analytical occurrence of
+the endpoint words, balanced participation, no crossed endpoint of the same physical event key,
 and no crossed backedge. Paths remain separate. The query declines beyond
 8,192 visited path steps or 64 completed paths. Unknown or unsupported cases
 retain their original frontiers. Actual source-time coverage/rearming and the
@@ -229,8 +275,8 @@ insertion, deletion or reordering inside the interval, or loss of its anchor,
 invalidates this certificate. Final helper omission also preserves certificates,
 and finalization refuses a stale proof before invoking the unchanged checker.
 This conservative dependency tracking is intentionally stricter than necessary.
-Re-certifying useful later edits, qualifying shared endpoint words and choosing
-a key with the early boundary in view remain foundation work. There is no
+Shared endpoint words are qualified by milestone 2. Re-certifying useful later
+edits and choosing a key with the early boundary in view remain later work. There is no
 general final-plan motion pass, automatic control refinement or native
 improvement claim from this slice.
 
@@ -257,7 +303,7 @@ receipt still gates the consumer. This demonstrates native use of the building
 block with ordering nonregression. Under the revised mechanism acceptance
 criteria it contributes to milestone 1; it is not a native overlap improvement.
 
-### Current baseline correction and next implementation
+### Starting evidence before shared occurrence correspondence
 
 At frozen `b62b89de5`, default KDA, dspark RMSNorm and hc_pre construct and
 reconstruct. Both baseline and candidate now refuse the opt-in KDA
@@ -274,10 +320,11 @@ later-bank extracts before the first bank's compute. This exposes loss of an
 existing placement opportunity under shared analytical words; it is not an
 accepted tradeoff or evidence for enabling the refinement by default.
 
-Next: establish shared occurrence correspondence and preserve existing choice
-frontiers when adding analysis structure, then connect lifecycle boundaries to
-binding before key selection. Use the shared-foundations sequence above rather
-than adding a KDA-specific rule. Keep source-time consumption evidence mandatory;
+This motivated the shared occurrence correspondence slice now recorded above:
+choice frontiers survive analysis refinement and the 16 added relations are
+removed. Milestone 2 connects correspondence to exact-gap certificates for shared words
+and lifecycle boundaries to placement, recurring qualification and binding.
+Continue with actual rearming deadlines rather than adding a KDA-specific rule. Keep source-time consumption evidence mandatory;
 the cut-754 combined experiment is a separate prerequisite if that policy is
 used. Preserve the complete-order and corpus gates for each mechanism extension.
 Track KDA overlap improvements separately from milestone 1 acceptance, with

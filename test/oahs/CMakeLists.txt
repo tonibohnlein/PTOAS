@@ -12,6 +12,8 @@ enable_testing()
 add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp
   ../../lib/PTO/Transforms/OAHS/CausalFrontier.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedLedger.cpp
+  ../../lib/PTO/Transforms/OAHS/SelectedLifecycles.cpp
+  ../../lib/PTO/Transforms/OAHS/SelectedOccurrences.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedControl.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedReplay.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedGroups.cpp

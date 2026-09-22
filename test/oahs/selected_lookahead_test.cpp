@@ -599,6 +599,44 @@ void keepKnownPrefixSeparateFromOverlap()
     require(plan.decisions[0].publication == 1,
             "lookahead moved the known source prefix past the later load");
 }
+void sharedLifecycleView()
+{
+    auto p = base(1, 3);
+    const auto R = o::Pipe::V;
+    p.operations = {op(P, {{0, false, true, true}}), op(Q, {{0, true, false}}),
+                    op(R, {{0, true, false}}), op(P, {{0, false, true, true}})};
+    o::selected::Control control(p);
+    o::StorageFrontierAnalysis storage(p);
+    o::selected::RequirementFrontiers facts(p, control, storage);
+    require(facts.complete(), facts.reason());
+    const auto& reader = facts.use(1, 0);
+    require(reader.roles == 1 && reader.pipe == Q && reader.release == 2 &&
+            reader.returns == std::vector<o::Cut>{3}, "reader lost physical return deadline");
+    const auto& physical = facts.lifetime(3, 0);
+    std::set<o::Cut> readers;
+    for (const auto& origin : physical.previousReaders) {
+        readers.insert(origin.site);
+    }
+    require(readers == std::set<o::Cut>{1, 2}, "lifecycle merged independent reader engines");
+    require(&physical == &facts.lifetime(3, 0), "lifecycle summary not shared");
+    require(!facts.lifetime(100, 0).reachable && !facts.use(1, 4).roles, "invalid lifecycle query accepted");
+    require(facts.recurringRelease(1, 0) == o::NoAnalysisId, "unqualified recurrence invented");
+    const auto plan = accepted(p);
+    bool readiness = false, release = false;
+    for (const auto& decision : plan.decisions) {
+        for (const auto& demand : decision.lifecycles) {
+            if (demand.requirement.source.site == 0 && demand.requirement.target.site == 1) {
+                readiness = demand.release == 1 && demand.deadline == 1 &&
+                    demand.returnDeadlines == std::vector<o::Cut>{3};
+            }
+            if (demand.requirement.kind == o::StorageRelationship::WAR) {
+                release |= demand.deadline == 3;
+            }
+        }
+    }
+    require(readiness && release, "binding lost its first-pass lifecycle evidence");
+    require(bool(oahs_oracle::graph(p, plan.commands, {0, 1, 2, 3}, {})), "lifecycle binding order invalid");
+}
 void keepDifferentDeadlines()
 {
     auto p = base(2, 2);
@@ -1133,6 +1171,7 @@ int main()
     for (auto n : {32u, 64u, 128u}) o::selected::ReplayTestAccess::pairEnumeration(n);
     keepKnownPrefixSeparateFromOverlap();
     reuseThroughRequiredOverlapReadiness();
+    sharedLifecycleView();
     keepDifferentDeadlines();
     alternativeEarlySources();
     alternativeProviderCredit();

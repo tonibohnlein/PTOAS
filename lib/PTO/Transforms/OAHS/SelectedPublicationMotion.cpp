@@ -78,20 +78,40 @@ Cut Constructor::lifecycleRelease(const SelectedDecision& decision) const
     Cut release = NoAnalysisId;
     for (const auto& required : decision.required) {
         bool found = false;
-        for (const auto& fact : requirements.at(decision.consumer)) {
-            if (fact.access != accessClass(required)) {
+        for (const auto& fact : decision.lifecycles) {
+            const auto& use = requirements.use(fact.requirement.source.site, fact.requirement.cell);
+            const auto access = (Id(fact.requirement.cell) * PipeCount + unsigned(use.pipe)) * 2 +
+                Id(fact.requirement.kind != StorageRelationship::WAR);
+            if (access != accessClass(required)) {
                 continue;
             }
-            if (fact.lifecycleRelease == NoAnalysisId) {
+            if (fact.release == NoAnalysisId) {
                 return NoAnalysisId;
             }
             found = true;
-            if (release == NoAnalysisId || control.position[release] < control.position[fact.lifecycleRelease]) {
-                release = fact.lifecycleRelease;
+            if (release == NoAnalysisId || control.position[release] < control.position[fact.release]) {
+                release = fact.release;
             }
         }
         if (!found) {
             return NoAnalysisId;
+        }
+    }
+    // A marginal last-reader view is not permission to release storage. Keep
+    // the conjunctive demands and reject a known later physical reader on the
+    // publishing engine before the conflicting use.
+    for (const auto& fact : decision.lifecycles) {
+        if (fact.requirement.kind != StorageRelationship::WAR) {
+            continue;
+        }
+        const auto& physical = requirements.lifetime(fact.requirement.source.site, fact.requirement.cell);
+        for (const auto& reader : physical.nextReaders) {
+            const bool crossed = reader.site != fact.requirement.source.site &&
+                program.operations[reader.operation].pipe == decision.source &&
+                control.straight(release, reader.site) && control.straight(reader.site, decision.consumer);
+            if (crossed) {
+                return NoAnalysisId;
+            }
         }
     }
     return release;
@@ -104,6 +124,9 @@ bool Constructor::preservePublicationSpan(Id publication, const SelectedDecision
     }
     const auto endpoint = ledger.endpoint(publication);
     auto target = lifecycleRelease(decision);
+    if (target != NoAnalysisId) {
+        target = control.canonicalCut[target];
+    }
     if (target == NoAnalysisId || target == endpoint.cut || !control.balancedWords(target, endpoint.cut)) {
         target = NoAnalysisId;
         for (auto gap : control.finalReadGaps) {
@@ -117,9 +140,7 @@ bool Constructor::preservePublicationSpan(Id publication, const SelectedDecision
     }
     const auto original = endpoint.cut;
     const bool qualified = target != NoAnalysisId && target != original &&
-        control.sourceCut(target, endpoint.command.source) &&
-        control.wordOccurrences[control.canonicalCut[target]].size() == 1 &&
-        control.wordOccurrences[original].size() == 1 && control.balancedWords(target, original);
+        control.sourceCut(target, endpoint.command.source) && control.balancedWords(target, original);
     if (!qualified) {
         return true;
     }

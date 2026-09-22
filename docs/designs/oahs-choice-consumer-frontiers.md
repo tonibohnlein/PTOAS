@@ -21,9 +21,10 @@ current source-time causal state and actual selected keys determine realization.
 ## Qualification and resource interface
 
 `Control` indexes candidate frontiers by their first consumers. Each original
-choice must have two straight arm prefixes, unique analytical command words,
-and a first payload on the same observer. Empty arms, nested control, an earlier
-payload on another pipeline, and ambiguous/shared words retain ordinary fallback.
+choice must have two straight arm prefixes and a first payload on the same
+observer at every reachable analytical occurrence of its shared command word.
+Empty arms, nested control, an earlier payload on another pipeline, and
+unqualified occurrence correspondence retain ordinary fallback.
 Preparation scans those prefixes once per pipeline, not once per requirement.
 
 At selection:
@@ -31,16 +32,17 @@ At selection:
 - Every first consumer physically conflicts with every motivating requirement.
 - No crossed existing outward publication from the observer or ALL boundary may
   acquire an extra prerequisite. Deadline words are included in this check.
-- The earlier source is reachable, current-version and in the straight incoming
-  corridor. Claimed history must remain fresh up to the choice.
+- The earlier source is reachable and current-version. Every paired source and
+  choice occurrence must have a straight incoming corridor, sufficient actual
+  source-time history and no intervening regeneration of the claimed access.
 - A direct key must have actual source-time publication credit and a clear use
   interval. Closed/recurring reservations remain excluded.
 - A distinct helper-free key must be available at the original broader boundary.
   This conservative check prevents the known one-key split from starving the
   subsequent ordinary receipt or forcing a broader return. It is not a complete
   allocation theorem; unsupported capacity retains fallback.
-- One exact staged proposal checks all represented protocol occurrences and key
-  neighbors. Pending payload requirements remain explicit; no desired return is
+- One exact staged proposal, built through the canonical ledger, checks all
+  represented protocol occurrences and key neighbors. Pending payload requirements remain explicit; no desired return is
   granted as credit. Rejection changes no live ledger or reservations.
 
 The already checked endpoints are committed through the existing frontier path.
@@ -53,7 +55,15 @@ safety, not general ordering optimality; ordering inclusion is measured separate
 `--no-choice-consumer-frontiers` as an ablation. The separate unfinished
 `firstWriteConsumers` experiment remains disabled.
 
-## Validation
+## Shared-occurrence validation
+
+The real final-visit refiner preserves early choice placement and identical
+complete payload ordering across 22 branch/visit traces. Tests also reject
+unmatched endpoints, an empty arm only in the final copy and crossed outward
+publications in a shared word. All 26 current portable suites pass. Current
+native and corpus evidence is recorded in `HANDOFF.md` under milestone 2.
+
+## Original rollout validation
 
 - All 25 portable suites pass. The focused suite checks acyclic and repeated
   choices, zero/one/two/four trips and every branch sequence, complete order-set

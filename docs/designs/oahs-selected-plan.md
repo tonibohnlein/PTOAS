@@ -35,6 +35,59 @@ must agree with the current checkpoint map before it supplies a placement query.
 The source's prefix is compared with the consumer's current occurrence record;
 a later access cannot inherit an older receipt merely by sharing its class.
 
+## Shared occurrence correspondence
+
+`SelectedOccurrences.cpp` provides a cached immutable relation between two
+canonical command words. Its original-graph monitor carries the analytical
+source occurrence until the matching acquisition word. It rejects a second
+publication while live, an acquisition without a publication and an unconsumed
+publication at an exit. Paths skipping both endpoints remain legal. The result
+records every possible source/receipt occurrence pair; identical words have one
+identity pair per reachable occurrence. This is participation evidence, not
+completion, storage freshness, eventual execution or physical-key rearming.
+
+The existing `balancedWords` query uses that shared relation. Original-choice
+placement is its first explicit paired-occurrence consumer: it qualifies every
+copy's first consumers, intersects actual source coverage across all pairs and
+checks every key-use interval. Analytical refinement can retain the original
+scope owner while splitting its command word into final/repeated occurrences;
+qualification resolves that owner through the canonical word identity. The
+private protocol trial appends through `Ledger`, so it edits every copy exactly
+as live construction will. Existing outward publications remain protected.
+
+The diagnostic `--final-read-analysis-only` option imports final-visit control
+refinement without enabling final-read placement. Default import is unchanged.
+This separation tests whether analysis alone loses an existing placement
+opportunity. Cross-word publication motion uses the same correspondence: each
+reachable source occurrence starts a separate exact-gap symbolic proof, and each
+exit must match its qualified publication occurrence. All crossed canonical
+words contribute dependencies, so an edit in any analytical copy can invalidate
+the certificate. The existing 8,192-step/64-path bounds, backedge and same-key
+refusals, actual coverage/rearming checks and independent final admission remain.
+
+## Common physical lifecycle view
+
+`SelectedLifecycles.cpp` makes `RequirementFrontiers` the shared construction
+interface over immutable storage and control analysis. A cached `LifecycleUse`
+identifies physical cell, read/write roles, source occurrence and pipe, candidate
+release gap, distinct conflicting-use deadlines and potential storage returns.
+Lazy physical lifetime summaries retain predecessor readers/writers, subsequent
+users, participation and enclosing-loop facts from `StorageFrontierAnalysis`.
+Distinct readers and deadlines remain distinct; these facts prescribe no event
+pair and supply no completion or consumption credit.
+
+Ordinary release placement consumes these records, including known later
+physical readers. Recurring qualification consumes their access roles,
+occurrences and qualified release gaps. Every binding path retains value-based
+`SelectedLifecycleDemand` records linking its original storage relationships,
+release candidates, consumer deadlines and possible return deadlines to the
+selected decision and stable endpoint IDs. Records survive construction and
+remain distinct from the actual endpoints after certified motion.
+
+This completes milestone 2's common interface. Selecting a required storage
+return to discharge an unresolved key-rearming obligation at its actual deadline
+is milestone 3; retaining a possible return here does not perform that selection.
+
 ## Policy map
 
 | Rule | Implementation |

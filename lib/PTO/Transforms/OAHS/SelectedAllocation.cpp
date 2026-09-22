@@ -64,9 +64,11 @@ bool Constructor::clearInterval(Id key, Cut source, Cut target) const
             c.observer != identity.observer || c.key != identity.key) {
             continue;
         }
-        if (control.straight(source, endpoint.cut) && control.straight(endpoint.cut, target) &&
-            endpoint.cut != source) {
-            return false;
+        for (auto occurrence : control.wordOccurrences[endpoint.cut]) {
+            if (control.straight(source, occurrence) && control.straight(occurrence, target) &&
+                occurrence != source) {
+                return false;
+            }
         }
     }
     return true;
@@ -1232,6 +1234,7 @@ std::optional<bool> Constructor::splitRelay(const Group& group, Pipe observer, R
     decision.observer = observer;
     decision.stage = stage;
     decision.required = group.requirements;
+    decision.lifecycles = requirements.demandsAt(current, group.requirements);
     decision.endpoints = materialize(ledger);
     ++result.work.splitRelays;
     if (!update() || !settleRearming(decision))
@@ -1254,6 +1257,7 @@ bool Constructor::bind(Group& group, RequirementStage stage)
         decision.publicationAtWordStart = true; decision.stage = stage;
         decision.source = group.source; decision.observer = observer;
         decision.required = group.requirements;
+        decision.lifecycles = requirements.demandsAt(current, group.requirements);
         const auto number = frontier.keys()[key].key;
         decision.endpoints.push_back(ledger.append(group.publication,
             {Command::Publish, group.source, observer, number}, EndpointPurpose::Completion, result.decisions.size()));
@@ -1280,6 +1284,7 @@ bool Constructor::bind(Group& group, RequirementStage stage)
         decision.publicationAtWordStart = true; decision.stage = stage;
         decision.source = group.source; decision.observer = observer;
         decision.required = group.requirements;
+        decision.lifecycles = requirements.demandsAt(current, group.requirements);
         const auto number = frontier.keys()[key].key;
         decision.endpoints.push_back(ledger.prepend(group.publication,
             {Command::Publish, group.source, observer, number}, EndpointPurpose::Completion, result.decisions.size()));
@@ -1306,6 +1311,7 @@ bool Constructor::bind(Group& group, RequirementStage stage)
         decision.source = group.source;
         decision.observer = observer;
         decision.required = group.requirements;
+        decision.lifecycles = requirements.demandsAt(current, group.requirements);
         const auto request = result.decisions.size();
         for (auto cut : group.publications) {
             decision.endpoints.push_back(ledger.append(cut,
@@ -1359,6 +1365,7 @@ bool Constructor::bind(Group& group, RequirementStage stage)
     decision.source = group.source;
     decision.observer = observer;
     decision.required = group.requirements;
+    decision.lifecycles = requirements.demandsAt(current, group.requirements);
     decision.commonCut = group.common;
     auto source = group.publication;
     for (Id hop = 1; hop < path.size(); ++hop) {

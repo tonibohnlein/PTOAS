@@ -26,6 +26,13 @@ struct Component {
     std::vector<Id> sites, order, entries;
     bool cyclic = false;
 };
+// A balanced source/receipt relation in the original graph. Pairs identify
+// analytical occurrences, including alternative paths and repeated visits.
+// Qualification supplies participation only, never completion or key credit.
+struct OccurrenceCorrespondence {
+    bool qualified = false;
+    std::vector<std::pair<Cut, Cut>> pairs;
+};
 struct Control {
     detail::ControlGraph graph;
     std::vector<std::vector<Id>> predecessors;
@@ -82,6 +89,13 @@ struct Control {
     Cut after(Id) const;
     bool sourceCut(Id, Pipe) const;
     bool balancedWords(Cut publication, Cut acquisition) const;
+    const OccurrenceCorrespondence& correspondence(Cut publication, Cut acquisition) const;
+
+private:
+    mutable std::map<std::pair<Cut, Cut>, OccurrenceCorrespondence> correspondences;
+    OccurrenceCorrespondence pairOccurrences(Cut, Cut) const;
+    void prepareChoiceFrontiers(const Program&);
+    bool appendChoiceOccurrence(const Program&, Cut, ChoiceFrontier&);
 };
 
 class Ledger {
@@ -260,6 +274,16 @@ enum class RequirementOccurrence : unsigned {
     Unknown,
     Count
 };
+// One physical use in original control. Successor requirements retain all
+// reader engines and original deadlines; they do not allocate private channels.
+struct LifecycleUse {
+    unsigned cell = 0, roles = 0;
+    StorageOrigin origin;
+    Pipe pipe = Pipe::S;
+    OccurrenceMode occurrence;
+    Cut release = NoAnalysisId;
+    std::vector<Cut> deadlines, returns;
+};
 // One original storage requirement with both of its placement bounds retained.
 // This is immutable analysis metadata: it grants no completion receipt, event
 // token, or permission to merge requirements that happen to use one pipeline.
@@ -294,6 +318,11 @@ public:
     const std::string& reason() const { return error; }
     const std::vector<RequirementFrontier>& at(Cut site) const;
     std::map<Id, unsigned> reasons(Cut site) const;
+    const LifecycleUse& use(Cut site, unsigned cell) const;
+    const StorageLifecycle& lifetime(Cut site, unsigned cell) const;
+    Cut recurringRelease(Cut site, unsigned cell) const;
+    std::vector<SelectedLifecycleDemand> demandsAt(
+        Cut site, const std::vector<FrontierRequirement>& required) const;
     std::size_t size() const { return population; }
     std::size_t sourceBoundaries() const { return boundedSources; }
     const std::array<std::size_t, unsigned(RequirementOccurrence::Count)>& occurrenceCounts() const
@@ -307,6 +336,10 @@ private:
     std::size_t population = 0, boundedSources = 0;
     std::array<std::size_t, unsigned(RequirementOccurrence::Count)> occurrences{};
     const StorageFrontierAnalysis* storage = nullptr;
+    const Program* program = nullptr;
+    const Control* control = nullptr;
+    mutable std::map<std::pair<Cut, unsigned>, LifecycleUse> uses;
+    mutable std::map<std::pair<Cut, unsigned>, StorageLifecycle> lifetimes;
     std::vector<std::vector<RequirementFrontier>> byDeadline;
 };
 // A storage/control qualifier: it returns requirements and original frontiers,
@@ -414,6 +447,8 @@ private:
                         const std::vector<FrontierRequirement>&, const std::set<Id>*) const;
     bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&,
                            const std::vector<FrontierRequirement>&, const std::set<Id>*);
+    std::set<Id> choiceCoverage(Cut, const Control::ChoiceFrontier&, Pipe,
+        const std::vector<FrontierRequirement>&) const;
     bool choiceConsumerFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&,
                                 const std::vector<FrontierRequirement>&, const std::set<Id>*);
     bool consume();

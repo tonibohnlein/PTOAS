@@ -11,7 +11,7 @@ advancing acquisition deadlines.
 The user-approved milestones, starting at `b62b89de5`, are tracked in
 [oahs-quality-milestones.md](oahs-quality-milestones.md). Publication-prefix
 certification has an accepted restricted mechanism checkpoint. Shared occurrence
-correspondence and lifecycle consolidation are active; rearming deadlines, recurring
+correspondence and lifecycle consolidation are complete; rearming deadlines, recurring
 selection and open ownership retain their acceptance milestones. Implement the
 [shared foundations](oahs-quality-milestones.md#shared-foundations-before-further-kernel-optimization)
 across those milestones before pursuing another single-kernel optimization:
@@ -19,6 +19,29 @@ lifecycle facts, occurrence correspondence and reusable certificates first,
 then selected rearming obligations and ownership. Keep unqualified selection
 policies disabled. Historical entries below remain evidence and acceptance
 context.
+
+### Completed milestone 2: common lifecycle and occurrence interface
+
+A common original-control source/receipt relation now backs `balancedWords` and
+choice-frontier placement. Shared choices retain their early publication only
+when every occurrence has sufficient actual coverage, fresh storage history,
+legal participation and source-time key evidence. Refined analytical copies use
+the original scope owner; staged command edits use the canonical ledger.
+`--final-read-analysis-only` separates observation import from placement policy.
+See [the interface](oahs-selected-plan.md#shared-occurrence-correspondence) and
+`HANDOFF.md` for validation and artifact identities.
+
+Exact-gap certificates now prove each qualified occurrence separately and retain
+all crossed canonical-word dependencies. The common physical-use/lifetime view
+feeds ordinary placement, recurring qualification and binding decisions; it
+retains distinct readers, deadlines and potential returns without granting credit.
+
+Next is milestone 3: retain unresolved rearming obligations until the selected
+key's next applicable publication; prefer a required storage return when actual
+causal propagation establishes consumption before that deadline. Preserve the
+storage acquisition deadline separately. Do not enable a broad omission search
+or grant credit for an anticipated return. Keep the existing complete-order,
+independent causal/reconstruction and corpus gates.
 
 ## Previous priority: broad sweep follow-up
 

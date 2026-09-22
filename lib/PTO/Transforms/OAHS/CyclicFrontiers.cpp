@@ -14,39 +14,12 @@
 
 namespace mlir::pto::oahs::selected {
 namespace {
-Cut after(const Program& p, const Control& c, Id site, const OccurrenceMode& expected)
-{
-    // A unique legal source position in the unchanged current-visit corridor.
-    std::set<Id> candidates;
-    auto todo = c.graph.sites[site].successors;
-    std::vector<bool> seen(c.graph.sites.size());
-    while (!todo.empty()) {
-        const auto at = todo.back();
-        todo.pop_back();
-        if (seen[at]) {
-            continue;
-        }
-        seen[at] = true;
-        if (c.sourceCut(at, p.operations[c.graph.operations[site]].pipe)) {
-            if (!(occurrenceMode(p, at) == expected)) {
-                return NoAnalysisId;
-            }
-            candidates.insert(canonicalCommandCut(p, at));
-            continue;
-        }
-        if (c.graph.operations[at] != NoAnalysisId || at == c.graph.exit) {
-            return NoAnalysisId;
-        }
-        const auto& next = c.graph.sites[at].successors;
-        todo.insert(todo.end(), next.begin(), next.end());
-    }
-    return candidates.size() == 1 ? *candidates.begin() : NoAnalysisId;
-}
 // Project one physical cell's access roles, without making storage succession
 // imply completion. All other payload remains in the selected full-graph replay.
 bool balanced(const Control&, const std::vector<Cut>&, const std::vector<Cut>&, bool = false);
 std::vector<RecurringRequirement> qualifyCell(
-    const Program& p, const Control& c, const ObservedLoop& loop, unsigned cell, Pipe intermediate = Pipe::Count)
+    const Program& p, const Control& c, const RequirementFrontiers& frontiers,
+    const ObservedLoop& loop, unsigned cell, Pipe intermediate = Pipe::Count)
 {
     std::set<Id> members(loop.sites.begin(), loop.sites.end());
     const std::set<Id> entries = loop.entries.empty() ? std::set<Id>{loop.entry}
@@ -79,10 +52,10 @@ std::vector<RecurringRequirement> qualifyCell(
         if (!c.reachable[site] || operation == NoAnalysisId) continue;
         const auto& op = p.operations[operation];
         if (op.pipe == intermediate) continue;
-        unsigned role = 0;
-        for (const auto& a : op.accesses) if (a.cell == cell) role |= unsigned(a.read) | (unsigned(a.write) << 1);
+        const auto& use = frontiers.use(site, cell);
+        const auto role = use.roles;
         if (!role) continue;
-        const auto m = occurrenceMode(p, site);
+        const auto m = use.occurrence;
         if (role == 3 || !m.valid || m.owner != loop.owner ||
             (period && (period != m.period || residue != m.residue)) ||
             p.target.synchronous[unsigned(op.pipe)]) return {};
@@ -195,7 +168,7 @@ std::vector<RecurringRequirement> qualifyCell(
     for (auto site : members) {
         if (!roles[site]) continue;
         const auto cut = canonicalCommandCut(p, site);
-        const auto endpoint = after(p, c, site, modes[site]);
+        const auto endpoint = frontiers.recurringRelease(site, cell);
         if (endpoint == NoAnalysisId) return {};
         if (roles[site] == 2) {
             if (previous[site] != (modes[site].previous ? 2u : 1u)) return {};
@@ -237,7 +210,7 @@ std::vector<RecurringRequirement> qualifyCell(
                 if (std::none_of(next.begin(), next.end(), [&](Id target) {
                         return !exits.count(target) && roles[target] == 1;
                     }))
-                    open.publications.push_back(after(p, c, site, modes[site]));
+                    open.publications.push_back(frontiers.recurringRelease(site, cell));
             }
         }
         if (balanced(c, open.publications, open.acquisitions)) release = std::move(open);
@@ -257,8 +230,8 @@ std::vector<RecurringRequirement> qualifyCell(
 // occurrence correspondence; the actual protocol includes both readiness hops.
 // It grants no receipt until the selected endpoints are causally propagated.
 std::vector<RecurringRequirement> qualifyPipelineCycle(
-    const Program& p, const Control& c, const ObservedLoop& loop, unsigned cell,
-    const std::vector<RecurringRequirement>& ordinary)
+    const Program& p, const Control& c, const RequirementFrontiers& frontiers,
+    const ObservedLoop& loop, unsigned cell, const std::vector<RecurringRequirement>& ordinary)
 {
     if (loop.bodyEntry != NoAnalysisId || p.cells[cell].exclusive ||
         p.cells[cell].unknownRange || p.cells[cell].storage != Cell::Storage::CanonicalInterval)
@@ -269,11 +242,10 @@ std::vector<RecurringRequirement> qualifyPipelineCycle(
         const auto operation = c.graph.operations[site];
         if (!c.reachable[site] || operation == NoAnalysisId) continue;
         const auto& op = p.operations[operation];
-        unsigned role = 0;
-        for (const auto& a : op.accesses)
-            if (a.cell == cell) role |= unsigned(a.read) | (unsigned(a.write) << 1);
+        const auto& use = frontiers.use(site, cell);
+        const auto role = use.roles;
         if (!role) continue;
-        const auto mode = occurrenceMode(p, site);
+        const auto mode = use.occurrence;
         if (!mode.valid || mode.owner != loop.owner || mode.period != 1 ||
             p.target.synchronous[unsigned(op.pipe)]) return {};
         accesses.push_back(site);
@@ -283,7 +255,7 @@ std::vector<RecurringRequirement> qualifyPipelineCycle(
         }
     }
     if (middle == Pipe::Count) return {};
-    auto outer = qualifyCell(p, c, loop, cell, middle);
+    auto outer = qualifyCell(p, c, frontiers, loop, cell, middle);
     if (outer.size() != 2) return {};
     auto ready = outer[0], result = outer[0];
     ready.observer = middle;
@@ -320,7 +292,7 @@ std::vector<RecurringRequirement> qualifyPipelineCycle(
         };
         // Both hops are independently required by the original storage uses.
         if (!has(first, false) || !has(last, true)) return {};
-        const auto endpoint = after(p, c, body.back(), occurrenceMode(p, body.back()));
+        const auto endpoint = frontiers.recurringRelease(body.back(), cell);
         if (endpoint == NoAnalysisId) return {};
         ready.acquisitions.push_back(canonicalCommandCut(p, body.front()));
         result.publications.push_back(endpoint);
@@ -774,7 +746,8 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
 // cycle for an exact physical cell. The selected protocol is available before
 // ordinary construction decides whether a same-pipe overwrite needs a fence.
 std::vector<RecurringRequirement> qualifyEnclosingCell(
-    const Program& p, const Control& c, const ObservedLoop& loop, unsigned cell)
+    const Program& p, const Control& c, const RequirementFrontiers& frontiers,
+    const ObservedLoop& loop, unsigned cell)
 {
     if (loop.bodyEntry == NoAnalysisId || !loop.atLeastOnce ||
         loop.entry >= c.graph.sites.size() || loop.exit >= c.graph.sites.size() ||
@@ -790,9 +763,7 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
         const auto operation = c.graph.operations[site];
         if (operation == NoAnalysisId) continue;
         const auto& op = p.operations[operation];
-        unsigned role = 0;
-        for (const auto& access : op.accesses)
-            if (access.cell == cell) role |= unsigned(access.read) | (unsigned(access.write) << 1);
+        const auto role = frontiers.use(site, cell).roles;
         if (!role) continue;
         if (role == 3 || p.target.synchronous[unsigned(op.pipe)]) return {};
         const auto observation = p.observed->sites[site].observation;
@@ -990,11 +961,11 @@ std::vector<RecurringRequirement> qualifyRelationships(
                 if (sourceOperation == NoAnalysisId || relationship.cell >= p.cells.size() ||
                     p.cells[relationship.cell].exclusive) continue;
                 const auto sourcePipe = p.operations[sourceOperation].pipe;
-                const auto sourceMode = occurrenceMode(p, sourceSite);
+                const auto sourceMode = frontiers.use(sourceSite, relationship.cell).occurrence;
                 if (sourcePipe == targetPipe || p.target.synchronous[unsigned(sourcePipe)] ||
                     !sourceMode.valid || sourceMode.owner != loop.owner ||
                     sourceMode.period != targetMode.period) continue;
-                const auto publication = after(p, c, sourceSite, sourceMode);
+                const auto publication = frontiers.recurringRelease(sourceSite, relationship.cell);
                 if (publication == NoAnalysisId) continue;
                 for (const auto key : {
                         Key{loop.owner, sourceMode.period, sourcePipe, targetPipe,
@@ -1137,8 +1108,8 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     for (const auto& loop : p.observed->loops) {
         for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
             auto local = loop.bodyEntry == NoAnalysisId
-                ? qualifyCell(p, c, loop, cell)
-                : qualifyEnclosingCell(p, c, loop, cell);
+                ? qualifyCell(p, c, frontiers, loop, cell)
+                : qualifyEnclosingCell(p, c, frontiers, loop, cell);
             for (auto& request : local) append(std::move(request));
         }
     }
@@ -1148,7 +1119,7 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     if (allowGuardedEpisodes) {
         for (const auto& loop : p.observed->loops) {
             for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
-                auto pipeline = qualifyPipelineCycle(p, c, loop, cell, requests);
+                auto pipeline = qualifyPipelineCycle(p, c, frontiers, loop, cell, requests);
                 if (pipeline.empty()) continue;
                 pipelineOwners.insert(loop.owner);
                 requests.erase(std::remove_if(requests.begin(), requests.end(), [&](const auto& r) {

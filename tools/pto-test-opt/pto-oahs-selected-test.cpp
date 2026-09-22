@@ -1556,6 +1556,7 @@ int main(int argc, char **argv) {
       else if (flag == "--first-write-consumers") options.firstWriteConsumers = true;
       else if (flag == "--equal-coverage-binding") options.equalCoverageBinding = true;
       else if (flag == "--no-publication-prefixes") options.publicationPrefixes = false;
+      else if (flag == "--final-read-analysis-only") options.finalReadAnalysisOnly = true;
       else if (flag == "--cross-word-prefixes") options.crossWordPrefixes = true;
       else if (flag == "--trace-replay") options.traceReplay = true;
       else if (flag == "--prefix-replay") options.siblingReplayReuse = false;

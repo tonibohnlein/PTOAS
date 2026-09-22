@@ -425,6 +425,32 @@ bool Constructor::loopEntryFrontier(
     }
     return false;
 }
+std::set<Id> Constructor::choiceCoverage(Cut publication, const Control::ChoiceFrontier& choice,
+    Pipe source, const std::vector<FrontierRequirement>& required) const
+{
+    std::set<Id> covered;
+    const auto& correspondence = control.correspondence(publication, choice.entry);
+    if (!correspondence.qualified || control.canonicalCut[publication] == choice.entry) {
+        return covered;
+    }
+    for (const auto& r : required) {
+        const auto access = accessClass(r);
+        const bool sufficient = !choice.issuedClasses.count(access) &&
+            std::all_of(correspondence.pairs.begin(), correspondence.pairs.end(), [&](const auto& pair) {
+                const auto& snapshot = cache.cuts[pair.first].before.causal;
+                if (!snapshot.reachable() || !control.sourceCut(pair.first, source) ||
+                    !freshBetween(pair.first, pair.second, access)) {
+                    return false;
+                }
+                const auto* history = snapshot.facts()->history.find(access);
+                return history && frontierContains(*history, PipeCount + unsigned(source));
+            });
+        if (sufficient) {
+            covered.insert(access);
+        }
+    }
+    return covered;
+}
 bool Constructor::choiceConsumerFrontier(
     Pipe source, const std::vector<FrontierRequirement>& required, Group& group,
     const std::vector<FrontierRequirement>& all, const std::set<Id>* promotion)
@@ -455,31 +481,27 @@ bool Constructor::choiceConsumerFrontier(
                         (command.kind == Command::Publish && command.source == observer);
                 });
             })) continue;
+        std::set<Id> needed;
+        for (const auto& r : required) {
+            needed.insert(accessClass(r));
+        }
         const SelectedSource* selected = nullptr;
         for (const auto& handle : result.sources) {
-            if (handle.pipe != source || handle.version != cache.version || !handle.snapshot.reachable() ||
-                handle.cut == choice.entry || !control.straight(handle.cut, choice.entry) ||
-                control.wordOccurrences[control.canonicalCut[handle.cut]].size() != 1) continue;
-            const auto& snapshot = cache.cuts[handle.cut].before.causal;
-            if (!snapshot.reachable()) continue;
-            if (!std::all_of(required.begin(), required.end(), [&](const auto& r) {
-                    const auto access = accessClass(r);
-                    const auto* history = snapshot.facts()->history.find(access);
-                    return !choice.issuedClasses.count(access) &&
-                        freshBetween(handle.cut, choice.entry, access) && history &&
-                        frontierContains(*history, PipeCount + unsigned(source));
-                })) continue;
-            if (!selected || control.position[handle.cut] < control.position[selected->cut]) selected = &handle;
+            if (handle.pipe != source || handle.version != cache.version || !handle.snapshot.reachable()) {
+                continue;
+            }
+            const auto covered = choiceCoverage(handle.cut, choice, source, required);
+            const bool sufficient = std::includes(covered.begin(), covered.end(), needed.begin(), needed.end());
+            if (!sufficient) {
+                continue;
+            }
+            if (!selected || control.position[handle.cut] < control.position[selected->cut]) {
+                selected = &handle;
+            }
         }
         if (!selected) continue;
         const auto publication = selected->cut;
-        std::set<Id> covered;
-        for (const auto& r : all) {
-            const auto access = accessClass(r);
-            const auto* history = selected->snapshot.facts()->history.find(access);
-            if (!choice.issuedClasses.count(access) && freshBetween(publication, choice.entry, access) &&
-                history && frontierContains(*history, PipeCount + unsigned(source))) covered.insert(access);
-        }
+        auto covered = choiceCoverage(publication, choice, source, all);
         if (promotion && std::none_of(promotion->begin(), promotion->end(),
                 [&](Id access) { return covered.count(access); })) continue;
         // Read-only physical feasibility before one exact staged solve. No
@@ -491,7 +513,11 @@ bool Constructor::choiceConsumerFrontier(
             if (identity.source != source || identity.observer != observer ||
                 !availableKey(candidate)) continue;
             ++result.work.keyQueries;
-            if (canPublishAt(publication, candidate) && clearInterval(candidate, publication, choice.entry)) {
+            const auto& pairs = control.correspondence(publication, choice.entry).pairs;
+            const bool clear = std::all_of(pairs.begin(), pairs.end(), [&](const auto& pair) {
+                return clearInterval(candidate, pair.first, pair.second);
+            });
+            if (clear && canPublishAt(publication, candidate)) {
                 key = candidate;
                 break;
             }
@@ -510,10 +536,12 @@ bool Constructor::choiceConsumerFrontier(
                     canPublishAt(choice.entry, other);
             });
         if (!lateBinding) continue;
-        auto commands = ledger.commands();
-        commands[publication].push_back({Command::Publish, source, observer, frontier.keys()[key].key});
-        commands[choice.entry].push_back({Command::Acquire, source, observer, frontier.keys()[key].key});
-        const auto trial = analyze(program, commands, {false});
+        Ledger proposed = ledger;
+        proposed.append(publication, {Command::Publish, source, observer, frontier.keys()[key].key},
+                        EndpointPurpose::Completion);
+        proposed.append(choice.entry, {Command::Acquire, source, observer, frontier.keys()[key].key},
+                        EndpointPurpose::Completion);
+        const auto trial = analyze(program, proposed.commands(), {false});
         ++result.work.choiceTrials;
         result.work.choiceAnalysisSites += trial.stats.siteEvaluations;
         // Payload requirements not yet visited remain explicit residuals.

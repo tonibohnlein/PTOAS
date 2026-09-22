@@ -140,6 +140,8 @@ add_mlir_dialect_library(PTOTransforms
   OAHS/Plan.cpp
   OAHS/CausalFrontier.cpp
   OAHS/SelectedLedger.cpp
+  OAHS/SelectedLifecycles.cpp
+  OAHS/SelectedOccurrences.cpp
   OAHS/SelectedControl.cpp
   OAHS/SelectedReplay.cpp
   OAHS/SelectedGroups.cpp
@@ -391,6 +393,8 @@ endif()
 # settings and leaving other translation units' optimization settings unchanged.
 set_source_files_properties(
   OAHS/Plan.cpp OAHS/CausalFrontier.cpp OAHS/SelectedLedger.cpp
+  OAHS/SelectedLifecycles.cpp
+  OAHS/SelectedOccurrences.cpp
   OAHS/SelectedControl.cpp OAHS/SelectedReplay.cpp OAHS/SelectedGroups.cpp
   OAHS/SelectedAllocation.cpp OAHS/SelectedPublication.cpp OAHS/SelectedPlan.cpp OAHS/CyclicFrontiers.cpp
   OAHS/SelectedPublicationMotion.cpp OAHS/SelectedPublicationOrder.cpp

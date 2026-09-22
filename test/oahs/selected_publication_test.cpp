@@ -86,6 +86,7 @@ oahs_oracle::PayloadOrder branchOrder(const o::Program& program, const o::Comman
     std::vector<o::Command> pending;
     const auto& graph = *program.observed;
     auto at = graph.entry;
+    unsigned branch = 0;
     for (unsigned steps = 0; steps < graph.sites.size(); ++steps) {
         pending.insert(pending.end(), commands[at].begin(), commands[at].end());
         const auto& site = graph.sites[at];
@@ -97,7 +98,7 @@ oahs_oracle::PayloadOrder branchOrder(const o::Program& program, const o::Comman
         if (at == graph.exit) {
             break;
         }
-        at = site.successors[site.successors.size() == 2 ? arm : 0];
+        at = site.successors[site.successors.size() == 2 ? ((arm >> branch++) & 1) : 0];
     }
     require(at == graph.exit, "branch trace did not terminate");
     words.push_back(std::move(pending));
@@ -108,7 +109,7 @@ oahs_oracle::PayloadOrder branchOrder(const o::Program& program, const o::Comman
     return order;
 }
 
-void crossWordRelease(bool readAgain, bool finalHelpers)
+void crossWordRelease(bool readAgain, bool finalHelpers, bool shared = false)
 {
     auto p = base(4, 1);
     p.operations = {op(Q, {{3, false, true}}), op(P, {{3, true, false}}),
@@ -142,6 +143,25 @@ void crossWordRelease(bool readAgain, bool finalHelpers)
     o::Commands fixed(o::commandCutCount(p));
     fixed[5] = {{o::Command::Publish, M, Q, 0}, {o::Command::Acquire, M, Q, 0},
                 {o::Command::Publish, Q, R, 0}, {o::Command::Acquire, Q, R, 0}};
+    if (shared) {
+        auto& g = *p.observed;
+        for (o::Cut at = 0; at < 9; ++at) {
+            auto copy = g.sites[at];
+            for (auto& next : copy.successors) {
+                if (next != 9) {
+                    next += 10;
+                }
+            }
+            g.sites.push_back(std::move(copy));
+            fixed.push_back(fixed[at]);
+        }
+        g.sites.emplace_back();
+        g.sites.back().successors = {0, 10};
+        g.entry = 19;
+        g.observations.push_back({19, {}, true});
+        g.sites.back().observation = g.observations.size() - 1;
+        fixed.emplace_back();
+    }
     o::SelectedOptions options;
     options.finalHelperTrials = finalHelpers;
     const auto old = o::constructSelectedPlan(p, fixed, options);
@@ -151,7 +171,7 @@ void crossWordRelease(bool readAgain, bool finalHelpers)
     require(o::checkCausalFrontier(p, plan.commands).accepted, "cross-word cold certificate");
     require(readAgain ? plan.work.crossWordPublications == 0 : plan.work.crossWordPublications != 0,
             "cross-word release ignored the last physical reader");
-    for (unsigned arm : {0u, 1u}) {
+    for (unsigned arm = 0; arm < (shared ? 4u : 2u); ++arm) {
         const auto before = branchOrder(p, old.commands, arm);
         const auto after = branchOrder(p, plan.commands, arm);
         require(std::includes(before.begin(), before.end(), after.begin(), after.end()),
@@ -221,6 +241,64 @@ struct ReplayTestAccess {
                     "certificate crossed a same-key generation boundary");
         }
     }
+    static void sharedSpan()
+    {
+        auto p = base(1, 2);
+        p.operations = {op(Q, {}), op(M, {}), op(P, {})};
+        ObservedControl g;
+        g.qualification = "alternative analytical words with distinct crossed interfaces";
+        g.entry = 0;
+        g.exit = 7;
+        g.sites.resize(8);
+        for (Cut at = 0; at < 8; ++at) {
+            g.observations.push_back({at, {}, true});
+            g.sites[at].observation = at;
+            if (at < 7) {
+                g.sites[at].successors = {at + 1};
+            }
+        }
+        g.sites[0].successors = {1, 4};
+        g.sites[3].successors = {7};
+        for (Cut at = 1; at <= 3; ++at) {
+            g.sites[at].operation = at - 1;
+            g.sites[at + 3].operation = at - 1;
+        }
+        g.sites[4].observation = 1;
+        g.sites[6].observation = 3;
+        p.observed = g;
+        Control control(p);
+        CausalFrontier frontier(p);
+        Ledger ledger(p, control.canonicalCut, control.wordSpan);
+        std::string reason;
+        require(control.complete && ledger.initialize(Commands(commandCutCount(p)), reason), reason);
+        ledger.append(2, {Command::Acquire, M, Q, 0}, EndpointPurpose::Fixed);
+        ledger.append(5, {Command::Acquire, R, Q, 0}, EndpointPurpose::Fixed);
+        const auto set = ledger.append(3, {Command::Publish, Q, P, 0}, EndpointPurpose::Completion);
+        ledger.append(3, {Command::Acquire, Q, P, 0}, EndpointPurpose::Completion);
+        std::vector<Cut> crossed;
+        require(certifyPublicationOrder(p, control, ledger, frontier.keys(), set, 4, 0, crossed),
+                "paired shared endpoints were not certified");
+        require(std::find(crossed.begin(), crossed.end(), 2) != crossed.end() &&
+                std::find(crossed.begin(), crossed.end(), 5) != crossed.end(),
+                "certificate omitted one occurrence's outward interface");
+        auto moved = ledger;
+        require(moved.movePublicationTo(set, 4, 0, crossed) && moved.publicationPrefixesValid(),
+                "shared endpoint move lost its certificate");
+        moved.append(5, {Command::Publish, Q, R, 1}, EndpointPurpose::Fixed);
+        require(!moved.publicationPrefixesValid(), "edit in second occurrence retained stale proof");
+        auto reused = ledger;
+        reused.append(5, {Command::Acquire, Q, P, 0}, EndpointPurpose::Fixed);
+        require(!certifyPublicationOrder(p, control, reused, frontier.keys(), set, 1, 0, crossed) && crossed.empty(),
+                "same-key endpoint in one occurrence crossed");
+        auto unmatched = p;
+        unmatched.observed->sites[0].successors.back() = 5;
+        Control missing(unmatched);
+        Ledger words(unmatched, missing.canonicalCut, missing.wordSpan);
+        require(missing.complete && words.initialize(ledger.commands(), reason), reason);
+        const auto publication = words.word(3).front();
+        require(!certifyPublicationOrder(unmatched, missing, words, frontier.keys(), publication, 1, 0, crossed),
+                "unmatched shared publication occurrence admitted");
+    }
     static void cyclicSpan()
     {
         auto p = base(1, 1);
@@ -284,8 +362,11 @@ int main()
     for (const bool finalHelpers : {false, true}) {
         crossWordRelease(false, finalHelpers);
         crossWordRelease(true, finalHelpers);
+        crossWordRelease(false, finalHelpers, true);
+        crossWordRelease(true, finalHelpers, true);
     }
     o::selected::ReplayTestAccess::spanBoundaries();
+    o::selected::ReplayTestAccess::sharedSpan();
     o::selected::ReplayTestAccess::cyclicSpan();
     o::selected::ReplayTestAccess::certificateBoundaries();
     std::cout << "publication prefix tests passed\n";

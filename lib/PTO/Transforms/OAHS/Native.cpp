@@ -1363,7 +1363,8 @@ LogicalResult executeSelectedHandoffSync(
         result.success = checked.accepted;
         result.reason = checked.reason;
         return result;
-      }, mutate, selectedObservationPolicy(options.classInvariantInputs, options.firstWriteConsumers, options.finalReadSources));
+      }, mutate, selectedObservationPolicy(options.classInvariantInputs, options.firstWriteConsumers,
+          options.finalReadSources || options.finalReadAnalysisOnly));
 }
 
 } // namespace

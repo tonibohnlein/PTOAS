@@ -91,10 +91,10 @@ bool certifyPublicationOrder(const Program& program, const Control& control, con
         return false;
     }
     const auto endpoint = ledger.endpoint(publication);
-    const bool ordinary = endpoint.command.kind == Command::Publish && endpoint.cut != target &&
-        offset <= ledger.word(target).size() && control.sourceCut(target, endpoint.command.source) &&
-        control.wordOccurrences[control.canonicalCut[target]].size() == 1 &&
-        control.wordOccurrences[endpoint.cut].size() == 1 && control.balancedWords(target, endpoint.cut);
+    const auto destination = control.canonicalCut[target];
+    const auto& correspondence = control.correspondence(destination, endpoint.cut);
+    const bool ordinary = endpoint.command.kind == Command::Publish && endpoint.cut != destination &&
+        offset <= ledger.word(destination).size() && correspondence.qualified;
     if (!ordinary) {
         return false;
     }
@@ -108,7 +108,7 @@ bool certifyPublicationOrder(const Program& program, const Control& control, con
         return found == keys.end() ? NoAnalysisId : found->second;
     };
     struct Path {
-        Cut at;
+        Cut at, source;
         Ports old, next;
         std::set<Cut> visited;
     };
@@ -116,9 +116,19 @@ bool certifyPublicationOrder(const Program& program, const Control& control, con
     if (publicationKey == NoAnalysisId) {
         return false;
     }
-    Path entry{target, Ports(keys.size()), Ports(keys.size()), {}};
-    entry.next.command(endpoint.command, publicationKey);
-    std::vector<Path> todo{std::move(entry)};
+    std::vector<Path> todo;
+    std::set<Cut> sources;
+    for (const auto& pair : correspondence.pairs) {
+        if (!sources.insert(pair.first).second) {
+            continue;
+        }
+        if (!control.sourceCut(pair.first, endpoint.command.source)) {
+            return false;
+        }
+        Path entry{pair.first, pair.first, Ports(keys.size()), Ports(keys.size()), {}};
+        entry.next.command(endpoint.command, publicationKey);
+        todo.push_back(std::move(entry));
+    }
     std::set<Cut> sites;
     unsigned completed = 0, steps = 0;
     // Conservative compile-time bounds, not a limit on admitted executions.
@@ -132,7 +142,7 @@ bool certifyPublicationOrder(const Program& program, const Control& control, con
         sites.insert(control.canonicalCut[path.at]);
         const auto& word = ledger.word(path.at);
         bool finished = false;
-        for (Id i = path.at == target ? offset : 0; i < word.size(); ++i) {
+        for (Id i = path.at == path.source ? offset : 0; i < word.size(); ++i) {
             const auto& command = ledger.endpoint(word[i]).command;
             if (word[i] == publication) {
                 path.old.command(command, index(command));
@@ -148,7 +158,9 @@ bool certifyPublicationOrder(const Program& program, const Control& control, con
             path.next.command(command, index(command));
         }
         if (finished) {
-            if (++completed > 64 || !path.next.containedIn(path.old)) {
+            const bool paired = std::binary_search(correspondence.pairs.begin(), correspondence.pairs.end(),
+                                                   std::make_pair(path.source, path.at));
+            if (++completed > 64 || !paired || !path.next.containedIn(path.old)) {
                 return false;
             }
             continue;

@@ -41,6 +41,13 @@ struct SelectedSource {
     // command word. This sentinel boundary has no shifting numeric offset.
     FrontierState postOrigin;
 };
+// Original storage facts motivating a selected binding. Return opportunities
+// are deadlines of required storage reuse, never acquired event-rearming credit.
+struct SelectedLifecycleDemand {
+    StorageRelationship requirement;
+    Cut release = NoAnalysisId, deadline = NoAnalysisId;
+    std::vector<Cut> returnDeadlines;
+};
 struct SelectedDecision {
     // Binding-time placement. Later certified motion keeps stable endpoint IDs;
     // resolve endpoints in the final ledger for their actual emitted positions.
@@ -48,6 +55,7 @@ struct SelectedDecision {
     RequirementStage stage = RequirementStage::Overlap;
     Pipe source = Pipe::S, observer = Pipe::S;
     std::vector<FrontierRequirement> required;
+    std::vector<SelectedLifecycleDemand> lifecycles;
     std::vector<std::size_t> endpoints;
     bool commonCut = false, enlargedPrefix = false;
     bool publicationAtWordStart = false;
@@ -212,6 +220,8 @@ struct SelectedOptions {
     // Native first-conflicting-write observation experiment; mandatory checks remain enabled.
     bool firstWriteConsumers = false;
     bool finalReadSources = false;
+    // Diagnostic: refine original observations without enabling final-read placement.
+    bool finalReadAnalysisOnly = false;
     bool equalCoverageBinding = false;
     // Diagnostic ablation for certified motion inside one selected word.
     bool publicationPrefixes = true;

@@ -7,7 +7,7 @@ Updated: 2026-09-22
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: common lifecycle and occurrence interface (mechanism milestone 2)
+- Current milestone: milestone 2 implementation complete; final corpus acceptance running; milestone 3 next
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
@@ -19,11 +19,129 @@ regression coverage across the larger kernel corpus. The persistent sequence,
 acceptance gates and current KDA/hc_pre/RMSNorm/GEMM witnesses are in
 [quality milestones](docs/designs/oahs-quality-milestones.md). Work starts at
 `b62b89de5`; older amendment sections describe the starting evidence. Current
-validation is recorded in the first-slice section below. Keep the
+validation is recorded in the foundation-slice sections below. Keep the
 first-write/final-read experiment opt-in until its complete ordering comparison
 passes.
 
-### Current foundation slice: cross-word certificates
+### Milestone 2 completion: common lifecycle and occurrence interface
+
+The implementation is complete. Final corpus acceptance is running; replace this
+status with its results before declaring the milestone accepted.
+
+`SelectedLifecycles.cpp` consolidates physical-use facts and lazily cached storage
+lifetimes behind `RequirementFrontiers`. Records retain physical identity,
+read/write roles, original occurrences, candidate releases, distinct conflict
+deadlines, predecessor/next users, participation and possible returns. Ordinary
+publication placement, recurring qualification and all ordinary binding paths
+consume the view. `SelectedDecision::lifecycles` retains value-based links from
+original requirements and candidate boundaries to the selected binding; stable
+endpoint IDs resolve its actual final placement. Possible returns are never
+acquired completion or event-consumption credit.
+
+The cross-word certificate now starts an independent exact-gap proof at every
+qualified source occurrence and checks its matching publication occurrence.
+Dependencies cover all crossed canonical words, including different intervening
+words in separate analytical copies. An edit in either copy invalidates the
+proof. Source-time coverage and rearming still hold at every copy, followed by
+the unchanged full-plan causal and reconstruction checks. Same-key crossings,
+backedges and the 8,192-step/64-path limits still decline conservatively. This is
+not arbitrary endpoint grouping or a global publication-prefix invariant.
+
+New constructor regressions cover shared-word motion across an original branch,
+later physical readers and helper omission on/off. Direct certificate tests
+cover second-copy edits, unmatched participation and same-key crossings. The
+multi-reader lifecycle test preserves separate readers and verifies release,
+storage-deadline and possible-return links on an accepted binding.
+
+Final artifacts and exact recipes are in
+`/home/toni/work/pypto3_sync_more/oahs-m2-complete-work/`. This is an artifact
+directory, not another checkout. Its baseline driver is the frozen preceding
+occurrence slice (`57fd3f4162ac440efcb1811145d508009675fa3078299a4bdb4be0467d0df613`);
+that slice's comparison to committed `01aa6e5a5` is retained below. The focused
+core build was reused from `occurrence-correspondence-work/core`; only changed
+core sources and native adapter/tools were built, with at most two intensive
+workers in aggregate. No project-wide rebuild, sanitizer or device run.
+
+Next action after acceptance: **milestone 3, rearming at its actual deadline**.
+Use common lifecycle return opportunities to retain unresolved selected-key
+rearming obligations until the next applicable publication. Prefer required
+storage returns when actual causal propagation proves consumption in time.
+Keep the storage acquisition deadline distinct. Do not infer future receipt
+credit, enable analysis experiments by default or expand into recurring
+population selection/open ownership (milestones 4/5). The historical combined
+first-write/final-read KDA cut-754 refusal remains a separate prerequisite;
+that experiment was not rerun in this completion campaign.
+
+### Previous milestone-2 slice: shared occurrence correspondence
+
+Committed the preceding cross-word certificate foundation as `01aa6e5a5`
+(`Add bounded cross-word publication certification`). The user confirmed that
+milestone 1 measures mechanism readiness, not a KDA performance gain. Its
+restricted checkpoint is accepted; milestone 2 was active at this checkpoint.
+
+`SelectedOccurrences.cpp` now supplies a cached immutable correspondence between
+canonical publication/acquisition words. Original-control participation is
+checked by tracking the analytical source until consumption. All possible
+source/receipt pairs are retained, including shared final/repeated words and
+paths skipping both endpoints. Missing receipts, double publications and live
+exits decline. This fact grants no storage completion or event-reuse credit.
+
+The existing `balancedWords` query uses this relation. Choice placement now
+qualifies every reachable copy, resolves copied arm scopes through the original
+canonical owner, intersects actual source coverage/freshness across all pairs,
+and checks every selected key interval. Its private trial uses `Ledger` so all
+shared copies receive the same edits as live construction. Matching-key interval
+checks also consider every occurrence of existing endpoints.
+
+`--final-read-analysis-only` is a diagnostic import switch that leaves final-read
+placement disabled. Default import is unchanged. The generic loop regression
+splits the final visit with the real observation refiner and preserves complete
+payload ordering for 1/2/4 visits and every branch sequence (22 traces). Negative
+cases cover unmatched participation, an empty final arm and outward publications.
+An ordinary fallback in the latter synthetic case can still refuse missing
+rearming evidence; this slice does not bypass that check.
+
+Artifacts and the incremental native recipe are in
+`/home/toni/work/pypto3_sync_more/occurrence-correspondence-work/`. The frozen
+baseline is the driver for `01aa6e5a5`; `validation.json` pins the final source,
+input and driver identities, and `source/` retains the changed files. Only the
+focused portable core and native adapter/tools were built, with two workers;
+there was no project-wide rebuild. The new milestone-2 slice is not yet committed.
+
+Final validation (`validate.py` and `check-additional-order.py`):
+
+- **26/26 portable suites** and **both native suites** pass.
+- **19/19 compatibility inputs** construct and reconstruct; 18 plans are
+  byte-identical. MTP projection uses shared choice frontiers; its complete
+  226-payload trace adds and removes zero relations (`additional-order.json`).
+- **88/88 corpus modules with default options**, all byte-identical.
+- **88/88 with `--final-read-analysis-only`**, all byte-identical to the committed
+  unrefined baseline. No observation policy is enabled by default.
+- Default KDA, hc_pre and RMSNorm remain byte-identical. Their complete finite
+  ordering comparisons add/remove zero. Analysis-only hc_pre/RMSNorm are also
+  unchanged. Analysis-only KDA adds zero and removes 276 relations on the recorded
+  1,727-payload trace. Disabling choice placement restores the 16 extra relations;
+  enabling it removes exactly those 16, adding none. One selected choice transfer
+  is reported under refinement. `--final-read-sources` alone also adds zero and
+  removes 276; the combined first-write/final-read cut-754 refusal is unchanged.
+- The MTP trace adapter adds signed-remainder and boolean-and scalar evaluation
+  only; event and complete-order checking are unchanged. Finite traces remain
+  regression evidence, not arbitrary-loop induction or device timing.
+- `git diff --check` passes; C++17 warning-policy builds pass. The scoped checker
+  reports three `G.FMT.11-CPP` regex false positives on already-braced conditions
+  containing function calls, and no warnings. All three were reviewed against
+  their complete statements (`compliance-review.md`); no actual unbraced body or
+  source change was required. No sanitizer or project-wide rebuild was run.
+
+Next action at that checkpoint (now implemented above): use occurrence correspondence to qualify exact-gap
+publication certificates across shared words. Preserve each occurrence's causal
+interfaces and selected-edit dependencies; do not simply delete the certificate's
+unique-endpoint-word restriction. Broader lifecycle consolidation, actual rearming
+deadlines and ownership follow with explicit construction consumers. The combined
+first-write/final-read KDA experiment still refuses cut 754 for missing certified
+return-key evidence, independently of this occurrence mechanism.
+
+### Previous foundation slice: cross-word certificates
 
 The user redirected the implementation order toward shared building blocks
 across the milestones before further single-kernel optimization. Follow the
@@ -74,7 +192,7 @@ certificate coverage with nonregression, not a native improvement. The revised
 mechanism acceptance criteria do not require a speedup.
 
 An early experiment implicitly enabled final-read control refinement with the
-certificate. It is removed from the current implementation. KDA's final-read-only
+certificate. It is removed from the current implementation. At this previous checkpoint, KDA's final-read-only
 plan removes 276 and adds 16 finite payload relations relative to the committed
 default; importing the refinement alone changes construction even with motion
 disabled. The added relations put later-bank extraction before first-bank
