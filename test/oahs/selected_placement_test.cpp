@@ -13,6 +13,50 @@
 using namespace selected_test;
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void disjointRecurringKeys() {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(1, 1);
+        for (unsigned i = 0; i < 6; ++i) {
+            p.operations.push_back(op(P, {{0, true, false}}));
+        }
+        RecurringRequirement first, returned, second;
+        first.source = second.source = P;
+        first.observer = second.observer = Q;
+        returned.source = Q;
+        returned.observer = P;
+        first.publications = {0}; first.acquisitions = {1};
+        returned.publications = {2}; returned.acquisitions = {3};
+        second.publications = {4}; second.acquisitions = {5};
+        first.qualifiedCycle = returned.qualifiedCycle = second.qualifiedCycle = true;
+        SelectedOptions options;
+        options.recurringOmissionTrials = false;
+        Constructor c(p, options);
+        require(c.recurring({first, returned, second}) && c.result.channels.size() == 3 &&
+                c.recurringKeys.size() == 2, "disjoint logical channels did not share a physical key");
+        const auto words = c.ledger.commands();
+        require(checkCausalFrontier(p, words).accepted,
+                "reused recurring key lacks actual rearming");
+        oahs_oracle::PayloadOrder reusedOrder, privateOrder;
+        require(bool(oahs_oracle::graph(p, words, {0,1,2,3,4,5}, {}, nullptr, nullptr, &reusedOrder)),
+                "independent checker rejected disjoint recurring ownership");
+        p.target.keys[unsigned(P)][unsigned(Q)].push_back(1);
+        Constructor reference(p, options);
+        require(reference.recurring({first, returned, second}) && reference.result.channels.size() == 3,
+                "private-key reference was declined");
+        require(bool(oahs_oracle::graph(p, reference.ledger.commands(), {0,1,2,3,4,5},
+                                      {}, nullptr, nullptr, &privateOrder)) && privateOrder == reusedOrder,
+                "physical key reuse changed payload ordering");
+        p.target.keys[unsigned(P)][unsigned(Q)].pop_back();
+        Constructor noReturn(p, options);
+        require(noReturn.recurring({first, second}) && noReturn.result.channels.empty() &&
+                noReturn.result.work.rejectedProtocolProposals == 1,
+                "empty occupancy was mistaken for consumption knowledge");
+        second.publications = {1};
+        Constructor overlap(p, options);
+        require(overlap.recurring({first, returned, second}) && overlap.result.channels.empty() &&
+                overlap.result.work.rejectedResourceProposals == 1,
+                "overlapping logical lifetimes shared a key");
+    }
     static void joinedConsumptionReturn() {
         const auto P = Pipe::MTE2, Q = Pipe::V;
         auto input = base(3, 1);
@@ -268,6 +312,34 @@ void starvation() {
     std::cout << "cohort channels=" << plan.channels.size() << " rejected=" << plan.work.rejectedResourceProposals << " success=" << plan.success << '\n';
     require(plan.success, "optional cohort starved ordinary X: " + plan.reason);
     require(plan.work.rejectedResourceProposals == 1 && plan.channels.empty(), "exact-fit cohort was not declined");
+}
+void directProtocolDispatch()
+{
+    auto p = base(2, 4);
+    p.operations = {op(o::Pipe::MTE1, {{0,false,true}}), op(o::Pipe::M, {{0,true,false}}),
+                    op(o::Pipe::FIX, {{1,false,true}}), op(o::Pipe::MTE2, {{1,true,false}})};
+    for (bool oneWay : {false, true}) {
+        p.target.keys[unsigned(o::Pipe::FIX)][unsigned(o::Pipe::MTE2)].clear();
+        p.target.keys[unsigned(o::Pipe::MTE2)][unsigned(o::Pipe::FIX)] =
+            oneWay ? std::vector<unsigned>{0,1,2,3} : std::vector<unsigned>{};
+        auto imported = o::makePeriodicLoop(p, 1, {});
+        require(imported.success, imported.reason);
+        const auto& program = imported.program;
+        o::selected::Control control(program);
+        o::StorageFrontierAnalysis storage(program);
+        o::selected::RequirementFrontiers frontiers(program, control, storage);
+        const auto requests = o::selected::qualifyCyclicFrontiers(program, control, frontiers);
+        require(std::any_of(requests.begin(), requests.end(), [](const auto& request) {
+                    return request.source == o::Pipe::MTE1 && request.observer == o::Pipe::M;
+                }), "an unrelated relay obligation discarded a direct bank protocol");
+        require(std::all_of(requests.begin(), requests.end(), [&](const auto& request) {
+                    return !program.target.keys[unsigned(request.source)][unsigned(request.observer)].empty();
+                }), "direct construction selected a nonexistent primitive");
+        // This checks direct realization selection. The original FIX/MTE2
+        // effects remain in the program for the ordinary relay constructor.
+        require(program.operations.size() >= p.operations.size(),
+                "target dispatch discarded original physical effects");
+    }
 }
 void deferredRequiredReturn()
 {
@@ -674,12 +746,14 @@ void noMotionAndRandom() {
 }
 }
 int main() {
+    o::selected::ReplayTestAccess::disjointRecurringKeys();
     o::selected::ReplayTestAccess::joinedConsumptionReturn();
     o::selected::ReplayTestAccess::reusedGapCertificates();
     o::selected::ReplayTestAccess::proposalWordOrder();
     o::selected::ReplayTestAccess::proposalOmissionWords();
     o::selected::ReplayTestAccess::invalidProposal();
     o::selected::ReplayTestAccess::uncoveredProducerProposal();
+    directProtocolDispatch();
     deferredRequiredReturn();
     deferredSharedReceipt(false);
     deferredSharedReceipt(true);

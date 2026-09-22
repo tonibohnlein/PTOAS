@@ -50,6 +50,28 @@ struct SyncSemanticRecord {
 };
 struct SyncSemanticReport {
   SmallVector<SyncSemanticRecord, 0> operations;
+  // Qualification for adding local completion order under the existing
+  // ordinary-phase contract. This is not an instruction admission policy:
+  // other clients still consume the production translation unchanged.
+  std::string localProgressGap() const {
+    for (const auto &record : operations) {
+      if (!record.gap.empty()) {
+        return record.gap;
+      }
+      switch (record.kind) {
+      case SyncSemanticRecord::Ordinary:
+      case SyncSemanticRecord::Storage:
+      case SyncSemanticRecord::Descriptor:
+      case SyncSemanticRecord::Control:
+      case SyncSemanticRecord::Pure:
+      case SyncSemanticRecord::Configuration:
+        break;
+      default:
+        return "local serialization requires a protocol/progress interface";
+      }
+    }
+    return {};
+  }
   bool complete() const {
     return llvm::all_of(operations, [](const auto &record) {
       return record.gap.empty();

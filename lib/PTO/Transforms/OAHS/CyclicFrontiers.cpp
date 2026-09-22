@@ -17,6 +17,18 @@ namespace {
 // Project one physical cell's access roles, without making storage succession
 // imply completion. All other payload remains in the selected full-graph replay.
 bool balanced(const Control&, const std::vector<Cut>&, const std::vector<Cut>&, bool = false);
+// The recurring adapter currently materializes direct events. An absent
+// direction requires another realization, not suppression of physical facts.
+bool directTransfer(const Program& p, const RecurringRequirement& request)
+{
+    return !p.target.keys[unsigned(request.source)][unsigned(request.observer)].empty();
+}
+bool directProtocol(const Program& p, const std::vector<RecurringRequirement>& requests)
+{
+    return std::all_of(requests.begin(), requests.end(), [&](const auto& request) {
+        return directTransfer(p, request);
+    });
+}
 std::vector<RecurringRequirement> qualifyCell(
     const Program& p, const Control& c, const RequirementFrontiers& frontiers,
     const ObservedLoop& loop, unsigned cell, Pipe intermediate = Pipe::Count)
@@ -31,6 +43,9 @@ std::vector<RecurringRequirement> qualifyCell(
     // Metadata is a proposal, not a trusted interface. Check all entries and
     // exits, including a root entry with no predecessor edge.
     for (Id site = 0; site < c.graph.sites.size(); ++site) {
+        if (!c.reachable[site]) {
+            continue;
+        }
         for (auto next : c.graph.sites[site].successors) {
             const bool unqualifiedEntry = members.count(next) && !members.count(site) &&
                 !entries.count(site);
@@ -507,37 +522,54 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
         if (std::any_of(writes.begin(), writes.end(), [&](Cut site) {
                 return !c.components[c.component[site]].cyclic;
             })) continue;
-        struct ReaderRegion { Cut entry, acquisition, exit, publication; };
+        struct ReaderRegion {
+            Cut entry, acquisition;
+            std::vector<std::pair<Cut, Cut>> releases;
+        };
         std::vector<ReaderRegion> regions;
         std::set<Cut> covered;
-        for (const auto& loop : p.observed->loops) {
-            if (!loop.atLeastOnce || loop.bodyEntry == NoAnalysisId ||
-                !loop.entries.empty() || !loop.exits.empty()) continue;
+        for (const auto& loop : c.loopEntries) {
             const std::set<Cut> members(loop.sites.begin(), loop.sites.end());
             // Use leaf reader regions; do not turn an enclosing multi-generation
             // region into one completion episode.
             if (std::any_of(p.observed->loops.begin(), p.observed->loops.end(), [&](const auto& child) {
-                    return child.owner != loop.owner && members.count(child.entry);
+                    if (child.owner == loop.owner) {
+                        return false;
+                    }
+                    for (const auto& occurrence : loopEntryOccurrences(child)) {
+                        if (members.count(occurrence.entry)) {
+                            return true;
+                        }
+                    }
+                    return false;
                 })) continue;
             std::vector<Cut> local;
-            for (auto site : reads) if (members.count(site)) local.push_back(site);
+            for (auto site : reads) {
+                if (members.count(site)) {
+                    local.push_back(site);
+                }
+            }
             if (local.empty() || std::any_of(writes.begin(), writes.end(),
                     [&](Cut site) { return members.count(site); })) continue;
-            const auto facts = std::find_if(c.loopEntries.begin(), c.loopEntries.end(),
-                [&](const auto& entry) { return entry.entry == loop.entry; });
-            if (facts == c.loopEntries.end() || facts->issuedPipes.count(writer)) continue;
+            if (loop.issuedPipes.count(writer)) {
+                continue;
+            }
             Cut acquisition;
-            const auto& first = facts->firstConsumers[unsigned(reader)];
+            const auto& first = loop.firstConsumers[unsigned(reader)];
             if (!first.empty() && std::all_of(first.begin(), first.end(), [&](Cut site) {
                     return reads.count(site);
                 })) acquisition = c.canonicalCut[loop.entry];
             else {
-                const auto input = std::find_if(facts->firstInputConsumers.begin(), facts->firstInputConsumers.end(),
+                const auto input = std::find_if(loop.firstInputConsumers.begin(), loop.firstInputConsumers.end(),
                     [&](Cut site) { return reads.count(site); });
-                if (input == facts->firstInputConsumers.end()) continue;
+                if (input == loop.firstInputConsumers.end()) {
+                    continue;
+                }
                 acquisition = c.canonicalCut[*input];
             }
-            if (!c.graph.legalCuts[loop.exit]) { admitted = false; break; }
+            if (std::any_of(loop.exits.begin(), loop.exits.end(), [&](Cut exit) {
+                    return !c.graph.legalCuts[exit];
+                })) { admitted = false; break; }
             // A final-visit observation can expose the last physical reader
             // before unrelated trailing work. Query the same cell/control
             // view; no lexical boundary or observation supplies completion.
@@ -545,36 +577,56 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
             std::vector<std::pair<Cut, Cut>> lastCandidates;
             for (auto site : local) {
                 const auto afterRead = c.after(site);
-                if (afterRead == NoAnalysisId || !members.count(afterRead)) continue;
+                if (afterRead == NoAnalysisId || !members.count(afterRead)) {
+                    continue;
+                }
                 const auto observation = p.observed->sites[afterRead].observation;
-                if (observation == NoAnalysisId) continue;
+                if (observation == NoAnalysisId) {
+                    continue;
+                }
                 const auto& atoms = p.observed->observations[observation].atoms;
                 if (std::any_of(atoms.begin(), atoms.end(), [&](const auto& atom) {
                         return atom.kind == ObservationAtom::LoopHasNext && atom.owner == loop.owner &&
                                atom.parameter == loop.lastVisitDistance && atom.value == 0;
                     })) lastCandidates.emplace_back(site, c.canonicalCut[afterRead]);
             }
-            if (!lastCandidates.empty()) {
+            if (!lastCandidates.empty() && loop.exits.size() == 1) {
                 std::vector<unsigned> lastRoles(c.graph.sites.size());
-                for (auto site : local) lastRoles[site] = 1;
+                for (auto site : local) {
+                    lastRoles[site] = 1;
+                }
                 lastRoles[loop.exit] = 2;
                 const auto following = nearestRoles(c, lastRoles, true);
                 std::set<Cut> lastCuts;
-                for (auto [site, cut] : lastCandidates) if (following[site] == 2) lastCuts.insert(cut);
+                for (auto [site, cut] : lastCandidates) {
+                    if (following[site] == 2) {
+                        lastCuts.insert(cut);
+                    }
+                }
                 if (lastCuts.size() == 1 && balanced(c, {c.canonicalCut[loop.entry]}, {*lastCuts.begin()}))
                     publication = *lastCuts.begin();
             }
-            regions.push_back({loop.entry, acquisition, loop.exit, publication});
+            ReaderRegion region{loop.entry, acquisition, {}};
+            for (auto exit : loop.exits) {
+                region.releases.emplace_back(exit, loop.exits.size() == 1 ? publication : c.canonicalCut[exit]);
+            }
+            regions.push_back(std::move(region));
             covered.insert(local.begin(), local.end());
         }
-        if (!admitted || covered != reads) continue;
+        if (!admitted || covered != reads) {
+            continue;
+        }
         // Compose reader-only children by physical generation. A sibling exit
         // is a use boundary, not automatically a release; the following child
         // retains readiness unless an intervening writer starts a new phase.
         std::vector<unsigned> beforeRoles(c.graph.sites.size()), afterRoles(beforeRoles.size());
-        for (auto site : writes) beforeRoles[site] = afterRoles[site] = 2;
+        for (auto site : writes) {
+            beforeRoles[site] = afterRoles[site] = 2;
+        }
         for (const auto& region : regions) {
-            beforeRoles[region.exit] |= 1;
+            for (const auto& release : region.releases) {
+                beforeRoles[release.first] |= 1;
+            }
             afterRoles[region.entry] |= 1;
         }
         const auto previous = nearestRoles(c, beforeRoles, false);
@@ -584,11 +636,20 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
             // Native sibling exit/entry anchors can be the same original cut.
             // That boundary itself is the neighboring role in this view.
             const auto predecessor = beforeRoles[region.entry] ? beforeRoles[region.entry] : previous[region.entry];
-            if (predecessor == 2) firstConsumers.insert(region.acquisition);
+            if (predecessor == 2) {
+                firstConsumers.insert(region.acquisition);
+            }
             else if (predecessor != 1) { admitted = false; break; }
-            const auto successor = afterRoles[region.exit] ? afterRoles[region.exit] : next[region.exit];
-            if (successor && !(successor & ~6u)) publications.insert(region.publication);
-            else if (successor != 1) { admitted = false; break; }
+            for (const auto& [exit, publication] : region.releases) {
+                const auto successor = afterRoles[exit] ? afterRoles[exit] : next[exit];
+                if (successor && !(successor & ~6u)) {
+                    publications.insert(publication);
+                }
+                else if (successor != 1) { admitted = false; break; }
+            }
+            if (!admitted) {
+                break;
+            }
         }
         const bool retainsAcrossChildren = firstConsumers.size() < regions.size();
         // Mixed first/retained or last/non-last paths need an original
@@ -616,7 +677,8 @@ std::vector<RecurringRequirement> qualifyReaderRegionCycles(
         std::sort(ready.publications.begin(), ready.publications.end());
         ready.publications.erase(std::unique(ready.publications.begin(), ready.publications.end()),
                                  ready.publications.end());
-        if (admitted && balanced(c, ready.publications, ready.acquisitions, true) &&
+        if (admitted && directTransfer(p, ready) && directTransfer(p, returned) &&
+            balanced(c, ready.publications, ready.acquisitions, true) &&
             balanced(c, returned.publications, returned.acquisitions, true)) {
             candidates.push_back({std::move(ready), std::move(returned), std::move(writes), retainsAcrossChildren});
         }
@@ -1050,6 +1112,63 @@ bool protocolCompatible(const Program& p, const Control& c,
         return obligation.kind != ProtocolObligation::ReceiptNotEstablished;
     });
 }
+
+// A shared physical key must preserve the logical identity of every receipt,
+// not merely alternate SET and WAIT. This projection checks exact selected
+// word order; the mandatory causal solve still proves republication knowledge.
+bool disjointTokenLifetimes(const Control& control,
+                            const std::vector<RecurringRequirement>& requests,
+                            const std::vector<Id>& members, bool publicationFirst)
+{
+    using Endpoint = std::pair<Id, bool>;
+    std::map<Cut, std::vector<Endpoint>> words;
+    for (auto member : members) {
+        for (auto cut : requests[member].publications) {
+            words[control.canonicalCut[cut]].emplace_back(member, true);
+        }
+        for (auto cut : requests[member].acquisitions) {
+            words[control.canonicalCut[cut]].emplace_back(member, false);
+        }
+    }
+    if (publicationFirst) {
+        for (auto& [cut, word] : words) {
+            (void)cut;
+            std::stable_partition(word.begin(), word.end(), [](const auto& endpoint) {
+                return endpoint.second;
+            });
+        }
+    }
+    // NoAnalysisId is an empty key; every other state names its logical owner.
+    std::vector<std::set<Id>> seen(control.graph.sites.size());
+    std::deque<std::pair<Cut, Id>> pending{{control.graph.entry, NoAnalysisId}};
+    bool reachedExit = false;
+    while (!pending.empty()) {
+        auto [site, owner] = pending.front();
+        pending.pop_front();
+        if (!seen[site].insert(owner).second) {
+            continue;
+        }
+        const auto found = words.find(control.canonicalCut[site]);
+        if (found != words.end()) {
+            for (auto [member, publish] : found->second) {
+                if (owner != (publish ? NoAnalysisId : member)) {
+                    return false;
+                }
+                owner = publish ? member : NoAnalysisId;
+            }
+        }
+        if (site == control.graph.exit) {
+            reachedExit = true;
+            if (owner != NoAnalysisId) {
+                return false;
+            }
+        }
+        for (auto next : control.graph.sites[site].successors) {
+            pending.emplace_back(next, owner);
+        }
+    }
+    return reachedExit;
+}
 } // namespace
 
 std::vector<RecurringRequirement> qualifyCyclicFrontiers(
@@ -1084,7 +1203,10 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
         returned.publications.assign(reads.begin(), reads.end());
         returned.acquisitions.assign(afterReads.begin(), afterReads.end());
         acknowledged.publications = acknowledged.acquisitions = returned.acquisitions;
-        if (!balanced(c, returned.publications, returned.acquisitions)) return {};
+        if (!directTransfer(p, returned) || !directTransfer(p, acknowledged) ||
+            !balanced(c, returned.publications, returned.acquisitions)) {
+            return {};
+        }
         return {returned, acknowledged};
     }
     auto append = [&](RecurringRequirement request) {
@@ -1110,6 +1232,9 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
             auto local = loop.bodyEntry == NoAnalysisId
                 ? qualifyCell(p, c, frontiers, loop, cell)
                 : qualifyEnclosingCell(p, c, frontiers, loop, cell);
+            if (!directProtocol(p, local)) {
+                continue;
+            }
             for (auto& request : local) append(std::move(request));
         }
     }
@@ -1120,7 +1245,9 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
         for (const auto& loop : p.observed->loops) {
             for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
                 auto pipeline = qualifyPipelineCycle(p, c, frontiers, loop, cell, requests);
-                if (pipeline.empty()) continue;
+                if (pipeline.empty() || !directProtocol(p, pipeline)) {
+                    continue;
+                }
                 pipelineOwners.insert(loop.owner);
                 requests.erase(std::remove_if(requests.begin(), requests.end(), [&](const auto& r) {
                     return r.owner == loop.owner;
@@ -1143,7 +1270,10 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
     const auto ordinary = requests;
     auto relationshipRequests = qualifyRelationships(p, c, frontiers);
     relationshipRequests.erase(std::remove_if(relationshipRequests.begin(), relationshipRequests.end(),
-        [&](const auto& r) { return pipelineOwners.count(r.owner); }), relationshipRequests.end());
+        [&](const auto& r) {
+            return pipelineOwners.count(r.owner) ||
+                !directTransfer(p, r);
+        }), relationshipRequests.end());
     for (auto& candidate : relationshipRequests) {
         auto subset = [](const std::vector<Cut>& a, const std::vector<Cut>& b) {
             return std::includes(b.begin(), b.end(), a.begin(), a.end());
@@ -1244,6 +1374,9 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
         for (Id i = 0; i + 1 < guarded.size(); i += 2) {
             const auto& ready = guarded[i];
             const auto& release = guarded[i + 1];
+            if (!directTransfer(p, ready) || !directTransfer(p, release)) {
+                continue;
+            }
             if (release.source != ready.observer || release.observer != ready.source ||
                 ready.cell != release.cell) continue;
             episodes[{ready.source, ready.observer, ready.acquisitions}].push_back(i);
@@ -1336,13 +1469,32 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
     // channel is not necessary merely because its participation is qualified.
     std::vector<Id> keys;
     std::set<Id> proposedKeys;
-    for (const auto& request : requests) {
+    std::map<Id, std::vector<Id>> keyOwners;
+    const bool guarded = std::all_of(requests.begin(), requests.end(), [](const auto& request) {
+        return request.owner == NoAnalysisId && request.period == 0;
+    });
+    for (Id index = 0; index < requests.size(); ++index) {
+        const auto& request = requests[index];
         Id selected = NoAnalysisId;
         for (Id key = 0; key < frontier.keys().size(); ++key) {
             const auto& identity = frontier.keys()[key];
             if (identity.source == request.source && identity.observer == request.observer && !proposedKeys.count(key) && !fixedKeys.count(key)) {
                 selected = key;
                 break;
+            }
+        }
+        if (selected == NoAnalysisId) {
+            for (const auto& [key, owners] : keyOwners) {
+                const auto& identity = frontier.keys()[key];
+                if (identity.source != request.source || identity.observer != request.observer) {
+                    continue;
+                }
+                auto combined = owners;
+                combined.push_back(index);
+                if (disjointTokenLifetimes(control, requests, combined, guarded)) {
+                    selected = key;
+                    break;
+                }
             }
         }
         if (selected == NoAnalysisId) {
@@ -1354,11 +1506,9 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
         }
         proposedKeys.insert(selected);
         keys.push_back(selected);
+        keyOwners[selected].push_back(index);
     }
     std::vector<bool> retained(requests.size(), true);
-    const bool guarded = std::all_of(requests.begin(), requests.end(), [](const auto& request) {
-        return request.owner == NoAnalysisId && request.period == 0;
-    });
     struct PendingEndpoint { Cut cut; Command command; Id request; };
     // Materialize the exact canonical words before checking. In particular a
     // publication-first convention can remove consumption credit carried by a

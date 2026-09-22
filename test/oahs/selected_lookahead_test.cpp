@@ -885,6 +885,66 @@ void invariantLoopEntry()
     p.observed->loops.front().atLeastOnce = false;
     require(accepted(p).work.loopEntryTransfers == 0, "unknown/zero-trip entry was acquired unconditionally");
 }
+void invariantLoopEntryCopies()
+{
+    auto p = invariantLoopProgram();
+    auto& q = *p.observed;
+    for (o::Cut at = 0; at < 7; ++at) {
+        auto copy = q.sites[at];
+        for (auto& next : copy.successors) {
+            if (next != 7) {
+                next += 8;
+            }
+        }
+        q.sites.push_back(std::move(copy));
+    }
+    q.entry = 15;
+    q.observations.push_back({15, {}, true});
+    q.sites.push_back({o::NoControlId, 8, {0,8}, {}, 0});
+    auto& loop = q.loops.front();
+    loop.entries = {3,11}; loop.exits = {7};
+    loop.sites = {4,5,6,12,13,14};
+    loop.occurrences = {{3,7,5,{4,5,6},{},{}}, {11,7,13,{12,13,14},{},{}}};
+    const o::selected::Control control(p);
+    require(control.complete && control.loopEntries.size() == 2 && control.loopEntryFrontiers.size() == 1,
+            "shared entry did not retain both physical occurrences");
+    require(control.loopEntryFrontiers.front().firstConsumers[unsigned(Q)] == std::vector<o::Cut>{5,13},
+            "shared entry omitted a first-consumer requirement");
+    const auto plan = accepted(p);
+    require(plan.work.loopEntryTransfers == 1 && plan.commands[1].size() == 1 && plan.commands[9].size() == 1 &&
+            plan.commands[3].size() == 1 && plan.commands[11].size() == 1,
+            "entry protocol did not use the exact shared publication/acquisition words");
+    for (unsigned offset : {0u,8u}) {
+        auto flat = p;
+        flat.observed.reset(); flat.operations.clear(); flat.body = {};
+        o::Commands words;
+        std::vector<o::Command> pending;
+        const std::vector<unsigned> path{15, offset, offset+1, offset+2, offset+3, offset+4,
+            offset+5, offset+6, offset+4, offset+5, offset+6, offset+4, 7};
+        for (auto site : path) {
+            pending.insert(pending.end(), plan.commands[site].begin(), plan.commands[site].end());
+            const auto operation = q.sites[site].operation;
+            if (operation != o::NoAnalysisId) {
+                flat.operations.push_back(p.operations[operation]);
+                words.push_back(std::move(pending)); pending.clear();
+            }
+        }
+        words.push_back(std::move(pending));
+        require(bool(oahs_oracle::graph(flat, words, {0,1,2,3}, {{1,2},{1,3}})),
+                "a shared entry imported unrelated source completion");
+    }
+    auto independent = p;
+    independent.operations.push_back(op(Q, {}));
+    auto& other = *independent.observed;
+    other.observations.push_back({16, {}, true});
+    other.sites.push_back({3, 9, {13}, {}, 0});
+    other.sites[12].successors[0] = 16;
+    other.loops.front().sites.push_back(16);
+    other.loops.front().occurrences[1].sites.push_back(16);
+    other.loops.front().occurrences[1].bodyEntry = 16;
+    require(accepted(independent).work.loopEntryTransfers == 0,
+            "one representative hid independent work in another entry occurrence");
+}
 void reuseOneShotEntryKey()
 {
     auto p = invariantLoopProgram(1);
@@ -1209,6 +1269,7 @@ int main()
     enclosingAcquisitionAndRearming();
     releaseBeforeAcknowledgment();
     invariantLoopEntry();
+    invariantLoopEntryCopies();
     reuseOneShotEntryKey();
     entryWaitMustNotCrossPublication();
     firstConflictingWriterAfterPublication();

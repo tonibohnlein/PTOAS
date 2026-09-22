@@ -122,8 +122,9 @@ struct Program {
     Pipe reader = Pipe::S, writer = Pipe::S;
   };
   std::optional<AlternatingSlots> alternatingSlots;
-  // Lowering-qualified, statically identified FIFO slots. This is an immutable
-  // physical-use view, not a completion or event-lifecycle certificate.
+  // Lowering-qualified FIFO slot may-sets. An operation can touch either slot
+  // when its cursor is ambiguous. This immutable physical-use view grants no
+  // completion or event-lifecycle credit.
   struct StaticFifoSlots {
     std::vector<unsigned> cells;
     std::vector<std::size_t> reads, writes;
@@ -136,6 +137,11 @@ struct Program {
   // Essential analyses run to their finite fixed points. Resource limits are
   // target/ABI facts; no compiler-work allowance changes these obligations.
   struct InvocationContract {
+    // Imported boundary facts. Local byte/event checking does not establish
+    // external protocol progress or import authored event ownership.
+    bool externalProgress = false;
+    bool authoredSynchronization = false;
+    std::string localProgressGap;
     enum Retirement {
       NoRetirement,
       DrainAllAtReturn

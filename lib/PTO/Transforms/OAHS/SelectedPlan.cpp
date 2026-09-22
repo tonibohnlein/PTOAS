@@ -271,6 +271,16 @@ bool hasQualifiedRecurringAccesses(const Program& program)
 }
 SelectedPlan constructSelectedPlan(const Program& program, const Commands& fixed, SelectedOptions options)
 {
+    if (options.conservativeOnly) {
+        if (std::any_of(fixed.begin(), fixed.end(), [](const auto& word) { return !word.empty(); })) {
+            SelectedPlan refused;
+            refused.conservative = true;
+            refused.failure = SelectedFailure::UnsupportedContract;
+            refused.reason = "conservative construction does not import authored event words";
+            return refused;
+        }
+        return constructConservativePlan(program);
+    }
     const auto start = std::chrono::steady_clock::now();
     selected::Constructor constructor(program, options);
     const auto prepared = std::chrono::steady_clock::now();

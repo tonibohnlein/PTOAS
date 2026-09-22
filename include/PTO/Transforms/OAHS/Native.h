@@ -52,7 +52,9 @@ namespace testing {
 // Test/report entry for the same selected constructor and checker as
 // runHandoffSync, including import, transaction, emission and reconstruction.
 // The optional report describes construction; LogicalResult additionally covers
-// emission/reconstruction. No alternative constructor or fallback is used.
+// emission/reconstruction. conservativeOnly tests the new serialization service
+// on original control; automatic fallback is not enabled before coverage and
+// external-protocol progress qualification.
 LogicalResult runSelectedHandoffSyncWithMutation(
     func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate = {},
     SelectedPlan *report = nullptr, const SelectedOptions *options = nullptr);

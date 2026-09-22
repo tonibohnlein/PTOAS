@@ -93,7 +93,8 @@ struct Import {
   std::vector<std::string> observationNotes;
 };
 enum class ObservationPolicy : unsigned { RefineLeafLoops, QualifiedAccessRoles, ClassInvariantInputs,
-                               FirstWriteConsumers, ClassInvariantFirstWrites, FinalReadSourcesBit = 8 };
+                               FirstWriteConsumers, ClassInvariantFirstWrites, OriginalControl,
+                               FinalReadSourcesBit = 8 };
 ObservationPolicy selectedObservationPolicy(bool classInvariant, bool firstWrites, bool finalReads = false) {
   if (finalReads) return ObservationPolicy(unsigned(selectedObservationPolicy(classInvariant, firstWrites)) | 8u);
   if (firstWrites) return classInvariant ? ObservationPolicy::ClassInvariantFirstWrites
@@ -206,6 +207,9 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
   if (failed(wire(function.getBody(), {}, 0, NoControlId)))
     return failure();
   out.program.observed = std::move(q);
+  if (policy == ObservationPolicy::OriginalControl) {
+    return success();
+  }
   // Leaf loops are refined independently. No product of unrelated loop periods
   // is formed. Unsupported arithmetic keeps the original sound SCF graph.
   auto integer = [](Value value) -> std::optional<int64_t> {
@@ -263,7 +267,6 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     }
     if (participants.size() < 2)
       continue; // no cross-engine recurrence to refine
-    bool periodsAgree = true;
     loop.getRegion().walk([&](scf::IfOp choice) {
       auto cmp = choice.getCondition().getDefiningOp<arith::CmpIOp>();
       if (!cmp || (cmp.getPredicate() != arith::CmpIPredicate::eq &&
@@ -286,15 +289,10 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
       if (lhs != loop.getInductionVar() || !modulus || !residue ||
           *modulus <= 0 || *residue < 0 || *residue >= *modulus)
         return;
-      // Optional observation vocabulary follows one existing modulus and the
-      // physical key population, not an arbitrary fixed-point work allowance.
-      std::size_t maximumPool = 1;
-      for (const auto &row : out.program.target.keys)
-        for (const auto &pool : row)
-          maximumPool = std::max(maximumPool, pool.size());
-      if (uint64_t(*modulus) > maximumPool ||
+      // Refining a predicate is optional. A different independent period
+      // remains original control, rather than rejecting this bank relation.
+      if (uint64_t(*modulus) > SyncSlotMapping::ExplorationLimit ||
           (model.period != 1 && uint64_t(model.period) != uint64_t(*modulus))) {
-        periodsAgree = false;
         return;
       }
       model.period = unsigned(*modulus);
@@ -302,10 +300,16 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
           {ids.lookup(choice.getOperation()), uint64_t(*modulus),
            uint64_t(*residue), cmp.getPredicate() == arith::CmpIPredicate::eq});
     });
-    if (!periodsAgree) {
-      out.observationNotes.push_back(
-          "kept original SCF control: leaf-loop observation periods exceed the "
-          "selected finite vocabulary");
+    // The counted quotient includes elapsed/remaining states as well as bank
+    // residues. Its expansion is an optional construction vocabulary, not the
+    // physical relation itself. Bound compilation work independently of keys;
+    // retain all finite physical footprints when this vocabulary is too large.
+    constexpr uint64_t observationStateBudget = 4096;
+    const uint64_t period = model.period;
+    const uint64_t headerStates = period * (period + 1) * (period + 2);
+    if (headerStates > observationStateBudget ||
+        model.bodySites.size() > (observationStateBudget - headerStates) / headerStates) {
+      out.observationNotes.push_back("retained finite physical relations; counted observation work budget exceeded");
       continue;
     }
     auto refined = refineCountedLoop(out.program, model);
@@ -330,6 +334,43 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
       out.observationNotes.push_back("qualified original carried-slot orbit: period " +
                                      std::to_string(model.period));
   }
+  // Preserve useful entry placement facts even when residue refinement is not
+  // admitted (notably tiled loops with a non-unit step). This neither changes
+  // the control graph nor makes a physical interval an occurrence certificate.
+  for (auto loop : loops) {
+    auto &q = *out.program.observed;
+    const auto owner = ids.lookup(loop.getOperation());
+    if (llvm::any_of(q.loops, [&](const auto &r) { return r.owner == owner; })) {
+        continue;
+    }
+    const auto lower = integer(loop.getLowerBound()), upper = integer(loop.getUpperBound()),
+               step = integer(loop.getStep());
+    if (!lower || !upper || !step || *step <= 0 || *lower >= *upper ||
+        loop->hasAttr("unsignedCmp") || loop->hasAttr("unsigned_cmp")) continue;
+    if (q.sites[owner].successors.size() != 1) {
+        continue;
+    }
+    const auto header = q.sites[owner].successors.front();
+    if (q.sites[header].successors.size() != 2) {
+        continue;
+    }
+    const auto body = q.sites[header].successors[0], exit = q.sites[header].successors[1];
+    ObservedLoop original{owner, owner, exit, {}, body, true};
+    std::vector<bool> seen(q.sites.size());
+    std::vector<Cut> todo{header};
+    while (!todo.empty()) {
+      const auto at = todo.back(); todo.pop_back();
+      if (at == exit || seen[at]) {
+          continue;
+      }
+      seen[at] = true;
+      original.sites.push_back(at);
+      for (auto next : q.sites[at].successors) {
+          todo.push_back(next);
+      }
+    }
+    q.loops.push_back(std::move(original));
+  }
   // Compose only physical bank identity with the existing child interface.
   // Do not build enclosing elapsed/remaining or first/tail mode products.
   for (auto loop : loops) {
@@ -337,6 +378,14 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     const bool usableOrbit = slots != out.slotLoops.end() && slots->second.enclosing &&
                              slots->second.period >= 2;
     if (!usableOrbit) {
+      continue;
+    }
+    // The physical relation counts visits. Native LoopResidue emission still
+    // uses IV modulo period, so this materializer requires those to coincide.
+    // Other lower/step values retain the derived finite physical footprints.
+    if (integer(loop.getLowerBound()) != std::optional<int64_t>(0) ||
+        integer(loop.getStep()) != std::optional<int64_t>(1)) {
+      out.observationNotes.push_back("retained finite banks; normalized occurrence emission unavailable");
       continue;
     }
     const auto& control = *out.program.observed;
@@ -370,7 +419,14 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
         todo.push_back(next);
       }
     }
-    auto refined = refineBankOccurrences(out.program, model);
+    // These original entry facts were collected before analytical copying.
+    // The enclosing interface replaces only its own unrefined container;
+    // child records are mapped by the shared bank correspondence.
+    auto original = out.program;
+    auto& originalLoops = original.observed->loops;
+    originalLoops.erase(std::remove_if(originalLoops.begin(), originalLoops.end(),
+        [&](const auto& region) { return region.owner == model.owner; }), originalLoops.end());
+    auto refined = refineBankOccurrences(original, model);
     auto local = refined.program;
     if (refined.success) {
       local.observed->loops = {local.observed->loops.back()};
@@ -387,33 +443,6 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
   // Native emission uses original anchors; no payload is duplicated.
   while (out.payload.size() < out.program.operations.size())
     out.payload.push_back(out.payload[out.program.operations[out.payload.size()].original]);
-  // Preserve useful entry placement facts even when residue refinement is not
-  // admitted (notably tiled loops with a non-unit step). This neither changes
-  // the control graph nor makes a physical interval an occurrence certificate.
-  for (auto loop : loops) {
-    auto &q = *out.program.observed;
-    const auto owner = ids.lookup(loop.getOperation());
-    if (llvm::any_of(q.loops, [&](const auto &r) { return r.owner == owner; })) continue;
-    const auto lower = integer(loop.getLowerBound()), upper = integer(loop.getUpperBound()),
-               step = integer(loop.getStep());
-    if (!lower || !upper || !step || *step <= 0 || *lower >= *upper ||
-        loop->hasAttr("unsignedCmp") || loop->hasAttr("unsigned_cmp")) continue;
-    if (q.sites[owner].successors.size() != 1) continue;
-    const auto header = q.sites[owner].successors.front();
-    if (q.sites[header].successors.size() != 2) continue;
-    const auto body = q.sites[header].successors[0], exit = q.sites[header].successors[1];
-    ObservedLoop original{owner, owner, exit, {}, body, true};
-    std::vector<bool> seen(q.sites.size());
-    std::vector<Cut> todo{header};
-    while (!todo.empty()) {
-      const auto at = todo.back(); todo.pop_back();
-      if (at == exit || seen[at]) continue;
-      seen[at] = true;
-      original.sites.push_back(at);
-      for (auto next : q.sites[at].successors) todo.push_back(next);
-    }
-    q.loops.push_back(std::move(original));
-  }
   const bool firstWrites = policy == ObservationPolicy::FirstWriteConsumers ||
                            policy == ObservationPolicy::ClassInvariantFirstWrites;
   std::unique_ptr<StorageFrontierAnalysis> placementStorage;
@@ -470,6 +499,9 @@ LogicalResult import(func::FuncOp function, Import &out,
                              SyncAnalysisMode::NORMALSYNC);
   if (failed(translator.Build()))
     return failure();
+  if (policy == ObservationPolicy::OriginalControl) {
+    out.program.invocation.localProgressGap = translator.describeSemantics().localProgressGap();
+  }
   if (failed(closeStructuredSyncOrigins(function, translated, buffers)))
     return failure();
   // Consume the same physical nodes as existing InsertSync. An instruction
@@ -493,8 +525,13 @@ LogicalResult import(func::FuncOp function, Import &out,
   // Retain available shared protocol metadata for reports and refinements.
   // Missing/incomplete metadata does not veto the translator's result.
   function.walk([&](mlir::Operation *op) {
-    if (auto protocol = getSyncProtocolModel(op); protocol && protocol->complete())
-      out.protocols.push_back(*protocol);
+    out.program.invocation.authoredSynchronization |= isa<AuthoredSyncOpInterface>(op);
+    if (auto protocol = getSyncProtocolModel(op)) {
+      out.program.invocation.externalProgress = true;
+      if (protocol->complete()) {
+        out.protocols.push_back(*protocol);
+      }
+    }
   });
 
   DenseMap<mlir::Operation *, unsigned> operationIds;
@@ -553,7 +590,7 @@ LogicalResult import(func::FuncOp function, Import &out,
   // still account for every other access, including ACC and unqualified views.
   struct SlotCandidate {
     scf::ForOp loop;
-    SyncSlotMapping mapping;
+    unsigned period = 1;
     DenseMap<const BaseMemInfo *, std::vector<const BaseMemInfo *>> memories;
     bool nested = false;
   };
@@ -563,52 +600,84 @@ LogicalResult import(func::FuncOp function, Import &out,
   // outer loop containing children can have a finite address orbit without
   // having a qualified recurring synchronization interface.
   DenseMap<const BaseMemInfo *, const BaseMemInfo *> finiteMemory;
-  const auto slotTarget = a3SyncProfile(SyncCore::Cube);
-  std::size_t maximumPeriod = 1;
-  for (const auto &row : slotTarget.keys)
-    for (const auto &pool : row) maximumPeriod = std::max(maximumPeriod, pool.size());
   function.walk([&](scf::ForOp loop) {
-    bool nested = false;
-    loop.getRegion().walk([&](mlir::Operation *op) { nested |= isa<scf::ForOp, scf::WhileOp>(op); });
-    auto mapping = SyncSlotMapping::derive(loop, unsigned(maximumPeriod));
-    if (!mapping) return;
     SlotCandidate candidate;
     candidate.loop = loop;
-    candidate.nested = nested;
-    candidate.mapping = std::move(*mapping);
+    loop.getRegion().walk([&](mlir::Operation *op) {
+      candidate.nested |= isa<scf::ForOp, scf::WhileOp>(op);
+    });
+    DenseMap<Value, std::optional<SyncSlotMapping>> relations;
+    DenseSet<const BaseMemInfo *> examined;
     for (auto *payload : out.payload) {
-      if (!loop->isProperAncestor(payload)) continue;
+      if (!loop->isProperAncestor(payload)) {
+        continue;
+      }
       auto *phase = phases.lookup(payload);
       auto qualify = [&](const auto &memories) {
         for (const BaseMemInfo *memory : memories) {
-          if (candidate.memories.count(memory) || memory->scope == AddressSpace::GM ||
+          if (!examined.insert(memory).second || memory->scope == AddressSpace::GM ||
               memory->scope == AddressSpace::Zero || !memory->allocateSize ||
-              memory->baseBuffer != memory->rootBuffer) continue;
+              memory->aliasesUnknownRange || memory->baseAddresses.empty()) {
+            continue;
+          }
+          // Rebase the shared translated footprint, including view offsets and
+          // conservative envelopes. The effect's immediate SSA spelling is not
+          // an allocation-identity proof. Unknown origins remain unknown.
           auto alloc = memory->rootBuffer.template getDefiningOp<AllocTileOp>();
           if (!alloc || !alloc.getAddr() || !loop->isProperAncestor(alloc) ||
-              SyncSlotMapping::literal(alloc.getAddr())) continue;
-          std::vector<uint64_t> addresses;
-          for (auto &values : candidate.mapping.values) {
-            auto address = SyncSlotMapping::evaluate(alloc.getAddr(), values);
-            if (!address || memory->allocateSize > std::numeric_limits<uint64_t>::max() - *address) break;
-            addresses.push_back(*address);
+              memory->hasKnownPhysicalAddresses) {
+            continue;
           }
-          if (addresses.size() != candidate.mapping.period) continue;
+          auto relation = relations.find(alloc.getAddr());
+          if (relation == relations.end()) {
+            relation = relations.try_emplace(alloc.getAddr(),
+                SyncSlotMapping::derive(loop, alloc.getAddr())).first;
+          }
+          if (!relation->second) {
+            continue;
+          }
+          auto &mapping = *relation->second;
+          std::vector<SmallVector<uint64_t>> addresses;
+          for (auto &values : mapping.values) {
+            const auto address = SyncSlotMapping::evaluate(alloc.getAddr(), values);
+            SmallVector<uint64_t> footprint;
+            for (auto offset : memory->baseAddresses) {
+              if (!address || offset > std::numeric_limits<uint64_t>::max() - *address ||
+                  memory->allocateSize > std::numeric_limits<uint64_t>::max() - (*address + offset)) {
+                break;
+              }
+              footprint.push_back(*address + offset);
+            }
+            if (footprint.size() != memory->baseAddresses.size()) {
+              break;
+            }
+            addresses.push_back(std::move(footprint));
+          }
+          if (addresses.size() != mapping.period) {
+            continue;
+          }
           auto &variants = candidate.memories[memory];
-          for (auto address : addresses) {
+          auto possible = memory->clone();
+          possible->baseAddresses.clear();
+          for (const auto &footprint : addresses) {
             auto copy = memory->clone();
-            copy->baseAddresses = {address};
+            copy->baseAddresses = footprint;
             copy->hasKnownPhysicalAddresses = true;
             copy->aliasesUnknownRange = false;
             variants.push_back(copy.get());
             slotMemory.push_back(std::move(copy));
+            possible->baseAddresses.append(footprint.begin(), footprint.end());
           }
-          auto possible = memory->clone();
-          possible->baseAddresses.assign(addresses.begin(), addresses.end());
           possible->hasKnownPhysicalAddresses = true;
           possible->aliasesUnknownRange = false;
           finiteMemory[memory] = possible.get();
           slotMemory.push_back(std::move(possible));
+          // The existing occurrence graph has one phase dimension per owner.
+          // Retain every finite relation, but materialize only periods that
+          // divide this selected dimension. Never form an unrelated LCM.
+          if (candidate.period == 1 || mapping.period % candidate.period == 0) {
+            candidate.period = mapping.period;
+          }
         }
       };
       qualify(phase->defVec);
@@ -669,7 +738,7 @@ LogicalResult import(func::FuncOp function, Import &out,
   for (auto &candidate : slotCandidates)
     for (unsigned i = 0; i < out.payload.size(); ++i)
       if (candidate.loop->isProperAncestor(out.payload[i]))
-        for (unsigned residue = 0; residue < candidate.mapping.period; ++residue) {
+        for (unsigned residue = 0; residue < candidate.period; ++residue) {
           variants.push_back({i, residue, unsigned(out.program.operations.size()), &candidate});
           out.program.operations.push_back(out.program.operations[i]);
         }
@@ -683,8 +752,13 @@ LogicalResult import(func::FuncOp function, Import &out,
         // completion is intentionally governed by production alias behavior.
         if (candidate && candidate->memories.count(memory)) {
           const auto &resolved = candidate->memories.find(memory)->second;
-          if (residue) physicalEffects.push_back({operation, resolved[*residue], write});
-          else for (auto *bank : resolved) physicalEffects.push_back({operation, bank, write});
+          if (residue && candidate->period % resolved.size() == 0) {
+            physicalEffects.push_back({operation, resolved[*residue % resolved.size()], write});
+          } else {
+            for (auto *bank : resolved) {
+              physicalEffects.push_back({operation, bank, write});
+            }
+          }
         } else if (const auto banks = bankMemories.find(memory); banks != bankMemories.end()) {
           for (const auto* bank : *banks->second) {
             physicalEffects.push_back({operation, bank, write});
@@ -756,7 +830,7 @@ LogicalResult import(func::FuncOp function, Import &out,
   // sparse population once rather than scanning it for every original phase.
   for (const auto &variant : variants) {
     auto &slot = out.slotLoops[variant.candidate->loop.getOperation()];
-    slot.period = variant.candidate->mapping.period;
+    slot.period = variant.candidate->period;
     slot.enclosing = variant.candidate->nested;
     if (slot.effects.empty() || slot.effects.back().operation != variant.original)
       slot.effects.push_back({variant.original, {}});
@@ -1334,7 +1408,7 @@ LogicalResult testing::checkHandoffObservationPredicate(
 }
 
 namespace {
-LogicalResult executeSelectedHandoffSync(
+LogicalResult executeSelectedAttempt(
     func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate, SelectedPlan *report,
     SelectedOptions options = {}) {
   if (report) {
@@ -1362,8 +1436,67 @@ LogicalResult executeSelectedHandoffSync(
         result.success = checked.accepted;
         result.reason = checked.reason;
         return result;
-      }, mutate, selectedObservationPolicy(options.classInvariantInputs, options.firstWriteConsumers,
+      }, mutate, options.conservativeOnly ? ObservationPolicy::OriginalControl :
+          selectedObservationPolicy(options.classInvariantInputs, options.firstWriteConsumers,
           options.finalReadSources || options.finalReadAnalysisOnly));
+}
+
+bool conservativeRetryEligible(const SelectedPlan& candidate)
+{
+  if (candidate.success) {
+    return false; // emission/reconstruction failure is an implementation defect
+  }
+  return candidate.failure == SelectedFailure::EventResource ||
+         candidate.failure == SelectedFailure::MissingParticipation ||
+         candidate.failure == SelectedFailure::UnqualifiedControl;
+}
+
+LogicalResult executeSelectedHandoffSync(
+    func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate, SelectedPlan *report,
+    SelectedOptions options = {}) {
+  if (!options.conservativeFallback || options.conservativeOnly) {
+    return executeSelectedAttempt(function, mutate, report, options);
+  }
+  SelectedPlan candidate;
+  std::string diagnostics;
+  LogicalResult status = failure();
+  {
+    ScopedDiagnosticHandler capture(function.getContext(), [&](Diagnostic& diagnostic) {
+      llvm::raw_string_ostream stream(diagnostics);
+      diagnostic.print(stream);
+      stream << '\n';
+      return success();
+    });
+    status = executeSelectedAttempt(function, mutate, &candidate, options);
+  }
+  if (succeeded(status) || !conservativeRetryEligible(candidate)) {
+    if (!diagnostics.empty()) {
+      llvm::errs() << diagnostics;
+    }
+    if (report) {
+      *report = std::move(candidate);
+    }
+    return status;
+  }
+  // The failed transaction owns its clone. Retry from the still-original
+  // function, importing fresh physical facts and original control; no ledger,
+  // source snapshots or ownership reservations cross this boundary.
+  options.conservativeOnly = true;
+  options.conservativeFallback = false;
+  SelectedPlan fallback;
+  status = executeSelectedAttempt(function, mutate, &fallback, options);
+  fallback.candidateFailure = candidate.failure;
+  fallback.candidateReason = candidate.reason;
+  fallback.fallbackUsed = succeeded(status);
+  if (succeeded(status)) {
+    function.emitRemark("handoff: checked local conservative fallback after ") << candidate.reason;
+  } else if (!diagnostics.empty()) {
+    llvm::errs() << diagnostics;
+  }
+  if (report) {
+    *report = std::move(fallback);
+  }
+  return status;
 }
 
 } // namespace

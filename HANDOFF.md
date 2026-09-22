@@ -14,6 +14,50 @@ Verify the branch, HEAD, and working tree before continuing. A newer user commit
 
 ## Active quality work (2026-09-22)
 
+### Approved shared-mechanism refactor: Stage 0 in progress
+
+The user approved the dependency-ordered Stage 0–5 sequence now recorded in
+[semantic corrections](docs/designs/oahs-semantic-corrections.md#approved-refactor-sequence-2026-09-22).
+This supersedes the requirement to restore every ordering regression before
+building the next shared interface. Temporary quality/work regressions are
+allowed and recorded; soundness, event contracts and supported-input compilation
+remain mandatory. Reference gains must be restored by final acceptance.
+
+Pre-refactor plans, measurements, trace scripts and task-owned patch are frozen
+in `/home/toni/work/pypto3_sync_more/oahs-refactor-work/stage0-baseline/`.
+The optimized checkpoint passed 27 portable suites, both native suites and 115
+prepared inputs. Nine changed prefill plans preserve complete order on 36
+bounded traces while reducing commands/resources; CSA still adds 434 and removes
+20 relations on the all-active trace. No new overlap/device-speed claim.
+The pending non-FIFO relay edit now passes its focused portable suite; broader
+native/default validation is being refreshed.
+
+Stage 0 adds `constructConservativePlan` and native test-driver
+`--conservative-only`. It uses actual available/unreserved target directions,
+two closed tours per communicating component, named local fences or return
+cycles for singleton asynchronous engines, and terminal retirement. Full
+original-graph causal validation and native reconstruction remain unchanged.
+Original-control import skips optional observation refinement. This is a new
+simple policy, not a retained old optimizer or completed-plan search.
+
+**New acceptance issue:** full local serialization can deadlock peer protocols
+by gating a send behind a receive that the send must enable. The portable/local
+proof does not establish coupled progress. Shared invocation facts retain
+recognized authored synchronization and external protocol participation;
+conservative construction refuses those contracts. This classification is not
+an exhaustive proof for unnormalized/opaque communication operations. Native
+coverage remains experimental, and automatic fallback is NOT enabled. The user
+selected restricted fallback scope: qualify local kernels using the shared
+semantic report and retain current optimized construction for peer kernels.
+Unknown/open progress is refused by the conservative path only; there is no new
+instruction admission gate on ordinary optimized compilation. Validate the
+dispatcher over the whole manifest and conservative-only over qualified locals.
+
+Separate review accepted the local closed-walk argument and identified the
+peer-progress gap. Review follow-ups add unused-intermediary completion,
+shared-word/unreachable-representative, typed-effect and rollback tests. Current
+build/test results must be updated below before declaring Stage 0 complete.
+
 ### Semantic generality: first deliverable complete, broader objective active
 
 The dependency-ordered [correction plan](docs/designs/oahs-semantic-corrections.md)
@@ -54,13 +98,51 @@ nonidentity view geometry, and the retained whole-cell ACC compatibility gate.
 The gate inventory records their replacement analyses. The research draft's
 target illustration now states the access-local premises and argument; no claim
 of universal composition was added. Concurrent AGENTS/todo edits were preserved.
-Changes are uncommitted.
+This first deliverable is committed as `b506cc19e` (Apply the documented ACC
+access-order contract). Subsequent semantic-generalization work is uncommitted.
 
 **Next:** step 2, independent physical-use relations from relevant selector and
 address slices. Extend shared scalar/geometry facts, preserve partial knowledge,
 and separate representability from event capacity. Start with one prefill bank
 lifetime and state the invariant before implementing. Do not expand the view
 recognizer or bypass the generation/support obligation retained for step 3.
+
+### Active steps 2–5 continuation: physical facts and preserved child interfaces
+
+The dependency-slice implementation derives each address recurrence independently
+of unrelated carried state and event-pool capacity. Scalar dialect folding
+preserves equivalent identities/casts; view footprints are rebased using shared
+translated coordinates. Fourteen native variants cover carried/IV forms,
+independent footprints, overlap and unknown-state negatives, a 17-bank case,
+and nonunit-step emission limits. Both native suites and 115 campaign cases
+passed at the initial step-2 checkpoint. Corpus (88), targeted (6), original
+prefill (2), and 18/19 compatibility plans were identical to the ACC commit.
+
+**That checkpoint fails quality acceptance:** the changed DeepSeek CSA decode
+plan loses an existing PV-storage return after enclosing bank refinement.
+On the all-active one-entry trace it adds 668 and removes 20 complete payload
+issue/completion relations; updates rise 21→67 and replay 15180→218554.
+Independent review traces show current QK completion entering the PV load gate.
+Safety passes are not evidence of improved ordering. Archive:
+`/home/toni/work/pypto3_sync_more/oahs-physical-relations-work/csa-regression/`.
+The local trace model treats FFTS endpoints as opaque same-pipe payloads; it
+does not model coupled peers or establish device timing.
+
+Work in progress addresses the source: collect original child entry facts
+before bank refinement, retain paired child entry/body/exit/member and endpoint
+records, and prepare the existing Control entry summaries per occurrence.
+Reader-region qualification consumes those summaries instead of rejecting all
+copied boundaries. First-use copying also preserves the records. Separately,
+FIFO cursor fixed points now retain exact prefixes and may-slot suffixes, while
+the native adapter preserves an existing more precise alternating solution.
+Portable/native validation of these later changes is underway; the initial
+115-case result above does not certify them.
+
+Remaining explicit limitations: incompatible recurrence periods retain finite
+footprints but not simultaneous precise occurrence dimensions; arbitrary IV
+congruence transfer, dynamic view geometry, generation-scoped producer support,
+fully composable ordered endpoint gaps, and deadline-specific joint binding
+remain unfinished. No step-2–5 completion or new device speedup is claimed.
 
 ### Earlier milestone sequence
 

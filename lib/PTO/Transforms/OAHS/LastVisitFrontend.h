@@ -96,6 +96,10 @@ ObservedImport refineLastVisit(const Program &input, std::size_t owner,
       loop.bodyEntry = header;
     }
   }
+  if (!refreshLoopOccurrences(q)) {
+    out.reason = "last-visit refinement lacks a closed child occurrence interface";
+    return out;
+  }
   q.qualification += "; last-visit-words-v1";
   for (std::size_t i = 0; i < input.operations.size(); ++i) out.originalPhases.push_back(i);
   const auto checked = validateProgram(out.program);

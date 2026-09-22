@@ -219,6 +219,12 @@ struct SelectedWork {
 };
 // These switches never disable mandatory checking or native reconstruction.
 struct SelectedOptions {
+    // Diagnostic/conservative service; does not weaken final checking. Native
+    // import retains original control instead of optional observation copies.
+    bool conservativeOnly = false;
+    // Native compatibility retry for qualified local kernels. Portable model
+    // construction remains strict; emission/checker failures are never retried.
+    bool conservativeFallback = false;
     bool recurring = true;
     bool recurringOmissionTrials = true;
     bool finalHelperTrials = true;
@@ -245,6 +251,10 @@ struct SelectedOptions {
 };
 struct SelectedPlan {
     bool success = false;
+    bool conservative = false;
+    bool fallbackUsed = false;
+    SelectedFailure candidateFailure = SelectedFailure::None;
+    std::string candidateReason;
     SelectedFailure failure = SelectedFailure::None;
     std::string reason;
     Cut cut = NoAnalysisId;
@@ -274,6 +284,10 @@ bool hasQualifiedRecurringAccesses(const Program&);
 
 SelectedPlan constructSelectedPlan(const Program&, const Commands& fixed = {},
                                    SelectedOptions options = {});
+
+// Deterministic serialization with the same target and independent checker.
+// No authored/fixed words or optimization certificates are imported as credit.
+SelectedPlan constructConservativePlan(const Program&);
 
 } // namespace mlir::pto::oahs
 #endif

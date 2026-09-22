@@ -337,84 +337,111 @@ Control::Control(const Program& program)
     // Construction queries these summaries instead of rediscovering invariant
     // classes and earlier observer work at every residual repair.
     if (program.observed) for (const auto& loop : program.observed->loops) {
-        if (!loop.atLeastOnce || loop.bodyEntry == NoAnalysisId) continue;
-        LoopEntryFacts facts;
-        facts.entry = loop.entry;
-        facts.sites = loop.sites;
-        facts.firstConsumer.fill(NoAnalysisId);
-        for (const auto& [boundary, consumer] : loop.firstWriteFrontiers) {
-            if (boundary >= graph.sites.size() || consumer >= graph.sites.size() ||
-                graph.operations[boundary] != NoAnalysisId ||
-                graph.operations[consumer] == NoAnalysisId ||
-                graph.sites[boundary].successors != std::vector<Id>{consumer} ||
-                !lookahead.balancedTransfer({loop.entry}, boundary, graph.entry, graph.exit)) {
-                complete = false;
-                reason = "invalid first-write receipt boundary";
-                return;
-            }
-            facts.firstWriteFrontiers.emplace_back(boundary, consumer);
-            receiptGaps.emplace(boundary, program.operations[graph.operations[consumer]].pipe);
+        if (!loop.atLeastOnce) {
+            continue;
         }
-        std::set<Pipe> observers;
-        for (auto site : loop.sites) {
-            ++loopEntryPreparationSites;
-            const auto operation = graph.operations[site];
-            if (operation == NoAnalysisId) continue;
-            const auto& op = program.operations[operation];
-            const auto observation = program.observed->sites[site].observation;
-            if (observation != NoAnalysisId) {
-                const auto& atoms = program.observed->observations[observation].atoms;
-                if (std::any_of(atoms.begin(), atoms.end(), [&](const auto& a) {
-                        return a.kind == ObservationAtom::LoopHasPrevious &&
-                            a.owner == loop.owner && a.parameter == 1 && a.value == 0;
-                    }) && lookahead.balancedTransfer({loop.entry}, site, graph.entry, graph.exit))
-                    facts.firstInputConsumers.push_back(site);
+        for (const auto& occurrence : loopEntryOccurrences(loop)) {
+            if (occurrence.bodyEntry == NoAnalysisId) {
+                continue;
             }
-            observers.insert(op.pipe);
-            facts.issuedPipes.insert(op.pipe);
-            for (const auto& access : op.accesses) {
-                const auto base = (Id(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
-                if (access.read) facts.issuedClasses.insert(base);
-                if (access.write) facts.issuedClasses.insert(base + 1);
+            LoopEntryFacts facts;
+            facts.entry = occurrence.entry;
+            facts.exit = occurrence.exit;
+            facts.exits = occurrence.exits.empty() ? std::vector<Cut>{occurrence.exit} : occurrence.exits;
+            facts.owner = loop.owner;
+            facts.lastVisitDistance = loop.lastVisitDistance;
+            facts.sites = occurrence.sites;
+            const std::set<Cut> members(occurrence.sites.begin(), occurrence.sites.end());
+            const std::set<Cut> exits(facts.exits.begin(), facts.exits.end());
+            facts.firstConsumer.fill(NoAnalysisId);
+            for (const auto& [boundary, consumer] : occurrence.firstWriteFrontiers) {
+                if (boundary >= graph.sites.size() || consumer >= graph.sites.size() ||
+                    graph.operations[boundary] != NoAnalysisId ||
+                    graph.operations[consumer] == NoAnalysisId ||
+                    graph.sites[boundary].successors != std::vector<Id>{consumer} ||
+                    !lookahead.balancedTransfer({occurrence.entry}, boundary, graph.entry, graph.exit)) {
+                    complete = false;
+                    reason = "invalid first-write receipt boundary";
+                    return;
+                }
+                facts.firstWriteFrontiers.emplace_back(boundary, consumer);
+                receiptGaps.emplace(boundary, program.operations[graph.operations[consumer]].pipe);
             }
-        }
-        for (auto observer : observers) {
-            std::vector<bool> seen(graph.sites.size());
-            std::vector<Cut> todo{loop.bodyEntry};
-            std::set<Cut> first;
-            bool bypass = false;
-            while (!todo.empty()) {
-                const auto at = todo.back(); todo.pop_back();
-                if (seen[at]) continue;
-                seen[at] = true;
+            std::set<Pipe> observers;
+            for (auto site : occurrence.sites) {
                 ++loopEntryPreparationSites;
-                if (at == loop.exit) { bypass = true; break; }
-                const auto operation = graph.operations[at];
-                if (operation != NoAnalysisId && program.operations[operation].pipe == observer) {
-                    first.insert(at);
+                const auto operation = graph.operations[site];
+                if (operation == NoAnalysisId) {
                     continue;
                 }
-                const auto& next = graph.sites[at].successors;
-                todo.insert(todo.end(), next.begin(), next.end());
+                const auto& op = program.operations[operation];
+                const auto observation = program.observed->sites[site].observation;
+                if (observation != NoAnalysisId) {
+                    const auto& atoms = program.observed->observations[observation].atoms;
+                    if (std::any_of(atoms.begin(), atoms.end(), [&](const auto& a) {
+                            return a.kind == ObservationAtom::LoopHasPrevious &&
+                                a.owner == loop.owner && a.parameter == 1 && a.value == 0;
+                        }) && lookahead.balancedTransfer({occurrence.entry}, site, graph.entry, graph.exit))
+                        facts.firstInputConsumers.push_back(site);
+                }
+                observers.insert(op.pipe);
+                facts.issuedPipes.insert(op.pipe);
+                for (const auto& access : op.accesses) {
+                    const auto base = (Id(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
+                    if (access.read) {
+                        facts.issuedClasses.insert(base);
+                    }
+                    if (access.write) {
+                        facts.issuedClasses.insert(base + 1);
+                    }
+                }
             }
-            if (!bypass && !first.empty()) {
-                facts.firstConsumers[unsigned(observer)].assign(first.begin(), first.end());
-                if (first.size() == 1) facts.firstConsumer[unsigned(observer)] = *first.begin();
-                std::fill(seen.begin(), seen.end(), false);
-                todo = graph.sites[loop.entry].successors;
+            for (auto observer : observers) {
+                std::vector<bool> seen(graph.sites.size());
+                std::vector<Cut> todo{occurrence.bodyEntry};
+                std::set<Cut> first;
+                bool bypass = false;
                 while (!todo.empty()) {
                     const auto at = todo.back(); todo.pop_back();
-                    if (at == loop.exit || at == loop.entry || seen[at]) continue;
+                    if (seen[at]) {
+                        continue;
+                    }
                     seen[at] = true;
                     ++loopEntryPreparationSites;
-                    facts.crossedWords[unsigned(observer)].push_back(at);
-                    if (first.count(at)) continue;
+                    if (exits.count(at) || !members.count(at)) { bypass = true; break; }
+                    const auto operation = graph.operations[at];
+                    if (operation != NoAnalysisId && program.operations[operation].pipe == observer) {
+                        first.insert(at);
+                        continue;
+                    }
                     const auto& next = graph.sites[at].successors;
                     todo.insert(todo.end(), next.begin(), next.end());
                 }
+                if (!bypass && !first.empty()) {
+                    facts.firstConsumers[unsigned(observer)].assign(first.begin(), first.end());
+                    if (first.size() == 1) {
+                        facts.firstConsumer[unsigned(observer)] = *first.begin();
+                    }
+                    std::fill(seen.begin(), seen.end(), false);
+                    todo = graph.sites[occurrence.entry].successors;
+                    while (!todo.empty()) {
+                        const auto at = todo.back(); todo.pop_back();
+                        if (exits.count(at) || at == occurrence.entry || seen[at] || !members.count(at)) {
+                            continue;
+                        }
+                        seen[at] = true;
+                        ++loopEntryPreparationSites;
+                        facts.crossedWords[unsigned(observer)].push_back(at);
+                        if (first.count(at)) {
+                            continue;
+                        }
+                        const auto& next = graph.sites[at].successors;
+                        todo.insert(todo.end(), next.begin(), next.end());
+                    }
+                }
             }
+            loopEntries.push_back(std::move(facts));
         }
-        loopEntries.push_back(std::move(facts));
     }
     // One pass over the sites fixes the canonical word of each site, the sites
     // sharing it, and the range of components it spans. canonicalCommandCut
@@ -440,6 +467,54 @@ Control::Control(const Program& program)
         auto& span = wordSpan[canonicalCut[site]];
         span.first = span.first == NoAnalysisId ? block : std::min(span.first, block);
         span.second = std::max(span.second, block);
+    }
+    // A shared command word must satisfy every region occurrence it edits.
+    // Keep the physical region records distinct, and build their universal
+    // placement summary once after canonical word identities are available.
+    std::map<std::pair<Id, Cut>, std::vector<Id>> entryFamilies;
+    for (Id i = 0; i < loopEntries.size(); ++i) {
+        entryFamilies[{loopEntries[i].owner, canonicalCut[loopEntries[i].entry]}].push_back(i);
+    }
+    for (const auto& [identity, members] : entryFamilies) {
+        const auto entry = identity.second;
+        std::set<Cut> represented;
+        for (auto member : members) {
+            represented.insert(loopEntries[member].entry);
+        }
+        if (std::any_of(wordOccurrences[entry].begin(), wordOccurrences[entry].end(), [&](Cut site) {
+                return reachable[site] && !represented.count(site);
+            })) {
+            continue;
+        }
+        auto combined = loopEntries[members.front()];
+        combined.entry = entry;
+        auto merge = [](auto& target, const auto& source) {
+            target.insert(target.end(), source.begin(), source.end());
+            std::sort(target.begin(), target.end());
+            target.erase(std::unique(target.begin(), target.end()), target.end());
+        };
+        for (Id i = 1; i < members.size(); ++i) {
+            const auto& next = loopEntries[members[i]];
+            merge(combined.sites, next.sites);
+            merge(combined.exits, next.exits);
+            merge(combined.firstInputConsumers, next.firstInputConsumers);
+            merge(combined.firstWriteFrontiers, next.firstWriteFrontiers);
+            combined.issuedClasses.insert(next.issuedClasses.begin(), next.issuedClasses.end());
+            combined.issuedPipes.insert(next.issuedPipes.begin(), next.issuedPipes.end());
+            for (unsigned pipe = 0; pipe < PipeCount; ++pipe) {
+                if (combined.firstConsumers[pipe].empty() || next.firstConsumers[pipe].empty()) {
+                    combined.firstConsumers[pipe].clear();
+                } else {
+                    merge(combined.firstConsumers[pipe], next.firstConsumers[pipe]);
+                }
+                merge(combined.crossedWords[pipe], next.crossedWords[pipe]);
+            }
+        }
+        for (unsigned pipe = 0; pipe < PipeCount; ++pipe) {
+            combined.firstConsumer[pipe] = combined.firstConsumers[pipe].size() == 1
+                ? combined.firstConsumers[pipe].front() : NoAnalysisId;
+        }
+        loopEntryFrontiers.push_back(std::move(combined));
     }
     if (program.observed) for (const auto& loop : program.observed->loops)
         for (auto cut : loop.firstVisitPrefix) {

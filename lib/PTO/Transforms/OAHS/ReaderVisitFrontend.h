@@ -211,6 +211,9 @@ ObservedImport refineReaderVisits(const Program& input, const ReaderVisitRegion&
             loop.lastVisitDistance = r.step;
         }
     }
+    if (!refreshLoopOccurrences(q)) {
+        return reject("reader refinement lacks a closed child occurrence interface");
+    }
     q.qualification += r.finalSourceGaps ? "; final-read-source-gaps-v1" : "; joint-reader-prefix-v1";
     for (std::size_t i = 0; i < input.operations.size(); ++i)
         out.originalPhases.push_back(i);

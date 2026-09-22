@@ -231,7 +231,7 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
-    for (unsigned variant = 0; variant < 5; ++variant) {
+    for (unsigned variant = 0; variant < 6; ++variant) {
         auto source = fixture;
         auto replace = [&](const std::string& from, const std::string& to) {
             source.replace(source.find(from), from.size(), to);
@@ -244,6 +244,22 @@ module attributes {pto.target_arch = "a3"} {
             replace("nosplit = true", "nosplit = false");
         if (variant == 4)
             replace("{split = 0}", "{split = 1}");
+        if (variant == 5) {
+            const auto begin = fixture.find("        pto.tpush");
+            const auto end = fixture.find("      }", begin);
+            auto prologue = fixture.substr(begin, end - begin);
+            for (const auto* name : {"%a", "%b"}) {
+                std::size_t at = 0;
+                const auto replacement = std::string(name) + "_prologue";
+                while ((at = prologue.find(name, at)) != std::string::npos) {
+                    prologue.replace(at, 2, replacement);
+                    at += replacement.size();
+                }
+            }
+            replace("pto.tpush(%out, %pipe : !pto.tile_buf<acc, 16x16xf32>, !pto.pipe) {split = 0}", "");
+            replace("pto.tpop(%b, %pipe : !pto.tile_buf<mat, 16x16xf32>, !pto.pipe) {split = 0}", "");
+            source.insert(source.find("    scf.for"), prologue);
+        }
         auto module = parseSourceString<ModuleOp>(source, &context);
         if (!check(bool(module), "parse static FIFO fixture"))
             return false;
@@ -251,8 +267,28 @@ module attributes {pto.target_arch = "a3"} {
         oahs::NativeAnalysis input;
         if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, input)), "import static FIFO fixture"))
             return false;
-        if (!check(bool(input.program.staticFifoSlots) == (variant == 0), "static FIFO qualification boundary"))
+        if (!check(bool(input.program.staticFifoSlots) == (variant == 0 || variant == 1 || variant == 5),
+                   "static FIFO qualification boundary")) {
             return false;
+        }
+        if (variant == 5) {
+            const auto& slots = *input.program.staticFifoSlots;
+            for (const auto* population : {&slots.reads, &slots.writes}) {
+                for (unsigned i = 0; i < population->size(); ++i) {
+                    unsigned count = 0;
+                    for (auto access : input.program.operations[(*population)[i]].accesses) {
+                        count += llvm::is_contained(slots.cells, access.cell);
+                    }
+                    if (!check(count == (i < 2 ? 1u : 2u), "known prologue survives ambiguous recurring cursor")) {
+                        return false;
+                    }
+                }
+            }
+            if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, nullptr)),
+                       "construct/reconstruct partial FIFO facts")) {
+                return false;
+            }
+        }
         if (variant)
             continue;
         const auto& slots = *input.program.staticFifoSlots;
@@ -709,6 +745,68 @@ bool positive(MLIRContext &context, const char *source, StringRef name) {
                << " waits=" << waits << " retirements=" << retirements << "\n";
   return check(waits != 0 && retirements == 1, "selected handoffs and exact terminal drain");
 }
+bool conservativeConstruction(MLIRContext& context)
+{
+    oahs::SelectedOptions options;
+    options.conservativeOnly = true;
+    for (const auto& fixture : {std::make_pair(ordinary, "ordinary"), std::make_pair(loop, "loop"),
+                               std::make_pair(recurrence, "recurrence")}) {
+        auto module = parseSourceString<ModuleOp>(fixture.first, &context);
+        if (!check(bool(module), "parse conservative input")) {
+            return false;
+        }
+        auto function = module->lookupSymbol<func::FuncOp>(fixture.second);
+        unsigned beforeBranches = 0;
+        function.walk([&](scf::IfOp) { ++beforeBranches; });
+        oahs::SelectedPlan report;
+        if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report, &options)) &&
+                   report.success && report.conservative, "conservative native construction/reconstruction")) {
+            return false;
+        }
+        unsigned afterBranches = 0;
+        function.walk([&](scf::IfOp) { ++afterBranches; });
+        if (!check(beforeBranches == afterBranches, "conservative path refined original participation")) {
+            return false;
+        }
+    }
+    for (const auto& fixture : {std::make_pair(queue, "queue"), std::make_pair(collective, "collective")}) {
+        auto module = parseSourceString<ModuleOp>(fixture.first, &context);
+        if (!check(bool(module), "parse conservative progress negative")) {
+            return false;
+        }
+        auto function = module->lookupSymbol<func::FuncOp>(fixture.second);
+        const auto original = text(function);
+        oahs::SelectedPlan report;
+        ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic&) { return success(); });
+        const auto status = oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report, &options);
+        if (!check(failed(status) && !report.success && report.commands.empty() && text(function) == original &&
+                   report.reason.find("progress certificate") != std::string::npos,
+                   "local serialization claimed peer progress or mutated refused input")) {
+            return false;
+        }
+    }
+    auto module = parseSourceString<ModuleOp>(ordinary, &context);
+    if (!check(bool(module), "parse conservative mutation")) {
+        return false;
+    }
+    auto function = module->lookupSymbol<func::FuncOp>("ordinary");
+    const auto original = text(function);
+    bool changed = false;
+    ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic&) { return success(); });
+    const auto status = oahs::testing::runSelectedHandoffSyncWithMutation(function, [&](func::FuncOp working) {
+        WaitFlagOp victim;
+        working.walk([&](WaitFlagOp wait) {
+            if (!victim) {
+                victim = wait;
+            }
+        });
+        if (victim) {
+            victim.erase();
+            changed = true;
+        }
+    }, nullptr, &options);
+    return check(changed && failed(status) && text(function) == original, "conservative rollback after missing WAIT");
+}
 bool mutations(MLIRContext &context) {
   for (unsigned mutation = 0; mutation < 3; ++mutation) {
     auto module = parseSourceString<ModuleOp>(ordinary, &context);
@@ -1087,7 +1185,7 @@ module attributes {pto.target_arch = "a3"} {
     auto maximum = builder.create<arith::ConstantIntOp>(function.getLoc(), std::numeric_limits<int64_t>::max(), 64);
     auto one = builder.create<arith::ConstantIntOp>(function.getLoc(), 1, 64);
     Value overflow = builder.create<arith::AddIOp>(function.getLoc(), maximum, one);
-    Value unsupported = builder.create<arith::SubIOp>(function.getLoc(), one, zero);
+    Value unsupported = builder.create<arith::DivUIOp>(function.getLoc(), one, zero);
     SyncSlotMapping::ConstantCache cache;
     if (!check(!SyncSlotMapping::evaluateConstant(overflow, cache) &&
                !SyncSlotMapping::evaluateConstant(unsupported, cache), "rejected scalar unexpectedly admitted")) return false;
@@ -1098,7 +1196,7 @@ module attributes {pto.target_arch = "a3"} {
                  "rejected expression was reevaluated")) return false;
     }
   }
-  for (unsigned mutation = 0; mutation < 10; ++mutation) {
+  for (unsigned mutation = 0; mutation < 13; ++mutation) {
     auto module = parseSourceString<ModuleOp>(input, &context);
     if (!check(bool(module), "parse constant address fixture")) {
       return false;
@@ -1123,8 +1221,22 @@ module attributes {pto.target_arch = "a3"} {
       allocation.getAddrMutable().assign(address);
     }
     uint64_t expected = 24576;
-    const bool expectKnown = mutation == 0 || (mutation >= 4 && mutation <= 6);
-    if (mutation >= 4) {
+    const bool expectKnown = mutation == 0 || (mutation >= 4 && mutation <= 6) || mutation == 12;
+    if (mutation >= 10) {
+      auto one = builder.create<arith::ConstantIntOp>(sum.getLoc(), 1, 64);
+      auto bit = builder.create<arith::CmpIOp>(sum.getLoc(), arith::CmpIPredicate::eq, one, one);
+      Value extended;
+      if (mutation == 10) {
+        extended = builder.create<arith::ExtSIOp>(sum.getLoc(), builder.getI64Type(), bit);
+      } else if (mutation == 11) {
+        auto index = builder.create<arith::IndexCastOp>(sum.getLoc(), builder.getIndexType(), bit);
+        extended = builder.create<arith::IndexCastOp>(sum.getLoc(), builder.getI64Type(), index);
+      } else {
+        extended = builder.create<arith::ExtUIOp>(sum.getLoc(), builder.getI64Type(), bit);
+      }
+      allocation.getAddrMutable().assign(extended);
+      expected = 1;
+    } else if (mutation >= 4) {
       expected = mutation == 6 ? 64 : 256;
       auto input = builder.create<arith::ConstantIntOp>(sum.getLoc(),
           mutation >= 7 ? (mutation == 9 ? 256 : -1) : int64_t(expected), 32);
@@ -1155,6 +1267,206 @@ module attributes {pto.target_arch = "a3"} {
   }
   return true;
 }
+// A single scalar/address dependency slice must survive equivalent spelling
+// and unrelated carried state, control, descriptors and storage relations.
+bool slotDependencySlices(MLIRContext &context) {
+  const std::string input = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @slice(%src: !pto.partition_tensor_view<1x32xf32>, %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %three = arith.constant 3 : index
+    %stride = arith.constant 128 : index
+    %base = arith.constant 256 : index
+    %out_addr = arith.constant 4096 : i64
+    %out = pto.alloc_tile addr = %out_addr : !pto.tile_buf<vec, 1x32xf32>
+    %result = scf.for %i = %zero to %n step %one iter_args(%slot = %zero) -> index {
+      %advance = arith.addi %slot, %one : index
+      %next = arith.remui %advance, %two : index
+      %selected = arith.addi %slot, %zero : index
+      %offset = arith.muli %selected, %stride : index
+      %address = arith.addi %offset, %base : index
+      %cast = arith.index_cast %address : index to i64
+      %bank = pto.alloc_tile addr = %cast : !pto.tile_buf<vec, 1x32xf32>
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%bank : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tabs ins(%bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+      scf.yield %next : index
+    }
+    return
+  }
+})mlir";
+  for (unsigned variant = 0; variant < 14; ++variant) {
+    std::string source = input;
+    auto replace = [&](const std::string &from, const std::string &to) {
+      const auto at = source.find(from);
+      if (at == std::string::npos) {
+        return false;
+      }
+      source.replace(at, from.size(), to);
+      return true;
+    };
+    if (variant == 1) {
+      replace("%result = scf.for", "%result:2 = scf.for");
+      replace("iter_args(%slot = %zero) -> index", "iter_args(%slot = %zero, %unrelated = %n) -> (index, index)");
+      replace("scf.yield %next : index", "scf.yield %next, %unrelated : index, index");
+    }
+    if (variant == 2 || variant == 3 || variant == 10 || variant == 11) {
+      replace("%result = scf.for", "scf.for");
+      replace(" iter_args(%slot = %zero) -> index", "");
+      replace("%advance = arith.addi %slot, %one : index", "");
+      replace("%next = arith.remui %advance, %two : index", "");
+      replace("%selected = arith.addi %slot, %zero : index", variant != 3 ?
+          "%selected = arith.remui %i, %two : index" : "%selected = arith.andi %i, %one : index");
+      replace("scf.yield %next : index", "");
+      if (variant == 10 || variant == 11) {
+        const std::string identity = variant == 10 ?
+            "%identity = arith.addi %i, %zero : index\n" :
+            "%cast_iv = arith.index_cast %i : index to i64\n"
+            "      %identity = arith.index_cast %cast_iv : i64 to index\n";
+        replace("%selected = arith.remui %i, %two : index",
+            identity + "      %selected = arith.remui %identity, %two : index");
+      }
+    }
+    if (variant == 4) {
+      replace("%next = arith.remui %advance, %two : index", "%next = arith.xori %slot, %one : index");
+      replace("%selected = arith.addi %slot, %zero : index", "%selected = arith.subi %slot, %zero : index");
+    }
+    if (variant == 5) {
+      replace("scf.yield %next : index", R"mlir(
+      %unrelated = arith.remui %i, %three : index
+      %predicate = arith.cmpi eq, %unrelated, %zero : index
+      scf.if %predicate { }
+      scf.yield %next : index)mlir");
+    }
+    if (variant == 6) {
+      replace("%bank = pto.alloc_tile", "%allocation = pto.alloc_tile");
+      replace("      pto.tload", "      %bank = pto.treshape %allocation : "
+          "!pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 1x32xf32>\n      pto.tload");
+    }
+    if (variant == 7) {
+      replace("%two = arith.constant 2", "%two = arith.constant 17");
+    }
+    if (variant == 8) {
+      replace("%next = arith.remui %advance, %two : index", "%next = arith.addi %advance, %n : index");
+    }
+    if (variant == 9) {
+      replace("%stride = arith.constant 128", "%stride = arith.constant 64");
+    }
+    if (variant == 12) {
+      replace("%result = scf.for", "%result:2 = scf.for");
+      replace("iter_args(%slot = %zero) -> index",
+          "iter_args(%slot = %zero, %other = %zero) -> (index, index)");
+      replace("scf.yield %next : index", R"mlir(
+      %other_advance = arith.addi %other, %one : index
+      %other_next = arith.remui %other_advance, %three : index
+      %other_base = arith.constant 2048 : index
+      %other_offset = arith.muli %other, %stride : index
+      %other_address = arith.addi %other_offset, %other_base : index
+      %other_cast = arith.index_cast %other_address : index to i64
+      %other_bank = pto.alloc_tile addr = %other_cast : !pto.tile_buf<vec, 1x32xf32>
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%other_bank : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tabs ins(%other_bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+      scf.yield %next, %other_next : index, index)mlir");
+    }
+    if (variant == 13) {
+      replace("to %n step %one iter_args", "to %n step %two iter_args");
+      replace("scf.yield %next : index", "scf.for %child = %zero to %one step %one { }\n      scf.yield %next : index");
+    }
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module) && succeeded(verify(*module)), "parse scalar dependency slice variant")) {
+      return false;
+    }
+    auto function = module->lookupSymbol<func::FuncOp>("slice");
+    scf::ForOp loop;
+    AllocTileOp bank;
+    function.walk<WalkOrder::PreOrder>([&](scf::ForOp op) {
+      if (!loop) { loop = op; }
+    });
+    loop.walk([&](AllocTileOp op) {
+      if (!bank) { bank = op; }
+    });
+    if (!check(bool(bank), "dependency fixture lost its bank allocation")) {
+      return false;
+    }
+    auto mapping = SyncSlotMapping::derive(loop, bank.getAddr());
+    const unsigned period = variant == 7 ? 17 : 2;
+    if (!check(variant == 8 ? !mapping : mapping && mapping->period == period,
+               "selector slice lost a proved relation or admitted unknown evolution, variant " +
+                   std::to_string(variant))) {
+      return false;
+    }
+    if (mapping) {
+      for (unsigned visit = 0; visit < 40; ++visit) {
+        const auto address = SyncSlotMapping::evaluate(bank.getAddr(), mapping->values[visit % period]);
+        if (!check(address == std::optional<uint64_t>(256 + (variant == 9 ? 64 : 128) * (visit % period)),
+                   "dependency slice disagrees with original scalar semantics")) {
+          return false;
+        }
+      }
+    }
+    const auto original = text(function);
+    oahs::NativeAnalysis imported;
+    if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)) && text(function) == original,
+               "dependency-sliced native import changed original IR")) {
+      return false;
+    }
+    if (variant != 8 && variant != 9) {
+      for (unsigned slot = 0; slot < period; ++slot) {
+        if (!check(llvm::any_of(imported.program.cells, [&](const auto &cell) {
+              return !cell.unknownRange && cell.ranges ==
+                  std::vector<std::pair<uint64_t, uint64_t>>{{256 + 128 * slot, 128}};
+            }), "native import discarded independent finite bank facts")) {
+          return false;
+        }
+      }
+    }
+    if (variant == 13) {
+      for (const auto &observation : imported.program.observed->observations) {
+        if (!check(llvm::none_of(observation.atoms, [](const auto &atom) {
+              return atom.kind == oahs::ObservationAtom::LoopResidue;
+            }), "non-unit enclosing visits used unnormalized IV guards")) {
+          return false;
+        }
+      }
+    }
+    if (variant == 12) {
+      for (unsigned slot = 0; slot < 3; ++slot) {
+        if (!check(llvm::any_of(imported.program.cells, [&](const auto &cell) {
+              return !cell.unknownRange && cell.ranges ==
+                  std::vector<std::pair<uint64_t, uint64_t>>{{2048 + 128 * slot, 128}};
+            }), "independent period-three relation lost its physical facts")) {
+          return false;
+        }
+      }
+    }
+    if (variant == 9) {
+      bool shared = false;
+      for (unsigned cell = 0; cell < imported.program.cells.size(); ++cell) {
+        if (imported.program.cells[cell].ranges != std::vector<std::pair<uint64_t, uint64_t>>{{320, 64}}) {
+          continue;
+        }
+        unsigned uses = 0;
+        for (const auto &op : imported.program.operations) {
+          uses += llvm::any_of(op.accesses, [&](auto access) { return access.cell == cell; });
+        }
+        shared |= uses >= 2;
+      }
+      if (!check(shared, "overlapping banks lost their shared physical obligation")) {
+        return false;
+      }
+    }
+    // Large relations are physical facts even when binding requires fallback.
+    oahs::SelectedPlan plan;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)),
+               "dependency-sliced constructor or independent reconstruction failed, variant " +
+                   std::to_string(variant))) {
+      return false;
+    }
+  }
+  return true;
+}
 bool slotMappings(MLIRContext &context) {
   auto module = parseSourceString<ModuleOp>(slotInput, &context);
   if (!check(bool(module), "parse carried-slot fixture")) return false;
@@ -1164,7 +1476,7 @@ bool slotMappings(MLIRContext &context) {
   AllocTileOp bank;
   function.walk([&](scf::ForOp op) { loop = op; });
   loop.walk([&](AllocTileOp op) { bank = op; });
-  auto mapping = SyncSlotMapping::derive(loop, 8);
+  auto mapping = SyncSlotMapping::derive(loop, bank.getAddr(), 8);
   if (!check(mapping && mapping->period == 3, "derive stride-two modulo-three orbit")) return false;
   uint64_t slot = 2;
   for (unsigned i = 0; i < 30; ++i) {
@@ -1172,7 +1484,8 @@ bool slotMappings(MLIRContext &context) {
     auto address = SyncSlotMapping::evaluate(bank.getAddr(), mapping->values[i % 3]);
     if (!check(address && *address == 256 + 128 * slot, "slot address differs from original recurrence")) return false;
   }
-  if (!check(!SyncSlotMapping::derive(loop, 2), "finite vocabulary cannot silently truncate the orbit")) return false;
+  if (!check(!SyncSlotMapping::derive(loop, bank.getAddr(), 2),
+             "finite vocabulary cannot silently truncate the orbit")) return false;
   oahs::NativeAnalysis imported;
   if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)) && text(function) == original,
              "periodic import must preserve original IR")) return false;
@@ -1219,7 +1532,13 @@ bool slotMappings(MLIRContext &context) {
       auto huge = builder.create<arith::ConstantIndexOp>(changed.getLoc(), std::numeric_limits<int64_t>::max());
       add.setOperand(1, huge);
     }
-    if (!check(!SyncSlotMapping::derive(changed, 8), "unproved carried slot was admitted")) return false;
+    AllocTileOp changedBank;
+    changed.walk([&](AllocTileOp op) { changedBank = op; });
+    const auto relation = SyncSlotMapping::derive(changed, changedBank.getAddr(), 8);
+    if (!check(bool(relation) == (mutation == 1),
+               "dependency recurrence proof or independent induction step changed")) {
+      return false;
+    }
   }
   auto unresolved = parseSourceString<ModuleOp>(slotInput, &context);
   auto unknownFunction = unresolved->lookupSymbol<func::FuncOp>("slots");
@@ -1256,6 +1575,8 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
     const auto &work = report.work;
     llvm::errs() << "function=" << function.getSymName() << " construction=" << report.success
                  << " reconstruction=" << succeeded(status) << " failure=" << unsigned(report.failure)
+                 << " conservative=" << report.conservative
+                 << " fallback=" << report.fallbackUsed << " candidate_failure=" << unsigned(report.candidateFailure)
                  << " cut=" << report.cut
                  << " updates=" << work.selectedUpdates << " replay=" << work.replaySiteEvaluations
                  << " microseconds=" << work.elapsedMicroseconds
@@ -1495,6 +1816,20 @@ bool frontierFile(MLIRContext &context, const char *path, bool observations = fa
       }
       oahs::SelectedOptions diagnosticOptions;
       diagnosticOptions.firstWriteConsumers = firstWrites;
+      for (const auto& proposal : oahs::selected::qualifyCyclicFrontiers(p, control, frontiers)) {
+        llvm::outs() << "proposal source=" << pipeName(proposal.source)
+                     << " observer=" << pipeName(proposal.observer) << " cell=" << proposal.cell
+                     << " direct_keys=" << p.target.keys[unsigned(proposal.source)][unsigned(proposal.observer)].size()
+                     << " publications=";
+        for (auto cut : proposal.publications) {
+          llvm::outs() << cut << ",";
+        }
+        llvm::outs() << " acquisitions=";
+        for (auto cut : proposal.acquisitions) {
+          llvm::outs() << cut << ",";
+        }
+        llvm::outs() << "\n";
+      }
       const auto plan = oahs::constructSelectedPlan(p, {}, diagnosticOptions);
       accepted &= plan.success;
       if (!plan.success) for (const auto &endpoint : plan.ledger)
@@ -1781,6 +2116,9 @@ int main(int argc, char **argv) {
     for (int i = 3; i < argc; ++i) {
       const StringRef flag(argv[i]);
       if (flag == "--no-recurring-trials") options.recurringOmissionTrials = false;
+      else if (flag == "--conservative-only") options.conservativeOnly = true;
+      else if (flag == "--conservative-fallback") options.conservativeFallback = true;
+      else if (flag == "--candidate-only") options.conservativeFallback = false;
       else if (flag == "--no-helper-trials") options.finalHelperTrials = false;
       else if (flag == "--no-frontier-motion") options.movingFrontiers = false;
       else if (flag == "--no-reader-return-sharing") options.shareReaderReturns = false;
@@ -1814,10 +2152,15 @@ int main(int argc, char **argv) {
     llvm::errs() << "usage: pto-oahs-selected-test [--construct INPUT | --frontiers INPUT | --observations INPUT | --explain INPUT]\n";
     return 2;
   }
-  const bool passed = positive(context, ordinary, "ordinary") && positive(context, loop, "loop") &&
+  const bool passed = conservativeConstruction(context) && positive(context, ordinary, "ordinary") &&
+                      positive(context, loop, "loop") &&
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") && conditionalRearming(context) &&
                       positive(context, queue, "queue") && exactCommandEmission(context) && mutations(context) && constantAddresses(context) &&
-                      choiceConsumerPlacement(context) && slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && staticFifoSlotQualification(context) && firstConsumerPlacement(context) && firstWritePlacement(context) && finalReadSourcePlacement(context) && lastReaderPlacement(context) && jointReaderPlacement(context);
+                      choiceConsumerPlacement(context) && slotDependencySlices(context) && slotMappings(context) &&
+                      accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) &&
+                      staticFifoSlotQualification(context) && firstConsumerPlacement(context) &&
+                      firstWritePlacement(context) && finalReadSourcePlacement(context) &&
+                      lastReaderPlacement(context) && jointReaderPlacement(context);
   return passed ? 0 : 1;
 }

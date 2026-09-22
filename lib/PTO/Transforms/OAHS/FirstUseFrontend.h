@@ -193,6 +193,7 @@ private:
 
   void updateLoops() {
     for (auto &loop : q.loops) {
+      const auto originalOccurrences = loopEntryOccurrences(loop);
       const auto originalMembers = loop.sites;
       for (auto site : originalMembers) {
         const auto found = clones.find(site);
@@ -224,6 +225,60 @@ private:
       if (loop.entry == region.entry && clones.count(loop.bodyEntry)) {
         loop.bodyEntry = clones.at(loop.bodyEntry);
       }
+      // Preserve paired original entry interfaces through prefix cloning.
+      // A copied entry gets its mapped interface; an unchanged entry owns both
+      // its first-use prefix and shared continuation. Neither resets state.
+      loop.occurrences.clear();
+      for (const auto& occurrence : originalOccurrences) {
+        auto mapped = occurrence;
+        auto remap = [&](std::size_t site) {
+          const auto found = clones.find(site);
+          return found == clones.end() ? site : found->second;
+        };
+        mapped.entry = remap(mapped.entry);
+        mapped.exit = remap(mapped.exit);
+        mapped.bodyEntry = remap(mapped.bodyEntry);
+        for (auto* sites : {&mapped.sites, &mapped.firstVisitPrefix, &mapped.exits}) {
+          for (auto& site : *sites) {
+            site = remap(site);
+          }
+        }
+        for (auto& frontier : mapped.firstWriteFrontiers) {
+          frontier.first = remap(frontier.first);
+          frontier.second = remap(frontier.second);
+        }
+        if (mapped.entry != occurrence.entry) {
+          loop.occurrences.push_back(occurrence);
+          loop.occurrences.push_back(std::move(mapped));
+        } else {
+          auto combined = occurrence;
+          combined.bodyEntry = occurrence.entry == region.entry ? mapped.bodyEntry : occurrence.bodyEntry;
+          auto mergeSites = [](auto& target, const auto& extra) {
+            target.insert(target.end(), extra.begin(), extra.end());
+            std::sort(target.begin(), target.end());
+            target.erase(std::unique(target.begin(), target.end()), target.end());
+          };
+          mergeSites(combined.sites, mapped.sites);
+          mergeSites(combined.firstVisitPrefix, mapped.firstVisitPrefix);
+          for (const auto& frontier : mapped.firstWriteFrontiers) {
+            if (std::find(combined.firstWriteFrontiers.begin(), combined.firstWriteFrontiers.end(), frontier) ==
+                combined.firstWriteFrontiers.end()) {
+              combined.firstWriteFrontiers.push_back(frontier);
+            }
+          }
+          loop.occurrences.push_back(std::move(combined));
+        }
+      }
+      if (!loop.occurrences.empty()) {
+        loop.firstVisitPrefix.clear();
+        loop.firstWriteFrontiers.clear();
+        for (const auto& occurrence : loop.occurrences) {
+          loop.firstVisitPrefix.insert(loop.firstVisitPrefix.end(),
+              occurrence.firstVisitPrefix.begin(), occurrence.firstVisitPrefix.end());
+          loop.firstWriteFrontiers.insert(loop.firstWriteFrontiers.end(),
+              occurrence.firstWriteFrontiers.begin(), occurrence.firstWriteFrontiers.end());
+        }
+      }
     }
   }
 
@@ -251,6 +306,10 @@ ObservedImport refineFirstUse(const Program &input, const FirstUseRegion &region
     return out;
   }
   prefix.run();
+  if (!refreshLoopOccurrences(*out.program.observed)) {
+    out.reason = "first-use refinement lacks a closed child occurrence interface";
+    return out;
+  }
   for (std::size_t i = 0; i < input.operations.size(); ++i) {
     out.originalPhases.push_back(i);
   }

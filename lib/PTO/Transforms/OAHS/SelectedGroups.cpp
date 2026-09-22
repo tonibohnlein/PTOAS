@@ -258,24 +258,42 @@ bool Constructor::loopEntryFrontier(
     std::set<Id> needed;
     for (const auto& r : required) needed.insert(accessClass(r));
     const auto observer = program.operations[control.graph.operations[current]].pipe;
-    for (const auto& loop : control.loopEntries) {
-        std::vector<std::pair<Cut, Cut>> acquisitions{{loop.entry, loop.entry}};
-        for (auto cut : loop.firstInputConsumers)
-            if (program.operations[control.graph.operations[cut]].pipe == observer)
-                acquisitions.emplace_back(cut, cut);
-        for (const auto& frontier : loop.firstWriteFrontiers)
-            if (program.operations[control.graph.operations[frontier.second]].pipe == observer)
-                acquisitions.push_back(frontier);
-        for (auto [acquisition, consumer] : acquisitions) {
+    for (const auto& loop : control.loopEntryFrontiers) {
+        std::map<Cut, std::vector<Cut>> acquisitions;
+        std::map<Cut, std::set<Cut>> represented;
+        acquisitions[loop.entry] = loop.firstConsumers[unsigned(observer)];
+        auto receipt = [&](Cut boundary, Cut consumer) {
+            if (program.operations[control.graph.operations[consumer]].pipe == observer) {
+                const auto word = control.canonicalCut[boundary];
+                if (word == loop.entry) {
+                    return; // Entry uses the universal first-consumer set.
+                }
+                acquisitions[word].push_back(consumer);
+                represented[word].insert(boundary);
+            }
+        };
+        for (auto cut : loop.firstInputConsumers) {
+            receipt(cut, cut);
+        }
+        for (auto [boundary, consumer] : loop.firstWriteFrontiers) {
+            receipt(boundary, consumer);
+        }
+        for (const auto& [acquisition, first] : acquisitions) {
             const bool atEntry = acquisition == loop.entry;
-            const auto first = atEntry ? loop.firstConsumers[unsigned(observer)]
-                                       : std::vector<Cut>{consumer};
+            if (!atEntry && std::any_of(control.wordOccurrences[acquisition].begin(),
+                    control.wordOccurrences[acquisition].end(), [&](Cut site) {
+                        return control.reachable[site] && !represented[acquisition].count(site);
+                    })) {
+                continue;
+            }
+            if (!atEntry && !control.correspondence(loop.entry, acquisition).qualified) {
+                continue;
+            }
             // SCC construction may visit a later consumer before a qualified
             // first use. Select the receipt at that actual first deadline,
             // or at entry only when every first observer payload requires it.
             const bool eligible = !first.empty() &&
-                std::find(loop.sites.begin(), loop.sites.end(), current) != loop.sites.end() &&
-                control.canonicalCut[acquisition] == acquisition;
+                std::find(loop.sites.begin(), loop.sites.end(), current) != loop.sites.end();
             if (!eligible) continue;
             if (!std::all_of(first.begin(), first.end(), [&](Cut cut) {
                 const auto& op = program.operations[control.graph.operations[cut]];
@@ -285,6 +303,35 @@ bool Constructor::loopEntryFrontier(
                     });
                 });
             })) continue;
+            auto coverage = [&](Cut publication, const auto& requirements) {
+                std::set<Id> covered;
+                // Incoming occurrence freshness and invariant region history
+                // are separate proofs. The receipt may be inside a child frame.
+                const auto& correspondence = control.correspondence(publication, loop.entry);
+                if (!correspondence.qualified) {
+                    return covered;
+                }
+                for (const auto& requirement : requirements) {
+                    const auto access = accessClass(requirement);
+                    if (loop.issuedClasses.count(access)) {
+                        continue;
+                    }
+                    const bool sufficient = std::all_of(correspondence.pairs.begin(), correspondence.pairs.end(),
+                        [&](const auto& pair) {
+                            const auto& snapshot = cache.cuts[pair.first].before.causal;
+                            if (!snapshot.reachable() || !control.sourceCut(pair.first, source) ||
+                                !freshBetween(pair.first, pair.second, access)) {
+                                return false;
+                            }
+                            const auto* history = snapshot.facts()->history.find(access);
+                            return history && frontierContains(*history, PipeCount + unsigned(source));
+                        });
+                    if (sufficient) {
+                        covered.insert(access);
+                    }
+                }
+                return covered;
+            };
             // Moving a wait ahead of Q's first payload can still order another
             // engine through an earlier Q publication. Consult actual selected
             // words, not just payload order. Existing entry commands precede the
@@ -308,18 +355,14 @@ bool Constructor::loopEntryFrontier(
             })) continue;
             const SelectedSource* selected = nullptr;
             for (const auto& handle : result.sources) {
-                if (handle.pipe != source || handle.version != cache.version || !handle.snapshot.reachable() ||
-                    !control.straight(handle.cut, loop.entry)) continue;
-                bool covered = true;
-                const auto& snapshot = cache.cuts[handle.cut].before.causal;
-                if (!snapshot.reachable()) continue;
-                for (auto access : needed) {
-                    const auto* history = snapshot.facts()->history.find(access);
-                    covered &= freshBetween(handle.cut, loop.entry, access) && history &&
-                        frontierContains(*history, PipeCount + unsigned(source));
+                if (handle.pipe != source || handle.version != cache.version || !handle.snapshot.reachable()) {
+                    continue;
                 }
-                if (covered && (!selected || control.position[handle.cut] < control.position[selected->cut]))
+                const auto covered = coverage(handle.cut, required);
+                if (std::includes(covered.begin(), covered.end(), needed.begin(), needed.end()) &&
+                    (!selected || control.position[handle.cut] < control.position[selected->cut])) {
                     selected = &handle;
+                }
             }
             // With no saved source in this invocation, a source-inactive region
             // can establish its incoming completion at entry. All alternative first
@@ -334,21 +377,16 @@ bool Constructor::loopEntryFrontier(
                     });
                 });
             if (!selected && !regional) continue;
-            const auto publication = selected ? selected->cut : loop.entry;
-            if (!regional && !control.lookahead.balancedTransfer({publication}, acquisition,
-                                           control.graph.entry, control.graph.exit)) continue;
+            const auto publication = selected ? control.canonicalCut[selected->cut] : loop.entry;
+            if (!regional && !control.correspondence(publication, acquisition).qualified) {
+                continue;
+            }
             // Additional credit comes from the actual publication checkpoint,
             // never the consumer checkpoint. Invariance inside the region and
             // freshness on the incoming corridor preserve occurrence identity.
             auto covered = needed;
-            const auto& snapshot = cache.cuts[publication].before.causal;
-            if (snapshot.reachable()) for (const auto& r : all) {
-                const auto access = accessClass(r);
-                const auto* history = snapshot.facts()->history.find(access);
-                if (!loop.issuedClasses.count(access) &&
-                    freshBetween(publication, loop.entry, access) && history &&
-                    frontierContains(*history, PipeCount + unsigned(source))) covered.insert(access);
-            }
+            const auto additional = coverage(publication, all);
+            covered.insert(additional.begin(), additional.end());
             // An overlap-only promotion without Known credit cannot succeed.
             // Reject it before key selection and the whole-program trial solve.
             if (promotion && std::none_of(promotion->begin(), promotion->end(),
@@ -372,15 +410,18 @@ bool Constructor::loopEntryFrontier(
                 const auto at = a == source ? publication : acquisition;
                 for (auto key : entryProtocolKeys) {
                     const auto& e = frontier.keys()[key];
-                    if (e.source != a || e.observer != b ||
-                        !canPublish(cache.cuts[at].before, key)) continue;
+                    if (e.source != a || e.observer != b || !canPublishAt(at, key)) {
+                        continue;
+                    }
                     const bool inRegion = std::any_of(ledger.records().begin(), ledger.records().end(),
                         [&](const auto& endpoint) {
                             const auto& c = endpoint.command;
                             return ledger.active(endpoint.id) &&
                                 (c.kind == Command::Publish || c.kind == Command::Acquire) &&
                                 c.source == a && c.observer == b && c.key == e.key &&
-                                std::find(loop.sites.begin(), loop.sites.end(), endpoint.cut) != loop.sites.end();
+                                std::any_of(loop.sites.begin(), loop.sites.end(), [&](Cut site) {
+                                    return control.canonicalCut[site] == control.canonicalCut[endpoint.cut];
+                                });
                         });
                     if (!inRegion) return key;
                 }
@@ -388,12 +429,17 @@ bool Constructor::loopEntryFrontier(
             };
             const auto forward = unused(source, observer);
             if (forward == NoAnalysisId) continue;
-            const bool repeats = control.components[control.component[publication]].cyclic;
+            const bool repeats = std::any_of(control.wordOccurrences[publication].begin(),
+                control.wordOccurrences[publication].end(), [&](Cut site) {
+                    return control.reachable[site] && control.components[control.component[site]].cyclic;
+                });
             Id reverse = NoAnalysisId;
-            auto commands = ledger.commands();
-            commands[publication].push_back({Command::Publish, source, observer, frontier.keys()[forward].key});
-            commands[acquisition].push_back({Command::Acquire, source, observer, frontier.keys()[forward].key});
-            auto trial = analyze(program, commands, {false});
+            Ledger proposed = ledger;
+            proposed.append(publication, {Command::Publish, source, observer, frontier.keys()[forward].key},
+                            EndpointPurpose::Completion);
+            proposed.append(acquisition, {Command::Acquire, source, observer, frontier.keys()[forward].key},
+                            EndpointPurpose::Completion);
+            auto trial = analyze(program, proposed.commands(), {false});
             result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
             const bool needsConsumption = std::any_of(trial.protocol.begin(), trial.protocol.end(), [&](const auto& r) {
                 return r.kind == ProtocolObligation::ConsumptionNotEstablished &&
@@ -406,9 +452,11 @@ bool Constructor::loopEntryFrontier(
             if (trial.complete && trial.diagnostics.empty() && repeats && needsConsumption) {
                 reverse = unused(observer, source);
                 if (reverse == NoAnalysisId) continue;
-                commands[acquisition].push_back({Command::Publish, observer, source, frontier.keys()[reverse].key});
-                commands[acquisition].push_back({Command::Acquire, observer, source, frontier.keys()[reverse].key});
-                trial = analyze(program, commands, {false});
+                proposed.append(acquisition, {Command::Publish, observer, source, frontier.keys()[reverse].key},
+                                EndpointPurpose::ConsumptionAcknowledgment);
+                proposed.append(acquisition, {Command::Acquire, observer, source, frontier.keys()[reverse].key},
+                                EndpointPurpose::ConsumptionAcknowledgment);
+                trial = analyze(program, proposed.commands(), {false});
                 result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
             }
             if (!trial.complete || !trial.diagnostics.empty() || !trial.protocol.empty()) continue;

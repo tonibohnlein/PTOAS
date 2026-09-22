@@ -52,12 +52,12 @@ struct ReplayTestAccess {
 }
 namespace {
 // Bounded relay selection regressions, not a general ordering guarantee.
-// The explicit slot view and target vocabulary are portable fixture contracts;
-// this does not qualify a native FIFO lowering or its cross-core protocol.
+// Target vocabulary is a portable fixture contract. The same imported storage
+// obligations must work without FIFO provenance.
 const auto P = o::Pipe::FIX, Q = o::Pipe::MTE2, R = o::Pipe::M, T = o::Pipe::MTE1;
 o::Command set(o::Pipe a, o::Pipe b, unsigned key) { return {o::Command::Publish, a, b, key}; }
 o::Command wait(o::Pipe a, o::Pipe b, unsigned key) { return {o::Command::Acquire, a, b, key}; }
-o::Program observe(o::Program p, std::vector<std::size_t> reads, std::vector<std::size_t> writes)
+o::Program observe(o::Program p)
 {
     p.observed.reset();
     p.staticFifoSlots.reset();
@@ -67,7 +67,6 @@ o::Program observe(o::Program p, std::vector<std::size_t> reads, std::vector<std
     auto observed = o::addStructuredBoundaryCuts(p);
     require(observed.success, observed.reason);
     p = std::move(observed.program);
-    p.staticFifoSlots = o::Program::StaticFifoSlots{{0, 1}, std::move(reads), std::move(writes)};
     require(o::validateProgram(p).success, "relay fixture contract invalid");
     return p;
 }
@@ -99,9 +98,7 @@ o::Program fixture(bool requiredReader)
         p.operations = {
             op(R, {{2, true, false}}), op(P, {{0, false, true}}), op(Q, {{3, true, false}}), op(T, {{4, true, false}}),
             op(Q, {{0, true, false}})};
-    return observe(
-        std::move(p), requiredReader ? std::vector<std::size_t>{4, 5} : std::vector<std::size_t>{4},
-        requiredReader ? std::vector<std::size_t>{1, 2} : std::vector<std::size_t>{1});
+    return observe(std::move(p));
 }
 
 o::Commands flatten(const o::Program& p, const o::Commands& words)
@@ -188,6 +185,14 @@ void witness(bool requiredReader)
     require(o::checkCausalFrontier(p, plan.commands).accepted, "cold relay check failed");
     const auto actual = flatten(p, plan.commands);
     const auto actualOrder = order(p, actual);
+    auto tagged = p;
+    tagged.staticFifoSlots = o::Program::StaticFifoSlots{
+        {0, 1}, requiredReader ? std::vector<std::size_t>{4, 5} : std::vector<std::size_t>{4},
+        requiredReader ? std::vector<std::size_t>{1, 2} : std::vector<std::size_t>{1}};
+    const auto taggedPlan = o::constructSelectedPlan(tagged, {}, options);
+    require(taggedPlan.success && taggedPlan.work.splitRelays == plan.work.splitRelays &&
+                order(tagged, flatten(tagged, taggedPlan.commands)) == actualOrder,
+            "FIFO provenance changed the ordinary storage relay");
     std::cout << "linked required_reader=" << requiredReader << " split_relays=" << plan.work.splitRelays
               << " pairs=" << pairs(actual) << " order=" << actualOrder.size() << '\n';
     for (unsigned cut = 0; cut < actual.size(); ++cut)
@@ -282,7 +287,7 @@ void receiverCredit(bool acquired)
     input.operations = {
         op(R, {{4, true, false}}), op(T, {{2, false, true}}), op(P, {{0, false, true}}), op(Q, {{3, true, false}}),
         op(Q, {{0, true, false}, {2, true, false}})};
-    auto p = observe(std::move(input), {4}, {2});
+    auto p = observe(std::move(input));
     o::Commands fixed(p.observed->sites.size());
     if (acquired) {
         fixed[before(p, 2)] = {set(T, Q, 3)};
@@ -326,7 +331,7 @@ void outwardBoundary(unsigned placement)
     const auto other = o::Pipe::MTE3;
     input.target.keys[unsigned(T)][unsigned(other)] = {0};
     input.operations.push_back(op(other, {{3, true, false}}));
-    auto p = observe(std::move(input), {4}, {1});
+    auto p = observe(std::move(input));
     o::Commands fixed(p.observed->sites.size());
     fixed[before(p, 2)] = {set(P, T, 3)};
     if (placement == 1)

@@ -68,9 +68,6 @@ ObservedImport refineStaticSlots(const Program& input, const AlternatingSlotRegi
             }
         }
     }
-    for (std::size_t op = 0; op < role.size(); ++op)
-        if (role[op] && slots[op] != 1 && slots[op] != 2)
-            return refuse("static FIFO access has ambiguous or unreachable cursor");
     result.program = input;
     auto& p = result.program;
     const auto first = p.cells.size();
@@ -84,13 +81,29 @@ ObservedImport refineStaticSlots(const Program& input, const AlternatingSlotRegi
         cell.provenance = "lowering-qualified static FIFO cursor";
         p.cells.push_back(std::move(cell));
     }
-    for (std::size_t op = 0; op < role.size(); ++op)
-        if (role[op])
-            for (auto& access : p.operations[op].accesses)
-                if (access.cell == region.cell) {
-                    access.cell = first + unsigned(slots[op] == 2);
+    for (std::size_t op = 0; op < role.size(); ++op) {
+        if (!role[op]) {
+            continue;
+        }
+        auto& accesses = p.operations[op].accesses;
+        accesses.clear();
+        for (auto access : input.operations[op].accesses) {
+            if (access.cell != region.cell) {
+                accesses.push_back(access);
+                continue;
+            }
+            // A join loses only this operation's exact cursor. Preserve all
+            // possible slots, without killing either slot's prior history.
+            const unsigned mask = slots[op] ? slots[op] : 3;
+            for (unsigned slot = 0; slot < 2; ++slot) {
+                if (mask & (1u << slot)) {
+                    access.cell = first + slot;
                     access.definiteWrite = false;
+                    accesses.push_back(access);
                 }
+            }
+        }
+    }
     auto valid = validateProgram(p);
     result.success = valid.success;
     result.reason = valid.reason;

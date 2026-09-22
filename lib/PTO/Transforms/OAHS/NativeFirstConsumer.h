@@ -302,6 +302,10 @@ inline void importFirstConsumers(
         for (auto at : prefix) region.firstVisitPrefix.push_back(clones[at]);
       }
     }
+    if (!refreshLoopOccurrences(q)) {
+      notes.push_back("first-consumer candidate lacks a closed child occurrence interface");
+      continue;
+    }
     q.qualification += "; first-consumer-prefix-v1";
     selected::Control control(candidate);
     if (!control.complete) {

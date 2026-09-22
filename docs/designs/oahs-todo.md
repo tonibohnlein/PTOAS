@@ -1,5 +1,32 @@
 # OAHS implementation TODO
 
+## Approved refactor execution order — 2026-09-22
+
+The [semantic refactor sequence](oahs-semantic-corrections.md#approved-refactor-sequence-2026-09-22)
+is the current implementation order. Historical quality gates below remain
+reference evidence; temporary ordering/resource/work regressions are permitted
+during this migration and must be recorded, while soundness and supported-input
+compilation remain mandatory. Final gains must come from the refactored path.
+
+- [ ] Stage 0: frozen evidence, visible regression/refusal records, new checked
+  conservative constructor, strict candidate/conservative-only validation and
+  transactional retry. No legacy implementation fallback.
+- [ ] Stage 1: shared independent physical/scalar/descriptor facts, partial
+  knowledge and immutable analysis ownership.
+- [ ] Stage 2: generation families, affected-interval support, access-scoped ACC
+  qualification and open region obligations.
+- [ ] Stage 3: composed endpoint roles, stable gaps and original participation.
+- [ ] Stage 4: shared actual-return support, exact ordered packet qualification,
+  ordinary relays and deadline-specific ownership/rearming/binding.
+- [ ] Stage 5: superseded-path removal, reference-gain recovery, diagnostics and
+  independent generality review; measured caching/region-execution work only.
+
+The architectural items below map to these stages: region interfaces and
+generation selection → 2; placement and occurrence composition → 3; completion,
+cross-cell returns and packet binding → 4; refusal diagnostics begin in 0 and
+gain query detail throughout; certificate caching investigations → 5. Preserve
+the bounded completed M2/M3 mechanisms. See HANDOFF.md for current validation.
+
 This list tracks implementation work that is not ready for the committed
 selected-plan design. Safety remains mandatory, but the acceptance criteria
 also protect useful payload ordering, resource availability, and construction
@@ -63,6 +90,92 @@ state allocation. Repeated immutable native qualification is separate known
 work; the current profile does not establish it as the dominant cost. Preserve
 causal/reconstruction checks, cold-replay equivalence and native plan hashes
 when reducing compiler work. Evidence is recorded in `HANDOFF.md`.
+
+## Architectural generality corrections — 2026-09-22
+
+These items extend the existing milestones; they are not ten independent
+specializations to implement. Trace one real lifetime through the interfaces,
+identify the missing fact, and replace the narrowest missing abstraction.
+Apply the generality acceptance rules in [AGENTS.md](../../AGENTS.md).
+The [consolidated audit, section H](/home/toni/work/pypto3_sync_more/region-prefill-review-20260922/REVIEW.md#h-architectural-interfaces-correction-directions)
+records source evidence and distinguishes confirmed restrictions from research
+hypotheses. This is a local evidence link; the actionable tasks are retained here
+so another checkout does not depend on that artifact being available.
+
+### Shared interface work
+
+- [ ] **Region transfers:** investigate parameterized input/output contracts
+  instead of only selected-state snapshots. Preserve open event occupancy,
+  consumption knowledge, storage histories, occurrence mapping and ownership.
+  First demonstrate avoidable repeated evaluation and require cold-replay
+  equivalence; runtime-plan improvement is not implied.
+- [ ] **Generation-scoped selection:** replace cell-wide protocol ownership and
+  writer/reader uniformity with storage generations and participating uses.
+  Compose prelude writes, reloads, outside readers, scratch reuse and epilogues.
+  Preserve alias identity and scoped producer-repair obligations, including the
+  fence-relocation negative. This directly supports M4.
+- [ ] **Shared completion support:** extend the existing required-return and M3
+  rearming records into consistent obligation-to-transfer queries. Retain actual
+  receipt identity, occurrence conditions and deadlines for multiple readers,
+  alternative consumptions and cross-region support. Invalidate affected support
+  after edits. An anticipated return grants no credit; no deletion search.
+- [ ] **Exact packet binding:** unify transactional qualification where the first
+  receipt can establish the second leg's rearming. Reproduce a linked relay case
+  that fails independent-leg qualification but passes complete ordered-packet
+  validation. Check both neighboring generations and dormant/active ownership
+  across repeated entries; commit only the checked packet.
+- [ ] **Common placement interface:** express word-start, final-read, choice and
+  ordinary placement through stable gaps, original participation, source history
+  and deadlines. Preserve shared-word occurrences and outward publications.
+  Discovery provenance must not determine which binding obligations are checked.
+- [ ] **Separate facts, proof queries and policy:** expose physical uses,
+  occurrence relations, legal gaps and target guarantees independently of benefit
+  heuristics. Query coverage, participation, ordering and resources separately
+  from selecting a certified proposal. Lazy analysis is allowed; policy absence
+  must not masquerade as semantic impossibility.
+
+### Additional limitations found in the interface audit
+
+- [ ] **Occurrence relations rather than metadata shape:** replace clients'
+  dependence on the single-owner residue/previous/next `OccurrenceMode` grammar
+  with the particular relation needed: same generation, next participating use,
+  or matched endpoints. Reuse existing original-graph correspondence. Test counted
+  bank observations combined with original guards and nested owners without
+  building a global product of unrelated predicates.
+- [ ] **Cross-cell return discovery:** `demandsAt` currently follows returns for
+  the same cell back to the original producer pipe. Discover other already
+  required transfers that can carry the needed completion/consumption at a
+  compatible deadline. Keep discovery sparse; test an earlier-deadline negative.
+  The causal checker and existing return sharing already support some such
+  paths; this task concerns consistent candidate discovery.
+- [ ] **Structured refusal diagnostics:** distinguish no opportunity, unsupported
+  representation, missing proof, resource failure, stale certificate and budget
+  exhaustion where relevant. Attach the lifetime/gap and failed premise. Extend
+  existing notes rather than claiming diagnostics are absent. Report a real-input
+  opportunity funnel without adding another whole-program analysis per query.
+- [ ] **Certificate dependency granularity — investigate first:** measure whether
+  unrelated ledger edits force avoidable certificate recomputation under global
+  version checks. If demonstrated, track relevant states, words, occurrences and
+  neighboring key uses; retain conservative invalidation elsewhere. Existing
+  component-aware replay and endpoint protections remain authoritative. Do not
+  add a cache without a measured witness and invalidation tests.
+
+### Acceptance and sequencing
+
+Start with the documented target-contract corrections and one current prefill
+lifetime, then integrate the necessary shared-interface changes with M4. The
+other implementation agent's active ACC/descriptor work must be reconciled
+before treating older audit findings as still open. Do not restart completed M2
+or M3 work, or call their broader generalizations complete on the strength of
+their bounded acceptance results.
+
+For each implemented correction require: a real importer/constructor witness;
+equivalent-representation, unrelated-context and composition tests; genuine
+missing-support negatives; unchanged independent causal/reconstruction checks;
+complete payload-order set comparisons for quality claims; and separate resource
+and compilation-work accounting. Run applicable native/corpus checks. Record
+remaining sufficient restrictions and obtain a separate generality review before
+claiming general completion. Device timing follows a useful changed native plan.
 
 ## Open research task: isolated GEMM gains versus prefill
 

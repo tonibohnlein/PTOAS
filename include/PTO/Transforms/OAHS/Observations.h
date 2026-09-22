@@ -7,9 +7,11 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #ifndef PTO_TRANSFORMS_OAHS_OBSERVATIONS_H
 #define PTO_TRANSFORMS_OAHS_OBSERVATIONS_H
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <set>
 #include <string>
 #include <vector>
 #include <utility>
@@ -52,6 +54,14 @@ struct ObservedScope {
 };
 // Original normalized region boundaries, used only to qualify local roles.
 // They confer no completion or event credit; construction replays the full graph.
+struct ObservedLoopOccurrence {
+  std::size_t entry = NoControlId, exit = NoControlId, bodyEntry = NoControlId;
+  std::vector<std::size_t> sites, firstVisitPrefix;
+  std::vector<std::pair<std::size_t, std::size_t>> firstWriteFrontiers;
+  // A first-use prefix may rejoin original backedges and reach both copied
+  // and original exits. Empty means the single representative exit above.
+  std::vector<std::size_t> exits = {};
+};
 struct ObservedLoop {
   std::size_t owner = NoControlId, entry = NoControlId, exit = NoControlId;
   std::vector<std::size_t> sites;
@@ -73,7 +83,21 @@ struct ObservedLoop {
   // Exactly-once receipt boundary and its immediate first-write payload.
   // The boundary executes before the payload's ordinary shared command word.
   std::vector<std::pair<std::size_t, std::size_t>> firstWriteFrontiers = {};
+  // Paired boundaries and endpoint obligations of each analytical copy. The
+  // original owner and participation remain shared; entries do not reset state.
+  std::vector<ObservedLoopOccurrence> occurrences = {};
 };
+inline std::vector<ObservedLoopOccurrence> loopEntryOccurrences(const ObservedLoop& loop)
+{
+  if (!loop.occurrences.empty()) {
+    return loop.occurrences;
+  }
+  if (!loop.entries.empty() || !loop.exits.empty()) {
+    return {}; // Older composed metadata does not establish boundary pairing.
+  }
+  return {{loop.entry, loop.exit, loop.bodyEntry, loop.sites,
+           loop.firstVisitPrefix, loop.firstWriteFrontiers}};
+}
 struct ObservedControl {
   std::vector<ObservedSite> sites;
   std::vector<OriginalObservation> observations;
@@ -83,5 +107,88 @@ struct ObservedControl {
   // Named input/frontend proof boundary, not a causal-completion assertion.
   std::string qualification;
 };
+// Recompute membership after a control refinement using its explicit paired
+// interfaces. Cloned prefixes can rejoin original suffixes and backedges; a
+// pointwise clone map alone does not describe those participating occurrences.
+inline bool refreshLoopOccurrences(ObservedControl& control)
+{
+  for (auto& loop : control.loops) {
+    if (loop.occurrences.empty()) {
+      continue;
+    }
+    const std::set<std::size_t> allowed(loop.sites.begin(), loop.sites.end());
+    const std::set<std::size_t> boundaries = loop.exits.empty() ? std::set<std::size_t>{loop.exit} :
+        std::set<std::size_t>(loop.exits.begin(), loop.exits.end());
+    std::set<std::size_t> covered;
+    for (auto& occurrence : loop.occurrences) {
+      if (occurrence.entry >= control.sites.size() || occurrence.exit >= control.sites.size()) {
+        return false;
+      }
+      std::set<std::size_t> members;
+      std::set<std::size_t> exits;
+      auto pending = control.sites[occurrence.entry].successors;
+      while (!pending.empty()) {
+        const auto site = pending.back();
+        pending.pop_back();
+        if (boundaries.count(site)) {
+          exits.insert(site);
+          continue;
+        }
+        if (!members.insert(site).second) {
+          continue;
+        }
+        if (site >= control.sites.size() || !allowed.count(site)) {
+          return false;
+        }
+        const auto& next = control.sites[site].successors;
+        pending.insert(pending.end(), next.begin(), next.end());
+      }
+      occurrence.sites.assign(members.begin(), members.end());
+      if (exits.empty()) {
+        return false;
+      }
+      occurrence.exits.assign(exits.begin(), exits.end());
+      occurrence.exit = *exits.begin();
+      if (occurrence.entry == loop.entry) {
+        occurrence.bodyEntry = loop.bodyEntry;
+      }
+      if (loop.atLeastOnce && !members.count(occurrence.bodyEntry)) {
+        return false;
+      }
+      occurrence.firstVisitPrefix.clear();
+      for (auto site : loop.firstVisitPrefix) {
+        if (members.count(site)) {
+          occurrence.firstVisitPrefix.push_back(site);
+        }
+      }
+      occurrence.firstWriteFrontiers.clear();
+      for (const auto& frontier : loop.firstWriteFrontiers) {
+        if (members.count(frontier.first) != members.count(frontier.second)) {
+          return false;
+        }
+        if (members.count(frontier.first)) {
+          occurrence.firstWriteFrontiers.push_back(frontier);
+        }
+      }
+      covered.insert(members.begin(), members.end());
+    }
+    loop.sites.assign(covered.begin(), covered.end());
+    loop.firstVisitPrefix.clear();
+    loop.firstWriteFrontiers.clear();
+    for (const auto& occurrence : loop.occurrences) {
+      loop.firstVisitPrefix.insert(loop.firstVisitPrefix.end(),
+          occurrence.firstVisitPrefix.begin(), occurrence.firstVisitPrefix.end());
+      loop.firstWriteFrontiers.insert(loop.firstWriteFrontiers.end(),
+          occurrence.firstWriteFrontiers.begin(), occurrence.firstWriteFrontiers.end());
+    }
+    std::sort(loop.firstVisitPrefix.begin(), loop.firstVisitPrefix.end());
+    loop.firstVisitPrefix.erase(std::unique(loop.firstVisitPrefix.begin(), loop.firstVisitPrefix.end()),
+                               loop.firstVisitPrefix.end());
+    std::sort(loop.firstWriteFrontiers.begin(), loop.firstWriteFrontiers.end());
+    loop.firstWriteFrontiers.erase(std::unique(loop.firstWriteFrontiers.begin(), loop.firstWriteFrontiers.end()),
+                                  loop.firstWriteFrontiers.end());
+  }
+  return true;
+}
 } // namespace mlir::pto::oahs
 #endif

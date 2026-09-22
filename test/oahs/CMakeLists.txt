@@ -23,11 +23,12 @@ add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedPublicationMotion.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedPublicationOrder.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedPlan.cpp
+  ../../lib/PTO/Transforms/OAHS/ConservativePlan.cpp
   ../../lib/PTO/Transforms/OAHS/CyclicFrontiers.cpp)
 target_include_directories(oahs-core-under-test PUBLIC ../../include)
 target_compile_features(oahs-core-under-test PUBLIC cxx_std_17)
 target_compile_options(oahs-core-under-test PRIVATE -Wall -Wextra -Werror -pedantic)
-set(OAHS_TEST_SUITES scaling analysis storage_frontier observed phase replay lifecycle causal_frontier
+set(OAHS_TEST_SUITES conservative scaling analysis storage_frontier observed phase replay lifecycle causal_frontier
   selected_plan selected_choice selected_placement selected_publication selected_relay selected_cyclic
   selected_update selected_rearming selected_lookahead observation_union bank_occurrence first_use fifo_slot)
 foreach(suite ${OAHS_TEST_SUITES})

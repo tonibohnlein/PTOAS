@@ -164,10 +164,32 @@ void run(bool guarded, bool reentered, unsigned banks = 2)
     const auto imported = o::refineBankOccurrences(f.child, f.bank);
     require(imported.success, imported.reason);
     const auto& p = imported.program;
+    for (const auto& loop : p.observed->loops) {
+        if (loop.owner == f.bank.owner) {
+            continue;
+        }
+        require(loop.occurrences.size() == banks, "bank refinement preserves paired child occurrences");
+        for (const auto& occurrence : loop.occurrences) {
+            require(std::find(loop.entries.begin(), loop.entries.end(), occurrence.entry) != loop.entries.end() &&
+                    std::find(loop.exits.begin(), loop.exits.end(), occurrence.exit) != loop.exits.end(),
+                    "copied child boundaries retain original participation");
+        }
+        auto malformed = p;
+        auto& changed = *std::find_if(malformed.observed->loops.begin(), malformed.observed->loops.end(),
+            [&](const auto& candidate) { return candidate.owner == loop.owner; });
+        changed.occurrences.front().sites.clear();
+        require(!o::validateProgram(malformed).success, "incomplete occurrence coverage accepted");
+    }
     require(p.observed->sites.size() == f.child.observed->sites.size() + (banks - 1) * (f.bank.bodySites.size() + 1),
         "bank interface introduced enclosing first/tail modes");
     const auto plan = accepted(p);
     require(plan.channels.size() == 4 * banks + 4, "bank-qualified readiness/release channels absent");
+    auto unused = p;
+    const auto target = unused.observed->loops.front().sites.front();
+    unused.observed->sites.push_back({o::NoControlId, o::NoControlId, {target}, {}, 0});
+    const auto unchanged = accepted(unused);
+    require(unchanged.channels.size() == plan.channels.size(),
+            "unreachable old control must not veto an existing recurring interface");
     unsigned bankReady = 0, bankRelease = 0;
     for (const auto& channel : plan.channels) {
         if (channel.owner != f.bank.owner) continue;

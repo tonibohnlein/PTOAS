@@ -65,18 +65,36 @@ inline void importFifoSlots(
     }
     region.cell = cell;
     auto refined = refineStaticSlots(p, region);
-    if (refined.success) {
+    bool exact = refined.success;
+    if (exact) {
+        const auto& slots = *refined.program.staticFifoSlots;
+        for (const auto* population : {&slots.reads, &slots.writes}) {
+            for (auto op : *population) {
+                unsigned count = 0;
+                for (auto access : refined.program.operations[op].accesses) {
+                    count += llvm::is_contained(slots.cells, access.cell);
+                }
+                exact &= count == 1;
+            }
+        }
+    }
+    if (exact) {
         p = std::move(refined.program);
         notes.push_back("qualified static FIFO cursor slots; original graph unchanged");
         return;
     }
-    refined = refineAlternatingSlots(p, region);
+    auto alternating = refineAlternatingSlots(p, region);
+    if (alternating.success) {
+        p = std::move(alternating.program);
+        notes.push_back("qualified alternating two-slot FIFO uses; shared original words");
+        return;
+    }
     if (!refined.success) {
         notes.push_back("kept pooled FIFO effects: " + refined.reason);
         return;
     }
     p = std::move(refined.program);
-    notes.push_back("qualified alternating two-slot FIFO uses; shared original words");
+    notes.push_back("retained partial FIFO cursor facts; ambiguous accesses touch both slots");
 }
 } // namespace mlir::pto::oahs::native_detail
 #endif

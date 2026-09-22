@@ -100,6 +100,66 @@ bool validObserved(const Program &p, std::string &reason) {
     if (missingEntry || missingExit) {
       return fail("composed recurrence omits its representative boundary");
     }
+    if (!loop.occurrences.empty()) {
+      std::set<std::size_t> occurrenceEntries, occurrenceExits, occurrenceMembers;
+      for (const auto& occurrence : loop.occurrences) {
+        if (occurrence.entry >= q.sites.size() || occurrence.exit >= q.sites.size() ||
+            occurrence.entry == occurrence.exit) {
+          return fail("invalid paired loop occurrence boundary");
+        }
+        const std::set<std::size_t> local(occurrence.sites.begin(), occurrence.sites.end());
+        const std::set<std::size_t> exits = occurrence.exits.empty() ? std::set<std::size_t>{occurrence.exit} :
+            std::set<std::size_t>(occurrence.exits.begin(), occurrence.exits.end());
+        if (!exits.count(occurrence.exit)) {
+          return fail("paired occurrence omits its representative exit");
+        }
+        for (auto exit : exits) {
+          if (exit >= q.sites.size() || local.count(exit)) {
+            return fail("invalid paired occurrence exit");
+          }
+        }
+        if (local.size() != occurrence.sites.size() || local.count(occurrence.entry) ||
+            local.count(occurrence.exit) ||
+            (loop.atLeastOnce && !local.count(occurrence.bodyEntry))) {
+          return fail("invalid paired loop occurrence membership");
+        }
+        for (auto site : local) {
+          if (!members.count(site)) {
+            return fail("paired loop occurrence escapes original members");
+          }
+          for (auto next : q.sites[site].successors) {
+            if (!exits.count(next) && !local.count(next)) {
+              return fail("paired loop occurrence omits its continuation");
+            }
+          }
+        }
+        for (auto next : q.sites[occurrence.entry].successors) {
+          if (!exits.count(next) && !local.count(next)) {
+            return fail("paired loop entry escapes its occurrence");
+          }
+        }
+        for (auto site : occurrence.firstVisitPrefix) {
+          if (!local.count(site)) {
+            return fail("paired first-visit prefix escapes occurrence");
+          }
+        }
+        for (const auto& frontier : occurrence.firstWriteFrontiers) {
+          if (!local.count(frontier.first) || !local.count(frontier.second)) {
+            return fail("paired first-write boundary escapes occurrence");
+          }
+        }
+        occurrenceEntries.insert(occurrence.entry);
+        occurrenceExits.insert(exits.begin(), exits.end());
+        occurrenceMembers.insert(local.begin(), local.end());
+      }
+      const std::set<std::size_t> entries = loop.entries.empty() ? std::set<std::size_t>{loop.entry} :
+          std::set<std::size_t>(loop.entries.begin(), loop.entries.end());
+      const std::set<std::size_t> exits = loop.exits.empty() ? std::set<std::size_t>{loop.exit} :
+          std::set<std::size_t>(loop.exits.begin(), loop.exits.end());
+      if (occurrenceEntries != entries || occurrenceExits != exits || occurrenceMembers != members) {
+        return fail("incomplete paired loop occurrence correspondence");
+      }
+    }
   }
   std::set<std::vector<uint64_t>> unique;
   std::map<std::pair<std::size_t, bool>,
@@ -250,8 +310,8 @@ bool valid(const Program &p, std::string &reason) {
                           return false;
                       }
                   }
-              if (count != 1) {
-                  reason = "static FIFO access must identify one slot";
+              if (!count || count > slots.cells.size()) {
+                  reason = "static FIFO access must identify its possible slots";
                   return false;
               }
           }

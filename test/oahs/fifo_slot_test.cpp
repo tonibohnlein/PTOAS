@@ -101,7 +101,15 @@ void staticCursorSlots()
         }
     auto skipped = p;
     skipped.observed->sites[3].successors.push_back(5);
-    require(!o::refineStaticSlots(skipped, region).success, "skipped send must not retain static slot identity");
+    auto partial = o::refineStaticSlots(skipped, region);
+    require(partial.success, "skipped send must preserve partial cursor facts");
+    for (auto write : region.writes) {
+        unsigned count = 0;
+        for (auto access : partial.program.operations[write].accesses) {
+            count += access.cell == 2 || access.cell == 3;
+        }
+        require(count == 2, "ambiguous recurring send must retain both slot obligations");
+    }
     auto extra = region;
     extra.reads.pop_back();
     require(!o::refineStaticSlots(p, extra).success, "unrepresented FIFO user must decline");
@@ -112,9 +120,50 @@ void staticCursorSlots()
     extra.slotBytes = std::numeric_limits<uint64_t>::max();
     require(!o::refineStaticSlots(p, extra).success, "slot offset overflow must decline");
     require(!o::refineStaticSlots(r.program, region).success, "already split root must not be refined twice");
-    require(
-        !o::refineStaticSlots(fixture(), {0, 2, 128, {0}, {2}}).success,
-        "one send/pop per repeated body requires a changing slot observation");
+    require(o::refineStaticSlots(fixture(), {0, 2, 128, {0}, {2}}).success,
+            "changing cursors still have finite physical may-sets");
+}
+void partialCursorSlots()
+{
+    auto p = base(1);
+    // A known prologue, an optional complete pair, then a suffix. The suffix's
+    // ambiguity must not erase the prologue's exact physical identity.
+    for (unsigned i = 0; i < 6; ++i) {
+        p.operations.push_back(op(i % 2 ? o::Pipe::MTE2 : o::Pipe::FIX,
+                                  {{0, bool(i % 2), !bool(i % 2), false}}));
+        p.operations.back().original = i;
+    }
+    o::ObservedControl q;
+    q.qualification = "known prologue and optional cursor advancement";
+    q.scopes = {{0, o::NoControlId, o::NoControlId}};
+    q.entry = 0;
+    q.exit = 7;
+    q.sites.resize(8);
+    for (unsigned i = 0; i < 8; ++i) {
+        q.sites[i].observation = i;
+        q.observations.push_back({i, {}, true});
+        if (i < 7) {
+            q.sites[i].successors = {i + 1};
+        }
+    }
+    q.sites[2].successors = {3, 5};
+    const unsigned sites[] = {0, 1, 3, 4, 5, 6};
+    for (unsigned i = 0; i < 6; ++i) {
+        q.sites[sites[i]].operation = i;
+    }
+    p.observed = std::move(q);
+    auto refined = o::refineStaticSlots(p, {0, 2, 128, {1, 3, 5}, {0, 2, 4}});
+    require(refined.success, "partial FIFO cursor analysis");
+    for (unsigned i = 0; i < 6; ++i) {
+        const auto& effects = refined.program.operations[i].accesses;
+        require(effects.size() == (i < 4 ? 1u : 2u), "preserve exact prefix and may-slot suffix");
+        if (i < 4) {
+            require(effects[0].cell == 1 + i / 2, "known participating cursor");
+        }
+    }
+    auto plan = o::constructSelectedPlan(refined.program);
+    require(plan.success, "construct from partial cursor facts: " + plan.reason);
+    require(o::verify(refined.program, plan.commands).success, "independent partial-cursor verification");
 }
 void checkTraces(const o::Program& p, const o::Commands& commands)
 {
@@ -168,6 +217,7 @@ void checkTraces(const o::Program& p, const o::Commands& commands)
 int main()
 {
     staticCursorSlots();
+    partialCursorSlots();
     auto p = fixture();
     o::AlternatingSlotRegion region{0, 2, 128, {0}, {2}};
     auto refined = o::refineAlternatingSlots(p, region);

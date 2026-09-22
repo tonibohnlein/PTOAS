@@ -125,6 +125,24 @@ int main() {
   require(certificate.accepted, "first-use causal certificate: " + certificate.reason +
           " at " + std::to_string(certificate.cut));
   checkPaths(refined.program, commands);
+  auto withLoops = original;
+  withLoops.observed->loops = {
+      {0, 0, 14, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}, 2, false},
+      {2, 2, 12, {3, 4, 5, 6, 7, 8, 9, 10, 11}, 4, false},
+      {5, 5, 11, {6, 7, 8, 9, 10}, 7, false}};
+  auto composed = o::refineFirstUse(withLoops, region);
+  require(composed.success, "first-use child correspondence: " + composed.reason);
+  const auto& child = composed.program.observed->loops.back();
+  require(child.occurrences.size() == 2, "first-use prefix must preserve both child entries");
+  const auto& copied = child.occurrences.back();
+  require(std::find(copied.sites.begin(), copied.sites.end(), 9) != copied.sites.end(),
+          "copied child must retain original repeated-prefix work");
+  require(copied.exits.size() == 2, "copied entry can exit through first or repeated child visit");
+  auto missingMember = composed.program;
+  auto& sites = missingMember.observed->loops.back().occurrences.back().sites;
+  sites.erase(std::remove(sites.begin(), sites.end(), 9), sites.end());
+  require(!o::validateProgram(missingMember).success, "occurrence with escaping backedge work accepted");
+  checkPaths(composed.program, fixtureCommands(composed.program));
   for (auto boundary : {2u, 12u}) {
     auto missing = commands;
     missing[boundary].clear();

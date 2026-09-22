@@ -988,32 +988,28 @@ bool Constructor::settleRearming(const SelectedDecision& decision)
     return !changed || update();
 }
 
-// A qualified FIFO cohort supplies only the physical send/pop correspondence.
 // Select a relay prefix separately from the final receipt deadline. This is an
-// optional staged construction, not a rewrite of a completed plan.
+// optional staged construction over ordinary storage requirements. Storage
+// provenance grants neither completion nor event-consumption knowledge.
 std::optional<bool> Constructor::splitRelay(const Group& group, Pipe observer, RequirementStage stage)
 {
-    if (!program.staticFifoSlots || group.common || group.publication == current ||
-        !control.straight(group.publication, current) || route(group.source, observer).size() != 3)
+    if (group.common || group.requirements.empty() || group.publication == current ||
+        !control.straight(group.publication, current) || route(group.source, observer).size() != 3) {
         return std::nullopt;
-    const auto& slots = *program.staticFifoSlots;
-    if (group.requirements.empty() ||
-        std::any_of(group.requirements.begin(), group.requirements.end(), [&](const auto& r) {
-            return !r.sourceWrite || std::find(slots.cells.begin(), slots.cells.end(), r.cell) == slots.cells.end();
-        }))
-        return std::nullopt;
+    }
     auto unique = [&](Cut cut) { return control.wordOccurrences[control.canonicalCut[cut]].size() == 1; };
     if (!unique(group.publication) || !unique(current))
         return std::nullopt;
-    // Do not gate intervening sends of another bank through an earlier bank's
-    // receipt. The immutable shared-slot view identifies this lower bound; it
-    // does not enlarge the publication or grant the other bank's completion.
+    // Retain the producer corridor's lower placement boundary using actual
+    // storage effects, independent of how those effects were imported. This
+    // does not enlarge the publication or grant another write's completion.
     Cut lower = group.publication;
     for (Cut at = 0; at < control.graph.sites.size(); ++at) {
         ++result.work.relayPreparationSites;
         const auto op = control.graph.operations[at];
         if (op == NoAnalysisId || program.operations[op].pipe != group.source ||
-            std::find(slots.writes.begin(), slots.writes.end(), op) == slots.writes.end() ||
+            std::none_of(program.operations[op].accesses.begin(), program.operations[op].accesses.end(),
+                         [](const auto& access) { return access.write; }) ||
             !control.straight(group.publication, at) || !control.straight(at, current))
             continue;
         const auto after = control.after(at);

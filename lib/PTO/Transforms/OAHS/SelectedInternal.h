@@ -50,6 +50,9 @@ struct Control {
     LookaheadIndex lookahead;
     struct LoopEntryFacts {
         Cut entry;
+        Cut exit, owner;
+        std::vector<Cut> exits;
+        uint64_t lastVisitDistance = 1;
         // A unique first observer payload on every exiting entry path, or no
         // qualified deadline. These are original-program facts, not receipts.
         std::array<Cut, PipeCount> firstConsumer;
@@ -66,6 +69,9 @@ struct Control {
         std::set<Id> issuedClasses;
     };
     std::vector<LoopEntryFacts> loopEntries;
+    // Universal placement facts for every reachable occurrence of one emitted
+    // entry word. Individual records above remain the physical region view.
+    std::vector<LoopEntryFacts> loopEntryFrontiers;
     struct ChoiceFrontier {
         Cut entry;
         Pipe observer;
