@@ -25,6 +25,17 @@ acyclic no-next-publication answer. The checked borrowing paths remain intact.
 See [scope and validation](oahs-key-binding-consistency.md). General cyclic
 continuation-query cost and KDA order inclusion remain open.
 
+The authored-local-event boundary is closed at the public pass: both algorithms
+share the existing explicit-event exclusion before dispatch. Authored functions
+remain unchanged; their protocols are not thereby validated. Mixed protocol
+import/validation remains separate future work. See
+[the entry contract](oahs-shared-semantics.md#authored-local-synchronization).
+
+The additional KDA/dspark RMSNorm check exposed ordinary dormant-key exhaustion.
+The existing checked restoration path now covers ordinary owned keys too; both
+modules pass default public insertion and reconstruction with identical outputs.
+This restores admission, with no new device or ordering-quality claim.
+
 Next acceptance work:
 
 1. Run full model builds and device correctness for the newly admitted sweep

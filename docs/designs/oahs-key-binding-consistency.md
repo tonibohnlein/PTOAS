@@ -14,6 +14,41 @@ Existing role reuse and explicitly certified reservation borrowing remain
 separate entry points. They retain ownership and check restoration with the new
 use; they do not globally free a reserved key. No target event pool is enlarged.
 
+### Exhaustion with dormant ordinary helpers
+
+The requested follow-up on KDA projection and exact dspark RMSNorm found a
+remaining admission gap: the default constructor exhausted ordinary keys at
+cuts 653 and 215 respectively. Usable keys had dormant helper ownership, but
+the explicit restoration certificate was available only for closed roles.
+
+Ordinary exhaustion now uses that same restoration-plus-transfer certificate.
+It retains the source gap, checks occurrence matching and neighboring uses,
+restores all dormant helpers owning the candidate key in a private ledger, and
+validates the complete proposed protocol before restoring anything live.
+This full event check, rather than the narrower direct-return continuation
+query, certifies both neighboring generations and every repeated occurrence.
+The selected packet remains exactly the restored helpers plus the new pair;
+a common-cut request does not append another private return after validation.
+Restored helpers are pinned; ordinary availability still excludes dormant
+ownership everywhere. Closed and recurring reservations retain their separate
+admission checks. This fallback runs only after ordinary free-key and closed-role
+binding fail. Its full analyses are charged to the existing
+`closedReservationChecks` / `closedReservationCheckSites` counters, which now
+also include this ordinary dormant-ownership case.
+
+The linked `dischargeRestore` variants exercise ordinary `edge()`
+selection with no free alternative, require the early source to remain fixed,
+check refusal without mutation when restoration lacks rearming support, and
+compare incremental replay with cold replay after supported restoration. They
+cover split and common cuts, including repeated entries.
+
+The exact native follow-up constructs and reconstructs KDA AIC/AIV and dspark
+RMSNorm with default options. KDA AIC restores four helpers with four staged
+checks (10,288 analysis-site evaluations); RMSNorm restores two with two checks
+(1,218 evaluations). KDA AIV needs none. These are admission results, not
+ordering or device-speed improvements. The first-write/final-read experiments
+remain disabled. Artifacts: `../sweep-followup-work/authored-events-kernels/`.
+
 ## Split returns protect their next use
 
 The old split selector accepted the first reverse key with source-time credit.

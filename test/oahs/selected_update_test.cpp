@@ -192,13 +192,28 @@ struct ReplayTestAccess {
         std::cout << "shared_words=" << words << " comparison_spans=" << scans
                   << " invalidation_sites=" << visits << '\n';
     }
-    static void dischargeRestore(bool borrow = false)
+    static void dischargeRestore(bool borrow = false, bool ordinary = false, bool common = false,
+                                 bool repeated = false)
     {
         const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE3;
         auto p = base(4, 3);
         p.operations = {op(P, {{0, true, false}}), op(Q, {{1, true, false}}),
                         op(R, {{2, true, false}}), op(P, {{3, true, false}})};
+        if (repeated) {
+            ObservedControl graph;
+            graph.qualification = "repeated owned-helper restoration";
+            graph.entry = 0; graph.exit = 4;
+            for (Id site = 0; site <= graph.exit; ++site) {
+                graph.observations.push_back({site, {}, true});
+                graph.sites.push_back({site < 4 ? site : NoControlId, site, {}, {}, 0});
+                if (site < graph.exit) graph.sites.back().successors = {site + 1};
+            }
+            graph.sites[3].successors.push_back(0);
+            graph.sites[3].backedgeOwners = {NoControlId, 0};
+            p.observed = std::move(graph);
+        }
         Constructor c(p);
+        require(c.control.complete && c.frontier.complete(), c.control.reason + " / " + c.frontier.reason());
         c.needsContextualReplay = true;
         std::string reason;
         require(c.ledger.initialize(Commands(commandCutCount(p)), reason), reason);
@@ -256,10 +271,16 @@ struct ReplayTestAccess {
             // A later forward receipt can rearm the original helper's key at
             // the proposed source. Restore the owned helper and borrow as one
             // checked edit; the reservation itself must survive.
-            c.closedBindings[{P, Q}] = {NoAnalysisId, suspended};
-            c.closedKeys.insert(suspended);
+            if (!ordinary) {
+                c.closedBindings[{P, Q}] = {NoAnalysisId, suspended};
+                c.closedKeys.insert(suspended);
+            }
+            auto prepare = [&] {
+                return ordinary ? c.prepareDormantKey(common ? 3 : 2, 3, suspended) :
+                                  c.prepareClosedReservation(2, 3, suspended);
+            };
             const auto version = c.ledger.version();
-            require(!c.prepareClosedReservation(2, 3, suspended) &&
+            require(!prepare() &&
                     c.ledger.version() == version && !c.ledger.active(helperSet),
                     "unsupported helper restoration mutated the live ledger");
             append(2, Command::Publish, P, Q, 1, EndpointPurpose::Completion);
@@ -267,17 +288,33 @@ struct ReplayTestAccess {
             require(c.update(), c.cache.reason);
             require(!c.inactiveClosedReservation(2, 3, suspended),
                     "inactive helper was silently ignored");
-            require(c.prepareClosedReservation(2, 3, suspended),
-                    "checked helper restoration rejected a supported borrow");
-            append(2, Command::Publish, Q, P, 0, EndpointPurpose::Completion);
-            append(3, Command::Acquire, Q, P, 0, EndpointPurpose::Completion);
-            require(c.update(), c.cache.reason);
-            require(c.closedKeys.count(suspended) && c.requiredReturns.count(helperWait) &&
+            if (ordinary) {
+                for (Id key = 0; key < c.frontier.keys().size(); ++key) {
+                    const auto& identity = c.frontier.keys()[key];
+                    if (identity.source == Q && identity.observer == P && key != suspended)
+                        c.closedKeys.insert(key);
+                }
+                c.current = 3;
+                c.activeComponent = c.control.component[c.current];
+                Cut publication = common ? 3 : 2;
+                SelectedDecision selected;
+                require(c.edge(Q, P, publication, common, selected), c.result.reason);
+                require(publication == (common ? 3u : 2u) && selected.endpoints.size() == 2 &&
+                        c.ledger.endpoint(selected.endpoints.front()).command.key == 0,
+                        "ordinary exhaustion lost the early gap or selected another key");
+            } else {
+                require(prepare(), "checked helper restoration rejected a supported borrow");
+                append(2, Command::Publish, Q, P, 0, EndpointPurpose::Completion);
+                append(3, Command::Acquire, Q, P, 0, EndpointPurpose::Completion);
+                require(c.update(), c.cache.reason);
+            }
+            require(bool(c.closedKeys.count(suspended)) == !ordinary && c.requiredReturns.count(helperWait) &&
                     c.ledger.active(helperSet) && c.ledger.active(helperWait) &&
                     c.result.work.closedReservationChecks == 2,
                     "borrow lost ownership or its restored support");
             require(checkCausalFrontier(p, c.ledger.commands()).accepted,
                     "restored closed-role borrow rejected by cold checker");
+            compare();
             return;
         }
         require(c.reusable(Q, P, c.cache.cuts[2].before) != suspended,
@@ -898,6 +935,9 @@ int main()
     o::selected::ReplayTestAccess::splitReturnNeighbors();
     o::selected::ReplayTestAccess::dischargeRestore();
     o::selected::ReplayTestAccess::dischargeRestore(true);
+    o::selected::ReplayTestAccess::dischargeRestore(true, true);
+    o::selected::ReplayTestAccess::dischargeRestore(true, true, true);
+    o::selected::ReplayTestAccess::dischargeRestore(true, true, true, true);
     for (unsigned words : {32u, 128u, 512u})
         o::selected::ReplayTestAccess::prefixComparisonCost(words);
     sourceTimeAndNeighbors();

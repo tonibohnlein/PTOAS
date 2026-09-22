@@ -6,6 +6,27 @@ instruction behavior. An operation without a translated synchronization node
 contributes no synchronization effects and remains in the original IR. No
 explicit "no effect" registration is required for this default.
 
+## Authored local synchronization
+
+The public InsertSync pass shares its existing explicit-event exclusion across
+`existing` and `handoff`, before dispatching to either constructor. A function
+containing `SetFlagOp`, `WaitFlagOp`, `RecordEventOp`, or `WaitEventOp` is left
+unchanged. This also prevents a second insertion pass over generated local
+events. Unknown algorithm names still produce an error.
+
+This is preservation, not validation of the authored protocol. The native OAHS
+adapter does not import those original endpoints into its fixed-command ledger;
+mixing generated events with them could otherwise reuse their physical keys.
+Supporting mixed authored/generated protocols requires importing and validating
+the combined ordered stream. Ordinary instruction translation remains shared;
+this exclusion adds no instruction-effect registration requirement.
+
+The public-pass regression in `pto-oahs-native-test.cpp` covers each excluded
+opcode, paired flags and higher-level events, nested repeated key use, distinct
+event IDs, ordinary automatic insertion, and second-pass preservation under both
+algorithms. Direct native analysis/construction test APIs do not perform this
+public-pass exclusion.
+
 ## Ordinary translation contract
 
 The authoritative input is existing InsertSync's pipeline, memory-effect and

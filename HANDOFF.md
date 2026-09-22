@@ -12,7 +12,41 @@ Updated: 2026-09-22
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
 
-## Latest local amendment: key binding consistency
+## Latest local amendment: authored-event exclusion
+
+The public InsertSync pass now applies its existing explicit-local-event skip
+before dispatching to either algorithm. Functions containing flags or
+record/wait events remain unchanged, including on a second insertion run.
+Unknown algorithm names still fail. This closes coexistence with unrepresented
+authored event keys without changing ordinary instruction-effect admission.
+It does not validate manual protocols or implement mixed fixed-command import.
+
+The native suite passes, including new public-pass checks for all four event
+operations, repeated uses, distinct IDs, automatic insertion and idempotence
+under both algorithms. Logs: `../sweep-followup-work/authored-events-native.log`.
+The focused local build script needed the existing `SlotAffineAnalysis` object
+when linking the public legacy pass; no production source repair was needed.
+
+The additional requested KDA/dspark RMSNorm check exposed ordinary dormant-key
+exhaustion after `7f22b091f`. The existing restoration certificate now covers
+ordinary owned keys as a last binding alternative. It checks restored helpers
+plus the exact new pair, retains the publication gap, and pins the restored
+helpers. Full protocol analysis certifies repeated use; the selected packet is
+not subsequently enlarged with a private return. Ordinary unchecked binding
+still excludes dormant ownership. See
+[the follow-up](docs/designs/oahs-key-binding-consistency.md#exhaustion-with-dormant-ordinary-helpers).
+All 25 portable suites pass, including split/common-cut and repeated-entry
+restoration regressions. KDA AIC/AIV and exact dspark RMSNorm now construct and
+reconstruct with default options. The KDA input retains the previously recorded
+syntax-only `load_scalar` to `load` conversion. Logs and plans are in
+`../sweep-followup-work/authored-events-kernels/`. This is synchronization
+compilation validation, not device compilation/execution or a speedup claim.
+Final public-pass output is byte-identical to the construction/reconstruction
+driver for both modules; `summary.json` records input and output hashes. Both
+native suites also pass (`authored-events-native-final.log` and
+`authored-events-selected-final.log`). The full historical corpus was not rerun.
+
+## Previous amendment: key binding consistency
 
 After `5e0a72772`, ordinary binding now uses one ownership condition for dormant
 helpers and reserved roles, including source gaps, final-read sources, relay

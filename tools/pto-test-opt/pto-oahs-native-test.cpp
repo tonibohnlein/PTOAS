@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
+#include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/OAHS/Native.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
@@ -16,6 +17,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
+#include "mlir/Pass/PassManager.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
 #include <limits>
@@ -91,6 +93,86 @@ static std::string text(func::FuncOp function) {
   function.print(out);
   out.flush();
   return result;
+}
+static void testPublicAuthoredEvents(MLIRContext &context) {
+  auto run = [&](ModuleOp module, StringRef algorithm) {
+    auto pass = createPTOInsertSyncPass();
+    require(succeeded(pass->initializeOptions(
+        ("algorithm=" + algorithm).str(), [](const Twine &error) {
+          llvm::errs() << error << "\n";
+          return failure();
+        })));
+    PassManager manager(&context);
+    manager.addNestedPass<func::FuncOp>(std::move(pass));
+    require(succeeded(manager.run(module)));
+  };
+  const std::string header = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @manual(%src: !pto.partition_tensor_view<1x32xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %four = arith.constant 4 : index
+    %x = arith.constant 0 : i64
+    %y = arith.constant 128 : i64
+    %a = pto.alloc_tile addr = %x : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %y : !pto.tile_buf<vec, 1x32xf32>
+)mlir";
+  const std::string load = R"mlir(
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>)
+      outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+)mlir";
+  const std::string read = R"mlir(
+    pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>)
+      outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+)mlir";
+  const std::string set = "pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]\n";
+  const std::string wait = "pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]\n";
+  const std::string record = "pto.record_event [#pto.pipe_event_type<TLOAD>, #pto.pipe_event_type<TVEC>, #pto.event<EVENT_ID0>]\n";
+  const std::string waitEvent = "pto.wait_event [#pto.pipe_event_type<TLOAD>, #pto.pipe_event_type<TVEC>, #pto.event<EVENT_ID0>]\n";
+  const std::string end = "return\n}}";
+  for (StringRef algorithm : {"existing", "handoff"}) {
+    // Each opcode independently excludes the function, even when its authored
+    // protocol is incomplete. Skipping is preservation, not validation.
+    for (const auto &events : {set, wait, record, waitEvent, set + wait,
+                               record + waitEvent}) {
+      auto module = parseSourceString<ModuleOp>(header + load + events + read + end, &context);
+      require(bool(module));
+      auto function = module->lookupSymbol<func::FuncOp>("manual");
+      const auto before = text(function);
+      run(*module, algorithm);
+      require(text(function) == before);
+    }
+    for (unsigned id : {0u, 3u}) {
+      // Nested repeated uses with a real return acknowledgment; test both the
+      // first allocator ID and a distinct ID. Neither permits mixed insertion.
+      std::string body = "scf.for %i = %zero to %four step %one {\n" + load + set + wait + read +
+          "pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]\n"
+          "pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]\n}\n";
+      if (id == 3)
+        for (size_t at = 0; (at = body.find("EVENT_ID0", at)) != std::string::npos; ++at)
+          body.replace(at, 9, "EVENT_ID3");
+      auto module = parseSourceString<ModuleOp>(header + body + end, &context);
+      require(bool(module));
+      auto function = module->lookupSymbol<func::FuncOp>("manual");
+      const auto before = text(function);
+      run(*module, algorithm);
+      require(text(function) == before);
+    }
+    // Automatic insertion still runs on plain payload, and a second public
+    // pass preserves the generated protocol rather than inserting over it.
+    auto module = parseSourceString<ModuleOp>(header + load + read + end, &context);
+    require(bool(module));
+    auto function = module->lookupSymbol<func::FuncOp>("manual");
+    run(*module, algorithm);
+    unsigned sets = 0, waits = 0;
+    function.walk([&](SetFlagOp) { ++sets; });
+    function.walk([&](WaitFlagOp) { ++waits; });
+    require(sets && waits);
+    const auto once = text(function);
+    run(*module, algorithm);
+    require(text(function) == once);
+  }
 }
 static void testSharedSemantics(MLIRContext &context) {
   // These operations have no OAHS registration or single-phase marker. Their
@@ -766,6 +848,7 @@ int main(int argc, char **argv) {
     return 2;
   }
   testCarriedPointerRoundTrip(context);
+  testPublicAuthoredEvents(context);
   testSharedSemantics(context);
   testConfigurationAndMergeSort(context);
   testScalarDivisionEffects(context);

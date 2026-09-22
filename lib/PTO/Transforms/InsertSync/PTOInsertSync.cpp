@@ -73,11 +73,7 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     if (func.isDeclaration()) {
       return;
     }
-    if (algorithm == "handoff") {
-      if (failed(oahs::runHandoffSync(func))) signalPassFailure();
-      return;
-    }
-    if (algorithm != "existing") {
+    if (algorithm != "existing" && algorithm != "handoff") {
       func.emitError("unknown synchronization algorithm; expected existing or handoff");
       signalPassFailure();
       return;
@@ -87,8 +83,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // low-level pipe flags or the higher-level record/wait events), do not run
     // the automatic insertion pass again. Re-inserting on top of manual sync
     // can introduce duplicated/mismatched event dependencies that may lead to
-    // runtime failures on NPU.
-    //
+    // runtime failures on NPU. Both algorithms share this exclusion: preserving
+    // authored instructions does not import their event ownership into OAHS's
+    // generated-command ledger.
     bool hasExplicitSync = false;
     func.walk([&](Operation *op) {
       if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::RecordEventOp,
@@ -99,6 +96,11 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       return WalkResult::advance();
     });
     if (hasExplicitSync) {
+      return;
+    }
+
+    if (algorithm == "handoff") {
+      if (failed(oahs::runHandoffSync(func))) signalPassFailure();
       return;
     }
 

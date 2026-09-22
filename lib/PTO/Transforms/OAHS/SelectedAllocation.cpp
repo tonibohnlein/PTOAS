@@ -586,7 +586,20 @@ bool Constructor::prepareClosedReservation(Cut publication, Cut acquisition, Id 
     bool owned = false;
     for (const auto& binding : closedBindings)
         owned |= binding.second.first == key || binding.second.second == key;
-    if (!owned || !borrowedInterval(publication, acquisition, key)) return false;
+    if (!owned) return false;
+    return prepareDormantKey(publication, acquisition, key);
+}
+bool Constructor::prepareDormantKey(Cut publication, Cut acquisition, Id key)
+{
+    if (recurringKeys.count(key) || entryProtocolKeys.count(key) ||
+        !suspendedReturnKey(key) || !canPublishAt(publication, key)) return false;
+    // Closed roles enter only through their explicit ownership certificate.
+    if (closedKeys.count(key)) {
+        bool owned = false;
+        for (const auto& binding : closedBindings)
+            owned |= binding.second.first == key || binding.second.second == key;
+        if (!owned || !borrowedInterval(publication, acquisition, key)) return false;
+    } else if (!clearInterval(key, publication, acquisition)) return false;
     const auto& identity = frontier.keys()[key];
     std::vector<std::pair<Id, Id>> restore;
     std::set<Id> accounted;
@@ -674,6 +687,7 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     const auto binding = closedBindings.find({source, observer});
     const bool retained = recurringClosed && binding != closedBindings.end();
     Id key = retained ? binding->second.first : NoAnalysisId;
+    bool restoredTransfer = false;
     if (certifiedKey != NoAnalysisId) {
         if (closed || certifiedKey >= frontier.keys().size() || !availableKey(certifiedKey) ||
             !canPublishAt(publication, certifiedKey) ||
@@ -725,6 +739,22 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
                 }
             }
         }
+        if (key == NoAnalysisId) {
+            // Dormant ordinary helpers retain ownership just like closed
+            // roles. Exhaustion may use their keys only by checking restoration
+            // and the new transfer together, never by ignoring the promise.
+            for (Id candidate = 0; candidate < frontier.keys().size(); ++candidate) {
+                const auto& identity = frontier.keys()[candidate];
+                if (identity.source != source || identity.observer != observer ||
+                    closedKeys.count(candidate) || !suspendedReturnKey(candidate)) continue;
+                ++result.work.keyQueries;
+                if (prepareDormantKey(publication, current, candidate)) {
+                    key = candidate;
+                    restoredTransfer = true;
+                    break;
+                }
+            }
+        }
         if (key == NoAnalysisId && !acknowledgment(source, observer, publication, key, decision)) {
             return false;
         }
@@ -736,7 +766,7 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     const bool repeated = std::any_of(acquisitionOccurrences.begin(), acquisitionOccurrences.end(), [&](Cut cut) {
         return control.reachable[cut] && control.components[control.component[cut]].cyclic;
     });
-    if (!closed && repeated &&
+    if (!restoredTransfer && !closed && repeated &&
         (publicationOccurrences.size() > 1 || acquisitionOccurrences.size() > 1 ||
             (options.firstWriteConsumers && control.firstWriteWords.count(control.canonicalCut[publication]))) &&
         !consumptionBeforeNextPublication(publication, current, key)) {
@@ -754,7 +784,11 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     const auto wait = ledger.append(current,
         {Command::Acquire, source, observer, number}, EndpointPurpose::Completion, request);
     decision.endpoints.push_back(wait);
-    if (!closed) {
+    if (!closed || restoredTransfer) {
+        // Restoration was checked with this exact forward pair on the whole
+        // original graph, including matching and rearming on repeated visits.
+        // Keep that certified packet; do not append an unchecked private return
+        // merely because the fallback source and deadline share a cut.
         if (splitReverse != NoAnalysisId) {
             const auto reverseNumber = frontier.keys()[splitReverse].key;
             decision.endpoints.push_back(ledger.append(current,

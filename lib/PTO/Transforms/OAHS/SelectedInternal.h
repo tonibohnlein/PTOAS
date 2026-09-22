@@ -399,6 +399,7 @@ private:
     bool inactiveReservation(Cut, Cut, Id);
     bool inactiveClosedReservation(Cut, Cut, Id);
     bool prepareClosedReservation(Cut, Cut, Id);
+    bool prepareDormantKey(Cut, Cut, Id);
     bool borrowedInterval(Cut, Cut, Id);
     bool suspendedReturnKey(Id) const;
     bool crossControlReturn(Id, Cut, Id, Id);
