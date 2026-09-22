@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
+#include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/OAHS/Native.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
@@ -16,6 +17,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
+#include "mlir/Pass/PassManager.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
 #include <limits>
@@ -60,20 +62,30 @@ public:
   static ArrayRef<StringRef> getAttributeNames() { return {}; }
   PIPE getPipe() { return PIPE::PIPE_V; }
 };
+class UnregisteredProbeOp
+    : public Op<UnregisteredProbeOp, OpTrait::OneOperand, OpTrait::ZeroResults> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(UnregisteredProbeOp)
+  using Op::Op;
+  static StringRef getOperationName() { return "sync_probe.unregistered"; }
+  static ArrayRef<StringRef> getAttributeNames() { return {}; }
+};
 class SyncProbeDialect : public Dialect {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SyncProbeDialect)
   static StringRef getDialectNamespace() { return "sync_probe"; }
   explicit SyncProbeDialect(MLIRContext *context)
       : Dialect(getDialectNamespace(), context, TypeID::get<SyncProbeDialect>()) {
-    addOperations<OrdinaryProbeOp, PipeOnlyProbeOp>();
+    addOperations<OrdinaryProbeOp, PipeOnlyProbeOp, UnregisteredProbeOp>();
   }
 };
 } // namespace
 
-static void require(bool condition) {
-  if (!condition)
+static void require(bool condition, unsigned line = __builtin_LINE()) {
+  if (!condition) {
+    llvm::errs() << "native test assertion at line " << line << "\n";
     std::abort();
+  }
 }
 static std::string text(func::FuncOp function) {
   std::string result;
@@ -81,6 +93,86 @@ static std::string text(func::FuncOp function) {
   function.print(out);
   out.flush();
   return result;
+}
+static void testPublicAuthoredEvents(MLIRContext &context) {
+  auto run = [&](ModuleOp module, StringRef algorithm) {
+    auto pass = createPTOInsertSyncPass();
+    require(succeeded(pass->initializeOptions(
+        ("algorithm=" + algorithm).str(), [](const Twine &error) {
+          llvm::errs() << error << "\n";
+          return failure();
+        })));
+    PassManager manager(&context);
+    manager.addNestedPass<func::FuncOp>(std::move(pass));
+    require(succeeded(manager.run(module)));
+  };
+  const std::string header = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @manual(%src: !pto.partition_tensor_view<1x32xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %four = arith.constant 4 : index
+    %x = arith.constant 0 : i64
+    %y = arith.constant 128 : i64
+    %a = pto.alloc_tile addr = %x : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %y : !pto.tile_buf<vec, 1x32xf32>
+)mlir";
+  const std::string load = R"mlir(
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>)
+      outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+)mlir";
+  const std::string read = R"mlir(
+    pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>)
+      outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+)mlir";
+  const std::string set = "pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]\n";
+  const std::string wait = "pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]\n";
+  const std::string record = "pto.record_event [#pto.pipe_event_type<TLOAD>, #pto.pipe_event_type<TVEC>, #pto.event<EVENT_ID0>]\n";
+  const std::string waitEvent = "pto.wait_event [#pto.pipe_event_type<TLOAD>, #pto.pipe_event_type<TVEC>, #pto.event<EVENT_ID0>]\n";
+  const std::string end = "return\n}}";
+  for (StringRef algorithm : {"existing", "handoff"}) {
+    // Each opcode independently excludes the function, even when its authored
+    // protocol is incomplete. Skipping is preservation, not validation.
+    for (const auto &events : {set, wait, record, waitEvent, set + wait,
+                               record + waitEvent}) {
+      auto module = parseSourceString<ModuleOp>(header + load + events + read + end, &context);
+      require(bool(module));
+      auto function = module->lookupSymbol<func::FuncOp>("manual");
+      const auto before = text(function);
+      run(*module, algorithm);
+      require(text(function) == before);
+    }
+    for (unsigned id : {0u, 3u}) {
+      // Nested repeated uses with a real return acknowledgment; test both the
+      // first allocator ID and a distinct ID. Neither permits mixed insertion.
+      std::string body = "scf.for %i = %zero to %four step %one {\n" + load + set + wait + read +
+          "pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]\n"
+          "pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]\n}\n";
+      if (id == 3)
+        for (size_t at = 0; (at = body.find("EVENT_ID0", at)) != std::string::npos; ++at)
+          body.replace(at, 9, "EVENT_ID3");
+      auto module = parseSourceString<ModuleOp>(header + body + end, &context);
+      require(bool(module));
+      auto function = module->lookupSymbol<func::FuncOp>("manual");
+      const auto before = text(function);
+      run(*module, algorithm);
+      require(text(function) == before);
+    }
+    // Automatic insertion still runs on plain payload, and a second public
+    // pass preserves the generated protocol rather than inserting over it.
+    auto module = parseSourceString<ModuleOp>(header + load + read + end, &context);
+    require(bool(module));
+    auto function = module->lookupSymbol<func::FuncOp>("manual");
+    run(*module, algorithm);
+    unsigned sets = 0, waits = 0;
+    function.walk([&](SetFlagOp) { ++sets; });
+    function.walk([&](WaitFlagOp) { ++waits; });
+    require(sets && waits);
+    const auto once = text(function);
+    run(*module, algorithm);
+    require(text(function) == once);
+  }
 }
 static void testSharedSemantics(MLIRContext &context) {
   // These operations have no OAHS registration or single-phase marker. Their
@@ -166,6 +258,7 @@ module attributes {pto.target_arch = "a3"} {
     "sync_probe.ordinary"(%src) {mode = 3 : i32} : (!pto.tile_buf<vec, 1x32xf32>) -> ()
     "sync_probe.ordinary"(%unmapped) : (f32) -> ()
     "sync_probe.pipe_only"(%src) : (!pto.tile_buf<vec, 1x32xf32>) -> ()
+    "sync_probe.unregistered"(%src) : (!pto.tile_buf<vec, 1x32xf32>) -> ()
     return
   }
 })mlir";
@@ -183,13 +276,43 @@ module attributes {pto.target_arch = "a3"} {
   unsigned gapCount = 0;
   for (const auto &record : gapReport.operations)
     gapCount += !record.gap.empty();
-  require(gapCount == 5 && text(gapFunction) == gapBefore);
-  {
-    ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic &) {
-      return success();
-    });
-    require(failed(oahs::runHandoffSync(gapFunction)));
-    require(text(gapFunction) == gapBefore);
+  require(gapCount == 6 && text(gapFunction) == gapBefore);
+  // The audit remains informative, but is not a compilation prerequisite.
+  // Import exactly the five nodes produced by existing InsertSync, including
+  // empty-effect pipeline nodes. The sixth instruction has no sync interfaces.
+  oahs::NativeAnalysis gapAnalysis;
+  require(succeeded(oahs::analyzeHandoffSync(gapFunction, gapAnalysis)));
+  require(gapAnalysis.phases.size() == 5 && text(gapFunction) == gapBefore);
+  require(gapAnalysis.program.operations[0].accesses.empty());
+  require(gapAnalysis.program.operations[1].accesses.empty());
+  require(!gapAnalysis.program.operations[2].accesses.empty());
+  require(gapAnalysis.program.operations[3].accesses.empty());
+  require(gapAnalysis.program.operations[4].accesses.empty());
+  require(succeeded(oahs::runHandoffSync(gapFunction)));
+  unsigned preserved = 0;
+  gapFunction.walk([&](UnregisteredProbeOp) { ++preserved; });
+  require(preserved == 1);
+
+  // A skipped instruction is not a reason to discard a translated instruction
+  // inside control the native adapter cannot represent.
+  for (bool withPayload : {false, true}) {
+    std::string nested = R"mlir(module attributes {pto.target_arch = "a3"} {
+      func.func @nested(%src: !pto.tile_buf<vec, 1x32xf32>) {
+        scf.execute_region {
+    )mlir";
+    if (withPayload)
+      nested += "\"sync_probe.ordinary\"(%src) : (!pto.tile_buf<vec, 1x32xf32>) -> ()\n";
+    nested += "scf.yield } return } }";
+    auto nestedModule = parseSourceString<ModuleOp>(nested, &context);
+    require(bool(nestedModule));
+    auto nestedFunction = nestedModule->lookupSymbol<func::FuncOp>("nested");
+    const auto before = text(nestedFunction);
+    ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic &) { return success(); });
+    oahs::NativeAnalysis imported;
+    // Unsupported control still fails; absence of instruction effects does
+    // not add a representation for execute_region's entry/exit semantics.
+    require(failed(oahs::analyzeHandoffSync(nestedFunction, imported)));
+    require(text(nestedFunction) == before);
   }
 
   const char *unsupported = R"mlir(
@@ -204,12 +327,55 @@ module attributes {pto.target_arch = "a3"} {
   auto rejected = parseSourceString<ModuleOp>(unsupported, &context);
   require(bool(rejected));
   auto variant = rejected->lookupSymbol<func::FuncOp>("variant");
-  const auto original = text(variant);
-  ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic &) {
-    return success();
+  require(succeeded(oahs::runHandoffSync(variant)));
+  unsigned loads = 0;
+  variant.walk([&](TLoadOp) { ++loads; });
+  require(loads == 1);
+}
+
+static void testScalarDivisionEffects(MLIRContext &context) {
+  const char *source = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @divide(%scalar: f32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : i64
+    %next = arith.constant 1024 : i64
+    %a = pto.alloc_tile addr = %zero : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %next : !pto.tile_buf<vec, 1x32xf32>
+    pto.tdivs ins(%a, %scalar : !pto.tile_buf<vec, 1x32xf32>, f32)
+      outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tdivs ins(%scalar, %b : f32, !pto.tile_buf<vec, 1x32xf32>)
+      outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+})mlir";
+  auto module = parseSourceString<ModuleOp>(source, &context);
+  require(bool(module) && succeeded(verify(*module)));
+  auto function = module->lookupSymbol<func::FuncOp>("divide");
+  unsigned divisions = 0;
+  function.walk([&](TDivSOp op) {
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    op.getEffects(effects);
+    require(effects.size() == 2);
+    auto tile = divisions++ == 0 ? op.getSrc() : op.getScalar();
+    require(isa<MemoryEffects::Read>(effects[0].getEffect()) &&
+            effects[0].getValue() == tile);
+    require(isa<MemoryEffects::Write>(effects[1].getEffect()) &&
+            effects[1].getValue() == op.getDst());
   });
-  require(failed(oahs::runHandoffSync(variant)));
-  require(text(variant) == original);
+  require(divisions == 2);
+  MemoryDependentAnalyzer aliases; SyncIRs translated; Buffer2MemInfoMap buffers;
+  PTOIRTranslator translator(translated, aliases, buffers, function,
+                             SyncAnalysisMode::NORMALSYNC);
+  require(succeeded(translator.Build()));
+  require(translator.describeSemantics().complete());
+  require(succeeded(oahs::runHandoffSync(function)));
+  unsigned barriers = 0;
+  function.walk([&](TDivSOp op) {
+    auto barrier = dyn_cast_or_null<BarrierOp>(op->getPrevNode());
+    barriers += barrier && barrier.getPipe().getPipe() == PIPE::PIPE_V;
+  });
+  require(barriers >= 1); // The real tile RAW/WAR requirements survive.
 }
 
 static void testPreservedProtocols(MLIRContext &context) {
@@ -499,11 +665,10 @@ module attributes {pto.target_arch = "a3"} {
   });
   require(index == 3);
   auto function = module->lookupSymbol<func::FuncOp>("profiles");
-  const auto original = text(function);
-  {
-    ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic &) { return success(); });
-    require(failed(oahs::runHandoffSync(function)) && text(function) == original);
-  }
+  require(succeeded(oahs::runHandoffSync(function)));
+  unsigned collectives = 0;
+  function.walk([&](SyncAllOp) { ++collectives; });
+  require(collectives == 3);
   module->getOperation()->setAttr("pto.target_arch", StringAttr::get(&context, "a5"));
   module->walk([&](SyncAllOp op) {
     auto model = getSyncProtocolModel(op);
@@ -511,9 +676,50 @@ module attributes {pto.target_arch = "a3"} {
   });
 }
 
+// A castptr round trip of a carried pointer must retain both the entry and
+// backedge origins. Merely copying the translator's initial root loses B.
+static void testCarriedPointerRoundTrip(MLIRContext &context) {
+  auto module = parseSourceString<ModuleOp>(R"mlir(
+module {
+  func.func @origins(%a: !pto.ptr<f32>, %b: !pto.ptr<f32>, %n: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %last = scf.for %i = %zero to %n step %one
+        iter_args(%slot = %a) -> (!pto.ptr<f32>) {
+      %addr = pto.castptr %slot : !pto.ptr<f32> -> i64
+      %roundtrip = pto.castptr %addr : i64 -> !pto.ptr<ui32>
+      scf.yield %b : !pto.ptr<f32>
+    }
+    return
+  }
+})mlir", &context);
+  require(bool(module));
+  auto function = module->lookupSymbol<func::FuncOp>("origins");
+  Buffer2MemInfoMap buffers;
+  for (unsigned i = 0; i < 2; ++i) {
+    Value root = function.getArgument(i);
+    buffers[root].push_back(std::make_unique<BaseMemInfo>(
+        root, root, AddressSpace::GM, SmallVector<uint64_t>{0}, 128));
+  }
+  SyncIRs phases;
+  require(succeeded(closeStructuredSyncOrigins(function, phases, buffers)));
+  Value roundtrip;
+  function.walk([&](CastPtrOp op) {
+    if (isa<PtrType>(op.getResult().getType())) roundtrip = op.getResult();
+  });
+  require(roundtrip && buffers[roundtrip].size() == 2);
+  bool entry = false, backedge = false;
+  for (const auto &info : buffers[roundtrip]) {
+    entry |= info->rootBuffer == function.getArgument(0);
+    backedge |= info->rootBuffer == function.getArgument(1);
+    require(!info->aliasesUnknownRange && info->allocateSize == 128);
+  }
+  require(entry && backedge);
+}
+
 int main(int argc, char **argv) {
   DialectRegistry registry;
-  MLIRContext context(registry);
+  MLIRContext context(registry, MLIRContext::Threading::DISABLED);
   context.loadDialect<SyncProbeDialect, PTODialect, arith::ArithDialect, scf::SCFDialect,
                       func::FuncDialect>();
   if (argc == 3 && StringRef(argv[1]) == "--analyze") {
@@ -569,7 +775,10 @@ int main(int argc, char **argv) {
     llvm::errs() << "usage: pto-oahs-native-test [--analyze INPUT]\n";
     return 2;
   }
+  testCarriedPointerRoundTrip(context);
+  testPublicAuthoredEvents(context);
   testSharedSemantics(context);
+  testScalarDivisionEffects(context);
   testPreservedProtocols(context);
   testPreservedCollectives(context);
   const char *source = R"mlir(

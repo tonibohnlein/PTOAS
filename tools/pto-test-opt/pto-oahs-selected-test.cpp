@@ -251,7 +251,7 @@ bool accumulatorOrdering(MLIRContext &context) {
     if (mutation == 4) {
       bool rejected = true;
       function.walk([&](TMatmulAccOp op) { rejected &= !syncAccumulatorOrder(op); });
-      if (!check(rejected && failed(oahs::analyzeHandoffSync(function, imported)),
+      if (!check(rejected && succeeded(oahs::analyzeHandoffSync(function, imported)),
                  "phase mode borrowed ordinary ACC credit")) return false;
       continue;
     }

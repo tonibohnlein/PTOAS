@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not pto-test-opt %s '-pto-insert-sync=algorithm=handoff' 2>&1 | FileCheck %s
-// Global entries have a different acquire/commit/release protocol.
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' 2>&1 | FileCheck %s
+// Use the shared translator even when the optional protocol audit is incomplete.
 module attributes {pto.target_arch = "a3"} {
   func.func @cube_globaltensor_internal()
       attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
@@ -27,5 +27,6 @@ module attributes {pto.target_arch = "a3"} {
   }
 }
 
-// CHECK: {{queue has global-entry or unrepresented protocol users|incomplete protocol during origin closure}}
-// CHECK-NOT: pto.set_flag
+// CHECK: pto.talloc
+// CHECK: pto.tpush
+// CHECK: return

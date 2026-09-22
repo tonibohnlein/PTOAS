@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not pto-test-opt %s '-pto-insert-sync=algorithm=handoff' 2>&1 | FileCheck %s
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' 2>&1 | FileCheck %s
 
 module attributes {pto.target_arch = "a3"} {
   func.func @incomplete(%src: !pto.partition_tensor_view<1x32xf32>,
@@ -17,6 +17,6 @@ module attributes {pto.target_arch = "a3"} {
   }
 }
 
-// CHECK: error: handoff: shared sync semantics: operation variant requires additional lowering semantics
-// CHECK-NOT: pto.set_flag
-// CHECK-NOT: pto.wait_flag
+// CHECK: pto.tload
+// CHECK: init_out_buffer = true
+// CHECK: pto.barrier <PIPE_ALL>

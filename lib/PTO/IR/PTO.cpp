@@ -10,12 +10,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
-#include "PTO/IR/PTOLayoutUtils.h"
-#include "PTO/IR/PTOMultiBuffer.h"
-#include "PTO/IR/PTOSyncUtils.h"
-#include "PTO/IR/SyncResources.h"
 #include "PTO/IR/SyncProtocolModel.h"
-#include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/IR/SyncResources.h"
 
 #include "mlir/Interfaces/InferIntRangeInterface.h"
 

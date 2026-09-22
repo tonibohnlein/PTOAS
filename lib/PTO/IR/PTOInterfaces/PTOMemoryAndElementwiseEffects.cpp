@@ -125,11 +125,16 @@ void TRandomOp::getEffects(
 }
 PTO_DEFINE_BINARY_EFFECTS(TDivOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 
-// TDIVS has custom assembly format; conservatively treat first 2 operands as reads.
+// TDIVS preserves textual operand order: either input may be the tile.
+// The scalar is an SSA value, not storage read by this operation.
 void TDivSOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(effects, getSrcMutable());
-  PTO_ADD_READ(effects, getScalarMutable());
+  for (auto *operand : {&getSrcMutable(), &getScalarMutable()}) {
+    if (isa<TileBufType, RankedTensorType, PartitionTensorViewType>(
+            operand->get().getType())) {
+      addEffect(effects, operand, MemoryEffects::Read::get());
+    }
+  }
   PTO_ADD_WRITE(effects, getDstMutable());
 }
 

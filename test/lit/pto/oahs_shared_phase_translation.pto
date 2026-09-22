@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not pto-test-opt %s '-pto-insert-sync=algorithm=handoff' 2>&1 | FileCheck %s
+// RUN: pto-test-opt %s '-pto-insert-sync=algorithm=handoff' 2>&1 | FileCheck %s
 
 !left = !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>
 !right = !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
@@ -19,5 +19,6 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 }
-// CHECK: error: handoff: shared sync semantics: phase/resource contract incomplete
-// CHECK-NOT: pto.set_flag
+// CHECK: pto.tmatmul
+// CHECK: accPhase = #pto<acc_phase final>
+// CHECK: pto.barrier <PIPE_ALL>

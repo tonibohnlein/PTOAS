@@ -88,7 +88,7 @@ add_llvm_executable(pto-oahs-native-test
   PARTIAL_SOURCES_INTENDED
 )
 target_link_libraries(pto-oahs-native-test PRIVATE
-  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport MLIRPass
   MLIRFuncDialect MLIRArithDialect MLIRSCFDialect
 )
 add_dependencies(pto-oahs-native-test PTOOpsIncGen PTOPassesIncGen)

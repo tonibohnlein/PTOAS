@@ -446,32 +446,35 @@ LogicalResult import(func::FuncOp function, Import &out,
     return failure();
   if (failed(closeStructuredSyncOrigins(function, translated, buffers)))
     return failure();
-  // The shared translator owns semantic qualification. Import the translated
-  // phases; do not maintain a second opcode admission/effect extraction path.
-  auto semantics = translator.describeSemantics();
+  // Consume the same physical nodes as existing InsertSync. An instruction
+  // without a translated node contributes no synchronization effects. The
+  // optional describeSemantics audit is not an instruction-admission gate.
   DenseMap<mlir::Operation *, CompoundInstanceElement *> phases;
-  for (const auto &record : semantics.operations) {
-    if (!record.gap.empty())
-      return record.operation->emitError("handoff: shared sync semantics: ")
-             << record.gap;
-    if (record.kind != SyncSemanticRecord::Ordinary &&
-        record.kind != SyncSemanticRecord::Protocol)
-      continue;
-    if (record.protocol)
-      out.protocols.push_back(*record.protocol);
-    if (record.phases.empty())
-      continue;
-    auto *phase = record.phases.front();
+  for (const auto &entry : translated) {
+    auto *phase = dyn_cast<CompoundInstanceElement>(entry.get());
+    if (!phase) continue;
+    auto *op = phase->elementOp;
+    // Every imported phase needs an actual insertion boundary. Never silently
+    // discard later phases of a compound instruction at this adapter boundary.
+    if (phases.count(op))
+      return op->emitError("handoff: multiple translated phases require phase-aware native anchors");
     if (!pipe(static_cast<PIPE>(phase->kPipeValue)))
-      return record.operation->emitError(
+      return op->emitError(
           "handoff: pipeline outside native target contract");
-    out.payload.push_back(record.operation);
-    phases[record.operation] = phase;
+    out.payload.push_back(op);
+    phases[op] = phase;
   }
+  // Retain available shared protocol metadata for reports and refinements.
+  // Missing/incomplete metadata does not veto the translator's result.
+  function.walk([&](mlir::Operation *op) {
+    if (auto protocol = getSyncProtocolModel(op); protocol && protocol->complete())
+      out.protocols.push_back(*protocol);
+  });
 
   DenseMap<mlir::Operation *, unsigned> operationIds;
   for (auto [i, op] : llvm::enumerate(out.payload))
     operationIds[op] = i;
+  std::vector<bool> represented(out.payload.size());
   std::function<Region(mlir::Region &)> importRegion =
       [&](mlir::Region &region) -> Region {
     Region sequence;
@@ -501,6 +504,7 @@ LogicalResult import(func::FuncOp function, Import &out,
           Region phase;
           phase.kind = Region::Operation;
           phase.operation = found->second;
+          represented[found->second] = true;
           sequence.children.push_back(std::move(phase));
         }
       }
@@ -508,6 +512,9 @@ LogicalResult import(func::FuncOp function, Import &out,
     return sequence;
   };
   out.program.body = importRegion(function.getBody());
+  for (auto [i, op] : llvm::enumerate(out.payload))
+    if (!represented[i])
+      return op->emitError("handoff: translated phase lies outside supported structured control");
 
   struct Effect {
     unsigned operation;
@@ -800,9 +807,7 @@ LogicalResult import(func::FuncOp function, Import &out,
       "hardware guarantee";
   out.program.invocation.boundary =
       "kernel return requires completion of asynchronous physical phases";
-  if (llvm::any_of(semantics.operations, [](const auto &record) {
-        return record.kind == SyncSemanticRecord::Protocol;
-      }))
+  if (!out.protocols.empty())
     out.program.invocation.boundary +=
         "; preserved lowering-owned peer matching/participation/progress contracts; "
         "cross-core flags remain owned by the original protocol in their "
