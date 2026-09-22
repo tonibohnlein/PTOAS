@@ -16,6 +16,7 @@
 #include <map>
 #include <set>
 #include <utility>
+#include <tuple>
 
 namespace mlir::pto::oahs::selected {
 
@@ -85,7 +86,7 @@ struct Control {
 class Ledger {
 public:
     // The canonical table belongs to the enclosing Control and outlives this.
-    Ledger(const Program&, const std::vector<Cut>&);
+    Ledger(const Program&, const std::vector<Cut>&, const std::vector<std::pair<Id, Id>>&);
     bool initialize(const Commands&, std::string&);
     Id append(Cut, Command, EndpointPurpose, Id request = NoAnalysisId, Id ack = NoAnalysisId);
     Id prepend(Cut, Command, EndpointPurpose, Id request = NoAnalysisId);
@@ -97,6 +98,7 @@ public:
     void erase(Id);
     void protectPublicationPrefix(Id);
     void restoreAfter(Id, Id);
+    Id lastPublicationComponent(Pipe, Pipe, unsigned) const;
     uint64_t version() const { return revision; }
     const std::vector<SelectedEndpoint>& records() const { return endpoints; }
     const std::vector<Cut>& changes() const { return changed; }
@@ -106,6 +108,11 @@ private:
     Cut canonical(Cut) const;
     const Program& program;
     const std::vector<Cut>& canonicalCut;
+    const std::vector<std::pair<Id, Id>>& wordSpan;
+    // Maximum reachable component per active publication, including all word
+    // occurrences. Maintained on insert/erase/restore, including private copies.
+    std::map<std::tuple<Pipe, Pipe, unsigned>, std::multiset<Id>> publicationComponents;
+    void indexPublication(Id, bool);
     uint64_t revision = 0;
     std::vector<std::vector<Id>> words;
     std::vector<SelectedEndpoint> endpoints;
@@ -386,7 +393,9 @@ private:
     Id reusable(Pipe, Pipe, const State&);
     bool canPublish(const State&, Id) const;
     bool canPublishAt(Cut, Id) const;
-    bool consumptionBeforeNextPublication(Cut, Cut, Id);
+    bool consumptionBeforeNextPublication(Cut, Cut, Id, const Ledger* = nullptr);
+    bool availableKey(Id) const;
+    Id splitReturnKey(Cut, Id);
     bool inactiveReservation(Cut, Cut, Id);
     bool inactiveClosedReservation(Cut, Cut, Id);
     bool prepareClosedReservation(Cut, Cut, Id);

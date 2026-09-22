@@ -121,8 +121,7 @@ bool Constructor::finalReadFrontier(Pipe source,
             !finalReadGap(gap, source, required)) continue;
         for (Id key = 0; key < frontier.keys().size(); ++key) {
             const auto& k = frontier.keys()[key];
-            if (k.source != source || k.observer != observer || closedKeys.count(key) ||
-                recurringKeys.count(key)) continue;
+            if (k.source != source || k.observer != observer || !availableKey(key)) continue;
             if (!finalReadGap(gap, source, required, key) ||
                 !consumptionBeforeNextPublication(gap, current, key)) continue;
             group.publication = gap;
@@ -229,7 +228,7 @@ bool Constructor::sourceFrontier(
     Id selected = NoAnalysisId;
     for (Id key = 0; key < frontier.keys().size(); ++key) {
         const auto& identity = frontier.keys()[key];
-        if (identity.source != source || identity.observer != observer || closedKeys.count(key)) continue;
+        if (identity.source != source || identity.observer != observer || !availableKey(key)) continue;
         const bool used = std::any_of(ledger.records().begin(), ledger.records().end(), [&](const auto& endpoint) {
             const auto& command = endpoint.command;
             return (command.kind == Command::Publish || command.kind == Command::Acquire) &&
@@ -357,7 +356,7 @@ bool Constructor::loopEntryFrontier(
             auto unused = [&](Pipe a, Pipe b) {
                 for (Id key = 0; key < frontier.keys().size(); ++key) {
                     const auto& e = frontier.keys()[key];
-                    if (e.source != a || e.observer != b || closedKeys.count(key) || recurringKeys.count(key)) continue;
+                    if (e.source != a || e.observer != b || !availableKey(key)) continue;
                     if (std::none_of(ledger.records().begin(), ledger.records().end(), [&](const auto& r) {
                         if (!ledger.active(r.id)) return false;
                         const auto& c = r.command;
@@ -490,7 +489,7 @@ bool Constructor::choiceConsumerFrontier(
         for (Id candidate = 0; candidate < frontier.keys().size(); ++candidate) {
             const auto& identity = frontier.keys()[candidate];
             if (identity.source != source || identity.observer != observer ||
-                closedKeys.count(candidate) || recurringKeys.count(candidate)) continue;
+                !availableKey(candidate)) continue;
             ++result.work.keyQueries;
             if (canPublishAt(publication, candidate) && clearInterval(candidate, publication, choice.entry)) {
                 key = candidate;
@@ -507,7 +506,7 @@ bool Constructor::choiceConsumerFrontier(
             [&](const auto& identity) {
                 const auto other = Id(&identity - frontier.keys().data());
                 return other != key && identity.source == source && identity.observer == observer &&
-                    !closedKeys.count(other) && !recurringKeys.count(other) &&
+                    availableKey(other) &&
                     canPublishAt(choice.entry, other);
             });
         if (!lateBinding) continue;

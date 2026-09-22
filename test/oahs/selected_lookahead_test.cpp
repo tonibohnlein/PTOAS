@@ -328,7 +328,7 @@ struct ReplayTestAccess {
         require(checkCausalFrontier(p, c.ledger.commands()).accepted, "shared-word edge lacks rearming");
         require(c.result.work.acknowledgments == (existingReturn ? 0u : 1u),
                 "selected return ignored or missing new consumption helper");
-        require((reserved || closedRole || c.result.work.splitRearmingQueries == 1) && c.result.work.splitRearmingSites != 0,
+        require((reserved || closedRole || c.result.work.splitRearmingQueries == (existingReturn ? 1u : 2u)) && c.result.work.splitRearmingSites != 0,
                 "missing bounded neighboring-use query");
         // The earlier source cannot import the unrelated P operation between
         // publication and acquisition. Check multiple complete visits using

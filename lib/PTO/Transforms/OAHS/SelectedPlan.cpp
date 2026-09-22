@@ -12,7 +12,7 @@
 namespace mlir::pto::oahs::selected {
 Constructor::Constructor(const Program& p, SelectedOptions settings)
     : program(p), options(settings), frontier(p), control(p), storage(p), requirements(p, control, storage),
-      ledger(p, control.canonicalCut), finalized(control.graph.sites.size())
+      ledger(p, control.canonicalCut, control.wordSpan), finalized(control.graph.sites.size())
 {
     // Final-source proofs query every original occurrence, including exits.
     needsContextualReplay = options.finalReadSources && !control.finalReadGaps.empty();

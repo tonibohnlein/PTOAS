@@ -39,6 +39,14 @@ a later access cannot inherit an older receipt merely by sharing its class.
 | F7 | `SelectedAllocation.cpp`: stable source-time key selection, complete forward/reverse interval certificates, nonrecursive consumption acknowledgment and one shortest eligible route. |
 | F8 | `SelectedControl/SelectedReplay`: open choice/loop interfaces and actual fixed-point validation; `CyclicFrontiers.cpp`: qualified recurring relationship frontiers, participation checks and deterministic role allocation. |
 
+All ordinary F7 binding routes share the ownership exclusion for closed roles,
+recurring reservations and inactive restorable helpers. Certified borrowing is
+explicit. Split reverse helpers additionally check their successor against the
+complete proposed forward/return packet. A ledger-maintained publication index
+answers qualified acyclic no-next-use queries without a continuation walk;
+shared or cyclic cases retain the full structural check. See
+[key binding consistency](oahs-key-binding-consistency.md).
+
 Ordinary completion endpoint `request` IDs index `decisions`. Endpoints with
 purpose `RecurringCompletion` index `channels`. Both kinds coexist in the same
 ledger; `channels` contains qualified physical access-role requests. Neither table supplies completion to the checker.

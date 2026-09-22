@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedTestSupport.h"
+#include "GraphOracle.h"
 #include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
 #include <numeric>
 using namespace selected_test;
@@ -194,7 +195,7 @@ struct ReplayTestAccess {
     static void dischargeRestore(bool borrow = false)
     {
         const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE3;
-        auto p = base(4, 2);
+        auto p = base(4, 3);
         p.operations = {op(P, {{0, true, false}}), op(Q, {{1, true, false}}),
                         op(R, {{2, true, false}}), op(P, {{3, true, false}})};
         Constructor c(p);
@@ -281,6 +282,20 @@ struct ReplayTestAccess {
         }
         require(c.reusable(Q, P, c.cache.cuts[2].before) != suspended,
                 "ordinary allocation stole a restorable acknowledgment key");
+        c.current = 3;
+        c.activeComponent = c.control.component[c.current];
+        const auto gapKey = c.reusableAtStart(2,Q,P);
+        require(gapKey != NoAnalysisId && gapKey != suspended &&
+                c.frontier.keys()[gapKey].key == 2,
+                "source-gap binding stole dormant ownership or lost its free alternative");
+        Group gap; gap.source = Q; gap.publication = 2;
+        require(c.helperFreeBinding(gap,P) == gapKey,
+                "helper-free binding ignored dormant ownership");
+        require(!c.availableKey(suspended), "common ownership predicate admitted dormant helper");
+        gap.atWordStart = true; gap.forwardKey = gapKey; gap.version = c.ledger.version();
+        require(c.bind(gap,RequirementStage::Known),"source-gap alternative binding failed");
+        c.current = c.control.graph.exit;
+        c.activeComponent = c.control.component[c.current];
         compare();
         // New earlier republication needs the removed helper BEFORE the later
         // actual return. update() must restore original IDs and word positions.
@@ -319,6 +334,153 @@ struct ReplayTestAccess {
         broken.append(2, {Command::Acquire, Q, P, 1}, EndpointPurpose::Completion);
         require(!checkCausalFrontier(p, broken.commands()).accepted,
                 "missing neighboring rearming support was not discriminating");
+    }
+    static void nextPublicationIndex()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(1,1);
+        for (unsigned i = 0; i < 6; ++i) p.operations.push_back(op(Q,{{0,true,false}}));
+        Constructor c(p);
+        Id key = NoAnalysisId;
+        for (Id k = 0; k < c.frontier.keys().size(); ++k)
+            if (c.frontier.keys()[k].source == Q && c.frontier.keys()[k].observer == P) key = k;
+        require(c.consumptionBeforeNextPublication(2,2,key) && c.result.work.splitRearmingSites == 0,
+                "absent publication scanned the empty continuation");
+        auto anchor = c.ledger.append(5,{Command::Barrier,Q,Q,0},EndpointPurpose::Fixed);
+        auto pub = c.ledger.append(5,{Command::Publish,Q,P,0},EndpointPurpose::Fixed);
+        auto wait = c.ledger.append(5,{Command::Acquire,Q,P,0},EndpointPurpose::Fixed);
+        require(!c.consumptionBeforeNextPublication(2,2,key),"inserted successor not indexed");
+        auto trial = c.ledger;
+        trial.erase(wait); trial.erase(pub);
+        require(c.consumptionBeforeNextPublication(2,2,key,&trial),"private deletion did not update index");
+        require(!c.consumptionBeforeNextPublication(2,2,key),"private index mutation leaked");
+        c.ledger.erase(wait); c.ledger.erase(pub);
+        require(c.consumptionBeforeNextPublication(2,2,key),"erased successor still indexed");
+        c.ledger.restoreAfter(pub,anchor); c.ledger.restoreAfter(wait,pub);
+        require(!c.consumptionBeforeNextPublication(2,2,key),"restored successor not indexed");
+        auto shared = base(1,1);
+        shared.operations = {op(Q,{{0,true,false}})};
+        ObservedControl graph;
+        graph.qualification = "shared publication spans the queried acquisition";
+        graph.sites.resize(5);
+        graph.observations = {{10,{},true},{11,{},true},{12,{},true},{13,{},true}};
+        graph.entry = 0; graph.exit = 4;
+        graph.sites[0] = {0,0,{1},{},0};
+        graph.sites[1] = {NoControlId,1,{2},{},0};
+        graph.sites[2] = {NoControlId,2,{3},{},0};
+        graph.sites[3] = {NoControlId,1,{4},{},0};
+        graph.sites[4] = {NoControlId,3,{},{},0};
+        shared.observed = graph;
+        Constructor copies(shared);
+        require(!copies.consumptionBeforeNextPublication(1,2,key),
+                "absence index ignored a later occurrence of the new word");
+        copies.ledger.append(1,{Command::Publish,Q,P,0},EndpointPurpose::Fixed);
+        require(!copies.consumptionBeforeNextPublication(2,2,key),
+                "publication index ignored a later occurrence of an existing word");
+        // A new publication can repeat even when there are no selected ones.
+        p.body = {Region::For,{seq({leaf(0),leaf(1),leaf(2),leaf(3),leaf(4),leaf(5)})},0,true};
+        Constructor loop(p);
+        require(!loop.consumptionBeforeNextPublication(2,2,key) &&
+                loop.result.work.splitRearmingNoNextUse == 0,
+                "absence index ignored recurrence of the proposed publication");
+    }
+    static void helperSelectionScaling()
+    {
+        for (unsigned n : {8u,16u,32u,64u}) {
+            auto p = base(n,2);
+            p.body = {Region::Sequence,{}};
+            for (unsigned i = 0; i < n; ++i) {
+                p.operations.push_back(op(Pipe::MTE2,{{i,false,true}}));
+                p.operations.push_back(op(Pipe::V,{{i,true,false}}));
+                p.body.children.push_back({Region::Choice,{leaf(2*i),{Region::Sequence,{}}}});
+                p.body.children.push_back(leaf(2*i+1));
+            }
+            const auto plan = constructSelectedPlan(p);
+            require(plan.success,"ordinary diamond construction: " + plan.reason);
+            require(checkCausalFrontier(p,plan.commands).accepted,"diamond plan failed cold check");
+            require(plan.work.splitRearmingQueries >= n-1 &&
+                    plan.work.splitRearmingQueries == plan.work.splitRearmingNoNextUse &&
+                    plan.work.splitRearmingSites == 0,
+                    "ordinary helpers repeated suffix absence scans");
+            std::cout << "helper_absence choices=" << n << " queries=" << plan.work.splitRearmingQueries
+                      << " fast=" << plan.work.splitRearmingNoNextUse
+                      << " sites=" << plan.work.splitRearmingSites << '\n';
+        }
+    }
+    static void splitReturnNeighbors()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto body = base(3,2);
+        body.operations = {op(P,{{0,false,true}}),op(P,{{1,true,false}}),
+            op(Q,{{0,true,false}}),op(Q,{{2,true,false}}),op(P,{{1,true,false}})};
+        body.body = {Region::For,{seq({leaf(0),leaf(1),leaf(2),leaf(3),leaf(4)})},0,true};
+        const auto& p = body;
+        Constructor c(p);
+        c.needsContextualReplay = true;
+        std::string reason;
+        require(c.ledger.initialize({},reason),reason);
+        std::vector<Cut> cuts(5,NoAnalysisId);
+        for (Cut at = 0; at < c.control.graph.operations.size(); ++at) {
+            const auto op = c.control.graph.operations[at];
+            if (op != NoAnalysisId && cuts[op] == NoAnalysisId) cuts[op] = at;
+        }
+        auto append = [&](Cut cut, Command::Kind kind, Pipe a, Pipe b, unsigned key) {
+            c.ledger.append(cut,{kind,a,b,key},EndpointPurpose::Fixed);
+        };
+        append(cuts[3],Command::Publish,Q,P,0);
+        append(cuts[3],Command::Acquire,Q,P,0);
+        append(cuts[4],Command::Publish,P,Q,1);
+        append(cuts[4],Command::Acquire,P,Q,1);
+        c.current = cuts[2]; c.activeComponent = c.control.component[c.current];
+        require(c.replay(),"split fixture replay: " + c.cache.reason);
+        Id forward = NoAnalysisId, bad = NoAnalysisId, good = NoAnalysisId;
+        for (Id k = 0; k < c.frontier.keys().size(); ++k) {
+            const auto& e = c.frontier.keys()[k];
+            if (e.source == P && e.observer == Q && e.key == 0) forward = k;
+            if (e.source == Q && e.observer == P) (e.key == 0 ? bad : good) = k;
+        }
+        require(c.canPublishAt(c.current,bad),"lower reverse key lacks preceding credit");
+        require(!c.consumptionBeforeNextPublication(c.current,c.current,bad),
+                "lower reverse key has no bad successor");
+        Cut pub = cuts[1];
+        require(c.splitReturnKey(pub,forward) == good,"split return did not skip bad next publication");
+        const auto before = c.ledger;
+        // Exercise the production split selector against a fixed cyclic
+        // interface, then materialize precisely its proposed complete packet.
+        c.ledger.append(pub,{Command::Publish,P,Q,0},EndpointPurpose::Completion);
+        c.ledger.append(c.current,{Command::Acquire,P,Q,0},EndpointPurpose::Completion);
+        c.ledger.append(c.current,{Command::Publish,Q,P,1},EndpointPurpose::ConsumptionAcknowledgment);
+        c.ledger.append(c.current,{Command::Acquire,Q,P,1},EndpointPurpose::ConsumptionAcknowledgment);
+        require(c.update(),"selected split helper failed replay: " + c.cache.reason);
+        const auto checked = checkCausalFrontier(p,c.ledger.commands());
+        require(checked.accepted,"selected split packet failed cold check: " + checked.reason + " at " + std::to_string(checked.cut));
+        // Both choices cover the same payloads. Only the lower-key packet
+        // invalidates the already-selected reverse publication.
+        auto broken = before;
+        broken.append(pub,{Command::Publish,P,Q,0},EndpointPurpose::Completion);
+        broken.append(c.current,{Command::Acquire,P,Q,0},EndpointPurpose::Completion);
+        broken.append(c.current,{Command::Publish,Q,P,0},EndpointPurpose::ConsumptionAcknowledgment);
+        broken.append(c.current,{Command::Acquire,Q,P,0},EndpointPurpose::ConsumptionAcknowledgment);
+        require(checkCausalFrontier(p,broken.commands()).failure == FrontierFailure::ConsumptionNotEstablished,
+                "bad reverse neighbor did not isolate rearming failure");
+        for (unsigned visits = 1; visits <= 4; ++visits) {
+            for (bool wrong : {false,true}) {
+                auto flat = p; flat.body = {}; flat.operations.clear();
+                Commands words;
+                const auto commands = wrong ? broken.commands() : c.ledger.commands();
+                for (unsigned visit = 0; visit < visits; ++visit)
+                    for (unsigned op = 0; op < p.operations.size(); ++op) {
+                        flat.operations.push_back(p.operations[op]);
+                        words.push_back(commands[cuts[op]]);
+                    }
+                words.push_back({});
+                std::vector<unsigned> trace(flat.operations.size());
+                std::iota(trace.begin(),trace.end(),0);
+                const auto checked = oahs_oracle::graph(flat,words,trace);
+                require(checked.balanced && checked.acyclic && checked.hazards && checked.rearm == !wrong,
+                        "finite split-return mutation did not isolate neighboring consumption");
+            }
+        }
     }
     // One edit, replayed with the reusable prefix kept and then entirely cold.
     // Returns how many components the incremental run actually kept.
@@ -731,6 +893,9 @@ void recurringRoleIsolation()
 } // namespace
 int main()
 {
+    o::selected::ReplayTestAccess::nextPublicationIndex();
+    o::selected::ReplayTestAccess::helperSelectionScaling();
+    o::selected::ReplayTestAccess::splitReturnNeighbors();
     o::selected::ReplayTestAccess::dischargeRestore();
     o::selected::ReplayTestAccess::dischargeRestore(true);
     for (unsigned words : {32u, 128u, 512u})

@@ -19,6 +19,12 @@ constructor failures are fixed locally through general occurrence, participation
 and consumption-return handling. See [diagnosis](oahs-constructor-compatibility.md).
 The stricter instruction-admission gate remains removed; do not reintroduce it.
 
+Review amendments implemented locally after `5e0a72772`: common dormant/active
+ownership exclusion, split-helper successor qualification and an indexed
+acyclic no-next-publication answer. The checked borrowing paths remain intact.
+See [scope and validation](oahs-key-binding-consistency.md). General cyclic
+continuation-query cost and KDA order inclusion remain open.
+
 Next acceptance work:
 
 1. Run full model builds and device correctness for the newly admitted sweep

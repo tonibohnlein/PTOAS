@@ -25,9 +25,28 @@ std::vector<Id> unionIds(const std::vector<Id>& a, const std::vector<Id>& b)
     std::set_union(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(out));
     return out;
 }
-Ledger::Ledger(const Program& p, const std::vector<Cut>& canonicalWords)
-    : program(p), canonicalCut(canonicalWords), words(commandCutCount(p))
+Ledger::Ledger(const Program& p, const std::vector<Cut>& canonicalWords,
+               const std::vector<std::pair<Id, Id>>& spans)
+    : program(p), canonicalCut(canonicalWords), wordSpan(spans), words(commandCutCount(p))
 {
+}
+void Ledger::indexPublication(Id id, bool add)
+{
+    const auto& e = endpoints[id];
+    if (e.command.kind != Command::Publish || wordSpan[e.cut].first == NoAnalysisId) return;
+    const auto key = std::make_tuple(e.command.source, e.command.observer, e.command.key);
+    const auto last = wordSpan[e.cut].second;
+    if (add) publicationComponents[key].insert(last);
+    else {
+        auto at = publicationComponents.find(key);
+        at->second.erase(at->second.find(last));
+        if (at->second.empty()) publicationComponents.erase(at);
+    }
+}
+Id Ledger::lastPublicationComponent(Pipe source, Pipe observer, unsigned key) const
+{
+    const auto at = publicationComponents.find({source,observer,key});
+    return at == publicationComponents.end() ? NoAnalysisId : *at->second.rbegin();
 }
 // Same value as canonicalCommandCut, read from the control's one-pass memo.
 // Cuts beyond the table, and programs without a refined control, are their own
@@ -75,6 +94,7 @@ Id Ledger::insert(Cut cut, Id offset, Command command, EndpointPurpose purpose, 
     }
     const auto id = endpoints.size();
     endpoints.push_back({id, cut, command, purpose, request, ack});
+    indexPublication(id, true);
     words[cut].insert(words[cut].begin() + offset, id);
     ++revision;
     changed.push_back(cut);
@@ -106,6 +126,7 @@ void Ledger::erase(Id id)
     auto& word = words[cut];
     word.erase(std::find(word.begin(), word.end(), id));
     removed.insert(id);
+    indexPublication(id, false);
     changed.push_back(cut);
     ++revision;
 }
@@ -121,6 +142,7 @@ void Ledger::restoreAfter(Id id, Id predecessor)
     }
     word.insert(position, id);
     removed.erase(id);
+    indexPublication(id, true);
     changed.push_back(cut);
     ++revision;
 }

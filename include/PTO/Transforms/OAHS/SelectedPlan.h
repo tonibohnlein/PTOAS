@@ -138,7 +138,7 @@ struct SelectedWork {
     std::size_t sourceHandles = 0, acknowledgments = 0, commonCutTransfers = 0;
     std::size_t recurringChannels = 0;
     // Structural next-publication/actual-return queries, not full trial solves.
-    std::size_t splitRearmingQueries = 0;
+    std::size_t splitRearmingQueries = 0, splitRearmingNoNextUse = 0;
     uint64_t splitRearmingSites = 0;
     std::size_t joinedAcknowledgments = 0, acknowledgmentChecks = 0;
     uint64_t acknowledgmentCheckSites = 0;

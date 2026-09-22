@@ -12,6 +12,26 @@ Updated: 2026-09-22
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
 
+## Latest local amendment: key binding consistency
+
+After `5e0a72772`, ordinary binding now uses one ownership condition for dormant
+helpers and reserved roles, including source gaps, final-read sources, relay
+legs and acknowledgment allocation. Explicit checked reservation borrowing
+remains available. Split returns check their next publication against the full
+proposed forward/return packet before selecting a reverse key.
+
+The ledger also indexes the latest publication component per key. Acyclic
+no-next-use queries avoid rescanning the remaining graph; cyclic/shared cases
+retain the complete query. See [implementation and regressions](docs/designs/oahs-key-binding-consistency.md).
+All 25 portable suites and both native suites pass. The targeted native recheck
+covers the 19 compatibility inputs and four partial-attention modules: **23/23
+construct and reconstruct; 22 plans are byte-identical to `5e0a72772`**. Qwen
+`topk_select` differs only in event-ID assignments (no payload, position or
+command-count change). Results are in
+`../sweep-followup-work/key-binding-native-cases.log`. The full 88-module corpus
+was not repeated for this amendment.
+This amendment does not enable the KDA experiments or claim device speedups.
+
 ## Sweep follow-up: compatibility first
 
 See [exact reproductions, fixes and remaining gates](docs/designs/oahs-sweep-followup.md).

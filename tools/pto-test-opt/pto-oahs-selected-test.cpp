@@ -1133,6 +1133,7 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
                  << " final_read_query_sites=" << work.finalReadQuerySites
                  << " first_write_consumers=" << options.firstWriteConsumers
                  << " split_rearming_queries=" << report.work.splitRearmingQueries
+                 << " split_rearming_no_next_use=" << report.work.splitRearmingNoNextUse
                  << " split_rearming_sites=" << report.work.splitRearmingSites
                  << " joined_acknowledgments=" << work.joinedAcknowledgments
                  << " acknowledgment_checks=" << work.acknowledgmentChecks

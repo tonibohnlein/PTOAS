@@ -7,8 +7,49 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedTestSupport.h"
 #include "GraphOracle.h"
+#include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
 #include <numeric>
 using namespace selected_test;
+namespace mlir::pto::oahs::selected {
+struct ReplayTestAccess {
+    static void dormantRelay(Program p, Pipe a, Pipe b) {
+        p.target.keys[unsigned(b)][unsigned(a)] = {0};
+        SelectedOptions options; options.finalHelperTrials = options.recurringOmissionTrials = false;
+        Constructor c(p,options); c.needsContextualReplay = true;
+        const auto entry = c.control.graph.entry;
+        auto append = [&](Pipe from, Pipe to, unsigned key, Command::Kind kind, EndpointPurpose purpose, Id ack = NoAnalysisId) {
+            return c.ledger.append(entry,{kind,from,to,key},purpose,NoAnalysisId,ack);
+        };
+        append(b,a,0,Command::Publish,EndpointPurpose::Fixed);
+        const auto forward = append(b,a,0,Command::Acquire,EndpointPurpose::Fixed);
+        const auto helperSet = append(a,b,0,Command::Publish,EndpointPurpose::ConsumptionAcknowledgment,forward);
+        const auto helperWait = append(a,b,0,Command::Acquire,EndpointPurpose::ConsumptionAcknowledgment,forward);
+        c.rememberReturn(helperSet,helperWait); c.result.work.acknowledgments = 1;
+        append(a,b,3,Command::Publish,EndpointPurpose::Completion);
+        const auto actual = append(a,b,3,Command::Acquire,EndpointPurpose::Completion);
+        c.current = c.control.graph.exit; c.activeComponent = c.control.component[c.current];
+        require(c.update(),"dormant relay initial protocol: " + c.cache.reason);
+        SelectedDecision receipt; receipt.endpoints = {actual};
+        require(c.settleRearming(receipt) && !c.ledger.active(helperWait),"relay helper never discharged");
+        const auto plan = c.run({});
+        require(plan.success && plan.work.splitRelays != 0,"dormant relay lost its selectable route: " + plan.reason);
+        bool alternative = false;
+        for (const auto& e : c.ledger.records())
+            if (c.ledger.active(e.id) && e.command.kind == Command::Publish &&
+                e.command.source == a && e.command.observer == b && e.cut != entry) {
+                require(e.command.key != 0,"relay stole dormant helper ownership");
+                alternative = true;
+            }
+        require(alternative,"dormant relay did not exercise the affected leg");
+        Id originalForward = NoAnalysisId;
+        for (Id k = 0; k < c.frontier.keys().size(); ++k)
+            if (c.frontier.keys()[k].source == b && c.frontier.keys()[k].observer == a &&
+                c.frontier.keys()[k].key == 0) originalForward = k;
+        require(c.restoreReturns(originalForward),"relay helper restoration was not exercised");
+        require(checkCausalFrontier(p,c.ledger.commands()).accepted,"relay binding broke restored ownership");
+    }
+};
+}
 namespace {
 // Bounded relay selection regressions, not a general ordering guarantee.
 // The explicit slot view and target vocabulary are portable fixture contracts;
@@ -383,6 +424,8 @@ void bindingAlternative(bool secondLeg, unsigned state = 0, bool reusedAlternati
 } // namespace
 int main()
 {
+    o::selected::ReplayTestAccess::dormantRelay(fixture(true),P,R);
+    o::selected::ReplayTestAccess::dormantRelay(fixture(true),R,Q);
     witness(false);
     witness(true);
     receiverCredit(false);
