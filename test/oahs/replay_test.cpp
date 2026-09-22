@@ -12,7 +12,7 @@
 #include "AnalysisEquality.h"
 #include "ObservedFixtures.h"
 #include "PhaseFixtures.h"
-#include "GraphOracle.h"
+#include "TraceOracle.h"
 #include <cstdlib>
 #include <iostream>
 #include <random>

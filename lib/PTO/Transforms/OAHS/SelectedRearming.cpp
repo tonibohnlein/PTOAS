@@ -6,23 +6,27 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 // Deadline-driven ordinary rearming. These records never modify causal state.
-// Acyclic continuations may merge shared receipt occurrences. Correspondence
-// and actual source-time consumption checks qualify the later F7 helper.
+// Acyclic continuations may merge shared receipts and split before key reuse.
+// Immutable balanced boundaries and actual source-time consumption checks
+// qualify the later F7 helper without allocating it speculatively.
 #include "SelectedInternal.h"
 
 namespace mlir::pto::oahs::selected {
 bool Constructor::deferCommonRearming(Id key, Id acquisition, const SelectedDecision& decision)
 {
-    if (!options.deferredAcyclicAcknowledgments ||
-        std::any_of(control.components.begin(), control.components.end(),
-                    [](const auto& component) { return component.cyclic; }) ||
-        !control.mergesToExit[current]) {
+    if (!options.deferredAcyclicAcknowledgments || !control.acyclic) {
         return false;
     }
     const auto& correspondence = control.correspondence(current, control.graph.exit);
+    const auto boundary = control.rearmingBoundary[current];
+    if (boundary == NoAnalysisId || !legalCommandCut(program, boundary)) {
+        return false;
+    }
     if (!correspondence.qualified ||
         std::any_of(correspondence.pairs.begin(), correspondence.pairs.end(), [&](const auto& pair) {
-            return pair.second != control.graph.exit || !control.mergesToExit[pair.first];
+            const auto next = control.rearmingBoundary[pair.first];
+            return pair.second != control.graph.exit || next == NoAnalysisId ||
+                control.canonicalCut[next] != control.canonicalCut[boundary];
         })) {
         return false;
     }
@@ -40,6 +44,7 @@ bool Constructor::deferCommonRearming(Id key, Id acquisition, const SelectedDeci
     SelectedRearmingObligation obligation;
     obligation.key = identity;
     obligation.acquisition = acquisition;
+    obligation.fallback = control.canonicalCut[boundary];
     for (const auto& demand : decision.lifecycles) {
         obligation.returnDeadlines.insert(obligation.returnDeadlines.end(),
             demand.returnDeadlines.begin(), demand.returnDeadlines.end());
@@ -54,6 +59,36 @@ bool Constructor::deferCommonRearming(Id key, Id acquisition, const SelectedDeci
         ++result.work.deferredAcknowledgments;
     }
     return true;
+}
+
+Cut Constructor::deferredReturnCut(Id acquisition, Cut publication, Id key) const
+{
+    const auto found = deferredByAcquisition.find(acquisition);
+    if (found == deferredByAcquisition.end()) {
+        return NoAnalysisId;
+    }
+    // The consumer at the traversal cursor is not evidence at an earlier
+    // publication. Recheck the actual generation at every source occurrence.
+    for (auto at : control.wordOccurrences[control.canonicalCut[publication]]) {
+        const auto& state = cache.cuts[at].before;
+        if (control.reachable[at] && (!state.causal.reachable() ||
+            state.causal.facts()->events[key].occupancy != 1 || state.consumptions[key].size() != 1 ||
+            state.consumptions[key].front() != acquisition)) {
+            return NoAnalysisId;
+        }
+    }
+    const auto source = ledger.endpoint(acquisition).cut;
+    if (control.correspondence(source, publication).qualified) {
+        return publication;
+    }
+    const auto boundary = result.rearming[found->second].fallback;
+    const auto lastBoundary = control.wordSpan[boundary].second;
+    const auto firstPublication = control.wordSpan[control.canonicalCut[publication]].first;
+    // Every entry-to-exit path contains the receipt and its first split. A
+    // publication after that split can be conditional; the return cannot be.
+    // Topological components distinguish earlier saved source positions.
+    return lastBoundary != NoAnalysisId && firstPublication != NoAnalysisId &&
+        lastBoundary <= firstPublication ? boundary : NoAnalysisId;
 }
 
 void Constructor::observeDeferredRearming(const SelectedDecision& decision)

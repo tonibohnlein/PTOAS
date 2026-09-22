@@ -148,6 +148,7 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
 {
     Id oldWait = NoAnalysisId, reverse = NoAnalysisId;
     Cut moved = publication;
+    Cut returnCut = NoAnalysisId;
     bool stagedAcrossControl = false;
     for (Id candidate = 0; candidate < frontier.keys().size(); ++candidate) {
         const auto& identity = frontier.keys()[candidate];
@@ -171,8 +172,7 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
         // A deferred shared receipt can have several mutually exclusive
         // occurrences feeding one later publication. Match every occurrence;
         // its record identifies the debt but supplies no consumption credit.
-        const bool deferredAcrossControl = deferredByAcquisition.count(wait) &&
-            !control.straight(cut, current) && control.correspondence(cut, publication).qualified;
+        const bool deferredAcrossControl = deferredByAcquisition.count(wait) != 0;
         const bool acrossControl = deferredAcrossControl || (options.firstWriteConsumers && publication != current &&
             (cut != ledger.endpoint(wait).cut || !control.straight(cut, current)));
         if ((!control.straight(cut, current) && !acrossControl) || !control.straight(publication, current)) {
@@ -187,6 +187,10 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
         if (!clearInterval(candidate, newCut, current)) {
             continue;
         }
+        const auto receipt = deferredAcrossControl ? deferredReturnCut(wait, newCut, candidate) : newCut;
+        if (receipt == NoAnalysisId) {
+            continue;
+        }
         // F7 chooses the lowest reverse key whose COMPLETE certificate passes.
         // A lower reusable key with an intervening use must not hide a later
         // eligible key for this same stable forward repair target.
@@ -196,18 +200,21 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
                 !availableKey(reverseKey)) continue;
             ++result.work.keyQueries;
             if (!canPublish(after->second, reverseKey)) continue;
-            if (acrossControl ? !crossControlReturn(wait, newCut, candidate, reverseKey) :
-                !clearInterval(reverseKey, cut, newCut)) continue;
+            if (acrossControl ? !crossControlReturn(wait, receipt, candidate, reverseKey) :
+                !clearInterval(reverseKey, cut, newCut)) {
+                continue;
+            }
             // The acyclic return half must stand on its own during replay.
             // Do not presume the new forward receipt rearms an already selected
             // later reverse publication. Existing first-write staging is separate.
-            if (deferredAcrossControl && !consumptionBeforeNextPublication(cut, newCut, reverseKey)) {
+            if (deferredAcrossControl && !consumptionBeforeNextPublication(cut, receipt, reverseKey)) {
                 continue;
             }
             key = candidate;
             oldWait = wait;
             reverse = reverseKey;
             moved = newCut;
+            returnCut = receipt;
             stagedAcrossControl = acrossControl && !deferredAcrossControl;
             break;
         }
@@ -224,10 +231,14 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
     decision.repairedForwardKey = frontier.keys()[key].key;
     decision.repairReverseKey = identity.key;
     decision.repairInputVersion = ledger.version();
-    decision.endpoints.push_back(ledger.after(oldWait,
-        {Command::Publish, observer, source, identity.key}, EndpointPurpose::ConsumptionAcknowledgment, request, oldWait));
-    decision.endpoints.push_back(ledger.append(moved,
-        {Command::Acquire, observer, source, identity.key}, EndpointPurpose::ConsumptionAcknowledgment, request, oldWait));
+    const auto sent = ledger.after(oldWait, {Command::Publish, observer, source, identity.key},
+        EndpointPurpose::ConsumptionAcknowledgment, request, oldWait);
+    decision.endpoints.push_back(sent);
+    // Append the wait after existing outward publications, including when the
+    // balancing boundary is the old word itself. Only its SET needs the exact
+    // original receipt prefix; earlier publications must not acquire a new gate.
+    decision.endpoints.push_back(ledger.append(returnCut, {Command::Acquire, observer, source, identity.key},
+        EndpointPurpose::ConsumptionAcknowledgment, request, oldWait));
     ++result.work.acknowledgments;
     decision.enlargedPrefix |= moved != publication;
     publication = moved;

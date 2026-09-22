@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include "PTO/Transforms/OAHS/Analysis.h"
-#include "GraphOracle.h"
+#include "TraceOracle.h"
 #include "../../lib/PTO/Transforms/OAHS/Transfer.h"
 #include <cstdlib>
 #include <iostream>

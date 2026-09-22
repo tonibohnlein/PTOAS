@@ -42,8 +42,10 @@ struct Control {
     std::vector<Component> components;
     std::vector<Id> component, position, frame;
     std::vector<bool> reachable;
-    // Original continuations may merge, but cannot split or repeat before exit.
-    std::vector<bool> mergesToExit;
+    // First downstream split/exit, through merge-only original continuations.
+    // This can balance a delayed return even when a later key use is skipped.
+    std::vector<Cut> rearmingBoundary;
+    bool acyclic = true;
     std::vector<Pipe> sitePipes;
     LookaheadIndex lookahead;
     struct LoopEntryFacts {
@@ -466,6 +468,7 @@ private:
     bool joinedAcknowledgment(Pipe, Pipe, Cut, Id&, SelectedDecision&);
     bool needsCommonAcknowledgment(const State&) const;
     bool deferCommonRearming(Id key, Id acquisition, const SelectedDecision&);
+    Cut deferredReturnCut(Id acquisition, Cut publication, Id key) const;
     void observeDeferredRearming(const SelectedDecision&);
     // Index obligations by the actual consumption endpoint, not engine pair.
     std::map<Id, Id> deferredByAcquisition;

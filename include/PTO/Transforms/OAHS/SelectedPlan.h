@@ -54,6 +54,9 @@ struct SelectedLifecycleDemand {
 struct SelectedRearmingObligation {
     EventIdentity key;
     std::size_t acquisition = NoAnalysisId;
+    // Balanced fallback before a downstream split; no command is reserved or
+    // emitted here unless actual reuse needs a consumption return.
+    Cut fallback = NoAnalysisId;
     std::vector<Cut> returnDeadlines;
     std::vector<std::size_t> reusePublications;
 };

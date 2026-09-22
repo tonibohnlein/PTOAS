@@ -355,7 +355,7 @@ void deferredSharedReceipt(bool requiredReturn, bool skippedReceipt = false, boo
     const auto debt = std::find_if(plan.rearming.begin(), plan.rearming.end(), [&](const auto& obligation) {
         return plan.ledger.at(obligation.acquisition).cut == 3;
     });
-    const bool qualified = !skippedReceipt && !downstreamChoice;
+    const bool qualified = !skippedReceipt;
     require((debt != plan.rearming.end()) == qualified, "shared receipt deferral ignored participation");
     if (qualified) {
         require(!debt->reusePublications.empty(), "shared receipt lost its actual reuse deadline");
@@ -406,7 +406,7 @@ void deferredSharedReceipt(bool requiredReturn, bool skippedReceipt = false, boo
         const auto before = ordering(baseline.commands), after = ordering(plan.commands);
         require(std::includes(before.begin(), before.end(), after.begin(), after.end()),
                 "shared receipt introduced payload ordering");
-        if (qualified && !requiredReturn) {
+        if (qualified && !requiredReturn && !downstreamChoice) {
             require(before != after, "shared receipt helper did not release unrelated producer work");
         } else if (!qualified) {
             require(before == after, "unsupported shared receipt changed conservative ordering");
@@ -441,22 +441,26 @@ void deferredAcknowledgment() {
     require(!plan.rearming.empty() && !plan.rearming.front().reusePublications.empty(),
             "helper-backed reuse lost its deferred obligation");
 
-    // The common consumption is exactly once, but a later publication inside
-    // a branch is outside F7's straight-corridor repair vocabulary.
+    // The common consumption is exactly once. A helper demanded by a later
+    // conditional publication must also be consumed on the skipped path.
     p.body = seq({leaf(0), {o::Region::Choice,{leaf(1),seq({})}}, leaf(2),leaf(3),
                   {o::Region::Choice,{seq({leaf(4),leaf(5)}),seq({})}}});
     baseline = o::constructSelectedPlan(p,{},before);
     plan = o::constructSelectedPlan(p,{},after);
     require(baseline.success, "closed conditional-reuse baseline failed: " + baseline.reason);
     require(plan.success, "conditional future key reuse lost its repair: " + plan.reason);
-    require(plan.work.deferredAcknowledgments == 0 &&
-            plan.work.acknowledgments == baseline.work.acknowledgments,
-            "unsupported conditional repair must retain the closed policy");
+    require(plan.work.deferredAcknowledgments != 0 && !plan.rearming.empty(),
+            "conditional repair did not retain its unresolved obligation");
     require(o::checkCausalFrontier(p,plan.commands).accepted, "conditional-reuse cold check failed");
     for (auto visits : {std::vector<unsigned>{0,1,2,3,4,5}, std::vector<unsigned>{0,2,3,4,5},
                         std::vector<unsigned>{0,1,2,3}, std::vector<unsigned>{0,2,3}}) {
-        require(bool(oahs_oracle::graph(p,baseline.commands,visits)), "closed conditional-reuse oracle failed");
-        require(bool(oahs_oracle::graph(p,plan.commands,visits)), "conditional reuse lacks real rearming");
+        oahs_oracle::PayloadOrder oldOrder, newOrder;
+        require(bool(oahs_oracle::graph(p, baseline.commands, visits, {}, nullptr, nullptr, &oldOrder)),
+                "closed conditional-reuse oracle failed");
+        require(bool(oahs_oracle::graph(p, plan.commands, visits, {}, nullptr, nullptr, &newOrder)),
+                "conditional reuse lacks real rearming");
+        require(std::includes(oldOrder.begin(), oldOrder.end(), newOrder.begin(), newOrder.end()),
+                "conditional rearming added payload ordering");
     }
     auto broken = plan.commands;
     for (auto& word : broken) word.erase(std::remove_if(word.begin(),word.end(),[&](const auto& command) {

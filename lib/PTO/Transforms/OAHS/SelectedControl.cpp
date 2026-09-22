@@ -317,17 +317,20 @@ Control::Control(const Program& program)
         reason = "invalid immutable lookahead dimensions";
         return;
     }
-    // A single reverse DAG pass qualifies merge-only continuations. Shared
-    // receipts in mutually exclusive arms can reach one later reuse deadline
-    // without treating the join as a new execution or enumerating paths.
-    mergesToExit.assign(graph.sites.size(), false);
+    // One reverse component pass finds where a merge-only continuation first
+    // splits. A helper requested inside a later branch can be consumed here
+    // on every path, without moving its publication past the original receipt.
+    rearmingBoundary.assign(graph.sites.size(), NoAnalysisId);
     for (auto block = components.rbegin(); block != components.rend(); ++block) {
         if (block->cyclic) {
+            acyclic = false;
             continue;
         }
         for (auto site : block->sites) {
             const auto& next = graph.sites[site].successors;
-            mergesToExit[site] = site == graph.exit || (next.size() == 1 && mergesToExit[next.front()]);
+            const auto boundary = next.size() == 1 ? rearmingBoundary[next.front()] : NoAnalysisId;
+            rearmingBoundary[site] = boundary != NoAnalysisId ? boundary :
+                (graph.legalCuts[site] ? site : NoAnalysisId);
         }
     }
     // Prepare region entry placement facts once, before selecting any event.

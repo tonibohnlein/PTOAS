@@ -100,17 +100,26 @@ with the final ledger. An empty reuse list is not proof that future construction
 cannot introduce a deadline; these records never grant consumption credit.
 
 The admissible scope is an acyclic graph with exactly one execution of the
-receipt word on every entry-to-exit path. M2 occurrence correspondence now also
-qualifies mutually exclusive copies of that word. Their continuations may merge,
-but cannot split or repeat before exit. A reverse pass over original components
-prepares this continuation property once. Previously selected uses retain the
-existing conservative policy.
+receipt word on every entry-to-exit path. M2 occurrence correspondence also
+qualifies mutually exclusive copies of that word. A reverse component pass
+finds the last legal command position before the first downstream split or exit,
+following continuations that only merge. All copies must identify the same
+canonical balancing boundary. Previously selected uses and skipped receipts
+retain the existing conservative policy.
 
 Required returns can supply actual rearming. Otherwise F7 can publish a helper
-immediately after the old acquisition in every shared copy and acquire it at the
-new forward publication's existing gap. It checks actual consumption at every
-publication occurrence, balances the return across original control, excludes
-intervening key uses, and protects the reverse key's next publication. The return
+immediately after the old acquisition in every shared copy. If the new forward
+publication matches every receipt, its existing gap is the return deadline.
+Otherwise a conditional reuse requests the already-qualified common balancing
+boundary: the helper is consumed there even on paths skipping the new use. No
+helper is emitted merely because such a branch or boundary exists. The forward
+publication retains its original source position.
+
+F7 rechecks the actual consumed generation at every publication occurrence,
+balances the return across original control, excludes intervening key uses, and
+protects the reverse key's next publication. The helper WAIT is appended after
+existing outward publications, even when the balancing boundary shares the old
+receipt's word. The helper SET retains the exact early receipt prefix. The return
 half is replayed before installing the forward pair; it cannot borrow knowledge
 from that still-unselected pair. Existing cyclic first-write staging is separate.
 
@@ -120,13 +129,27 @@ it uses `afterEndpoint` snapshots already produced by command replay. Qualificat
 uses cached immutable correspondence and existing key-interval certificates;
 it does not solve a completed plan for each obligation.
 
-Constructor witnesses cover both shared-helper reuse and an actual required
-return, with independent order inclusion on every finite branch path. The helper
-witness strictly removes payload ordering. Skipped receipts and downstream
-branches retain closed fallback and unchanged ordering. This is a qualified M3
-extension, not general deadline-driven selection or milestone completion.
-`--defer-acyclic-acks` stays opt-in; downstream conditional repair and the remaining
-deadline/edit interactions need their own qualification and evidence.
+The local ordering argument is relative to the closed exchange at the original
+receipt: the return publishes the same consumer prefix and its producer-side
+wait moves later on each qualified path. Earlier producer work and publications
+therefore lose prerequisites; the move does not add consumer completion to the
+return. This does not prove dominance of all subsequent greedy choices. Complete
+constructed plans still require independent order comparisons.
+
+Constructor witnesses cover shared and conditional reuse, a branch without
+reuse, actual required returns, multiple physical readers, stale return
+generations, earlier publication deadlines, scarce keys and removal of a
+supporting return after reuse. One return can cover several consumed generations;
+the provenance records never keep them valid after an invalidating edit.
+Independent finite-trace checks compare complete ordering, with strict reductions
+in the delayed-helper and no-reuse witnesses. The native conditional fixture also
+checks import, emission, reconstruction and all four branch traces.
+
+This is the bounded M3 mechanism: ordinary acyclic and qualified branch/shared
+occurrences. `--defer-acyclic-acks` remains opt-in. General recurring deadline
+selection belongs to the coupled protocol and ownership work in M4/M5; it is not
+silently enabled by these acyclic certificates. Native device performance and
+GEMM-to-prefill generalization are separate acceptance questions.
 
 ## Construction cost: query only live residuals
 

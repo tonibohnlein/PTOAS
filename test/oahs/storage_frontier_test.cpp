@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "../../lib/PTO/Transforms/OAHS/Control.h"
-#include "GraphOracle.h"
+#include "TraceOracle.h"
 #include "PTO/Transforms/OAHS/StorageFrontiers.h"
 #include <cstdlib>
 #include <iostream>

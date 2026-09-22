@@ -12,12 +12,15 @@
 #include "PTO/Transforms/InsertSync/SyncAccumulatorOrdering.h"
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
+#include "../../test/oahs/GraphOracle.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
+#include <functional>
 #include <limits>
+#include <numeric>
 #include <map>
 #include <tuple>
 
@@ -1537,6 +1540,89 @@ module attributes {pto.target_arch = "a3"} {
   return check(early && outside, "native bank readiness lost its early source or common choice receipt");
 }
 
+bool conditionalRearming(MLIRContext &context) {
+  const char *source = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @conditional_rearming(%src: !pto.partition_tensor_view<1x32xf32>, %first: i1, %later: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %x = arith.constant 0 : i64
+    %y = arith.constant 128 : i64
+    %z = arith.constant 256 : i64
+    %w = arith.constant 384 : i64
+    %s = arith.constant 512 : i64
+    %a = pto.alloc_tile addr = %x : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %y : !pto.tile_buf<vec, 1x32xf32>
+    %scratch = pto.alloc_tile addr = %z : !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %w : !pto.tile_buf<vec, 1x32xf32>
+    %spare = pto.alloc_tile addr = %s : !pto.tile_buf<vec, 1x32xf32>
+    pto.tabs ins(%scratch : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    scf.if %first {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+    }
+    pto.tabs ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+    scf.if %later {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%spare : !pto.tile_buf<vec, 1x32xf32>)
+    }
+    return
+  }
+})mlir";
+  auto original = parseSourceString<ModuleOp>(source, &context);
+  auto candidate = parseSourceString<ModuleOp>(source, &context);
+  if (!check(bool(original) && bool(candidate), "parse conditional rearming")) { return false; }
+  auto function = *original->getOps<func::FuncOp>().begin();
+  oahs::NativeAnalysis input;
+  if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, input)),
+             "import conditional rearming")) { return false; }
+  oahs::SelectedOptions options;
+  options.finalHelperTrials = false;
+  oahs::SelectedPlan before, after;
+  if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &before, &options)),
+             "closed conditional construction/reconstruction")) { return false; }
+  options.deferredAcyclicAcknowledgments = true;
+  function = *candidate->getOps<func::FuncOp>().begin();
+  if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &after, &options)),
+             "deferred conditional construction/reconstruction")) { return false; }
+  if (!check(after.work.deferredAcknowledgments && after.work.acknowledgments < before.work.acknowledgments,
+             "native branch forced a helper without key reuse")) { return false; }
+  const auto &graph = *input.program.observed;
+  bool accepted = true, improved = false;
+  unsigned traces = 0;
+  std::function<void(oahs::Cut, std::vector<oahs::Cut>)> walk;
+  walk = [&](oahs::Cut at, std::vector<oahs::Cut> path) {
+    path.push_back(at);
+    if (path.size() > graph.sites.size()) { accepted = false; return; }
+    if (at != graph.exit) {
+      for (auto next : graph.sites[at].successors) { walk(next, path); }
+      return;
+    }
+    auto ordering = [&](const oahs::Commands &commands) {
+      auto flat = input.program;
+      flat.observed.reset(); flat.body = {}; flat.operations.clear();
+      oahs::Commands words;
+      std::vector<oahs::Command> pending;
+      for (auto cut : path) {
+        pending.insert(pending.end(), commands[cut].begin(), commands[cut].end());
+        if (graph.sites[cut].operation != oahs::NoAnalysisId) {
+          flat.operations.push_back(input.program.operations[graph.sites[cut].operation]);
+          words.push_back(std::move(pending)); pending.clear();
+        }
+      }
+      words.push_back(std::move(pending));
+      std::vector<unsigned> visits(flat.operations.size());
+      std::iota(visits.begin(), visits.end(), 0);
+      oahs_oracle::PayloadOrder result;
+      accepted &= bool(oahs_oracle::graph(flat, words, visits, {}, nullptr, nullptr, &result));
+      return result;
+    };
+    const auto oldOrder = ordering(before.commands), newOrder = ordering(after.commands);
+    accepted &= std::includes(oldOrder.begin(), oldOrder.end(), newOrder.begin(), newOrder.end());
+    improved |= oldOrder != newOrder;
+    ++traces;
+  };
+  walk(graph.entry, {});
+  return check(accepted && improved && traces == 4, "native conditional rearming lost safety or added ordering");
+}
+
 int main(int argc, char **argv) {
   MLIRContext context;
   context.disableMultithreading();
@@ -1581,7 +1667,7 @@ int main(int argc, char **argv) {
   }
   const bool passed = positive(context, ordinary, "ordinary") && positive(context, loop, "loop") &&
                       positive(context, recurrence, "recurrence") &&
-                      positive(context, collective, "collective") &&
+                      positive(context, collective, "collective") && conditionalRearming(context) &&
                       positive(context, queue, "queue") && exactCommandEmission(context) && mutations(context) && constantAddresses(context) &&
                       choiceConsumerPlacement(context) && slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && staticFifoSlotQualification(context) && firstConsumerPlacement(context) && firstWritePlacement(context) && finalReadSourcePlacement(context) && lastReaderPlacement(context) && jointReaderPlacement(context);
   return passed ? 0 : 1;
