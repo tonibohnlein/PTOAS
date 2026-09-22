@@ -193,6 +193,7 @@ private:
 
   void updateLoops() {
     for (auto &loop : q.loops) {
+      const auto originalOccurrences = loopEntryOccurrences(loop);
       const auto originalMembers = loop.sites;
       for (auto site : originalMembers) {
         const auto found = clones.find(site);
@@ -224,6 +225,30 @@ private:
       if (loop.entry == region.entry && clones.count(loop.bodyEntry)) {
         loop.bodyEntry = clones.at(loop.bodyEntry);
       }
+      loop.occurrences.clear();
+      for (const auto& occurrence : originalOccurrences) {
+        auto mapped = occurrence;
+        auto remap = [&](std::size_t site) {
+          const auto found = clones.find(site);
+          return found == clones.end() ? site : found->second;
+        };
+        mapped.entry = remap(mapped.entry);
+        mapped.exit = remap(mapped.exit);
+        mapped.bodyEntry = remap(mapped.bodyEntry);
+        for (auto* sites : {&mapped.sites, &mapped.exits}) {
+          for (auto& site : *sites) {
+            site = remap(site);
+          }
+        }
+        if (mapped.entry != occurrence.entry) {
+          loop.occurrences.push_back(occurrence);
+          loop.occurrences.push_back(std::move(mapped));
+        } else {
+          auto combined = occurrence;
+          combined.bodyEntry = occurrence.entry == region.entry ? mapped.bodyEntry : occurrence.bodyEntry;
+          loop.occurrences.push_back(std::move(combined));
+        }
+      }
     }
   }
 
@@ -251,6 +276,10 @@ ObservedImport refineFirstUse(const Program &input, const FirstUseRegion &region
     return out;
   }
   prefix.run();
+  if (!refreshLoopOccurrences(*out.program.observed)) {
+    out.reason = "first-use refinement lacks a closed child occurrence interface";
+    return out;
+  }
   for (std::size_t i = 0; i < input.operations.size(); ++i) {
     out.originalPhases.push_back(i);
   }

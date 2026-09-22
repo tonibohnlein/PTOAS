@@ -37,6 +37,9 @@ o::Program fixture() {
   q.sites[10].backedgeOwners = {5};
   q.sites[11].backedgeOwners = {2};
   q.sites[13].backedgeOwners = {0};
+  q.loops = {{0, 0, 14, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}},
+             {2, 2, 12, {3, 4, 5, 6, 7, 8, 9, 10, 11}},
+             {5, 5, 11, {6, 7, 8, 9, 10}}};
   p.observed = std::move(q);
   return p;
 }
@@ -120,6 +123,20 @@ int main() {
   require(refined.success, refined.reason);
   require(refined.program.observed->sites.size() == 21, "expanded beyond the first-use prefix");
   require(refined.program.operations.size() == original.operations.size(), "duplicated physical effects");
+  for (std::size_t i = 0; i < original.observed->loops.size(); ++i) {
+    const auto& retained = refined.program.observed->loops[i].sites;
+    for (auto site : original.observed->loops[i].sites) {
+      require(std::find(retained.begin(), retained.end(), site) != retained.end(),
+              "refined entry reachability erased original owner membership");
+    }
+  }
+  const auto& child = refined.program.observed->loops.back();
+  require(child.occurrences.size() == 2, "first-use prefix lost the copied child entry");
+  for (const auto& occurrence : o::loopEntryOccurrences(child)) {
+    require(occurrence.exits == std::vector<std::size_t>{11}, "prefix lost its shared child exit");
+    require(std::find(occurrence.sites.begin(), occurrence.sites.end(), 9) != occurrence.sites.end(),
+            "prefix lost the original later-iteration suffix");
+  }
   const auto commands = fixtureCommands(refined.program);
   const auto certificate = o::checkCausalFrontier(refined.program, commands);
   require(certificate.accepted, "first-use causal certificate: " + certificate.reason +

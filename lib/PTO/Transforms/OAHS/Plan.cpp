@@ -100,6 +100,29 @@ bool validObserved(const Program &p, std::string &reason) {
     if (missingEntry || missingExit) {
       return fail("composed recurrence omits its representative boundary");
     }
+    for (const auto& occurrence : loop.occurrences) {
+      const auto contains = [](const auto& list, std::size_t value, std::size_t single) {
+        return list.empty() ? value == single : std::find(list.begin(), list.end(), value) != list.end();
+      };
+      if (!contains(loop.entries, occurrence.entry, loop.entry) ||
+          !contains(loop.exits, occurrence.exit, loop.exit)) {
+        return fail("occurrence boundary is outside its original owner");
+      }
+      std::set<std::size_t> sites;
+      for (auto site : occurrence.sites) {
+        if (!members.count(site) || !sites.insert(site).second) {
+          return fail("invalid paired occurrence member");
+        }
+      }
+      if (loop.atLeastOnce && !sites.count(occurrence.bodyEntry)) {
+        return fail("occurrence lost its qualified body entry");
+      }
+      for (auto exit : occurrence.exits) {
+        if (!contains(loop.exits, exit, loop.exit)) {
+          return fail("occurrence exit is outside its original owner");
+        }
+      }
+    }
   }
   std::set<std::vector<uint64_t>> unique;
   std::map<std::size_t,
@@ -254,6 +277,28 @@ bool valid(const Program &p, std::string &reason) {
           reason = "malformed explicit event effect";
           return false;
         }
+  }
+  for (const auto& relation : p.physicalUses) {
+    if (!relation.period || !p.observed || relation.owner >= p.observed->sites.size()) {
+      reason = "invalid physical-use owner or period";
+      return false;
+    }
+    for (const auto& effects : relation.effects) {
+      if (effects.operation >= p.operations.size() || effects.residues.size() != relation.period) {
+        reason = "invalid physical-use occurrence coverage";
+        return false;
+      }
+      for (const auto& residue : effects.residues) {
+        for (const auto& access : residue) {
+          if (access.cell >= p.cells.size() || (!access.read && !access.write) ||
+              (access.definiteWrite && (!access.write ||
+               p.cells[access.cell].storage == Cell::Storage::OverlapWitness))) {
+            reason = "invalid physical-use effect";
+            return false;
+          }
+        }
+      }
+    }
   }
   if (!validObserved(p, reason))
     return false;

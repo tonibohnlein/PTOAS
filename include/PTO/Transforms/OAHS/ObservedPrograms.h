@@ -47,10 +47,7 @@ struct CountedLoopRegion {
   // These specialize analytical phases only; payload and command anchors stay
   // original. The caller proves address arithmetic, alias coverage and reset
   // at every region entry. No definite-write credit follows from this binding.
-  struct PeriodicEffects {
-    std::size_t operation = 0;
-    std::vector<std::vector<Access>> residues;
-  };
+  using PeriodicEffects = PeriodicPhysicalEffects;
   std::vector<PeriodicEffects> effects;
   // Proven from original bounds, independently of the selected protocol.
   bool atLeastOnce = false;

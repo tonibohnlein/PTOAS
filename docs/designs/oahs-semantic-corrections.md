@@ -76,7 +76,7 @@ analysis limitations, not hardware restrictions or optimization-benefit policy.
 
 Separate generality review is required before claiming general completion.
 Review inputs: the gate inventory above; `SyncTileDescriptorState.h`,
-`SyncAccumulatorOrdering.h`, native import; the 22 ported ACC variants, two argument-descriptor join variants, and
+`SyncAccumulatorOrdering.h`, native import; the 22 ported ACC variants, two supported argument-shape variants, and
 access-scope negative; and the pinned campaign in
 `/home/toni/work/pypto3_sync_more/oahs-semantic-contract-work/`.
 The broader audit objective remains active after this first deliverable.
@@ -103,7 +103,7 @@ physical/control/lifecycle records; do not add a second planner or completion
 ledger. A possible return is not acquired credit. Unknown proof results never
 establish completion, disjointness or event availability.
 
-### Checkpoint 1: hardened, measured baseline (active)
+### Checkpoint 1: hardened, measured baseline (implemented)
 
 Validate the ports and correct invalid fixtures before adding analysis precision.
 Port the first-use separation premise from `f0d2a07db`; remove speculative fences
@@ -117,7 +117,7 @@ Exit evidence: focused positive/negative tests, native reconstruction, supported
 input results, and complete ordering comparisons for changed witnesses. Event
 counts and compilation work are separate measurements. No new device claim.
 
-### Checkpoint 2: physical use plus stable occurrence consumers
+### Checkpoint 2: physical use plus stable occurrence consumers (foundation implemented; acceptance open)
 
 Derive each address/selector from its original dependency slice. Preserve
 integer semantics, independent relations and partial may-footprints. Compiler
@@ -131,6 +131,18 @@ indexing from `55e706384`. Do not copy the WIP frontend integration or retain th
 single-owner mode grammar as the general contract. Exercise carried versus IV
 selectors, expressions/views, unrelated state, independent/coupled selectors,
 ambiguous overlaps and the old CSA lost-child-return regression.
+
+The current increment implements dependency-sliced finite address relations,
+separate per-period physical-use records, conservative unions, and paired child
+entry/body/exit occurrences. It retains original owner membership when one
+refined entry has a narrower reachable path. A local event-resource failure can
+atomically decline optional observation materialization; external protocols
+cannot use that retry. This establishes no event credit and does not compose
+storage generations. The existing constructor still realizes one compatible
+period per owner. Ordered endpoint gaps, next relevant physical use, partial
+FIFO knowledge and the CSA ordering review remain checkpoint-2 obligations.
+The draft should distinguish a finite relation from its optional control/event
+realization; a proof of the generalized composition awaits those interfaces.
 
 ### Checkpoint 3: generation-scoped support and composed endpoints
 

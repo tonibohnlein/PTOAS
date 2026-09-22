@@ -166,6 +166,29 @@ void run(bool guarded, bool reentered, unsigned banks = 2)
     const auto& p = imported.program;
     require(p.observed->sites.size() == f.child.observed->sites.size() + (banks - 1) * (f.bank.bodySites.size() + 1),
         "bank interface introduced enclosing first/tail modes");
+    unsigned pairedChildren = 0;
+    for (const auto& child : p.observed->loops) {
+        if (child.occurrences.empty()) continue;
+        ++pairedChildren;
+        require(child.occurrences.size() == banks, "lost an independent child occurrence");
+        for (const auto& occurrence : o::loopEntryOccurrences(child)) {
+            require(occurrence.entry != o::NoControlId && occurrence.exit != o::NoControlId,
+                    "child occurrence lost its paired boundaries");
+            require(!occurrence.sites.empty(), "child occurrence lost its original member positions");
+            for (auto site : occurrence.sites) {
+                require(std::find(child.sites.begin(), child.sites.end(), site) != child.sites.end(),
+                        "child occurrence escaped its original owner");
+            }
+        }
+    }
+    require(pairedChildren != 0, "enclosing refinement lost child correspondence");
+    auto broken = p;
+    for (auto& child : broken.observed->loops) {
+        if (child.occurrences.empty()) continue;
+        child.occurrences.front().entry = broken.observed->exit;
+        break;
+    }
+    require(!o::validateProgram(broken).success, "accepted a child entry outside its original owner");
     const auto plan = accepted(p);
     require(!plan.channels.empty(), "bank-qualified readiness/release channels absent");
     unsigned bankReady = 0, bankRelease = 0;

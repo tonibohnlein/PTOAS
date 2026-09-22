@@ -162,6 +162,8 @@ struct SelectedPlan {
     FrontierCheck certificate;
     SelectedWork work;
     std::optional<DeclinedRecurringAttempt> declinedRecurring;
+    // Native local-only admission retry; discarded work remains visible.
+    std::optional<DeclinedRecurringAttempt> declinedObservation;
 };
 
 // F1--F8 construction service used by the live handoff pass.

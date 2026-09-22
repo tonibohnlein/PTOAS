@@ -109,9 +109,39 @@ inline bool validBoundary(const ObservedControl& q, const CountedLoopRegion& loo
     return true;
 }
 
-inline void expandChildBoundaries(ObservedLoop& child,
+inline bool expandChildBoundaries(ObservedLoop& child,
     const std::vector<std::map<std::size_t, std::size_t>>& copies)
 {
+    const auto original = loopEntryOccurrences(child);
+    if (original.empty()) {
+        return false;
+    }
+    std::vector<ObservedLoopOccurrence> occurrences;
+    for (const auto& copy : copies) {
+        for (const auto& occurrence : original) {
+            auto mapped = occurrence;
+            auto remap = [&](std::size_t& site) {
+                const auto found = copy.find(site);
+                if (found == copy.end()) {
+                    return false;
+                }
+                site = found->second;
+                return true;
+            };
+            if (!remap(mapped.entry) || !remap(mapped.exit) ||
+                (mapped.bodyEntry != NoControlId && !remap(mapped.bodyEntry))) {
+                return false;
+            }
+            for (auto* sites : {&mapped.sites, &mapped.exits}) {
+                for (auto& site : *sites) {
+                    if (!remap(site)) {
+                        return false;
+                    }
+                }
+            }
+            occurrences.push_back(std::move(mapped));
+        }
+    }
     auto expand = [&](const std::vector<std::size_t>& sites) {
         std::vector<std::size_t> out;
         for (const auto& copy : copies) {
@@ -129,6 +159,9 @@ inline void expandChildBoundaries(ObservedLoop& child,
     child.sites = expand(child.sites);
     child.entry = child.entries.front();
     child.exit = child.exits.front();
+    child.occurrences = std::move(occurrences);
+    child.bodyEntry = child.occurrences.front().bodyEntry;
+    return true;
 }
 } // namespace bank_occurrence_detail
 
@@ -264,7 +297,10 @@ ObservedImport refineBankOccurrences(const Program& input, const CountedLoopRegi
     for (auto& child : q.loops) {
         const bool contained = members.count(child.entry) && members.count(child.exit);
         if (contained) {
-            bank_occurrence_detail::expandChildBoundaries(child, copies);
+            if (!bank_occurrence_detail::expandChildBoundaries(child, copies)) {
+                out.reason = "incomplete child occurrence boundary correspondence";
+                return out;
+            }
         }
     }
     ObservedLoop region{loop.owner, loop.owner, loop.continuation, {}, copies[0].at(loop.bodyEntry), loop.atLeastOnce};

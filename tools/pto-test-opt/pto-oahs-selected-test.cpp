@@ -543,7 +543,7 @@ module attributes {pto.target_arch = "a3"} {
     auto maximum = builder.create<arith::ConstantIntOp>(function.getLoc(), std::numeric_limits<int64_t>::max(), 64);
     auto one = builder.create<arith::ConstantIntOp>(function.getLoc(), 1, 64);
     Value overflow = builder.create<arith::AddIOp>(function.getLoc(), maximum, one);
-    Value unsupported = builder.create<arith::SubIOp>(function.getLoc(), one, zero);
+    Value unsupported = builder.create<arith::DivUIOp>(function.getLoc(), one, zero);
     SyncSlotMapping::ConstantCache cache;
     if (!check(!SyncSlotMapping::evaluateConstant(overflow, cache) &&
                !SyncSlotMapping::evaluateConstant(unsupported, cache), "rejected scalar unexpectedly admitted")) return false;
@@ -611,6 +611,229 @@ module attributes {pto.target_arch = "a3"} {
   }
   return true;
 }
+bool slotDependencySlices(MLIRContext &context) {
+  const std::string input = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @slice(%src: !pto.partition_tensor_view<1x32xf32>, %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %three = arith.constant 3 : index
+    %stride = arith.constant 128 : index
+    %base = arith.constant 256 : index
+    %out_addr = arith.constant 4096 : i64
+    %out = pto.alloc_tile addr = %out_addr : !pto.tile_buf<vec, 1x32xf32>
+    %result = scf.for %i = %zero to %n step %one iter_args(%slot = %zero) -> index {
+      %advance = arith.addi %slot, %one : index
+      %next = arith.remui %advance, %two : index
+      %selected = arith.addi %slot, %zero : index
+      %offset = arith.muli %selected, %stride : index
+      %address = arith.addi %offset, %base : index
+      %cast = arith.index_cast %address : index to i64
+      %bank = pto.alloc_tile addr = %cast : !pto.tile_buf<vec, 1x32xf32>
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%bank : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tabs ins(%bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+      scf.yield %next : index
+    }
+    return
+  }
+})mlir";
+  for (unsigned variant = 0; variant < 15; ++variant) {
+    std::string source = input;
+    auto replace = [&](const std::string &from, const std::string &to) {
+      const auto at = source.find(from);
+      if (at == std::string::npos) {
+        return false;
+      }
+      source.replace(at, from.size(), to);
+      return true;
+    };
+    if (variant == 1) {
+      replace("%result = scf.for", "%result:2 = scf.for");
+      replace("iter_args(%slot = %zero) -> index", "iter_args(%slot = %zero, %unrelated = %n) -> (index, index)");
+      replace("scf.yield %next : index", "scf.yield %next, %unrelated : index, index");
+    }
+    if (variant == 2 || variant == 3 || variant == 10 || variant == 11) {
+      replace("%result = scf.for", "scf.for");
+      replace(" iter_args(%slot = %zero) -> index", "");
+      replace("%advance = arith.addi %slot, %one : index", "");
+      replace("%next = arith.remui %advance, %two : index", "");
+      replace("%selected = arith.addi %slot, %zero : index", variant != 3 ?
+          "%selected = arith.remui %i, %two : index" : "%selected = arith.andi %i, %one : index");
+      replace("scf.yield %next : index", "");
+      if (variant == 10 || variant == 11) {
+        const std::string identity = variant == 10 ?
+            "%identity = arith.addi %i, %zero : index\n" :
+            "%cast_iv = arith.index_cast %i : index to i64\n"
+            "      %identity = arith.index_cast %cast_iv : i64 to index\n";
+        replace("%selected = arith.remui %i, %two : index",
+            identity + "      %selected = arith.remui %identity, %two : index");
+      }
+    }
+    if (variant == 4) {
+      replace("%next = arith.remui %advance, %two : index", "%next = arith.xori %slot, %one : index");
+      replace("%selected = arith.addi %slot, %zero : index", "%selected = arith.subi %slot, %zero : index");
+    }
+    if (variant == 5) {
+      replace("scf.yield %next : index", R"mlir(
+      %unrelated = arith.remui %i, %three : index
+      %predicate = arith.cmpi eq, %unrelated, %zero : index
+      scf.if %predicate { }
+      scf.yield %next : index)mlir");
+    }
+    if (variant == 6) {
+      replace("%bank = pto.alloc_tile", "%allocation = pto.alloc_tile");
+      replace("      pto.tload", "      %bank = pto.treshape %allocation : "
+          "!pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 1x32xf32>\n      pto.tload");
+    }
+    if (variant == 7) {
+      replace("%two = arith.constant 2", "%two = arith.constant 17");
+    }
+    if (variant == 8) {
+      replace("%next = arith.remui %advance, %two : index", "%next = arith.addi %advance, %n : index");
+    }
+    if (variant == 9) {
+      replace("%stride = arith.constant 128", "%stride = arith.constant 64");
+    }
+    if (variant == 12) {
+      replace("%result = scf.for", "%result:2 = scf.for");
+      replace("iter_args(%slot = %zero) -> index",
+          "iter_args(%slot = %zero, %other = %zero) -> (index, index)");
+      replace("scf.yield %next : index", R"mlir(
+      %other_advance = arith.addi %other, %one : index
+      %other_next = arith.remui %other_advance, %three : index
+      %other_base = arith.constant 2048 : index
+      %other_offset = arith.muli %other, %stride : index
+      %other_address = arith.addi %other_offset, %other_base : index
+      %other_cast = arith.index_cast %other_address : index to i64
+      %other_bank = pto.alloc_tile addr = %other_cast : !pto.tile_buf<vec, 1x32xf32>
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%other_bank : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tabs ins(%other_bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+      scf.yield %next, %other_next : index, index)mlir");
+    }
+    if (variant == 14) {
+      replace("%result = scf.for", "%result:2 = scf.for");
+      replace("iter_args(%slot = %zero) -> index",
+          "iter_args(%slot = %zero, %other = %zero) -> (index, index)");
+      replace("%selected = arith.addi %slot, %zero : index",
+          "%weighted = arith.muli %other, %two : index\n"
+          "      %selected = arith.addi %slot, %weighted : index");
+      replace("scf.yield %next : index",
+          "%other_advance = arith.addi %other, %one : index\n"
+          "      %other_next = arith.remui %other_advance, %three : index\n"
+          "      scf.yield %next, %other_next : index, index");
+    }
+    if (variant == 13) {
+      replace("to %n step %one iter_args", "to %n step %two iter_args");
+      replace("scf.yield %next : index", "scf.for %child = %zero to %one step %one { }\n      scf.yield %next : index");
+    }
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module) && succeeded(verify(*module)), "parse scalar dependency slice variant")) {
+      return false;
+    }
+    auto function = module->lookupSymbol<func::FuncOp>("slice");
+    scf::ForOp loop;
+    AllocTileOp bank;
+    function.walk<WalkOrder::PreOrder>([&](scf::ForOp op) {
+      if (!loop) { loop = op; }
+    });
+    loop.walk([&](AllocTileOp op) {
+      if (!bank) { bank = op; }
+    });
+    if (!check(bool(bank), "dependency fixture lost its bank allocation")) {
+      return false;
+    }
+    auto mapping = SyncSlotMapping::derive(loop, bank.getAddr());
+    const unsigned period = variant == 7 ? 17 : (variant == 14 ? 6 : 2);
+    if (!check(variant == 8 ? !mapping : mapping && mapping->period == period,
+               "selector slice lost a proved relation or admitted unknown evolution, variant " +
+                   std::to_string(variant))) {
+      return false;
+    }
+    if (mapping) {
+      for (unsigned visit = 0; visit < 40; ++visit) {
+        const auto address = SyncSlotMapping::evaluate(bank.getAddr(), mapping->values[visit % period]);
+        const auto slot = variant == 14 ? visit % 2 + 2 * (visit % 3) : visit % period;
+        if (!check(address == std::optional<uint64_t>(256 + (variant == 9 ? 64 : 128) * slot),
+                   "dependency slice disagrees with original scalar semantics")) {
+          return false;
+        }
+      }
+    }
+    const auto original = text(function);
+    oahs::NativeAnalysis imported;
+    if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)) && text(function) == original,
+               "dependency-sliced native import changed original IR")) {
+      return false;
+    }
+    if (variant != 8 && variant != 9) {
+      for (unsigned slot = 0; slot < period; ++slot) {
+        if (!check(llvm::any_of(imported.program.cells, [&](const auto &cell) {
+              return !cell.unknownRange && cell.ranges ==
+                  std::vector<std::pair<uint64_t, uint64_t>>{{256 + 128 * slot, 128}};
+            }), "native import discarded independent finite bank facts")) {
+          return false;
+        }
+      }
+    }
+    if (variant == 13) {
+      for (const auto &observation : imported.program.observed->observations) {
+        if (!check(llvm::none_of(observation.atoms, [](const auto &atom) {
+              return atom.kind == oahs::ObservationAtom::LoopResidue;
+            }), "non-unit enclosing visits used unnormalized IV guards")) {
+          return false;
+        }
+      }
+    }
+    if (variant == 12) {
+      std::set<unsigned> periods;
+      for (const auto& relation : imported.program.physicalUses) {
+        periods.insert(relation.period);
+      }
+      if (!check(periods == std::set<unsigned>{2, 3},
+                 "independent occurrence relations were erased or multiplied")) {
+        return false;
+      }
+      for (unsigned slot = 0; slot < 3; ++slot) {
+        if (!check(llvm::any_of(imported.program.cells, [&](const auto &cell) {
+              return !cell.unknownRange && cell.ranges ==
+                  std::vector<std::pair<uint64_t, uint64_t>>{{2048 + 128 * slot, 128}};
+            }), "independent period-three relation lost its physical facts")) {
+          return false;
+        }
+      }
+    }
+    if (variant == 9) {
+      bool shared = false;
+      for (unsigned cell = 0; cell < imported.program.cells.size(); ++cell) {
+        if (imported.program.cells[cell].ranges != std::vector<std::pair<uint64_t, uint64_t>>{{320, 64}}) {
+          continue;
+        }
+        unsigned uses = 0;
+        for (const auto &op : imported.program.operations) {
+          uses += llvm::any_of(op.accesses, [&](auto access) { return access.cell == cell; });
+        }
+        shared |= uses >= 2;
+      }
+      if (!check(shared, "overlapping banks lost their shared physical obligation")) {
+        return false;
+      }
+    }
+    // Large relations are physical facts even when binding requires fallback.
+    oahs::SelectedPlan plan;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)),
+               "dependency-sliced constructor or independent reconstruction failed, variant " +
+                   std::to_string(variant))) {
+      return false;
+    }
+    if (variant == 7 && !check(bool(plan.declinedObservation),
+                             "unrealizable optional observations were not declined atomically")) {
+      return false;
+    }
+  }
+  return true;
+}
 bool slotMappings(MLIRContext &context) {
   auto module = parseSourceString<ModuleOp>(slotInput, &context);
   if (!check(bool(module), "parse carried-slot fixture")) return false;
@@ -620,7 +843,7 @@ bool slotMappings(MLIRContext &context) {
   AllocTileOp bank;
   function.walk([&](scf::ForOp op) { loop = op; });
   loop.walk([&](AllocTileOp op) { bank = op; });
-  auto mapping = SyncSlotMapping::derive(loop, 8);
+  auto mapping = SyncSlotMapping::derive(loop, bank.getAddr(), 8);
   if (!check(mapping && mapping->period == 3, "derive stride-two modulo-three orbit")) return false;
   uint64_t slot = 2;
   for (unsigned i = 0; i < 30; ++i) {
@@ -628,7 +851,8 @@ bool slotMappings(MLIRContext &context) {
     auto address = SyncSlotMapping::evaluate(bank.getAddr(), mapping->values[i % 3]);
     if (!check(address && *address == 256 + 128 * slot, "slot address differs from original recurrence")) return false;
   }
-  if (!check(!SyncSlotMapping::derive(loop, 2), "finite vocabulary cannot silently truncate the orbit")) return false;
+  if (!check(!SyncSlotMapping::derive(loop, bank.getAddr(), 2),
+             "finite vocabulary cannot silently truncate the orbit")) return false;
   oahs::NativeAnalysis imported;
   if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)) && text(function) == original,
              "periodic import must preserve original IR")) return false;
@@ -675,7 +899,13 @@ bool slotMappings(MLIRContext &context) {
       auto huge = builder.create<arith::ConstantIndexOp>(changed.getLoc(), std::numeric_limits<int64_t>::max());
       add.setOperand(1, huge);
     }
-    if (!check(!SyncSlotMapping::derive(changed, 8), "unproved carried slot was admitted")) return false;
+    AllocTileOp changedBank;
+    changed.walk([&](AllocTileOp op) { changedBank = op; });
+    const auto relation = SyncSlotMapping::derive(changed, changedBank.getAddr(), 8);
+    if (!check(bool(relation) == (mutation == 1),
+               "dependency recurrence proof or independent induction step changed")) {
+      return false;
+    }
   }
   auto unresolved = parseSourceString<ModuleOp>(slotInput, &context);
   auto unknownFunction = unresolved->lookupSymbol<func::FuncOp>("slots");
@@ -706,6 +936,10 @@ bool runFile(MLIRContext &context, const char *path) {
     if (function.isDeclaration()) { return; }
     oahs::SelectedPlan report;
     const auto status = oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report);
+    if (report.declinedRecurring) {
+      llvm::errs() << "declined recurring: " << report.declinedRecurring->reason
+                   << " at " << report.declinedRecurring->cut << "\n";
+    }
     accepted &= succeeded(status);
     // Existing token order is preserved so earlier recorded logs stay comparable.
     // The added tokens are the report's own counters; `reason` stays last.
@@ -730,6 +964,11 @@ bool runFile(MLIRContext &context, const char *path) {
                  << work.frontierUnknown
                  << " recurring=" << work.recurringChannels
                  << " recurring_proposals=" << work.recurringProposals
+                 << " observation_declined=" << bool(report.declinedObservation)
+                 << " observation_discarded_replay_sites="
+                 << (report.declinedObservation ? report.declinedObservation->work.replaySiteEvaluations : 0)
+                 << " observation_discarded_elapsed_us="
+                 << (report.declinedObservation ? report.declinedObservation->work.elapsedMicroseconds : 0)
                  << " recurring_declined=" << bool(report.declinedRecurring)
                  << " discarded_replay_sites="
                  << (report.declinedRecurring ? report.declinedRecurring->work.replaySiteEvaluations : 0)
@@ -908,6 +1147,6 @@ int main(int argc, char **argv) {
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
-                      slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context);
+                      slotMappings(context) && slotDependencySlices(context) && accumulatorOrdering(context) && firstUseOrdering(context);
   return passed ? 0 : 1;
 }

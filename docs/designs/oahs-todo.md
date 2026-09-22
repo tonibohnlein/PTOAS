@@ -16,9 +16,11 @@ fact on this baseline before replacing its consumer.
    deadline-local fencing, position-preserving release sharing and atomic
    optional-cohort decline pass focused/native checks. Corpus: 88/88; inherited
    compatibility refusals: 2/19. Resource/replay regressions are in HANDOFF.
-2. **Next: shared facts and occurrence interfaces.** Derive physical-use relations from relevant dependency slices **together
-   with** stable child occurrence/endpoint correspondence. Preserve independent
-   facts and conservative effects regardless of event capacity.
+2. **Active: shared facts and occurrence interfaces.** Dependency-sliced
+   physical-use records and paired child entry/body/exit paths are implemented.
+   Preserve their original owner membership while refining reachability. Finish
+   the changed CSA ordering review and portable checks; exact endpoint gaps,
+   next-use links and partial FIFO knowledge remain open.
 3. Extend generation/support intervals and compose first-consumer, first-write
    and final-reader requirements before control refinement. Preserve residual
    repair and access-scoped ACC obligations.

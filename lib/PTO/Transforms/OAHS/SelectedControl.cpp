@@ -317,62 +317,66 @@ Control::Control(const Program& program)
     // Construction queries these summaries instead of rediscovering invariant
     // classes and earlier observer work at every residual repair.
     if (program.observed) for (const auto& loop : program.observed->loops) {
-        if (!loop.atLeastOnce || loop.bodyEntry == NoAnalysisId) continue;
-        LoopEntryFacts facts;
-        facts.entry = loop.entry;
-        facts.sites = loop.sites;
-        facts.firstConsumer.fill(NoAnalysisId);
-        std::set<Pipe> observers;
-        for (auto site : loop.sites) {
-            ++loopEntryPreparationSites;
-            const auto operation = graph.operations[site];
-            if (operation == NoAnalysisId) continue;
-            const auto& op = program.operations[operation];
-            observers.insert(op.pipe);
-            facts.issuedPipes.insert(op.pipe);
-            for (const auto& access : op.accesses) {
-                const auto base = (Id(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
-                if (access.read) facts.issuedClasses.insert(base);
-                if (access.write) facts.issuedClasses.insert(base + 1);
-            }
-        }
-        for (auto observer : observers) {
-            std::vector<bool> seen(graph.sites.size());
-            std::vector<Cut> todo{loop.bodyEntry};
-            std::set<Cut> first;
-            bool bypass = false;
-            while (!todo.empty()) {
-                const auto at = todo.back(); todo.pop_back();
-                if (seen[at]) continue;
-                seen[at] = true;
+        for (const auto& occurrence : loopEntryOccurrences(loop)) {
+            if (!loop.atLeastOnce || occurrence.bodyEntry == NoAnalysisId) continue;
+            const std::set<Cut> exits = occurrence.exits.empty() ? std::set<Cut>{occurrence.exit} :
+                std::set<Cut>(occurrence.exits.begin(), occurrence.exits.end());
+            LoopEntryFacts facts;
+            facts.entry = occurrence.entry;
+            facts.sites = occurrence.sites;
+            facts.firstConsumer.fill(NoAnalysisId);
+            std::set<Pipe> observers;
+            for (auto site : occurrence.sites) {
                 ++loopEntryPreparationSites;
-                if (at == loop.exit) { bypass = true; break; }
-                const auto operation = graph.operations[at];
-                if (operation != NoAnalysisId && program.operations[operation].pipe == observer) {
-                    first.insert(at);
-                    continue;
+                const auto operation = graph.operations[site];
+                if (operation == NoAnalysisId) continue;
+                const auto& op = program.operations[operation];
+                observers.insert(op.pipe);
+                facts.issuedPipes.insert(op.pipe);
+                for (const auto& access : op.accesses) {
+                    const auto base = (Id(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
+                    if (access.read) facts.issuedClasses.insert(base);
+                    if (access.write) facts.issuedClasses.insert(base + 1);
                 }
-                const auto& next = graph.sites[at].successors;
-                todo.insert(todo.end(), next.begin(), next.end());
             }
-            if (!bypass && !first.empty()) {
-                facts.firstConsumers[unsigned(observer)].assign(first.begin(), first.end());
-                if (first.size() == 1) facts.firstConsumer[unsigned(observer)] = *first.begin();
-                std::fill(seen.begin(), seen.end(), false);
-                todo = graph.sites[loop.entry].successors;
+            for (auto observer : observers) {
+                std::vector<bool> seen(graph.sites.size());
+                std::vector<Cut> todo{occurrence.bodyEntry};
+                std::set<Cut> first;
+                bool bypass = false;
                 while (!todo.empty()) {
                     const auto at = todo.back(); todo.pop_back();
-                    if (at == loop.exit || at == loop.entry || seen[at]) continue;
+                    if (seen[at]) continue;
                     seen[at] = true;
                     ++loopEntryPreparationSites;
-                    facts.crossedWords[unsigned(observer)].push_back(at);
-                    if (first.count(at)) continue;
+                    if (exits.count(at)) { bypass = true; break; }
+                    const auto operation = graph.operations[at];
+                    if (operation != NoAnalysisId && program.operations[operation].pipe == observer) {
+                        first.insert(at);
+                        continue;
+                    }
                     const auto& next = graph.sites[at].successors;
                     todo.insert(todo.end(), next.begin(), next.end());
                 }
+                if (!bypass && !first.empty()) {
+                    facts.firstConsumers[unsigned(observer)].assign(first.begin(), first.end());
+                    if (first.size() == 1) facts.firstConsumer[unsigned(observer)] = *first.begin();
+                    std::fill(seen.begin(), seen.end(), false);
+                    todo = graph.sites[occurrence.entry].successors;
+                    while (!todo.empty()) {
+                        const auto at = todo.back(); todo.pop_back();
+                        if (exits.count(at) || at == occurrence.entry || seen[at]) continue;
+                        seen[at] = true;
+                        ++loopEntryPreparationSites;
+                        facts.crossedWords[unsigned(observer)].push_back(at);
+                        if (first.count(at)) continue;
+                        const auto& next = graph.sites[at].successors;
+                        todo.insert(todo.end(), next.begin(), next.end());
+                    }
+                }
             }
+            loopEntries.push_back(std::move(facts));
         }
-        loopEntries.push_back(std::move(facts));
     }
     // One pass over the sites fixes the canonical word of each site, the sites
     // sharing it, and the range of components it spans. canonicalCommandCut

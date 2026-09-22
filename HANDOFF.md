@@ -1,5 +1,47 @@
 # OAHS current handoff
 
+## Active checkpoint — shared physical facts and child occurrences
+
+Branch `codex/oahs-gemm-base`. The preceding hardening checkpoint is committed
+as `be14229f2`; this checkpoint adds a general physical-use and occurrence
+foundation. The complete dependency order and acceptance boundary are in
+[semantic corrections](docs/designs/oahs-semantic-corrections.md).
+
+- Native scalar analysis follows each relevant address's original dependency
+  slice. Carried and induction-derived selectors, dialect-folded scalar
+  expressions and address-preserving views can yield finite physical footprints.
+  Unrelated carried values and event-pool size do not bound the physical fact.
+  Independent periods remain separate `PhysicalUseRelation` records. The
+  current control constructor materializes one compatible period per owner;
+  an incompatible relation contributes its conservative may-footprint.
+- `ObservedLoopOccurrence` pairs each child copy's entry, body, members and
+  possible exits. First-use refinement recomputes the reachable child paths
+  while preserving the original owner's complete membership. The owner/reachable
+  distinction was required to retain the established GEMM recurring protocol.
+- If optional native observation materialization cannot bind events, a local
+  kernel gets one fresh OAHS attempt on original control, preserving the
+  physical facts. Shared peer/queue protocols do not take this retry. Failed
+  admission work and reason remain visible in the report.
+
+Recorded evidence: all three native drivers pass, including independent
+period-2/period-3, coupled period-6 and 17-bank cases. The pinned campaign
+constructs and reconstructs **88/88 corpus**, **GEMM**, three targeted kernels
+and two Qwen/DeepSeek prefill witnesses; **17/19 compatibility** pass, retaining
+the two inherited refusals. Corpus and GEMM plans match `be14229f2`; one
+DeepSeek CSA compatibility plan changes and needs a complete ordering review.
+Results and per-case commands are in
+`/home/toni/work/pypto3_sync_more/oahs-gemm-base-builds/physical-use/`.
+These are host results, not new device measurements.
+
+At the user's request, final validation was stopped. The portable build/test
+run was interrupted (exit 130) after the last occurrence-test additions, and
+no final changed-code check or complete ordering comparison of the changed CSA
+plan was run. Treat checkpoint 2 as **an implemented foundation with acceptance
+open**. The next action is to inspect that CSA ordering and finish the focused
+portable checks before using these facts to widen construction. Later work must
+add generation/support intervals, exact endpoint gaps/participation and a common
+packet/binding contract; none is supplied by these records alone.
+
 ## Active checkpoint — harden the retained GEMM constructor
 
 - Worktree: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-gemm-base`.

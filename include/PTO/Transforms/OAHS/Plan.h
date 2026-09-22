@@ -35,6 +35,17 @@ struct Access {
   // A strong update never clears acquired-completion or event state.
   bool definiteWrite = false;
 };
+// Finite physical effects indexed by visits to one original owner. Each
+// relation stands alone; storing it neither refines control nor grants credit.
+struct PeriodicPhysicalEffects {
+  std::size_t operation = 0;
+  std::vector<std::vector<Access>> residues;
+};
+struct PhysicalUseRelation {
+  std::size_t owner = NoControlId;
+  unsigned period = 1;
+  std::vector<PeriodicPhysicalEffects> effects;
+};
 enum class EffectTiming { Issue, Completion };
 struct ResourceEffect {
   std::string resource;
@@ -113,6 +124,7 @@ struct Program {
   // Optional qualified finite original-control quotient. It replaces, rather
   // than silently flattens, body. Effects still name original physical phases.
   std::optional<ObservedControl> observed;
+  std::vector<PhysicalUseRelation> physicalUses;
   std::vector<EventIdentity> reservations;
   Target target;
   // No native frontend populates this until its lowering/service premises are
