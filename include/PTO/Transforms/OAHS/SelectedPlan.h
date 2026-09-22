@@ -155,6 +155,8 @@ struct SelectedWork {
     std::size_t rejectedSupportProposals = 0;
     std::size_t gapPublications = 0, deferredAcknowledgments = 0;
     std::size_t finalReadPublications = 0;
+    std::size_t prefixPublications = 0, prefixChecks = 0;
+    uint64_t prefixAnalysisSites = 0;
     std::size_t closedReservationBorrows = 0;
     std::size_t closedReservationChecks = 0, closedReservationCheckSites = 0;
     uint64_t finalReadQuerySites = 0;
@@ -208,6 +210,8 @@ struct SelectedOptions {
     bool firstWriteConsumers = false;
     bool finalReadSources = false;
     bool equalCoverageBinding = false;
+    // Diagnostic ablation for certified motion inside one selected word.
+    bool publicationPrefixes = true;
     bool traceReplay = false;
     // Diagnostic comparison with the former prefix-only contextual cache.
     bool siblingReplayReuse = true;

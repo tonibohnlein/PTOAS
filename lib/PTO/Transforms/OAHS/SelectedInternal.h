@@ -97,6 +97,10 @@ public:
     bool active(Id id) const { return !removed.count(id); }
     void erase(Id);
     void protectPublicationPrefix(Id);
+    // Restricted within-word motion: retain endpoint identity and certify the
+    // crossed command suffix before changing the selected word.
+    bool movePublicationBefore(Id, Id);
+    bool publicationPrefixesValid() const;
     void restoreAfter(Id, Id);
     Id lastPublicationComponent(Pipe, Pipe, unsigned) const;
     uint64_t version() const { return revision; }
@@ -119,6 +123,7 @@ private:
     std::vector<Cut> changed;
     std::set<Id> removed;
     std::map<Cut, Id> protectedPrefixes;
+    std::map<Id, std::vector<Id>> publicationPrefixes;
     Id insert(Cut, Id, Command, EndpointPurpose, Id, Id);
 };
 
@@ -386,6 +391,8 @@ private:
                                 const std::vector<FrontierRequirement>&, const std::set<Id>*);
     bool consume();
     bool bind(Group&, RequirementStage);
+    bool preservePublicationPrefixes(SelectedDecision&);
+    bool publicationGapCovers(Id, Id, const std::vector<FrontierRequirement>&) const;
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&, Id certifiedKey = NoAnalysisId);
     bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&);
     bool joinedAcknowledgment(Pipe, Pipe, Cut, Id&, SelectedDecision&);

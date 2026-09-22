@@ -6,6 +6,12 @@ See [shared semantic extraction](oahs-shared-semantics.md) and
 `algorithm=handoff` uses this constructor. `algorithm=existing` remains the default
 and comparison path; no additional pass mode or legacy fallback is introduced.
 
+The ongoing quality work and the first restricted construction-time
+publication-prefix certificate are specified in
+[quality milestones](oahs-quality-milestones.md#first-implementation-within-one-command-word).
+That certificate protects a new ordinary publication inside its command word;
+it is not yet a global publication-prefix invariant.
+
 ## Entry points and state
 
 `constructSelectedPlan(program, fixedWords)` is a production C++ service. It

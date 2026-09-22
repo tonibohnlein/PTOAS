@@ -6,7 +6,15 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
-## Current priority: broad sweep follow-up
+## Active quality sequence
+
+The user-approved milestones, starting at `b62b89de5`, are tracked in
+[oahs-quality-milestones.md](oahs-quality-milestones.md). Publication-prefix
+certification is active; lifecycle consolidation, rearming deadlines, recurring
+selection and open ownership follow in that order. Historical entries below
+remain evidence and acceptance context.
+
+## Previous priority: broad sweep follow-up
 
 The instruction policy is now **use existing InsertSync's translation**. No
 independent OAHS approval of instruction semantics is required. Keep the optional

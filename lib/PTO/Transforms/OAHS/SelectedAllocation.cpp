@@ -1371,7 +1371,12 @@ bool Constructor::bind(Group& group, RequirementStage stage)
         }
         source = current;
     }
-    if (!settleRearming(decision)) return false;
+    if (!preservePublicationPrefixes(decision)) {
+        return false;
+    }
+    if (!settleRearming(decision)) {
+        return false;
+    }
     result.decisions.push_back(std::move(decision));
     return true;
 }

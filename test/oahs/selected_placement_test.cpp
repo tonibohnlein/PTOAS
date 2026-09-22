@@ -367,6 +367,9 @@ void reusedSourceGap() {
         op(R,{{1,true,false}}), op(P,{{0,false,true}}),
         op(Q,{{0,true,false},{2,false,true}}), op(Q,{{1,false,true}}), op(P,{{0,false,true}})};
     o::SelectedOptions options; options.sourceGaps = true; options.finalHelperTrials = false;
+    // Isolate the older source-gap policy. The publication-prefix certificate
+    // independently recovers this early release in ordinary construction.
+    options.publicationPrefixes = false;
     const auto plan = o::constructSelectedPlan(p,{},options);
     require(plan.success, "reused-key source gap construction failed: " + plan.reason);
     require(bool(oahs_oracle::graph(p,plan.commands,{0,1,2,3,4,5,6},{{2,6}})),

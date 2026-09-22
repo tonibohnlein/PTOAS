@@ -7,10 +7,89 @@ Updated: 2026-09-22
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: shared translation and six constructor compatibility repairs, host validation
+- Current milestone: production publication-prefix certificate (quality milestone 1)
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
+
+## Active quality work (2026-09-22)
+
+The user authorized implementation of the publication-prefix certificate and
+regression coverage across the larger kernel corpus. The persistent sequence,
+acceptance gates and current KDA/hc_pre/RMSNorm/GEMM witnesses are in
+[quality milestones](docs/designs/oahs-quality-milestones.md). Work starts at
+`b62b89de5`; older amendment sections describe the starting evidence. Current
+validation is recorded in the first-slice section below. Keep the
+first-write/final-read experiment opt-in until its complete ordering comparison
+passes.
+
+### First certificate slice implemented locally
+
+`SelectedPublication.cpp` now certifies an earlier position for a new ordinary
+completion SET inside its existing word. It can release storage before an
+unrelated source-engine WAIT, but cannot cross an outward source publication,
+source fence, ALL fence, matching-key endpoint or protected prefix. It checks
+coverage and actual source-time key rearming at every original occurrence,
+then validates a private ledger copy before changing the selected plan.
+Protected endpoint IDs survive subsequent insertion/restoration; selected
+replay checks the recorded prefix, including after return-repair retries.
+
+This is default-on for ordinary binding, with diagnostic
+`--no-publication-prefixes` and explicit work counters. It performs two
+fixed-plan analyses per considered motion. The full scope, structural ordering
+argument and limitations are in the
+[milestone design](docs/designs/oahs-quality-milestones.md#first-implementation-within-one-command-word).
+This is not yet a global prefix invariant: earlier-word incoming dependencies,
+recurring grouping and cross-payload motion remain outside the certificate.
+
+Production-constructor regressions demonstrate the requested local decision:
+release input storage before an unrelated wait without losing any required
+storage order. Complete independent issue/completion relations strictly shrink,
+including with a reused physical key. Required compute completion, outward
+publication, fence and matching-key negatives retain the necessary order.
+Later insertion/restoration and private-copy isolation are also tested.
+
+**Baseline correction:** the opt-in KDA first-write/final-read experiment now
+fails at cut 754 (`split recurring receipt has no certified return key`) in
+both the frozen `b62b89de5` driver and this candidate. Default KDA succeeds.
+The older 1,784-removed/706-added comparison is historical and does not describe
+the current experiment. Keep the source-time rearming check intact.
+
+Validation artifacts are under
+`/home/toni/work/pypto3_sync_more/publication-prefix-work/`. The final portable
+build passes **26/26** suites (`portable-tests-final.log`); both native suites
+pass (`pto-oahs-native-test-final.log`, `pto-oahs-selected-test-final.log`).
+The build uses the recorded Linux LLVM/native artifacts, not the stale macOS
+workspace metadata. `build-native.py` records the focused archive/link recipe.
+Changed-code checking reports zero errors/warnings and the C++17 portable build
+uses `-Wall -Wextra -Werror -pedantic`. No sanitizer or device run was performed;
+no analyzer-wide compliance or performance claim is made.
+
+The final driver passes all **19/19 archived compatibility inputs**, with
+byte-identical plans against the frozen baseline (`compatibility-summary.json`).
+Default KDA AIC/AIV, exact dspark RMSNorm and hc_pre also construct and
+reconstruct with identical plans (`targeted-summary.json`). Independent finite
+full-order comparison reports zero added/removed relations for KDA AIC,
+RMSNorm and hc_pre under the recorded bindings and pipeline contracts. The
+opt-in KDA refusal is recorded separately, never counted as a successful plan.
+
+The final paired prepared A3 corpus also passes **88/88**, including GEMM,
+attention, normalization and projection kernels. All 88 plans are byte-identical
+to the frozen baseline; `corpus-final/summary.json` and `drivers.json` pin the
+inputs, identical scalar-spelling migrations, options and executables. No new
+prefix motion fires in these native corpora or targeted kernels. The first
+slice therefore demonstrates constructor behavior in the focused regressions,
+with native nonregression evidence, but no native overlap improvement yet.
+`validation.json` records the final driver/source hashes; `source/` and
+`source.patch` preserve this uncommitted implementation. The earlier `corpus/`
+run predates the final replay-retry check; use `corpus-final/` for acceptance.
+
+**Next action:** milestone 1 remains active. Extend the same certificate to
+qualified source boundaries across words using the actual KDA release/return
+path and its outward dependencies. Establish current experimental key support
+separately if using first-write/final-read placement. Require an actual native
+ordering improvement, full relation inclusion, hc_pre/RMSNorm physical-lifetime
+checks, GEMM nonregression and the larger paired corpus before closing it.
 
 ## Latest local amendment: authored-event exclusion
 

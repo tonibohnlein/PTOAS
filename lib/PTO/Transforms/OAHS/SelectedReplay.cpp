@@ -719,7 +719,13 @@ bool Constructor::update()
     // Recompute the affected suffix from bottom. Reuse only predecessor-closed
     // unchanged components; no old facts seed a changed prefix or loop.
     const auto before = result.work.replaySiteEvaluations;
-    while (!replay()) {
+    for (;;) {
+        if (!ledger.publicationPrefixesValid()) {
+            return fail(SelectedFailure::SelectedUpdate, "selected edit invalidated a publication prefix", current);
+        }
+        if (replay()) {
+            break;
+        }
         if (cache.failure != FrontierFailure::ConsumptionNotEstablished || cache.failureEndpoint == NoAnalysisId)
             return false;
         const auto key = keyIndex(frontier, ledger.endpoint(cache.failureEndpoint).command);

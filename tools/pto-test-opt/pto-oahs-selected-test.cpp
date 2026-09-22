@@ -1127,6 +1127,9 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
                  << options.classInvariantInputs << options.equalCoverageBinding
                  << " final_read_sources=" << options.finalReadSources
                  << " final_read_publications=" << work.finalReadPublications
+                 << " prefix_publications=" << work.prefixPublications
+                 << " prefix_checks=" << work.prefixChecks
+                 << " prefix_analysis_sites=" << work.prefixAnalysisSites
                  << " closed_reservation_borrows=" << work.closedReservationBorrows
                  << " closed_reservation_checks=" << work.closedReservationChecks
                  << " closed_reservation_check_sites=" << work.closedReservationCheckSites
@@ -1551,6 +1554,7 @@ int main(int argc, char **argv) {
       else if (flag == "--final-read-sources") options.finalReadSources = true;
       else if (flag == "--first-write-consumers") options.firstWriteConsumers = true;
       else if (flag == "--equal-coverage-binding") options.equalCoverageBinding = true;
+      else if (flag == "--no-publication-prefixes") options.publicationPrefixes = false;
       else if (flag == "--trace-replay") options.traceReplay = true;
       else if (flag == "--prefix-replay") options.siblingReplayReuse = false;
       else { llvm::errs() << "unknown construction option: " << flag << "\n"; return 2; }
