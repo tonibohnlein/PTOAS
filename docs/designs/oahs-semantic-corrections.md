@@ -1,7 +1,8 @@
 # Semantic correction sequence
 
-Active baseline: GEMM parity commit `16564fa8a`, merged with upstream master
-`66bd855ed` in `388e127fd`, followed by shared InsertSync import in `d882ede3e`.
+Active branch: `codex/oahs-gemm-base`, baseline `37554ef9b`. The historical
+GEMM snapshot is rebased as `f08b28194` atop upstream `66bd855ed`, followed by
+shared InsertSync instruction import `dbe56f7e6` and ACC correction `37554ef9b`.
 Audit: `/home/toni/work/pypto3_sync_more/region-prefill-review-20260922/REVIEW.md`.
 The audit inspected a later implementation. Reproduce each restriction on this
 branch before implementing its replacement; later M1–M3 mechanisms are not
@@ -89,8 +90,92 @@ not implemented by this backport. The prior campaign paths above document the
 source commit, not a claim that its results already reproduce here.
 
 The backport additionally seeds function-argument descriptor state before branch
-joins. Without this, a conditional assignment to an argument could be omitted
-from the join, resurrecting its original static dimensions. Native fixtures
-cover both an unknown conditional assignment (no ACC credit) and an equal known
-assignment (credit preserved). This is a conservative-state correction, not a
-new synchronization policy.
+joins. The originally added argument-mutation fixtures were invalid: this dialect
+permits `set_validshape` only on locally bound dynamic descriptors. They have been
+replaced with supported static/unknown argument-shape cases. Existing local-tile
+variants cover equal and unknown branch updates. No instruction verifier is
+relaxed, and the invalid fixtures are not claimed as native join evidence.
+
+## Approved continuation after the GEMM restart
+
+Facts, certificates and selection policy remain separate. Extend the existing
+physical/control/lifecycle records; do not add a second planner or completion
+ledger. A possible return is not acquired credit. Unknown proof results never
+establish completion, disjointness or event availability.
+
+### Checkpoint 1: hardened, measured baseline (active)
+
+Validate the ports and correct invalid fixtures before adding analysis precision.
+Port the first-use separation premise from `f0d2a07db`; remove speculative fences
+in distinct future command words and uncertified recurring endpoint motion.
+Share identical boundaries only. Failed optional recurring construction gets
+one fresh ordinary OAHS attempt from original inputs, never partial-ledger reuse.
+Report the failed attempt's reason and work explicitly. No new conservative
+constructor or completed-plan subset/deletion search is introduced.
+
+Exit evidence: focused positive/negative tests, native reconstruction, supported
+input results, and complete ordering comparisons for changed witnesses. Event
+counts and compilation work are separate measurements. No new device claim.
+
+### Checkpoint 2: physical use plus stable occurrence consumers
+
+Derive each address/selector from its original dependency slice. Preserve
+integer semantics, independent relations and partial may-footprints. Compiler
+analysis budgets are independent of key capacity. Include the common query for
+original owner, participating child occurrence, entry/body/exits, original
+ordered endpoint positions and next relevant use before enabling more refined
+control. Semantic requirements must survive another analysis's refinement.
+
+Adapt dependency-slice code/tests from `dc13183ac` and occurrence/lifecycle
+indexing from `55e706384`. Do not copy the WIP frontend integration or retain the
+single-owner mode grammar as the general contract. Exercise carried versus IV
+selectors, expressions/views, unrelated state, independent/coupled selectors,
+ambiguous overlaps and the old CSA lost-child-return regression.
+
+### Checkpoint 3: generation-scoped support and composed endpoints
+
+Represent producer episodes, participating readers, next conflicting uses and
+entry/reload/bypass/exit obligations as views over existing facts. Collect all
+first-consumer/first-write/final-reader roles with exact gaps and original
+participation before refinement. Include retained inputs with two child readers,
+reloads, skipped children, outside readers and next overwrites beyond the parent,
+then connect these to a Qwen or DeepSeek prefill lifetime.
+
+Replace broad ACC/storage/engine eligibility only after scoped certificates
+cover their obligations. Preserve the X/Y residual-fence-relocation negative.
+Port reader-region tests and producer-support reasoning, not their whole-engine
+admission gates. Open interfaces preserve state; region exits imply no drain.
+
+### Checkpoint 4: common realization and useful required receipts
+
+Use one internal packet contract: requirements/gaps, participation and support,
+physical binding, exact staged words, validation, commitment of those same words.
+Apply actual transfers in order; only their checked execution grants credit.
+Keep complete readiness/release selection ahead of residual repair. Share an
+independently required return only when its existing endpoints cover the added
+obligation. Generalize structured source coverage along with ordinary coverage.
+
+Adapt ownership/restoration fixes (`7f22b091f`, `b62b89de5`), required-return
+sharing, two-sided relay checks and restricted publication certificates
+(`edcdcecee`, `01aa6e5a5`) when the common consumers need them. Deferred
+acknowledgment policies and replay-cache extensions are later, witness-driven
+work. Remove obsolete paths when the replacement meets their responsibilities.
+
+### Migration and final acceptance
+
+Temporary ordering, resource and compile-time regressions are explicit ledger
+entries, never new admission filters. Soundness, matching, ownership and rearming
+remain mandatory. Preserve enclosing-cycle and bank composition throughout.
+Any future conservative fallback remains restricted to qualified local kernels;
+peer kernels are outside that fallback contract.
+
+At each default checkpoint run focused checks and the supported corpus. Record
+complete added/removed payload-order sets, resources, work and host time
+separately. Final acceptance restores demonstrated GEMM/MAT and targeted gains
+through shared mechanisms, explains other corpus tradeoffs, and measures actual
+coupled device execution. Tests do not substitute for general proof; amend the
+draft when an established mechanism needs formulation or new proof obligations.
+
+The TODO tracks work, this document defines sequence and invariants, and the
+HANDOFF records exact current evidence and the next action. Historical results
+from the old branch are donor evidence, never validation of this checkout.

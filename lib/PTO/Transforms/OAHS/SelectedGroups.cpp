@@ -373,45 +373,14 @@ bool Constructor::consume()
             return fail(SelectedFailure::UnsupportedContract,
                 "no qualified named fence for the remaining same-engine requirement", current);
         }
-        std::vector<std::pair<Cut, std::vector<FrontierRequirement>>> fences{{current, missing}};
-        // Contextual replay has already evaluated every observation under the
-        // current ledger.  Several guarded copies of one original payload can
-        // therefore expose the same local completion repair independently.
-        // Install all such repairs before replaying; do not revisit the whole
-        // selected graph once per observation.  A site with a cross-engine
-        // residual or an unavailable checkpoint remains an ordinary decision.
-        if (needsContextualReplay) {
-            const auto original = program.operations[operation].original;
-            for (Cut site = 0; site < control.graph.sites.size(); ++site) {
-                if (site == current || !control.graph.legalCuts[site] ||
-                    !cache.cuts[site].before.causal.reachable())
-                    continue;
-                const auto other = control.graph.operations[site];
-                if (other == NoAnalysisId || program.operations[other].pipe != observer ||
-                    program.operations[other].original != original)
-                    continue;
-                auto residuals = frontier.inspect(cache.cuts[site].before.causal, other).residuals;
-                if (residuals.empty() || std::any_of(residuals.begin(), residuals.end(),
-                        [&](const auto& r) { return r.source != observer; }))
-                    continue;
-                const auto& word = ledger.word(site);
-                const bool alreadyFenced = std::any_of(word.begin(), word.end(), [&](Id endpoint) {
-                    const auto& command = ledger.endpoint(endpoint).command;
-                    return command.kind == Command::Barrier && command.source == observer;
-                });
-                if (!alreadyFenced) fences.emplace_back(site, std::move(residuals));
-            }
-        }
         const auto version = ledger.version();
-        std::set<Cut> installedWords;
-        for (auto& [site, residuals] : fences) {
-            result.fences.push_back({site, observer, version, std::move(residuals)});
-            // Several analytical observations may share one emitted command
-            // word. Preserve every diagnostic witness, but install exactly
-            // one physical fence in that word.
-            if (installedWords.insert(control.canonicalCut[site]).second)
-                ledger.append(site, {Command::Barrier, observer, Pipe::S, 0}, EndpointPurpose::LocalFence);
-        }
+        result.fences.push_back({current, observer, version, missing});
+        // Repair this occurrence at its actual deadline. A future analytical
+        // copy may receive completion from transfers selected before it is
+        // reached. Ledger canonicalization still emits one command when
+        // several analytical sites genuinely share the same authored word.
+        ledger.append(current, {Command::Barrier, observer, Pipe::S, 0},
+                      EndpointPurpose::LocalFence);
         if (!update()) {
             return false;
         }

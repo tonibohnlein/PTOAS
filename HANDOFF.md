@@ -1,27 +1,101 @@
 # OAHS current handoff
 
-## Active baseline decision — 2026-09-22
+## Active checkpoint — harden the retained GEMM constructor
 
-The user selected the source snapshot pinned by the Shenggan GEMM parity
-campaign as the baseline for further development:
-
-- Commit: `16564fa8ae7282631f20ce112c10bab0cf69ed36`.
-- Branch: `codex/oahs-gemm-base`.
 - Worktree: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-gemm-base`.
-- Rebased counterpart: `f2d24ece1`; its OAHS code and portable tests match.
+- Branch: `codex/oahs-gemm-base`; committed baseline: `37554ef9b`.
+- Linear upstream base: `66bd855ed`; GEMM snapshot: `f08b28194`
+  (historical source `16564fa8a`).
+- Included ports: shared InsertSync instruction translation `dbe56f7e6`,
+  documented ACC access-order correction `37554ef9b`.
+- Current task: implement the dependency-ordered continuation in
+  [semantic corrections](docs/designs/oahs-semantic-corrections.md).
+  Do not merge the old WIP refactor wholesale or restart again.
 
-Code remains at that snapshot. No new build or validation has been run here;
-device parity is historical evidence recorded in the later campaign report.
-The current implementation and the main-based scaffold remain in their separate
-worktrees. The scaffold's build is stopped.
+Source `env.local.sh`; the tracked `env.sh` contains historical machine paths.
+Preserve `.codex/CLAUDE.md` line-ending noise and local workspace configuration.
+Use at most two resource-intensive workers across all local commands.
 
-Next: retain the demonstrated bank/readiness/release mechanics, review later
-correctness fixes separately, and first port the shared InsertSync semantic
-integration from `5e0a72772` without importing its unrelated constructor changes.
-Do not resume the zero-based rewrite. Keep aggregate local build/test workers
-at two or fewer. Source this worktree's `env.sh` for its isolated configuration.
+### Hardening result and exact evidence
 
-The checkout notes and validation below are historical notes from this snapshot.
+The first continuation checkpoint is implemented. The algorithm still uses the
+retained enclosing-bank constructor and unchanged independent causal checker.
+
+- First-use refinement rejects decisions not separated by a tracked transition.
+- Recurring sharing preserves exact endpoint positions; broad one-sided and
+  two-sided release motion is removed pending a contextual ordering certificate.
+- Local fences are decided at the current occurrence's deadline. Shared emitted
+  words still share commands; separate future words receive no speculative fence.
+- One failed optional recurring attempt is discarded completely before a fresh
+  ordinary OAHS attempt from the same input/fixed words. Its reason and work are
+  exported in `declinedRecurring`; no new serializer or subset search is used.
+- The two invalid argument-mutation fixtures were replaced with legal static and
+  unknown argument-shape cases. The dialect disallows `set_validshape` on function
+  arguments; local-tile branch-join variants remain covered. No verifier changed.
+
+Artifact directory:
+`/home/toni/work/pypto3_sync_more/oahs-gemm-base-builds/hardening/`.
+Focused build scripts live in its sibling `migration/`; the link includes the
+shared SlotAffineAnalysis dependency. Baseline binaries are pinned in
+`hardening/baseline/`. Validation results:
+
+- **21/21 portable suites**, including native-core first-use, deadline-fence,
+  six-visit distinct-release and optional-resource rollback witnesses.
+- **All three native drivers pass**, including 24 supported ACC variants and
+  unchanged operand-release/FIX negatives. The initial baseline selected driver
+  failed only at the invalid argument-mutation fixture; see the retained logs.
+- **88/88 corpus** construct and reconstruct on baseline and candidate.
+- **17/19 compatibility** on both. Existing failures: Qwen `topk_select` and
+  `kernel_softmax_prepare`, unresolved original byte completion. No new failures.
+- **KDA, RMSNorm and hc_pre**, both original Qwen/DeepSeek prefill witnesses and
+  **GEMM** construct and reconstruct. These five targeted/prefill plans are
+  unchanged; GEMM changes as described below.
+- Nine corpus plans, two compatibility plans and the separate GEMM witness
+  change. Five changes are certified bijective key renamings with otherwise
+  identical ordered commands/control. Concrete complete start/completion order
+  comparisons on the remaining changed functions add **zero** relations.
+  These finite traces are not universal ordering proofs.
+- GEMM removes **56/120/248** payload relations for 1/2/4 tiles. The independent
+  physical/event oracle retains all previous overlap checks and now requires
+  **14/28/56** A-refill boundaries free of the later B-reader prerequisite.
+
+Current GEMM event populations are **330/652/1296 pairs**, compared with the
+historical **182/360/716**. No named barriers, one terminal ALL. This is an
+explicit resource/possible latency regression, not a new device timing claim.
+Native replay work is unchanged for GEMM (21,846 visits) but grows on several
+fence-heavy kernels: final RMSNorm 2,499 -> 5,907; row RMSNorm 1,643 -> 3,417;
+TopK 1,111 -> 2,349; route_sort 8,028 -> 17,582. These are recovery obligations,
+not permission to restore speculative fences or broaden release prefixes.
+
+Evidence: `summary.json`, `ordering.json`, `portable-final.log`,
+`pto-oahs-selected-test-final.log`, `gemm/trace-final.log`. The campaign summary's
+initial selected-unit rc=1 refers to the invalid fixture; the final unit result
+is recorded separately. Source changes after that campaign only correct test
+fixtures, strengthen test oracles, and update documentation.
+
+The changed-code prefilter's four bracing reports are false positives on compound
+conditions: all four bodies have braces. Its local `env.local.sh` header report
+is outside the source change. The real added-line length issues were fixed.
+No sanitizer or device campaign was run.
+
+### Next checkpoint and regression ledger
+
+Implement shared physical-use facts together with stable child occurrence
+queries. Keep the API invariant explicit before enabling broader refinement.
+Do not import the old WIP integration wholesale. Remaining inherited compatibility
+failures need the corresponding original-control/support fixes, not a serializer.
+
+| Witness | Remaining issue | Responsible checkpoint / recovery |
+| --- | --- | --- |
+| Shenggan GEMM | More release channels/commands despite strictly narrower checked ordering | Common packet/required-return coverage; retain independent A-refill check and remeasure device time |
+| final/row RMSNorm, TopK, route_sort | More contextual replay after removing speculative future fences | Shared immutable preparation / measured replay work; preserve deadline-local decisions |
+| Qwen topk_select, kernel_softmax_prepare | Baseline and candidate completion refusal | Occurrence/support interfaces; restore native construction/reconstruction |
+| Qwen/DeepSeek prefill | Isolated GEMM improvements still not established in coupled prefill | Physical-use and generation composition, then authentic device comparison |
+
+
+## Historical GEMM snapshot and campaign evidence
+
+
 
 Updated: 2026-09-18
 

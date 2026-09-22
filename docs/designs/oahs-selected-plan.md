@@ -32,7 +32,7 @@ a later access cannot inherit an older receipt merely by sharing its class.
 | --- | --- |
 | F1 | `SelectedControl.cpp`: original graph, SCC order and original-cut frames; `SelectedPlan.cpp::run` visits each task once. |
 | F2 | `CausalFrontier::inspect`, `SelectedGroups.cpp::reasons/consume`: every effect including RMW, no hypothetical acquisition. |
-| F3 | `SelectedGroups.cpp::groups/sourceGroup` and `CyclicFrontiers.cpp`: known readiness and reuse together, then remaining overlaps; compatible recurring cells share one source/target prefix. |
+| F3 | `SelectedGroups.cpp::groups/sourceGroup` and `CyclicFrontiers.cpp`: known readiness and reuse together, then remaining overlaps; recurring cells share only identical endpoint frontiers. |
 | F4 | `coverage/groups` and recurring-frontier merging: strict containment among required providers, then stable source ordering; `consume` rechecks the whole residual after real acquisitions. |
 | F5 | `Control::after`, saved `SelectedSource` records and ledger placement preserve separate early source positions, including qualified straight corridors inside observed loops. |
 | F6 | `consume`: cross-engine repairs first, named fence only for the remaining same-engine residual, then complete payload check. |
@@ -111,8 +111,13 @@ invalidates the saved
 selected map from the component of its earliest changed word onward and
 recomputes every finalized site from there to the consumer from bottom. It
 rechecks affected payloads and both sides of each selected key use. No old
-ledger-version fact seeds a changed traversal. A failed update stops construction;
-there is no alternative-plan scoring, recoloring, retry search or legacy fallback.
+ledger-version fact seeds a changed traversal. A failed update stops that attempt. If it contained an optional recurring
+proposal, construction may retry once with a fresh ledger and no recurring
+specialization. Both attempts start from the same original input and fixed words;
+no endpoints, reservations or causal facts survive the discarded attempt.
+`declinedRecurring` records its failure, cut and work. Total elapsed time includes
+both attempts; the ordinary work counters describe the returned attempt. There
+is no alternative-plan scoring, subset search, recoloring or legacy fallback.
 
 Components before the earliest changed word are reused verbatim. The
 construction order is a topological order of the strongly connected components,
@@ -281,8 +286,8 @@ normalized leaf `scf.for` only when shared imported byte effects qualify a
 physical ready/release role. The supported normalization uses index induction,
 zero lower bound, unit step, no iter_args, signed comparisons, and compatible
 original residue predicates. No operation-name table or full-write inference is
-introduced. Other loops retain ordinary conservative control; there is no retry
-with another constructor. The analysis-only report can still expose normalized
+introduced. Other loops retain ordinary conservative control. Declining optional recurring
+specialization uses the same constructor and unchanged independent checker. The analysis-only report can still expose normalized
 first/tail observations independently.
 
 Nested slot mappings are imported conservatively first: an operation outside the
@@ -510,3 +515,22 @@ Shared physical-address extraction also evaluates supported constant expressions
 using the checked scalar evaluator. Unknown inputs, overflowing arithmetic and
 narrowing loss retain conservative footprints; address certainty does not grant
 definite-write or occurrence credit.
+
+## Inherited-checkpoint hardening
+
+First-use prefix refinement now requires selected decisions to be separated by
+a tracked backedge before the next decision. The current transformation returns
+to original control after a selected decision, so membership and single entry
+alone do not establish its phase premise.
+
+Recurring coalescing retains distinct publication and acquisition boundaries.
+Identical endpoint sets can share a transfer; occurrence balance or a straight
+corridor alone cannot justify moving boundaries. In particular, one bank's
+release cannot be delayed to another reader and acquired before an earlier
+refill merely to save a key. Broader motion needs a contextual ordering proof.
+
+Local completion repair is decided at the current occurrence's deadline after
+actual selected receipts. Analytical copies sharing an emitted word share its
+fence, but unfinished distinct future words receive no speculative repairs.
+This preserves the opportunity for intervening required transfers to satisfy
+those later demands without introducing another local fence.

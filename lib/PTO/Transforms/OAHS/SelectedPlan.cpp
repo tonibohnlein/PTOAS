@@ -82,7 +82,7 @@ void Constructor::registerSource()
     if (needsContextualReplay) refreshSources(after);
 }
 
-SelectedPlan Constructor::run(const Commands& fixed)
+SelectedPlan Constructor::run(const Commands& fixed, bool useRecurring)
 {
     const auto start = std::chrono::steady_clock::now();
     auto complete = [&]() {
@@ -144,8 +144,13 @@ SelectedPlan Constructor::run(const Commands& fixed)
         fail(SelectedFailure::InvalidInput, reason);
         return complete();
     }
-    const auto channels = qualifyCyclicFrontiers(program, control, requirements);
-    if (!channels.empty() && !recurring(channels)) return complete();
+    if (useRecurring) {
+        const auto channels = qualifyCyclicFrontiers(program, control, requirements);
+        result.work.recurringProposals = channels.size();
+        if (!channels.empty() && !recurring(channels)) {
+            return complete();
+        }
+    }
     for (activeComponent = 0; activeComponent < control.components.size(); ++activeComponent) {
         // End compiler role reservations, not physical event state. Actual D/S
         // facts and balances continue through the selected-body fixed point.
@@ -186,11 +191,25 @@ bool hasQualifiedRecurringAccesses(const Program& program)
 SelectedPlan constructSelectedPlan(const Program& program, const Commands& fixed)
 {
     const auto start = std::chrono::steady_clock::now();
-    selected::Constructor constructor(program);
-    const auto prepared = std::chrono::steady_clock::now();
-    auto result = constructor.run(fixed);
-    result.work.preparationMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(
-        prepared - start).count();
+    auto attempt = [&](bool useRecurring) {
+        const auto preparing = std::chrono::steady_clock::now();
+        selected::Constructor constructor(program);
+        const auto prepared = std::chrono::steady_clock::now();
+        auto plan = constructor.run(fixed, useRecurring);
+        plan.work.preparationMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(
+            prepared - preparing).count();
+        return plan;
+    };
+    auto result = attempt(true);
+    if (!result.success && result.work.recurringProposals) {
+        // Optional protocols may fit their own key population yet starve an
+        // ordinary deadline. Discard the whole private attempt, including its
+        // ledgers and reservations, before constructing without specialization.
+        // This is one deterministic retry, never subset or deletion search.
+        DeclinedRecurringAttempt declined{result.failure, result.reason, result.cut, result.work};
+        result = attempt(false);
+        result.declinedRecurring = std::move(declined);
+    }
     result.work.elapsedMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - start).count();
     return result;

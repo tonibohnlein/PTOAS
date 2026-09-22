@@ -12,13 +12,22 @@ Use [the semantic correction sequence](oahs-semantic-corrections.md) as the
 implementation order. The review covers a later branch; establish each missing
 fact on this baseline before replacing its consumer.
 
-1. Merge current upstream and port the shared InsertSync instruction semantics.
-2. Port `b506cc19e`'s documented ACC access-order correction; validate native
-   equivalences/negatives, Qwen and DeepSeek prefill, the historical corpus,
-   and the retained Shenggan plan. This is the active checkpoint.
-3. Derive independent physical-use relations from selector dependency slices.
-4. Introduce generation-scoped support, then compose endpoint requirements.
-5. Generalize protocol construction and deadline-specific resource binding.
+1. **Implemented: harden and validate `37554ef9b`.** First-use separation,
+   deadline-local fencing, position-preserving release sharing and atomic
+   optional-cohort decline pass focused/native checks. Corpus: 88/88; inherited
+   compatibility refusals: 2/19. Resource/replay regressions are in HANDOFF.
+2. **Next: shared facts and occurrence interfaces.** Derive physical-use relations from relevant dependency slices **together
+   with** stable child occurrence/endpoint correspondence. Preserve independent
+   facts and conservative effects regardless of event capacity.
+3. Extend generation/support intervals and compose first-consumer, first-write
+   and final-reader requirements before control refinement. Preserve residual
+   repair and access-scoped ACC obligations.
+4. Consolidate exact ordered-packet construction/binding, then exploit actual
+   required-return coverage on a native prefill witness. Port later mechanisms
+   selectively; retire superseded paths when their obligations are covered.
+5. Recover reference GEMM/MAT and targeted ordering gains, classify corpus
+   tradeoffs, and run matched device validation. Update the draft's algorithm
+   and proof obligations alongside established mechanisms.
 
 The old GEMM source snapshot's notes below are historical. The later device
 campaign reported parity with the manual kernel; current host validation does

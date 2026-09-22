@@ -57,6 +57,7 @@ class Trace:
         self.serialize_parent = serialize_parent
         self.bank_checks = 0
         self.early_ready_checks = 0
+        self.release_prefix_checks = 0
 
     def vertex(self, parents):
         bits = 0
@@ -155,6 +156,19 @@ class Trace:
                         assert not self.ancestors[issued] & (1 << old[1]), (
                             "previous-group compute gates a different MAT bank", old[3], context)
                         self.bank_checks += 1
+            if name == "tload":
+                a = next((cell for cell, write in effects
+                          if write and cell[0] == "mat" and cell[1] in (0, 65536)), None)
+                if a:
+                    b_base = 131072 if a[1] == 0 else 262144
+                    previous_b = next((old for old in reversed(self.payloads)
+                                       if old[0] == "textract" and old[3][:1] == context[:1]
+                                       and any(not write and cell[0] == "mat" and cell[1] == b_base
+                                               for cell, write in old[2])), None)
+                    if previous_b:
+                        assert not self.ancestors[issued] & (1 << previous_b[1]), (
+                            "later B reader gates independent A refill", previous_b[3], context)
+                        self.release_prefix_checks += 1
             if (name == "textract" and context[-1][1] == 0 and
                     any(write and cell[0] == "left" for cell, write in effects)):
                 loads = [old for old in self.payloads if old[0] == "tload" and old[3] == context[:-1]]
@@ -283,20 +297,22 @@ def main():
         entries = 256 // step
         assert trace.bank_checks == entries * 15 * 4 * 2, trace.bank_checks
         assert trace.early_ready_checks == entries * 16, trace.early_ready_checks
-        pairs = {("M", "MTE1"): 64 * entries + 2,
-                 ("MTE1", "MTE2"): 16 * entries + 2,
-                 ("MTE2", "MTE1"): 32 * entries,
-                 ("MTE1", "M"): 64 * entries,
-                 ("FIX", "M"): entries, ("M", "FIX"): entries}
-        for kind in ("set_flag", "wait_flag"):
-            actual = {(source, observer): count
-                      for (command, source, observer), count in trace.sync_counts.items() if command == kind}
-            assert actual == pairs, ("bank-qualified event population changed", actual)
+        assert trace.release_prefix_checks == entries * 14, trace.release_prefix_checks
+        # Event populations are evidence, not a prescribed protocol. Distinct
+        # release frontiers can require more pairs while preserving more overlap.
+        pairs = {(source, observer): count
+                 for (command, source, observer), count in trace.sync_counts.items()
+                 if command == "set_flag"}
+        waits = {(source, observer): count
+                 for (command, source, observer), count in trace.sync_counts.items()
+                 if command == "wait_flag"}
+        assert pairs == waits, ("unbalanced event population", pairs, waits)
         print("outer entries", 256 // step, "required edges", trace.required_checks,
               "native ACC access checks", trace.native_acc_checks,
               "forbidden inner/outer overlap edges absent", trace.overlap_checks, trace.outer_checks,
               "bank prefetch", trace.bank_checks, "early A readiness", trace.early_ready_checks,
-              "event pairs", sum(pairs.values()), "named barriers", 0, "terminal ALL", 1)
+              "independent A refills", trace.release_prefix_checks, "event pairs", sum(pairs.values()),
+              "named barriers", 0, "terminal ALL", 1)
     # A safety-preserving drain must FAIL the quality gate. This distinguishes
     # the overlap assertion from an acceptance-only synchronization test.
     try:

@@ -327,19 +327,17 @@ std::pair<std::string, bool> accumulatorVariant(unsigned variant) {
     expected = variant == 20;
   }
   if (variant == 22 || variant == 23) {
-    // A descriptor passed as an argument has the same reaching-state rules as
-    // an allocation. A conditional unknown update must survive the branch join.
-    std::string staticType = aType;
-    staticType.erase(staticType.find(", valid=?x?"), std::string(", valid=?x?").size());
+    // Argument descriptor dimensions are facts too, but set_validshape is
+    // only legal on locally bound tiles. Exercise the supported argument
+    // contract: unknown dynamic dimensions versus known static dimensions.
+    std::string argumentType = aType;
+    if (variant == 23) {
+      argumentType.erase(argumentType.find(", valid=?x?"), std::string(", valid=?x?").size());
+    }
     const auto begin = source.find("    %a =");
     source.erase(begin, source.find('\n', begin) + 1 - begin);
-    replace("%unknown: index", "%unknown: index, %a: " + staticType);
-    replace(aType, staticType);
-    const auto at = source.find("    pto.tmatmul ins");
-    const auto row = variant == 22 ? "%unknown" : "%m";
-    source.insert(at, "    %cond = arith.cmpi eq, %unknown, %m : index\n"
-                      "    scf.if %cond {\n    pto.set_validshape %a, " +
-                      std::string(row) + ", %k : " + staticType + "\n    }\n");
+    replace("%unknown: index", "%unknown: index, %a: " + argumentType);
+    replace(aType, argumentType);
     expected = variant == 23;
   }
   return {source, expected};
@@ -731,6 +729,12 @@ bool runFile(MLIRContext &context, const char *path) {
                  << work.frontierRegionContinuation << "," << work.frontierGuarded << ","
                  << work.frontierUnknown
                  << " recurring=" << work.recurringChannels
+                 << " recurring_proposals=" << work.recurringProposals
+                 << " recurring_declined=" << bool(report.declinedRecurring)
+                 << " discarded_replay_sites="
+                 << (report.declinedRecurring ? report.declinedRecurring->work.replaySiteEvaluations : 0)
+                 << " discarded_elapsed_us="
+                 << (report.declinedRecurring ? report.declinedRecurring->work.elapsedMicroseconds : 0)
                  << " recurring_trials=" << work.recurringTrials
                  << " recurring_removed=" << work.redundantRecurringChannels
                  << " recurring_analysis_sites=" << work.recurringAnalysisSites

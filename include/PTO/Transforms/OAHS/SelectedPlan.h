@@ -10,6 +10,7 @@
 
 #include "PTO/Transforms/OAHS/CausalFrontier.h"
 #include "PTO/Transforms/OAHS/StorageFrontiers.h"
+#include <optional>
 
 namespace mlir::pto::oahs {
 
@@ -109,7 +110,7 @@ struct SelectedWork {
     // final validation. It excludes native import/emission and test references.
     uint64_t elapsedMicroseconds = 0, preparationMicroseconds = 0;
     std::size_t sourceHandles = 0, acknowledgments = 0, commonCutTransfers = 0;
-    std::size_t recurringChannels = 0;
+    std::size_t recurringChannels = 0, recurringProposals = 0;
     std::size_t recurringTrials = 0, redundantRecurringChannels = 0;
     uint64_t recurringAnalysisSites = 0;
     std::size_t loopEntryTransfers = 0;
@@ -134,6 +135,14 @@ struct SelectedWork {
     // Whole-original-graph contextual solves, and updates that reused nothing.
     std::size_t contextualReplays = 0, unreusedUpdates = 0;
 };
+// Diagnostics and work from the single discarded optional attempt. Its
+// endpoints and causal state never participate in the returned construction.
+struct DeclinedRecurringAttempt {
+    SelectedFailure failure = SelectedFailure::None;
+    std::string reason;
+    Cut cut = NoAnalysisId;
+    SelectedWork work;
+};
 struct SelectedPlan {
     bool success = false;
     SelectedFailure failure = SelectedFailure::None;
@@ -152,6 +161,7 @@ struct SelectedPlan {
     std::vector<SelectedLoopInterface> loops;
     FrontierCheck certificate;
     SelectedWork work;
+    std::optional<DeclinedRecurringAttempt> declinedRecurring;
 };
 
 // F1--F8 construction service used by the live handoff pass.

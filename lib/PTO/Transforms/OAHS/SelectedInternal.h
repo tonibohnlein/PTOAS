@@ -267,7 +267,7 @@ class Constructor {
     friend struct ReplayTestAccess;
 public:
     explicit Constructor(const Program&);
-    SelectedPlan run(const Commands&);
+    SelectedPlan run(const Commands&, bool useRecurring = true);
 
 private:
     const Program& program;

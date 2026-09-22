@@ -245,7 +245,9 @@ void sharedRecurringPrefixes()
 {
     const auto P = o::Pipe::MTE1, Q = o::Pipe::M;
     auto body = base(2, 4);
-    body.operations = {op(P, {{0, false, true, true}}), op(P, {{1, false, true, true}}),
+    // Both physical obligations have identical publication and acquisition
+    // gaps. Sharing must not manufacture equality by moving either endpoint.
+    body.operations = {op(P, {{0, false, true, true}, {1, false, true, true}}),
                        op(Q, {{0, true, false}, {1, true, false}})};
     const auto input = o::makePeriodicLoop(body, 1, {});
     require(input.success, input.reason);

@@ -61,6 +61,8 @@ ObservedImport refineCountedLoop(const Program &, const CountedLoopRegion &);
 // Frontend proof: each decision is true exactly before any of the listed
 // original loop backedges since entry. Exit ends that qualification. Only the
 // prefix up to a decision/backedge is split; all later control remains shared.
+// Selected decisions must be separated by a tracked backedge (or region exit);
+// the prefix transformation does not retain its phase through a second decision.
 struct FirstUseRegion {
   std::size_t entry = 0, exit = 0;
   std::vector<std::size_t> decisions, backedgeOwners;

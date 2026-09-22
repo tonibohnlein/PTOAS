@@ -613,124 +613,26 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
         requests.push_back(std::move(candidate));
     }
     if (!relationshipRequests.empty() && !protocolCompatible(p, c, requests)) requests = ordinary;
-    // Apply F3/F4 to recurring roles too. If one side of two role interfaces
-    // is already the same frontier, a later compatible source prefix (or an
-    // earlier compatible acquisition) can serve the conjunction. We only
-    // merge one unambiguous cut per original occurrence mode; alternatives
-    // remain separate until their participation correspondence is proved.
-    using EndpointOccurrence = std::vector<std::tuple<Id, unsigned, uint64_t, uint64_t>>;
-    auto indexed = [&](const std::vector<Cut>& cuts) {
-        std::map<EndpointOccurrence, Cut> out;
-        for (auto cut : cuts) {
-            if (cut >= p.observed->sites.size()) return std::map<EndpointOccurrence, Cut>{};
-            const auto observation = p.observed->sites[cut].observation;
-            if (observation == NoAnalysisId || observation >= p.observed->observations.size() ||
-                !p.observed->observations[observation].available)
-                return std::map<EndpointOccurrence, Cut>{};
-            EndpointOccurrence key;
-            for (const auto& atom : p.observed->observations[observation].atoms)
-                key.emplace_back(atom.owner, unsigned(atom.kind), atom.parameter, atom.value);
-            std::sort(key.begin(), key.end());
-            if (!out.emplace(std::move(key), cut).second)
-                return std::map<EndpointOccurrence, Cut>{};
-        }
-        return out;
-    };
-    auto combine = [&](const std::vector<Cut>& a, const std::vector<Cut>& b, bool later,
-                       std::vector<Cut>& out) {
-        const auto left = indexed(a), right = indexed(b);
-        if (left.empty() || left.size() != right.size()) return false;
-        out.clear();
-        for (const auto& [key, x] : left) {
-            const auto found = right.find(key);
-            if (found == right.end()) return false;
-            const auto y = found->second;
-            if (c.straight(x, y)) out.push_back(later ? y : x);
-            else if (c.straight(y, x)) out.push_back(later ? x : y);
-            else return false;
-        }
-        std::sort(out.begin(), out.end());
-        return true;
-    };
+    // Sharing is position-preserving. Occurrence balance and straight paths
+    // do not prove that delaying a publication or advancing an acquisition
+    // preserves the surrounding payload order. Keep distinct boundaries until
+    // a contextual ordering certificate can justify their movement.
     for (Id i = 0; i < requests.size(); ++i) {
+        auto& a = requests[i];
         for (Id j = i + 1; j < requests.size();) {
-            auto& a = requests[i];
-            auto& b = requests[j];
+            const auto& b = requests[j];
             if (a.source != b.source || a.observer != b.observer || a.owner != b.owner ||
-                a.period != b.period) {
+                a.period != b.period || a.storageRelease != b.storageRelease ||
+                a.publications != b.publications || a.acquisitions != b.acquisitions) {
                 ++j;
                 continue;
             }
-            std::vector<Cut> merged;
-            bool compatible = false;
-            if (a.acquisitions == b.acquisitions && combine(a.publications, b.publications, true, merged)) {
-                a.publications = std::move(merged);
-                compatible = true;
-            } else if (a.publications == b.publications &&
-                       combine(a.acquisitions, b.acquisitions, false, merged)) {
-                a.acquisitions = std::move(merged);
-                compatible = true;
-            }
-            if (!compatible) {
-                ++j;
-                continue;
-            }
+            a.qualifiedCycle &= b.qualifiedCycle;
             a.cells.insert(a.cells.end(), b.cells.begin(), b.cells.end());
             std::sort(a.cells.begin(), a.cells.end());
             a.cells.erase(std::unique(a.cells.begin(), a.cells.end()), a.cells.end());
             a.cell = a.cells.front();
             requests.erase(requests.begin() + j);
-        }
-    }
-    // Two exact cells in the same physical bank episode may share their
-    // storage-release return while retaining separate early readiness. Admit
-    // this only when each cell has its own reverse exact cycle, the complete
-    // guarded occurrences correspond, and the merged release token stream is
-    // balanced. This is the private multi-operand bank case, not the broader
-    // one-sided endpoint coalescing policy.
-    bool joinedCycle = true;
-    while (joinedCycle) {
-        joinedCycle = false;
-        for (Id i = 0; i < requests.size() && !joinedCycle; ++i) {
-            const auto& a = requests[i];
-            if (!a.qualifiedCycle || !a.storageRelease) continue;
-            for (Id j = i + 1; j < requests.size() && !joinedCycle; ++j) {
-                const auto& b = requests[j];
-                if (!b.qualifiedCycle || a.source != b.source || a.observer != b.observer ||
-                    a.owner != b.owner || a.period != b.period || a.cells == b.cells) continue;
-                auto reverse = [&](const RecurringRequirement& value, Id skip) {
-                    for (Id k = 0; k < requests.size(); ++k) {
-                        const auto& candidate = requests[k];
-                        if (k != skip && candidate.qualifiedCycle && candidate.owner == value.owner &&
-                            candidate.period == value.period && candidate.source == value.observer &&
-                            candidate.observer == value.source && candidate.cells == value.cells)
-                            return k;
-                    }
-                    return Id(NoAnalysisId);
-                };
-                const auto ri = reverse(a, i), rj = reverse(b, j);
-                if (ri == NoAnalysisId || rj == NoAnalysisId || ri == rj) continue;
-                std::vector<Cut> forwardPublications, forwardAcquisitions;
-                if (!combine(a.publications, b.publications, true, forwardPublications) ||
-                    !combine(a.acquisitions, b.acquisitions, false, forwardAcquisitions) ||
-                    !balanced(c, forwardPublications, forwardAcquisitions))
-                    continue;
-                auto forward = a;
-                forward.cells = a.cells;
-                forward.cells.insert(forward.cells.end(), b.cells.begin(), b.cells.end());
-                std::sort(forward.cells.begin(), forward.cells.end());
-                forward.cells.erase(std::unique(forward.cells.begin(), forward.cells.end()),
-                                    forward.cells.end());
-                forward.cell = forward.cells.front();
-                forward.publications = std::move(forwardPublications);
-                forward.acquisitions = std::move(forwardAcquisitions);
-                std::vector<Id> erase{i, j};
-                std::sort(erase.begin(), erase.end(), std::greater<Id>());
-                erase.erase(std::unique(erase.begin(), erase.end()), erase.end());
-                for (auto index : erase) requests.erase(requests.begin() + index);
-                requests.push_back(std::move(forward));
-                joinedCycle = true;
-            }
         }
     }
     return requests;
