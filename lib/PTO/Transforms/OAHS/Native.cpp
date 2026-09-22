@@ -452,23 +452,28 @@ LogicalResult import(func::FuncOp function, Import &out,
   DenseMap<mlir::Operation *, CompoundInstanceElement *> phases;
   for (const auto &entry : translated) {
     auto *phase = dyn_cast<CompoundInstanceElement>(entry.get());
-    if (!phase) continue;
+    if (!phase) {
+      continue;
+    }
     auto *op = phase->elementOp;
     // Every imported phase needs an actual insertion boundary. Never silently
     // discard later phases of a compound instruction at this adapter boundary.
-    if (phases.count(op))
+    if (phases.count(op)) {
       return op->emitError("handoff: multiple translated phases require phase-aware native anchors");
-    if (!pipe(static_cast<PIPE>(phase->kPipeValue)))
+    }
+    if (!pipe(static_cast<PIPE>(phase->kPipeValue))) {
       return op->emitError(
           "handoff: pipeline outside native target contract");
+    }
     out.payload.push_back(op);
     phases[op] = phase;
   }
   // Retain available shared protocol metadata for reports and refinements.
   // Missing/incomplete metadata does not veto the translator's result.
   function.walk([&](mlir::Operation *op) {
-    if (auto protocol = getSyncProtocolModel(op); protocol && protocol->complete())
+    if (auto protocol = getSyncProtocolModel(op); protocol && protocol->complete()) {
       out.protocols.push_back(*protocol);
+    }
   });
 
   DenseMap<mlir::Operation *, unsigned> operationIds;
@@ -512,9 +517,11 @@ LogicalResult import(func::FuncOp function, Import &out,
     return sequence;
   };
   out.program.body = importRegion(function.getBody());
-  for (auto [i, op] : llvm::enumerate(out.payload))
-    if (!represented[i])
+  for (auto [i, op] : llvm::enumerate(out.payload)) {
+    if (!represented[i]) {
       return op->emitError("handoff: translated phase lies outside supported structured control");
+    }
+  }
 
   struct Effect {
     unsigned operation;
@@ -765,30 +772,29 @@ LogicalResult import(func::FuncOp function, Import &out,
   // A payload-free function has no core-specific obligations. A pure DMA
   // function derives its core from the actual local storage above.
   out.program.target = a3SyncProfile(cube ? SyncCore::Cube : SyncCore::Vector);
-  // Require the entire M-access population of an exact ACC atom to obey one
-  // native accumulation contract. Unknown aliases, other M instructions,
-  // mixed layouts/shapes, mutable valid dimensions and UnitFlag retain the
-  // ordinary completion requirement. The actual effects remain unchanged.
-  bool mutableDimensions = false;
-  function.walk([&](SetValidShapeOp) { mutableDimensions = true; });
-  if (cube && !mutableDimensions) {
+  // Keep the existing whole-cell compatibility proof until generation-scoped
+  // support is represented. Descriptor state and storage identity are shared
+  // semantic facts; unrelated updates and allocation syntax are not vetoes.
+  if (cube) {
+    const SyncTileDescriptorState descriptors(function);
     std::vector<std::optional<SyncAccumulatorOrder>> common(out.program.cells.size());
     std::vector<bool> invalid(out.program.cells.size());
     // Sparse effect incidences, rather than another cells-by-operations scan.
     for (unsigned i = 0; i < out.program.operations.size(); ++i) {
       const auto &op = out.program.operations[i];
       if (op.pipe != Pipe::M) continue;
-      const auto order = syncAccumulatorOrder(out.payload[i]);
+      const auto order = syncAccumulatorOrder(out.payload[i], descriptors, buffers);
       out.program.operations[i].nativeMmadAccumulate = order && isa<TMatmulAccOp>(out.payload[i]);
       for (const auto &access : op.accesses) {
         const auto cell = access.cell;
         const auto &atom = out.program.cells[cell];
         if (invalid[cell] || atom.storage != Cell::Storage::CanonicalInterval || atom.unknownRange ||
             atom.addressSpace != std::to_string(unsigned(AddressSpace::ACC))) continue;
-        if (!order || (common[cell] && (common[cell]->signature != order->signature ||
-                                       common[cell]->destinationType != order->destinationType)))
+        if (!order || (common[cell] && !common[cell]->compatible(*order))) {
           invalid[cell] = true;
-        else common[cell] = order;
+        } else {
+          common[cell] = order;
+        }
       }
     }
     for (unsigned cell = 0; cell < out.program.cells.size(); ++cell)

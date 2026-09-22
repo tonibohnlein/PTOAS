@@ -1,5 +1,28 @@
 # OAHS current handoff
 
+## Active baseline decision — 2026-09-22
+
+The user selected the source snapshot pinned by the Shenggan GEMM parity
+campaign as the baseline for further development:
+
+- Commit: `16564fa8ae7282631f20ce112c10bab0cf69ed36`.
+- Branch: `codex/oahs-gemm-base`.
+- Worktree: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-gemm-base`.
+- Rebased counterpart: `f2d24ece1`; its OAHS code and portable tests match.
+
+Code remains at that snapshot. No new build or validation has been run here;
+device parity is historical evidence recorded in the later campaign report.
+The current implementation and the main-based scaffold remain in their separate
+worktrees. The scaffold's build is stopped.
+
+Next: retain the demonstrated bank/readiness/release mechanics, review later
+correctness fixes separately, and first port the shared InsertSync semantic
+integration from `5e0a72772` without importing its unrelated constructor changes.
+Do not resume the zero-based rewrite. Keep aggregate local build/test workers
+at two or fewer. Source this worktree's `env.sh` for its isolated configuration.
+
+The checkout notes and validation below are historical notes from this snapshot.
+
 Updated: 2026-09-18
 
 ## Checkout

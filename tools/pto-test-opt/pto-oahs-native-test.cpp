@@ -149,9 +149,11 @@ module attributes {pto.target_arch = "a3"} {
       std::string body = "scf.for %i = %zero to %four step %one {\n" + load + set + wait + read +
           "pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]\n"
           "pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID0>]\n}\n";
-      if (id == 3)
-        for (size_t at = 0; (at = body.find("EVENT_ID0", at)) != std::string::npos; ++at)
+      if (id == 3) {
+        for (size_t at = 0; (at = body.find("EVENT_ID0", at)) != std::string::npos; ++at) {
           body.replace(at, 9, "EVENT_ID3");
+        }
+      }
       auto module = parseSourceString<ModuleOp>(header + body + end, &context);
       require(bool(module));
       auto function = module->lookupSymbol<func::FuncOp>("manual");
@@ -300,8 +302,9 @@ module attributes {pto.target_arch = "a3"} {
       func.func @nested(%src: !pto.tile_buf<vec, 1x32xf32>) {
         scf.execute_region {
     )mlir";
-    if (withPayload)
+    if (withPayload) {
       nested += "\"sync_probe.ordinary\"(%src) : (!pto.tile_buf<vec, 1x32xf32>) -> ()\n";
+    }
     nested += "scf.yield } return } }";
     auto nestedModule = parseSourceString<ModuleOp>(nested, &context);
     require(bool(nestedModule));

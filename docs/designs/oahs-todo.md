@@ -6,19 +6,25 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
-## Current priority order
+## Current priority order — GEMM baseline restart, 2026-09-22
 
-1. Device-qualify the locally completed GEMM plan: 182 event pairs, zero named
-   barriers, and no added checked payload ordering relative to the manual plan.
-2. Extend remaining-obligation selection to guarded attention bank reuse,
-   without eagerly installing every qualified bank channel.
-3. Harden recurring specialization and coalescing at their correctness and
-   resource boundaries.
-4. Optimize construction runtime and repeated immutable structure building.
+Use [the semantic correction sequence](oahs-semantic-corrections.md) as the
+implementation order. The review covers a later branch; establish each missing
+fact on this baseline before replacing its consumer.
 
-Finish and measure a coherent plan milestone before moving to the next item.
-Runtime work may still be performed when it blocks plan experimentation, but it
-is not the current optimization target.
+1. Merge current upstream and port the shared InsertSync instruction semantics.
+2. Port `b506cc19e`'s documented ACC access-order correction; validate native
+   equivalences/negatives, Qwen and DeepSeek prefill, the historical corpus,
+   and the retained Shenggan plan. This is the active checkpoint.
+3. Derive independent physical-use relations from selector dependency slices.
+4. Introduce generation-scoped support, then compose endpoint requirements.
+5. Generalize protocol construction and deadline-specific resource binding.
+
+The old GEMM source snapshot's notes below are historical. The later device
+campaign reported parity with the manual kernel; current host validation does
+not constitute a new device timing claim. Preserve that plan and the independent
+checker while replacing recognizer restrictions. Temporary implementation
+boundaries must remain explicit in the correction document.
 
 ## Locally completed GEMM plan milestone
 

@@ -100,7 +100,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     }
 
     if (algorithm == "handoff") {
-      if (failed(oahs::runHandoffSync(func))) signalPassFailure();
+      if (failed(oahs::runHandoffSync(func))) {
+        signalPassFailure();
+      }
       return;
     }
 
