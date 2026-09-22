@@ -31,8 +31,9 @@ struct SyncPipeBuild {
 class SyncCodegen {
 public:
   SyncCodegen(SyncIRs &syncIR, func::FuncOp func,
-              SyncAnalysisMode syncAnalysisMode)
-      : syncIR_(syncIR), func_(func), syncAnalysisMode_(syncAnalysisMode) {};
+              SyncAnalysisMode syncAnalysisMode, bool preserveCommandWords = false)
+      : syncIR_(syncIR), func_(func), syncAnalysisMode_(syncAnalysisMode),
+        preserveCommandWords_(preserveCommandWords) {};
  
   ~SyncCodegen() = default;
  
@@ -82,6 +83,9 @@ private:
   SyncIRs &syncIR_;
   func::FuncOp func_;
   SyncAnalysisMode syncAnalysisMode_;
+  // Checked ordered words can contain several generations of the same key.
+  // Signature deduplication would erase distinct SET/WAIT occurrences.
+  bool preserveCommandWords_ = false;
  
   // 记录 Op -> Sync 的映射
   DenseMap<const Operation *, SyncPipeBuild> op2InsertSync;

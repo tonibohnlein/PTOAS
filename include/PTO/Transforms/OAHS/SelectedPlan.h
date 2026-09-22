@@ -137,6 +137,9 @@ struct SelectedWork {
     uint64_t elapsedMicroseconds = 0, preparationMicroseconds = 0;
     std::size_t sourceHandles = 0, acknowledgments = 0, commonCutTransfers = 0;
     std::size_t recurringChannels = 0;
+    // Structural next-publication/actual-return queries, not full trial solves.
+    std::size_t splitRearmingQueries = 0;
+    uint64_t splitRearmingSites = 0;
     std::size_t recurringTrials = 0, redundantRecurringChannels = 0;
     std::size_t sharedReaderReturns = 0, returnSharingQueries = 0;
     uint64_t returnSharingSiteVisits = 0;
@@ -149,6 +152,10 @@ struct SelectedWork {
     std::size_t rejectedProtocolProposals = 0, rejectedResourceProposals = 0;
     std::size_t rejectedSupportProposals = 0;
     std::size_t gapPublications = 0, deferredAcknowledgments = 0;
+    std::size_t finalReadPublications = 0;
+    std::size_t closedReservationBorrows = 0;
+    std::size_t closedReservationChecks = 0, closedReservationCheckSites = 0;
+    uint64_t finalReadQuerySites = 0;
     std::size_t equalCoveragePairs = 0, bindingProbes = 0, bindingChoices = 0;
     std::size_t helperCompositionTrials = 0;
     uint64_t helperCompositionSiteEvaluations = 0, helperCompositionMicroseconds = 0;
@@ -195,6 +202,9 @@ struct SelectedOptions {
     bool sourceGaps = false;
     bool deferredAcyclicAcknowledgments = false;
     bool classInvariantInputs = false;
+    // Native first-conflicting-write observation experiment; mandatory checks remain enabled.
+    bool firstWriteConsumers = false;
+    bool finalReadSources = false;
     bool equalCoverageBinding = false;
     bool traceReplay = false;
     // Diagnostic comparison with the former prefix-only contextual cache.

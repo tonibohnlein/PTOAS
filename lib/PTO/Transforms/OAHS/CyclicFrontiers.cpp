@@ -27,7 +27,7 @@ Cut after(const Program& p, const Control& c, Id site, const OccurrenceMode& exp
             continue;
         }
         seen[at] = true;
-        if (c.graph.legalCuts[at]) {
+        if (c.sourceCut(at, p.operations[c.graph.operations[site]].pipe)) {
             if (!(occurrenceMode(p, at) == expected)) {
                 return NoAnalysisId;
             }
@@ -840,7 +840,7 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
             const auto at = todo.back(); todo.pop_back();
             if (seen[at]) continue;
             seen[at] = true;
-            if (c.graph.legalCuts[at]) {
+            if (c.sourceCut(at, p.operations[c.graph.operations[source]].pipe)) {
                 if (!atomsEqual(source, at)) return Cut(NoAnalysisId);
                 cuts.insert(canonicalCommandCut(p, at));
                 continue;

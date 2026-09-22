@@ -68,6 +68,11 @@ bool Ledger::initialize(const Commands& fixed, std::string& reason)
 Id Ledger::insert(Cut cut, Id offset, Command command, EndpointPurpose purpose, Id request, Id ack)
 {
     cut = canonical(cut);
+    const auto protectedEnd = protectedPrefixes.find(cut);
+    if (protectedEnd != protectedPrefixes.end()) {
+        const auto at = std::find(words[cut].begin(), words[cut].end(), protectedEnd->second);
+        if (at != words[cut].end()) offset = std::max(offset, Id(at - words[cut].begin()) + 1);
+    }
     const auto id = endpoints.size();
     endpoints.push_back({id, cut, command, purpose, request, ack});
     words[cut].insert(words[cut].begin() + offset, id);
@@ -91,6 +96,10 @@ Id Ledger::after(Id predecessor, Command command, EndpointPurpose purpose, Id re
     const auto found = std::find(ids.begin(), ids.end(), predecessor);
     return insert(cut, Id(found - ids.begin()) + 1, command, purpose, request, ack);
 }
+void Ledger::protectPublicationPrefix(Id id)
+{
+    protectedPrefixes[endpoints.at(id).cut] = id;
+}
 void Ledger::erase(Id id)
 {
     const auto cut = endpoints.at(id).cut;
@@ -104,7 +113,13 @@ void Ledger::restoreAfter(Id id, Id predecessor)
 {
     const auto cut = endpoints.at(id).cut;
     auto& word = words[cut];
-    word.insert(std::next(std::find(word.begin(), word.end(), predecessor)), id);
+    auto position = std::next(std::find(word.begin(), word.end(), predecessor));
+    const auto protectedEnd = protectedPrefixes.find(cut);
+    if (protectedEnd != protectedPrefixes.end()) {
+        const auto at = std::find(word.begin(), word.end(), protectedEnd->second);
+        if (at != word.end() && position <= at) position = std::next(at);
+    }
+    word.insert(position, id);
     removed.erase(id);
     changed.push_back(cut);
     ++revision;

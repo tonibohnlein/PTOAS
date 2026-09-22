@@ -1,0 +1,25 @@
+module attributes {pto.target_arch = "a3"} {
+  func.func @first_write(%dst: !pto.partition_tensor_view<1x32xf32>, %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %lo = arith.constant 3 : index
+    %hi = arith.constant 9 : index
+    %step = arith.constant 2 : index
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %x = arith.constant 0 : i64
+    %y = arith.constant 128 : i64
+    %z = arith.constant 256 : i64
+    %a = pto.alloc_tile addr = %x : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %y : !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %z : !pto.tile_buf<vec, 1x32xf32>
+    scf.for %entry = %zero to %n step %one {
+      pto.tstore ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%dst : !pto.partition_tensor_view<1x32xf32>)
+      scf.for %i = %lo to %hi step %step {
+        pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+        pto.tload ins(%dst : !pto.partition_tensor_view<1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+        pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+      }
+    }
+    return
+  }
+}

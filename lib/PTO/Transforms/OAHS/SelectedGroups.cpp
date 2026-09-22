@@ -45,6 +45,96 @@ bool Constructor::freshBetween(Cut source, Cut target, Id access) const
     return !control.lookahead.hasIssueBetween(
         control.frame[source], access, control.position[source], control.position[target]);
 }
+// Qualify an original final-visit source, not a lexical child exit. The
+// two-state walk pairs every occurrence with exactly one current receipt and
+// preserves the motivating access classes along the entire live corridor.
+bool Constructor::finalReadGap(Cut gap, Pipe source,
+    const std::vector<FrontierRequirement>& required, Id key)
+{
+    if (!program.observed || required.empty() || gap == current) return false;
+    const auto observation = program.observed->sites[gap].observation;
+    if (observation == NoAnalysisId) return false;
+    const auto& o = program.observed->observations[observation];
+    if (!o.available || !o.beforeSharedWord ||
+        std::none_of(o.atoms.begin(), o.atoms.end(), [](const auto& atom) {
+            return atom.kind == ObservationAtom::LoopHasNext && atom.value == 0 && atom.parameter;
+        })) return false;
+    std::set<Id> needed;
+    for (const auto& r : required) {
+        if (r.source != source || r.sourceWrite) return false;
+        needed.insert(accessClass(r));
+    }
+    const auto publication = control.canonicalCut[gap], acquisition = control.canonicalCut[current];
+    if (publication == acquisition) return false;
+    std::vector<std::pair<Cut, bool>> todo{{control.graph.entry, false}};
+    std::set<std::pair<Cut, bool>> seen;
+    bool reached = false;
+    while (!todo.empty()) {
+        auto [at, live] = todo.back(); todo.pop_back();
+        if (!seen.insert({at, live}).second) continue;
+        ++result.work.finalReadQuerySites;
+        const auto word = control.canonicalCut[at];
+        if (word == publication) {
+            if (live || control.graph.operations[at] != NoAnalysisId) return false;
+            const auto& state = cache.cuts[at].incoming;
+            if (!state.causal.reachable()) return false;
+            for (auto access : needed) {
+                const auto* h = state.causal.facts()->history.find(access);
+                if (!h || !frontierContains(*h, PipeCount + unsigned(source))) return false;
+            }
+            // This dedicated word remains before the anchor's shared word.
+            // It can accumulate publications but never receiving prerequisites.
+            for (auto id : ledger.word(at))
+                if (ledger.endpoint(id).command.kind != Command::Publish) return false;
+            if (key != NoAnalysisId && !canPublish(state, key)) return false;
+            live = true;
+        }
+        if (live && key != NoAnalysisId) {
+            const auto& k = frontier.keys()[key];
+            for (auto id : ledger.word(at)) {
+                const auto& c = ledger.endpoint(id).command;
+                if ((c.kind == Command::Publish || c.kind == Command::Acquire) &&
+                    c.source == k.source && c.observer == k.observer && c.key == k.key) return false;
+            }
+        }
+        if (word == acquisition) {
+            if (!live) return false;
+            reached = true; live = false;
+        }
+        const auto op = control.graph.operations[at];
+        if (live && op != NoAnalysisId && program.operations[op].pipe == source)
+            for (auto a : program.operations[op].accesses)
+                if (a.read && needed.count((Id(a.cell) * PipeCount + unsigned(source)) * 2)) return false;
+        const auto& next = control.graph.sites[at].successors;
+        if (next.empty() && live) return false;
+        for (auto successor : next) todo.emplace_back(successor, live);
+    }
+    return reached;
+}
+bool Constructor::finalReadFrontier(Pipe source,
+    const std::vector<FrontierRequirement>& required, Group& group)
+{
+    if (!options.finalReadSources || !program.observed) return false;
+    const auto observer = program.operations[control.graph.operations[current]].pipe;
+    for (auto gap : control.finalReadGaps) {
+        if (control.canonicalCut[gap] != gap || !control.reachable[gap] ||
+            !finalReadGap(gap, source, required)) continue;
+        for (Id key = 0; key < frontier.keys().size(); ++key) {
+            const auto& k = frontier.keys()[key];
+            if (k.source != source || k.observer != observer || closedKeys.count(key) ||
+                recurringKeys.count(key)) continue;
+            if (!finalReadGap(gap, source, required, key) ||
+                !consumptionBeforeNextPublication(gap, current, key)) continue;
+            group.publication = gap;
+            group.forwardKey = key;
+            group.version = ledger.version();
+            group.finalReadSource = true;
+            for (const auto& r : required) group.coverage.insert(accessClass(r));
+            return true;
+        }
+    }
+    return false;
+}
 bool Constructor::sourceFrontier(
     Pipe source, const std::vector<FrontierRequirement>& required, Group& group,
     const std::vector<FrontierRequirement>& all, const std::set<Id>* promotion) const
@@ -170,14 +260,17 @@ bool Constructor::loopEntryFrontier(
     for (const auto& r : required) needed.insert(accessClass(r));
     const auto observer = program.operations[control.graph.operations[current]].pipe;
     for (const auto& loop : control.loopEntries) {
-        std::vector<Cut> acquisitions{loop.entry};
+        std::vector<std::pair<Cut, Cut>> acquisitions{{loop.entry, loop.entry}};
         for (auto cut : loop.firstInputConsumers)
             if (program.operations[control.graph.operations[cut]].pipe == observer)
-                acquisitions.push_back(cut);
-        for (auto acquisition : acquisitions) {
+                acquisitions.emplace_back(cut, cut);
+        for (const auto& frontier : loop.firstWriteFrontiers)
+            if (program.operations[control.graph.operations[frontier.second]].pipe == observer)
+                acquisitions.push_back(frontier);
+        for (auto [acquisition, consumer] : acquisitions) {
             const bool atEntry = acquisition == loop.entry;
             const auto first = atEntry ? loop.firstConsumers[unsigned(observer)]
-                                       : std::vector<Cut>{acquisition};
+                                       : std::vector<Cut>{consumer};
             // SCC construction may visit a later consumer before a qualified
             // first use. Select the receipt at that actual first deadline,
             // or at entry only when every first observer payload requires it.
@@ -447,6 +540,7 @@ Group Constructor::sourceGroup(
     Group group;
     group.source = source;
     group.requirements = required;
+    if (finalReadFrontier(source, required, group)) return group;
     std::set<Id> needed;
     for (const auto& requirement : required) needed.insert(accessClass(requirement));
     const SelectedSource* selected = nullptr;
@@ -465,6 +559,8 @@ Group Constructor::sourceGroup(
                         return control.reachable[publication] && control.straight(publication, cut);
                     });
             })) continue;
+        if (options.finalReadSources && !control.finalReadGaps.empty() &&
+            !control.balancedWords(handle.cut, current)) continue;
         const auto covered = coverage(handle.cut, source, required);
         if (!std::includes(covered.begin(), covered.end(), needed.begin(), needed.end())) continue;
         if (!selected || control.position[handle.cut] < control.position[selected->cut]) selected = &handle;
@@ -492,8 +588,15 @@ Group Constructor::sourceGroup(
     if (!comparable && choiceConsumerFrontier(source, required, group, all, promotion)) return group;
     if (!comparable && sourceFrontier(source, required, group, all, promotion)) return group;
     if (!comparable && loopEntryFrontier(source, required, group, all, promotion)) return group;
-    group.publication = comparable ? selected->cut : current;
-    group.common = !comparable;
+    group.common = !comparable ||
+        ((control.components[activeComponent].cyclic ||
+          (options.finalReadSources && !control.finalReadGaps.empty())) &&
+         control.wordOccurrences[control.canonicalCut[current]].size() > 1 &&
+         control.canonicalCut[selected->cut] == control.canonicalCut[current]);
+    // Two analytical occurrences of one shared word are one physical cut.
+    // Its recurring exchange needs the same actual acknowledgment as any
+    // other common-cut transfer; a saved handle is not rearming evidence.
+    group.publication = group.common ? current : selected->cut;
     group.coverage = coverage(group.publication, source, all);
     return group;
 }

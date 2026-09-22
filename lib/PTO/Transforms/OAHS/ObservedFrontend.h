@@ -31,6 +31,7 @@ inline uint64_t mulMod(uint64_t a, uint64_t b, uint64_t m) {
 }
 inline bool same(const OriginalObservation &a, const OriginalObservation &b) {
   if (a.anchor != b.anchor || a.available != b.available ||
+      a.beforeSharedWord != b.beforeSharedWord ||
       a.atoms.size() != b.atoms.size())
     return false;
   for (std::size_t i = 0; i < a.atoms.size(); ++i) {

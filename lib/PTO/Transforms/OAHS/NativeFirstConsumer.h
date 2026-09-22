@@ -8,23 +8,34 @@
 #ifndef PTO_OAHS_NATIVE_FIRST_CONSUMER_H
 #define PTO_OAHS_NATIVE_FIRST_CONSUMER_H
 #include "NativeFirstUse.h"
+#include "PTO/Transforms/OAHS/StorageFrontiers.h"
 #include <limits>
+#include <memory>
 
 namespace mlir::pto::oahs::native_detail {
 // Collect first/final endpoint roles before refining one original owner.
 // The first-only fallback splits a straight prefix. Original positive bounds
 // prove entry; the backedge still admits arbitrarily many later visits. Only
-// invariant-input consumers get distinct first/later command observations.
+// invariant-input consumers and first writes conflicting with source-inactive
+// readers get distinct first/later command observations.
 // Other original words, physical operations and all completion histories stay
 // shared. This creates vocabulary, not synchronization or completion credit.
 inline void importFirstConsumers(
     Program &program, const SmallVector<scf::ForOp> &loops,
     const DenseMap<mlir::Operation *, std::size_t> &ids,
     DenseMap<std::size_t, scf::ForOp> &owners,
-    std::vector<std::string> &notes, bool classInvariant = false) {
+    std::vector<std::string> &notes, bool classInvariant = false, bool firstWrites = false,
+    const StorageFrontierAnalysis *storageView = nullptr) {
+  // Snapshot the original storage view before cloning occurrence vocabulary.
+  // Marginal prior-reader witnesses only admit useful candidates; they grant
+  // no completion or rearming credit to the selected constructor.
+  std::unique_ptr<StorageFrontierAnalysis> ownedStorage;
+  if (firstWrites && !storageView) ownedStorage = std::make_unique<StorageFrontierAnalysis>(program);
+  const auto *storage = storageView ? storageView : ownedStorage.get();
   std::map<unsigned, std::set<Pipe>> writers;
-  for (const auto &op : program.operations) for (auto access : op.accesses)
+  for (const auto &op : program.operations) for (auto access : op.accesses) {
     if (access.write) writers[access.cell].insert(op.pipe);
+  }
   std::vector<std::vector<std::size_t>> predecessors(program.observed->sites.size());
   for (std::size_t at = 0; at < predecessors.size(); ++at)
     for (auto next : program.observed->sites[at].successors) predecessors[next].push_back(at);
@@ -112,9 +123,29 @@ inline void importFirstConsumers(
         if (cells.size() > 1) earlyInputs.insert(cells.begin(), cells.end());
       }
     }
-    if (earlyInputs.empty()) continue;
+    // Reader completion is invariant when its source pipe does not issue in
+    // this region, even though the receiving pipe repeatedly overwrites the
+    // cell. This is a candidate occurrence boundary only: source-time history,
+    // completion, balanced participation and rearming remain selected queries.
+    std::set<std::pair<unsigned, Pipe>> firstWriteRoles;
+    if (firstWrites && storage && storage->complete()) for (auto at : members) {
+      const auto op = old.sites[at].operation;
+      if (op == NoControlId) continue;
+      const auto &operation = program.operations[op];
+      for (auto access : operation.accesses) {
+        const auto &cell = program.cells[access.cell];
+        if (!access.write || cell.unknownRange || cell.exclusive) continue;
+        for (auto original : storage->sitesForOperation(op))
+          for (const auto &origin : storage->previousReaders(original, access.cell)) {
+            const auto reader = program.operations[origin.operation].pipe;
+            if (reader != operation.pipe && !bodyPipes.count(reader))
+              firstWriteRoles.insert({access.cell, operation.pipe});
+          }
+      }
+    }
+    if (earlyInputs.empty() && firstWriteRoles.empty()) continue;
     std::vector<std::size_t> prefix;
-    std::set<std::size_t> consumers, seen;
+    std::set<std::size_t> consumers, firstWriters, seen;
     std::set<Pipe> issued;
     std::set<std::pair<unsigned, Pipe>> readInputs;
     std::size_t last = 0;
@@ -132,9 +163,18 @@ inline void importFirstConsumers(
             readInputs.insert({a.cell, operation.pipe}).second)
           for (auto writer : writers[a.cell])
             invariant |= writer != operation.pipe && (classInvariant || !bodyPipes.count(writer));
-        // Entry acquisition already handles the first observer operation.
+        bool firstWrite = false;
+        for (auto a : operation.accesses)
+          if (a.write) firstWrite |= firstWriteRoles.erase({a.cell, operation.pipe}) != 0;
+        // A first write needs its own deadline even when it is the observer's
+        // first payload: an earlier outward publication can forbid entry
+        // placement. Preserve that publication's original position.
         if (invariant && issued.count(operation.pipe)) {
           consumers.insert(at);
+          last = prefix.size();
+        }
+        if (firstWrite) {
+          firstWriters.insert(at);
           last = prefix.size();
         }
         issued.insert(operation.pipe);
@@ -142,6 +182,14 @@ inline void importFirstConsumers(
       if (site.successors.size() != 1 ||
           (!site.backedgeOwners.empty() && site.backedgeOwners[0] != NoControlId)) break;
       at = site.successors[0];
+    }
+    if (!firstWriters.empty() && prefix.size() != members.size()) {
+      // Keep the initial first-write extension to a whole straight child.
+      // A truncated clone can discard another bank's post-read boundary.
+      firstWriters.clear();
+      last = 0;
+      for (std::size_t i = 0; i < prefix.size(); ++i)
+        if (consumers.count(prefix[i])) last = i + 1;
     }
     if (!last) continue;
     // Collect the other end of the lifetime on the SAME original owner,
@@ -182,7 +230,7 @@ inline void importFirstConsumers(
         if (trailing) lastPublications.insert(prefix[index + 1]);
       }
     }
-    if (!lastPublications.empty()) {
+    if (!lastPublications.empty() && firstWriters.empty()) {
       ReaderVisitRegion request;
       request.owner = owner;
       request.firstConsumers.assign(consumers.begin(), consumers.end());
@@ -203,7 +251,7 @@ inline void importFirstConsumers(
     // Include the command anchor immediately after the final copied payload.
     // Joining at that anchor would otherwise erase its source publication cut.
     if (prefix.size() <= last) continue;
-    prefix.resize(last + 1);
+    if (firstWriters.empty()) prefix.resize(last + 1);
     auto candidate = program;
     auto &q = *candidate.observed;
     std::map<std::size_t, std::size_t> clones;
@@ -225,19 +273,41 @@ inline void importFirstConsumers(
     }
     for (auto at : prefix) for (auto &next : q.sites[clones[at]].successors)
       if (clones.count(next)) next = clones[next];
-    q.sites[owner].successors = {clones.at(body)};
+    std::map<std::size_t, std::size_t> receipts;
+    for (auto at : firstWriters) {
+      auto observation = old.observations[old.sites[at].observation];
+      observation.atoms.push_back({ObservationAtom::LoopHasPrevious, owner, 1, 0});
+      observation.beforeSharedWord = true;
+      const auto boundary = q.sites.size();
+      receipts[clones.at(at)] = boundary;
+      q.sites.push_back({NoControlId, q.observations.size(), {clones.at(at)},
+                         {NoControlId}, old.sites[at].context});
+      q.observations.push_back(std::move(observation));
+    }
+    for (auto at : prefix) for (auto &next : q.sites[clones.at(at)].successors)
+      if (receipts.count(next)) next = receipts.at(next);
+    q.sites[owner].successors = {receipts.count(clones.at(body)) ?
+        receipts.at(clones.at(body)) : clones.at(body)};
     for (auto &region : q.loops) {
       bool contains = region.owner == owner ||
           std::find(region.sites.begin(), region.sites.end(), owner) != region.sites.end();
-      if (contains) for (auto at : prefix) region.sites.push_back(clones[at]);
+      if (contains) {
+        for (auto at : prefix) region.sites.push_back(clones[at]);
+        for (const auto &[consumer, boundary] : receipts) region.sites.push_back(boundary);
+      }
       if (region.owner == owner) {
-        region.bodyEntry = clones.at(body);
+        region.bodyEntry = q.sites[owner].successors.front();
+        for (const auto &[consumer, boundary] : receipts)
+          region.firstWriteFrontiers.emplace_back(boundary, consumer);
         for (auto at : prefix) region.firstVisitPrefix.push_back(clones[at]);
       }
     }
     q.qualification += "; first-consumer-prefix-v1";
     selected::Control control(candidate);
-    if (!control.complete) continue;
+    if (!control.complete) {
+      notes.push_back("first-consumer candidate declined: " + control.reason);
+      continue;
+    }
     program = std::move(candidate);
     owners[owner] = loop;
     notes.push_back("qualified first-consumer prefix: " + std::to_string(prefix.size()) + " sites");

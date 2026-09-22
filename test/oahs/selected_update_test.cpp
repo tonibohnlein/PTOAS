@@ -191,7 +191,7 @@ struct ReplayTestAccess {
         std::cout << "shared_words=" << words << " comparison_spans=" << scans
                   << " invalidation_sites=" << visits << '\n';
     }
-    static void dischargeRestore()
+    static void dischargeRestore(bool borrow = false)
     {
         const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE3;
         auto p = base(4, 2);
@@ -244,6 +244,43 @@ struct ReplayTestAccess {
         require(c.settleRearming(decision), c.cache.reason);
         require(!c.ledger.active(helperSet) && !c.ledger.active(helperWait) &&
                 c.result.work.rearmingDischarged == 1, "fixture never discharged its helper");
+        Id suspended = NoAnalysisId;
+        for (Id key = 0; key < c.frontier.keys().size(); ++key) {
+            const auto& identity = c.frontier.keys()[key];
+            if (identity.source == Q && identity.observer == P && identity.key == 0) suspended = key;
+        }
+        require(suspended != NoAnalysisId, "fixture key missing");
+        require(c.suspendedReturnKey(suspended), "restorable reverse key lost its ownership");
+        if (borrow) {
+            // A later forward receipt can rearm the original helper's key at
+            // the proposed source. Restore the owned helper and borrow as one
+            // checked edit; the reservation itself must survive.
+            c.closedBindings[{P, Q}] = {NoAnalysisId, suspended};
+            c.closedKeys.insert(suspended);
+            const auto version = c.ledger.version();
+            require(!c.prepareClosedReservation(2, 3, suspended) &&
+                    c.ledger.version() == version && !c.ledger.active(helperSet),
+                    "unsupported helper restoration mutated the live ledger");
+            append(2, Command::Publish, P, Q, 1, EndpointPurpose::Completion);
+            append(2, Command::Acquire, P, Q, 1, EndpointPurpose::Completion);
+            require(c.update(), c.cache.reason);
+            require(!c.inactiveClosedReservation(2, 3, suspended),
+                    "inactive helper was silently ignored");
+            require(c.prepareClosedReservation(2, 3, suspended),
+                    "checked helper restoration rejected a supported borrow");
+            append(2, Command::Publish, Q, P, 0, EndpointPurpose::Completion);
+            append(3, Command::Acquire, Q, P, 0, EndpointPurpose::Completion);
+            require(c.update(), c.cache.reason);
+            require(c.closedKeys.count(suspended) && c.requiredReturns.count(helperWait) &&
+                    c.ledger.active(helperSet) && c.ledger.active(helperWait) &&
+                    c.result.work.closedReservationChecks == 2,
+                    "borrow lost ownership or its restored support");
+            require(checkCausalFrontier(p, c.ledger.commands()).accepted,
+                    "restored closed-role borrow rejected by cold checker");
+            return;
+        }
+        require(c.reusable(Q, P, c.cache.cuts[2].before) != suspended,
+                "ordinary allocation stole a restorable acknowledgment key");
         compare();
         // New earlier republication needs the removed helper BEFORE the later
         // actual return. update() must restore original IDs and word positions.
@@ -253,6 +290,7 @@ struct ReplayTestAccess {
         require(c.result.work.rearmingRestored == 1 && c.result.work.rearmingDischarged == 0 &&
                 c.requiredReturns.count(helperWait) && c.ledger.word(1) == originalWord,
                 "earlier deadline did not restore and pin original helper identities/positions");
+        require(!c.suspendedReturnKey(suspended), "restored key remains spuriously suspended");
         compare();
         require(checkCausalFrontier(p, c.ledger.commands()).accepted, "restored plan not accepted");
         c.current = 3;
@@ -263,6 +301,24 @@ struct ReplayTestAccess {
         decision.endpoints.push_back(helperWait);
         require(c.settleRearming(decision) && c.ledger.word(1) == originalWord,
                 "required return was removed again");
+        // Source-time credit alone does not authorize a new use before an
+        // already selected publication. Its new consumption must reach that
+        // later publisher too; otherwise a locally valid helper breaks reuse.
+        c.current = 2;
+        Id laterKey = NoAnalysisId;
+        for (Id key = 0; key < c.frontier.keys().size(); ++key) {
+            const auto& identity = c.frontier.keys()[key];
+            if (identity.source == Q && identity.observer == P && identity.key == 1) laterKey = key;
+        }
+        require(laterKey != NoAnalysisId && c.canPublish(c.cache.cuts[2].before, laterKey),
+                "neighboring-use fixture lacks source-time credit");
+        require(c.reusable(Q, P, c.cache.cuts[2].before) != laterKey,
+                "new helper stole the next publication's consumption credit");
+        auto broken = c.ledger;
+        broken.append(2, {Command::Publish, Q, P, 1}, EndpointPurpose::Completion);
+        broken.append(2, {Command::Acquire, Q, P, 1}, EndpointPurpose::Completion);
+        require(!checkCausalFrontier(p, broken.commands()).accepted,
+                "missing neighboring rearming support was not discriminating");
     }
     // One edit, replayed with the reusable prefix kept and then entirely cold.
     // Returns how many components the incremental run actually kept.
@@ -676,6 +732,7 @@ void recurringRoleIsolation()
 int main()
 {
     o::selected::ReplayTestAccess::dischargeRestore();
+    o::selected::ReplayTestAccess::dischargeRestore(true);
     for (unsigned words : {32u, 128u, 512u})
         o::selected::ReplayTestAccess::prefixComparisonCost(words);
     sourceTimeAndNeighbors();

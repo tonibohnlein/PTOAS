@@ -25,7 +25,7 @@ ObservedImport refineReaderVisits(const Program& input, const ReaderVisitRegion&
         out.reason = valid.reason;
         return out;
     }
-    if (!input.observed || r.firstConsumers.empty() || r.lastPublications.empty() || !r.step)
+    if (!input.observed || (r.firstConsumers.empty() && !r.finalSourceGaps) || r.lastPublications.empty() || !r.step)
         return reject("joint reader visits need first/final endpoints and a positive step");
     const auto& old = *input.observed;
     const auto found =
@@ -114,11 +114,13 @@ ObservedImport refineReaderVisits(const Program& input, const ReaderVisitRegion&
         if (first.count(prefix[i]))
             firstEnd = i + 1;
     prefix.resize(std::min(prefix.size(), firstEnd + 1));
+    if (first.empty()) prefix.clear();
 
     out.program = input;
     auto& q = *out.program.observed;
     std::map<std::pair<std::size_t, bool>, std::size_t> words;
     auto observe = [&](std::size_t original, std::size_t copy, bool isFirst, bool isFinal) {
+        if (r.finalSourceGaps && last.count(original)) return;
         if (!first.count(original) && !last.count(original))
             return;
         const bool value = first.count(original) ? !isFirst : !isFinal;
@@ -133,7 +135,7 @@ ObservedImport refineReaderVisits(const Program& input, const ReaderVisitRegion&
         }
         q.sites[copy].observation = where->second;
     };
-    std::vector<std::size_t> added, firstPrefix;
+    std::vector<std::size_t> added, firstPrefix, finalAnchors;
     if (r.singleVisit) {
         for (auto site : members) {
             observe(site, site, true, true);
@@ -144,6 +146,7 @@ ObservedImport refineReaderVisits(const Program& input, const ReaderVisitRegion&
         }
         q.sites[r.owner].successors = {body};
         firstPrefix = prefix;
+        finalAnchors.assign(last.begin(), last.end());
     } else {
         std::map<std::size_t, std::size_t> finalCopy, firstCopy;
         for (auto site : members) {
@@ -153,6 +156,7 @@ ObservedImport refineReaderVisits(const Program& input, const ReaderVisitRegion&
             observe(site, site, false, false);
             observe(site, finalCopy.at(site), false, true);
         }
+        for (auto site : last) finalAnchors.push_back(finalCopy.at(site));
         for (auto site : members) {
             auto& copy = q.sites[finalCopy.at(site)];
             for (auto& next : copy.successors)
@@ -175,10 +179,26 @@ ObservedImport refineReaderVisits(const Program& input, const ReaderVisitRegion&
             for (auto& next : q.sites[firstCopy.at(site)].successors)
                 if (firstCopy.count(next))
                     next = firstCopy.at(next);
-        q.sites[r.owner].successors = {firstCopy.at(body)};
+        q.sites[r.owner].successors = {first.empty() ? header : firstCopy.at(body)};
         q.sites[header].successors = {body, finalCopy.at(body)};
         q.sites[header].backedgeOwners.clear();
     }
+    const auto sitesBeforeGaps = q.sites.size();
+    std::map<std::size_t, std::size_t> gaps;
+    if (r.finalSourceGaps) for (auto anchor : finalAnchors) {
+        auto observation = q.observations[q.sites[anchor].observation];
+        observation.atoms.push_back({ObservationAtom::LoopHasNext, r.owner, r.step, 0});
+        observation.beforeSharedWord = true;
+        const auto gap = q.sites.size();
+        // Rewire only the final analytical visit; ordinary words stay shared.
+        gaps.emplace(anchor, gap);
+        q.sites.push_back({NoControlId, q.observations.size(), {anchor}, {}, q.sites[anchor].context});
+        q.observations.push_back(std::move(observation));
+        added.push_back(gap);
+    }
+    for (std::size_t site = 0; site < sitesBeforeGaps; ++site)
+        for (auto& next : q.sites[site].successors)
+            if (gaps.count(next)) next = gaps.at(next);
     for (auto& loop : q.loops) {
         if (loop.owner != r.owner && std::find(loop.sites.begin(), loop.sites.end(), r.owner) == loop.sites.end())
             continue;
@@ -186,12 +206,12 @@ ObservedImport refineReaderVisits(const Program& input, const ReaderVisitRegion&
         if (loop.owner == r.owner) {
             if (std::find(loop.sites.begin(), loop.sites.end(), header) == loop.sites.end())
                 loop.sites.push_back(header);
-            loop.bodyEntry = firstPrefix.front();
-            loop.firstVisitPrefix = firstPrefix;
+            loop.bodyEntry = first.empty() ? (r.singleVisit ? body : header) : firstPrefix.front();
+            if (!first.empty()) loop.firstVisitPrefix = firstPrefix;
             loop.lastVisitDistance = r.step;
         }
     }
-    q.qualification += "; joint-reader-prefix-v1";
+    q.qualification += r.finalSourceGaps ? "; final-read-source-gaps-v1" : "; joint-reader-prefix-v1";
     for (std::size_t i = 0; i < input.operations.size(); ++i)
         out.originalPhases.push_back(i);
     const auto checked = validateProgram(out.program);

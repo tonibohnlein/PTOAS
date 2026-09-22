@@ -1,0 +1,36 @@
+// A first ACC overwrite must retain separate readiness for the two operand banks.
+// The second bank's extractions must not gate the first matrix operation.
+module attributes {pto.target_arch = "a3"} {
+  func.func @first_write_banks(%dst: !pto.partition_tensor_view<16x512xf32>, %n: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 4096 : i64
+    %b1 = arith.constant 32768 : i64
+    %mat = arith.constant 8192 : i64
+    %x = pto.alloc_tile addr = %a0 : !pto.tile_buf<mat, 16x128xbf16, blayout=col_major, slayout=row_major>
+    %y = pto.alloc_tile addr = %mat : !pto.tile_buf<mat, 128x512xbf16, slayout=col_major>
+    %l0 = pto.alloc_tile addr = %a0 : !pto.tile_buf<left, 16x32xbf16, slayout=row_major, compact=1>
+    %r0 = pto.alloc_tile addr = %a0 : !pto.tile_buf<right, 32x512xbf16, slayout=col_major>
+    %l1 = pto.alloc_tile addr = %a1 : !pto.tile_buf<left, 16x32xbf16, slayout=row_major, compact=1>
+    %r1 = pto.alloc_tile addr = %b1 : !pto.tile_buf<right, 32x512xbf16, slayout=col_major>
+    %acc = pto.alloc_tile addr = %a0 : !pto.tile_buf<acc, 16x512xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>
+    scf.for %entry = %c0 to %n step %c1 {
+      pto.tstore ins(%acc : !pto.tile_buf<acc, 16x512xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>) outs(%dst : !pto.partition_tensor_view<16x512xf32>)
+      scf.for %i = %c0 to %c128 step %c64 {
+        pto.textract ins(%x, %c0, %i : !pto.tile_buf<mat, 16x128xbf16, blayout=col_major, slayout=row_major>, index, index) outs(%l0 : !pto.tile_buf<left, 16x32xbf16, slayout=row_major, compact=1>)
+        pto.textract ins(%y, %i, %c0 : !pto.tile_buf<mat, 128x512xbf16, slayout=col_major>, index, index) outs(%r0 : !pto.tile_buf<right, 32x512xbf16, slayout=col_major>)
+        %j = arith.addi %i, %c32 : index
+        pto.textract ins(%x, %c0, %j : !pto.tile_buf<mat, 16x128xbf16, blayout=col_major, slayout=row_major>, index, index) outs(%l1 : !pto.tile_buf<left, 16x32xbf16, slayout=row_major, compact=1>)
+        pto.textract ins(%y, %j, %c0 : !pto.tile_buf<mat, 128x512xbf16, slayout=col_major>, index, index) outs(%r1 : !pto.tile_buf<right, 32x512xbf16, slayout=col_major>)
+        pto.tmatmul.acc ins(%acc, %l0, %r0 : !pto.tile_buf<acc, 16x512xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>, !pto.tile_buf<left, 16x32xbf16, slayout=row_major, compact=1>, !pto.tile_buf<right, 32x512xbf16, slayout=col_major>) outs(%acc : !pto.tile_buf<acc, 16x512xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>)
+        pto.tmatmul.acc ins(%acc, %l1, %r1 : !pto.tile_buf<acc, 16x512xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>, !pto.tile_buf<left, 16x32xbf16, slayout=row_major, compact=1>, !pto.tile_buf<right, 32x512xbf16, slayout=col_major>) outs(%acc : !pto.tile_buf<acc, 16x512xf32, blayout=col_major, slayout=row_major, fractal=1024, compact=1>)
+      }
+    }
+    return
+  }
+}

@@ -11,6 +11,376 @@
 
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void finalReadSource()
+    {
+        using namespace selected_test;
+        const auto P = Pipe::MTE2, Q = Pipe::MTE1, M = Pipe::M;
+        for (bool single : {false, true}) for (bool repeated : {false, true}) for (bool reused : {false, true}) {
+            auto p = base(1, 2);
+            p.operations = {op(P, {{0,false,true}}), op(Q, {{0,true,false}}),
+                            op(M, {}), op(P, {{0,false,true}})};
+            ObservedControl g; g.qualification = "final reader with a shared acknowledgment word";
+            g.sites.resize(11); g.entry=0; g.exit=10;
+            for (unsigned i=0;i<11;++i) { g.observations.push_back({i,{},true});g.sites[i].observation=i; }
+            for (unsigned i=0;i<10;++i) g.sites[i].successors={i+1};
+            g.sites[3].successors={4,8}; g.sites[7].successors={3};g.sites[7].backedgeOwners={2};
+            if(repeated){g.sites[9].successors={0,10};g.sites[9].backedgeOwners={0,NoControlId};}
+            g.sites[0].operation=0;g.sites[4].operation=1;g.sites[6].operation=2;g.sites[8].operation=3;
+            g.loops.push_back({2,2,8,{3,4,5,6,7},4,true});p.observed=g;
+            ReaderVisitRegion request;request.owner=2;request.step=64;
+            request.lastPublications={5};request.singleVisit=single;request.finalSourceGaps=true;
+            auto refined=refineReaderVisits(p,request);
+            require(refined.success,"final-only refinement: "+refined.reason);p=std::move(refined.program);
+            SelectedOptions settings;settings.finalReadSources=true;
+            Constructor c(p,settings);std::string reason;
+            require(c.control.complete,c.control.reason);
+            require(c.ledger.initialize(Commands(commandCutCount(p)),reason),reason);
+            c.ledger.append(0,{Command::Barrier,P,P,0},EndpointPurpose::Fixed);
+            if(reused) for(auto cmd:std::vector<Command>{{Command::Publish,Q,P,0},{Command::Acquire,Q,P,0}})
+                c.ledger.append(1,cmd,EndpointPurpose::Fixed);
+            for(auto cmd:std::vector<Command>{{Command::Publish,P,Q,0},{Command::Acquire,P,Q,0},
+                    {Command::Publish,Q,P,1},{Command::Acquire,Q,P,1}})
+                c.ledger.append(1,cmd,EndpointPurpose::Fixed);
+            for(auto cmd:std::vector<Command>{{Command::Publish,Q,M,0},{Command::Acquire,Q,M,0},
+                    {Command::Publish,M,Q,0},{Command::Acquire,M,Q,0}})
+                c.ledger.append(5,cmd,EndpointPurpose::Fixed);
+            for(auto cmd:std::vector<Command>{{Command::Publish,P,Q,1},{Command::Acquire,P,Q,1}})
+                c.ledger.append(9,cmd,EndpointPurpose::Fixed);
+            c.current=8;c.activeComponent=c.control.component[8];c.needsContextualReplay=true;
+            require(c.replay(),c.result.reason);
+            std::vector<FrontierRequirement> required;
+            for(auto r:c.residual()) if(r.source==Q)required.push_back(r);
+            require(!required.empty(),"missing reader obligation");
+            Group group;group.source=Q;group.requirements=required;
+            require(c.finalReadFrontier(Q,required,group),"qualified final-read source declined");
+            const auto gap=group.publication;
+            require(c.ledger.word(5).size()==4,"source selection changed acknowledgment");
+            if(repeated){
+                auto commands=c.ledger.commands();
+                const auto readySet=c.ledger.word(1)[reused ? 2 : 0];
+                const auto readyWait=c.ledger.word(1)[reused ? 3 : 1];
+                const auto wait=c.ledger.word(9).back();c.ledger.erase(wait);c.ledger.erase(readyWait);
+                require(!c.consumptionBeforeNextPublication(gap,8,group.forwardKey),
+                        "missing return manufactured rearming");
+                c.ledger.restoreAfter(wait,c.ledger.word(9).back());
+                c.ledger.restoreAfter(readyWait,readySet);
+                require(c.replay(),c.result.reason);group.version=c.ledger.version();
+            }
+            require(c.bind(group,RequirementStage::Known),c.result.reason);
+            require(c.result.work.finalReadPublications==1,"final source not selected");
+            require(c.ledger.word(5).size()==4,"final binding removed acknowledgment");
+            require(checkCausalFrontier(p,c.ledger.commands()).accepted,"final source protocol invalid");
+            for (unsigned trips : (single ? std::vector<unsigned>{1} : std::vector<unsigned>{2,3,4})) {
+                auto flat=p;flat.observed.reset();flat.operations.clear();flat.body={};
+                Commands words;std::vector<Command> pending;
+                unsigned iteration=0,entry=0;Cut at=p.observed->entry;
+                const auto commands=c.ledger.commands();
+                for(unsigned steps=0;steps<200;++steps) {
+                    const auto& site=p.observed->sites[at];
+                    pending.insert(pending.end(),commands[at].begin(),commands[at].end());
+                    if(site.operation!=NoControlId) {
+                        flat.operations.push_back(p.operations[site.operation]);words.push_back(pending);pending.clear();
+                    }
+                    if(at==p.observed->exit)break;
+                    if(at==2)iteration=0;
+                    if(at==3) at=site.successors[(++iteration==trips)?1:0];
+                    else if(at==9 && repeated)at=site.successors[(++entry==2)?1:0];
+                    else at=site.successors.front();
+                }
+                require(at==p.observed->exit,"finite final-reader trace did not terminate");
+                words.push_back(pending);auto broad=words;
+                for(auto& word:broad) {
+                    auto release=std::find_if(word.begin(),word.end(),[&](const auto& cmd){
+                        return cmd.kind==Command::Publish&&cmd.source==Q&&cmd.observer==P&&cmd.key==0;
+                    });
+                    if(release!=word.end() && std::any_of(word.begin(),word.end(),[&](const auto& cmd){
+                        return cmd.kind==Command::Acquire&&cmd.source==M&&cmd.observer==Q;
+                    })){auto command=*release;word.erase(release);word.push_back(command);}
+                }
+                std::vector<unsigned> visits(flat.operations.size());std::iota(visits.begin(),visits.end(),0);
+                oahs_oracle::PayloadOrder earlyOrder,broadOrder;
+                require(bool(oahs_oracle::graph(flat,words,visits,{},nullptr,nullptr,&earlyOrder)),
+                        "constructed final source lost finite matching/rearming");
+                require(bool(oahs_oracle::graph(flat,broad,visits,{},nullptr,nullptr,&broadOrder)),
+                        "late release control invalid");
+                require(std::includes(broadOrder.begin(),broadOrder.end(),earlyOrder.begin(),earlyOrder.end()),
+                        "constructed final source added order");
+                if(trips>1)require(earlyOrder.size()<broadOrder.size(),"constructed release failed to preserve overlap");
+            }
+            // A subsequent word-start insertion cannot move before the saved
+            // publication boundary. Its endpoint identity, not offset 0, pins it.
+            const auto release=c.ledger.word(gap).front();
+            const auto later=c.ledger.prepend(gap,{Command::Barrier,Q,Q,0},EndpointPurpose::Fixed);
+            require(c.ledger.word(gap).front()==release,"later insertion broadened protected source gap");
+            c.ledger.erase(later);
+            auto reload=p;reload.operations[2].pipe=Q;reload.operations[2].accesses={{0,true,false}};
+            Constructor negative(reload,settings);
+            require(negative.ledger.initialize(c.ledger.commands(),reason),reason);
+            negative.current=8;negative.activeComponent=negative.control.component[8];
+            negative.needsContextualReplay=true;
+            // Freshness is structural and must reject a later physical reader,
+            // independent of whether another transfer happens to cover it.
+            negative.replay();
+            require(!negative.finalReadGap(gap,Q,required),"later reader reused stale final prefix");
+        }
+    }
+    static void crossControlAcknowledgment()
+    {
+        using namespace selected_test;
+        const auto P = Pipe::MTE2, Q = Pipe::MTE1;
+        auto p = base(1, 2);
+        p.target.keys[unsigned(P)][unsigned(Q)] = {0};
+        p.operations = {op(P, {}), op(P, {}), op(Q, {})};
+        ObservedControl g; g.qualification = "return through an original branch";
+        g.sites.resize(9); g.entry = 0; g.exit = 8;
+        for (unsigned i = 0; i < 9; ++i) {
+            g.observations.push_back({i, {}, true}); g.sites[i].observation = i;
+        }
+        g.sites[0].successors = {1}; g.sites[1].successors = {2};
+        g.sites[2].successors = {3,4}; g.sites[3].successors = {5}; g.sites[4].successors = {5};
+        g.sites[5].successors = {6}; g.sites[6].successors = {7}; g.sites[7].successors = {1,8};
+        g.sites[7].backedgeOwners = {1, NoAnalysisId};
+        g.sites[3].operation = 0; g.sites[5].operation = 1; g.sites[6].operation = 2;
+        p.observed = g;
+        SelectedOptions settings; settings.firstWriteConsumers = true;
+        Constructor c(p, settings); std::string reason;
+        require(c.control.complete, c.control.reason);
+        require(c.ledger.initialize(Commands(commandCutCount(p)), reason), reason);
+        Id oldWait = NoAnalysisId;
+        for (auto command : std::vector<Command>{{Command::Publish,Q,P,0},{Command::Acquire,Q,P,0},
+                {Command::Publish,P,Q,0},{Command::Acquire,P,Q,0}})
+            oldWait = c.ledger.append(1,command,EndpointPurpose::Completion);
+        c.ledger.append(7,{Command::Publish,Q,P,1},EndpointPurpose::Completion);
+        c.ledger.append(7,{Command::Acquire,Q,P,1},EndpointPurpose::Completion);
+        c.current=6; c.activeComponent=c.control.component[6]; c.needsContextualReplay=true;
+        require(c.replay(),c.result.reason);
+        require(!c.control.straight(1,6), "fixture failed to cross control");
+        Id forward=NoAnalysisId, reverse=NoAnalysisId;
+        for (Id key=0;key<c.frontier.keys().size();++key) {
+            const auto& k=c.frontier.keys()[key];
+            if(k.source==P && k.observer==Q && k.key==0) forward=key;
+            if(k.source==Q && k.observer==P && k.key==0) reverse=key;
+        }
+        require(c.crossControlReturn(oldWait,5,forward,reverse), "balanced branch return declined");
+        require(!c.crossControlReturn(oldWait,3,forward,reverse), "bypassed return acquisition accepted");
+        const auto interference=c.ledger.append(3,{Command::Publish,Q,P,0},EndpointPurpose::Completion);
+        require(!c.crossControlReturn(oldWait,5,forward,reverse), "intervening reverse-key use accepted");
+        c.ledger.erase(interference);
+        Cut publication=5; SelectedDecision decision;
+        require(c.edge(P,Q,publication,false,decision),c.result.reason);
+        require(publication==5 && decision.repairedAcquisition==oldWait,
+                "cross-control return lost source gap or actual consumption");
+        require(checkCausalFrontier(p,c.ledger.commands()).accepted,"cross-control generations invalid");
+        auto missing=c.ledger.commands();
+        missing[5].erase(std::remove_if(missing[5].begin(),missing[5].end(),[&](const auto& cmd){
+            return cmd.kind==Command::Acquire && cmd.source==Q && cmd.observer==P && cmd.key==0;
+        }),missing[5].end());
+        require(!checkCausalFrontier(p,missing).accepted,"missing return accepted");
+        for(unsigned trips:{1u,2u,4u}) for(unsigned branch:{3u,4u}) {
+            auto flat=p;flat.observed.reset();flat.operations.clear();flat.body={};
+            Commands words;std::vector<Command> pending;
+            std::vector<unsigned> middle;
+            auto commands=c.ledger.commands();
+            auto append=[&](unsigned site){
+                pending.insert(pending.end(),commands[site].begin(),commands[site].end());
+                if(g.sites[site].operation==NoAnalysisId)return;
+                if(site==5)middle.push_back(flat.operations.size());
+                flat.operations.push_back(p.operations[g.sites[site].operation]);
+                words.push_back(std::move(pending));pending.clear();
+            };
+            append(0);
+            for(unsigned t=0;t<trips;++t){append(1);append(2);append(t%2?7-branch:branch);append(5);append(6);append(7);}
+            append(8);words.push_back(std::move(pending));
+            auto late=words;
+            for(auto at:middle){
+                auto& word=late[at];
+                auto lastSet=std::find_if(word.rbegin(),word.rend(),[&](const auto& cmd){
+                    return cmd.kind==Command::Publish&&cmd.source==P&&cmd.observer==Q;
+                });
+                require(lastSet!=word.rend(),"missing early forward set");
+                auto set=std::prev(lastSet.base());
+                late[at+1].insert(late[at+1].begin(),*set);word.erase(set);
+            }
+            std::vector<unsigned> visits(flat.operations.size());std::iota(visits.begin(),visits.end(),0);
+            oahs_oracle::PayloadOrder earlyOrder,lateOrder;
+            require(bool(oahs_oracle::graph(flat,words,visits,{},nullptr,nullptr,&earlyOrder)),"finite return invalid");
+            require(bool(oahs_oracle::graph(flat,late,visits,{},nullptr,nullptr,&lateOrder)),"late return control invalid");
+            require(std::includes(lateOrder.begin(),lateOrder.end(),earlyOrder.begin(),earlyOrder.end())&&
+                earlyOrder.size()<lateOrder.size(),"cross-control repair lost early overlap");
+        }
+    }
+    static void sharedWordNewConsumption(bool existingReturn = false, bool noSpareReturn = false, bool reserved = false, bool closedRole = false)
+    {
+        using namespace selected_test;
+        const auto P = Pipe::M, Q = Pipe::MTE1;
+        auto p = base(1, 2);
+        p.operations = {op(Q, {}), op(P, {}), op(P, {}), op(Q, {})};
+        ObservedControl g;
+        g.qualification = "shared first/later publication words";
+        g.sites.resize(13);
+        g.entry = 0; g.exit = 7;
+        for (unsigned i = 0; i < 8; ++i) g.observations.push_back({i, {}, true});
+        for (unsigned i = 0; i < 8; ++i) g.sites[i].observation = i;
+        g.sites[0].successors = {1};
+        for (unsigned i = 1; i < 6; ++i) g.sites[i].successors = {i + 1};
+        g.sites[6].successors = {8, 7};
+        for (unsigned i = 8; i < 13; ++i) {
+            g.sites[i].observation = i - 7;
+            g.sites[i].successors = {i == 12 ? 6u : i + 1};
+        }
+        for (auto start : {1u, 8u}) {
+            g.sites[start].operation = 0;
+            g.sites[start + 1].operation = 1;
+            g.sites[start + 3].operation = 2;
+            g.sites[start + 4].operation = 3;
+        }
+        g.sites[12].backedgeOwners = {6};
+        p.observed = g;
+        if (noSpareReturn) p.target.keys[unsigned(Q)][unsigned(P)] = {0};
+        if (reserved || closedRole) p.target.keys[unsigned(P)][unsigned(Q)] = {0};
+        SelectedOptions settings;
+        settings.firstWriteConsumers = true;
+        Constructor c(p, settings);
+        require(c.control.complete, c.control.reason);
+        std::string reason;
+        require(c.ledger.initialize(Commands(commandCutCount(p)), reason), reason);
+        for (auto command : std::vector<Command>{{Command::Publish, P, Q, 0},
+                {Command::Acquire, P, Q, 0}, {Command::Publish, Q, P, 0},
+                {Command::Acquire, Q, P, 0}})
+            c.ledger.append(1, command, reserved && command.source == P ?
+                EndpointPurpose::RecurringCompletion : EndpointPurpose::Completion, 0);
+        if (reserved) {
+            c.result.channels.push_back({0, 0, {0}, P, Q, {1}, {1}, 6, 1});
+            for (Id key = 0; key < c.frontier.keys().size(); ++key)
+                if (c.frontier.keys()[key].source == P && c.frontier.keys()[key].observer == Q) {
+                    c.recurringKeys.insert(key); c.closedKeys.insert(key);
+                }
+        }
+        Id borrowedClosed = NoAnalysisId;
+        if (closedRole) {
+            Id reverse = NoAnalysisId;
+            for (Id key = 0; key < c.frontier.keys().size(); ++key) {
+                const auto& k = c.frontier.keys()[key];
+                if (k.source == P && k.observer == Q && k.key == 0) borrowedClosed = key;
+                if (k.source == Q && k.observer == P && k.key == 0) reverse = key;
+            }
+            c.closedBindings[{P,Q}] = {borrowedClosed,reverse};
+            c.closedKeys.insert(borrowedClosed); c.closedKeys.insert(reverse);
+        }
+        if (existingReturn) {
+            c.ledger.append(6, {Command::Publish, Q, P, 1}, EndpointPurpose::Completion);
+            c.ledger.append(6, {Command::Acquire, Q, P, 1}, EndpointPurpose::Completion);
+        }
+        c.current = 5;
+        c.activeComponent = c.control.component[c.current];
+        c.needsContextualReplay = true;
+        require(c.replay(), c.result.reason);
+        require(checkCausalFrontier(p, c.ledger.commands()).accepted, "initial closed exchange invalid");
+        Cut publication = 3;
+        SelectedDecision decision;
+        if (reserved) {
+            const auto key = *c.recurringKeys.begin();
+            require(c.inactiveReservation(3, 5, key), "inactive reservation lacks certificate");
+            c.result.channels[0].acquisitions = {2};
+            require(!c.inactiveReservation(3, 5, key), "unmaterialized owner endpoint accepted");
+            c.result.channels[0].acquisitions = {1};
+            c.entryProtocolKeys.insert(key);
+            require(!c.inactiveReservation(3, 5, key), "lazy entry reservation borrowed");
+            c.entryProtocolKeys.erase(key);
+            require(!c.inactiveReservation(3, 1, key), "overlapping owner interval borrowed");
+            const auto returnSet = c.ledger.word(6).front();
+            const auto returnWait = c.ledger.word(6).back();
+            c.ledger.erase(returnWait);
+            require(!c.inactiveReservation(3, 5, key), "missing next-publication support accepted");
+            c.ledger.restoreAfter(returnWait, returnSet);
+        }
+        if (closedRole) {
+            require(c.inactiveClosedReservation(3,5,borrowedClosed), "closed role has no borrow certificate");
+            require(!c.inactiveClosedReservation(3,1,borrowedClosed), "overlapping closed role accepted");
+            const auto wait = c.ledger.word(6).back(), sent = c.ledger.word(6).front();
+            c.ledger.erase(wait);
+            require(!c.inactiveClosedReservation(3,5,borrowedClosed), "missing closed-role rearming accepted");
+            c.ledger.restoreAfter(wait,sent);
+            c.entryProtocolKeys.insert(borrowedClosed);
+            require(!c.inactiveClosedReservation(3,5,borrowedClosed), "entry-owned key borrowed");
+            c.entryProtocolKeys.erase(borrowedClosed);
+        }
+        const auto version = c.ledger.version();
+        const bool bound = c.edge(P, Q, publication, false, decision);
+        if (noSpareReturn) {
+            require(!bound && c.result.failure == SelectedFailure::EventResource,
+                    "unproved reverse-key consumption was borrowed");
+            require(c.ledger.version() == version && publication == 3,
+                    "failed return qualification changed endpoints or source gap");
+            return;
+        }
+        require(bound, c.result.reason);
+        if (closedRole) {
+            require(c.result.work.closedReservationBorrows == 1 && decision.endpoints.size() == 2,
+                    "closed borrow did not preserve helper-free transfer");
+            require(c.closedKeys.count(borrowedClosed), "closed owner reservation was released");
+        }
+        require(publication == 3, "rearming moved the early source gap");
+        if (reserved) {
+            require(decision.endpoints.size() == 2, "reservation borrowing added a helper");
+            require(c.closedKeys.count(*c.recurringKeys.begin()), "borrowing released owner reservation");
+        }
+        require(checkCausalFrontier(p, c.ledger.commands()).accepted, "shared-word edge lacks rearming");
+        require(c.result.work.acknowledgments == (existingReturn ? 0u : 1u),
+                "selected return ignored or missing new consumption helper");
+        require((reserved || closedRole || c.result.work.splitRearmingQueries == 1) && c.result.work.splitRearmingSites != 0,
+                "missing bounded neighboring-use query");
+        // The earlier source cannot import the unrelated P operation between
+        // publication and acquisition. Check multiple complete visits using
+        // the independent issue/completion graph, including shared words.
+        for (unsigned trips : {1u, 2u, 4u}) {
+            auto flat = p; flat.observed.reset(); flat.operations.clear(); flat.body = {};
+            Commands words; std::vector<Command> pending;
+            std::vector<std::pair<unsigned, unsigned>> forbidden;
+            const auto commands = c.ledger.commands();
+            auto append = [&](unsigned site) {
+                pending.insert(pending.end(), commands[site].begin(), commands[site].end());
+                const auto operation = g.sites[site].operation;
+                if (operation == NoAnalysisId) return;
+                if (operation == 3) forbidden.emplace_back(flat.operations.size() - 1, flat.operations.size());
+                flat.operations.push_back(p.operations[operation]);
+                words.push_back(std::move(pending)); pending.clear();
+            };
+            append(0);
+            for (unsigned visit = 0; visit < trips; ++visit) {
+                for (unsigned site = 1; site <= 5; ++site) append(site + (visit ? 7 : 0));
+                append(6);
+            }
+            append(7); words.push_back(std::move(pending));
+            std::vector<unsigned> visits(flat.operations.size());
+            std::iota(visits.begin(), visits.end(), 0);
+            oahs_oracle::PayloadOrder narrowOrder, lateOrder;
+            require(bool(oahs_oracle::graph(flat, words, visits, forbidden, nullptr, nullptr, &narrowOrder)),
+                    "rearming broadened early source gap");
+            auto late = words;
+            for (unsigned visit = 0; visit < trips; ++visit) {
+                auto& sourceWord = late[4 * visit + 2];
+                const auto at = std::find_if(sourceWord.begin(), sourceWord.end(), [&](const auto& cmd) {
+                    return cmd.kind == Command::Publish && cmd.source == P && cmd.observer == Q;
+                });
+                require(at != sourceWord.end(), "early publication not present at original gap");
+                late[4 * visit + 3].insert(late[4 * visit + 3].begin(), *at);
+                sourceWord.erase(at);
+            }
+            require(bool(oahs_oracle::graph(flat, late, visits, {}, nullptr, nullptr, &lateOrder)),
+                    "late-source control invalid");
+            require(std::includes(lateOrder.begin(), lateOrder.end(), narrowOrder.begin(), narrowOrder.end()) &&
+                    narrowOrder.size() < lateOrder.size(), "early-source repair did not preserve order inclusion");
+        }
+        auto missing = c.ledger.commands();
+        for (auto at : {5u, 12u, 6u}) {
+            auto& word = missing[at];
+            word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& cmd) {
+                return cmd.source == Q && cmd.observer == P;
+            }), word.end());
+        }
+        require(!checkCausalFrontier(p, missing).accepted, "old acknowledgment reused for new consumption");
+    }
     static void pairEnumeration(unsigned count)
     {
         auto p = selected_test::base(1, 2);
@@ -539,6 +909,98 @@ void entryWaitMustNotCrossPublication()
     require(accepted(p, fixed).work.loopEntryTransfers == 1,
             "publication after the consumer disabled useful early placement");
 }
+// Incoming reader completion is needed at the first conflicting write, not
+// before the observer exports an unrelated prefix. Supply an original
+// first-visit witness to distinguish occurrence precision from new causal state.
+void firstConflictingWriterAfterPublication()
+{
+    auto p = invariantLoopProgram();
+    p.operations[0].accesses = {{0, true, false}};
+    p.operations[2].accesses = {{0, false, true}};
+    p.operations.push_back(op(R, {}));
+    auto& q = *p.observed;
+    q.observations.push_back({8, {}, true});
+    q.sites.push_back({3, 8, {5}, {}, 0});
+    q.sites[4].successors[0] = 8;
+    q.loops.front().bodyEntry = 8;
+    q.loops.front().sites.push_back(8);
+    const std::vector<o::Command> relay{
+        {o::Command::Publish, Q, R, 0}, {o::Command::Acquire, Q, R, 0},
+        {o::Command::Publish, R, Q, 0}, {o::Command::Acquire, R, Q, 0}};
+    o::Commands fixed(o::commandCutCount(p));
+    fixed[8] = relay;
+    const auto baseline = accepted(p, fixed);
+    require(baseline.work.loopEntryTransfers == 0,
+            "external-reader receipt crossed an outward publication");
+
+    auto refined = p;
+    auto& r = *refined.observed;
+    // Original first/later participation: one prefix, then zero or more
+    // backedge visits. The outward-publication word stays shared.
+    r.sites.push_back({3, 8, {10}, {}, 0});
+    r.observations.push_back({10, {{o::ObservationAtom::LoopHasPrevious, 3, 1, 0}}, true});
+    r.sites.push_back({2, r.observations.size() - 1, {6}, {}, 0});
+    r.sites[3].successors = {9};
+    r.loops.front().bodyEntry = 9;
+    r.loops.front().sites.insert(r.loops.front().sites.end(), {9, 10});
+    fixed.resize(o::commandCutCount(refined));
+    fixed[9] = relay;
+    const auto selected = accepted(refined, fixed);
+    require(std::any_of(selected.commands[10].begin(), selected.commands[10].end(), [&](const auto& c) {
+        return c.kind == o::Command::Acquire && c.source == P && c.observer == Q;
+    }), "first conflicting writer did not receive incoming reader completion");
+    require(std::none_of(selected.commands[5].begin(), selected.commands[5].end(), [&](const auto& c) {
+        return c.kind == o::Command::Acquire && c.source == P && c.observer == Q;
+    }), "later writes reacquire the same invariant external reader");
+
+    auto evaluate = [&](const o::Program& program, const o::Commands& commands,
+                        const std::vector<o::Cut>& path, oahs_oracle::PayloadOrder& order) {
+        auto flat = program; flat.observed.reset(); flat.body = {}; flat.operations.clear();
+        o::Commands words; std::vector<o::Command> pending;
+        for (auto site : path) {
+            pending.insert(pending.end(), commands[site].begin(), commands[site].end());
+            const auto operation = program.observed->sites[site].operation;
+            if (operation == o::NoAnalysisId) continue;
+            flat.operations.push_back(program.operations[operation]);
+            words.push_back(std::move(pending)); pending.clear();
+        }
+        words.push_back(std::move(pending));
+        std::vector<unsigned> visits(flat.operations.size());
+        std::iota(visits.begin(), visits.end(), 0);
+        return bool(oahs_oracle::graph(flat, words, visits, {{0, 2}}, nullptr, nullptr, &order));
+    };
+    for (unsigned n : {1u, 2u, 5u}) {
+        std::vector<o::Cut> before{0, 1, 2, 3}, after{0, 1, 2, 3, 9, 10, 6};
+        for (unsigned i = 0; i < n; ++i) before.insert(before.end(), {4, 8, 5, 6});
+        for (unsigned i = 1; i < n; ++i) after.insert(after.end(), {4, 8, 5, 6});
+        before.insert(before.end(), {4, 7}); after.insert(after.end(), {4, 7});
+        oahs_oracle::PayloadOrder a, b;
+        require(evaluate(p, baseline.commands, before, a) && evaluate(refined, selected.commands, after, b),
+                "first-write protocol lost safety/rearming or gated the outward consumer");
+        require(std::includes(a.begin(), a.end(), b.begin(), b.end()),
+                "first-write receipt added payload ordering");
+    }
+    auto missing = selected.commands;
+    auto& word = missing[10];
+    word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& c) {
+        return c.kind == o::Command::Acquire && c.source == P && c.observer == Q;
+    }), word.end());
+    require(!o::checkCausalFrontier(refined, missing).accepted,
+            "first-write completion was assumed without its actual receipt");
+    auto broad = selected.commands;
+    const auto receipt = std::find_if(broad[10].begin(), broad[10].end(), [&](const auto& c) {
+        return c.kind == o::Command::Acquire && c.source == P && c.observer == Q;
+    });
+    broad[3].push_back(*receipt);
+    broad[10].erase(receipt);
+    require(o::checkCausalFrontier(refined, broad).accepted,
+            "broad first-write witness should remain safe");
+    oahs_oracle::PayloadOrder broadOrder;
+    require(!evaluate(refined, broad, {0, 1, 2, 3, 9, 10, 6, 4, 7}, broadOrder),
+            "broad entry receipt did not expose the forbidden outward ordering");
+    std::cout << "first-conflicting-write paths=3 repeated-receipt=0 broad-entry-safe-but-orders-export=1\n";
+}
+
 // A region with alternative first writers, re-entered after a foreign reader.
 // The source does no work inside the child; no kernel/opcode recognition is used.
 o::Program enclosingChoice()
@@ -578,6 +1040,55 @@ void changedRepublicationDeadline()
     require(o::checkCausalFrontier(p, plan.commands).accepted, "earlier deadline lost its rearming path");
     for (const auto& visits : oahs_oracle::traces(p, 3))
         require(bool(oahs_oracle::graph(p, plan.commands, visits)), "changed deadline failed independent protocol check");
+}
+// Supplied-plan diagnostic for the KDA acknowledgment -> MAT-release path.
+// This is not a claim that native construction already selects the early word.
+void releaseBeforeAcknowledgment()
+{
+    const auto dma = o::Pipe::MTE2, reader = o::Pipe::MTE1, compute = o::Pipe::M;
+    for (unsigned trips : {2u, 3u, 4u}) {
+        auto p = base(trips + 1, 1);
+        p.operations.push_back(op(dma, {{0, false, true}}));
+        for (unsigned i = 0; i < trips; ++i) {
+            p.operations.push_back(op(reader, {{0, true, false}, {i + 1, false, true}}));
+            p.operations.push_back(op(compute, {{i + 1, true, false}}));
+        }
+        p.operations.push_back(op(dma, {{0, false, true}}));
+        o::Commands early(p.operations.size() + 1);
+        early[1] = {{o::Command::Publish, dma, reader, 0},
+                    {o::Command::Acquire, dma, reader, 0}};
+        for (unsigned i = 0; i < trips; ++i) {
+            early[2 + 2*i] = {{o::Command::Publish, reader, compute, 0},
+                             {o::Command::Acquire, reader, compute, 0},
+                             {o::Command::Publish, compute, reader, 0},
+                             {o::Command::Acquire, compute, reader, 0}};
+        }
+        const unsigned finalReadGap = 2 * trips;
+        early[finalReadGap].insert(early[finalReadGap].begin(),
+                                  {o::Command::Publish, reader, dma, 0});
+        early[finalReadGap + 1] = {{o::Command::Acquire, reader, dma, 0}};
+        auto broad = early;
+        broad[finalReadGap].erase(broad[finalReadGap].begin());
+        broad[finalReadGap].push_back({o::Command::Publish, reader, dma, 0});
+        std::vector<unsigned> visits(p.operations.size());
+        std::iota(visits.begin(), visits.end(), 0);
+        oahs_oracle::PayloadOrder earlyOrder, broadOrder;
+        require(o::checkCausalFrontier(p, early).accepted, "early release loses causal support");
+        require(o::checkCausalFrontier(p, broad).accepted, "broad release control invalid");
+        require(bool(oahs_oracle::graph(p, early, visits,
+                    {{2 * trips - 2, 2 * trips + 1}}, nullptr, nullptr, &earlyOrder)),
+                "early release imports penultimate compute or loses rearming");
+        require(bool(oahs_oracle::graph(p, broad, visits, {}, nullptr, nullptr, &broadOrder)),
+                "broad release oracle failure");
+        require(std::includes(broadOrder.begin(), broadOrder.end(), earlyOrder.begin(), earlyOrder.end()) &&
+                    broadOrder.size() > earlyOrder.size(), "release gap does not strictly reduce order");
+        auto missing = early;
+        missing[2].erase(missing[2].begin() + 2, missing[2].end());
+        require(!oahs_oracle::graph(p, missing, visits).rearm,
+                "missing acknowledgment did not expose actual key-reuse obligation");
+        require(!o::checkCausalFrontier(p, missing).accepted,
+                "causal checker accepted missing rearming support");
+    }
 }
 void enclosingAcquisitionAndRearming()
 {
@@ -630,8 +1141,17 @@ int main()
     keepLoopReturn();
     changedRepublicationDeadline();
     enclosingAcquisitionAndRearming();
+    releaseBeforeAcknowledgment();
     invariantLoopEntry();
     reuseOneShotEntryKey();
     entryWaitMustNotCrossPublication();
+    firstConflictingWriterAfterPublication();
+    o::selected::ReplayTestAccess::finalReadSource();
+    o::selected::ReplayTestAccess::crossControlAcknowledgment();
+    o::selected::ReplayTestAccess::sharedWordNewConsumption();
+    o::selected::ReplayTestAccess::sharedWordNewConsumption(true);
+    o::selected::ReplayTestAccess::sharedWordNewConsumption(true, false, true);
+    o::selected::ReplayTestAccess::sharedWordNewConsumption(true, false, false, true);
+    o::selected::ReplayTestAccess::sharedWordNewConsumption(false, true);
     std::cout << "selected lookahead, deadline and terminal-return tests passed\n";
 }

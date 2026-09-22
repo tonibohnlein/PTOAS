@@ -92,12 +92,21 @@ struct Import {
   DenseMap<mlir::Operation *, SlotLoop> slotLoops;
   std::vector<std::string> observationNotes;
 };
-enum class ObservationPolicy { RefineLeafLoops, QualifiedAccessRoles, ClassInvariantInputs };
+enum class ObservationPolicy : unsigned { RefineLeafLoops, QualifiedAccessRoles, ClassInvariantInputs,
+                               FirstWriteConsumers, ClassInvariantFirstWrites, FinalReadSourcesBit = 8 };
+ObservationPolicy selectedObservationPolicy(bool classInvariant, bool firstWrites, bool finalReads = false) {
+  if (finalReads) return ObservationPolicy(unsigned(selectedObservationPolicy(classInvariant, firstWrites)) | 8u);
+  if (firstWrites) return classInvariant ? ObservationPolicy::ClassInvariantFirstWrites
+                                        : ObservationPolicy::FirstWriteConsumers;
+  return classInvariant ? ObservationPolicy::ClassInvariantInputs : ObservationPolicy::QualifiedAccessRoles;
+}
 // Every actual original instruction is an anchor, including scalar/control
 // instructions and region terminators. Synthetic branch/loop decisions have no
 // anchor and cannot acquire emitted commands. Payload phases remain unchanged.
 LogicalResult importObservedCuts(func::FuncOp function, Import &out,
                                  ObservationPolicy policy) {
+  const bool finalReads = (unsigned(policy) & 8u) != 0;
+  policy = ObservationPolicy(unsigned(policy) & ~8u);
   ObservedControl q;
   q.qualification = "MLIR-SCF-original-anchor-control-v1";
   q.scopes.push_back({0, NoControlId, NoControlId});
@@ -405,8 +414,15 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     }
     q.loops.push_back(std::move(original));
   }
+  const bool firstWrites = policy == ObservationPolicy::FirstWriteConsumers ||
+                           policy == ObservationPolicy::ClassInvariantFirstWrites;
+  std::unique_ptr<StorageFrontierAnalysis> placementStorage;
+  if (firstWrites || finalReads) placementStorage = std::make_unique<StorageFrontierAnalysis>(out.program);
   native_detail::importFirstConsumers(out.program, loops, ids, out.loopOwners, out.observationNotes,
-      policy == ObservationPolicy::ClassInvariantInputs);
+      policy == ObservationPolicy::ClassInvariantInputs || policy == ObservationPolicy::ClassInvariantFirstWrites,
+      firstWrites, placementStorage.get());
+  if (finalReads) native_detail::importFinalReadSources(out.program, loops, ids, out.loopOwners,
+      out.observationNotes, *placementStorage);
   native_detail::importLastReaders(out.program, loops, ids, out.loopOwners, out.observationNotes);
   native_detail::importFirstUse(function, out.program, ids, out.observationNotes);
   if (out.loopOwners.empty())
@@ -1015,6 +1031,7 @@ LogicalResult execute(func::FuncOp function, NativeConstructor constructor,
     mlir::Operation *anchor;
     scf::IfOp guard;
     detail::ObservationUnion predicates;
+    bool receiptPrelude = false;
   };
   SmallVector<EmittedWord> words;
   llvm::SmallPtrSet<mlir::Operation *, 32> originalSet;
@@ -1027,16 +1044,19 @@ LogicalResult execute(func::FuncOp function, NativeConstructor constructor,
       return function.emitError(
           "handoff: selected command has no original native anchor");
     const auto &word = result.commands[cut];
+    const bool receiptPrelude = input.program.observed->observations[
+        input.program.observed->sites[cut].observation].beforeSharedWord;
     auto sameWord = [&](const auto &candidate) {
       const auto &other = result.commands[candidate.cuts.front()];
-      return candidate.anchor == input.anchors[cut] && word.size() == other.size() &&
+      return candidate.anchor == input.anchors[cut] &&
+          candidate.receiptPrelude == receiptPrelude && word.size() == other.size() &&
           std::equal(word.begin(), word.end(), other.begin(), [](const auto &a, const auto &b) {
             return a.kind == b.kind && a.source == b.source && a.observer == b.observer && a.key == b.key;
           });
     };
     auto found = llvm::find_if(words, sameWord);
     if (found == words.end()) {
-      words.push_back({{}, input.anchors[cut], {}, {}});
+      words.push_back({{}, input.anchors[cut], {}, {}, receiptPrelude});
       found = words.end() - 1;
     }
     found->cuts.push_back(cut);
@@ -1046,6 +1066,7 @@ LogicalResult execute(func::FuncOp function, NativeConstructor constructor,
   DenseMap<mlir::Operation *, std::size_t> originalOrder;
   for (auto [index, op] : llvm::enumerate(originalOperations)) originalOrder[op] = index;
   llvm::stable_sort(words, [&](const auto &a, const auto &b) {
+    if (a.anchor == b.anchor) return a.receiptPrelude && !b.receiptPrelude;
     return originalOrder.lookup(a.anchor) < originalOrder.lookup(b.anchor);
   });
   PredicateCache predicateCache;
@@ -1089,7 +1110,8 @@ LogicalResult execute(func::FuncOp function, NativeConstructor constructor,
     }
     emission.push_back(std::move(anchor));
   }
-  SyncCodegen codegen(emission, function, SyncAnalysisMode::NORMALSYNC);
+  SyncCodegen codegen(emission, function, SyncAnalysisMode::NORMALSYNC,
+                      /*preserveCommandWords=*/true);
   codegen.Run();
   // Guard expressions were built from the qualified original-value descriptor.
   // Preserve their exact operation/operand/attribute structure, not just a tag
@@ -1336,8 +1358,7 @@ LogicalResult executeSelectedHandoffSync(
         result.success = checked.accepted;
         result.reason = checked.reason;
         return result;
-      }, mutate, options.classInvariantInputs ? ObservationPolicy::ClassInvariantInputs
-                                             : ObservationPolicy::QualifiedAccessRoles);
+      }, mutate, selectedObservationPolicy(options.classInvariantInputs, options.firstWriteConsumers, options.finalReadSources));
 }
 
 } // namespace
@@ -1378,9 +1399,8 @@ LogicalResult analyzeHandoffSyncWithPolicy(func::FuncOp function,
 } // namespace
 
 LogicalResult testing::analyzeSelectedHandoffSync(func::FuncOp function,
-                                                  NativeAnalysis &result, bool classInvariantInputs) {
-  return analyzeHandoffSyncWithPolicy(function, result, classInvariantInputs
-      ? ObservationPolicy::ClassInvariantInputs : ObservationPolicy::QualifiedAccessRoles);
+                                                  NativeAnalysis &result, bool classInvariantInputs, bool firstWriteConsumers, bool finalReadSources) {
+  return analyzeHandoffSyncWithPolicy(function, result, selectedObservationPolicy(classInvariantInputs, firstWriteConsumers, finalReadSources));
 }
 
 LogicalResult runHandoffSync(func::FuncOp function) {

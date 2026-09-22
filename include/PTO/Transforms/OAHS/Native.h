@@ -61,7 +61,8 @@ LogicalResult runSelectedHandoffSyncWithMutation(
 // constructor. This is a read-only diagnostic/test entry point: it selects no
 // commands and grants no completion or event credit.
 LogicalResult analyzeSelectedHandoffSync(func::FuncOp function,
-                                         NativeAnalysis &result, bool classInvariantInputs = false);
+                                         NativeAnalysis &result, bool classInvariantInputs = false,
+                                         bool firstWriteConsumers = false, bool finalReadSources = false);
 
 // Exercise arithmetic read-back directly, without the earlier whole-IR identity
 // gate masking decoder failures. This test hook grants no observation/target

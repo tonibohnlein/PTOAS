@@ -12,6 +12,7 @@
 #include <limits>
 #include <string>
 #include <vector>
+#include <utility>
 namespace mlir::pto::oahs {
 constexpr std::size_t NoControlId = std::numeric_limits<std::size_t>::max();
 // Only original-value observations. Occupancy, receipt state and writer history
@@ -33,6 +34,9 @@ struct OriginalObservation {
   std::size_t anchor = 0;
   std::vector<ObservationAtom> atoms;
   bool available = false;
+  // A separate endpoint gap immediately before this anchor's shared word.
+  // It may use a narrower predicate vocabulary without splitting that word.
+  bool beforeSharedWord = false;
 };
 struct ObservedSite {
   // Optional original physical phase. A boundary site is NOT a dummy payload.
@@ -66,6 +70,9 @@ struct ObservedLoop {
   // Qualified original distance for a final-visit observation. Legacy unit
   // loops use one; a joint reader frontend supplies the original positive step.
   uint64_t lastVisitDistance = 1;
+  // Exactly-once receipt boundary and its immediate first-write payload.
+  // The boundary executes before the payload's ordinary shared command word.
+  std::vector<std::pair<std::size_t, std::size_t>> firstWriteFrontiers = {};
 };
 struct ObservedControl {
   std::vector<ObservedSite> sites;

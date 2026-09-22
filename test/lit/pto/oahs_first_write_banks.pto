@@ -1,0 +1,6 @@
+// First-write qualification must preserve the first operand bank's early source.
+// RUN: pto-oahs-selected-test --construct %S/../../oahs/first_write_banks.pto > %t.base
+// RUN: pto-oahs-selected-test --construct %S/../../oahs/first_write_banks.pto --first-write-consumers > %t.new
+// RUN: %python %S/../../benchmarks/kda_projection/check_first_write_banks.py %t.base %t.new
+// RUN: pto-oahs-selected-test --construct %S/../../oahs/first_write_outward.pto --first-write-consumers > %t.outward
+module {}

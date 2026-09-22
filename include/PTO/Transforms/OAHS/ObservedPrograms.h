@@ -82,6 +82,8 @@ struct ReaderVisitRegion {
   std::vector<std::size_t> firstConsumers, lastPublications;
   uint64_t step = 1;
   bool singleVisit = false;
+  // Final-only publications get an independent word before the shared anchor.
+  bool finalSourceGaps = false;
 };
 ObservedImport refineReaderVisits(const Program &, const ReaderVisitRegion &);
 // Carry only the finite bank identity across a region. Unlike counted first/tail

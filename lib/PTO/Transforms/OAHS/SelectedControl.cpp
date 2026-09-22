@@ -188,6 +188,10 @@ Control::Control(const Program& program)
     }
     validInput = true;
     graph = detail::buildControlGraph(program);
+    sitePipes.resize(graph.sites.size(), Pipe::Count);
+    for (Id site = 0; site < graph.sites.size(); ++site)
+        if (graph.operations[site] != NoAnalysisId)
+            sitePipes[site] = program.operations[graph.operations[site]].pipe;
     reachable = detail::reachableSites(graph);
     predecessors.resize(graph.sites.size());
     for (Id site = 0; site < graph.sites.size(); ++site) {
@@ -322,6 +326,19 @@ Control::Control(const Program& program)
         facts.entry = loop.entry;
         facts.sites = loop.sites;
         facts.firstConsumer.fill(NoAnalysisId);
+        for (const auto& [boundary, consumer] : loop.firstWriteFrontiers) {
+            if (boundary >= graph.sites.size() || consumer >= graph.sites.size() ||
+                graph.operations[boundary] != NoAnalysisId ||
+                graph.operations[consumer] == NoAnalysisId ||
+                graph.sites[boundary].successors != std::vector<Id>{consumer} ||
+                !lookahead.balancedTransfer({loop.entry}, boundary, graph.entry, graph.exit)) {
+                complete = false;
+                reason = "invalid first-write receipt boundary";
+                return;
+            }
+            facts.firstWriteFrontiers.emplace_back(boundary, consumer);
+            receiptGaps.emplace(boundary, program.operations[graph.operations[consumer]].pipe);
+        }
         std::set<Pipe> observers;
         for (auto site : loop.sites) {
             ++loopEntryPreparationSites;
@@ -416,7 +433,18 @@ Control::Control(const Program& program)
                 return;
             }
             firstPrefixWords.insert(canonicalCut[cut]);
+            if (!loop.firstWriteFrontiers.empty()) firstWriteWords.insert(canonicalCut[cut]);
         }
+    if (program.observed) for (Cut cut = 0; cut < graph.sites.size(); ++cut) {
+        if (!reachable[cut] || canonicalCut[cut] != cut) continue;
+        const auto id = program.observed->sites[cut].observation;
+        if (id == NoAnalysisId) continue;
+        const auto& observation = program.observed->observations[id];
+        if (observation.available && observation.beforeSharedWord &&
+            std::any_of(observation.atoms.begin(), observation.atoms.end(), [](const auto& atom) {
+                return atom.kind == ObservationAtom::LoopHasNext && atom.value == 0;
+            })) finalReadGaps.push_back(cut);
+    }
     // Local first-observer frontiers of original alternatives. Inspect each
     // straight arm prefix once per pipeline, not once per storage requirement.
     // Empty arms, nested control and shared analytical words retain fallback.
@@ -468,10 +496,33 @@ Control::Control(const Program& program)
         }
     }
 }
+bool Control::balancedWords(Cut publication, Cut acquisition) const
+{
+    publication = canonicalCut[publication]; acquisition = canonicalCut[acquisition];
+    if (publication == acquisition) return true;
+    std::vector<std::pair<Cut, bool>> todo{{graph.entry, false}};
+    std::set<std::pair<Cut, bool>> seen;
+    bool consumed = false;
+    while (!todo.empty()) {
+        auto [at, live] = todo.back(); todo.pop_back();
+        if (!seen.insert({at,live}).second) continue;
+        if (canonicalCut[at] == publication) { if (live) return false; live = true; }
+        if (canonicalCut[at] == acquisition) { if (!live) return false; live = false; consumed = true; }
+        if (graph.sites[at].successors.empty() && live) return false;
+        for (auto next : graph.sites[at].successors) todo.emplace_back(next,live);
+    }
+    return consumed;
+}
 bool Control::straight(Id a, Id b) const
 {
     return a < frame.size() && b < frame.size() && frame[a] != NoAnalysisId &&
            frame[a] == frame[b] && position[a] <= position[b];
+}
+bool Control::sourceCut(Id cut, Pipe source) const
+{
+    const auto receipt = receiptGaps.find(cut);
+    return graph.legalCuts[cut] &&
+        (receipt == receiptGaps.end() || receipt->second == source);
 }
 Cut Control::after(Id origin) const
 {
@@ -481,7 +532,7 @@ Cut Control::after(Id origin) const
         if (!straight(origin, site)) {
             break;
         }
-        if (graph.legalCuts[site]) {
+        if (sourceCut(site, sitePipes[origin])) {
             return site;
         }
     }

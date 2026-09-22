@@ -102,7 +102,7 @@ bool validObserved(const Program &p, std::string &reason) {
     }
   }
   std::set<std::vector<uint64_t>> unique;
-  std::map<std::size_t,
+  std::map<std::pair<std::size_t, bool>,
            std::vector<std::tuple<unsigned, std::size_t, uint64_t>>>
       anchorVocabulary;
   std::set<std::size_t> usedObservations;
@@ -134,7 +134,7 @@ bool validObserved(const Program &p, std::string &reason) {
       assignments.emplace_back(unsigned(a.kind), a.owner, a.parameter, a.value);
     }
     std::sort(assignments.begin(), assignments.end());
-    std::vector<uint64_t> key{o.anchor};
+    std::vector<uint64_t> key{o.anchor, o.beforeSharedWord};
     for (const auto &[kind, owner, parameter, value] : assignments)
       key.insert(key.end(), {kind, owner, parameter, value});
     if (!unique.insert(key).second)
@@ -142,7 +142,7 @@ bool validObserved(const Program &p, std::string &reason) {
     if (usedObservations.count(observationId)) {
       std::vector<std::tuple<unsigned, std::size_t, uint64_t>> vocabulary(
           terms.begin(), terms.end());
-      auto entry = anchorVocabulary.emplace(o.anchor, vocabulary);
+      auto entry = anchorVocabulary.emplace(std::make_pair(o.anchor, o.beforeSharedWord), vocabulary);
       if (!entry.second && entry.first->second != vocabulary)
         return fail("one original anchor requires a common observable feature "
                     "vocabulary");
@@ -168,6 +168,17 @@ bool validObserved(const Program &p, std::string &reason) {
     if (n.observation != NoControlId) {
       if (n.observation >= q.observations.size())
         return fail("invalid observation index");
+      const auto &observation = q.observations[n.observation];
+      if (observation.beforeSharedWord) {
+        if (n.operation != NoControlId || n.successors.size() != 1 ||
+            n.successors.front() >= q.sites.size())
+          return fail("endpoint gap must immediately precede its shared anchor word");
+        const auto &next = q.sites[n.successors.front()];
+        if (next.observation >= q.observations.size() ||
+            q.observations[next.observation].beforeSharedWord ||
+            q.observations[next.observation].anchor != observation.anchor)
+          return fail("endpoint gap lost its original shared anchor");
+      }
       const std::optional<Pipe> role =
           n.operation == NoControlId
               ? std::nullopt

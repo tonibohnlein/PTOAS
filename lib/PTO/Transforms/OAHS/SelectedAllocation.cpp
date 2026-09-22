@@ -37,11 +37,15 @@ Id Constructor::reusable(Pipe source, Pipe observer, const State& state)
 {
     for (Id key = 0; key < frontier.keys().size(); ++key) {
         const auto& identity = frontier.keys()[key];
-        if (identity.source != source || identity.observer != observer || closedKeys.count(key)) {
+        if (identity.source != source || identity.observer != observer || closedKeys.count(key) ||
+            suspendedReturnKey(key)) {
             continue;
         }
         ++result.work.keyQueries;
-        if (canPublish(state, key)) {
+        // This helper creates a new consumption. Protect already-selected
+        // neighboring publications, including earlier words on the next visit.
+        if (canPublish(state, key) &&
+            consumptionBeforeNextPublication(current, current, key)) {
             return key;
         }
     }
@@ -52,10 +56,8 @@ bool Constructor::clearInterval(Id key, Cut source, Cut target) const
     if (source == target) {
         return true; // appended after all existing words at this cut
     }
-    if (!control.straight(source, target)) {
-        return false;
-    }
     const auto& identity = frontier.keys()[key];
+    if (!control.straight(source, target)) return false;
     for (const auto& endpoint : ledger.records()) {
         if (!ledger.active(endpoint.id)) continue;
         const auto& c = endpoint.command;
@@ -98,10 +100,54 @@ std::vector<Pipe> Constructor::route(Pipe source, Pipe observer) const
     std::reverse(path.begin(), path.end());
     return path;
 }
+bool Constructor::crossControlReturn(Id wait, Cut publication, Id forward, Id reverse)
+{
+    ++result.work.splitRearmingQueries;
+    // Exact consumption identity, at every execution of the publication word.
+    for (auto at : control.wordOccurrences[control.canonicalCut[publication]]) {
+        if (!control.reachable[at]) continue;
+        const auto& state = cache.cuts[at].before;
+        if (!state.causal.reachable() || state.causal.facts()->events[forward].occupancy != 1 ||
+            state.consumptions[forward].size() != 1 || state.consumptions[forward].front() != wait)
+            return false;
+    }
+    const auto& back = frontier.keys()[reverse];
+    const auto& front = frontier.keys()[forward];
+    // Track the actual old consumption, not its representative site's numeric
+    // position. Branch bypasses, repeated entries and shared words must all
+    // balance the new return, with no intervening use of its physical key.
+    std::vector<std::pair<Cut, bool>> todo{{control.graph.entry, false}};
+    std::set<std::pair<Cut, bool>> seen;
+    while (!todo.empty()) {
+        auto [cut, live] = todo.back(); todo.pop_back();
+        if (!seen.insert({cut, live}).second) continue;
+        ++result.work.splitRearmingSites;
+        for (auto id : ledger.word(cut)) {
+            const auto& command = ledger.endpoint(id).command;
+            if (live && (command.kind == Command::Publish || command.kind == Command::Acquire) &&
+                command.source == back.source && command.observer == back.observer && command.key == back.key)
+                return false;
+            if (live && command.kind == Command::Publish && command.source == front.source &&
+                command.observer == front.observer && command.key == front.key) return false;
+            if (id == wait) {
+                if (live) return false;
+                live = true;
+            }
+        }
+        if (control.canonicalCut[cut] == control.canonicalCut[publication]) {
+            if (!live) return false;
+            live = false;
+        }
+        if (control.graph.sites[cut].successors.empty() && live) return false;
+        for (auto next : control.graph.sites[cut].successors) todo.push_back({next, live});
+    }
+    return true;
+}
 bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, Id& key, SelectedDecision& decision)
 {
     Id oldWait = NoAnalysisId, reverse = NoAnalysisId;
     Cut moved = publication;
+    bool stagedAcrossControl = false;
     for (Id candidate = 0; candidate < frontier.keys().size(); ++candidate) {
         const auto& identity = frontier.keys()[candidate];
         if (identity.source != source || identity.observer != observer || closedKeys.count(candidate) ||
@@ -110,15 +156,28 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
             continue;
         }
         const auto wait = currentState().consumptions[candidate].front();
-        const auto cut = ledger.endpoint(wait).cut;
-        if (!control.straight(cut, current) || !control.straight(publication, current)) {
+        auto cut = ledger.endpoint(wait).cut;
+        // A shared endpoint's recorded cut may be in the repeated body while
+        // the current deadline is in its peeled visit. Match an actual original
+        // occurrence before applying the existing straight-corridor repair.
+        if (options.firstWriteConsumers && !control.straight(cut, current)) {
+            for (auto occurrence : control.wordOccurrences[control.canonicalCut[cut]])
+                if (control.reachable[occurrence] && control.straight(occurrence, current)) {
+                    cut = occurrence;
+                    break;
+                }
+        }
+        const bool acrossControl = options.firstWriteConsumers && publication != current &&
+            (cut != ledger.endpoint(wait).cut || !control.straight(cut, current));
+        if ((!control.straight(cut, current) && !acrossControl) || !control.straight(publication, current)) {
             continue;
         }
         const auto after = cache.afterEndpoint.find(wait);
         if (after == cache.afterEndpoint.end()) {
             continue;
         }
-        const auto newCut = control.position[cut] > control.position[publication] ? cut : publication;
+        const auto newCut = control.straight(cut, current) &&
+            control.position[cut] > control.position[publication] ? cut : publication;
         if (!clearInterval(candidate, newCut, current)) {
             continue;
         }
@@ -130,11 +189,14 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
             if (reverseIdentity.source != observer || reverseIdentity.observer != source ||
                 closedKeys.count(reverseKey)) continue;
             ++result.work.keyQueries;
-            if (!canPublish(after->second, reverseKey) || !clearInterval(reverseKey, cut, newCut)) continue;
+            if (!canPublish(after->second, reverseKey)) continue;
+            if (acrossControl ? !crossControlReturn(wait, newCut, candidate, reverseKey) :
+                !clearInterval(reverseKey, cut, newCut)) continue;
             key = candidate;
             oldWait = wait;
             reverse = reverseKey;
             moved = newCut;
+            stagedAcrossControl = acrossControl;
             break;
         }
         if (oldWait != NoAnalysisId) break;
@@ -156,11 +218,20 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
     ++result.work.acknowledgments;
     decision.enlargedPrefix |= moved != publication;
     publication = moved;
+    if (stagedAcrossControl) {
+        // The new forward receipt carries consumption of this return back to
+        // its publisher. Validate the complete exchange in edge(), not its
+        // temporarily incomplete reverse half. No live causal credit is added.
+        // The existing online helper-restoration interface is common-cut:
+        // it restores the WAIT after the SET in that same word. This split
+        // return remains explicit until an anchor-aware interface exists.
+        return true;
+    }
     if (!update()) {
         return false;
     }
     decision.repairOutputVersion = ledger.version();
-    if (!canPublish(cache.cuts[publication].before, key)) {
+    if (!canPublishAt(publication, key)) {
         return fail(SelectedFailure::SelectedUpdate,
             "selected acknowledgment does not rearm its new publication", publication);
     }
@@ -196,6 +267,7 @@ Id Constructor::reusableAtStart(Cut cut, Pipe source, Pipe observer) const
 }
 Id Constructor::helperFreeBinding(const Group& group, Pipe observer) const
 {
+    if (group.finalReadSource) return group.version == ledger.version() ? group.forwardKey : NoAnalysisId;
     if (group.atWordStart) return group.version == ledger.version()
         ? reusableAtStart(group.publication, group.source, observer) : NoAnalysisId;
     // Structured F3 queries already supply a complete candidate certificate.
@@ -210,7 +282,7 @@ Id Constructor::helperFreeBinding(const Group& group, Pipe observer) const
     for (Id key = 0; key < frontier.keys().size(); ++key) {
         const auto& e = frontier.keys()[key];
         if (e.source != group.source || e.observer != observer || closedKeys.count(key) ||
-            recurringKeys.count(key) || !canPublish(cache.cuts[group.publication].before, key)) continue;
+            recurringKeys.count(key) || !canPublishAt(group.publication, key)) continue;
         // Conservative positive certificate: a virgin key has no old/next
         // selected generation. Unsupported reused-key queries return Unknown.
         if (std::none_of(ledger.records().begin(),ledger.records().end(),[&](const auto& endpoint) {
@@ -280,6 +352,217 @@ bool Constructor::needsCommonAcknowledgment(const State& afterForward, Id key) c
     }
     return false;
 }
+bool Constructor::consumptionBeforeNextPublication(Cut publication, Cut acquisition, Id key)
+{
+    // Follow original occurrences, not just the representative command word.
+    // The proposed consumption is appended after the existing acquisition word.
+    // A later selected reverse publication followed by its acquisition carries
+    // that consumption to the publisher. Unsupported relay paths remain unknown.
+    const auto& forward = frontier.keys()[key];
+    using Point = std::pair<Cut, std::set<unsigned>>;
+    std::vector<Point> todo;
+    for (auto occurrence : control.wordOccurrences[control.canonicalCut[acquisition]])
+        if (control.reachable[occurrence])
+            for (auto next : control.graph.sites[occurrence].successors) todo.push_back({next, {}});
+    // Merge pending reverse generations by intersection. Facts only shrink
+    // at joins; do not enumerate a product of path histories. Losing a
+    // path-specific proof is conservative and requests the direct helper.
+    std::map<Cut, std::set<unsigned>> incoming;
+    ++result.work.splitRearmingQueries;
+    while (!todo.empty()) {
+        auto point = std::move(todo.back()); todo.pop_back();
+        auto [cut, published] = std::move(point);
+        auto [entry, inserted] = incoming.emplace(cut, published);
+        if (!inserted) {
+            std::set<unsigned> common;
+            std::set_intersection(entry->second.begin(), entry->second.end(), published.begin(), published.end(),
+                                  std::inserter(common, common.end()));
+            if (common == entry->second) continue;
+            entry->second = common;
+            published = std::move(common);
+        }
+        ++result.work.splitRearmingSites;
+        bool established = false;
+        for (auto id : ledger.word(cut)) {
+            const auto& command = ledger.endpoint(id).command;
+            if (command.kind == Command::Publish && command.source == forward.source &&
+                command.observer == forward.observer && command.key == forward.key) return false;
+            if (command.source != forward.observer || command.observer != forward.source) continue;
+            if (command.kind == Command::Publish) published.insert(command.key);
+            if (command.kind == Command::Acquire && published.count(command.key)) {
+                established = true;
+                break;
+            }
+        }
+        if (established) continue;
+        // Include a next execution of the NEW publication, not only old uses.
+        if (control.canonicalCut[cut] == control.canonicalCut[publication]) return false;
+        for (auto next : control.graph.sites[cut].successors) todo.push_back({next, published});
+    }
+    return true;
+}
+bool Constructor::inactiveReservation(Cut publication, Cut acquisition, Id key)
+{
+    // Borrow a fully materialized recurring role; never release its ownership.
+    // Lazy closed exchanges and entry protocols can still promise future uses.
+    if (!recurringKeys.count(key) || entryProtocolKeys.count(key) ||
+        !canPublishAt(publication, key)) return false;
+    for (const auto& binding : closedBindings)
+        if (binding.second.first == key || binding.second.second == key) return false;
+    const auto& identity = frontier.keys()[key];
+    auto matches = [&](const Command& command) {
+        return (command.kind == Command::Publish || command.kind == Command::Acquire) &&
+            command.source == identity.source && command.observer == identity.observer &&
+            command.key == identity.key;
+    };
+    std::set<std::pair<Cut, Command::Kind>> owned, materialized;
+    for (const auto& channel : result.channels) {
+        if (channel.source != identity.source || channel.observer != identity.observer ||
+            channel.key != identity.key) continue;
+        for (auto cut : channel.publications)
+            owned.insert({control.canonicalCut[cut], Command::Publish});
+        for (auto cut : channel.acquisitions)
+            owned.insert({control.canonicalCut[cut], Command::Acquire});
+    }
+    if (owned.empty()) return false;
+    for (const auto& endpoint : ledger.records()) {
+        if (!matches(endpoint.command)) continue;
+        // Removed endpoints could later be restored; fixed or lazy ownership
+        // is not covered by this certificate. Previous ordinary borrows remain
+        // explicit uses and are checked by the interval walk below.
+        if (!ledger.active(endpoint.id) || endpoint.purpose == EndpointPurpose::Fixed) return false;
+        if (endpoint.purpose == EndpointPurpose::RecurringCompletion) {
+            if (endpoint.request >= result.channels.size()) return false;
+            const auto& owner = result.channels[endpoint.request];
+            if (owner.source != identity.source || owner.observer != identity.observer ||
+                owner.key != identity.key) return false;
+            materialized.insert({control.canonicalCut[endpoint.cut], endpoint.command.kind});
+        }
+    }
+    if (owned != materialized) return false;
+    return borrowedInterval(publication, acquisition, key);
+}
+bool Constructor::inactiveClosedReservation(Cut publication, Cut acquisition, Id key)
+{
+    if (!closedKeys.count(key) || recurringKeys.count(key) || entryProtocolKeys.count(key) ||
+        !canPublishAt(publication, key)) return false;
+    bool owned = false;
+    for (const auto& binding : closedBindings)
+        owned |= binding.second.first == key || binding.second.second == key;
+    if (!owned) return false;
+    const auto& identity = frontier.keys()[key];
+    // Keep the role reserved. Suspended helpers might be restored later at an
+    // old gap, so this certificate covers active, explicit uses only.
+    for (const auto& endpoint : ledger.records()) {
+        const auto& command = endpoint.command;
+        if ((command.kind == Command::Publish || command.kind == Command::Acquire) &&
+            command.source == identity.source && command.observer == identity.observer &&
+            command.key == identity.key &&
+            (!ledger.active(endpoint.id) || endpoint.purpose == EndpointPurpose::Fixed)) return false;
+    }
+    return borrowedInterval(publication, acquisition, key);
+}
+bool Constructor::suspendedReturnKey(Id key) const
+{
+    const auto& identity = frontier.keys()[key];
+    const auto found = pendingRearming.find({identity.source, identity.observer});
+    if (found == pendingRearming.end()) return false;
+    for (const auto& helper : found->second) {
+        if (ledger.endpoint(helper.first).command.key == identity.key &&
+            (!ledger.active(helper.first) || !ledger.active(helper.second))) return true;
+    }
+    return false;
+}
+bool Constructor::prepareClosedReservation(Cut publication, Cut acquisition, Id key)
+{
+    if (inactiveClosedReservation(publication, acquisition, key)) return true;
+    if (!closedKeys.count(key) || recurringKeys.count(key) || entryProtocolKeys.count(key) ||
+        !canPublishAt(publication, key) || !suspendedReturnKey(key)) return false;
+    bool owned = false;
+    for (const auto& binding : closedBindings)
+        owned |= binding.second.first == key || binding.second.second == key;
+    if (!owned || !borrowedInterval(publication, acquisition, key)) return false;
+    const auto& identity = frontier.keys()[key];
+    std::vector<std::pair<Id, Id>> restore;
+    std::set<Id> accounted;
+    for (const auto& helper : pendingRearming.at({identity.source, identity.observer})) {
+        if (ledger.endpoint(helper.first).command.key != identity.key || ledger.active(helper.second)) continue;
+        restore.push_back(helper);
+        accounted.insert(helper.first); accounted.insert(helper.second);
+    }
+    for (const auto& endpoint : ledger.records()) {
+        const auto& command = endpoint.command;
+        if ((command.kind == Command::Publish || command.kind == Command::Acquire) &&
+            command.source == identity.source && command.observer == identity.observer &&
+            command.key == identity.key && (endpoint.purpose == EndpointPurpose::Fixed ||
+            (!ledger.active(endpoint.id) && !accounted.count(endpoint.id)))) return false;
+    }
+    auto materializeReturns = [&](Ledger& target) {
+        for (const auto& helper : restore) {
+            target.restoreAfter(helper.first, target.endpoint(helper.second).acknowledges);
+            target.restoreAfter(helper.second, helper.first);
+        }
+    };
+    // A dormant helper is a real ownership promise. Validate its original
+    // endpoints together with the proposed borrow, not with invented credit.
+    // This is one checked restoration, not a deletion/subset search.
+    auto proposed = ledger;
+    materializeReturns(proposed);
+    proposed.append(publication, {Command::Publish, identity.source, identity.observer, identity.key},
+                    EndpointPurpose::Completion);
+    proposed.append(acquisition, {Command::Acquire, identity.source, identity.observer, identity.key},
+                    EndpointPurpose::Completion);
+    ++result.work.closedReservationChecks;
+    const auto checked = analyze(program, proposed.commands(), {false});
+    result.work.closedReservationCheckSites += checked.stats.siteEvaluations;
+    if (!checked.complete || !checked.diagnostics.empty() || !checked.protocol.empty() ||
+        !checked.phaseResources.empty()) return false;
+    materializeReturns(ledger);
+    for (const auto& helper : restore) {
+        requiredReturns.insert(helper.second);
+        ++result.work.acknowledgments;
+        ++result.work.rearmingRestored;
+        --result.work.rearmingDischarged;
+    }
+    // edge() installs the checked forward pair before replaying this edit.
+    return true;
+}
+bool Constructor::borrowedInterval(Cut publication, Cut acquisition, Id key)
+{
+    const auto& identity = frontier.keys()[key];
+    auto matches = [&](const Command& command) {
+        return (command.kind == Command::Publish || command.kind == Command::Acquire) &&
+            command.source == identity.source && command.observer == identity.observer &&
+            command.key == identity.key;
+    };
+    // A two-state walk over original occurrences proves exactly one borrowed
+    // acquisition per publication, with no owning/other key use in between.
+    // Shared words and backedges are visited in both states, not flattened.
+    std::vector<std::pair<Cut, bool>> todo{{control.graph.entry, false}};
+    std::set<std::pair<Cut, bool>> seen;
+    const auto sourceWord = control.canonicalCut[publication];
+    const auto targetWord = control.canonicalCut[acquisition];
+    while (!todo.empty()) {
+        auto [cut, live] = todo.back(); todo.pop_back();
+        if (!seen.insert({cut, live}).second) continue;
+        ++result.work.splitRearmingSites;
+        for (auto id : ledger.word(cut))
+            if (live && matches(ledger.endpoint(id).command)) return false;
+        if (control.canonicalCut[cut] == sourceWord) {
+            if (live) return false;
+            live = true;
+        }
+        if (control.canonicalCut[cut] == targetWord) {
+            if (!live) return false;
+            live = false;
+        }
+        if (control.graph.sites[cut].successors.empty() && live) return false;
+        for (auto next : control.graph.sites[cut].successors) todo.push_back({next, live});
+    }
+    // The owner may run again after this interval. Actual selected reverse
+    // receipts must carry the new consumption before ANY next publication.
+    return consumptionBeforeNextPublication(publication, acquisition, key);
+}
 bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed, SelectedDecision& decision, Id certifiedKey)
 {
     const bool recurringClosed = closed && control.components[activeComponent].cyclic;
@@ -288,27 +571,54 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     Id key = retained ? binding->second.first : NoAnalysisId;
     if (certifiedKey != NoAnalysisId) {
         if (closed || certifiedKey >= frontier.keys().size() || closedKeys.count(certifiedKey) ||
-            !canPublish(cache.cuts[publication].before, certifiedKey) ||
+            !canPublishAt(publication, certifiedKey) ||
             !clearInterval(certifiedKey, publication, current))
             return fail(SelectedFailure::SelectedUpdate, "binding certificate no longer applies", publication);
         key = certifiedKey;
     } else if (retained) {
-        if (!canPublish(cache.cuts[publication].before, key) &&
+        if (!canPublishAt(publication, key) &&
             !restoreRearming(key, publication)) {
+            // Restoring a return can fail replay at another endpoint. Preserve
+            // that exact occurrence and cause instead of blaming this binding.
+            if (result.failure != SelectedFailure::None) return false;
             return fail(SelectedFailure::EventResource,
                 "recurring forward role lacks its consumption path", publication);
         }
     } else {
         for (Id candidate = 0; candidate < frontier.keys().size(); ++candidate) {
             const auto& identity = frontier.keys()[candidate];
-            if (identity.source != source || identity.observer != observer || closedKeys.count(candidate)) {
+            if (identity.source != source || identity.observer != observer || closedKeys.count(candidate) ||
+                suspendedReturnKey(candidate)) {
                 continue;
             }
             ++result.work.keyQueries;
-            if (canPublish(cache.cuts[publication].before, candidate) &&
+            if (canPublishAt(publication, candidate) &&
                 clearInterval(candidate, publication, current)) {
                 key = candidate;
                 break;
+            }
+        }
+        if (key == NoAnalysisId && options.firstWriteConsumers && !closed) {
+            for (auto candidate : recurringKeys) {
+                const auto& identity = frontier.keys()[candidate];
+                if (identity.source != source || identity.observer != observer) continue;
+                ++result.work.keyQueries;
+                if (inactiveReservation(publication, current, candidate)) {
+                    key = candidate;
+                    break;
+                }
+            }
+        }
+        if (key == NoAnalysisId && !closed) {
+            for (auto candidate : closedKeys) {
+                const auto& identity = frontier.keys()[candidate];
+                if (identity.source != source || identity.observer != observer) continue;
+                ++result.work.keyQueries;
+                if (prepareClosedReservation(publication, current, candidate)) {
+                    key = candidate;
+                    ++result.work.closedReservationBorrows;
+                    break;
+                }
             }
         }
         if (key == NoAnalysisId && !acknowledgment(source, observer, publication, key, decision)) {
@@ -316,6 +626,32 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
         }
     }
     const auto number = frontier.keys()[key].key;
+    Id splitReverse = NoAnalysisId;
+    const auto& publicationOccurrences = control.wordOccurrences[control.canonicalCut[publication]];
+    const auto& acquisitionOccurrences = control.wordOccurrences[control.canonicalCut[current]];
+    const bool repeated = std::any_of(acquisitionOccurrences.begin(), acquisitionOccurrences.end(), [&](Cut cut) {
+        return control.reachable[cut] && control.components[control.component[cut]].cyclic;
+    });
+    if (options.firstWriteConsumers && !closed && repeated &&
+        (publicationOccurrences.size() > 1 || acquisitionOccurrences.size() > 1 ||
+            control.firstWriteWords.count(control.canonicalCut[publication])) &&
+        !consumptionBeforeNextPublication(publication, current, key)) {
+        // Certify a direct return at the actual new consumption. Its source
+        // position never moves the forward publication behind unrelated work.
+        // Existing source-time knowledge must already rearm the reverse key;
+        // no target-time emptiness or hypothetical future receipt is borrowed.
+        for (Id candidate = 0; candidate < frontier.keys().size(); ++candidate) {
+            const auto& identity = frontier.keys()[candidate];
+            if (identity.source == observer && identity.observer == source &&
+                !closedKeys.count(candidate) && !recurringKeys.count(candidate) &&
+                canPublishAt(current, candidate)) {
+                splitReverse = candidate;
+                break;
+            }
+        }
+        if (splitReverse == NoAnalysisId)
+            return fail(SelectedFailure::EventResource, "split recurring receipt has no certified return key", current);
+    }
     const auto request = result.decisions.size();
     decision.endpoints.push_back(ledger.append(publication,
         {Command::Publish, source, observer, number}, EndpointPurpose::Completion, request));
@@ -323,6 +659,15 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
         {Command::Acquire, source, observer, number}, EndpointPurpose::Completion, request);
     decision.endpoints.push_back(wait);
     if (!closed) {
+        if (splitReverse != NoAnalysisId) {
+            const auto reverseNumber = frontier.keys()[splitReverse].key;
+            decision.endpoints.push_back(ledger.append(current,
+                {Command::Publish, observer, source, reverseNumber}, EndpointPurpose::ConsumptionAcknowledgment, request, wait));
+            decision.endpoints.push_back(ledger.append(current,
+                {Command::Acquire, observer, source, reverseNumber}, EndpointPurpose::ConsumptionAcknowledgment, request, wait));
+            rememberReturn(decision.endpoints[decision.endpoints.size() - 2], decision.endpoints.back());
+            ++result.work.acknowledgments;
+        }
         return update();
     }
     // A recurring closed word is one selected edit. Replaying its forward half
@@ -403,7 +748,7 @@ bool Constructor::restoreReturns(Id key)
 }
 bool Constructor::restoreRearming(Id key, Cut publication)
 {
-    return restoreReturns(key) && update() && canPublish(cache.cuts[publication].before, key);
+    return restoreReturns(key) && update() && canPublishAt(publication, key);
 }
 
 void Constructor::rememberReturn(Id publication, Id acquisition)
@@ -767,6 +1112,31 @@ std::optional<bool> Constructor::splitRelay(const Group& group, Pipe observer, R
 bool Constructor::bind(Group& group, RequirementStage stage)
 {
     const auto observer = program.operations[control.graph.operations[current]].pipe;
+    if (group.finalReadSource) {
+        const auto key = group.forwardKey;
+        if (group.version != ledger.version() || key >= frontier.keys().size() ||
+            closedKeys.count(key) || recurringKeys.count(key) ||
+            !finalReadGap(group.publication, group.source, group.requirements, key) ||
+            !consumptionBeforeNextPublication(group.publication, current, key))
+            return fail(SelectedFailure::SelectedUpdate, "stale final-read source certificate", current);
+        SelectedDecision decision;
+        decision.consumer = current; decision.publication = group.publication;
+        decision.publicationAtWordStart = true; decision.stage = stage;
+        decision.source = group.source; decision.observer = observer;
+        decision.required = group.requirements;
+        const auto number = frontier.keys()[key].key;
+        decision.endpoints.push_back(ledger.append(group.publication,
+            {Command::Publish, group.source, observer, number}, EndpointPurpose::Completion, result.decisions.size()));
+        ledger.protectPublicationPrefix(decision.endpoints.back());
+        decision.endpoints.push_back(ledger.append(current,
+            {Command::Acquire, group.source, observer, number}, EndpointPurpose::Completion, result.decisions.size()));
+        ++result.work.finalReadPublications;
+        // Keep all existing acknowledgments; this selection changes only the
+        // completion source. Actual replay supplies the receipt's credit.
+        if (!update()) return false;
+        result.decisions.push_back(std::move(decision));
+        return true;
+    }
     if (group.atWordStart) {
         const auto key = reusableAtStart(group.publication, group.source, observer);
         if (group.version != ledger.version() || key != group.forwardKey || key == NoAnalysisId)

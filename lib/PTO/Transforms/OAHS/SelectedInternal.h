@@ -33,6 +33,7 @@ struct Control {
     std::vector<Component> components;
     std::vector<Id> component, position, frame;
     std::vector<bool> reachable;
+    std::vector<Pipe> sitePipes;
     LookaheadIndex lookahead;
     struct LoopEntryFacts {
         Cut entry;
@@ -43,6 +44,7 @@ struct Control {
         std::vector<Cut> sites;
         // One occurrence per entry, at an invariant input's actual deadline.
         std::vector<Cut> firstInputConsumers;
+        std::vector<std::pair<Cut, Cut>> firstWriteFrontiers;
         std::set<Pipe> issuedPipes;
         // Original word positions crossed by moving an acquisition to entry,
         // including the deadline's pre-payload word, excluding entry itself.
@@ -60,7 +62,9 @@ struct Control {
     std::vector<ChoiceFrontier> choiceFrontiers;
     std::vector<std::vector<Id>> choicesAtConsumer;
     uint64_t choicePreparationSites = 0;
-    std::set<Cut> firstPrefixWords;
+    std::set<Cut> firstPrefixWords, firstWriteWords;
+    std::vector<Cut> finalReadGaps;
+    std::map<Cut, Pipe> receiptGaps;
     uint64_t loopEntryPreparationSites = 0;
     // Memo of canonicalCommandCut, and the sites sharing each canonical word,
     // with the component span of each such word. These are facts about the
@@ -74,6 +78,8 @@ struct Control {
     explicit Control(const Program&);
     bool straight(Id, Id) const;
     Cut after(Id) const;
+    bool sourceCut(Id, Pipe) const;
+    bool balancedWords(Cut publication, Cut acquisition) const;
 };
 
 class Ledger {
@@ -89,6 +95,7 @@ public:
     Commands commands() const;
     bool active(Id id) const { return !removed.count(id); }
     void erase(Id);
+    void protectPublicationPrefix(Id);
     void restoreAfter(Id, Id);
     uint64_t version() const { return revision; }
     const std::vector<SelectedEndpoint>& records() const { return endpoints; }
@@ -104,6 +111,7 @@ private:
     std::vector<SelectedEndpoint> endpoints;
     std::vector<Cut> changed;
     std::set<Id> removed;
+    std::map<Cut, Id> protectedPrefixes;
     Id insert(Cut, Id, Command, EndpointPurpose, Id, Id);
 };
 
@@ -279,6 +287,7 @@ struct Group {
     std::set<Id> coverage;
     bool common = false;
     bool atWordStart = false;
+    bool finalReadSource = false;
     bool bindingCertified = false;
     // A participation-qualified set of alternative early source cuts. It uses
     // one virgin directional key, not one key per branch. Empty means the
@@ -360,6 +369,8 @@ private:
     Id reusableAtStart(Cut, Pipe, Pipe) const;
     Id helperFreeBinding(const Group&, Pipe) const;
     bool freshBetween(Cut, Cut, Id) const;
+    bool finalReadFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&);
+    bool finalReadGap(Cut, Pipe, const std::vector<FrontierRequirement>&, Id = NoAnalysisId);
     bool sourceFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&,
                         const std::vector<FrontierRequirement>&, const std::set<Id>*) const;
     bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&,
@@ -374,6 +385,13 @@ private:
     Id reusable(Pipe, Pipe, const State&);
     bool canPublish(const State&, Id) const;
     bool canPublishAt(Cut, Id) const;
+    bool consumptionBeforeNextPublication(Cut, Cut, Id);
+    bool inactiveReservation(Cut, Cut, Id);
+    bool inactiveClosedReservation(Cut, Cut, Id);
+    bool prepareClosedReservation(Cut, Cut, Id);
+    bool borrowedInterval(Cut, Cut, Id);
+    bool suspendedReturnKey(Id) const;
+    bool crossControlReturn(Id, Cut, Id, Id);
     bool clearInterval(Id, Cut, Cut) const;
     std::vector<Pipe> route(Pipe, Pipe) const;
     std::optional<bool> splitRelay(const Group&, Pipe, RequirementStage);

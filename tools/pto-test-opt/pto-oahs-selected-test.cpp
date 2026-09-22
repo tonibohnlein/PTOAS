@@ -8,6 +8,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/OAHS/Native.h"
 #include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
+#include "PTO/Transforms/InsertSync/SyncCodegen.h"
 #include "PTO/Transforms/InsertSync/SyncAccumulatorOrdering.h"
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
@@ -28,6 +29,31 @@ bool check(bool condition, StringRef message) {
     llvm::errs() << "selected native test: " << message << "\n";
   }
   return condition;
+}
+bool exactCommandEmission(MLIRContext &context) {
+  auto module = parseSourceString<ModuleOp>(
+      "module attributes {pto.target_arch = \"a3\"} {func.func @words() {return}}", &context);
+  if (!check(bool(module), "parse exact command-word test")) return false;
+  auto function = module->lookupSymbol<func::FuncOp>("words");
+  auto anchor = std::make_unique<PlaceHolderInstanceElement>(0, 0);
+  anchor->elementOp = function.getBody().front().getTerminator();
+  SmallVector<std::unique_ptr<SyncOperation>> storage;
+  for (unsigned i=0;i<6;++i) {
+    const auto type = i%2 ? SyncOperation::TYPE::WAIT_EVENT : SyncOperation::TYPE::SET_EVENT;
+    auto sync = std::make_unique<SyncOperation>(type, PipelineType::PIPE_MTE2,
+        PipelineType::PIPE_MTE1, i, 0, std::nullopt);
+    sync->eventIds.push_back(0);
+    anchor->pipeBefore.push_back(sync.get());storage.push_back(std::move(sync));
+  }
+  SyncIRs emission;emission.push_back(std::move(anchor));
+  SyncCodegen codegen(emission,function,SyncAnalysisMode::NORMALSYNC,true);codegen.Run();
+  unsigned count=0;
+  for(auto& op:function.getBody().front()) {
+    if(isa<func::ReturnOp>(op))continue;
+    if(!check(count%2 ? isa<WaitFlagOp>(op) : isa<SetFlagOp>(op),"exact event order changed"))return false;
+    ++count;
+  }
+  return check(count==6,"distinct event generations deduplicated");
 }
 std::string text(func::FuncOp function) {
   std::string result;
@@ -312,6 +338,188 @@ module attributes {pto.target_arch = "a3"} {
       });
       if (!check(correctThreshold, "nonunit first-visit guard uses original lower bound plus step")) return false;
     }
+  }
+  return true;
+}
+bool firstWritePlacement(MLIRContext &context) {
+  const std::string fixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @first_write(%dst: !pto.partition_tensor_view<1x32xf32>, %n: index, %active: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %lo = arith.constant 3 : index
+    %hi = arith.constant 9 : index
+    %step = arith.constant 2 : index
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %x = arith.constant 0 : i64
+    %y = arith.constant 128 : i64
+    %z = arith.constant 256 : i64
+    %a = pto.alloc_tile addr = %x : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %y : !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %z : !pto.tile_buf<vec, 1x32xf32>
+    scf.for %entry = %zero to %n step %one {
+      pto.tstore ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%dst : !pto.partition_tensor_view<1x32xf32>)
+      scf.for %i = %lo to %hi step %step {
+        pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+        // INSERT
+        pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+      }
+    }
+    return
+  }
+})mlir";
+  oahs::SelectedOptions options;
+  options.firstWriteConsumers = true;
+  for (unsigned variant = 0; variant < 8; ++variant) {
+    auto source = fixture;
+    auto replace = [&](const std::string &a, const std::string &b) {
+      source.replace(source.find(a), a.size(), b);
+    };
+    const std::string write = "pto.tabs ins(%b : !pto.tile_buf<vec, 1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)";
+    if (variant == 1) replace("%lo to %hi", "%lo to %lo");
+    if (variant == 2) replace("%lo to %hi", "%lo to %n");
+    if (variant == 3) replace("// INSERT", "pto.tstore ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%dst : !pto.partition_tensor_view<1x32xf32>)");
+    if (variant == 4) replace(write, "scf.if %active { " + write + " }");
+    if (variant == 5) replace("%hi = arith.constant 9", "%hi = arith.constant 4");
+    if (variant == 6) {
+      const std::string read = "pto.tstore ins(%a : !pto.tile_buf<vec, 1x32xf32>) outs(%dst : !pto.partition_tensor_view<1x32xf32>)";
+      replace(read, "");
+      replace("    return", "    " + read + "\n    return");
+    } // A future-only reader is not a first-write reuse opportunity.
+    if (variant == 7) replace("// INSERT", "pto.tload ins(%dst : !pto.partition_tensor_view<1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)");
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module), "parse first-write fixture")) return false;
+    auto function = module->lookupSymbol<func::FuncOp>("first_write");
+    oahs::NativeAnalysis input;
+    if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, input, false, true)), "import first write")) return false;
+    oahs::NativeAnalysis finalOnly;
+    if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, finalOnly, false, false, true)),
+               "import final-only policy with shared storage view")) return false;
+    if (!check(std::all_of(finalOnly.program.observed->loops.begin(), finalOnly.program.observed->loops.end(),
+                         [](const auto &loop) { return loop.firstWriteFrontiers.empty(); }),
+               "sharing analysis must not enable first-write qualification")) return false;
+    const bool qualified = input.program.observed->qualification.find("first-consumer-prefix-v1") != std::string::npos;
+    if (!check(qualified == (variant == 0 || variant == 5 || variant == 7), "first write needs nonempty, unconditional, source-inactive participation")) return false;
+    if (!qualified) continue;
+    oahs::SelectedPlan report;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &report, &options)), "first-write construction/reconstruction")) return false;
+    bool firstReceipt = false, laterReceipt = false;
+    for (const auto &endpoint : report.ledger) {
+      if (endpoint.command.kind != oahs::Command::Acquire ||
+          endpoint.command.source != oahs::Pipe::MTE3 || endpoint.command.observer != oahs::Pipe::V) continue;
+      const auto observation = input.program.observed->sites[endpoint.cut].observation;
+      if (observation == oahs::NoControlId) continue;
+      for (const auto &atom : input.program.observed->observations[observation].atoms)
+        if (atom.kind == oahs::ObservationAtom::LoopHasPrevious) {
+          firstReceipt |= atom.value == 0;
+          laterReceipt |= atom.value != 0;
+        }
+    }
+    if (!check((firstReceipt || variant == 7) && !laterReceipt, "external-reader receipt belongs only at the first conflicting write, unless already covered")) return false;
+    bool threshold = false;
+    function.walk([&](arith::CmpIOp cmp) {
+      auto constant = cmp.getRhs().getDefiningOp<arith::ConstantIndexOp>();
+      threshold |= constant && constant.value() == 5 && cmp.getPredicate() == arith::CmpIPredicate::slt;
+    });
+    if (!check(!firstReceipt || threshold, "first-write guard must retain original nonunit step")) {
+      llvm::errs() << "variant=" << variant << "\n" << text(function);
+      return false;
+    }
+    if (variant == 7) {
+      bool priorExport = false, hoisted = false;
+      function.walk([&](mlir::Operation *op) {
+        priorExport |= isa<TLoadOp>(op);
+        if (auto wait = dyn_cast<WaitFlagOp>(op))
+          if (wait.getSrcPipe().getPipe() == PIPE::PIPE_MTE3 &&
+              wait.getDstPipe().getPipe() == PIPE::PIPE_V) {
+            auto owner = wait->getParentOfType<scf::ForOp>();
+            auto lower = owner ? owner.getLowerBound().getDefiningOp<arith::ConstantIndexOp>() : arith::ConstantIndexOp{};
+            if (lower && lower.value() == 3) hoisted |= !priorExport;
+          }
+      });
+      if (!check(priorExport && !hoisted, "native first-write receipt must stay after the earlier outward consumer")) return false;
+    }
+  }
+  for (unsigned mutation = 0; mutation != 2; ++mutation) {
+    auto module = parseSourceString<ModuleOp>(fixture, &context);
+    auto function = module->lookupSymbol<func::FuncOp>("first_write");
+    const auto before = text(function);
+    bool changed = false;
+    ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic &) { return success(); });
+    const auto status = oahs::testing::runSelectedHandoffSyncWithMutation(function, [&](func::FuncOp working) {
+      if (mutation == 0) {
+        WaitFlagOp victim;
+        working.walk([&](WaitFlagOp wait) {
+          if (!victim && wait.getSrcPipe().getPipe() == PIPE::PIPE_MTE3 &&
+              wait.getDstPipe().getPipe() == PIPE::PIPE_V) victim = wait;
+        });
+        if (victim) { victim.erase(); changed = true; }
+      } else {
+        working.walk([&](arith::CmpIOp cmp) {
+          if (!changed && cmp.getPredicate() == arith::CmpIPredicate::slt) {
+            cmp.setPredicate(arith::CmpIPredicate::sle); changed = true;
+          }
+        });
+      }
+    }, nullptr, &options);
+    if (!check(changed && failed(status) && text(function) == before,
+               "missing first-write support or wrong occurrence guard must fail transactionally")) return false;
+  }
+  return true;
+}
+
+bool finalReadSourcePlacement(MLIRContext &context) {
+  const std::string fixture = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @final_read(%src: !pto.partition_tensor_view<1x32xf32>, %active: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %upper = arith.constant 128 : index
+    %step = arith.constant 64 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 128 : i64
+    %addr2 = arith.constant 256 : i64
+    %a = pto.alloc_tile addr = %addr0 : !pto.tile_buf<vec, 1x32xf32>
+    %b = pto.alloc_tile addr = %addr1 : !pto.tile_buf<vec, 1x32xf32>
+    %c = pto.alloc_tile addr = %addr2 : !pto.tile_buf<vec, 1x32xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+    scf.for %i = %zero to %upper step %step {
+      pto.tadd ins(%a, %a : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%c : !pto.tile_buf<vec, 1x32xf32>)
+      %later = arith.cmpi eq, %i, %zero : index
+      scf.if %active {
+        pto.tadd ins(%c, %c : !pto.tile_buf<vec, 1x32xf32>, !pto.tile_buf<vec, 1x32xf32>) outs(%b : !pto.tile_buf<vec, 1x32xf32>)
+      }
+    }
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+}
+)mlir";
+  for (unsigned variant=0;variant<5;++variant) {
+    auto source=fixture;
+    if(variant==1) source.replace(source.find("%upper = arith.constant 128"),std::string("%upper = arith.constant 128").size(),"%upper = arith.constant 64");
+    if(variant==2) source.replace(source.find("ins(%c, %c"),10,"ins(%a, %a");
+    if(variant==3) {
+      const std::string load="    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%a : !pto.tile_buf<vec, 1x32xf32>)";
+      source.erase(source.rfind(load),load.size());
+    }
+    if(variant==4) source.replace(source.find("%upper = arith.constant 128"),
+        std::string("%upper = arith.constant 128").size(),"%upper = arith.constant 0");
+    auto module=parseSourceString<ModuleOp>(source,&context);
+    if(!check(bool(module),"parse final-read source"))return false;
+    auto function=module->lookupSymbol<func::FuncOp>("final_read");
+    oahs::NativeAnalysis input;
+    if(!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function,input,false,false,true)),
+              "import final-read source"))return false;
+    const bool qualified=input.program.observed->qualification.find("final-read-source-gaps-v1")!=std::string::npos;
+    if(!check(qualified==(variant<2),"final sources require a real return deadline and nonempty read prefix"))return false;
+    oahs::SelectedOptions options;options.finalReadSources=true;options.recurring=false;
+    options.finalHelperTrials=false;options.recurringOmissionTrials=false;
+    oahs::SelectedPlan report;
+    if(!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function,{},&report,&options)),
+              "final-read native construction/reconstruction"))return false;
+    if(!check(report.work.finalReadPublications == (variant<2?1u:0u),
+              "final-read source must preserve the conditional suffix and reject later reads"))return false;
   }
   return true;
 }
@@ -918,6 +1126,15 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
                  << " policy=" << options.recurringOmissionTrials << options.finalHelperTrials
                  << options.movingFrontiers << options.sourceGaps << options.deferredAcyclicAcknowledgments
                  << options.classInvariantInputs << options.equalCoverageBinding
+                 << " final_read_sources=" << options.finalReadSources
+                 << " final_read_publications=" << work.finalReadPublications
+                 << " closed_reservation_borrows=" << work.closedReservationBorrows
+                 << " closed_reservation_checks=" << work.closedReservationChecks
+                 << " closed_reservation_check_sites=" << work.closedReservationCheckSites
+                 << " final_read_query_sites=" << work.finalReadQuerySites
+                 << " first_write_consumers=" << options.firstWriteConsumers
+                 << " split_rearming_queries=" << report.work.splitRearmingQueries
+                 << " split_rearming_sites=" << report.work.splitRearmingSites
                  << " proposal_sites=" << work.proposalCheckSites
                  << " proposal_microseconds=" << work.proposalCheckMicroseconds
                  << " rejected_protocol=" << work.rejectedProtocolProposals
@@ -1071,20 +1288,89 @@ const char *occurrenceName(oahs::selected::RequirementOccurrence occurrence) {
   }
   return "?";
 }
-bool frontierFile(MLIRContext &context, const char *path, bool observations = false) {
+bool frontierFile(MLIRContext &context, const char *path, bool observations = false, bool explain = false, bool firstWrites = false) {
   auto module = parseSourceFile<ModuleOp>(path, &context);
   if (!module) return false;
   bool accepted = true;
   module->walk([&](func::FuncOp function) {
     if (function.isDeclaration()) return;
     oahs::NativeAnalysis imported;
-    if (failed(oahs::testing::analyzeSelectedHandoffSync(function, imported))) {
+    if (failed(oahs::testing::analyzeSelectedHandoffSync(function, imported, false, firstWrites))) {
       accepted = false;
       return;
     }
     oahs::selected::Control control(imported.program);
     oahs::StorageFrontierAnalysis storage(imported.program);
     oahs::selected::RequirementFrontiers frontiers(imported.program, control, storage);
+    if (explain) {
+      const auto &p = imported.program;
+      llvm::outs() << "explain_function " << function.getSymName() << "\n";
+      for (const auto &note : imported.observationNotes)
+        llvm::outs() << "observation_note " << note << "\n";
+      for (std::size_t id = 0; id < p.operations.size(); ++id) {
+        llvm::outs() << "operation " << id << " pipe=" << pipeName(p.operations[id].pipe);
+        for (const auto &a : p.operations[id].accesses)
+          llvm::outs() << " cell=" << a.cell << ":" << a.read << a.write;
+        llvm::outs() << " native=";
+        imported.phases[id]->print(llvm::outs());
+        llvm::outs() << "\n";
+      }
+      for (oahs::Cut site = 0; site < oahs::commandCutCount(p); ++site) {
+        llvm::outs() << "site " << site << " operation=" << oahs::operationAtCut(p, site)
+                     << " word=" << oahs::canonicalCommandCut(p, site)
+                     << " cyclic=" << control.components[control.component[site]].cyclic << "\n";
+      }
+      for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
+        llvm::outs() << "cell_topology cell=" << cell << " space=" << p.cells[cell].addressSpace
+                     << " acyclic_writers=";
+        for (oahs::Cut site = 0; site < control.graph.sites.size(); ++site) {
+          const auto operation = control.graph.operations[site];
+          if (!control.reachable[site] || operation == oahs::NoAnalysisId ||
+              control.components[control.component[site]].cyclic) continue;
+          for (const auto &access : p.operations[operation].accesses)
+            if (access.cell == cell && access.write)
+              llvm::outs() << operation << "@" << site << ",";
+        }
+        llvm::outs() << "\n";
+      }
+      oahs::SelectedOptions diagnosticOptions;
+      diagnosticOptions.firstWriteConsumers = firstWrites;
+      const auto plan = oahs::constructSelectedPlan(p, {}, diagnosticOptions);
+      accepted &= plan.success;
+      if (!plan.success) for (const auto &endpoint : plan.ledger)
+        llvm::outs() << "failed_endpoint id=" << endpoint.id << " cut=" << endpoint.cut
+                     << " kind=" << unsigned(endpoint.command.kind)
+                     << " source=" << pipeName(endpoint.command.source)
+                     << " observer=" << pipeName(endpoint.command.observer)
+                     << " key=" << endpoint.command.key << "\n";
+      auto requirements = [](const auto &rs) {
+        for (const auto &r : rs)
+          llvm::outs() << " requirement=" << r.cell << ":" << pipeName(r.source)
+                       << ":" << r.sourceWrite << ":" << r.consumer
+                       << ":" << r.consumerRead << r.consumerWrite;
+      };
+      for (const auto &f : plan.fences) {
+        llvm::outs() << "fence cut=" << f.cut << " observer=" << pipeName(f.observer);
+        requirements(f.residuals);
+        llvm::outs() << "\n";
+      }
+      for (const auto &d : plan.decisions) {
+        llvm::outs() << "decision consumer=" << d.consumer << " publication=" << d.publication
+                     << " source=" << pipeName(d.source) << " observer=" << pipeName(d.observer)
+                     << " common=" << d.commonCut << " enlarged=" << d.enlargedPrefix;
+        requirements(d.required);
+        llvm::outs() << "\n";
+      }
+      for (const auto &channel : plan.channels) {
+        llvm::outs() << "channel owner=" << channel.owner << " source=" << pipeName(channel.source)
+                     << " observer=" << pipeName(channel.observer) << " cell=" << channel.cell
+                     << " publications=";
+        for (auto cut : channel.publications) llvm::outs() << cut << ",";
+        llvm::outs() << " acquisitions=";
+        for (auto cut : channel.acquisitions) llvm::outs() << cut << ",";
+        llvm::outs() << "\n";
+      }
+    }
     if (!control.complete || !storage.complete() || !frontiers.complete()) {
       llvm::errs() << "frontier analysis failed for " << function.getSymName() << ": "
                    << (!control.complete ? control.reason :
@@ -1255,10 +1541,12 @@ int main(int argc, char **argv) {
       else if (flag == "--no-helper-trials") options.finalHelperTrials = false;
       else if (flag == "--no-frontier-motion") options.movingFrontiers = false;
       else if (flag == "--no-reader-return-sharing") options.shareReaderReturns = false;
-      else if (flag == "--no-choice-consumer-frontiers") options.choiceConsumerFrontiers = false;
       else if (flag == "--source-gaps") options.sourceGaps = true;
       else if (flag == "--defer-acyclic-acks") options.deferredAcyclicAcknowledgments = true;
       else if (flag == "--class-invariant-inputs") options.classInvariantInputs = true;
+      else if (flag == "--no-choice-consumer-frontiers") options.choiceConsumerFrontiers = false;
+      else if (flag == "--final-read-sources") options.finalReadSources = true;
+      else if (flag == "--first-write-consumers") options.firstWriteConsumers = true;
       else if (flag == "--equal-coverage-binding") options.equalCoverageBinding = true;
       else if (flag == "--trace-replay") options.traceReplay = true;
       else if (flag == "--prefix-replay") options.siblingReplayReuse = false;
@@ -1272,14 +1560,18 @@ int main(int argc, char **argv) {
   if (argc == 3 && StringRef(argv[1]) == "--observations") {
     return frontierFile(context, argv[2], true) ? 0 : 1;
   }
+  if ((argc == 3 || (argc == 4 && StringRef(argv[3]) == "--first-write-consumers")) &&
+      StringRef(argv[1]) == "--explain") {
+    return frontierFile(context, argv[2], false, true, argc == 4) ? 0 : 1;
+  }
   if (argc != 1) {
-    llvm::errs() << "usage: pto-oahs-selected-test [--construct INPUT | --frontiers INPUT | --observations INPUT]\n";
+    llvm::errs() << "usage: pto-oahs-selected-test [--construct INPUT | --frontiers INPUT | --observations INPUT | --explain INPUT]\n";
     return 2;
   }
   const bool passed = positive(context, ordinary, "ordinary") && positive(context, loop, "loop") &&
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
-                      positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
-                      choiceConsumerPlacement(context) && slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && staticFifoSlotQualification(context) && firstConsumerPlacement(context) && lastReaderPlacement(context) && jointReaderPlacement(context);
+                      positive(context, queue, "queue") && exactCommandEmission(context) && mutations(context) && constantAddresses(context) &&
+                      choiceConsumerPlacement(context) && slotMappings(context) && accumulatorOrdering(context) && firstUseOrdering(context) && fifoSlotQualification(context) && staticFifoSlotQualification(context) && firstConsumerPlacement(context) && firstWritePlacement(context) && finalReadSourcePlacement(context) && lastReaderPlacement(context) && jointReaderPlacement(context);
   return passed ? 0 : 1;
 }
