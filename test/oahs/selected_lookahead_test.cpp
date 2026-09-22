@@ -616,9 +616,11 @@ void keepDifferentDeadlines()
             "acyclic occurrence class was not recorded");
     const auto& first = frontiers.at(2);
     const auto& second = frontiers.at(3);
-    require(first.size() == 1 && first.front().publication == 1 && first.front().deadline == 2,
+    require(first.size() == 1 && first.front().publication == 1 && first.front().deadline == 2 &&
+            first.front().lifecycleRelease == 1,
             "first source boundary/deadline pair changed");
-    require(second.size() == 1 && second.front().publication == 2 && second.front().deadline == 3,
+    require(second.size() == 1 && second.front().publication == 2 && second.front().deadline == 3 &&
+            second.front().lifecycleRelease == 2,
             "second source boundary/deadline pair changed");
     require(first.front().source == second.front().source &&
             first.front().observer == second.front().observer,

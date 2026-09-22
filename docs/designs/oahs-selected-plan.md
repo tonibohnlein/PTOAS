@@ -10,7 +10,10 @@ The ongoing quality work and the first restricted construction-time
 publication-prefix certificate are specified in
 [quality milestones](oahs-quality-milestones.md#first-implementation-within-one-command-word).
 That certificate protects a new ordinary publication inside its command word;
-it is not yet a global publication-prefix invariant.
+the [opt-in cross-word foundation](oahs-quality-milestones.md#restricted-cross-word-foundation)
+adds a reusable ordering query and explicit proof dependencies. Neither is yet
+a global publication-prefix invariant. Shared lifecycle and occurrence
+interfaces take priority over further single-kernel selection policies.
 
 ## Entry points and state
 

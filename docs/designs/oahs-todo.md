@@ -10,9 +10,15 @@ advancing acquisition deadlines.
 
 The user-approved milestones, starting at `b62b89de5`, are tracked in
 [oahs-quality-milestones.md](oahs-quality-milestones.md). Publication-prefix
-certification is active; lifecycle consolidation, rearming deadlines, recurring
-selection and open ownership follow in that order. Historical entries below
-remain evidence and acceptance context.
+certification has an accepted restricted mechanism checkpoint. Shared occurrence
+correspondence and lifecycle consolidation are active; rearming deadlines, recurring
+selection and open ownership retain their acceptance milestones. Implement the
+[shared foundations](oahs-quality-milestones.md#shared-foundations-before-further-kernel-optimization)
+across those milestones before pursuing another single-kernel optimization:
+lifecycle facts, occurrence correspondence and reusable certificates first,
+then selected rearming obligations and ownership. Keep unqualified selection
+policies disabled. Historical entries below remain evidence and acceptance
+context.
 
 ## Previous priority: broad sweep follow-up
 

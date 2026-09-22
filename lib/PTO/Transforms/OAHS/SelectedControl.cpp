@@ -621,6 +621,7 @@ RequirementFrontiers::RequirementFrontiers(
             frontier.access =
                 (Id(relationship.cell) * PipeCount + unsigned(frontier.source)) * 2 + Id(write);
             frontier.deadline = control.canonicalCut[site];
+            frontier.lifecycleRelease = control.after(relationship.source.site);
             const auto sourceComponent = control.component[relationship.source.site];
             const auto targetComponent = control.component[site];
             if (sourceComponent != NoAnalysisId && targetComponent != NoAnalysisId &&

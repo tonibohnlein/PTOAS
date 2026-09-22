@@ -21,6 +21,7 @@
 namespace mlir::pto::oahs::selected {
 
 using Id = std::size_t;
+bool publicationMayCross(const Command&, const Command&);
 struct Component {
     std::vector<Id> sites, order, entries;
     bool cyclic = false;
@@ -100,6 +101,7 @@ public:
     // Restricted within-word motion: retain endpoint identity and certify the
     // crossed command suffix before changing the selected word.
     bool movePublicationBefore(Id, Id);
+    bool movePublicationTo(Id, Cut, Id, const std::vector<Cut>&);
     bool publicationPrefixesValid() const;
     void restoreAfter(Id, Id);
     Id lastPublicationComponent(Pipe, Pipe, unsigned) const;
@@ -124,8 +126,27 @@ private:
     std::set<Id> removed;
     std::map<Cut, Id> protectedPrefixes;
     std::map<Id, std::vector<Id>> publicationPrefixes;
+    struct PublicationSpan {
+        Id publication;
+        Cut original;
+        Id continuation;
+        // Exact selected word intervals on which the certificate depends.
+        // Mutating one invalidates this certificate, including deletion or
+        // reordering of an existing endpoint. No cached proof survives it.
+        std::map<Cut, std::vector<Id>> words;
+    };
+    std::vector<PublicationSpan> publicationSpans;
     Id insert(Cut, Id, Command, EndpointPurpose, Id, Id);
 };
+
+// Pure ordering query over a selected fragment. It consumes immutable control
+// and physical-key identities, not a completion snapshot or a binding policy.
+// Requires the constructor's admitted issue-only program and its unique
+// CausalFrontier key population; typed effects use separate admission paths.
+// Coverage, token legality and future edits require separate certificates.
+bool certifyPublicationOrder(const Program&, const Control&, const Ledger&,
+    const std::vector<EventIdentity>&, Id publication, Cut target, Id offset,
+    std::vector<Cut>& crossed);
 
 // The last original static origin per access class. Only the classes an
 // execution actually touched are represented: an absent class is NoAnalysisId,
@@ -259,6 +280,12 @@ struct RequirementFrontier {
     // The original consumer launch deadline. Several records may deliberately
     // share a pipeline while retaining different publications or deadlines.
     Cut deadline = NoAnalysisId;
+    // Minimal lifecycle extension: candidate gap after this physical source
+    // use, including a same-visit segment of a loop. This is not by itself a
+    // proof of the last read, matching participation, or sufficient coverage.
+    // Cell, access mode and source occurrence live in relationship/access.
+    // This boundary grants neither completion nor event-rearming credit.
+    Cut lifecycleRelease = NoAnalysisId;
 };
 class RequirementFrontiers {
 public:
@@ -392,7 +419,11 @@ private:
     bool consume();
     bool bind(Group&, RequirementStage);
     bool preservePublicationPrefixes(SelectedDecision&);
+    bool preservePublicationSpan(Id, const SelectedDecision&);
+    Cut lifecycleRelease(const SelectedDecision&) const;
     bool publicationGapCovers(Id, Id, const std::vector<FrontierRequirement>&) const;
+    bool publicationPositionCovers(Id, Cut, Id, const std::vector<FrontierRequirement>&) const;
+    bool publicationEditValid(const Ledger&);
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&, Id certifiedKey = NoAnalysisId);
     bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&);
     bool joinedAcknowledgment(Pipe, Pipe, Cut, Id&, SelectedDecision&);

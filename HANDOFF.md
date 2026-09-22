@@ -7,7 +7,7 @@ Updated: 2026-09-22
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: production publication-prefix certificate (quality milestone 1)
+- Current milestone: common lifecycle and occurrence interface (mechanism milestone 2)
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
@@ -23,7 +23,108 @@ validation is recorded in the first-slice section below. Keep the
 first-write/final-read experiment opt-in until its complete ordering comparison
 passes.
 
-### First certificate slice implemented locally
+### Current foundation slice: cross-word certificates
+
+The user redirected the implementation order toward shared building blocks
+across the milestones before further single-kernel optimization. Follow the
+[foundation sequence](docs/designs/oahs-quality-milestones.md#shared-foundations-before-further-kernel-optimization):
+immutable physical lifecycle facts, shared occurrence correspondence and reusable
+ordering certificates first; selected rearming obligations and ownership follow
+with real consumers. The user subsequently separated mechanism acceptance from
+kernel performance improvement: **milestone 1's restricted certificate checkpoint
+is accepted**, and shared occurrence correspondence is the next milestone-2
+slice. KDA remains a guiding and verification witness; its performance gain is
+not a milestone-1 completion requirement. Retain all ordering and corpus gates.
+Do not enable experimental policies merely to make analysis facts available.
+
+The cross-word certificate slice starts at `edcdceceeb474d7abc608a9aa3fb96f13c560bb6`.
+It extends `RequirementFrontier` with a candidate gap after its physical source
+use, retaining the existing cell, source occurrence and consumer deadline.
+`certifyPublicationOrder` is a pure, policy-independent query over an exact
+selected fragment. It compares incoming-port and payload prerequisites along
+each admitted path, including outward publication and consumption ports. The
+ordinary constructor uses it through opt-in `--cross-word-prefixes`; native
+observation import is unchanged. The existing word-local rule remains on.
+
+Accepted motion retains endpoint identity and records the exact crossed word
+intervals. A following endpoint anchors the end of the original publication's
+interval; later commands in that word remain outside it. Insertion, deletion or
+reordering inside the interval, or loss of the anchor, invalidates the proof.
+Selected replay and finalization refuse stale certificates; final helper
+omission retains any helper whose deletion would invalidate one. This is not yet
+re-certification or a global all-publications invariant. Endpoint words must
+have one analytical occurrence; crossed backedges and matching physical-key
+endpoints decline. Actual coverage/rearming and independent safety checks remain
+separate. See the [certificate scope](docs/designs/oahs-quality-milestones.md#restricted-cross-word-foundation).
+
+The portable production witness releases input storage before an unrelated
+compute wait across an original branch, while retaining the crossed outward
+publication's completion. Complete independent payload-order inclusion holds on
+both arms. A later physical reader retains its release boundary. Direct tests
+also cover key-generation crossings, invalid gaps, a loop corridor, private
+copies, invalidation by later edits and an unchanged continuation.
+
+The first opt-in corpus run passed 86/88 and refused two MLP cast modules because
+whole-word invalidation incorrectly included later continuation edits. Exact-gap
+tracking fixes both. The certificate now moves one MTE2-to-V publication in each
+native module. Twenty finite complete-order comparisons cover first/nonfirst
+entry and 0, 1, 2, 3 and 5 visits; all add **zero** and remove **zero** relations.
+An independently required receipt still gates the consumer. This is native
+certificate coverage with nonregression, not a native improvement. The revised
+mechanism acceptance criteria do not require a speedup.
+
+An early experiment implicitly enabled final-read control refinement with the
+certificate. It is removed from the current implementation. KDA's final-read-only
+plan removes 276 and adds 16 finite payload relations relative to the committed
+default; importing the refinement alone changes construction even with motion
+disabled. The added relations put later-bank extraction before first-bank
+compute. Preserve existing choice-frontier opportunities under refined shared
+words before enabling this analysis refinement by default. The separate
+first-write/final-read cut-754 rearming refusal remains historical evidence;
+do not weaken source-time consumption checks to bypass it.
+
+Artifacts for this slice are in
+`/home/toni/work/pypto3_sync_more/publication-cross-word-work/`. The frozen
+`baseline-selected-test` is the committed first-slice driver. The focused Linux
+native recipe is `build-native.py`; `.ptoas-workspace.json` still describes a
+different host and must not be used as this build's provenance.
+
+Final validation for this slice:
+
+- **26/26 portable suites**, including cross-word ordering, later physical reads,
+  exact-gap invalidation and final helper cleanup (`portable-tests-final.log`).
+- **Both native suites** pass (`pto-oahs-native-test-final.log`,
+  `pto-oahs-selected-test-final.log`).
+- **19/19 compatibility inputs**, with byte-identical plans against the committed
+  baseline (`compatibility-final-summary.json`).
+- **88/88 paired corpus modules with default options**, all byte-identical
+  (`corpus-default-final/summary.json`).
+- **88/88 with `--cross-word-prefixes`**, 86 byte-identical and only the two MLP
+  cast plans changed (`corpus-cross-final/summary.json`). The exact changed-plan
+  hashes match `mlp-summary.json`; all 20 checked traces have equal payload order.
+- Default and opt-in KDA AIC/AIV, hc_pre and RMSNorm construct/reconstruct with
+  identical plans. Full finite order comparisons for KDA AIC, hc_pre and RMSNorm
+  add/remove zero relations (`targeted-final-summary.json`). The combined
+  first-write/final-read cut-754 refusal is unchanged and recorded separately.
+- Changed-code checking reports **zero errors/warnings**; `git diff --check`
+  passes. Builds use C++17 with the portable warning policy. No sanitizer or
+  device timing was run; no analyzer-wide compliance claim is made.
+
+`validation.json`, `source/` and `source.patch` pin the uncommitted implementation
+and final drivers; `validate.py` and `check-mlp.py` record the runs. The original
+`corpus-cross/` is the retained **failing intermediate** whole-word experiment;
+use the `*-final` directories for acceptance. `refinement-diagnosis.json` records
+the separate exploratory KDA ordering comparison and its provenance limits.
+
+**Next foundation task:** consolidate all-occurrence correspondence used by
+choice/ordinary placement and recurring qualification. Test that enriching
+control preserves existing early source boundaries and consumer deadlines.
+Then expose those qualified lifecycle boundaries to binding before choosing
+physical keys. Rearming support must remain a separate selected obligation until
+an actual return acquires it. No kernel-name recognizers, final-plan search or
+default enabling of unqualified policies.
+
+### First certificate slice (committed at `edcdceceeb`)
 
 `SelectedPublication.cpp` now certifies an earlier position for a new ordinary
 completion SET inside its existing word. It can release storage before an
@@ -84,7 +185,7 @@ with native nonregression evidence, but no native overlap improvement yet.
 `source.patch` preserve this uncommitted implementation. The earlier `corpus/`
 run predates the final replay-retry check; use `corpus-final/` for acceptance.
 
-**Next action:** milestone 1 remains active. Extend the same certificate to
+**Historical next action (superseded by the foundation sequence above):** extend the same certificate to
 qualified source boundaries across words using the actual KDA release/return
 path and its outward dependencies. Establish current experimental key support
 separately if using first-write/final-read placement. Require an actual native

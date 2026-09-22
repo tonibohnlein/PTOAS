@@ -80,6 +80,9 @@ bool Constructor::finish()
         ++result.work.helperCompositionTrials;
         Ledger trial = ledger;
         for (auto id : endpoints) trial.erase(id);
+        if (!trial.publicationPrefixesValid()) {
+            continue;
+        }
         auto checked = checkCausalFrontier(program, trial.commands());
         result.work.invariantSiteEvaluations += checked.siteEvaluations;
         result.work.helperCompositionSiteEvaluations += checked.siteEvaluations;
@@ -94,6 +97,9 @@ bool Constructor::finish()
     }
     result.work.helperCompositionMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - helperStart).count();
+    if (!ledger.publicationPrefixesValid()) {
+        return fail(SelectedFailure::FinalValidation, "final edit invalidated a publication prefix", exit);
+    }
     const auto certificateStart = std::chrono::steady_clock::now();
     auto commands = ledger.commands();
     result.certificate = checkCausalFrontier(program, commands);

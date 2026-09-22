@@ -76,10 +76,170 @@ void reusedRelease()
             std::includes(before.begin(), before.end(), after.begin(), after.end()), "reused prefix added ordering");
     require(before.count({5, 12}) && !after.count({5, 12}), "reused release retained unrelated compute");
 }
+
+oahs_oracle::PayloadOrder branchOrder(const o::Program& program, const o::Commands& commands, unsigned arm)
+{
+    auto flat = program;
+    flat.observed.reset();
+    flat.operations.clear();
+    o::Commands words;
+    std::vector<o::Command> pending;
+    const auto& graph = *program.observed;
+    auto at = graph.entry;
+    for (unsigned steps = 0; steps < graph.sites.size(); ++steps) {
+        pending.insert(pending.end(), commands[at].begin(), commands[at].end());
+        const auto& site = graph.sites[at];
+        if (site.operation != o::NoAnalysisId) {
+            flat.operations.push_back(program.operations[site.operation]);
+            words.push_back(std::move(pending));
+            pending.clear();
+        }
+        if (at == graph.exit) {
+            break;
+        }
+        at = site.successors[site.successors.size() == 2 ? arm : 0];
+    }
+    require(at == graph.exit, "branch trace did not terminate");
+    words.push_back(std::move(pending));
+    std::vector<unsigned> visits(flat.operations.size());
+    std::iota(visits.begin(), visits.end(), 0);
+    oahs_oracle::PayloadOrder order;
+    require(bool(oahs_oracle::graph(flat, words, visits, {}, nullptr, nullptr, &order)), "branch order invalid");
+    return order;
+}
+
+void crossWordRelease(bool readAgain, bool finalHelpers)
+{
+    auto p = base(4, 1);
+    p.operations = {op(Q, {{3, false, true}}), op(P, {{3, true, false}}),
+                    op(P, {{0, false, true}}), op(Q, {{0, true, false}}),
+                    op(M, {{1, false, true}}), op(R, {}), op(R, {}), op(P, {{0, false, true}})};
+    if (readAgain) {
+        p.operations[5] = op(Q, {{0, true, false}});
+        p.operations[6] = op(Q, {{0, true, false}});
+    }
+    o::ObservedControl graph;
+    graph.qualification = "publication corridor with retained outward event";
+    graph.entry = 0;
+    graph.exit = 9;
+    graph.sites.resize(10);
+    for (unsigned i = 0; i < 10; ++i) {
+        graph.observations.push_back({i, {}, true});
+        graph.sites[i].observation = i;
+        if (i < 9) {
+            graph.sites[i].successors = {i + 1};
+        }
+    }
+    for (unsigned i = 0; i < 5; ++i) {
+        graph.sites[i].operation = i;
+    }
+    graph.sites[5].successors = {6, 7};
+    graph.sites[6].operation = 5;
+    graph.sites[6].successors = {8};
+    graph.sites[7].operation = 6;
+    graph.sites[8].operation = 7;
+    p.observed = graph;
+    o::Commands fixed(o::commandCutCount(p));
+    fixed[5] = {{o::Command::Publish, M, Q, 0}, {o::Command::Acquire, M, Q, 0},
+                {o::Command::Publish, Q, R, 0}, {o::Command::Acquire, Q, R, 0}};
+    o::SelectedOptions options;
+    options.finalHelperTrials = finalHelpers;
+    const auto old = o::constructSelectedPlan(p, fixed, options);
+    options.crossWordPrefixes = true;
+    const auto plan = o::constructSelectedPlan(p, fixed, options);
+    require(old.success && plan.success, "cross-word constructor: " + old.reason + " / " + plan.reason);
+    require(o::checkCausalFrontier(p, plan.commands).accepted, "cross-word cold certificate");
+    require(readAgain ? plan.work.crossWordPublications == 0 : plan.work.crossWordPublications != 0,
+            "cross-word release ignored the last physical reader");
+    for (unsigned arm : {0u, 1u}) {
+        const auto before = branchOrder(p, old.commands, arm);
+        const auto after = branchOrder(p, plan.commands, arm);
+        require(std::includes(before.begin(), before.end(), after.begin(), after.end()),
+                "cross-word certificate added ordering");
+        if (readAgain) {
+            require(before == after && after.count({9, 12}), "later physical read lost its release boundary");
+        } else {
+            require(before != after && before.count({9, 12}) && !after.count({9, 12}),
+                    "compute still gates refill");
+            require(after.count({9, 10}), "crossed outward publication lost its original completion");
+        }
+    }
+}
 } // namespace
 
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void spanBoundaries()
+    {
+        auto p = base(1, 2);
+        p.operations = {op(Q, {}), op(M, {}), op(P, {})};
+        Control control(p);
+        CausalFrontier frontier(p);
+        Ledger ledger(p, control.canonicalCut, control.wordSpan);
+        std::string reason;
+        require(ledger.initialize(Commands(commandCutCount(p)), reason), reason);
+        const auto outward = ledger.append(1, {Command::Publish, Q, R, 0}, EndpointPurpose::Fixed);
+        const auto publication = ledger.append(2, {Command::Publish, Q, P, 0}, EndpointPurpose::Completion);
+        const auto continuation = ledger.append(2, {Command::Acquire, Q, P, 0}, EndpointPurpose::Completion);
+        std::vector<Cut> crossed;
+        require(certifyPublicationOrder(p, control, ledger, frontier.keys(), publication, 1, 0, crossed),
+                "open-fragment certificate refused retained outward publication");
+        auto moved = ledger;
+        require(moved.movePublicationTo(publication, 1, 0, crossed) && moved.publicationPrefixesValid(),
+                "fresh cross-word certificate invalid");
+        require(ledger.endpoint(publication).cut == 2, "motion trial changed the live ledger");
+        for (const auto command : std::vector<Command>{{Command::Acquire, M, Q, 0},
+                 {Command::Publish, Q, R, 1}, {Command::Barrier, Q}, {Command::BarrierAll}}) {
+            auto changed = moved;
+            changed.append(1, command, EndpointPurpose::Completion);
+            require(!changed.publicationPrefixesValid(), "changed span retained a stale certificate");
+        }
+        auto erased = moved;
+        erased.erase(outward);
+        require(!erased.publicationPrefixesValid(), "endpoint deletion retained a stale span certificate");
+        auto afterGap = moved;
+        afterGap.append(2, {Command::Acquire, M, Q, 0}, EndpointPurpose::Completion);
+        require(afterGap.publicationPrefixesValid(), "same-word continuation invalidated the earlier fragment");
+        auto beforeGap = moved;
+        beforeGap.prepend(2, {Command::Acquire, M, Q, 0}, EndpointPurpose::Completion);
+        require(!beforeGap.publicationPrefixesValid(), "changed original gap retained a stale certificate");
+        auto lostAnchor = moved;
+        lostAnchor.erase(continuation);
+        require(!lostAnchor.publicationPrefixesValid(), "deleted continuation anchor retained its gap");
+        auto outside = moved;
+        outside.append(3, {Command::BarrierAll}, EndpointPurpose::Fixed);
+        require(outside.publicationPrefixesValid(), "unchanged fragment was invalidated by its continuation");
+        const auto version = moved.version();
+        require(!moved.movePublicationTo(publication, 1, 0, crossed) && moved.version() == version,
+                "invalid destination changed the ledger");
+        require(!certifyPublicationOrder(p, control, ledger, frontier.keys(), publication, 1, 9, crossed) &&
+                crossed.empty(), "invalid gap retained a certificate");
+        for (const auto kind : {Command::Publish, Command::Acquire}) {
+            auto reuse = ledger;
+            reuse.append(1, {kind, Q, P, 0}, EndpointPurpose::Fixed);
+            require(!certifyPublicationOrder(p, control, reuse, frontier.keys(), publication, 1, 0, crossed),
+                    "certificate crossed a same-key generation boundary");
+        }
+    }
+    static void cyclicSpan()
+    {
+        auto p = base(1, 1);
+        p.operations = {op(Q, {}), op(M, {}), op(P, {})};
+        p.body = seq({leaf(0), {Region::For, {leaf(1)}, 0, true}, leaf(2)});
+        Control control(p);
+        CausalFrontier frontier(p);
+        Ledger ledger(p, control.canonicalCut, control.wordSpan);
+        std::string reason;
+        require(control.complete && ledger.initialize(Commands(commandCutCount(p)), reason), reason);
+        const auto& operations = control.graph.operations;
+        const auto source = Id(std::find(operations.begin(), operations.end(), 0) - operations.begin());
+        const auto consumer = Id(std::find(operations.begin(), operations.end(), 2) - operations.begin());
+        const auto publication = ledger.append(consumer, {Command::Publish, Q, P, 0}, EndpointPurpose::Completion);
+        std::vector<Cut> crossed;
+        require(!certifyPublicationOrder(p, control, ledger, frontier.keys(), publication,
+                    control.after(source), 0, crossed) && crossed.empty(),
+                "bounded certificate admitted an unqualified loop corridor");
+    }
     static void certificateBoundaries()
     {
         auto p = base(1, 2);
@@ -121,6 +281,12 @@ int main()
     releaseBeforeUnrelatedWait(true, false);
     releaseBeforeUnrelatedWait(false, true);
     reusedRelease();
+    for (const bool finalHelpers : {false, true}) {
+        crossWordRelease(false, finalHelpers);
+        crossWordRelease(true, finalHelpers);
+    }
+    o::selected::ReplayTestAccess::spanBoundaries();
+    o::selected::ReplayTestAccess::cyclicSpan();
     o::selected::ReplayTestAccess::certificateBoundaries();
     std::cout << "publication prefix tests passed\n";
 }

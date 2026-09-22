@@ -17,6 +17,8 @@ add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedGroups.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedAllocation.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedPublication.cpp
+  ../../lib/PTO/Transforms/OAHS/SelectedPublicationMotion.cpp
+  ../../lib/PTO/Transforms/OAHS/SelectedPublicationOrder.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedPlan.cpp
   ../../lib/PTO/Transforms/OAHS/CyclicFrontiers.cpp)
 target_include_directories(oahs-core-under-test PUBLIC ../../include)

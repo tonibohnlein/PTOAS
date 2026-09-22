@@ -7,7 +7,7 @@ InsertSync is a comparison, not an ordering specification.
 
 ## Milestones and acceptance
 
-1. **Active: production publication-prefix certificate.** Establish a restricted
+1. **Accepted mechanism checkpoint: restricted publication-prefix certificate.** Establish a restricted
    certificate at actual command-word positions, including outward publications
    and neighboring key uses. Preserve the early release through later edits, or
    invalidate the certificate. Start from the current KDA release/acknowledgment
@@ -17,7 +17,7 @@ InsertSync is a comparison, not an ordering specification.
    complete payload-order comparisons, unchanged causal/reconstruction checks,
    and the larger prepared-kernel corpus. Record remaining native misses rather
    than promoting an experiment whose ordering gate fails.
-2. **Common lifecycle view.** Consolidate physical identity, producing/reading
+2. **Active: common lifecycle and occurrence view.** Consolidate physical identity, producing/reading
    occurrences, last physical users, next overwrite, legal gaps, participation
    and possible return support. Implement only the portion required by milestone
    1 first. Records prescribe obligations, not private event pairs, and do not
@@ -56,6 +56,60 @@ the source tree and obey the aggregate two-worker limit. Device tasks follow a
 specific qualified candidate or unresolved timing-attribution question; preserve
 authentic coupled execution and compare existing, pinned OAHS and candidate.
 
+## Shared foundations before further kernel optimization
+
+The user clarified the implementation order on 2026-09-22: develop the shared
+building blocks across the milestones before pursuing another KDA-specific
+optimization. Kernel witnesses motivate and test the mechanisms; qualifiers
+must continue to describe physical storage, control, occurrence and target
+semantics. The subsequent acceptance clarification separates mechanism readiness
+from kernel performance improvement. Milestone 1's restricted certificate scope
+is accepted on its recorded construction, ordering and corpus evidence; shared
+occurrence correspondence starts milestone 2. Broader certificates and default
+activation remain separately qualified extensions.
+
+Build these interfaces in dependency order, with executable consumers and
+focused positive and negative tests for each slice:
+
+| Building block | Existing owner and next extension | Consumers |
+| --- | --- | --- |
+| Physical lifecycle facts | Enrich `RequirementFrontiers` using `StorageFrontierAnalysis`: physical cell and access, source occurrence, candidate release gap, next conflicting-use deadline and participation. Keep distinct readers and deadlines. | Ordinary placement, recurring qualification and binding |
+| Occurrence correspondence | Share `Control`'s original occurrences and canonical words. Expose qualified correspondence for source, consumer and successive physical uses; an unknown answer preserves separate frontiers. Refining control must preserve existing placement opportunities. | Cross-word certificates, recurring obligations and open lifetimes |
+| Ordering certificate | A policy-independent query at exact command gaps compares payload observations and outward causal interfaces. Track which selected words its proof depends on and invalidate after unsupported edits. | Publication placement first; later endpoint grouping and movement |
+| Rearming obligations | Consolidate existing pending-return records in selected construction state. Keep the storage deadline separate from each applicable selected key's next-publication deadline; record possible returns separately from acquired support. | Ordinary and recurring physical binding |
+| Logical obligations and ownership | Qualify necessary transfers before assigning keys. Reserve only explicitly required recurrence support, then bind with actual consumption evidence across successive participating uses. | Recurring selection and open bank lifetimes |
+
+The first three are the immediate foundation slice. Rearming and ownership
+follow once they have real consumers of the shared lifecycle/occurrence view;
+do not add unused placeholder records or implement all five policies at once.
+Immutable analysis does not contain selected-event occupancy or declare a
+future return acquired. The existing causal engine remains the authority for
+actual completion and consumption knowledge.
+
+Validate generality by varying structure: straight and branched paths, skipped
+and repeated uses, shared analytical words, multiple reader engines, aliased
+physical bytes and scarce/reused keys. Link each enabled decision to the
+first-pass fact, its candidate boundaries, the actual selected endpoints and
+key, and the residual after the real receipt. Unsupported cases must remain
+explicit rather than acquiring inferred completion from a record. This follows
+the draft's lifecycle and analysis-to-decision contracts in
+`sections/07_literature_informed_mechanisms.tex`.
+
+Keep analysis refinement and placement options independent. In particular,
+enabling an ordering certificate must not implicitly enable final-read control
+refinement. Compare each refinement separately: adding analysis structure can
+change greedy construction even when the new placement mechanism never fires.
+Default activation requires complete-plan comparisons and corpus acceptance;
+availability of a building block alone is insufficient.
+
+Use KDA, hc_pre, physical RMSNorm lifetimes, GEMM and the larger corpus as a
+portfolio throughout this work. Mechanism acceptance requires explicit proof
+scope, linked constructor tests, independent causal/emission checks, complete
+order comparisons for changed native plans and corpus nonregressions. A KDA
+improvement, fewer ordering relations or a measured speedup is not required
+to finish milestone 1. Track performance improvements as a subsequent campaign
+using the shared mechanisms; device timing follows a qualified native candidate.
+
 ## Milestone 1 evidence and next action
 
 The archived KDA path is M completion -> acknowledgment -> MTE1 release -> MTE2
@@ -71,7 +125,8 @@ distinct accumulator and input ranges. See `oahs-final-read-sources.md`,
 `SelectedPublication.cpp` implements a default-on construction-time rule for
 new ordinary completion publications. It uses the KDA witness's release-before-
 unrelated-wait mechanism without recognizing a kernel or opcode sequence. It
-does not yet improve the native KDA plan. The milestone remains active.
+does not yet improve the native KDA plan. This is mechanism evidence, not a
+performance result.
 
 At ordinary binding, the constructor selects one earlier gap in the same word.
 It may cross acquisitions on the publishing engine and commands on other
@@ -123,6 +178,85 @@ and same-key crossing, and check insertion/restoration after certification.
 The earlier source-gap policy's comparison explicitly disables this independent
 new rule, so it continues to measure that policy alone.
 
+### Restricted cross-word foundation
+
+The next local slice adds an opt-in `crossWordPrefixes` policy, exposed by the
+diagnostic driver as `--cross-word-prefixes`. The ordinary within-word rule
+remains default-on. The new option does not change native observation import;
+final-read refinement remains separately selected by `--final-read-sources`.
+`--no-publication-prefixes` disables both motion rules.
+
+`RequirementFrontier::lifecycleRelease` retains the candidate gap after the
+relationship's physical source use, alongside its existing physical cell,
+access class, source occurrence, consumer deadline and participation metadata.
+Unlike the older acyclic-only `publication` field, this gap may be inside a
+loop. It is not a last-read, balanced-participation, completion or rearming
+certificate. The constructor must establish those applicable facts separately.
+This extends the existing analysis interface instead of creating another
+storage-history authority or prescribing an event pair.
+
+`certifyPublicationOrder` in `SelectedPublicationOrder.cpp` is independent of
+the selection policy. At an exact gap, it compares the old and proposed
+fragments on every admitted original path. Independent symbolic inputs name
+the incoming A/T/S/D ports; distinct symbols name each crossed payload's issue
+and completion. Commands propagate these dependencies. Each candidate payload
+observation and every exit port must have a prerequisite set contained in the
+original's. This includes outward event publications and consumption ports,
+so crossing an existing source SET is possible when its exported completion
+does not gain prerequisites. This is an observable prerequisite certificate
+for the ordinary A/T/S/D command model. It is weaker than the draft's
+all-labelled-terminal path certificate: it does not preserve every relation
+between retained event representatives. Do not reuse it for arbitrary endpoint
+grouping or interfaces with additional external attachments without extending
+the proof and its representation.
+The constructor's existing causal-frontier admission rejects unqualified typed
+resource, visibility, private-event and final-block effects before this query;
+the query consumes that admitted program and its unique physical-key population.
+
+Admission requires a single analytical occurrence of each endpoint word,
+balanced participation, no crossed endpoint of the same physical event key,
+and no crossed backedge. Paths remain separate. The query declines beyond
+8,192 visited path steps or 64 completed paths. Unknown or unsupported cases
+retain their original frontiers. Actual source-time coverage/rearming and the
+private-plan protocol/residual check remain mandatory and separate.
+
+The ledger preserves endpoint identity when moving a publication. It records
+the exact endpoint sequences in the crossed interval after the move. At the
+original publication word, a retained following endpoint identifies the end of
+that interval; commands after this anchor remain in the continuation. If no
+following anchor exists, the whole word is conservatively retained. Any later
+insertion, deletion or reordering inside the interval, or loss of its anchor,
+invalidates this certificate. Final helper omission also preserves certificates,
+and finalization refuses a stale proof before invoking the unchanged checker.
+This conservative dependency tracking is intentionally stricter than necessary.
+Re-certifying useful later edits, qualifying shared endpoint words and choosing
+a key with the early boundary in view remain foundation work. There is no
+general final-plan motion pass, automatic control refinement or native
+improvement claim from this slice.
+
+Decision records retain the binding-time placement; their stable endpoint IDs
+resolve to the actual positions in the accepted ledger. This preserves both
+the initial selection and the result of certification for diagnostics.
+
+The linked constructor test crosses an original branch and an outward source
+publication. Both branch traces strictly remove compute-completion to refill
+ordering while preserving the outward publication's completion, with complete
+independent payload-order inclusion. A later physical reader retains the late
+release. Other tests cover same-key crossings, invalid gaps, a loop corridor,
+private-copy isolation, stale-proof invalidation and unchanged continuations,
+including a continuation inside the same command word. The constructor witness
+runs with final helper omission both enabled and disabled.
+
+The first opt-in corpus run exposed this exact-gap distinction in two MLP cast
+modules: whole-word invalidation incorrectly included later continuation edits.
+With the interval corrected, both native modules construct and reconstruct and
+move an MTE2-to-V publication before an original conditional. Twenty independent
+finite order comparisons cover first/nonfirst entry and 0, 1, 2, 3 and 5 loop
+visits. They add and remove zero payload relations: an independently required
+receipt still gates the consumer. This demonstrates native use of the building
+block with ordering nonregression. Under the revised mechanism acceptance
+criteria it contributes to milestone 1; it is not a native overlap improvement.
+
 ### Current baseline correction and next implementation
 
 At frozen `b62b89de5`, default KDA, dspark RMSNorm and hc_pre construct and
@@ -132,14 +266,22 @@ certified return key`. The older 1,784-removed/706-added measurement above is
 historical, not the current baseline. Do not relax key-rearming checks to
 recover that experiment.
 
-Next: extend the certificate from a word-local gap to a qualified source
-boundary using the actual KDA publication/acknowledgment path. Track incoming
-causal dependencies and outward publications across crossed words, including
-invalidation after later edits. Keep source-time consumption evidence mandatory;
-the cut-754 experimental failure is a separate prerequisite if that policy is
-used. Require an actual default native plan improvement with complete relation
-inclusion before claiming that the KDA witness is resolved. Recheck hc_pre,
-physical RMSNorm lifetimes, GEMM, and the entire paired corpus at that boundary.
+The separately checked final-read-only refinement succeeds on KDA at the
+committed first slice, but removes 276 and adds 16 finite payload relations.
+The same difference occurs when only the final-read observation refinement is
+imported and publication motion is disabled. The added relations serialize
+later-bank extracts before the first bank's compute. This exposes loss of an
+existing placement opportunity under shared analytical words; it is not an
+accepted tradeoff or evidence for enabling the refinement by default.
+
+Next: establish shared occurrence correspondence and preserve existing choice
+frontiers when adding analysis structure, then connect lifecycle boundaries to
+binding before key selection. Use the shared-foundations sequence above rather
+than adding a KDA-specific rule. Keep source-time consumption evidence mandatory;
+the cut-754 combined experiment is a separate prerequisite if that policy is
+used. Preserve the complete-order and corpus gates for each mechanism extension.
+Track KDA overlap improvements separately from milestone 1 acceptance, with
+hc_pre, physical RMSNorm lifetimes and GEMM remaining independent witnesses.
 
 Artifacts, driver/input hashes, and final validation totals are recorded in
 `HANDOFF.md` under the active quality work. Device timing remains pending an

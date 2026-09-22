@@ -42,6 +42,8 @@ struct SelectedSource {
     FrontierState postOrigin;
 };
 struct SelectedDecision {
+    // Binding-time placement. Later certified motion keeps stable endpoint IDs;
+    // resolve endpoints in the final ledger for their actual emitted positions.
     Cut consumer = NoAnalysisId, publication = NoAnalysisId;
     RequirementStage stage = RequirementStage::Overlap;
     Pipe source = Pipe::S, observer = Pipe::S;
@@ -156,6 +158,7 @@ struct SelectedWork {
     std::size_t gapPublications = 0, deferredAcknowledgments = 0;
     std::size_t finalReadPublications = 0;
     std::size_t prefixPublications = 0, prefixChecks = 0;
+    std::size_t crossWordPublications = 0;
     uint64_t prefixAnalysisSites = 0;
     std::size_t closedReservationBorrows = 0;
     std::size_t closedReservationChecks = 0, closedReservationCheckSites = 0;
@@ -212,6 +215,8 @@ struct SelectedOptions {
     bool equalCoverageBinding = false;
     // Diagnostic ablation for certified motion inside one selected word.
     bool publicationPrefixes = true;
+    // Opt-in bounded cross-word certificate; does not enable control refinement.
+    bool crossWordPrefixes = false;
     bool traceReplay = false;
     // Diagnostic comparison with the former prefix-only contextual cache.
     bool siblingReplayReuse = true;
