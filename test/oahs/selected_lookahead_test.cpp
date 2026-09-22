@@ -11,6 +11,30 @@
 
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void skipDischargedProvenance()
+    {
+        using namespace selected_test;
+        const auto P = Pipe::MTE2, Q = Pipe::MTE1;
+        for (bool samePipe : {false, true}) {
+            auto p = base(1, 1);
+            p.operations = {op(P, {{0, false, true}}),
+                            op(samePipe ? P : Q, {{0, true, false}})};
+            o::Commands fixed(o::commandCutCount(p));
+            if (!samePipe) {
+                fixed[1] = {{o::Command::Publish, P, Q, 0}, {o::Command::Acquire, P, Q, 0}};
+            }
+            o::selected::Constructor c(p);
+            const auto plan = c.run(fixed);
+            require(plan.success, plan.reason);
+            const auto& requirements = c.requirements.at(1);
+            require(!requirements.empty(), "fixture lost original storage relationships");
+            require(std::none_of(requirements.begin(), requirements.end(), [](const auto& fact) {
+                return fact.described;
+            }), "absent cross-engine residual triggered provenance classification");
+            require(bool(oahs_oracle::graph(p, plan.commands, {0, 1}, {})), "skipped provenance lost safety");
+        }
+    }
+
     static void finalReadSource()
     {
         using namespace selected_test;
@@ -1171,6 +1195,7 @@ int main()
     for (auto n : {32u, 64u, 128u}) o::selected::ReplayTestAccess::pairEnumeration(n);
     keepKnownPrefixSeparateFromOverlap();
     reuseThroughRequiredOverlapReadiness();
+    o::selected::ReplayTestAccess::skipDischargedProvenance();
     sharedLifecycleView();
     keepDifferentDeadlines();
     alternativeEarlySources();

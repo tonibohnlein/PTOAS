@@ -269,6 +269,151 @@ void starvation() {
     require(plan.success, "optional cohort starved ordinary X: " + plan.reason);
     require(plan.work.rejectedResourceProposals == 1 && plan.channels.empty(), "exact-fit cohort was not declined");
 }
+void deferredRequiredReturn()
+{
+    auto p = base(3, 1);
+    p.operations = {op(Q, {{2, true, false}}), op(P, {{0, false, true}}),
+                    op(Q, {{0, true, false}}), op(P, {{0, false, true}}),
+                    op(P, {{1, false, true}}), op(Q, {{1, true, false}})};
+    p.body = seq({leaf(0), {o::Region::Choice, {leaf(1), seq({})}},
+                  leaf(2), leaf(3), leaf(4), leaf(5)});
+    o::SelectedOptions options;
+    options.finalHelperTrials = false;
+    const auto baseline = o::constructSelectedPlan(p, {}, options);
+    options.deferredAcyclicAcknowledgments = true;
+    const auto plan = o::constructSelectedPlan(p, {}, options);
+    require(baseline.success && plan.success, "required-return deferral: " + plan.reason);
+    require(!plan.rearming.empty(), "deferred consumption has no explicit obligation");
+    const auto& obligation = plan.rearming.front();
+    require(obligation.key.source == P && obligation.key.observer == Q &&
+            obligation.acquisition < plan.ledger.size(), "obligation lost its physical key or receipt");
+    require(std::find(obligation.returnDeadlines.begin(), obligation.returnDeadlines.end(), 3) !=
+            obligation.returnDeadlines.end(), "obligation lost the physical storage-return candidate");
+    require(!obligation.reusePublications.empty(), "actual rearmed reuse was not linked to consumption");
+    for (const auto& endpoint : plan.ledger) {
+        require(endpoint.purpose != o::EndpointPurpose::ConsumptionAcknowledgment ||
+                endpoint.acknowledges != obligation.acquisition,
+                "required storage return still received a private acknowledgment");
+    }
+    for (const auto& visits : {std::vector<unsigned>{0, 1, 2, 3, 4, 5},
+                             std::vector<unsigned>{0, 2, 3, 4, 5}}) {
+        oahs_oracle::PayloadOrder before, after;
+        require(bool(oahs_oracle::graph(p, baseline.commands, visits, {}, nullptr, nullptr, &before)) &&
+                bool(oahs_oracle::graph(p, plan.commands, visits, {}, nullptr, nullptr, &after)),
+                "deferred return failed independent order checks");
+        require(std::includes(before.begin(), before.end(), after.begin(), after.end()),
+                "required return introduced payload ordering");
+    }
+}
+void deferredSharedReceipt(bool requiredReturn, bool skippedReceipt = false, bool downstreamChoice = false)
+{
+    auto p = base(2, 2);
+    p.target.keys[unsigned(P)][unsigned(Q)] = {0};
+    p.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}}),
+                    op(P, {{1, false, true}}), op(P, {}), op(Q, {{1, true, false}}), op(Q, {})};
+    if (requiredReturn) {
+        p.operations[2] = op(P, {{0, false, true}});
+        p.operations[3] = op(P, {{1, false, true}});
+    }
+    o::ObservedControl graph;
+    graph.qualification = "mutually exclusive receipts with a common continuation";
+    graph.entry = 12;
+    graph.exit = 11;
+    graph.sites.resize(13);
+    for (unsigned at = 0; at < graph.sites.size(); ++at) {
+        graph.observations.push_back({at, {}, true});
+        graph.sites[at].observation = at;
+        if (at != graph.exit) {
+            graph.sites[at].successors = {at + 1};
+        }
+    }
+    graph.sites[0].operation = 0;
+    graph.sites[2].successors = {3, 4};
+    graph.sites[3].operation = graph.sites[4].operation = 1;
+    graph.sites[3].successors = {5};
+    graph.sites[4].observation = 3;
+    graph.sites[6].operation = 2;
+    graph.sites[8].operation = 3;
+    graph.sites[10].operation = 4;
+    graph.sites[12].operation = 5;
+    graph.sites[12].successors = {0};
+    if (skippedReceipt) {
+        graph.sites[4].observation = 4;
+        graph.sites[4].operation = o::NoAnalysisId;
+    }
+    if (downstreamChoice) {
+        graph.sites[5].successors = {6, 7};
+    }
+    p.observed = graph;
+    o::SelectedOptions options;
+    options.finalHelperTrials = false;
+    const auto baseline = o::constructSelectedPlan(p, {}, options);
+    options.deferredAcyclicAcknowledgments = true;
+    const auto plan = o::constructSelectedPlan(p, {}, options);
+    require(baseline.success && plan.success, "shared receipt construction: " + baseline.reason +
+            " at " + std::to_string(baseline.cut) + " / " + plan.reason + " at " + std::to_string(plan.cut));
+    const auto debt = std::find_if(plan.rearming.begin(), plan.rearming.end(), [&](const auto& obligation) {
+        return plan.ledger.at(obligation.acquisition).cut == 3;
+    });
+    const bool qualified = !skippedReceipt && !downstreamChoice;
+    require((debt != plan.rearming.end()) == qualified, "shared receipt deferral ignored participation");
+    if (qualified) {
+        require(!debt->reusePublications.empty(), "shared receipt lost its actual reuse deadline");
+        const bool hasPrivateReturn = std::any_of(plan.ledger.begin(), plan.ledger.end(), [&](const auto& endpoint) {
+            return endpoint.purpose == o::EndpointPurpose::ConsumptionAcknowledgment &&
+                endpoint.acknowledges == debt->acquisition;
+        });
+        require(hasPrivateReturn != requiredReturn,
+                "shared receipt did not select the required return before a helper");
+    }
+    require(o::checkCausalFrontier(p, plan.commands).accepted, "shared receipt cold validation failed");
+    std::function<void(o::Cut, std::vector<unsigned>)> walk;
+    walk = [&](o::Cut at, std::vector<unsigned> path) {
+        path.push_back(at);
+        if (at != graph.exit) {
+            for (auto next : graph.sites[at].successors) {
+                walk(next, path);
+            }
+            return;
+        }
+        auto flat = p;
+        flat.observed.reset();
+        flat.body = {};
+        flat.operations.clear();
+        for (auto at : path) {
+            if (graph.sites[at].operation != o::NoAnalysisId) {
+                flat.operations.push_back(p.operations[graph.sites[at].operation]);
+            }
+        }
+        auto ordering = [&](const o::Commands& commands) {
+            o::Commands words;
+            std::vector<o::Command> pending;
+            for (auto at : path) {
+                pending.insert(pending.end(), commands[at].begin(), commands[at].end());
+                if (graph.sites[at].operation != o::NoAnalysisId) {
+                    words.push_back(std::move(pending));
+                    pending.clear();
+                }
+            }
+            words.push_back(std::move(pending));
+            std::vector<unsigned> visits(flat.operations.size());
+            std::iota(visits.begin(), visits.end(), 0);
+            oahs_oracle::PayloadOrder order;
+            require(bool(oahs_oracle::graph(flat, words, visits, {}, nullptr, nullptr, &order)),
+                    "shared receipt independent oracle rejected plan");
+            return order;
+        };
+        const auto before = ordering(baseline.commands), after = ordering(plan.commands);
+        require(std::includes(before.begin(), before.end(), after.begin(), after.end()),
+                "shared receipt introduced payload ordering");
+        if (qualified && !requiredReturn) {
+            require(before != after, "shared receipt helper did not release unrelated producer work");
+        } else if (!qualified) {
+            require(before == after, "unsupported shared receipt changed conservative ordering");
+        }
+    };
+    walk(graph.entry, {});
+}
 void deferredAcknowledgment() {
     auto p = base(3, 2);
     p.operations = {op(Q,{{2,true,false}}), op(P,{{0,false,true}}),
@@ -293,6 +438,8 @@ void deferredAcknowledgment() {
     plan = o::constructSelectedPlan(p,{},after);
     require(plan.success, "real later reuse lost its repair: " + plan.reason);
     require(bool(oahs_oracle::graph(p,plan.commands,{0,1,2,3,4,5})), "real reuse lacks consumption evidence");
+    require(!plan.rearming.empty() && !plan.rearming.front().reusePublications.empty(),
+            "helper-backed reuse lost its deferred obligation");
 
     // The common consumption is exactly once, but a later publication inside
     // a branch is outside F7's straight-corridor repair vocabulary.
@@ -529,5 +676,10 @@ int main() {
     o::selected::ReplayTestAccess::proposalOmissionWords();
     o::selected::ReplayTestAccess::invalidProposal();
     o::selected::ReplayTestAccess::uncoveredProducerProposal();
+    deferredRequiredReturn();
+    deferredSharedReceipt(false);
+    deferredSharedReceipt(true);
+    deferredSharedReceipt(false, true);
+    deferredSharedReceipt(false, false, true);
     starvation(); wordGapBaseline(); reusedSourceGap(); deferredAcknowledgment(); commonFrontierContext(); noMotionAndRandom();
 }

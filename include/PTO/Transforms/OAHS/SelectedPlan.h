@@ -48,6 +48,15 @@ struct SelectedLifecycleDemand {
     Cut release = NoAnalysisId, deadline = NoAnalysisId;
     std::vector<Cut> returnDeadlines;
 };
+// An explicit obligation retained when no immediate acknowledgment is emitted.
+// Candidate return deadlines grant no credit. Reuse publications are linked only
+// after actual replay checks their consumption path; they are not future promises.
+struct SelectedRearmingObligation {
+    EventIdentity key;
+    std::size_t acquisition = NoAnalysisId;
+    std::vector<Cut> returnDeadlines;
+    std::vector<std::size_t> reusePublications;
+};
 struct SelectedDecision {
     // Binding-time placement. Later certified motion keeps stable endpoint IDs;
     // resolve endpoints in the final ledger for their actual emitted positions.
@@ -242,6 +251,7 @@ struct SelectedPlan {
     std::vector<SelectedEndpoint> ledger;
     std::vector<SelectedSource> sources;
     std::vector<SelectedDecision> decisions;
+    std::vector<SelectedRearmingObligation> rearming;
     std::vector<SelectedChannel> channels;
     std::vector<SelectedFence> fences;
     std::vector<SelectedUpdate> updates;

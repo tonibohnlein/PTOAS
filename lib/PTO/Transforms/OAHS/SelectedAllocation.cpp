@@ -168,8 +168,13 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
                     break;
                 }
         }
-        const bool acrossControl = options.firstWriteConsumers && publication != current &&
-            (cut != ledger.endpoint(wait).cut || !control.straight(cut, current));
+        // A deferred shared receipt can have several mutually exclusive
+        // occurrences feeding one later publication. Match every occurrence;
+        // its record identifies the debt but supplies no consumption credit.
+        const bool deferredAcrossControl = deferredByAcquisition.count(wait) &&
+            !control.straight(cut, current) && control.correspondence(cut, publication).qualified;
+        const bool acrossControl = deferredAcrossControl || (options.firstWriteConsumers && publication != current &&
+            (cut != ledger.endpoint(wait).cut || !control.straight(cut, current)));
         if ((!control.straight(cut, current) && !acrossControl) || !control.straight(publication, current)) {
             continue;
         }
@@ -193,11 +198,17 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
             if (!canPublish(after->second, reverseKey)) continue;
             if (acrossControl ? !crossControlReturn(wait, newCut, candidate, reverseKey) :
                 !clearInterval(reverseKey, cut, newCut)) continue;
+            // The acyclic return half must stand on its own during replay.
+            // Do not presume the new forward receipt rearms an already selected
+            // later reverse publication. Existing first-write staging is separate.
+            if (deferredAcrossControl && !consumptionBeforeNextPublication(cut, newCut, reverseKey)) {
+                continue;
+            }
             key = candidate;
             oldWait = wait;
             reverse = reverseKey;
             moved = newCut;
-            stagedAcrossControl = acrossControl;
+            stagedAcrossControl = acrossControl && !deferredAcrossControl;
             break;
         }
         if (oldWait != NoAnalysisId) break;
@@ -358,32 +369,10 @@ Id Constructor::helperFreeBinding(const Group& group, Pipe observer) const
     }
     return NoAnalysisId;
 }
-bool Constructor::needsCommonAcknowledgment(const State& afterForward, Id key) const
+bool Constructor::needsCommonAcknowledgment(const State& afterForward) const
 {
     // A syntactically last body operation is not a last dynamic operation. The
     // backward summary retains original backedges and all branch alternatives.
-    if (options.deferredAcyclicAcknowledgments &&
-        std::none_of(control.components.begin(), control.components.end(),
-                     [](const auto& component) { return component.cyclic; }) &&
-        // Exactly-once consumption does not establish that F7 can repair a
-        // future key use. Its acknowledgment placer needs a straight corridor
-        // from this consumption to the next publication. Until conditional
-        // repair is qualified, retain the closed exchange before any branch.
-        // This is a shared original-control fact, not future consumption credit.
-        control.straight(current, control.graph.exit) &&
-        control.wordOccurrences[control.canonicalCut[current]].size() == 1 &&
-        control.lookahead.balancedTransfer({control.graph.entry}, current,
-                                          control.graph.entry, control.graph.exit)) {
-        const auto& e = frontier.keys()[key];
-        const bool otherPublication = std::any_of(ledger.records().begin(), ledger.records().end(),
-            [&](const auto& endpoint) {
-                const auto& command = endpoint.command;
-                return ledger.active(endpoint.id) && endpoint.cut != current &&
-                    command.kind == Command::Publish && command.source == e.source &&
-                    command.observer == e.observer && command.key == e.key;
-            });
-        if (!otherPublication) return false;
-    }
     if (control.lookahead.mayIssueAfter(current)) return true;
     // A selected word may be shared by several original occurrences. Being
     // terminal at only this occurrence is not a terminal-channel certificate.
@@ -819,9 +808,7 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     if (!acquired.applied) return fail(SelectedFailure::SelectedUpdate, acquired.reason, current);
     afterForward.causal = std::move(acquired.state);
     if (observer == program.operations[control.graph.operations[current]].pipe &&
-        !needsCommonAcknowledgment(afterForward, key)) {
-        if (options.deferredAcyclicAcknowledgments && control.lookahead.mayIssueAfter(current))
-            ++result.work.deferredAcknowledgments;
+        (deferCommonRearming(key, wait, decision) || !needsCommonAcknowledgment(afterForward))) {
         // The token is consumed. Either no future use needs publisher knowledge,
         // or the acyclic policy defers that obligation to actual key reuse.
         // Do not invent consumption knowledge. Subsequent F7 and validation
@@ -944,6 +931,7 @@ bool Constructor::returnBeforeUse(Id helperWait, Id necessaryWait)
 
 bool Constructor::settleRearming(const SelectedDecision& decision)
 {
+    observeDeferredRearming(decision);
     // This certificate refers to the selected original-graph continuation.
     // The construction-only loop hypothesis traversal does not retain that
     // continuation's token generations. Keep its closed fallback until it has

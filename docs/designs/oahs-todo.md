@@ -36,12 +36,49 @@ all crossed canonical-word dependencies. The common physical-use/lifetime view
 feeds ordinary placement, recurring qualification and binding decisions; it
 retains distinct readers, deadlines and potential returns without granting credit.
 
-Next is milestone 3: retain unresolved rearming obligations until the selected
+Milestone 3 is active: retain unresolved rearming obligations until the selected
 key's next applicable publication; prefer a required storage return when actual
 causal propagation establishes consumption before that deadline. Preserve the
 storage acquisition deadline separately. Do not enable a broad omission search
 or grant credit for an anticipated return. Keep the existing complete-order,
 independent causal/reconstruction and corpus gates.
+
+### M3 progress and compiler-cost investigation
+
+Explicit deferred-rearming records now retain actual consumption identities,
+physical keys, lifecycle return candidates and subsequent replay-validated
+publications. The opt-in scope now includes exactly-once shared receipts in an
+acyclic graph when their continuations only merge before exit. Qualified helper
+placement uses M2 occurrence correspondence and existing actual-consumption/key
+certificates. Required-return and helper witnesses pass independent ordering
+checks; skipped receipts and downstream branches retain closed fallback.
+Next qualify the remaining conditional deadlines and edit interactions; do not
+treat these records as a new completion authority or mark M3 complete.
+
+Profile-driven fixes skip provenance classification with no cross-engine
+residual and avoid copying complete selected states just to detect join changes.
+The large attention case still spends substantial time in cyclic replay and
+state allocation. Repeated immutable native qualification is separate known
+work; the current profile does not establish it as the dominant cost. Preserve
+causal/reconstruction checks, cold-replay equivalence and native plan hashes
+when reducing compiler work. Evidence is recorded in `HANDOFF.md`.
+
+## Open research task: isolated GEMM gains versus prefill
+
+The user reports that isolated GEMM improvements did not translate to prefill.
+The target population is Qwen and DeepSeek prefill in pypto-lib. Select one
+matrix-heavy representative from each, pin the comparison, then identify a
+structural obstruction or runtime explanation using the [research refinement](oahs-quality-milestones.md#research-refinement-carrying-gemm-mechanisms-into-prefill).
+Distinguish missing physical-use facts, protocol qualification, interaction with
+remaining repairs and overlap that is not on the execution bottleneck. Historical
+MAT projection gains are separate evidence, not a resolution of this question.
+
+M3 retains deadline-driven rearming/shared actual returns. M4 explicitly covers
+complete readiness/release selection before residual repair, with scoped
+producer-support certificates. Independent slot relations remain the existing
+analysis task below; bring them forward only when the matched witness needs
+them. Draft and implementation changes should each carry their proof obligations
+and practical witnesses. Neither is merely a conformance target for the other.
 
 ## Previous priority: broad sweep follow-up
 

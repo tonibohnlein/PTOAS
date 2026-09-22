@@ -22,19 +22,119 @@ InsertSync is a comparison, not an ordering specification.
    and possible return support. Add each portion with a real construction
    consumer. Records prescribe obligations, not private event pairs, and do not
    become a second completion authority.
-3. **Rearming at its actual deadline.** Keep storage acquisition deadlines
+3. **Active: rearming at its actual deadline.** Keep storage acquisition deadlines
    separate from the next applicable publication of a reused event key. Select
    actual required returns before unnecessary private acknowledgments. Retain
    unresolved rearming obligations without granting anticipated receipt credit.
-4. **Necessary recurring obligations before physical binding.** Use lifecycle
-   and support records to avoid unnecessary channels during construction.
-   Replace omission trials incrementally with direct certificates; retain
-   explicit recurrence support and cold final validation.
+4. **Complete lifetime protocols before residual repair and physical binding.**
+   Use lifecycle and support records to select coupled readiness/release
+   obligations, sharing an already required return where qualified. Establish
+   actual completion and consumption paths before repairing residual hazards.
+   Certify interaction with remaining repairs; investigate scoped producer
+   support instead of weakening the existing safeguard. Avoid unnecessary
+   channels before binding, replacing omission trials incrementally with direct
+   certificates. Retain explicit recurrence support and cold final validation.
 5. **Open lifetimes and scoped ownership.** Generalize qualified successive
    physical uses across skipped children and re-entry. Reuse physical keys only
    with certified ownership lifetimes, matching and actual consumption paths.
    Include zero-use children, independent readers and generation-boundary
    negatives. Lexical nonoverlap alone is insufficient.
+
+## Research refinement: carrying GEMM mechanisms into prefill
+
+Added after milestone 2 was committed as `55e706384`. Draft and implementation
+jointly develop the algorithm; neither is the authority against which the other
+must simply conform. The other agent's review through `edcdcecee` is useful
+historical input. Its unfinished cross-word/common-interface status is superseded
+by milestones 1 and 2; this does not imply universal composition or a complete
+implementation of the draft's contextual ordering condition.
+
+**Open question:** the user reports large isolated-GEMM gains that did not carry
+into prefill and identifies Qwen and DeepSeek prefill kernels in pypto-lib as the
+target population. Select one representative matrix-heavy prefill kernel from
+each family; a user-supplied failing campaign is not required to start. Pin
+source/binary versions, shapes and execution context before attributing the gap.
+The expectation to investigate is that applicable GEMM mechanisms should carry
+into these kernels, not that every prefill kernel must show a speedup. Missing
+generality is a hypothesis, not an established cause. The archived
+[MAT campaign](oahs-mat-device-final-results.md) reports projection gains of
+4.4–16.2% against existing; distinguish those results from the reported prefill
+comparison. That campaign's restored-fence controls retain the gains, so fence
+removal alone is not an established explanation.
+
+Start with one matched GEMM/prefill physical-lifetime witness. Follow:
+
+1. Physical bank identity and successive participating uses: did analysis retain
+   the relevant relation through nesting, guards and independent recurrences?
+2. Candidate readiness/release boundaries: was the coupled protocol available,
+   and if declined, was the reason participation, producer support or capacity?
+3. Actual transfers and residual repair: did a required return carry reader
+   completion, prior-writer completion and readiness consumption? Did another
+   repair introduce new prerequisites or broaden a publication prefix?
+4. Emitted ordering and execution: did the complete plan preserve the intended
+   overlap, and did that overlap affect the measured execution path? Check event
+   overhead, resource limits and coupled scheduling before blaming qualification.
+
+The initial deliverable is one classified obstruction with a minimized,
+structural regression, or evidence that the intended protocol already exists
+and runtime attribution is needed. It is not a new broad profiling campaign or
+a kernel-name recognizer. Reuse existing plans and records first. Device work
+requires a concrete candidate or unresolved timing question and authentic
+execution context. This diagnostic supplies a witness for the relevant
+milestone without reopening completed M2 or making M3 depend on a prefill speedup.
+
+Keep the implementation sequence, with these explicit research obligations:
+
+| Mechanism | Implementation/proof question | Placement in the plan |
+| --- | --- | --- |
+| Deadline-driven rearming and shared returns | When can an actual required return discharge several consumption obligations before every applicable key reuse, without moving its endpoints to manufacture coverage? | M3: explicit obligations before helpers; preserve storage deadlines and certify fallback. |
+| Complete readiness/release selection | How does analysis justify selecting a coupled protocol whose actual returns also cover prior-writer requirements before ordinary repair? | M4: generalize the qualified GEMM mechanism; a proof for a supplied cycle alone is insufficient. |
+| Interaction with residual repair | Which scoped support conditions prevent a remaining repair from moving behind independent producer work and adding order? | M4: retain the current complete-producer safeguard until a narrower rule is proved and tested. |
+| Independent physical-use relations | Can unrelated carried state or independent periods reject an otherwise useful bank relation? | Targeted analysis prerequisite when witnessed; reuse the existing address-slice/independent-slot work item, not a larger joint period cap. |
+| Participation, joined consumption and dormant ownership | When do alternative receipts establish consumption, and which ownership promises survive helper removal and later restoration? | M3 must preserve these existing semantics; M5 generalizes ownership across skipped children and re-entry. |
+| Contextual placement, including relays | Does a narrower destination prefix impose new prerequisites on intermediate work or outward publications? | Retain two-sided checks and M1/M2 proof boundaries; extend only for a concrete unsupported placement. |
+
+For each rule, record: existing draft idea and premises; implementation discovery;
+proposed algorithm/state amendment; exact proof obligation (with theorem reference
+only after checking it); positive/negative construction witnesses; full-order and
+native/device evidence. Do not infer a new theorem from finite tests or infer
+practical value from a theorem alone. GEMM motivates and validates mechanisms;
+there is no decision here to promote it into a paper case study or rewrite the
+paper's evaluation. Amend the common algorithm first where evidence supports it.
+
+M3 remains bounded: ordinary acyclic corridors, then qualified branches/shared
+words; explicit forward-generation/consumption obligations, actual-return
+selection and rechecking at exact republication gaps. Unsupported recurrence
+retains the existing closed exchange. Test stale return generations, skipped
+returns, earlier reuse, multiple readers, scarce keys and later endpoint edits.
+Acceptance requires linked ordering improvements in constructor witnesses and
+native/corpus nonregressions, not a particular kernel speedup. M4 and M5 remain
+separate work rather than prerequisites for finishing M3.
+
+## M3 initial implementation and construction-cost gate
+
+The initial M3 slice makes the restricted acyclic deferral obligation explicit,
+retains lifecycle return candidates and links replay-validated republications to
+the actual old consumption. It preserves the existing opt-in policy scope; it
+is not completion of branch/shared-word deadline selection. The next slice
+extends it to mutually exclusive receipts with continuations that only merge.
+Existing occurrence and key certificates qualify fallback at the actual reuse
+gap. Constructor witnesses check required returns, a strict ordering improvement
+from delayed helper acquisition, and conservative skipped/conditional fallback.
+The policy remains opt-in and M3 remains active. See the
+[selected-plan account](oahs-selected-plan.md#milestone-3-explicit-deferred-rearming-initial-scope).
+
+The user also prioritized compiler cost after observing slow handoff compilation.
+A profile identified unnecessary original-requirement classification when the
+actual cross-engine residual was empty; provider grouping now skips it. A
+separate attention profile identified state-join allocation/copy cost; worklists
+now consume the join's exact change signal. Keep plan-quality and independent
+acceptance gates unchanged. Compare compiler cost against pinned equivalent
+plans, distinguishing native import, preparation, construction replay and final
+checking. Prefer deterministic work-count regressions to flaky timing limits.
+New M3 obligations must reuse existing snapshots/indexes rather than introducing
+one full-program solve per obligation. Further cyclic replay reduction remains
+separate, measured work; the current fixes do not eliminate that cost.
 
 ## Quality and validation contract
 

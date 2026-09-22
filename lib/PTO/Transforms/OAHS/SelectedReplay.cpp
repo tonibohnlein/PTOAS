@@ -12,10 +12,6 @@
 
 namespace mlir::pto::oahs::selected {
 namespace {
-bool same(const State& a, const State& b)
-{
-    return a.causal == b.causal && a.latest == b.latest && a.consumptions == b.consumptions;
-}
 Id keyIndex(const CausalFrontier& frontier, const Command& command)
 {
     const auto& keys = frontier.keys();
@@ -44,19 +40,32 @@ State Constructor::initial() const
     out.consumptions.resize(frontier.keys().size());
     return out;
 }
-bool Constructor::join(State& target, const State& input)
+bool Constructor::join(State& target, const State& input, bool* changed)
 {
+    if (changed) {
+        *changed = false;
+    }
     if (!input.causal.reachable()) {
         return true;
     }
     if (!target.causal.reachable()) {
         target = input;
+        if (changed) {
+            *changed = true;
+        }
         return true;
     }
     auto merged = frontier.join(target.causal, input.causal);
     if (!merged.applied) {
         return false;
     }
+    // Equal causal joins return the original immutable snapshot. If the
+    // provenance is equal too, there is no auxiliary merge or allocation.
+    if (merged.state.facts() == target.causal.facts() && target.latest == input.latest &&
+        target.consumptions == input.consumptions) {
+        return true;
+    }
+    bool modified = changed && !(merged.state == target.causal);
     // A class represented in neither operand has no origin on either side, so
     // the rule below is a no-op there: it either copies an absent value or
     // clears an already absent one. Visiting the union is therefore exact.
@@ -75,16 +84,28 @@ bool Constructor::join(State& target, const State& input)
     for (auto i : classes) {
         const auto* a = history.find(i);
         const auto* b = other.find(i);
+        const auto previous = target.latest.get(i);
         if (!a) {
-            target.latest.set(i, input.latest.get(i));
-        } else if (b && target.latest.get(i) != input.latest.get(i)) {
+            const auto origin = input.latest.get(i);
+            modified |= previous != origin;
+            target.latest.set(i, origin);
+        } else if (b && previous != input.latest.get(i)) {
+            modified |= previous != NoAnalysisId;
             target.latest.set(i, NoAnalysisId);
         }
     }
     for (Id i = 0; i < target.consumptions.size(); ++i) {
-        target.consumptions[i] = unionIds(target.consumptions[i], input.consumptions[i]);
+        if (target.consumptions[i] == input.consumptions[i]) {
+            continue;
+        }
+        auto combined = unionIds(target.consumptions[i], input.consumptions[i]);
+        modified |= combined != target.consumptions[i];
+        target.consumptions[i] = std::move(combined);
     }
     target.causal = std::move(merged.state);
+    if (changed) {
+        *changed = modified;
+    }
     return true;
 }
 bool Constructor::word(State& state, Cut site, Replay& replay)
@@ -197,11 +218,11 @@ bool Constructor::fixedComponent(
             if (control.component[next] != index) {
                 continue;
             }
-            const auto previous = incoming[next];
-            if (!join(incoming[next], state)) {
+            bool changed = false;
+            if (!join(incoming[next], state, &changed)) {
                 return false;
             }
-            if (!same(previous, incoming[next]) && !queued[next]) {
+            if (changed && !queued[next]) {
                 queue.push_back(next);
                 queued[next] = true;
             }
@@ -422,15 +443,15 @@ bool Constructor::contextualReplay()
             if (reusable[control.component[next]]) {
                 continue;
             }
-            const auto old = incoming[next];
+            bool changed = false;
             if (options.traceReplay) ++trace.successorJoins;
-            if (!join(incoming[next], state)) {
+            if (!join(incoming[next], state, &changed)) {
                 fresh.success = false;
                 fresh.reason = "incompatible contextual loop state";
                 fresh.failureCut = next;
                 break;
             }
-            if (!same(old, incoming[next])) {
+            if (changed) {
                 if (options.traceReplay) ++trace.changedJoins;
                 enqueue(next);
             }

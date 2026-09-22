@@ -18,6 +18,7 @@ add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedReplay.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedGroups.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedAllocation.cpp
+  ../../lib/PTO/Transforms/OAHS/SelectedRearming.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedPublication.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedPublicationMotion.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedPublicationOrder.cpp

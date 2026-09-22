@@ -174,6 +174,16 @@ SelectedPlan Constructor::run(const Commands& fixed)
             if (decision.repairedAcquisition != NoAnalysisId)
                 decision.repairedAcquisition = remap[decision.repairedAcquisition];
         }
+        for (auto& obligation : result.rearming) {
+            obligation.acquisition = remap[obligation.acquisition];
+            std::vector<Id> live;
+            for (auto id : obligation.reusePublications) {
+                if (remap[id] != NoAnalysisId) {
+                    live.push_back(remap[id]);
+                }
+            }
+            obligation.reusePublications = std::move(live);
+        }
         result.work.sourceHandles = result.sources.size();
         result.work.constructedSites = control.graph.sites.size();
         result.work.loopEntryPreparationSites = control.loopEntryPreparationSites;

@@ -14,6 +14,32 @@ namespace mlir::pto::oahs::selected {
 // Inspect intermediate construction checkpoints, not the already-cold final
 // certificate. Keep the production API free of a second replay/planner mode.
 struct ReplayTestAccess {
+    static void joinChangeSignal() {
+        auto p = base(1, 1);
+        p.operations = {op(Pipe::MTE2, {{0, false, true}}), op(Pipe::V, {{0, true, false}})};
+        Constructor c(p);
+        std::vector<State> states(1);
+        states.push_back(c.initial());
+        auto altered = states.back();
+        altered.latest.set(0, 1);
+        states.push_back(altered);
+        altered.consumptions[0] = {2};
+        states.push_back(altered);
+        auto issued = c.initial();
+        require(c.payload(issued, 0, c.cache), "join fixture payload failed");
+        states.push_back(issued);
+        for (const auto& a : states) {
+            for (const auto& b : states) {
+                auto result = a;
+                bool changed = true;
+                require(c.join(result, b, &changed), "valid state join refused");
+                const bool equal = result.causal == a.causal && result.latest == a.latest &&
+                    result.consumptions == a.consumptions;
+                require(changed == !equal, "join change signal differs from full snapshot comparison");
+            }
+        }
+    }
+
     // The complete semantic checkpoint, not just acceptance: causal facts, the
     // original-occurrence record and consumption evidence at every cut, plus
     // every endpoint aggregate.
@@ -930,6 +956,7 @@ void recurringRoleIsolation()
 } // namespace
 int main()
 {
+    o::selected::ReplayTestAccess::joinChangeSignal();
     o::selected::ReplayTestAccess::nextPublicationIndex();
     o::selected::ReplayTestAccess::helperSelectionScaling();
     o::selected::ReplayTestAccess::splitReturnNeighbors();

@@ -146,6 +146,7 @@ add_mlir_dialect_library(PTOTransforms
   OAHS/SelectedReplay.cpp
   OAHS/SelectedGroups.cpp
   OAHS/SelectedAllocation.cpp
+  OAHS/SelectedRearming.cpp
   OAHS/SelectedPublication.cpp
   OAHS/SelectedPublicationMotion.cpp
   OAHS/SelectedPublicationOrder.cpp
@@ -396,7 +397,8 @@ set_source_files_properties(
   OAHS/SelectedLifecycles.cpp
   OAHS/SelectedOccurrences.cpp
   OAHS/SelectedControl.cpp OAHS/SelectedReplay.cpp OAHS/SelectedGroups.cpp
-  OAHS/SelectedAllocation.cpp OAHS/SelectedPublication.cpp OAHS/SelectedPlan.cpp OAHS/CyclicFrontiers.cpp
+  OAHS/SelectedAllocation.cpp
+  OAHS/SelectedRearming.cpp OAHS/SelectedPublication.cpp OAHS/SelectedPlan.cpp OAHS/CyclicFrontiers.cpp
   OAHS/SelectedPublicationMotion.cpp OAHS/SelectedPublicationOrder.cpp
   OAHS/Native.cpp
   PROPERTIES COMPILE_OPTIONS "-O2")

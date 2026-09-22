@@ -88,6 +88,61 @@ This completes milestone 2's common interface. Selecting a required storage
 return to discharge an unresolved key-rearming obligation at its actual deadline
 is milestone 3; retaining a possible return here does not perform that selection.
 
+## Milestone 3: explicit deferred rearming (initial scope)
+
+`SelectedRearming.cpp` separates the existing opt-in acyclic deferral policy from
+terminal acknowledgment elision. A deferred forward consumption now creates a
+`SelectedRearmingObligation` before a private helper is allocated: physical key,
+actual acquisition endpoint and lifecycle return candidates. At subsequent
+bindings, successful command-replay snapshots link actual republications to
+that consumption. The records retain stable endpoint identities and are remapped
+with the final ledger. An empty reuse list is not proof that future construction
+cannot introduce a deadline; these records never grant consumption credit.
+
+The admissible scope is an acyclic graph with exactly one execution of the
+receipt word on every entry-to-exit path. M2 occurrence correspondence now also
+qualifies mutually exclusive copies of that word. Their continuations may merge,
+but cannot split or repeat before exit. A reverse pass over original components
+prepares this continuation property once. Previously selected uses retain the
+existing conservative policy.
+
+Required returns can supply actual rearming. Otherwise F7 can publish a helper
+immediately after the old acquisition in every shared copy and acquire it at the
+new forward publication's existing gap. It checks actual consumption at every
+publication occurrence, balances the return across original control, excludes
+intervening key uses, and protects the reverse key's next publication. The return
+half is replayed before installing the forward pair; it cannot borrow knowledge
+from that still-unselected pair. Existing cyclic first-write staging is separate.
+
+Source-time checks, shared-word checking, dormant ownership and final independent
+acceptance remain authoritative. Recording a reuse adds no solve or graph walk:
+it uses `afterEndpoint` snapshots already produced by command replay. Qualification
+uses cached immutable correspondence and existing key-interval certificates;
+it does not solve a completed plan for each obligation.
+
+Constructor witnesses cover both shared-helper reuse and an actual required
+return, with independent order inclusion on every finite branch path. The helper
+witness strictly removes payload ordering. Skipped receipts and downstream
+branches retain closed fallback and unchanged ordering. This is a qualified M3
+extension, not general deadline-driven selection or milestone completion.
+`--defer-acyclic-acks` stays opt-in; downstream conditional repair and the remaining
+deadline/edit interactions need their own qualification and evidence.
+
+## Construction cost: query only live residuals
+
+Provider grouping returns immediately when the actual residual has no
+cross-engine demand. Describing every original storage relationship in that
+case cannot affect selection, but had triggered expensive provenance/path
+queries even in native functions needing no selected synchronization. Original
+relationships remain indexed, and final checking is unchanged.
+
+Selected-state joins now report whether their result changed. Worklists use
+that result instead of copying the complete provenance/consumption state before
+every join. Equal causal and auxiliary states bypass auxiliary merging. This
+preserves the full state, fixed-point schedule and replay counts; regressions
+compare the change signal to full-state equality and incremental replay to cold
+replay. It does not reduce required replay after a ledger edit or weaken joins.
+
 ## Policy map
 
 | Rule | Implementation |

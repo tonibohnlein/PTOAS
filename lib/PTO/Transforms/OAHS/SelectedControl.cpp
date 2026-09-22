@@ -317,6 +317,19 @@ Control::Control(const Program& program)
         reason = "invalid immutable lookahead dimensions";
         return;
     }
+    // A single reverse DAG pass qualifies merge-only continuations. Shared
+    // receipts in mutually exclusive arms can reach one later reuse deadline
+    // without treating the join as a new execution or enumerating paths.
+    mergesToExit.assign(graph.sites.size(), false);
+    for (auto block = components.rbegin(); block != components.rend(); ++block) {
+        if (block->cyclic) {
+            continue;
+        }
+        for (auto site : block->sites) {
+            const auto& next = graph.sites[site].successors;
+            mergesToExit[site] = site == graph.exit || (next.size() == 1 && mergesToExit[next.front()]);
+        }
+    }
     // Prepare region entry placement facts once, before selecting any event.
     // Construction queries these summaries instead of rediscovering invariant
     // classes and earlier observer work at every residual repair.

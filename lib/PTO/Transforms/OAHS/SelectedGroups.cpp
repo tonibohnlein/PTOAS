@@ -631,8 +631,14 @@ Group Constructor::sourceGroup(
 std::vector<Group> Constructor::groups(
     const std::vector<FrontierRequirement>& all, RequirementStage stage)
 {
-    const auto labels = reasons(current);
     const auto observer = program.operations[control.graph.operations[current]].pipe;
+    // Provenance classifies providers; it cannot create a missing obligation.
+    // In particular, avoid describing every original relationship when actual
+    // causal propagation has already discharged all cross-engine requirements.
+    if (std::none_of(all.begin(), all.end(), [&](const auto& r) { return r.source != observer; })) {
+        return {};
+    }
+    const auto labels = reasons(current);
     std::map<Pipe, std::vector<FrontierRequirement>> sources, overlapSources;
     std::set<Id> known;
     for (const auto& r : all) {

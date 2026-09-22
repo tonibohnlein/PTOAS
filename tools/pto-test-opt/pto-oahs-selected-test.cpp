@@ -1149,6 +1149,7 @@ bool runFile(MLIRContext &context, const char *path, oahs::SelectedOptions optio
                  << " rejected_support=" << work.rejectedSupportProposals
                  << " gap_publications=" << work.gapPublications
                  << " deferred_acks=" << work.deferredAcknowledgments
+                 << " rearming_obligations=" << report.rearming.size()
                  << " equal_coverage_pairs=" << work.equalCoveragePairs
                  << " binding_probes=" << work.bindingProbes
                  << " binding_choices=" << work.bindingChoices

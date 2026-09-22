@@ -7,7 +7,7 @@ Updated: 2026-09-22
 - Repository: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-clean-m1`
 - Branch: `codex/oahs-clean-m1`
 - Sibling-replay milestone base: `9f30b9fd8` (placement/admission), based on `8afb90f17` MAT cycles; use Git HEAD for this revision
-- Current milestone: milestone 2 implementation complete; final corpus acceptance running; milestone 3 next
+- Current milestone: milestone 3 active; shared-receipt deferral and compiler-cost fixes implemented locally
 - Retained prior experiment: AIV receive placement and FIFO occurrence qualification
 
 Verify the branch, HEAD, and working tree before continuing. A newer user commit supersedes this record.
@@ -23,10 +23,133 @@ validation is recorded in the foundation-slice sections below. Keep the
 first-write/final-read experiment opt-in until its complete ordering comparison
 passes.
 
+### Current M3 slice: shared receipts and their actual reuse deadlines
+
+The existing checkout remains at user-committed `55e706384`; no new checkout or
+commit was made. This slice extends the opt-in acyclic policy beyond the initial
+records below. A deferred receipt may have mutually exclusive analytical copies
+when M2 correspondence proves exactly one executes on every path to exit and
+each continuation only merges. `Control::mergesToExit` prepares the continuation
+property in one reverse component pass. Skipped receipts, downstream splits and
+cyclic graphs retain the closed policy.
+
+At actual reuse, F7 can publish a necessary helper immediately after each old
+receipt and acquire it at the existing new publication gap. Existing occurrence,
+source-time consumption, interval and next-publication checks qualify the edit.
+The helper half is replayed independently before the new forward pair: it does
+not borrow that pair's future consumption. A required storage return can instead
+supply actual rearming and avoid the private helper altogether. Existing cyclic
+first-write staging and dormant ownership are unchanged.
+
+The new constructor witnesses check both paths, retain exact shared endpoint
+identities, and compare complete payload ordering on every branch trace. The
+helper witness strictly removes ordering; both positive cases add none. Skipped
+receipt and downstream-choice witnesses keep conservative ordering. Final
+acceptance passes: **26/26 portable suites**, **both native suites**, **19/19
+compatibility inputs**, **88/88 default corpus modules**, and **88/88 paired
+opt-in corpus modules**. Default plans and update/replay/forward counts are
+unchanged. Opt-in plans are byte-identical to the preceding M3 slice; no new
+native ordering comparison is needed for identical plans. Default and combined
+final-read-analysis/cross-word KDA, hc_pre and RMSNorm retain all six checked
+plans. Evidence: `/home/toni/work/pypto3_sync_more/oahs-m3-shared-work/`, including
+`validation-summary.json`, recipes and a source snapshot. The earlier M3
+driver/results in `oahs-m3-work` remain frozen for comparison. The scoped checker
+has four reviewed bracing regex false positives and no warnings; `git diff
+--check` passes. Final edits after validation only wrapped two long code lines
+and updated documentation; no behavior changed. Changes remain uncommitted.
+
+M3 remains active and `--defer-acyclic-acks` remains opt-in. Next: qualify
+conditional reuse/fallback where a future branch may skip the new publication,
+and cover stale returns, earlier deadlines and later edits. Do not move a shared
+return's endpoints to manufacture coverage or leave a helper token live on a
+skipped branch. This slice does not establish a native/device speedup or resolve
+GEMM-to-prefill generalization.
+
+### Previous slice: compiler cost and M3 initial obligations
+
+The user requested investigation of slow handoff compilation alongside starting
+M3. Work begins at committed `55e706384`; the planning refinements from the
+preceding discussion remain in this uncommitted worktree. No new checkout or
+project-wide rebuild was made. All builds/tests respect the aggregate two-worker
+limit; controlled timings run serially.
+
+Two avoidable costs were found and fixed:
+
+- `groups()` classified original requirements even when no cross-engine
+  residual remained. On prefill module 30 this described roughly 295,000
+  relationships despite selecting no synchronization edits. A CPU profile
+  attributed about 87% of samples to `describeRequirement` and its path query.
+  Skip provider classification when its result cannot select a transfer.
+- Attention replay repeatedly copied full auxiliary states to detect whether a
+  join changed them, and merged equal auxiliary states. Joins now report change
+  directly and bypass equal auxiliary merges. Causal semantics and fixed-point
+  scheduling are unchanged. The change signal has a full-state equality test;
+  existing incremental-versus-cold replay comparisons pass.
+
+Two alternating serial runs per arm on identical prepared inputs, comparing the
+frozen M2 driver to this candidate (seconds; median of two, not a large timing
+campaign):
+
+| Corpus module | Constructor before | Constructor after | Native diagnostic wall before | Wall after |
+| --- | ---: | ---: | ---: | ---: |
+| `pypto_lib__prefill_fwd__30` | 5.581 | 0.162 | 5.825 | 0.415 |
+| `pypto_lib__prefill_fwd__45` | 17.032 | 15.460 | 17.375 | 15.797 |
+
+All timed plans are byte-identical. Module 45 aggregates its AIC/AIV functions.
+The attention cost is still substantial: its profile is dominated by allocation
+and state joins over repeated cyclic replay. These fixes do not eliminate that
+replay. The preceding concurrent M2 corpus recorded 143.8 versus 145.0 summed
+constructor seconds against its immediate predecessor, which did not show a
+large M2-wide increase; those old timings are not controlled measurements.
+Native repeated qualification and immutable sharing remain separate potential
+costs, not the established dominant cause in these profiles.
+
+`SelectedRearming.cpp` now records a deferred ordinary consumption explicitly
+before introducing a private helper: physical key, actual acquisition endpoint
+and possible lifecycle return deadlines. Subsequent selected publications are
+linked from successful existing replay snapshots, preserving stable endpoint
+identities. These records are provenance, never acquired credit. No new solve,
+replay or graph walk is added for recording actual reuse. The opt-in acyclic
+policy's admission scope is unchanged. Tests cover a required storage return
+supporting reuse without a private helper, helper-backed reuse, and conservative
+conditional fallback. This is the first M3 slice, **not M3 completion**.
+
+Next M3 action: use the explicit obligations and M2 occurrence relation to
+qualify branch/shared-word reuse deadlines and fallback helper placement.
+Preserve source-time consumption checks, prefix certificates, dormant ownership
+and the closed exchange for unsupported cases. Do not simply enable the opt-in
+policy globally. Track construction work as well as plan quality; do not add
+per-obligation whole-plan analyses.
+
+Evidence and recipes: `/home/toni/work/pypto3_sync_more/oahs-m3-work/`.
+`final-cost.json` pins commands, input/plan hashes, wall time and constructor
+counters. `perf.data` and `perf-attention.data` retain the two profiles; profile
+commands and source identities are recorded with the final artifact snapshot.
+The core build remains `occurrence-correspondence-work/core`; native adapter/tools
+were rebuilt against it. Final acceptance passes: **26/26 portable suites**,
+**both native suites**, **19/19 compatibility inputs**, and **88/88 corpus
+modules**. All compatibility/corpus plans are byte-identical to M2; corpus
+selected-update, replay and forward-evaluation counts are unchanged. Default and
+combined final-read-analysis/cross-word KDA, hc_pre and RMSNorm plans are also
+identical to M2. `validation-summary.json` retains the results and driver hashes.
+`git diff --check` passes. The scoped checker reports four reviewed regex false
+positives on already-braced compound conditions, with no warnings or unresolved
+findings (`compliance-review.md`). No sanitizer, full-project rebuild or device
+timing was run. Source changes remain uncommitted.
+
 ### Milestone 2 completion: common lifecycle and occurrence interface
 
-The implementation is complete. Final corpus acceptance is running; replace this
-status with its results before declaring the milestone accepted.
+Milestone 2 is complete and committed/pushed by the user as `55e706384`.
+Final acceptance passed: 26/26 portable suites, both native suites, 19/19
+compatibility inputs with identical plans to the preceding occurrence slice,
+and 88/88 corpus inputs with default and combined experimental options. Default
+plans are identical; combined final-read-analysis/cross-word options change only
+the two MLP cast plans. All 20 finite changed-plan traces have equal payload
+ordering (`changed-plan-order.json`). KDA/hc_pre/RMSNorm checks add no ordering;
+analysis-only and combined KDA remove 276 relations on the recorded trace.
+Logs: `oahs-m2-complete-work/validation.log`, `portable-final.log`,
+`targeted-summary.json`, `changed-plan-order.log` and both corpus summaries.
+No fresh device timing is claimed.
 
 `SelectedLifecycles.cpp` consolidates physical-use facts and lazily cached storage
 lifetimes behind `RequirementFrontiers`. Records retain physical identity,
@@ -62,7 +185,7 @@ core build was reused from `occurrence-correspondence-work/core`; only changed
 core sources and native adapter/tools were built, with at most two intensive
 workers in aggregate. No project-wide rebuild, sanitizer or device run.
 
-Next action after acceptance: **milestone 3, rearming at its actual deadline**.
+Next action: **milestone 3, rearming at its actual deadline**.
 Use common lifecycle return opportunities to retain unresolved selected-key
 rearming obligations until the next applicable publication. Prefer required
 storage returns when actual causal propagation proves consumption in time.
@@ -71,6 +194,27 @@ credit, enable analysis experiments by default or expand into recurring
 population selection/open ownership (milestones 4/5). The historical combined
 first-write/final-read KDA cut-754 refusal remains a separate prerequisite;
 that experiment was not rerun in this completion campaign.
+
+### Research direction after milestone 2
+
+The user added the unexplained lack of prefill gains from isolated GEMM
+improvements, identifying Qwen and DeepSeek prefill kernels in pypto-lib as the
+target population. Select one matrix-heavy representative from each and pin its
+comparison; no additional user-supplied campaign is needed to begin. Treat the
+cause as an open generalization/attribution question. Follow the
+[refined plan](docs/designs/oahs-quality-milestones.md#research-refinement-carrying-gemm-mechanisms-into-prefill):
+trace one physical lifetime from analysis through coupled protocol selection,
+residual repairs, full emitted order and measured execution. Archived MAT
+projection improvements remain separate evidence. M3 stays bounded; M4 now
+explicitly includes complete readiness/release selection before residual repair
+and scoped producer support. Independent physical slot relations are a targeted
+analysis prerequisite if the witness exposes that obstruction. No new code,
+build or device campaign was started by this planning update.
+
+Develop draft and implementation together. Each proposed mechanism needs a
+precise construction rule, proof premises and practical witnesses; neither
+conformance language nor a successful supplied protocol establishes the rule.
+GEMM is a mechanism discovery, without a decision to make it a paper case study.
 
 ### Previous milestone-2 slice: shared occurrence correspondence
 

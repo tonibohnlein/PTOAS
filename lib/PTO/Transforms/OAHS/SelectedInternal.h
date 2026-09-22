@@ -42,6 +42,8 @@ struct Control {
     std::vector<Component> components;
     std::vector<Id> component, position, frame;
     std::vector<bool> reachable;
+    // Original continuations may merge, but cannot split or repeat before exit.
+    std::vector<bool> mergesToExit;
     std::vector<Pipe> sitePipes;
     LookaheadIndex lookahead;
     struct LoopEntryFacts {
@@ -416,7 +418,7 @@ private:
 
     bool fail(SelectedFailure, std::string, Cut = NoAnalysisId);
     State initial() const;
-    bool join(State&, const State&);
+    bool join(State&, const State&, bool* changed = nullptr);
     bool word(State&, Cut, Replay&);
     bool payload(State&, Cut, Replay&, bool pending = false);
     bool contextualReplay();
@@ -462,7 +464,11 @@ private:
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&, Id certifiedKey = NoAnalysisId);
     bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&);
     bool joinedAcknowledgment(Pipe, Pipe, Cut, Id&, SelectedDecision&);
-    bool needsCommonAcknowledgment(const State&, Id) const;
+    bool needsCommonAcknowledgment(const State&) const;
+    bool deferCommonRearming(Id key, Id acquisition, const SelectedDecision&);
+    void observeDeferredRearming(const SelectedDecision&);
+    // Index obligations by the actual consumption endpoint, not engine pair.
+    std::map<Id, Id> deferredByAcquisition;
     Id reusable(Pipe, Pipe, const State&);
     bool canPublish(const State&, Id) const;
     bool canPublishAt(Cut, Id) const;
