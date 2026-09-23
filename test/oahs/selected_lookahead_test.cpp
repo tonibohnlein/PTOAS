@@ -460,6 +460,33 @@ void alternativeEarlySources()
         [](const auto& decision) { return decision.publicationFrontier.empty(); }),
         "branch bypass was silently matched to a nonparticipating publisher");
 }
+void competingAlternativeSources()
+{
+    auto p = base(4, 2);
+    p.operations = {op(P, {{0, false, true}}), op(P, {{1, false, true}}),
+                    op(P, {{0, false, true}}), op(P, {{2, false, true}}),
+                    op(Q, {{0, true, false}, {3, true, false}}),
+                    op(R, {{3, false, true, true}})};
+    o::ObservedControl graph;
+    graph.qualification = "two independent alternative source frontiers";
+    graph.entry = 0; graph.exit = 8;
+    const std::vector<std::size_t> operations{
+        o::NoAnalysisId, 0, 1, 5, 2, 3, 5, 4, o::NoAnalysisId};
+    const std::vector<std::vector<std::size_t>> edges{
+        {1, 4}, {2}, {3}, {7}, {5}, {6}, {7}, {8}, {}};
+    for (std::size_t site = 0; site < operations.size(); ++site) {
+        graph.observations.push_back({site, {}, true});
+        graph.sites.push_back({operations[site], site, edges[site], {}, 0});
+    }
+    p.observed = std::move(graph);
+    const auto plan = accepted(p);
+    const auto early = std::find_if(plan.decisions.begin(), plan.decisions.end(), [](const auto& decision) {
+        return decision.consumer == 7 && decision.source == P &&
+            decision.publicationFrontier == std::vector<o::Cut>{2, 5};
+    });
+    require(early != plan.decisions.end(),
+            "second provider hid the first provider's alternative publication frontier");
+}
 void noUnusedTerminalReturn()
 {
     auto p = joinedTerminal();
@@ -467,6 +494,9 @@ void noUnusedTerminalReturn()
     const auto plan = accepted(p);
     require(plan.decisions.size() == 1 && plan.decisions[0].commonCut,
             "fixture did not select a common-cut transfer");
+    require(std::any_of(plan.realizationChoices.begin(), plan.realizationChoices.end(),
+                [](const auto& choice) { return choice.placementClass == 3; }),
+            "terminal common-cut packet did not enter the common realization selector");
     require(count(plan, o::Command::Publish) == 1 && count(plan, o::Command::Acquire) == 1,
             "terminal common cut still requires a reverse key");
     require(plan.work.acknowledgments == 0, "unused terminal consumption was acknowledged");
@@ -945,6 +975,7 @@ int main()
     preserveWinnerCoverageAtExactGap();
     keepDifferentDeadlines();
     alternativeEarlySources();
+    competingAlternativeSources();
     noUnusedTerminalReturn();
     deferFuturePayloadReturn();
     keepFutureWordReturn();

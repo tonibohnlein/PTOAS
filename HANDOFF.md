@@ -1,5 +1,57 @@
 # OAHS current handoff
 
+## Active after Step AG — bounded terminal common-cut realization
+
+AG adds a bounded class3 direct SET/WAIT at a terminal current-word tail to
+the common realization selector. A shared continuation query proves no later
+original payload or selected event use needs the key, unique emitted-word
+participation and no cross-engine residual after privately staging the pair.
+The exact source-gap, occurrence, physical coverage, helper-free key,
+neighboring-use, complete-packet and persistent-publication checks remain
+mandatory. Only authoritative selected propagation supplies credit. The
+normal decision records the common cut and counts its selected transfer.
+
+The first AG attempt selected the terminal packet before the existing earlier
+alternative-source frontier. The final implementation extracts that earlier
+source discovery as a read-only shared query and reuses it in the structured
+binder. Before any class3 candidate is admitted, every ordinary request at
+that deadline is checked for an earlier alternative or loop-entry opportunity.
+The loop-entry preflight is conservative and grants no credit; the legacy
+structured binder remains authoritative. The discovery cache evicts obsolete
+causal versions. This deadline-wide priority is a bounded migration guard,
+not a general class3 or common-binding completion.
+
+Final host evidence on this source: 25/25 portable suites, all three native
+drivers, 88/88 corpus, 18/19 compatibility (the inherited refusal), GEMM,
+two prefills and three targeted inputs. Outputs are byte-identical to AF, so
+the complete finite payload-order delta is empty. The normal-constructor
+terminal fixture selects class3; the existing alternative-source coverage
+fixture and a two-provider composition fixture retain the earlier frontier.
+The latter is composition evidence, not the full broad-credit counterexample.
+After brace-only compliance cleanup, the focused portable realization and
+lookahead tests and linked native selected driver were rebuilt and rerun on the
+exact final source. Changed-code check: 7 files, zero errors/warnings.
+No sanitizer or device campaign. AD's `hc_head_reduce` +122/-20 ordering loss
+remains open.
+
+Successful-input totals versus AF: selected updates 8227->8227, replay sites
+7101322->7101322, normal candidates 674->674, repair candidates 4->5,
+selected repairs 4->5, SETs 3779->3779 and WAITs 3778->3778. New terminal
+continuation queries 9435 inspect 58 sites and zero selected command words;
+source-gap queries 5077->5078 and normal-key work 985158->985825. These
+are aggregate work counts, not an asymptotic proof or timing claim.
+Artifacts: `../oahs-gemm-base-builds/refactor-step-ag/` (`design.md`,
+`host-final.log`, `summary.json`, `results.json`, `changed-order.log`,
+`work.json`, `reviews.md`). Architecture/generality, correctness and
+asymptotic-performance reviewers ACCEPT AG's bounded scope after revisions.
+
+Next: migrate qualified alternative and loop-entry source frontiers into the
+same local realization/binding policy, then extend class3 and actual-return
+support through scoped occurrence, publication, ownership and rearming facts.
+Do not keep a deadline-wide priority guard as the final solution. Recover the
+AD ordering loss through common source/support decisions, then continue
+composition, cost and device gates. Keep the three-reviewer commit loop.
+
 ## Active after Step AF — actual selected-return source corridor
 
 AF adds a bounded class2 ordinary realization. A previously selected reverse

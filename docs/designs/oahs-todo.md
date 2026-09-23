@@ -87,6 +87,19 @@ This is not general class2, class3, recurring return transport or AD ordering
 recovery. Extend conditional participation, affected-interval support and
 historical-key binding through shared queries rather than another recipe.
 
+## Current continuation after AG
+
+AG moves the bounded terminal common-cut direct exchange into the normal
+class3 realization selector. Exact tail prefix, no-later-use continuation,
+helper-free key, full packet and selected causal update remain required. The
+read-only earlier-source query is shared with the legacy alternative binder;
+class3 defers for the whole deadline when any request retains an earlier
+alternative or loop-entry opportunity. This preserves source boundaries but is
+not the final shared binding policy for those structured clients. See HANDOFF
+and AG artifacts for validation, complete ordering and work counts. General
+class3, historical-key binding, cross-cell return composition and quality
+recovery remain open.
+
 ## Current continuation after R
 
 User-approved sequence is the "Adopted continuation" in the canonical semantic

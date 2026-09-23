@@ -709,6 +709,16 @@ private:
         const std::vector<Cut>&, Pipe, const std::vector<FrontierRequirement>&) const;
     std::set<Id> coverage(Cut, Pipe, const std::vector<FrontierRequirement>&) const;
     bool freshBetween(Cut, Cut, Id) const;
+    struct SourceFrontierFacts {
+        std::vector<Cut> publications;
+        std::set<Id> crossedClasses;
+    };
+    using SourceFrontierKey = std::tuple<uint64_t, Cut, Pipe, std::set<Id>>;
+    uint64_t sourceFrontierVersion = NoAnalysisId;
+    std::map<SourceFrontierKey, std::optional<SourceFrontierFacts>> sourceFrontierCache;
+    std::optional<SourceFrontierFacts> discoverSourceFrontier(
+        Pipe, const std::vector<FrontierRequirement>&);
+    bool earlierLoopEntrySource(Pipe, const std::vector<FrontierRequirement>&) const;
     bool sourceFrontier(Pipe, const std::vector<FrontierRequirement>&,
                         const std::vector<FrontierRequirement>&, Group&);
     bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&,
@@ -724,6 +734,8 @@ private:
         bool repair = false, std::optional<WordGap> prescribedGap = {},
         Id prescribedKey = NoAnalysisId, const SourceGapQualification* prescribedFacts = nullptr);
     std::optional<CertifiedRealization> normalCorridor(
+        const Group&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
+    std::optional<CertifiedRealization> normalCommonCut(
         const Group&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
     void indexSelectedReturns();
     Id indexedReturnEndpoints = 0;
@@ -759,7 +771,8 @@ private:
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&);
     bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&, bool&, OrderedPacket&);
     std::optional<bool> joinedAcknowledgment(Pipe, Pipe, Cut, SelectedDecision&);
-    bool needsCommonAcknowledgment(const State&) const;
+    bool terminalCommonCut();
+    bool needsCommonAcknowledgment(const State&);
     void deferReturn(Id);
     bool canDeferCommonReturn() const;
     bool latentPublicationAfter(Id anchor, Pipe observer) const;

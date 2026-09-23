@@ -338,6 +338,48 @@ std::optional<CertifiedRealization> Constructor::normalCorridor(
     }
     return {};
 }
+std::optional<CertifiedRealization> Constructor::normalCommonCut(
+    const Group& group, const std::vector<FrontierRequirement>& due,
+    const std::vector<DueObligation>& universe)
+{
+    if (!group.common || !terminalCommonCut()) { return {}; }
+    const auto observer = program.operations[control.graph.operations[current]].pipe;
+    const auto gap = ledger.tail(current);
+    const auto facts = sourceGapFacts(gap, group.source, observer, group.requirements);
+    if (!facts.proved()) { return {}; }
+    const auto offset = ledger.word(gap.cut).size();
+    const auto payload = control.graph.operations[current];
+    for (Id key = 0; key < frontier.keys().size(); ++key) {
+        if (!sourceGapKey(facts, key)) { continue; }
+        const auto& identity = frontier.keys()[key];
+        const Command publish{Command::Publish, group.source, observer, identity.key};
+        const Command acquire{Command::Acquire, group.source, observer, identity.key};
+        bool terminal = true;
+        for (const auto& prefix : facts.prefixes) {
+            const auto sent = frontier.command(prefix, publish, {gap.cut, offset});
+            if (!sent.applied) { terminal = false; break; }
+            const auto received = frontier.command(sent.state, acquire, {gap.cut, offset + 1});
+            if (!received.applied) { terminal = false; break; }
+            const auto checked = frontier.inspect(received.state, payload);
+            if (!checked.applied && checked.failure != FrontierFailure::Payload) {
+                terminal = false;
+                break;
+            }
+            terminal &= std::none_of(checked.residuals.begin(), checked.residuals.end(),
+                [&](const auto& r) { return r.source != observer; });
+        }
+        if (!terminal) { continue; }
+        Group ordinary = group;
+        ordinary.common = false; // Qualify the same direct packet as ordinary.
+        ordinary.publication = gap.cut;
+        auto candidate = normalOrdinary(ordinary, due, universe, false, gap, key, &facts);
+        if (!candidate) { continue; }
+        candidate->placementClass = 3;
+        candidate->ordinary.common = true;
+        return candidate;
+    }
+    return {};
+}
 std::shared_ptr<const Constructor::SupportClosure> Constructor::normalSupport(Id id)
 {
     if (normalSupportVersion != ledger.version()) {
@@ -592,6 +634,22 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
             retain(normalCorridor(request, due, universe));
         }
     }
+    const bool terminalCandidate = candidates.empty() && terminalCommonCut();
+    if (terminalCandidate) {
+        // A common-cut packet for one source can also cover another source's
+        // requirement. Preserve ANY qualified earlier source at this deadline
+        // until the structured clients enter the same local binding policy.
+        const bool earlierSource = std::any_of(ordinaryRequests.begin(), ordinaryRequests.end(),
+            [&](const Group& request) {
+                return discoverSourceFrontier(request.source, request.requirements) ||
+                    earlierLoopEntrySource(request.source, request.requirements);
+            });
+        if (!earlierSource) {
+            for (const auto& request : ordinaryRequests) {
+                retain(normalCommonCut(request, due, universe));
+            }
+        }
+    }
     const auto winner = selectRealization(candidates);
     if (winner == NoAnalysisId) { return {}; }
     auto& selected = candidates[winner];
@@ -622,6 +680,7 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
         SelectedDecision decision;
         decision.consumer = current;
         decision.publication = group.publication;
+        decision.commonCut = group.common;
         decision.sourceMilestone = selected.sourceMilestone;
         decision.publicationGapLeft = selected.selectedSourceGap.left;
         decision.publicationGapRight = selected.selectedSourceGap.right;
@@ -652,6 +711,7 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
             ++result.work.acknowledgments;
             ++result.work.joinedAcknowledgments;
         }
+        if (decision.commonCut) { ++result.work.commonCutTransfers; }
         result.decisions.push_back(std::move(decision));
     }
     auto predicted = classes(due);

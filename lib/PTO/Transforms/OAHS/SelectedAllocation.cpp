@@ -806,24 +806,20 @@ bool Constructor::latentPublicationAfter(Id anchor, Pipe observer) const
     }
     return false;
 }
-bool Constructor::needsCommonAcknowledgment(const State& afterForward) const
+bool Constructor::terminalCommonCut()
 {
+    ++result.work.commonCutContinuationQueries;
     // A syntactically last body operation is not a last dynamic operation. The
     // backward summary retains original backedges and all branch alternatives.
-    if (control.lookahead.mayIssueAfter(current)) return true;
+    if (control.lookahead.mayIssueAfter(current)) { return false; }
     // A selected word may be shared by several original occurrences. Being
     // terminal at only this occurrence is not a terminal-channel certificate.
     const auto canonical = control.canonicalCut[current];
     const auto& occurrences = control.wordOccurrences[canonical];
     if (std::count_if(occurrences.begin(), occurrences.end(),
-                     [&](Id site) { return control.reachable[site]; }) != 1) return true;
+                     [&](Id site) { return control.reachable[site]; }) != 1) { return false; }
     const auto operation = control.graph.operations[current];
-    if (operation == NoAnalysisId) return true;
-    const auto checked = frontier.inspect(afterForward.causal, operation);
-    if (!checked.applied && checked.failure != FrontierFailure::Payload) return true;
-    const auto observer = program.operations[operation].pipe;
-    if (std::any_of(checked.residuals.begin(), checked.residuals.end(),
-                   [&](const auto& r) { return r.source != observer; })) return true;
+    if (operation == NoAnalysisId) { return false; }
     // Only the final cross-engine acquisition of this terminal payload can use
     // this rule. Later fixed/recurring words can have rearming obligations even
     // when there are no later payloads; inspect the CURRENT ledger, not the
@@ -833,15 +829,27 @@ bool Constructor::needsCommonAcknowledgment(const State& afterForward) const
     while (!todo.empty()) {
         const auto site = todo.back();
         todo.pop_back();
-        if (seen[site]) continue;
+        if (seen[site]) { continue; }
         seen[site] = true;
+        ++result.work.commonCutContinuationSites;
+        result.work.commonCutContinuationWords += ledger.word(site).size();
         for (auto endpoint : ledger.word(site)) {
-            if (ledger.endpoint(endpoint).command.kind != Command::BarrierAll) return true;
+            if (ledger.endpoint(endpoint).command.kind != Command::BarrierAll) { return false; }
         }
         const auto& next = control.graph.sites[site].successors;
         todo.insert(todo.end(), next.begin(), next.end());
     }
-    return false;
+    return true;
+}
+bool Constructor::needsCommonAcknowledgment(const State& afterForward)
+{
+    if (!terminalCommonCut()) { return true; }
+    const auto operation = control.graph.operations[current];
+    const auto checked = frontier.inspect(afterForward.causal, operation);
+    if (!checked.applied && checked.failure != FrontierFailure::Payload) { return true; }
+    const auto observer = program.operations[operation].pipe;
+    return std::any_of(checked.residuals.begin(), checked.residuals.end(),
+        [&](const auto& r) { return r.source != observer; });
 }
 bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed, SelectedDecision& decision)
 {

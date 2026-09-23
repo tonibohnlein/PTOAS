@@ -66,27 +66,39 @@ bool Constructor::freshBetween(Cut source, Cut target, Id access) const
     return !control.lookahead.hasIssueBetween(
         control.frame[source], access, control.position[source], control.position[target]);
 }
-bool Constructor::sourceFrontier(
-    Pipe source, const std::vector<FrontierRequirement>& required,
-    const std::vector<FrontierRequirement>& all, Group& group)
+std::optional<Constructor::SourceFrontierFacts> Constructor::discoverSourceFrontier(
+    Pipe source, const std::vector<FrontierRequirement>& required)
 {
     // This extension is intentionally acyclic: static predecessor identities
     // are not a bank-generation correspondence across an unqualified loop.
+    if (sourceFrontierVersion != cache.version) {
+        sourceFrontierCache.clear();
+        sourceFrontierVersion = cache.version;
+    }
+    std::set<Id> needed;
+    for (const auto& requirement : required) { needed.insert(accessClass(requirement)); }
+    const SourceFrontierKey key{cache.version, current, source, needed};
+    const auto previous = sourceFrontierCache.find(key);
+    if (previous != sourceFrontierCache.end()) { return previous->second; }
+    auto reject = [&]() -> std::optional<SourceFrontierFacts> {
+        sourceFrontierCache.emplace(key, std::nullopt);
+        return {};
+    };
     if (required.empty() || control.components[activeComponent].cyclic ||
-        control.canonicalCut[current] != current) return false;
+        control.canonicalCut[current] != current) { return reject(); }
     auto uniqueWord = [&](Cut cut) {
-        if (cut >= control.canonicalCut.size() || control.canonicalCut[cut] != cut) return false;
+        const bool canonical = cut < control.canonicalCut.size() && control.canonicalCut[cut] == cut;
+        if (!canonical) { return false; }
         const auto& occurrences = control.wordOccurrences[cut];
         return std::count_if(occurrences.begin(), occurrences.end(),
                             [&](Id site) { return control.reachable[site]; }) == 1;
     };
-    if (!uniqueWord(current)) return false;
-    std::set<Id> needed;
-    for (const auto& requirement : required) needed.insert(accessClass(requirement));
+    if (!uniqueWord(current)) { return reject(); }
     std::map<Id, const SelectedSource*> availableSources;
     for (const auto& handle : result.sources) {
-        if (handle.pipe == source && handle.version == cache.version && handle.snapshot.reachable())
+        if (handle.pipe == source && handle.version == cache.version && handle.snapshot.reachable()) {
             availableSources.emplace(handle.origin, &handle);
+        }
     }
     std::set<Cut> publications;
     std::set<Id> crossedClasses;
@@ -94,10 +106,10 @@ bool Constructor::sourceFrontier(
     auto todo = control.predecessors[current];
     while (!todo.empty()) {
         const auto site = todo.back(); todo.pop_back();
-        if (!control.reachable[site] || seen[site]) continue;
+        if (!control.reachable[site] || seen[site]) { continue; }
         seen[site] = true;
         const auto component = control.component[site];
-        if (component == NoAnalysisId || control.components[component].cyclic) return false;
+        if (component == NoAnalysisId || control.components[component].cyclic) { return reject(); }
         const auto operation = control.graph.operations[site];
         bool touchesRequiredClass = false;
         if (operation != NoAnalysisId) {
@@ -110,18 +122,18 @@ bool Constructor::sourceFrontier(
         }
         if (touchesRequiredClass) {
             const auto found = availableSources.find(site);
-            if (found == availableSources.end()) return false;
+            if (found == availableSources.end()) { return reject(); }
             const auto& handle = *found->second;
-            if (handle.cut == current || !uniqueWord(handle.cut)) return false;
+            if (handle.cut == current || !uniqueWord(handle.cut)) { return reject(); }
             const auto sourceComponent = control.component[handle.cut];
-            if (sourceComponent == NoAnalysisId || control.components[sourceComponent].cyclic) return false;
+            if (sourceComponent == NoAnalysisId || control.components[sourceComponent].cyclic) { return reject(); }
             const auto& snapshot = cache.cuts[handle.cut].before.causal;
-            if (!snapshot.reachable()) return false;
+            if (!snapshot.reachable()) { return reject(); }
             // Do not assume that an absent class on one arm means an optional
             // corresponding producer. That case needs a separate qualifier.
             for (auto access : needed) {
                 const auto* history = snapshot.facts()->history.find(access);
-                if (!history || !frontierContains(*history, PipeCount + unsigned(source))) return false;
+                if (!history || !frontierContains(*history, PipeCount + unsigned(source))) { return reject(); }
             }
             publications.insert(handle.cut);
             continue;
@@ -136,14 +148,26 @@ bool Constructor::sourceFrontier(
                 if (access.write) { crossedClasses.insert(base + 1); }
             }
         }
-        if (site == control.graph.entry || control.predecessors[site].empty()) return false;
+        if (site == control.graph.entry || control.predecessors[site].empty()) { return reject(); }
         const auto& before = control.predecessors[site];
         todo.insert(todo.end(), before.begin(), before.end());
     }
     std::vector<Cut> cuts(publications.begin(), publications.end());
     if (!control.correspondence(cuts, std::vector<Cut>{current}).proved()) {
-        return false;
+        return reject();
     }
+    SourceFrontierFacts facts{std::move(cuts), std::move(crossedClasses)};
+    sourceFrontierCache.emplace(key, facts);
+    return facts;
+}
+
+bool Constructor::sourceFrontier(
+    Pipe source, const std::vector<FrontierRequirement>& required,
+    const std::vector<FrontierRequirement>& all, Group& group)
+{
+    const auto discovered = discoverSourceFrontier(source, required);
+    if (!discovered) { return false; }
+    const auto& cuts = discovered->publications;
     // Retain every original publication. Virgin keys use their local source
     // certificate; dormant ownership submits the same complete packet.
     const auto observer = program.operations[control.graph.operations[current]].pipe;
@@ -171,18 +195,47 @@ bool Constructor::sourceFrontier(
         break;
     }
     if (selected == NoAnalysisId) return false;
-    group.publications = std::move(cuts);
+    group.publications = cuts;
     group.publication = *std::min_element(group.publications.begin(), group.publications.end(),
         [&](Cut a, Cut b) { return control.position[a] < control.position[b]; });
     group.forwardKey = selected;
     group.version = cache.version;
     group.common = false;
     group.coverage = sourceHistoryCoverage(group.publications, source, all);
-    for (auto access : crossedClasses) {
+    for (auto access : discovered->crossedClasses) {
         group.coverage.erase(access);
     } // Coverage is opportunity metadata until an actual receipt propagates.
     return true;
 }
+bool Constructor::earlierLoopEntrySource(
+    Pipe source, const std::vector<FrontierRequirement>& required) const
+{
+    if (!program.observed || required.empty()) { return false; }
+    const auto observer = program.operations[control.graph.operations[current]].pipe;
+    for (const auto& loop : control.loopEntries) {
+        const auto& first = loop.firstConsumers[unsigned(observer)];
+        const bool containsDeadline =
+            std::find(loop.sites.begin(), loop.sites.end(), current) != loop.sites.end();
+        const bool eligible = !first.empty() && control.canonicalCut[loop.entry] == loop.entry &&
+            containsDeadline;
+        if (!eligible) { continue; }
+        if (!std::all_of(first.begin(), first.end(), [&](Cut cut) {
+            return std::all_of(required.begin(), required.end(), [&](const auto& r) {
+                const auto roles = requirements.use(cut, r.cell).roles;
+                return (roles & 2) || ((roles & 1) && r.sourceWrite);
+            });
+        })) { continue; }
+        // This only retains an existing earlier option for the structured
+        // binder. Its key and complete packet are still checked there.
+        if (std::any_of(result.sources.begin(), result.sources.end(), [&](const auto& handle) {
+            return handle.pipe == source && handle.version == cache.version &&
+                handle.snapshot.reachable() && control.straight(handle.cut, loop.entry);
+        })) { return true; }
+        if (!loop.issuedPipes.count(source)) { return true; }
+    }
+    return false;
+}
+
 bool Constructor::loopEntryFrontier(
     Pipe source, const std::vector<FrontierRequirement>& required,
     const std::vector<FrontierRequirement>& all, Group& group)

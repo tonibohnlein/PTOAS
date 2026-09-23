@@ -1667,3 +1667,43 @@ placement is not reported as an early source. Further conditional-credit,
 intervening-conflict and shared-word mutations remain acceptance work for the
 broader class2/general-binding interface. Scanned receipt and word populations
 are counted; one request can still inspect an interval of selected receipts.
+
+## AG design — terminal common-cut realization
+
+The ordinary selector now admits one bounded class3 direct realization at a
+terminal current-word gap. Its semantic source is the actual joined causal
+prefix at the word tail. The continuation query proves that no later original
+payload or selected event use can require this key, that the emitted word has
+one reachable occurrence, and that the privately staged SET/WAIT leaves no
+cross-engine payload residual. A missing terminal proof leaves the legacy
+checked construction path in charge. A terminal result omits only the reverse
+consumption acknowledgment; it grants neither unrelated storage completion nor
+future key reuse.
+
+The complete direct pair is qualified with the shared source-gap, physical
+coverage, occurrence, helper-free key, neighboring-use, packet and persistent
+publication checks. It is considered after classes0–2. Only its exact selected
+packet is committed; actual causal propagation must reduce the complete fixed
+due residual. The normal decision records the common cut, and the work record
+counts the continuation traversal and selected common-cut transfer.
+
+A missing comparable straight source does not prove that the current-word tail
+is the earliest useful source. A shared read-only query now exposes the legacy
+alternative-source discovery and caches it for its eventual structured binder.
+Before admitting any class3 candidate, the selector checks every ordinary
+request at that deadline for an earlier alternative or loop-entry opportunity.
+The loop-entry preflight is a conservative opportunity test; the existing
+structured binder still proves its complete packet. Deferring the whole
+deadline prevents one broad common-cut packet from hiding another source's
+earlier frontier. This is a migration priority rule, not a semantic veto: the
+alternative and loop-entry binders have not yet become common class0 clients.
+The discovery cache retains only the current causal version.
+
+The terminal joined-reader fixture exercises class3 through the normal
+constructor. Existing missing-branch and refreshed-source negatives retain
+conservative behavior; the two-provider fixture demonstrates composition and
+preserves the earlier alternative frontier. It does not by itself realize the
+full broad-credit counterexample. This is bounded class3, not general common
+return transport or completed F8 rearming. No kernel, datatype, or shape gate
+was introduced. The stronger migration target is local binding of the earlier
+structured frontiers under the same realization policy.
