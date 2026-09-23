@@ -43,7 +43,6 @@ RequirementFrontiers::RequirementFrontiers(
                 (Id(relationship.cell) * PipeCount + unsigned(frontier.source)) * 2 + Id(write);
             frontier.deadline = control.canonicalCut[site];
             const auto& sourceUse = use(relationship.source.site, relationship.cell);
-            frontier.lifecycleRelease = sourceUse.release;
             auto& indexed = uses.at({relationship.source.site, relationship.cell});
             indexed.deadlines.push_back(site);
             if (relationship.kind == StorageRelationship::WAR) {

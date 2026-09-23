@@ -1,5 +1,34 @@
 # OAHS current handoff
 
+## Current iteration — Step B endpoint-set matching
+
+Step A committed as `b6958b0e4`. Step B replaces recurring, alternative-source
+and loop-entry matching with the common endpoint-set query. Both obsolete
+monitors and the unused lookahead graph copy are removed. The independent token
+oracle now tests common matching, including cycles and same-word ordered pairs.
+The 32-source/shared-40-site-suffix test charges source identities explicitly.
+
+22/22 portable suites and all three native drivers pass. Pinned Step B results:
+`../oahs-gemm-base-builds/refactor-step-b/`. All 88 corpus, 18/19 compatibility,
+GEMM, two prefills and three targeted outcomes and plans equal Step A. No new
+ordering or resource change is hidden in those comparisons.
+
+Occurrence-query visits: corpus 173,563 → 236,014; compatibility 148,729 →
+222,673; GEMM 0 → 24,459. The removed balance traversals were uncounted, so
+this is not all newly added work. Nonetheless the campaign reports constructor
+time corpus 52.06s → 67.34s and GEMM 0.825s → 0.973s. The largest corpus tail
+also slows while issuing no occurrence query. Serial alternating pinned runs find comparable times: corpus case 50 is
+about 14.1s on both binaries; GEMM about 1.2s on both. The older campaign
+timings do not isolate a change-induced slowdown. Do not claim a speedup.
+The bounded query may conservatively refuse a large alternative-source/suffix
+population; preserve that limitation until a measured representation change.
+
+All three reviewers explicitly ACCEPT Step B. Per user steering, performance
+acceptance addresses unnecessary asymptotic complexity and repeated work, not
+small timing differences. The only final source changes after the campaign add
+braces to two existing one-line conditionals. Continue immediately
+with common publication-boundary queries after this step is committed.
+
 ## Active checkpoint — common lifecycle/occurrence consumers (2026-09-23)
 
 Branch `codex/oahs-gemm-base`, starting HEAD `d5718272e`. Foundation changes have explicit ACCEPT verdicts from all three independent reviewers.

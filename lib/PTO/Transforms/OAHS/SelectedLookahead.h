@@ -33,7 +33,6 @@ public:
         ready = false;
         byClass.clear();
         futurePayload.clear();
-        edges.clear();
         const auto size = successors.size();
         if (payload.size() != size) return false;
         std::vector<std::vector<Index>> predecessors(size);
@@ -73,7 +72,6 @@ public:
             queue.pop_front();
             for (auto before : predecessors[site]) add(before);
         }
-        edges = successors;
         ready = true;
         return true;
     }
@@ -96,53 +94,11 @@ public:
         return !ready || site >= futurePayload.size() || futurePayload[site];
     }
 
-    // Exact empty/full participation for one NEW logical channel on the finite
-    // original graph. This is not a rearming or memory-completion certificate.
-    // The caller separately requires a globally unused eligible physical key
-    // and real causal coverage at every publication frontier.
-    bool balancedTransfer(const std::vector<Index>& publications, Index acquisition,
-                          Index entry, Index exit) const
-    {
-        if (!ready || publications.empty() || acquisition >= edges.size() ||
-            entry >= edges.size() || exit >= edges.size() || !edges[exit].empty()) return false;
-        std::vector<bool> publishes(edges.size());
-        for (auto site : publications) {
-            if (site >= edges.size() || site == acquisition) return false;
-            publishes[site] = true;
-        }
-        std::vector<unsigned> incoming(edges.size());
-        std::vector<bool> queued(edges.size());
-        std::deque<Index> queue{entry};
-        incoming[entry] = 1; // empty
-        queued[entry] = true;
-        while (!queue.empty()) {
-            const auto site = queue.front(); queue.pop_front();
-            queued[site] = false;
-            auto state = incoming[site];
-            if (publishes[site]) {
-                if (state != 1) return false;
-                state = 2; // full
-            }
-            if (site == acquisition) {
-                if (state != 2) return false;
-                state = 1;
-            }
-            if (site == exit && state != 1) return false;
-            for (auto next : edges[site]) {
-                const auto joined = incoming[next] | state;
-                if (joined == incoming[next]) continue;
-                incoming[next] = joined;
-                if (!queued[next]) { queued[next] = true; queue.push_back(next); }
-            }
-        }
-        return incoming[acquisition] != 0 && incoming[exit] != 0;
-    }
 
 private:
     bool ready = false;
     std::map<std::pair<Index, Index>, std::vector<Index>> byClass;
     std::vector<bool> futurePayload;
-    std::vector<std::vector<Index>> edges;
 };
 
 } // namespace mlir::pto::oahs::selected

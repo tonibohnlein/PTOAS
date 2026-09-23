@@ -58,8 +58,8 @@ includes backedges, so the last textual payload of a loop is not terminal.
 
 When a straight-corridor source is unavailable, backward search can find an
 acyclic frontier of alternative publication cuts. Each source must contain the
-required completion in its actual selected snapshot. A separate empty/full
-monitor checks participation from original entry to exit; shared observation
+required completion in its actual selected snapshot. The common occurrence query
+checks participation over original control; shared observation
 words and unqualified cyclic sources are excluded. One globally unused eligible
 directional key is checked at every source position. The publications and common
 acquisition are inserted together and replayed as one selected edit. The branch

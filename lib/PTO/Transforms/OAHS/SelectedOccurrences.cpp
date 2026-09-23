@@ -12,12 +12,33 @@
 namespace mlir::pto::oahs::selected {
 const OccurrenceCorrespondence& Control::correspondence(Cut publication, Cut acquisition, Id budget) const
 {
+    return correspondence(std::vector<Cut>{publication}, std::vector<Cut>{acquisition}, budget);
+}
+
+const OccurrenceCorrespondence& Control::correspondence(
+    const std::vector<Cut>& publications, const std::vector<Cut>& acquisitions, Id budget) const
+{
     static const OccurrenceCorrespondence unknown{
         ProofOutcome::Unknown, "invalid occurrence boundary", NoAnalysisId, 0, {}};
-    if (!complete || publication >= canonicalCut.size() || acquisition >= canonicalCut.size()) {
+    auto canonicalize = [&](const std::vector<Cut>& cuts, std::vector<Cut>& result) {
+        if (!complete || cuts.empty()) {
+            return false;
+        }
+        for (auto cut : cuts) {
+            if (cut >= canonicalCut.size()) {
+                return false;
+            }
+            result.push_back(canonicalCut[cut]);
+        }
+        std::sort(result.begin(), result.end());
+        result.erase(std::unique(result.begin(), result.end()), result.end());
+        return true;
+    };
+    std::vector<Cut> sources, receipts;
+    if (!canonicalize(publications, sources) || !canonicalize(acquisitions, receipts)) {
         return unknown;
     }
-    const auto key = std::make_tuple(canonicalCut[publication], canonicalCut[acquisition], budget);
+    const auto key = std::make_tuple(std::move(sources), std::move(receipts), budget);
     const auto found = correspondences.find(key);
     if (found != correspondences.end()) {
         return found->second;
@@ -27,7 +48,8 @@ const OccurrenceCorrespondence& Control::correspondence(Cut publication, Cut acq
     return correspondences.emplace(key, std::move(result)).first->second;
 }
 
-OccurrenceCorrespondence Control::pairOccurrences(Cut publication, Cut acquisition, Id budget) const
+OccurrenceCorrespondence Control::pairOccurrences(
+    const std::vector<Cut>& publications, const std::vector<Cut>& acquisitions, Id budget) const
 {
     OccurrenceCorrespondence result;
     auto refuse = [&](ProofOutcome outcome, Cut cut, const char* reason) {
@@ -49,13 +71,13 @@ OccurrenceCorrespondence Control::pairOccurrences(Cut publication, Cut acquisiti
             return refuse(ProofOutcome::Unknown, at, "occurrence analysis budget exhausted");
         }
         ++result.siteEvaluations;
-        if (canonicalCut[at] == publication) {
+        if (std::binary_search(publications.begin(), publications.end(), canonicalCut[at])) {
             if (source != NoAnalysisId) {
                 return refuse(ProofOutcome::Disproved, at, "publication repeats before consumption");
             }
             source = at;
         }
-        if (canonicalCut[at] == acquisition) {
+        if (std::binary_search(acquisitions.begin(), acquisitions.end(), canonicalCut[at])) {
             if (source == NoAnalysisId) {
                 return refuse(ProofOutcome::Disproved, at, "acquisition has no participating publication");
             }
@@ -70,7 +92,7 @@ OccurrenceCorrespondence Control::pairOccurrences(Cut publication, Cut acquisiti
         }
     }
     if (pairs.empty()) {
-        return refuse(ProofOutcome::Unknown, publication, "no participating endpoint occurrence");
+        return refuse(ProofOutcome::Unknown, publications.front(), "no participating endpoint occurrence");
     }
     result.pairs.assign(pairs.begin(), pairs.end());
     result.outcome = ProofOutcome::Proved;

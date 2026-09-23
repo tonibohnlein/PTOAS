@@ -75,11 +75,17 @@ struct Control {
     // Same-word correspondence assumes publication precedes acquisition; exact
     // endpoint order, acquired credit and key legality remain binder obligations.
     const OccurrenceCorrespondence& correspondence(Cut, Cut, Id budget = 65536) const;
+    // Endpoint sets describe emitted words, not command multiplicities.
+    // Repeated/canonical aliases in a query denote the same endpoint.
+    const OccurrenceCorrespondence& correspondence(
+        const std::vector<Cut>& publications, const std::vector<Cut>& acquisitions, Id budget = 65536) const;
     mutable uint64_t occurrenceAnalysisSites = 0;
 
 private:
-    OccurrenceCorrespondence pairOccurrences(Cut, Cut, Id budget) const;
-    mutable std::map<std::tuple<Cut, Cut, Id>, OccurrenceCorrespondence> correspondences;
+    OccurrenceCorrespondence pairOccurrences(
+        const std::vector<Cut>&, const std::vector<Cut>&, Id budget) const;
+    mutable std::map<std::tuple<std::vector<Cut>, std::vector<Cut>, Id>,
+                     OccurrenceCorrespondence> correspondences;
 };
 
 // An ordered proposal, including provenance, materialized by the ledger once
@@ -259,7 +265,6 @@ struct RequirementFrontier {
     // The original consumer launch deadline. Several records may deliberately
     // share a pipeline while retaining different publications or deadlines.
     Cut deadline = NoAnalysisId;
-    Cut lifecycleRelease = NoAnalysisId;
 };
 class RequirementFrontiers {
 public:

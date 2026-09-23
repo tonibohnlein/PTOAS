@@ -67,6 +67,150 @@ void correspondence()
             "unconsumed publication at region continuation was accepted");
 }
 
+void alternativeEndpoints()
+{
+    auto p = sharedWords();
+    // Distinct source/receipt words on two exclusive paths describe the same
+    // logical obligation without requiring one canonical representative.
+    for (o::Cut at = 4; at < 7; ++at) {
+        p.observed->sites[at].observation = at;
+    }
+    o::selected::Control control(p);
+    const auto& relation = control.correspondence(std::vector<o::Cut>{1, 4}, std::vector<o::Cut>{3, 6});
+    require(relation.proved() && relation.pairs == std::vector<std::pair<o::Cut, o::Cut>>{{1, 3}, {4, 6}},
+            "alternative endpoint sets lost their original correspondence");
+    const auto work = control.occurrenceAnalysisSites;
+    require(&relation == &control.correspondence(std::vector<o::Cut>{4, 1, 4}, std::vector<o::Cut>{6, 3}) &&
+                control.occurrenceAnalysisSites == work,
+            "endpoint enumeration order changed the immutable relation");
+    require(!control.correspondence(std::vector<o::Cut>{1}, std::vector<o::Cut>{3, 6}).proved(),
+            "one alternative publication supplied credit on the other path");
+    require(!control.correspondence(std::vector<o::Cut>{1, 4}, std::vector<o::Cut>{3}).proved(),
+            "unconsumed alternative publication was accepted");
+    require(control.correspondence(std::vector<o::Cut>{}, std::vector<o::Cut>{3}).outcome ==
+                o::selected::ProofOutcome::Unknown,
+            "empty endpoint set was accepted");
+    const auto& limited = control.correspondence(std::vector<o::Cut>{1, 4}, std::vector<o::Cut>{3, 6}, 1);
+    require(limited.outcome == o::selected::ProofOutcome::Unknown && limited.pairs.empty(),
+            "set matching granted partial correspondence after budget exhaustion");
+}
+
+// Independent empty/full execution oracle. Unlike the retired placement API,
+// a same-word publication precedes its acquisition, and every terminal is
+// checked. Matching is not a proof that an invocation terminates.
+bool concreteBalance(const std::vector<std::vector<o::Cut>>& graph,
+                     const std::vector<o::Cut>& publications, o::Cut acquisition)
+{
+    std::vector<bool> publishes(graph.size());
+    for (auto cut : publications) {
+        publishes[cut] = true;
+    }
+    std::vector<std::array<bool, 2>> seen(graph.size());
+    std::vector<std::pair<o::Cut, bool>> todo{{0, false}};
+    bool received = false;
+    while (!todo.empty()) {
+        auto [site, full] = todo.back();
+        todo.pop_back();
+        if (seen[site][full]) {
+            continue;
+        }
+        seen[site][full] = true;
+        if (publishes[site]) {
+            if (full) {
+                return false;
+            }
+            full = true;
+        }
+        if (site == acquisition) {
+            if (!full) {
+                return false;
+            }
+            full = false;
+            received = true;
+        }
+        if (graph[site].empty() && full) {
+            return false;
+        }
+        for (auto next : graph[site]) {
+            todo.emplace_back(next, full);
+        }
+    }
+    return received;
+}
+
+void exhaustiveMatching()
+{
+    std::size_t cases = 0;
+    for (unsigned n = 1; n <= 4; ++n) {
+        for (uint64_t mask = 0; mask < (uint64_t(1) << ((n - 1) * n)); ++mask) {
+            std::vector<std::vector<o::Cut>> graph(n);
+            for (unsigned a = 0; a + 1 < n; ++a) {
+                for (unsigned b = 0; b < n; ++b) {
+                    if (mask & (uint64_t(1) << (a * n + b))) {
+                        graph[a].push_back(b);
+                    }
+                }
+            }
+            // Isolate the matching query on a bounded graph. This deliberately
+            // does not claim admission by the structured-control importer.
+            o::selected::Control control(base(1));
+            control.graph.entry = 0;
+            control.graph.exit = n - 1;
+            control.graph.sites.resize(n);
+            control.canonicalCut.resize(n);
+            for (unsigned at = 0; at < n; ++at) {
+                control.graph.sites[at].successors = graph[at];
+                control.canonicalCut[at] = at;
+            }
+            for (unsigned bits = 1; bits < (1u << n); ++bits) {
+                std::vector<o::Cut> publications;
+                for (unsigned at = 0; at < n; ++at) {
+                    if (bits & (1u << at)) {
+                        publications.push_back(at);
+                    }
+                }
+                for (unsigned receipt = 0; receipt < n; ++receipt) {
+                    const auto& relation = control.correspondence(publications, std::vector<o::Cut>{receipt});
+                    require(relation.proved() == concreteBalance(graph, publications, receipt),
+                            "shared occurrence matching differs from concrete token execution");
+                    ++cases;
+                }
+            }
+        }
+    }
+    std::cout << "independent matching cases=" << cases << '\n';
+}
+
+void joinedSources()
+{
+    constexpr o::Cut alternatives = 32, suffix = 40, receipt = alternatives + suffix + 1;
+    o::selected::Control control(base(1));
+    control.graph.entry = 0;
+    control.graph.exit = receipt + 1;
+    control.graph.sites.resize(receipt + 2);
+    control.canonicalCut.resize(receipt + 2);
+    std::vector<o::Cut> sources;
+    for (o::Cut at = 0; at <= receipt + 1; ++at) {
+        control.canonicalCut[at] = at;
+        control.graph.sites[at].successors.clear();
+        if (at > 0 && at <= alternatives) {
+            sources.push_back(at);
+            control.graph.sites[0].successors.push_back(at);
+            control.graph.sites[at].successors = {alternatives + 1};
+        } else if (at > alternatives && at <= receipt) {
+            control.graph.sites[at].successors = {at + 1};
+        }
+    }
+    const auto& matched = control.correspondence(sources, std::vector<o::Cut>{receipt});
+    require(matched.proved() && matched.pairs.size() == alternatives,
+            "shared suffix lost alternative source identities");
+    require(matched.siteEvaluations == 2 + alternatives * (suffix + 2),
+            "shared suffix occurrence work was not charged by source identity");
+    const auto& limited = control.correspondence(sources, std::vector<o::Cut>{receipt}, 64);
+    require(limited.outcome == o::selected::ProofOutcome::Unknown && limited.pairs.empty(),
+            "shared suffix work limit changed matching into partial credit");
+}
+
 void physicalDeadlines()
 {
     const auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE1;
@@ -123,6 +267,9 @@ struct ReplayTestAccess {
 int main()
 {
     correspondence();
+    alternativeEndpoints();
+    exhaustiveMatching();
+    joinedSources();
     physicalDeadlines();
     o::selected::ReplayTestAccess::everyInterveningOccurrence();
     std::cout << "shared occurrence and physical-deadline queries passed\n";

@@ -373,51 +373,10 @@ bool balanced(const Control& c, const std::vector<Cut>& publications,
     std::set<Cut> publish(publications.begin(), publications.end());
     std::set<Cut> acquire(acquisitions.begin(), acquisitions.end());
     for (auto cut : publish) if (acquire.count(cut)) return false;
-    std::vector<uint8_t> incoming(c.graph.sites.size());
-    std::deque<Id> queue;
-    std::vector<bool> queued(c.graph.sites.size());
-    bool invalid = false;
-    uint8_t exitState = 0;
-    incoming[c.graph.entry] = 1; // bit 0: empty; bit 1: full; bit 2: invalid
-    queue.push_back(c.graph.entry);
-    queued[c.graph.entry] = true;
-    while (!queue.empty()) {
-        const auto site = queue.front();
-        queue.pop_front();
-        queued[site] = false;
-        auto state = incoming[site];
-        const auto cut = c.canonicalCut[site];
-        if (publish.count(cut)) {
-            uint8_t next = state & 4;
-            if (state & 1) next |= 2;
-            if (state & 2) {
-                next |= 4;
-                invalid = true;
-            }
-            state = next;
-        }
-        if (acquire.count(cut)) {
-            uint8_t next = state & 4;
-            if (state & 2) next |= 1;
-            if (state & 1) {
-                next |= 4;
-                invalid = true;
-            }
-            state = next;
-        }
-        if (site == c.graph.exit) exitState = state;
-        for (auto successor : c.graph.sites[site].successors) {
-            const auto joined = uint8_t(incoming[successor] | state);
-            if (joined != incoming[successor]) {
-                incoming[successor] = joined;
-                if (!queued[successor]) {
-                    queue.push_back(successor);
-                    queued[successor] = true;
-                }
-            }
-        }
-    }
-    return !invalid && exitState == 1;
+    // Endpoint positions are distinct in this recurring vocabulary. Matching
+    // itself is shared with ordinary placement and binding, over all original
+    // occurrences rather than a separate empty/full-only monitor.
+    return c.correspondence(publications, acquisitions).proved();
 }
 
 std::vector<RecurringRequirement> qualifyRelationships(

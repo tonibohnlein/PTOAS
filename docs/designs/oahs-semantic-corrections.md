@@ -34,7 +34,10 @@ A stage or commit checkpoint is not authorization to stop. Each coherent step:
 1. Implement the shared mechanism and its positive, negative and composition tests.
 2. Run relevant checks with the aggregate two-worker limit.
 3. Obtain explicit acceptance from three independent reviewers: architecture/design,
-   correctness, and performance (including ordering, resources and compile work).
+   correctness, and performance. At this refactoring stage, performance review
+   detects unnecessary asymptotic complexity and avoidable repeated work; small
+   timing differences and tuning are not acceptance gates. Keep measured ordering,
+   resources and compiler work as evidence.
 4. Resolve blocking findings and obtain rereview of the final patch.
 5. Record the scope, evidence, limitations and all three verdicts; commit that step.
 6. Proceed directly to the next dependency-ordered step.
@@ -246,6 +249,24 @@ service improvement remain open. Detailed evidence is linked from HANDOFF.
 Architecture's nonblocking finding: `RequirementFrontier::lifecycleRelease`
 duplicates the shared use record and has no consumer; remove with the next
 shared-query consumer change. Continue Stage 1 immediately after this commit.
+
+### B — One matching query for endpoint sets
+
+Base: `b6958b0e4`. Architecture/design, correctness and performance: **ACCEPT**.
+Canonical endpoint sets now share source-identity pairing across recurring,
+alternative-source and loop-entry clients. Removed both superseded balance
+monitors, their unused graph copy and the unused duplicate release field.
+Architecture's cleanup request was resolved before acceptance. The independent
+up-to-four-site token oracle and a joining-source/shared-suffix workload cover
+matching, original pairs, repeated entries, same-word order and budget refusal.
+
+22 portable suites, all three native drivers and the pinned supported-input
+campaign pass with every plan unchanged from Step A. Results and counters:
+`../oahs-gemm-base-builds/refactor-step-b/`. Source-identity state growth is
+explicit; future budget refusal stays unknown. Performance acceptance follows
+the user's asymptotic-complexity criterion. The observed older/newer campaign
+timing difference was not reproduced by serial alternating binaries. Continue
+with shared post-payload boundaries and generation/support obligations.
 
 ## Historical audit detail and restart checkpoints
 

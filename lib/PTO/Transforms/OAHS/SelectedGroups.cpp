@@ -108,7 +108,9 @@ bool Constructor::sourceFrontier(
         todo.insert(todo.end(), before.begin(), before.end());
     }
     std::vector<Cut> cuts(publications.begin(), publications.end());
-    if (!control.lookahead.balancedTransfer(cuts, current, control.graph.entry, control.graph.exit)) return false;
+    if (!control.correspondence(cuts, std::vector<Cut>{current}).proved()) {
+        return false;
+    }
     // No edit/retry: only offer this vocabulary when an unused physical key has
     // its complete source-time certificate at ALL alternative publications.
     const auto observer = program.operations[control.graph.operations[current]].pipe;
@@ -208,8 +210,9 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
             });
         if (!selected && !regional) continue;
         const auto publication = selected ? selected->cut : loop.entry;
-        if (!regional && !control.lookahead.balancedTransfer({publication}, loop.entry,
-                                       control.graph.entry, control.graph.exit)) continue;
+        if (!regional && !control.correspondence(publication, loop.entry).proved()) {
+            continue;
+        }
         auto unused = [&](Pipe a, Pipe b) {
             for (Id key = 0; key < frontier.keys().size(); ++key) {
                 const auto& e = frontier.keys()[key];

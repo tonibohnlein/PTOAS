@@ -82,69 +82,6 @@ Id exhaustive(unsigned maxNodes)
     }
     return cases;
 }
-bool concreteBalance(const Graph& graph, const std::vector<Id>& publications,
-                     Id acquisition, Id entry, Id exit)
-{
-    if (publications.empty()) return false;
-    std::vector<bool> pub(graph.size());
-    for (auto at : publications) {
-        if (at == acquisition) return false;
-        pub[at] = true;
-    }
-    std::vector<std::vector<bool>> seen(graph.size(), std::vector<bool>(2));
-    std::vector<std::pair<Id, bool>> todo{{entry, false}};
-    bool reachedExit = false, reachedAcquisition = false;
-    while (!todo.empty()) {
-        const auto [site, input] = todo.back(); todo.pop_back();
-        if (seen[site][input]) continue;
-        seen[site][input] = true;
-        bool full = input;
-        if (pub[site]) {
-            if (full) return false;
-            full = true;
-        }
-        if (site == acquisition) {
-            reachedAcquisition = true;
-            if (!full) return false;
-            full = false;
-        }
-        if (site == exit) {
-            if (full) return false;
-            reachedExit = true;
-        }
-        for (auto next : graph[site]) todo.emplace_back(next, full);
-    }
-    return reachedExit && reachedAcquisition;
-}
-Id transferParticipation()
-{
-    Id cases = 0;
-    // All directed graphs up to four sites whose designated exit is terminal;
-    // all nonempty publication sets and each possible acquisition. The oracle
-    // enumerates concrete (site, empty/full) states, not joined balance masks.
-    for (unsigned n = 1; n <= 4; ++n) {
-        for (uint64_t mask = 0; mask < (uint64_t(1) << ((n - 1) * n)); ++mask) {
-            Graph graph(n);
-            for (unsigned a = 0; a + 1 < n; ++a)
-                for (unsigned b = 0; b < n; ++b)
-                    if (mask & (uint64_t(1) << (a * n + b))) graph[a].push_back(b);
-            Index index;
-            require(index.build(graph, std::vector<bool>(n), {}), "balance graph build");
-            for (unsigned bits = 1; bits < (1u << n); ++bits) {
-                std::vector<Id> pubs;
-                for (unsigned site = 0; site < n; ++site)
-                    if (bits & (1u << site)) pubs.push_back(site);
-                for (unsigned wait = 0; wait < n; ++wait) {
-                    require(index.balancedTransfer(pubs, wait, 0, n - 1) ==
-                            concreteBalance(graph, pubs, wait, 0, n - 1),
-                            "frontier participation differs from concrete token executions");
-                    ++cases;
-                }
-            }
-        }
-    }
-    return cases;
-}
 Id issueIntervals()
 {
     std::mt19937 random(0x2409a6b8);
@@ -182,8 +119,7 @@ int main(int argc, char** argv)
     invalidAndBoundary();
     const auto cases = exhaustive(maxNodes);
     const auto intervals = issueIntervals();
-    const auto transfers = transferParticipation();
     std::cout << "lookahead graph/payload cases=" << cases
               << " interval queries=" << intervals
-              << " transfer cases=" << transfers << " passed\n";
+              << " passed\n";
 }

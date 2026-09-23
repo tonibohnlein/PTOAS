@@ -129,3 +129,22 @@ exit balance, exhausted analysis, reload provenance, two readers with a common
 next overwrite, unrelated storage and a hidden intervening key occurrence.
 The new interface does not yet replace the single-owner recurrence grammar or
 supply generation-scoped producer support; those are later refactor stages.
+
+
+### Shared matching of endpoint sets
+
+The occurrence query accepts publication and acquisition sets and canonicalizes
+aliases and duplicates as one emitted word. Multiplicity and exact intra-word
+order remain packet obligations. Recurring qualification, alternative-source
+placement and loop-entry placement use this same matching query; their former
+empty/full monitors and the unused lookahead graph copy are removed. Recurring
+selection still requires distinct endpoint words. A coincident ordinary pair
+requires publication before acquisition.
+
+Matching checks every reachable terminal with a pending publication; it does
+not prove termination or peer progress. A source identity is retained through
+shared continuations, so work can grow with both control sites and alternative
+sources. The independent 65,536-state query budget yields unknown without any
+usable pairs. It is a sufficient implementation bound, not a semantic limit.
+The exhaustive token oracle and joining-alternatives regression check matching,
+repeated participation, source identities and explicitly charged query work.
