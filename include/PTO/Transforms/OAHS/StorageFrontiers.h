@@ -84,6 +84,36 @@ struct PhysicalUseSummary {
   bool complete() const { return status != Status::Unknown; }
   // A presence summary is a may set, not executable guarded participation.
 };
+// D3 predicates and frontiers are shared expression DAGs, not enumerated modes.
+// An exact structural expression is not a proof that its guard is executable.
+struct ParticipationExpression {
+  enum Kind { False, True, Atom, And, Or, Not, Invalid } kind = Invalid;
+  std::size_t left = NoAnalysisId, right = NoAnalysisId;
+  ObservationAtom atom;
+};
+struct GuardedReadFrontier {
+  enum Kind { Empty, Access, Union, Guard, Invalid } kind = Invalid;
+  std::size_t left = NoAnalysisId, right = NoAnalysisId;
+  std::size_t predicate = 1, operation = NoAnalysisId;
+};
+struct ReaderIntervalQuery {
+  std::size_t owner = NoAnalysisId;
+  unsigned cell = 0;
+  Pipe reader = Pipe::Count;
+  // WholeRegion includes this owner's recurrence. BodyInterval describes one
+  // original visit and indexes the children of its body sequence [begin,end).
+  enum Scope { WholeRegion, BodyInterval } scope = WholeRegion;
+  std::size_t begin = 0, end = NoAnalysisId;
+};
+struct OriginalReaderFrontiers {
+  enum class Status { Unknown, NoHit, Exact } status = Status::Unknown;
+  ReaderIntervalQuery interval;
+  // Exact whole counted-owner frontiers require initial/final visit vocabulary.
+  bool separatesVisits = false;
+  std::size_t nonempty = 0, first = 0, last = 0;
+  std::string reason;
+  bool complete() const { return status != Status::Unknown; }
+};
 struct ReaderBoundary {
   bool boundary = false;
   std::vector<StorageOrigin> readers;
@@ -109,6 +139,7 @@ struct StorageFrontierStats {
   std::size_t useSummaryQueries = 0, useSummarySolves = 0, useSummarySites = 0, useSummaryEdges = 0;
   std::size_t classificationQueries = 0, classificationSites = 0, classificationOrigins = 0;
   std::size_t witnessQueries = 0, witnessSites = 0;
+  std::size_t originalReadRegions = 0, participationNodes = 0, readFrontierNodes = 0, readCompositionParts = 0;
 };
 // Owns ORIGINAL effects/control; no candidate commands are an input.
 // Marginal witnesses are existential paths, never completion certificates.
@@ -144,6 +175,9 @@ public:
       const std::vector<std::size_t>& stops = {}, bool backward = false) const;
   // Summarizes the FIRST physical access on each path; this is not All(U).
   PhysicalUseSummary nearestUseSummary(const OriginalUseQuery&) const;
+  const OriginalReaderFrontiers& originalReaderFrontiers(const ReaderIntervalQuery&) const;
+  ParticipationExpression participationExpression(std::size_t) const;
+  GuardedReadFrontier guardedReadFrontier(std::size_t) const;
   ReaderBoundary readerBoundary(std::size_t site, unsigned cell, Pipe,
                                 bool backward) const;
   std::vector<Cut> corridor(std::size_t site, Pipe, bool backward,

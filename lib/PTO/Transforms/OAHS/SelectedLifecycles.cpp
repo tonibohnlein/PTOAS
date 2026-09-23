@@ -155,6 +155,18 @@ const std::vector<EndpointRequirement>& RequirementFrontiers::endpoints(Id origi
 bool RequirementFrontiers::needsOccurrenceSeparation(Id originalOwner) const
 {
     for (const auto& request : endpoints(originalOwner)) {
+        // Discover the original read frontiers before analytical refinement.
+        // This requests endpoint vocabulary; it grants neither guard availability
+        // nor a matched recurring protocol. Unknown retains the marginal query.
+        if (request.role != EndpointRequirement::FirstWrite) {
+            const auto reader = program->operations[request.access.operation].pipe;
+            const auto& interval = storage->originalReaderFrontiers(
+                {originalOwner, request.relationship.cell, reader});
+            if (interval.complete()) {
+                if (interval.separatesVisits) { return true; }
+                continue;
+            }
+        }
         const bool backward = request.role != EndpointRequirement::FinalReader;
         const auto site = request.access.site;
         ++endpointWork;

@@ -977,6 +977,71 @@ const PhysicalUseFrontier& StorageFrontierAnalysis::nearestUses(
   return impl->useFrontiers.emplace(key, std::move(result)).first->second;
 }
 
+bool hasOriginalIdentityMap(const Program& program) {
+  const bool shape = program.originalStructure && program.originalOperations.size() == program.operations.size();
+  if (!shape) { return false; }
+  const auto count = program.originalStructure->operations.size();
+  return std::all_of(program.originalOperations.begin(), program.originalOperations.end(),
+                     [&](auto original) { return original < count; });
+}
+
+Result captureOriginalStructure(Program& program) {
+  Result result;
+  if (program.originalStructure) {
+    result.reason = "original structure must be captured once before refinement";
+    return result;
+  }
+  result = validateProgram(program);
+  if (!result.success) { return result; }
+  auto original = std::make_shared<OriginalStructure>();
+  original->body = program.body;
+  const bool implicitFlat = original->body.kind == Region::Sequence && original->body.children.empty();
+  if (implicitFlat && !program.operations.empty()) {
+    if (program.observed) {
+      result.success = false;
+      result.reason = "observed input has no original structural provenance";
+      return result;
+    }
+    for (std::size_t i = 0; i < program.operations.size(); ++i) {
+      original->body.children.push_back({Region::Operation, {}, i});
+    }
+  }
+  std::vector<unsigned> seen(program.operations.size());
+  const bool validTree = validateRegion(program, original->body, seen, result.reason);
+  const bool once = std::all_of(seen.begin(), seen.end(), [](auto count) { return count == 1; });
+  if (!validTree || !once) {
+    result.success = false;
+    if (result.reason.empty()) { result.reason = "original structure does not cover each access once"; }
+    return result;
+  }
+  original->physicalUses = program.physicalUses;
+  original->operations = program.operations;
+  original->cells = program.cells;
+  program.originalOperations.clear();
+  for (std::size_t i = 0; i < program.operations.size(); ++i) { program.originalOperations.push_back(i); }
+  program.originalStructure = std::move(original);
+  return result;
+}
+
+const OriginalReaderFrontiers& StorageFrontierAnalysis::originalReaderFrontiers(
+    const ReaderIntervalQuery& query) const {
+  if (!impl->originalReads) {
+    impl->originalReads = std::make_unique<storage_detail::OriginalReadQueries>(impl->program);
+  }
+  const auto& result = impl->originalReads->query(query);
+  impl->statistics.originalReadRegions = impl->originalReads->evaluations;
+  impl->statistics.participationNodes = impl->originalReads->predicateCount();
+  impl->statistics.readFrontierNodes = impl->originalReads->frontierCount();
+  impl->statistics.readCompositionParts = impl->originalReads->compositionParts;
+  return result;
+}
+ParticipationExpression StorageFrontierAnalysis::participationExpression(std::size_t id) const {
+  return impl->originalReads ? impl->originalReads->predicate(id) : ParticipationExpression{};
+}
+GuardedReadFrontier StorageFrontierAnalysis::guardedReadFrontier(std::size_t id) const {
+  return impl->originalReads ? impl->originalReads->frontier(id) : GuardedReadFrontier{};
+}
+
 PhysicalUseSummary StorageFrontierAnalysis::nearestUseSummary(const OriginalUseQuery& query) const {
   ++impl->statistics.useSummaryQueries;
   PhysicalUseSummary result;

@@ -982,3 +982,73 @@ Each reached site/edge is expanded once per projection; monotone propagation add
 only seven possible bits per site. Sparse maps introduce logarithmic lookup cost. Distinct stop projections and inherited
 all-cell loop scans remain separately charged work, not a near-linear whole-pass
 claim. Source subscriptions and Q/R selected-state handling are unchanged.
+
+## Step T design invariant — original structure and guarded read intervals
+
+Missing fact: the original structured read interval is not retained independently
+of residue-specialized operation effects. A tree that still names an overwritten
+operation index cannot prove original participation. Capture a validated immutable
+structure/effect view before refinement; preserve stable original owner/access IDs
+and explicit correspondence. This is part of original-program analysis, never a
+completion ledger. Missing structural provenance yields query Unknown without
+rejecting an otherwise supported program or erasing physical facts.
+
+The shared read-segment query names an original owner/sequence interval, physical
+cell and reader engine. First, final and nonempty results describe that SAME
+interval. Only overlapping writes (including partial writes) obstruct read-only
+composition; unrelated writes remain independent. D3 uses shared original-predicate
+expressions rather than enumerated guard products. Counted repetition additionally
+needs invariant relevant participation and original arithmetic premises.
+
+Executable endpoint qualification is separate: derived guards remain useful
+facts when unavailable at an anchor. Existing observed words can consume them only
+through checked implication/correspondence. New LoopNonEmpty endpoints need original
+bounds dominance, exact predicate readback, and correlation with the original entry
+decision in the graph seen by the independent checker. Sibling-loop bounds need
+not have an ancestor loop; IV-dependent atoms still do. Never introduce an
+independent nondeterministic guard that forgets that correlation. Retire a demanded
+predicate interpretation after its affected interval rather than forming a global
+product. Construction activates a prescribed packet only for an actual residual.
+
+T implementation boundary: original structural expressions now drive the existing
+`needsOccurrenceSeparation` read-role vocabulary request. Exact original facts
+are not executable endpoint guards or a correspondence certificate. No selected
+command, event allocation or completion fact enters this query. First-write and
+unknown read cases retain the existing nearest-use discovery. Actual enclosing
+placement still uses the S consumer until interval/occurrence qualification is
+connected; this is not completion of the typed-placement milestone.
+
+Current sufficient restrictions and replacements:
+
+- A read interval containing an overlapping write is Unknown; next increment
+  supplies generation-delimited intervals rather than weakening this condition.
+- Counted-body nonemptiness must simplify to True. This proves invariant relevant
+  participation for the bounded decoder; general guarded repetition needs an
+  occurrence/availability proof. Both reading choice arms compose; a possibly
+  empty arm inside a repeated owner does not imply a final-iteration reader.
+- Per-cell read/write roles must remain present in every mapped analytical phase,
+  with unchanged cell geometry and pipe. These conservative applicability checks
+  are not exact occurrence matching. Variable relations retain their independent
+  physical facts; D1/D2 correspondence must replace this sufficient restriction
+  before using a variable-bank frontier for placement.
+- Missing structure, duplicate relevant guard identities, ambiguous footprints,
+  uncounted relevant participation and invalid handles remain Unknown/Invalid.
+  Irrelevant no-hit subtrees need no guard identity. Synthetic periodic creation
+  drops unsupported structural provenance; structured import reassigns/captures
+  original owners, while checked refinement preserves the immutable snapshot.
+- Exact counted readers request first/final vocabulary even when a later consumer
+  proves a single visit. This is demand discovery, not a claim that every request
+  needs a distinct emitted endpoint. No new placement or provider ranking policy.
+
+Original identities are an explicit trusted import contract, like original effect
+completeness. `hasOriginalIdentityMap` validates only index shape/range. Mutating
+original control requires recapture, or dropping this optional provenance; an
+observed graph cannot reconstruct original syntax merely from its current shape.
+
+Cost: one shared immutable snapshot; sparse original/current incidence indexes;
+one summary per demanded (original region, cell, reader); interned predicate and
+frontier DAGs; cached complete interval answers. Counted-trip magnitude is not
+iterated. `readCompositionParts` charges sequence/range scans separately; distinct
+overlapping ranges still cost the sum of their lengths. No current production
+client enumerates all ranges. A future range-heavy client requires shared range
+composition rather than claiming that summary memoization removes that cost.

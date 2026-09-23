@@ -336,6 +336,10 @@ int main() {
         pending.push_back(next);
     }
     CHECK(o::refineCountedLoop(original.program, spec).success);
+    auto malformedIdentity = original.program;
+    malformedIdentity.originalOperations.clear();
+    auto withoutIdentity = o::refineCountedLoop(malformedIdentity, spec);
+    CHECK(withoutIdentity.success && !withoutIdentity.program.originalStructure);
     auto bypassesBody = [](const o::Program& p) {
       const auto& graph = *p.observed;
       std::vector<bool> seen(graph.sites.size());

@@ -235,6 +235,10 @@ ObservedImport refineBankOccurrences(const Program& input, const CountedLoopRegi
         varying.emplace(operation, bank_occurrence_detail::varyingEffects(*binding));
     }
     out.program = input;
+    if (!hasOriginalIdentityMap(input)) {
+        out.program.originalStructure.reset();
+        out.program.originalOperations.clear();
+    }
     auto& q = *out.program.observed;
     const auto capacity = (q.sites.max_size() - q.sites.size()) / (loop.period - 1);
     const bool insufficientCapacity = members.size() + 1 > capacity;
@@ -291,6 +295,10 @@ ObservedImport refineBankOccurrences(const Program& input, const CountedLoopRegi
                                 } else {
                                     phase = out.program.operations.size();
                                     out.program.operations.push_back(std::move(op));
+                                    if (out.program.originalStructure) {
+                                        out.program.originalOperations.push_back(
+                                            input.originalOperations[node.operation]);
+                                    }
                                 }
                             }
                             phases.emplace(std::make_pair(node.operation, value), phase);

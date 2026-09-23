@@ -394,6 +394,8 @@ void composedEndpointDemands()
                 }), "one child role silently discarded another role at the same original access");
     }
     require(facts.needsOccurrenceSeparation(owner), "mixed first/continuing roles lost refinement demand");
+    require(storage.stats().originalReadRegions != 0,
+            "endpoint demand did not consume the shared original reader interval");
     require(facts.endpoints(o::NoAnalysisId).empty(), "unknown owner manufactured endpoint requests");
     auto rmw = base(1);
     rmw.operations = {op(P, {{0, true, true}}), op(Q, {{0, true, false}})};

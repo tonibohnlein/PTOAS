@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -108,6 +109,15 @@ struct Region {
   // A for may execute zero times. While has [before, after] children and always
   // executes before once before deciding whether to enter after.
   bool zeroTripPossible = false;
+  // Stable original anchor; independent of later analytical copies.
+  std::size_t originalOwner = NoControlId;
+  bool qualifiedCounted = false;
+};
+struct OriginalStructure {
+  Region body;
+  std::vector<Operation> operations;
+  std::vector<Cell> cells;
+  std::vector<PhysicalUseRelation> physicalUses;
 };
 enum class Property { ByteCompletion, ResourceExclusion };
 struct Demand {
@@ -122,6 +132,9 @@ struct Program {
   std::vector<Operation> operations;
   std::size_t nativeAccumulatorClasses = 0;
   Region body;
+  // Captured before effect/control refinement, never a selected completion state.
+  std::shared_ptr<const OriginalStructure> originalStructure;
+  std::vector<std::size_t> originalOperations;
   // Optional qualified finite original-control quotient. It replaces, rather
   // than silently flattens, body. Effects still name original physical phases.
   std::optional<ObservedControl> observed;
@@ -184,6 +197,11 @@ struct Result {
 // Declaration/structural validation only; not residual analysis or a proof of
 // synchronization. Use Analysis.h::analyze for the fixed-plan analysis service.
 Result validateProgram(const Program &program);
+// Caller supplies ORIGINAL syntax/effects, before analytical refinement.
+// Validate that structure independently even when an observed graph is present.
+Result captureOriginalStructure(Program& program);
+// Validates index shape/range only; not an effect or occurrence certificate.
+bool hasOriginalIdentityMap(const Program& program);
 // Read-only: reconstructs receipts and hazards from original operations and the
 // actual command stream, never from Result::demands annotations.
 Result verify(const Program &program, const Commands &commands);

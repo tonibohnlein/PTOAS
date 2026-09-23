@@ -8,6 +8,7 @@
 #ifndef PTO_OAHS_STORAGE_FRONTIER_ANALYSIS_H
 #define PTO_OAHS_STORAGE_FRONTIER_ANALYSIS_H
 #include "ControlComponents.h"
+#include "OriginalReadQueries.h"
 #include "PTO/Transforms/OAHS/StorageFrontiers.h"
 #include <algorithm>
 #include <deque>
@@ -75,6 +76,7 @@ struct StorageFrontierAnalysis::Impl {
                               std::vector<std::size_t>, bool>;
   std::map<UseQuery, PhysicalUseFrontier> useFrontiers;
   mutable StorageFrontierStats statistics;
+  mutable std::unique_ptr<storage_detail::OriginalReadQueries> originalReads;
   mutable std::vector<bool> repeatedSites;
   bool ok = false;
   std::string error;

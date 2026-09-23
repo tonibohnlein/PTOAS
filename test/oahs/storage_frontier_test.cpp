@@ -7,10 +7,12 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "../../lib/PTO/Transforms/OAHS/Control.h"
 #include "GraphOracle.h"
+#include "PTO/Transforms/OAHS/ObservedPrograms.h"
 #include "PTO/Transforms/OAHS/StorageFrontiers.h"
 #include <cstdlib>
 #include <iostream>
 #include <random>
+#include <functional>
 namespace o = mlir::pto::oahs;
 namespace {
 std::size_t checks = 0, relations = 0;
@@ -344,8 +346,177 @@ void summaryIntervalsAndScaling() {
   }
 }
 
+// Interpret the returned DAG with occurrence-local atoms. The test deliberately
+// changes the choice value between loop visits rather than treating it as a
+// globally invariant Boolean.
+bool predicate(const o::StorageFrontierAnalysis& facts, std::size_t id,
+               const std::function<bool(const o::ObservationAtom&)>& value) {
+  const auto p = facts.participationExpression(id);
+  switch (p.kind) {
+  case o::ParticipationExpression::Invalid: CHECK(false); return false;
+  case o::ParticipationExpression::False: return false;
+  case o::ParticipationExpression::True: return true;
+  case o::ParticipationExpression::Atom: return value(p.atom);
+  case o::ParticipationExpression::Not: return !predicate(facts, p.left, value);
+  case o::ParticipationExpression::And: return predicate(facts, p.left, value) && predicate(facts, p.right, value);
+  case o::ParticipationExpression::Or: return predicate(facts, p.left, value) || predicate(facts, p.right, value);
+  }
+  return false;
+}
+std::set<std::size_t> frontier(const o::StorageFrontierAnalysis& facts, std::size_t id,
+               const std::function<bool(const o::ObservationAtom&)>& value) {
+  const auto f = facts.guardedReadFrontier(id);
+  if (f.kind == o::GuardedReadFrontier::Empty) { return {}; }
+  if (f.kind == o::GuardedReadFrontier::Access) { return {f.operation}; }
+  if (f.kind == o::GuardedReadFrontier::Guard) {
+    return predicate(facts, f.predicate, value) ? frontier(facts, f.left, value) : std::set<std::size_t>{};
+  }
+  auto result = frontier(facts, f.left, value);
+  const auto right = frontier(facts, f.right, value);
+  result.insert(right.begin(), right.end());
+  return result;
+}
+void originalReadIntervals() {
+  auto p = base();
+  p.operations = {op(1, 0, 1), op(1, 0, 1), op(0, 0, 2)};
+  o::Region a{o::Region::For, {leaf(0)}}, b{o::Region::For, {leaf(1)}};
+  a.originalOwner = 10; b.originalOwner = 20;
+  a.qualifiedCounted = b.qualifiedCounted = true;
+  a.zeroTripPossible = b.zeroTripPossible = true;
+  p.body = seq({a, b, leaf(2)});
+  CHECK(o::captureOriginalStructure(p).success);
+  o::StorageFrontierAnalysis facts(p);
+  o::ReaderIntervalQuery q{o::NoAnalysisId, 0, o::Pipe(1), o::ReaderIntervalQuery::BodyInterval, 0, 2};
+  const auto& result = facts.originalReaderFrontiers(q);
+  CHECK(result.status == o::OriginalReaderFrontiers::Status::Exact);
+  for (unsigned mask = 0; mask != 4; ++mask) {
+    auto value = [&](const o::ObservationAtom& atom) {
+      if (atom.kind == o::ObservationAtom::LoopNonEmpty) { return bool(mask & (atom.owner == 10 ? 1 : 2)); }
+      return true; // each participating child has a single visit
+    };
+    CHECK(predicate(facts, result.nonempty, value) == bool(mask));
+    // A frontier inside a zero-trip child is unreachable; filter by original
+    // participation exactly as an actual observation would be.
+    auto first = frontier(facts, result.first, value), last = frontier(facts, result.last, value);
+    if (!(mask & 1)) { first.erase(0); last.erase(0); }
+    if (!(mask & 2)) { first.erase(1); last.erase(1); }
+    CHECK(first == (mask ? std::set<std::size_t>{mask & 1 ? 0u : 1u} : std::set<std::size_t>{}));
+    CHECK(last == (mask ? std::set<std::size_t>{mask & 2 ? 1u : 0u} : std::set<std::size_t>{}));
+  }
+  const auto work = facts.stats().originalReadRegions;
+  CHECK(&result == &facts.originalReaderFrontiers(q));
+  CHECK(work == facts.stats().originalReadRegions);
+  q.end = 3;
+  CHECK(!facts.originalReaderFrontiers(q).complete()); // reload ends the episode
+  q.owner = 10; q.scope = o::ReaderIntervalQuery::WholeRegion; q.end = o::NoAnalysisId;
+  CHECK(facts.originalReaderFrontiers(q).separatesVisits);
+  // Refinement may change a current operation; original facts remain immutable.
+  p.operations[0].accesses.clear();
+  o::StorageFrontierAnalysis refined(p);
+  CHECK(!refined.originalReaderFrontiers(q).complete());
+  CHECK(p.originalStructure->operations[0].accesses.size() == 1);
+  p.originalOperations.clear();
+  o::StorageFrontierAnalysis malformed(p);
+  CHECK(!malformed.originalReaderFrontiers(q).complete());
+
+  p = base(); p.operations = {op(1, 0, 1), op(1, 0, 1)};
+  o::Region choice{o::Region::Choice, {leaf(0), leaf(1)}};
+  choice.originalOwner = 30;
+  a.children = {choice}; p.body = seq({a});
+  CHECK(o::captureOriginalStructure(p).success);
+  o::StorageFrontierAnalysis alternatives(p);
+  const auto& both = alternatives.originalReaderFrontiers(q);
+  CHECK(both.status == o::OriginalReaderFrontiers::Status::Exact);
+  for (unsigned visit = 0; visit != 4; ++visit) {
+    auto value = [&](const o::ObservationAtom& atom) {
+      if (atom.kind == o::ObservationAtom::OriginalBoolean) { return bool(visit & 1); }
+      if (atom.kind == o::ObservationAtom::LoopHasPrevious) { return visit == 0; }
+      if (atom.kind == o::ObservationAtom::LoopHasNext) { return visit == 3; }
+      return true;
+    };
+    CHECK(frontier(alternatives, both.first, value) ==
+          (visit == 0 ? std::set<std::size_t>{1} : std::set<std::size_t>{}));
+    CHECK(frontier(alternatives, both.last, value) ==
+          (visit == 3 ? std::set<std::size_t>{0} : std::set<std::size_t>{}));
+  }
+  p.originalStructure.reset(); p.operations[1].accesses.clear();
+  CHECK(o::captureOriginalStructure(p).success);
+  o::StorageFrontierAnalysis conditional(p);
+  CHECK(!conditional.originalReaderFrontiers(q).complete());
+
+  p = base(); p.operations = {op(1, 0, 1)};
+  CHECK(o::captureOriginalStructure(p).success); // implicit flat normalization
+  o::StorageFrontierAnalysis flat(p);
+  CHECK(flat.originalReaderFrontiers({o::NoAnalysisId, 0, o::Pipe(1)}).nonempty == 1);
+  auto imported = o::addStructuredBoundaryCuts(p);
+  CHECK(imported.success && o::hasOriginalIdentityMap(imported.program));
+  auto periodic = o::makePeriodicLoop(p, 2, {});
+  CHECK(periodic.success && !periodic.program.originalStructure);
+  p.originalStructure.reset(); p.cells[0].unknownRange = true;
+  CHECK(o::captureOriginalStructure(p).success);
+  o::StorageFrontierAnalysis uncertain(p);
+  CHECK(!uncertain.originalReaderFrontiers({o::NoAnalysisId, 0, o::Pipe(1)}).complete());
+}
+
+void originalReadRefusalsAndScaling() {
+  auto p = base(); p.operations = {op(1, 0, 1)};
+  p.operations[0].accesses.push_back({1, true, false});
+  p.body = {o::Region::For, {leaf(0)}};
+  auto observed = o::addStructuredBoundaryCuts(p);
+  CHECK(observed.success);
+  p = observed.program;
+  p.originalStructure.reset();
+  p.physicalUses = {{p.body.originalOwner, 2, {{0, {{{1, true, false}}, {{1, true, false}}}}}}};
+  CHECK(o::captureOriginalStructure(p).success);
+  o::StorageFrontierAnalysis variants(p);
+  CHECK(!variants.originalReaderFrontiers({o::NoAnalysisId, 0, o::Pipe(1)}).complete());
+  CHECK(variants.originalReaderFrontiers({o::NoAnalysisId, 1, o::Pipe(1)}).nonempty == 1);
+  CHECK(variants.participationExpression(o::NoAnalysisId).kind == o::ParticipationExpression::Invalid);
+  CHECK(variants.guardedReadFrontier(o::NoAnalysisId).kind == o::GuardedReadFrontier::Invalid);
+  p.operations[0].accesses.push_back({2, true, false});
+  o::StorageFrontierAnalysis changed(p);
+  CHECK(!changed.originalReaderFrontiers({o::NoAnalysisId, 2, o::Pipe(1)}).complete());
+  p = base(); p.operations = {op(1, 0, 1), op(1, 0, 1)};
+  o::Region a{o::Region::Choice, {leaf(0), seq({})}}, b{o::Region::Choice, {seq({}), leaf(1)}};
+  a.originalOwner = b.originalOwner = 8;
+  p.body = seq({a, b});
+  CHECK(o::captureOriginalStructure(p).success);
+  o::StorageFrontierAnalysis ambiguous(p);
+  CHECK(!ambiguous.originalReaderFrontiers({o::NoAnalysisId, 0, o::Pipe(1)}).complete());
+  CHECK(ambiguous.originalReaderFrontiers({o::NoAnalysisId, 2, o::Pipe(1)}).status ==
+        o::OriginalReaderFrontiers::Status::NoHit);
+  p.originalStructure.reset(); p.operations[1].accesses = {{1, true, false}};
+  p.body.children[1].originalOwner = o::NoControlId;
+  CHECK(o::captureOriginalStructure(p).success);
+  o::StorageFrontierAnalysis unrelated(p);
+  CHECK(unrelated.originalReaderFrontiers({o::NoAnalysisId, 0, o::Pipe(1)}).complete());
+  for (unsigned size : {16u, 32u, 64u}) {
+    p = base(); p.body = seq({});
+    for (unsigned i = 0; i < size; ++i) {
+      p.operations.push_back(op(1, 0, 1));
+      o::Region choice{o::Region::Choice, {leaf(i), seq({})}};
+      choice.originalOwner = i;
+      p.body.children.push_back(choice);
+    }
+    CHECK(o::captureOriginalStructure(p).success);
+    o::StorageFrontierAnalysis many(p);
+    o::ReaderIntervalQuery q{o::NoAnalysisId, 0, o::Pipe(1)};
+    CHECK(many.originalReaderFrontiers(q).status == o::OriginalReaderFrontiers::Status::Exact);
+    const auto work = many.stats();
+    CHECK(work.originalReadRegions == 3 * size + 1);
+    CHECK(work.participationNodes < 12 * size && work.readFrontierNodes < 12 * size);
+    CHECK(work.readCompositionParts == size);
+    for (unsigned repeat = 0; repeat != size; ++repeat) { CHECK(many.originalReaderFrontiers(q).complete()); }
+    CHECK(many.stats().originalReadRegions == work.originalReadRegions);
+    CHECK(many.stats().participationNodes == work.participationNodes);
+    CHECK(many.stats().readCompositionParts == work.readCompositionParts);
+  }
+}
+
 } // namespace
 int main() {
+  originalReadIntervals();
+  originalReadRefusalsAndScaling();
   classificationScaling();
   summaryIntervalsAndScaling();
   summarySparseClosure();

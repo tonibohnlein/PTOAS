@@ -1,5 +1,51 @@
 # OAHS current handoff
 
+## Completed Step T — guarded original read intervals
+
+Baseline S `2e516d2a4`. Validated immutable original syntax/effects survive
+analytical refinement through an explicit identity map. Shared D3 predicate and
+frontier DAGs derive first/last/nonempty over one named read-only interval.
+Native endpoint-vocabulary discovery consumes exact read results; first-write
+and unknown read cases retain checked marginal discovery. No protocol activation,
+placement, guard availability or completion credit is implied by these facts.
+Actual enclosing placement migration is still next, not declared complete.
+
+All three reviewers ACCEPT; bounded separate generality ACCEPT. Final 22 portable
+suites, three native drivers, 88/88 corpus, 18/19 compatibility (same inherited
+refusal), GEMM, two prefills and three targets pass. Every emitted plan is identical
+to S, so represented payload order and resources are unchanged. Native tests
+exercise a guarded reader through the real importer; portable tests exercise the
+real vocabulary consumer, empty/independent/alternative children, changing branch
+values per visit, reloads, no-hit unrelated control, malformed provenance,
+refined/periodic mappings and unknown footprints. Scaling at 16/32/64 readers
+shows shared DAG growth; repeated queries add no summary/composition work.
+No sanitizer, device or LaTeX run. D3 is already specified in the current draft;
+this checkpoint adds no theorem or ordinary-core/native extension claim.
+
+Evidence: `../oahs-gemm-base-builds/refactor-step-t/` (summary.json, source-pin.json,
+reviews.txt, test-all.log, validation.log, work.json). Physical-use, replay and
+ownership counters are unchanged. Reported endpoint discovery9325522->9325964;
+this counts derived regions/DAG nodes/composition, not all snapshot/index bytes
+or allocator work. Applicability preparation is sparse in represented incidences;
+no timing speedup claim. Distinct interval scans retain sum-of-lengths cost.
+F/G/L/R debts remain open.
+
+Restriction inventory and replacements: `oahs-selected-plan.md`, Step T.
+Counted-body nonemptiness==True and role retention in every mapped phase are
+sufficient current restrictions, not the general decoder. Unknown retains physical
+facts and existing service; irrelevant control does not require guard identity.
+Original identities are trusted import provenance; index validation does not prove
+semantic correspondence. Exact original predicates are occurrence-local and need
+separate endpoint availability/all-alias checks.
+
+Next U: shared write-delimited read segments feeding D3, existing-word guard
+applicability and paired occurrence checks, then replace enclosing marginal
+first/final interpretation. A partial write delimits a segment but does not kill
+older histories. Owner exit is an open continuation, never an implicit drain.
+Preserve publicationAfter transport, producer support and matching. Follow with
+residual-first activation of selected recurring support; do not invoke the old
+bulk recurring installer mid-traversal. Continue the same review/commit loop.
+
 ## Completed Step S — shared nearest-use boundary summaries
 
 Baseline R `b436c3db0`. The adopted continuation is recorded at the start of

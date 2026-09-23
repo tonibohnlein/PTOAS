@@ -883,6 +883,20 @@ module attributes {pto.target_arch = "a3"} {
     }));
     oahs::StorageFrontierAnalysis storage(report.program);
     require(storage.complete());
+    require(oahs::hasOriginalIdentityMap(report.program));
+    const auto& tree = report.program.originalStructure->body;
+    const auto choice = llvm::find_if(tree.children, [](const auto& region) {
+      return region.kind == oahs::Region::Choice;
+    });
+    require(choice != tree.children.end());
+    bool guardedRead = false;
+    for (const auto& access : report.program.operations[1].accesses) {
+      if (!access.read || access.write) { continue; }
+      const auto& readers = storage.originalReaderFrontiers(
+          {choice->originalOwner, access.cell, report.program.operations[1].pipe});
+      guardedRead |= readers.status == oahs::OriginalReaderFrontiers::Status::Exact && readers.nonempty > 1;
+    }
+    require(guardedRead);
     bool importedWriter = false;
     for (const auto& relation : storage.relationshipsAt(report.phaseCuts[1])) {
         if (relation.source.operation == 0 && relation.target.operation == 1) {

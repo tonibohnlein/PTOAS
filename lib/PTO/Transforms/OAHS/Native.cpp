@@ -204,6 +204,10 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
   if (failed(wire(function.getBody(), {}, 0, NoControlId)))
     return failure();
   out.program.observed = std::move(q);
+  const auto captured = captureOriginalStructure(out.program);
+  if (!captured.success) {
+    out.observationNotes.push_back("original structural query unavailable: " + captured.reason);
+  }
   if (policy == ObservationPolicy::OriginalControl) {
     return success();
   }
@@ -238,7 +242,9 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     }
     const auto& work = storage.stats();
     out.endpointDiscoveryWork = work.staticSites + work.forwardEvaluations + work.backwardEvaluations +
-        work.nearestUseEvaluations + work.useSummarySites + work.useSummaryEdges + requirements.size() +
+        work.nearestUseEvaluations + work.useSummarySites + work.useSummaryEdges +
+        work.originalReadRegions + work.participationNodes + work.readFrontierNodes +
+        work.readCompositionParts + requirements.size() +
         control.loopEntryPreparationSites +
         requirements.endpointClassificationWork() + control.transitionClassificationWork;
   }
@@ -535,6 +541,12 @@ LogicalResult import(func::FuncOp function, Import &out,
   for (auto [i, op] : llvm::enumerate(out.payload))
     operationIds[op] = i;
   std::vector<bool> represented(out.payload.size());
+  DenseMap<mlir::Operation*, std::size_t> originalAnchors;
+  function.walk<WalkOrder::PreOrder>([&](mlir::Operation* operation) {
+    if (operation != function.getOperation()) {
+      originalAnchors.try_emplace(operation, originalAnchors.size());
+    }
+  });
   std::function<Region(mlir::Region &)> importRegion =
       [&](mlir::Region &region) -> Region {
     Region sequence;
@@ -544,18 +556,23 @@ LogicalResult import(func::FuncOp function, Import &out,
         if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
           Region choice;
           choice.kind = Region::Choice;
+          choice.originalOwner = originalAnchors.lookup(&op);
           choice.children.push_back(importRegion(ifOp.getThenRegion()));
           choice.children.push_back(importRegion(ifOp.getElseRegion()));
           sequence.children.push_back(std::move(choice));
         } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
           Region loop;
           loop.kind = Region::For;
-          loop.zeroTripPossible = true;
+          loop.originalOwner = originalAnchors.lookup(&op);
+          const auto& domain = out.scalarFacts.domain(forOp);
+          loop.qualifiedCounted = bool(domain);
+          loop.zeroTripPossible = !domain || !domain->atLeastOnce;
           loop.children.push_back(importRegion(forOp.getRegion()));
           sequence.children.push_back(std::move(loop));
         } else if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
           Region loop;
           loop.kind = Region::While;
+          loop.originalOwner = originalAnchors.lookup(&op);
           loop.children.push_back(importRegion(whileOp.getBefore()));
           loop.children.push_back(importRegion(whileOp.getAfter()));
           sequence.children.push_back(std::move(loop));
@@ -563,6 +580,7 @@ LogicalResult import(func::FuncOp function, Import &out,
                    found != operationIds.end()) {
           Region phase;
           phase.kind = Region::Operation;
+          phase.originalOwner = originalAnchors.lookup(&op);
           phase.operation = found->second;
           represented[found->second] = true;
           sequence.children.push_back(std::move(phase));

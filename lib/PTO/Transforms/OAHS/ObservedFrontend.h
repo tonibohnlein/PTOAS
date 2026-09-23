@@ -75,6 +75,10 @@ ObservedImport makePeriodicLoop(const Program &body, unsigned period,
       return fail("supplied period does not preserve a selector");
   }
   out.program = body;
+  // This frontend introduces a new recurrence, rather than refining an existing
+  // original owner. Its optional structured provenance is not yet derived.
+  out.program.originalStructure.reset();
+  out.program.originalOperations.clear();
   out.program.operations.clear();
   out.program.body = {};
   for (unsigned residue = 0; residue < period; ++residue)
@@ -219,18 +223,20 @@ ObservedImport addStructuredBoundaryCuts(const Program &input) {
     q.scopes.push_back({kind, parent, owner});
     return id;
   };
-  std::function<std::pair<std::size_t, std::size_t>(const Region &,
+  std::function<std::pair<std::size_t, std::size_t>(Region &,
                                                     std::size_t)>
       build;
-  build = [&](const Region &r,
+  build = [&](Region &r,
               std::size_t context) -> std::pair<std::size_t, std::size_t> {
     const auto begin = node(
         r.kind == Region::Operation ? r.operation : NoControlId, context, true);
+    r.originalOwner = begin;
+    r.qualifiedCounted = r.kind == Region::For;
     if (r.kind == Region::Operation)
       return {begin, begin};
     if (r.kind == Region::Sequence) {
       auto last = begin;
-      for (const auto &child : r.children) {
+      for (auto &child : r.children) {
         auto block = build(child, context);
         q.sites[last].successors = {block.first};
         last = block.second;
@@ -277,6 +283,12 @@ ObservedImport addStructuredBoundaryCuts(const Program &input) {
   q.entry = root.first;
   q.exit = node(NoControlId, 0, true);
   q.sites[root.second].successors = {q.exit};
+  out.program.body = std::move(tree);
+  // Fresh owner assignment is the capture boundary for structured inputs.
+  out.program.originalStructure.reset();
+  out.program.originalOperations.clear();
+  const auto captured = captureOriginalStructure(out.program);
+  if (!captured.success) { out.reason = captured.reason; return out; }
   out.program.observed = std::move(q);
   for (std::size_t i = 0; i < input.operations.size(); ++i)
     out.originalPhases.push_back(i);
@@ -355,6 +367,10 @@ ObservedImport refineCountedLoop(const Program &input,
       return fail("invalid original residue decision");
   }
   out.program = input;
+  if (!hasOriginalIdentityMap(input)) {
+    out.program.originalStructure.reset();
+    out.program.originalOperations.clear();
+  }
   auto &q = *out.program.observed;
   std::map<std::size_t, std::vector<std::size_t>> phases;
   for (std::size_t i = 0; i < input.operations.size(); ++i)
@@ -377,6 +393,9 @@ ObservedImport refineCountedLoop(const Program &input,
       const auto id = residue ? out.program.operations.size() : binding.operation;
       if (residue) {
         out.program.operations.push_back(std::move(operation));
+        if (out.program.originalStructure) {
+          out.program.originalOperations.push_back(input.originalOperations[binding.operation]);
+        }
         out.originalPhases.push_back(binding.operation);
       } else out.program.operations[id] = std::move(operation);
       variants.push_back(id);

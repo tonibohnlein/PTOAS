@@ -49,11 +49,15 @@ residual-activated two-child derivation -> disjoint-copy/persistent source suppo
 consolidation/recovery. Same three-reviewer commit loop. Cost investigation runs
 throughout; no new synthesis or inactive policy experiments are prerequisites.
 
-S completed the bounded nearest-role projection and sparse shared query consumer;
-guarded owner/interval derivation remains unfinished. Active T captures immutable
-original structure/effects before refinement, then composes first/last/nonempty
-for one interval. Preserve original guard availability and refined correspondence.
-See HANDOFF for exact S evidence and remaining F/G/L/R debts.
+S completed the bounded nearest-role projection. T captures immutable original
+structure/effects and composes guarded first/last/nonempty over a named interval,
+with a real endpoint-vocabulary consumer. This is not actual placement migration.
+Next U: write-delimited read segments (not implicit generation kills), original
+frontier applicability at all existing word occurrences, and replacement of the
+remaining enclosing marginal endpoint interpretation. Preserve guard availability,
+paired owner correspondence, early source subscriptions and unknown may facts.
+Then residual-driven activation of prescribed finite support, rather than the
+current upfront recurring installer. See HANDOFF for evidence and F/G/L/R debts.
 
 ## Historical resumed implementation queue
 
