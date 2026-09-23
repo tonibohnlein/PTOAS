@@ -114,6 +114,8 @@ struct SelectedWork {
     uint64_t occurrenceAnalysisSites = 0;
     uint64_t boundaryAnalysisSites = 0;
     uint64_t physicalUseQuerySites = 0;
+    uint64_t requirementClassifications = 0, classificationSites = 0, classificationOrigins = 0;
+    uint64_t witnessQueries = 0, witnessSites = 0;
     uint64_t producerSupportWork = 0;
     // Native original-program discovery, before selected construction/retries.
     uint64_t nativeEndpointDiscoveryWork = 0;

@@ -160,6 +160,7 @@ void lifecycle()
     auto r = a.relationshipsAt(1);
     CHECK(r.size() == 1);
     auto provenance = a.describeRequirement(r[0]);
+    CHECK(a.classifyRequirement(r[0]) == provenance.reasons);
     CHECK(provenance.reasons & o::KnownReadiness);
     CHECK(provenance.reasons & o::AdditionalOverlap);
     CHECK(provenance.occurrence.kind == o::OccurrenceQualification::SingleVisit);
@@ -184,7 +185,7 @@ void lifecycle()
     p.body = seq({{o::Region::Choice, {leaf(0), seq({})}}, leaf(1), leaf(2)});
     o::StorageFrontierAnalysis branch(p);
     CHECK(branch.lifecycleAt(1, 0).mayHaveNoPriorFullWrite);
-    CHECK(!(branch.describeRequirement(branch.relationshipsAt(1)[0]).reasons & o::KnownReadiness));
+    CHECK(!(branch.classifyRequirement(branch.relationshipsAt(1)[0]) & o::KnownReadiness));
     // Read-only child sees both the outside writer and outside overwrite.
     p.body = seq({leaf(0), {o::Region::For, {leaf(1)}, 0, true}, leaf(2)});
     o::StorageFrontierAnalysis loop(p);

@@ -43,6 +43,39 @@ Ordinary completion endpoint `request` IDs index `decisions`. Endpoints with
 purpose `RecurringCompletion` index `channels`. Both kinds coexist in the same
 ledger; `channels` contains qualified physical access-role requests. Neither table supplies completion to the checker.
 
+## Requirement classification cost
+
+`StorageFrontierAnalysis::classifyRequirement` supplies immutable reason flags
+without constructing a provenance path. Incoming origin-bit membership proves a
+positive-length path without an intervening definite overwrite. RMW sources use
+the writer row. Canonical reuse classification needs only those original facts.
+
+Readiness still requires a distinct, nonrepeated full writer that is the sole
+incoming writer and dominates the consumer. The dominance condition is expressed
+by one cell-local absence bit: starting at entry, propagate until a full write,
+recording the incoming bit before stopping. Under the unique-full-writer premise,
+every initialized path contributes its last full writer to the incoming row;
+therefore absence of an uninitialized path is equivalent to writer dominance.
+A branch that bypasses the sole possible writer remains uninitialized. Shared
+original-control SCCs establish endpoint nonrecurrence. No selected credit is
+created by either query.
+
+Uniqueness is memoized per requested site/cell, absence reachability once per
+requested cell, and SCC classification once per analysis. For graph size N/E,
+cell writer population W_c and queried consumer population Q_c, the added work
+is O(N log N + E + sum_c(N + E + Q_c W_c)), plus relationship lookups. The SCC
+sort is inherited; this is not a near-linear bound for all storage analysis or
+construction. In particular, retained dense origin matrices and selected replay
+are separate costs. Ordinary classification no longer adds a graph walk for
+every relationship. Detailed witness paths are extracted only on explicit request.
+Counters separate classified relationships, setup sites, origin inspections and
+witness requests/visits.
+
+Grouping skips flags when no cross-engine residual exists and in the Overlap
+stage. It compares all current providers using the existing policy, selects only
+the first winner, then refreshes after actual receipt propagation. This removes
+unused ranking without changing the provider policy.
+
 ## Look-ahead and publication frontiers
 
 Known readiness/reuse and additional-overlap requirements retain separate

@@ -888,6 +888,10 @@ StoragePath StorageFrontierAnalysis::witness(std::size_t s, std::size_t t,
   return impl->path(s, t, c);
 }
 StorageLifecycle StorageFrontierAnalysis::lifecycleAt(std::size_t s, unsigned c) const { return impl->lifecycle(s, c); }
+unsigned StorageFrontierAnalysis::classifyRequirement(const StorageRelationship& r) const
+{
+    return impl->classify(r);
+}
 RequirementProvenance StorageFrontierAnalysis::describeRequirement(const StorageRelationship& r) const
 {
     return impl->describe(r);

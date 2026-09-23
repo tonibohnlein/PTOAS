@@ -6,70 +6,14 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedInternal.h"
+#include "ControlComponents.h"
 #include <algorithm>
 #include <functional>
 #include <queue>
 
 namespace mlir::pto::oahs::selected {
 namespace {
-// Iterative DFS avoids making compiler stack depth depend on source nesting.
-std::vector<Id> finishingOrder(const detail::ControlGraph& graph, const std::vector<bool>& reachable)
-{
-    std::vector<bool> seen(graph.sites.size());
-    std::vector<Id> order;
-    for (Id root = 0; root < graph.sites.size(); ++root) {
-        if (!reachable[root] || seen[root]) {
-            continue;
-        }
-        std::vector<std::pair<Id, Id>> stack{{root, 0}};
-        seen[root] = true;
-        while (!stack.empty()) {
-            auto& frame = stack.back();
-            const auto& successors = graph.sites[frame.first].successors;
-            if (frame.second == successors.size()) {
-                order.push_back(frame.first);
-                stack.pop_back();
-                continue;
-            }
-            const auto next = successors[frame.second++];
-            if (!seen[next]) {
-                seen[next] = true;
-                stack.emplace_back(next, 0);
-            }
-        }
-    }
-    return order;
-}
-std::vector<std::vector<Id>> strongComponents(
-    const detail::ControlGraph& graph, const std::vector<std::vector<Id>>& predecessors,
-    const std::vector<bool>& reachable, std::vector<Id>& membership)
-{
-    auto order = finishingOrder(graph, reachable);
-    std::vector<std::vector<Id>> groups;
-    membership.assign(graph.sites.size(), NoAnalysisId);
-    for (auto at = order.rbegin(); at != order.rend(); ++at) {
-        if (membership[*at] != NoAnalysisId) {
-            continue;
-        }
-        const auto group = groups.size();
-        groups.emplace_back();
-        std::vector<Id> todo{*at};
-        membership[*at] = group;
-        while (!todo.empty()) {
-            const auto site = todo.back();
-            todo.pop_back();
-            groups.back().push_back(site);
-            for (auto before : predecessors[site]) {
-                if (reachable[before] && membership[before] == NoAnalysisId) {
-                    membership[before] = group;
-                    todo.push_back(before);
-                }
-            }
-        }
-        std::sort(groups.back().begin(), groups.back().end());
-    }
-    return groups;
-}
+using detail::strongComponents;
 Id rank(const detail::ControlGraph& graph, Id site)
 {
     return site < graph.cutRanks.size() ? graph.cutRanks[site] : site;

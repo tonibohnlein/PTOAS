@@ -276,11 +276,10 @@ struct ReaderParticipation {
 // token, or permission to merge requirements that happen to use one pipeline.
 struct RequirementFrontier {
     StorageRelationship relationship;
-    // Priority/occurrence provenance is enriched once, on demand, because
-    // native import probes recurring eligibility for several candidate loops.
-    // The source/deadline relationship itself is always indexed eagerly.
-    mutable RequirementProvenance provenance;
-    mutable bool described = false;
+    // Cheap flags are queried lazily; detailed witness paths are not needed
+    // to select a provider. The original relationship is indexed eagerly.
+    mutable unsigned reasons = AdditionalOverlap;
+    mutable bool classified = false;
     RequirementOccurrence occurrence = RequirementOccurrence::Unknown;
     Pipe source = Pipe::S, observer = Pipe::S;
     Id access = NoAnalysisId;

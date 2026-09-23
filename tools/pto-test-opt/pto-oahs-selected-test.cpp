@@ -1472,6 +1472,10 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " occurrence_sites=" << work.occurrenceAnalysisSites
                  << " boundary_sites=" << work.boundaryAnalysisSites
                  << " physical_use_sites=" << work.physicalUseQuerySites
+                 << " requirement_classifications=" << work.requirementClassifications
+                 << " classification_sites=" << work.classificationSites
+                 << " classification_origins=" << work.classificationOrigins
+                 << " witness_queries=" << work.witnessQueries << " witness_sites=" << work.witnessSites
                  << " producer_support_work=" << work.producerSupportWork
                  << " unsummarized_backedges=" << work.unsummarizedBackedges
                  << " finite_occurrence_transitions=" << work.finiteOccurrenceTransitions

@@ -204,11 +204,11 @@ std::map<Id, unsigned> RequirementFrontiers::reasons(Cut site) const
         return out;
     }
     for (auto& frontier : byDeadline[site]) {
-        if (!frontier.described) {
-            frontier.provenance = storage->describeRequirement(frontier.relationship);
-            frontier.described = true;
+        if (!frontier.classified) {
+            frontier.reasons = storage->classifyRequirement(frontier.relationship);
+            frontier.classified = true;
         }
-        out[frontier.access] |= frontier.provenance.reasons;
+        out[frontier.access] |= frontier.reasons;
     }
     return out;
 }

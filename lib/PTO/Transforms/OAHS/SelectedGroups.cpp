@@ -292,8 +292,11 @@ Group Constructor::sourceGroup(
 std::vector<Group> Constructor::groups(
     const std::vector<FrontierRequirement>& all, RequirementStage stage)
 {
-    const auto labels = reasons(current);
     const auto observer = program.operations[control.graph.operations[current]].pipe;
+    if (std::none_of(all.begin(), all.end(), [&](const auto& r) { return r.source != observer; })) {
+        return {};
+    }
+    const auto labels = stage == RequirementStage::Known ? reasons(current) : std::map<Id, unsigned>{};
     std::map<Pipe, std::vector<FrontierRequirement>> sources;
     for (const auto& r : all) {
         const auto found = labels.find(accessClass(r));
@@ -307,7 +310,7 @@ std::vector<Group> Constructor::groups(
     for (const auto& source : sources) {
         pending.push_back(sourceGroup(source.first, source.second, all));
     }
-    while (!pending.empty()) {
+    if (!pending.empty()) {
         Id selected = NoAnalysisId;
         for (Id i = 0; i < pending.size(); ++i) {
             bool maximal = true;
@@ -330,7 +333,7 @@ std::vector<Group> Constructor::groups(
             }
         }
         ordered.push_back(std::move(pending[selected]));
-        pending.erase(pending.begin() + selected);
+        // Actual receipt propagation invalidates the remaining ranking.
     }
     return ordered;
 }

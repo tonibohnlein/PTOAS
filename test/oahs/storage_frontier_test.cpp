@@ -85,6 +85,88 @@ bool path(const o::Program &p, const o::detail::ControlGraph &g, std::size_t s,
   }
   return false;
 }
+// Independent graph definition of the former flags, deliberately keeping
+// path/dominance queries in this test oracle rather than in construction.
+bool reaches(const o::detail::ControlGraph& graph, std::vector<std::size_t> pending,
+             std::size_t target, std::size_t excluded = o::NoAnalysisId)
+{
+    std::vector<bool> seen(graph.sites.size());
+    while (!pending.empty()) {
+        const auto at = pending.back();
+        pending.pop_back();
+        if (at == excluded || seen[at]) {
+            continue;
+        }
+        if (at == target) {
+            return true;
+        }
+        seen[at] = true;
+        for (auto next : graph.sites[at].successors) {
+            pending.push_back(next);
+        }
+    }
+    return false;
+}
+unsigned originalFlags(const o::Program& p, const o::detail::ControlGraph& graph,
+                       const o::StorageFrontierAnalysis& analysis, const o::StorageRelationship& r)
+{
+    unsigned flags = o::AdditionalOverlap;
+    const auto s = r.source.site, t = r.target.site;
+    if (!reaches(graph, {graph.entry}, s) || !reaches(graph, {graph.entry}, t) || !path(p, graph, s, t, r.cell)) {
+        return flags;
+    }
+    const auto source = access(p, s, r.cell), target = access(p, t, r.cell);
+    const bool reuse = target.write && ((r.kind == o::StorageRelationship::WAR && source.read) ||
+                                       (r.kind == o::StorageRelationship::WAW && source.write));
+    if (reuse && p.cells[r.cell].storage == o::Cell::Storage::CanonicalInterval) {
+        flags |= o::KnownReuse;
+    }
+    const auto writers = analysis.previousWriters(t, r.cell);
+    if (r.kind == o::StorageRelationship::RAW && source.write && target.read && source.definiteWrite &&
+        writers.size() == 1 && writers.front().site == s && s != t &&
+        !reaches(graph, {graph.entry}, t, s) && !reaches(graph, graph.sites[s].successors, s) &&
+        !reaches(graph, graph.sites[t].successors, t)) {
+        flags |= o::KnownReadiness;
+    }
+    return flags;
+}
+void classificationScaling()
+{
+    for (unsigned count : {4u, 8u, 16u, 32u}) {
+        for (bool singleton : {false, true}) {
+            auto p = base();
+            const auto writers = singleton ? 1u : count;
+            for (unsigned i = 0; i < writers; ++i) {
+                p.operations.push_back(op(0, 0, 2));
+            }
+            auto alternatives = leaf(0);
+            for (unsigned i = 1; i < writers; ++i) {
+                alternatives = {o::Region::Choice, {alternatives, leaf(i)}};
+            }
+            p.body = seq({alternatives});
+            for (unsigned i = 0; i < count; ++i) {
+                p.operations.push_back(op(1, 0, 1));
+                p.body.children.push_back(leaf(writers + i));
+            }
+            o::StorageFrontierAnalysis analysis(p);
+            CHECK(analysis.complete());
+            for (unsigned i = 0; i < count; ++i) {
+                for (const auto& r : analysis.relationshipsAt(writers + i)) {
+                    const auto flags = analysis.classifyRequirement(r);
+                    CHECK(bool(flags & o::KnownReadiness) == singleton);
+                }
+            }
+            const auto& work = analysis.stats();
+            CHECK(work.classificationQueries == writers * count);
+            CHECK(work.witnessQueries == 0 && work.witnessSites == 0);
+            CHECK(work.classificationSites <= 2 * work.staticSites);
+            CHECK(work.classificationOrigins <= writers * count);
+            std::cout << "classification writers=" << writers << " readers=" << count
+                      << " pairs=" << work.classificationQueries << " sites=" << work.classificationSites
+                      << " origins=" << work.classificationOrigins << '\n';
+        }
+    }
+}
 void sparseMatchesAll(const o::Program &p,
                       const std::vector<unsigned> &visits) {
   using Matrix = std::vector<std::vector<bool>>;
@@ -134,6 +216,7 @@ void sparseMatchesAll(const o::Program &p,
 
 } // namespace
 int main() {
+  classificationScaling();
   {
     auto p = base();
     p.operations = {op(0, 0, 2), op(1, 0, 1), op(1, 0, 1), op(0, 0, 2)};
@@ -187,6 +270,11 @@ int main() {
            {o::Region::While,
             {seq({leaf(1), {o::Region::Choice, {leaf(2), leaf(3)}}}), leaf(4)}},
            leaf(5)});
+    for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
+        p.cells[cell].storage = o::Cell::Storage::CanonicalInterval;
+        p.cells[cell].coordinateSpace = "physical";
+        p.cells[cell].ranges = {{cell * 16u, 16}};
+    }
     auto g = o::detail::buildControlGraph(p);
     o::StorageFrontierAnalysis f(p);
     CHECK(f.complete());
@@ -198,6 +286,13 @@ int main() {
         for (std::size_t t = 0; t < 6; ++t) {
           const auto a = access(p, s, c), b = access(p, t, c);
           const bool exists = path(p, g, s, t, c);
+          if (a.read || a.write) {
+              for (auto kind : {o::StorageRelationship::RAW, o::StorageRelationship::WAR,
+                                o::StorageRelationship::WAW}) {
+                  o::StorageRelationship r{kind, c, {s}, {t}};
+                  CHECK(f.classifyRequirement(r) == originalFlags(p, g, f, r));
+              }
+          }
           if (a.write) {
             CHECK(has(f.previousWriters(t, c), s) == exists);
             ++relations;

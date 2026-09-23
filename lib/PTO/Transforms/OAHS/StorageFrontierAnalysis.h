@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #ifndef PTO_OAHS_STORAGE_FRONTIER_ANALYSIS_H
 #define PTO_OAHS_STORAGE_FRONTIER_ANALYSIS_H
-#include "Control.h"
+#include "ControlComponents.h"
 #include "PTO/Transforms/OAHS/StorageFrontiers.h"
 #include <algorithm>
 #include <deque>
@@ -60,15 +60,19 @@ struct StorageFrontierAnalysis::Impl {
   std::vector<bool> reachable;
   struct CellInfo {
     std::vector<StorageOrigin> origins;
+    std::vector<std::size_t> writerOrigins;
     std::vector<std::size_t> originAt;
     std::vector<Access> accessAt;
     storage_detail::Matrix fw, fr, bw, br;
+    mutable std::vector<bool> withoutFullWriter;
+    mutable std::map<std::size_t, std::size_t> uniqueWriters;
   };
   std::vector<CellInfo> cells;
   using UseQuery = std::tuple<unsigned, std::vector<std::size_t>,
                               std::vector<std::size_t>, bool>;
   std::map<UseQuery, PhysicalUseFrontier> useFrontiers;
-  StorageFrontierStats statistics;
+  mutable StorageFrontierStats statistics;
+  mutable std::vector<bool> repeatedSites;
   bool ok = false;
   std::string error;
   std::size_t operationAt(std::size_t s) const { return graph.operations[s]; }
@@ -126,6 +130,9 @@ struct StorageFrontierAnalysis::Impl {
         if (a.read || a.write) {
           info.originAt[s] = info.origins.size();
           info.origins.push_back(origin(s));
+          if (a.write) {
+              info.writerOrigins.push_back(info.originAt[s]);
+          }
         }
       }
       const auto count = info.origins.size();
@@ -202,6 +209,7 @@ struct StorageFrontierAnalysis::Impl {
     if (!ok || s >= reachable.size() || t >= reachable.size() ||
         cell >= cells.size() || !reachable[s] || !reachable[t])
       return out;
+    ++statistics.witnessQueries;
     std::vector<std::size_t> parent(reachable.size(), NoAnalysisId);
     std::deque<std::size_t> queue;
     for (auto v : graph.sites[s].successors)
@@ -213,6 +221,7 @@ struct StorageFrontierAnalysis::Impl {
     while (!queue.empty()) {
       const auto v = queue.front();
       queue.pop_front();
+      ++statistics.witnessSites;
       if (v == t) {
         found = true;
         break;
@@ -272,6 +281,105 @@ struct StorageFrontierAnalysis::Impl {
   {
       return reaches(graph.sites[s].successors, s, [](std::size_t) { return false; });
   }
+  bool cyclicSite(std::size_t site) const
+  {
+      if (repeatedSites.empty()) {
+          std::vector<std::size_t> membership;
+          const auto groups = detail::strongComponents(graph, predecessors, reachable, membership);
+          repeatedSites.resize(graph.sites.size());
+          statistics.classificationSites += graph.sites.size();
+          for (const auto& group : groups) {
+              const bool cyclic = group.size() > 1 ||
+                  std::find(graph.sites[group.front()].successors.begin(),
+                            graph.sites[group.front()].successors.end(), group.front()) !=
+                      graph.sites[group.front()].successors.end();
+              for (auto at : group) {
+                  repeatedSites[at] = cyclic;
+              }
+          }
+      }
+      return repeatedSites[site];
+  }
+  bool uninitialized(std::size_t site, unsigned cell) const
+  {
+      auto& absent = cells[cell].withoutFullWriter;
+      if (absent.empty()) {
+          absent.resize(graph.sites.size());
+          std::vector<std::size_t> pending{graph.entry};
+          absent[graph.entry] = true;
+          while (!pending.empty()) {
+              const auto at = pending.back();
+              pending.pop_back();
+              ++statistics.classificationSites;
+              // This is the incoming fact: a write at the target cannot
+              // initialize its own read. Only outgoing paths are stopped.
+              if (cells[cell].accessAt[at].definiteWrite) {
+                  continue;
+              }
+              for (auto next : graph.sites[at].successors) {
+                  if (!absent[next]) {
+                      absent[next] = true;
+                      pending.push_back(next);
+                  }
+              }
+          }
+      }
+      return absent[site];
+  }
+  std::size_t uniqueWriter(std::size_t site, unsigned cell) const
+  {
+      const auto& info = cells[cell];
+      const auto cached = info.uniqueWriters.find(site);
+      if (cached != info.uniqueWriters.end()) {
+          return cached->second;
+      }
+      auto writer = NoAnalysisId;
+      for (auto i : info.writerOrigins) {
+          ++statistics.classificationOrigins;
+          if (info.fw.test(site, i)) {
+              if (writer != NoAnalysisId) {
+                  writer = NoAnalysisId;
+                  break;
+              }
+              writer = info.origins[i].site;
+          }
+      }
+      info.uniqueWriters.emplace(site, writer);
+      return writer;
+  }
+  unsigned classify(const StorageRelationship& relationship) const
+  {
+      ++statistics.classificationQueries;
+      const auto s = relationship.source.site, t = relationship.target.site;
+      const auto cell = relationship.cell;
+      unsigned flags = AdditionalOverlap;
+      if (!ok || s >= reachable.size() || t >= reachable.size() || cell >= cells.size() ||
+          !reachable[s] || !reachable[t]) {
+          return flags;
+      }
+      const auto& info = cells[cell];
+      const auto& source = info.accessAt[s];
+      const auto& target = info.accessAt[t];
+      const auto index = info.originAt[s];
+      // Original incoming provenance encodes positive-length paths with no
+      // intervening definite overwrite. RMW origins occupy the writer row.
+      if (index == NoAnalysisId || !(source.write ? info.fw : info.fr).test(t, index)) {
+          return flags;
+      }
+      const bool raw = relationship.kind == StorageRelationship::RAW && source.write && target.read;
+      const bool reuse = target.write && ((relationship.kind == StorageRelationship::WAR && source.read) ||
+                                         (relationship.kind == StorageRelationship::WAW && source.write));
+      if (reuse && program.cells[cell].storage == Cell::Storage::CanonicalInterval) {
+          flags |= KnownReuse;
+      }
+      // A unique full writer dominates exactly when there is no uninitialized
+      // entry path: every other path contributes its last full writer to fw.
+      if (raw && source.definiteWrite && s != t && uniqueWriter(t, cell) == s &&
+          !uninitialized(t, cell) && !cyclicSite(s) && !cyclicSite(t)) {
+          flags |= KnownReadiness;
+      }
+      return flags;
+  }
   StorageLifecycle lifecycle(std::size_t s, unsigned cell) const
   {
       StorageLifecycle out;
@@ -322,19 +430,7 @@ struct StorageFrontierAnalysis::Impl {
       const bool dominates = !reaches({graph.entry}, t, [&](std::size_t at) { return at == s; });
       if (s != t && dominates && !repeated(s) && !repeated(t))
           out.occurrence.kind = OccurrenceQualification::SingleVisit;
-      const auto& source = cells[r.cell].accessAt[s];
-      const auto& target = cells[r.cell].accessAt[t];
-      const bool raw = r.kind == StorageRelationship::RAW && source.write && target.read;
-      const bool reuse = target.write && ((r.kind == StorageRelationship::WAR && source.read) ||
-                                          (r.kind == StorageRelationship::WAW && source.write));
-      if (reuse && program.cells[r.cell].storage == Cell::Storage::CanonicalInterval)
-          out.reasons |= KnownReuse;
-      // A full writer dominates this single visit, and no alternative/partial
-      // writer intervenes. Mutable SSA identity is deliberately not consulted.
-      const auto writers = query(t, r.cell, 0);
-      if (raw && source.definiteWrite && writers.size() == 1 && writers.front().site == s &&
-          out.occurrence.kind == OccurrenceQualification::SingleVisit)
-          out.reasons |= KnownReadiness;
+      out.reasons = classify(r);
       return out;
   }
 };

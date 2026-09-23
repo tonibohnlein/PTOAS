@@ -1,5 +1,39 @@
 # OAHS current handoff
 
+## Current iteration — Step I witness-free requirement classification
+
+Baseline `2f08f364f`. Ordinary reason flags now use original provenance-bit
+membership rather than extracting a path per relationship. Unique full-writer
+classification uses an incoming absence-of-full-write bit, shared original SCCs
+and a writer-only incidence index; branch bypasses remain unknown readiness.
+The conditional dominance equivalence and cost argument are documented in
+`oahs-selected-plan.md`. Detailed paths remain explicitly available for proofs
+and diagnostics. Grouping skips unused classifications and computes only the
+same first winning provider before refreshing actual credit.
+
+All three reviewers ACCEPT. All22 portable suites and three native drivers pass.
+88/88 corpus,18/19 compatibility (same inherited refusal),GEMM,two prefills and
+three targets have identical plans and outcomes to H. Exact bytes establish
+unchanged emitted ordering/resources here; no redundant payload-order enumeration
+was run. Evidence: `../oahs-gemm-base-builds/refactor-step-i/` (pinned candidate,
+inputs, results, scaling, logs and commit record). The native corpus records
+311402 classified relationships and zero witness queries. In the isolated scaling
+family32 writers/32 readers produce1024 classifications and64 writer inspections;
+one writer/32 readers requires32 inspections. Replay debt from F/G remains.
+Three compliance bracing matches are inspected regex false positives; every
+reported body has braces. No sanitizer or device campaign. The accidentally
+broader native target was stopped; the established focused object/archive recipe
+completed validation within the two-worker limit. Use that recipe next, not the
+full transforms target. The tracked env.sh is stale; the validated local contract
+is `../oahs-gemm-base-builds/workspace-local-backup/env.local.sh`.
+
+Next: stable neighboring-endpoint gaps and revision-bound packet materialization,
+then publication-support revalidation and persistent generation support. Ordinary,
+joined and common-cut clients must converge without adding a full-program solve
+for every ordinary candidate. Preserve the normal-constructor repeated-join
+acceptance witness. Continue through the resumed queue in `oahs-todo.md` with one
+reviewed commit per coherent increment; stages1–5 are not closed by Step I.
+
 ## Current iteration — Step H access-scoped ACC histories
 
 Step G committed `e7c21d67d`. The whole-cell ACC eligibility flag is removed.

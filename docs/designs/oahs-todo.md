@@ -40,6 +40,25 @@ Cost track: extract measured plan-equivalent reductions with their consumers;
 new caches/region execution require evidence and invalidation tests. Two local
 resource-intensive workers maximum in aggregate.
 
+## Resumed implementation queue
+
+1. Classification cost: cheap original reason flags separated from witness paths,
+   shared site/cell facts, unused-classification fast paths and next-provider-only
+   selection. Preserve classification/policy; validate scaling and exact plans.
+2. Stable ordered gaps and common packet binding, including ordinary and joined
+   acknowledgments. Preserve publication-prefix dependencies across edits; add a
+   normal-constructor recurring joined-consumption witness.
+3. Persistent generation support for publications, consumer prerequisites and
+   continuations. Replace the overwrite guard/enclosing protocol-admission gate
+   only when shared semantic certificates cover their existing obligations.
+4. Actual required-return sharing and deadline-driven rearming through the common
+   interfaces, followed by outstanding F/G ordering recovery and consolidation.
+
+Each coherent increment requires architecture, correctness and asymptotic-cost
+review acceptance before its commit. Different selected ledger revisions are not
+by themselves evidence of acceptable aggregate cost. Existing unresolved and empty
+finite traces remain unresolved, not quality evidence.
+
 ## Historical GEMM checkpoint and parked findings
 
 The following source-checkpoint notes are historical. Event counts, old milestone

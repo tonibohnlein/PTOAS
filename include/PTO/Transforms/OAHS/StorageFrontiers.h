@@ -85,6 +85,8 @@ struct StorageFrontierStats {
   std::size_t staticSites = 0, originIncidences = 0, storageWords = 0;
   std::size_t forwardEvaluations = 0, backwardEvaluations = 0;
   std::size_t nearestUseEvaluations = 0;
+  std::size_t classificationQueries = 0, classificationSites = 0, classificationOrigins = 0;
+  std::size_t witnessQueries = 0, witnessSites = 0;
 };
 // Owns ORIGINAL effects/control; no candidate commands are an input.
 // Marginal witnesses are existential paths, never completion certificates.
@@ -108,6 +110,8 @@ public:
   std::vector<StorageOrigin> nextReaders(std::size_t site, unsigned cell) const;
   std::vector<StorageRelationship> relationshipsAt(std::size_t site) const;
   StorageLifecycle lifecycleAt(std::size_t site, unsigned cell) const;
+  // Cheap original reason flags; does not extract a witness path.
+  unsigned classifyRequirement(const StorageRelationship&) const;
   RequirementProvenance describeRequirement(const StorageRelationship&) const;
   // Positive length, including source==target through recurrence. Weak writes
   // retain incoming origins; definiteWriteFree records that loss of precision.
