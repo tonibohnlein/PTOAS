@@ -299,7 +299,7 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
             ready.supportSeeds.push_back(canonicalCommandCut(p, site));
             continue;
         }
-        const auto& participation = frontiers.readerParticipation(site, cell);
+        const auto& participation = frontiers.readerBoundaries(site, cell, loop.owner);
         if (!participation.proved()) {
             return {};
         }
@@ -308,16 +308,19 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
                 if (!c.reachable[occurrence]) {
                     continue;
                 }
-                const auto& other = frontiers.readerParticipation(occurrence, cell);
-                if (!other.proved() || other.first != participation.first || other.final != participation.final) {
+                const auto& other = frontiers.readerBoundaries(occurrence, cell, loop.owner);
+                const bool sameRoles = other.first.status == participation.first.status &&
+                    other.final.status == participation.final.status;
+                const bool compatible = other.proved() && sameRoles;
+                if (!compatible) {
                     return {};
                 }
             }
         }
-        if (participation.first) {
+        if (participation.first.hit()) {
             ready.acquisitions.push_back(canonicalCommandCut(p, site));
         }
-        if (participation.final) {
+        if (participation.final.hit()) {
             release.publications.push_back(endpoint);
         }
     }

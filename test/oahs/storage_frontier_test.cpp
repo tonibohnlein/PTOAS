@@ -214,9 +214,141 @@ void sparseMatchesAll(const o::Program &p,
   CHECK(edges(all) == edges(sparse));
 }
 
+// The origin enumerator is deliberately independent of the compact fixed point.
+void summaryMatchesOrigins(const o::Program& p, const o::detail::ControlGraph& graph,
+                           o::StorageFrontierAnalysis& facts) {
+  for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
+    for (std::size_t site = 0; site < graph.sites.size(); ++site) {
+      for (bool backward : {false, true}) {
+        for (const auto& stops : {std::vector<std::size_t>{}, std::vector<std::size_t>{site}}) {
+          const auto& exact = facts.nearestUses({site}, cell, stops, backward);
+          unsigned roles = 0;
+          for (const auto& origin : exact.accesses) {
+            const auto a = access(p, origin.operation, cell);
+            roles |= a.read && a.write ? o::PhysicalUseSummary::ReadWrite :
+                a.read ? o::PhysicalUseSummary::Read :
+                a.definiteWrite ? o::PhysicalUseSummary::FullWrite : o::PhysicalUseSummary::PartialWrite;
+          }
+          for (auto boundary : exact.boundaries) {
+            roles |= std::find(stops.begin(), stops.end(), boundary) != stops.end() ?
+                o::PhysicalUseSummary::IntervalStop :
+                backward ? o::PhysicalUseSummary::Entry : o::PhysicalUseSummary::Exit;
+          }
+          o::OriginalUseQuery query;
+          query.cell = cell;
+          query.starts.assign(1, site);
+          query.stops = stops;
+          query.backward = backward;
+          const auto summary = facts.nearestUseSummary(query);
+          CHECK(summary.complete() && summary.roles == roles);
+        }
+        o::OriginalUseQuery exclusive;
+        exclusive.cell = cell;
+        exclusive.starts.assign(1, site);
+        exclusive.backward = backward;
+        exclusive.includeStarts = false;
+        o::OriginalUseQuery inclusive = exclusive;
+        inclusive.includeStarts = true;
+        inclusive.starts.clear();
+        if (backward) {
+          for (std::size_t from = 0; from < graph.sites.size(); ++from) {
+            for (auto to : graph.sites[from].successors) {
+              if (to == site) { inclusive.starts.push_back(from); }
+            }
+          }
+        } else { inclusive.starts = graph.sites[site].successors; }
+        auto expected = facts.nearestUseSummary(inclusive).roles;
+        const bool boundary = inclusive.starts.empty() || (backward && site == graph.entry);
+        if (boundary) {
+          expected = backward ? o::PhysicalUseSummary::Entry : o::PhysicalUseSummary::Exit;
+        }
+        CHECK(facts.nearestUseSummary(exclusive).roles == expected);
+
+      }
+    }
+  }
+}
+void summarySparseClosure() {
+  auto p = base();
+  o::ObservedControl graph;
+  graph.qualification = "test original alternative with a closed access-free cycle";
+  graph.scopes = {{0, o::NoControlId, o::NoControlId}};
+  graph.entry = 0;
+  graph.exit = 2;
+  graph.sites.resize(3);
+  graph.sites[0].successors = {1, 2};
+  graph.sites[1].successors = {1};
+  for (std::size_t site = 0; site < 3; ++site) {
+    graph.sites[site].observation = site;
+    graph.observations.push_back({site, {}, true});
+  }
+  p.observed = graph;
+  o::StorageFrontierAnalysis facts(p);
+  CHECK(facts.complete());
+  o::OriginalUseQuery query;
+  query.starts.assign(1, 1);
+  auto cycle = facts.nearestUseSummary(query);
+  CHECK(cycle.status == o::PhysicalUseSummary::Status::NoHit && cycle.roles == 0);
+  const auto work = facts.stats().useSummarySites;
+  CHECK(facts.nearestUseSummary(query).roles == 0 && facts.stats().useSummarySites == work);
+  query.starts.assign(1, 0);
+  CHECK(facts.nearestUseSummary(query).roles == o::PhysicalUseSummary::Exit);
+  CHECK(facts.stats().useSummarySolves == 2);
+  const auto joinedWork = facts.stats().useSummarySites;
+  query.starts.assign(1, 1);
+  CHECK(facts.nearestUseSummary(query).roles == 0 && facts.stats().useSummarySites == joinedWork);
+
+  p = base();
+  p.operations.push_back(op(1, 0, 1));
+  for (unsigned i = 0; i < 256; ++i) { p.operations.push_back(op(0, 1, 0)); }
+  o::StorageFrontierAnalysis sparse(p);
+  query.starts.assign(1, 0);
+  CHECK(sparse.nearestUseSummary(query).roles == o::PhysicalUseSummary::Read);
+  CHECK(sparse.stats().useSummarySites == 2 && sparse.stats().useSummaryEdges == 0);
+}
+
+void summaryIntervalsAndScaling() {
+  for (unsigned length : {16u, 64u, 256u}) {
+    auto p = base();
+    for (unsigned i = 0; i < length; ++i) { p.operations.push_back(op(0, 1, 0)); }
+    p.operations.push_back(op(1, 0, 1));
+    o::StorageFrontierAnalysis facts(p);
+    o::OriginalUseQuery query;
+    query.starts.assign(1, 0);
+    CHECK(facts.nearestUseSummary(query).roles == o::PhysicalUseSummary::Read);
+    const auto work = facts.stats().useSummarySites;
+    for (unsigned i = 0; i < length; ++i) {
+      query.starts.assign(1, i);
+      CHECK(facts.nearestUseSummary(query).roles == o::PhysicalUseSummary::Read);
+    }
+    CHECK(facts.stats().useSummarySolves == 1 && facts.stats().useSummarySites == work);
+    CHECK(work <= 3 * (length + 2));
+    query.starts.assign(1, 0);
+    query.stops.assign(1, length);
+    CHECK(facts.nearestUseSummary(query).roles == o::PhysicalUseSummary::IntervalStop);
+    query.includeStops = true;
+    CHECK(facts.nearestUseSummary(query).roles == o::PhysicalUseSummary::Read);
+    query.starts.assign(1, length);
+    query.includeStarts = false;
+    const auto empty = facts.nearestUseSummary(query);
+    CHECK(empty.status == o::PhysicalUseSummary::Status::NoHit &&
+          empty.roles == o::PhysicalUseSummary::IntervalStop);
+    query.starts.assign(1, length + 100);
+    CHECK(!facts.nearestUseSummary(query).complete());
+    query.starts.assign(1, 0);
+    query.owner = length + 100;
+    CHECK(!facts.nearestUseSummary(query).complete());
+    query.owner = o::NoAnalysisId;
+    query.occurrence = length + 100;
+    CHECK(!facts.nearestUseSummary(query).complete());
+  }
+}
+
 } // namespace
 int main() {
   classificationScaling();
+  summaryIntervalsAndScaling();
+  summarySparseClosure();
   {
     auto p = base();
     p.operations = {op(0, 0, 2), op(1, 0, 1), op(1, 0, 1), op(0, 0, 2)};
@@ -278,6 +410,7 @@ int main() {
     auto g = o::detail::buildControlGraph(p);
     o::StorageFrontierAnalysis f(p);
     CHECK(f.complete());
+    summaryMatchesOrigins(p, g, f);
     if (trial % 3)
       for (const auto &walk : oahs_oracle::traces(p, 2))
         sparseMatchesAll(p, walk);

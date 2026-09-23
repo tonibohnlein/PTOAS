@@ -108,7 +108,8 @@ SelectedPlan Constructor::run(const Commands& fixed, bool useRecurring)
         result.work.sourceHandles = result.sources.size();
         result.work.occurrenceAnalysisSites = control.occurrenceAnalysisSites;
         result.work.boundaryAnalysisSites = control.boundaryAnalysisSites;
-        result.work.physicalUseQuerySites = storage.stats().nearestUseEvaluations;
+        result.work.physicalUseQuerySites = storage.stats().nearestUseEvaluations +
+            storage.stats().useSummarySites + storage.stats().useSummaryEdges;
         result.work.requirementClassifications = storage.stats().classificationQueries;
         result.work.classificationSites = storage.stats().classificationSites;
         result.work.classificationOrigins = storage.stats().classificationOrigins;

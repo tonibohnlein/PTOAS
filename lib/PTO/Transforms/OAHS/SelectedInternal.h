@@ -314,16 +314,23 @@ struct LifecycleUse {
     Cut release = NoAnalysisId;
     std::vector<Cut> deadlines, returns;
 };
-// Participation of a physical read within a write/read episode. Marginal
-// nearest-use facts include accesses outside lexical owners. Mixed participation
-// is unknown; neither a write nor a boundary implies acquired completion.
-struct ReaderParticipation {
-    ProofOutcome outcome = ProofOutcome::Unknown;
-    bool first = false, final = false;
+// Exact eligibility at an existing original endpoint, not a synthesized guard.
+// NoHit is relative to this candidate occurrence; Unknown retains adjacent may facts.
+struct ReaderEndpoint {
+    enum class Status { Unknown, NoHit, Exact } status = Status::Unknown;
+    Cut site = NoAnalysisId;
+    Id observation = NoAnalysisId;
+    bool hit() const { return status == Status::Exact; }
+};
+struct ReaderFrontiers {
+    Id owner = NoAnalysisId;
+    ReaderEndpoint first, final;
+    PhysicalUseSummary preceding, following;
     std::string reason;
-    std::vector<StorageOrigin> preceding, following;
-    std::vector<Cut> entryBoundaries, exitBoundaries;
-    bool proved() const { return outcome == ProofOutcome::Proved; }
+    bool proved() const
+    {
+        return first.status != ReaderEndpoint::Status::Unknown && final.status != ReaderEndpoint::Status::Unknown;
+    }
 };
 // One original storage requirement with both of its placement bounds retained.
 // This is immutable analysis metadata: it grants no completion receipt, event
@@ -362,7 +369,7 @@ public:
     std::map<Id, unsigned> reasons(Cut site) const;
     const LifecycleUse& use(Cut site, unsigned cell) const;
     Cut recurringRelease(Cut site, unsigned cell) const;
-    const ReaderParticipation& readerParticipation(Cut site, unsigned cell) const;
+    const ReaderFrontiers& readerBoundaries(Cut site, unsigned cell, Id owner = NoAnalysisId) const;
     const std::vector<EndpointRequirement>& endpoints(Id originalOwner) const;
     bool needsOccurrenceSeparation(Id originalOwner) const;
     uint64_t endpointClassificationWork() const { return endpointWork; }
@@ -386,7 +393,7 @@ private:
     const Program* program = nullptr;
     const Control* control = nullptr;
     mutable std::map<std::pair<Cut, unsigned>, LifecycleUse> uses;
-    mutable std::map<std::pair<Cut, unsigned>, ReaderParticipation> readerRoles;
+    mutable std::map<std::tuple<Id, Cut, unsigned>, ReaderFrontiers> readerFrontiers;
     std::vector<std::vector<RequirementFrontier>> byDeadline;
     mutable bool endpointsIndexed = false;
     mutable uint64_t endpointWork = 0;

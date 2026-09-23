@@ -63,6 +63,27 @@ struct PhysicalUseFrontier {
   std::vector<StorageOrigin> accesses;
   std::vector<std::size_t> boundaries;
 };
+// Original interval identity; no selected commands or causal credit enter it.
+// Starts/stops alone define the traversal horizon. Owner/occurrence are checked
+// identity annotations, NOT a proof of their correspondence or an implicit lexical
+// stop. Consumers must separately qualify occurrence matching and participation.
+struct OriginalUseQuery {
+  unsigned cell = 0;
+  std::size_t owner = NoAnalysisId, occurrence = NoAnalysisId;
+  std::vector<std::size_t> starts, stops;
+  bool backward = false, includeStarts = true, includeStops = false;
+};
+struct PhysicalUseSummary {
+  enum class Status { Unknown, NoHit, Present } status = Status::Unknown;
+  enum Role : unsigned {
+    Read = 1, FullWrite = 2, PartialWrite = 4, ReadWrite = 8,
+    Entry = 16, Exit = 32, IntervalStop = 64
+  };
+  unsigned roles = 0;
+  std::string reason;
+  bool complete() const { return status != Status::Unknown; }
+  // A presence summary is a may set, not executable guarded participation.
+};
 struct ReaderBoundary {
   bool boundary = false;
   std::vector<StorageOrigin> readers;
@@ -85,6 +106,7 @@ struct StorageFrontierStats {
   std::size_t staticSites = 0, originIncidences = 0, storageWords = 0;
   std::size_t forwardEvaluations = 0, backwardEvaluations = 0;
   std::size_t nearestUseEvaluations = 0;
+  std::size_t useSummaryQueries = 0, useSummarySolves = 0, useSummarySites = 0, useSummaryEdges = 0;
   std::size_t classificationQueries = 0, classificationSites = 0, classificationOrigins = 0;
   std::size_t witnessQueries = 0, witnessSites = 0;
 };
@@ -120,6 +142,8 @@ public:
   const PhysicalUseFrontier& nearestUses(
       const std::vector<std::size_t>& starts, unsigned cell,
       const std::vector<std::size_t>& stops = {}, bool backward = false) const;
+  // Summarizes the FIRST physical access on each path; this is not All(U).
+  PhysicalUseSummary nearestUseSummary(const OriginalUseQuery&) const;
   ReaderBoundary readerBoundary(std::size_t site, unsigned cell, Pipe,
                                 bool backward) const;
   std::vector<Cut> corridor(std::size_t site, Pipe, bool backward,

@@ -35,6 +35,20 @@ o::Program sharedWords()
     return p;
 }
 
+void observedOwnerIdentity()
+{
+    auto p = sharedWords();
+    p.observed->loops.push_back({0, 0, 7, {1, 2, 3, 4, 5, 6}});
+    o::StorageFrontierAnalysis storage(p);
+    require(storage.complete(), "valid loop owner without scope rejected");
+    o::OriginalUseQuery query;
+    query.owner = 0;
+    query.occurrence = 3;
+    query.starts = {2};
+    require(storage.nearestUseSummary(query).roles == o::PhysicalUseSummary::Read,
+            "loop owner identity required redundant scope spelling");
+}
+
 void correspondence()
 {
     auto p = sharedWords();
@@ -425,7 +439,7 @@ void mixedReaderParticipation()
         o::selected::RequirementFrontiers facts(p, control, storage);
         const auto sites = storage.sitesForOperation(1);
         require(sites.size() == 1, "mixed participation fixture needs one queried reader");
-        require(facts.readerParticipation(sites.front(), 0).outcome == o::selected::ProofOutcome::Unknown,
+        require(facts.readerBoundaries(sites.front(), 0).first.status == o::selected::ReaderEndpoint::Status::Unknown,
                 before ? "mixed first/continuing participation was proved"
                        : "mixed final/continuing participation was proved");
     }
@@ -452,23 +466,24 @@ void physicalDeadlines()
     require(demands.size() == 1 && demands[0].release == 1 && demands[0].deadline == 1 &&
                 demands[0].returnDeadlines == std::vector<o::Cut>{3},
             "readiness and possible return were conflated or lost");
-    const auto& first = facts.readerParticipation(1, 0);
-    const auto& last = facts.readerParticipation(2, 0);
-    const auto& reloaded = facts.readerParticipation(4, 0);
-    require(first.proved() && first.first && !first.final && last.proved() && !last.first && last.final,
+    const auto& first = facts.readerBoundaries(1, 0);
+    const auto& last = facts.readerBoundaries(2, 0);
+    const auto& reloaded = facts.readerBoundaries(4, 0);
+    require(first.proved() && first.first.hit() && !first.final.hit() &&
+                last.proved() && !last.first.hit() && last.final.hit(),
             "different reader owners did not retain one write episode");
-    require(reloaded.proved() && reloaded.first && reloaded.final &&
-                reloaded.preceding.size() == 1 && reloaded.preceding.front().site == 3,
+    require(reloaded.proved() && reloaded.first.hit() && reloaded.final.hit() &&
+                reloaded.preceding.roles == o::PhysicalUseSummary::FullWrite,
             "reload did not start a separate reader episode");
-    const auto queryWork = storage.stats().nearestUseEvaluations;
-    require(&facts.readerParticipation(1, 0) == &first && storage.stats().nearestUseEvaluations == queryWork,
+    const auto queryWork = storage.stats().useSummarySites;
+    require(&facts.readerBoundaries(1, 0) == &first && storage.stats().useSummarySites == queryWork,
             "immutable reader participation was recomputed");
     auto uncertain = p;
     uncertain.operations[3].accesses = {{0, true, true, false}};
     o::selected::Control uncertainControl(uncertain);
     o::StorageFrontierAnalysis uncertainStorage(uncertain);
     o::selected::RequirementFrontiers uncertainFacts(uncertain, uncertainControl, uncertainStorage);
-    require(!uncertainFacts.readerParticipation(4, 0).proved(),
+    require(!uncertainFacts.readerBoundaries(4, 0).proved(),
             "RMW was treated as a fresh reader episode");
     const auto& later = facts.at(4);
     require(later.size() == 1 && later[0].relationship.source.site == 3,
@@ -628,6 +643,7 @@ int main()
 {
     mlir::pto::oahs::selected::ReplayTestAccess::persistentSupport();
     mlir::pto::oahs::selected::ReplayTestAccess::olderAccumulatorSupport();
+    observedOwnerIdentity();
     correspondence();
     alternativeEndpoints();
     exhaustiveMatching();

@@ -58,6 +58,7 @@ struct StorageFrontierAnalysis::Impl {
   detail::ControlGraph graph;
   std::vector<std::vector<std::size_t>> predecessors;
   std::vector<bool> reachable;
+  std::set<std::size_t> originalOwners;
   struct CellInfo {
     std::vector<StorageOrigin> origins;
     std::vector<std::size_t> writerOrigins;
@@ -66,6 +67,8 @@ struct StorageFrontierAnalysis::Impl {
     storage_detail::Matrix fw, fr, bw, br;
     mutable std::vector<bool> withoutFullWriter;
     mutable std::map<std::size_t, std::size_t> uniqueWriters;
+    using SummaryKey = std::tuple<std::vector<std::size_t>, bool, bool>;
+    mutable std::map<SummaryKey, std::map<std::size_t, unsigned>> useSummaries;
   };
   std::vector<CellInfo> cells;
   using UseQuery = std::tuple<unsigned, std::vector<std::size_t>,
@@ -91,6 +94,10 @@ struct StorageFrontierAnalysis::Impl {
       return;
     }
     graph = detail::buildControlGraph(program);
+    for (const auto& context : graph.contexts) { originalOwners.insert(context.ownerSite); }
+    if (program.observed) {
+      for (const auto& loop : program.observed->loops) { originalOwners.insert(loop.owner); }
+    }
     const auto n = graph.sites.size();
     statistics.staticSites = n;
     predecessors.resize(n);
@@ -188,6 +195,92 @@ struct StorageFrontierAnalysis::Impl {
           }
         }
     }
+  }
+  unsigned summarizeUses(unsigned cell, const std::vector<std::size_t>& starts,
+      const std::vector<std::size_t>& stops, bool backward, bool includeStops) const {
+    const auto& info = cells[cell];
+    auto& cached = info.useSummaries[std::make_tuple(stops, backward, includeStops)];
+    struct Node {
+      unsigned roles = 0;
+      bool terminal = false, queued = false;
+      std::vector<std::size_t> dependents;
+    };
+    // Only complete nearest-access closures enter cached. A cached site cannot
+    // depend on a newly discovered node, so independent demand expansion never
+    // invalidates an earlier answer (including an access-free closed cycle).
+    std::map<std::size_t, Node> nodes;
+    std::vector<std::size_t> discover;
+    auto add = [&](std::size_t site) {
+      const bool unseen = reachable[site] && !cached.count(site);
+      const bool added = unseen && nodes.try_emplace(site).second;
+      if (added) {
+        discover.push_back(site);
+      }
+    };
+    for (auto site : starts) { add(site); }
+    if (!discover.empty()) { ++statistics.useSummarySolves; }
+    for (std::size_t at = 0; at < discover.size(); ++at) {
+      const auto site = discover[at];
+      auto& node = nodes.at(site);
+      ++statistics.useSummarySites;
+      const bool stop = std::binary_search(stops.begin(), stops.end(), site);
+      const auto& access = info.accessAt[site];
+      const auto& next = backward ? predecessors[site] : graph.sites[site].successors;
+      if (stop && !includeStops) {
+        node.roles = PhysicalUseSummary::IntervalStop;
+      } else if (access.read && access.write) {
+        node.roles = PhysicalUseSummary::ReadWrite;
+      } else if (access.read) {
+        node.roles = PhysicalUseSummary::Read;
+      } else if (access.write) {
+        node.roles = access.definiteWrite ? PhysicalUseSummary::FullWrite : PhysicalUseSummary::PartialWrite;
+      } else if (stop) {
+        node.roles = PhysicalUseSummary::IntervalStop;
+      } else if (backward && site == graph.entry) {
+        node.roles = PhysicalUseSummary::Entry;
+      } else if (next.empty()) {
+        node.roles = backward ? PhysicalUseSummary::Entry : PhysicalUseSummary::Exit;
+      }
+      node.terminal = node.roles != 0;
+      if (node.terminal) { continue; }
+      for (auto target : next) {
+        ++statistics.useSummaryEdges;
+        if (!reachable[target]) { continue; }
+        const auto known = cached.find(target);
+        if (known != cached.end()) {
+          node.roles |= known->second;
+        } else {
+          add(target);
+          nodes.at(target).dependents.push_back(site);
+        }
+      }
+    }
+    std::deque<std::size_t> pending;
+    for (auto& [site, node] : nodes) {
+      if (node.roles) { pending.push_back(site); node.queued = true; }
+    }
+    while (!pending.empty()) {
+      const auto site = pending.front();
+      pending.pop_front();
+      auto& node = nodes.at(site);
+      node.queued = false;
+      ++statistics.useSummarySites;
+      for (auto next : node.dependents) {
+        ++statistics.useSummaryEdges;
+        auto& dependent = nodes.at(next);
+        const auto joined = dependent.roles | node.roles;
+        if (joined == dependent.roles) { continue; }
+        dependent.roles = joined;
+        if (!dependent.queued) { pending.push_back(next); dependent.queued = true; }
+      }
+    }
+    for (const auto& [site, node] : nodes) { cached.emplace(site, node.roles); }
+    unsigned result = 0;
+    for (auto site : starts) {
+      const auto known = cached.find(site);
+      if (known != cached.end()) { result |= known->second; }
+    }
+    return result;
   }
   std::vector<StorageOrigin> query(std::size_t s, unsigned cell,
                                    unsigned kind) const {

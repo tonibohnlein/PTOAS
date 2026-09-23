@@ -5,6 +5,80 @@ restart checkpoints and historical milestone queues below. Active branch:
 `codex/oahs-gemm-base`; starting HEAD `d5718272e`. Original audit:
 `/home/toni/work/pypto3_sync_more/region-prefill-review-20260922/REVIEW.md`.
 
+## Adopted continuation — typed derivation and independent pipeline progress
+
+Current baseline: `b436c3db0` (Step R), not the Step P pin in
+`../ENGINEER_DIRECTIONS.md`. The current v0.37 TeX and code are co-developed;
+reconcile their contracts explicitly and preserve separate draft edits.
+This sequence supersedes the earlier active ordering below, retaining its
+acceptance boundary and historical evidence. User resumed implementation.
+
+1. Reconcile current evidence and audit active scalar, implicit-effect/BT,
+   visibility, external blocking, ACC and authored UnitFlag premises against
+   exact target/API/lowering. Correct defects in the shared semantic layer.
+   Record existing settings; new UnitFlag enablement and cross-core synthesis
+   are outside this sequence. Unrelated unknown features do not block the core.
+2. Replace enclosing-reader first/final reconstruction with typed original-use
+   queries under an explicit owner, occurrence, selector and continuation
+   interval (start/stop/inclusion). Distinguish NoHit, exact guarded frontier
+   with no-hit condition, and Unknown retaining may facts and failed premises.
+   Independent participants are conjunctive; alternatives retain original
+   predicates whose exact values must be available at each chosen endpoint.
+   Install early source subscriptions before traversal, or preserve equivalent
+   exact retrospective access. Share source/summary representation.
+3. Derive the two-child family through normal construction. At a deadline select
+   a provider from the actual complete residual; only that selection activates
+   its finite recurring support. Apply actual credit, refresh, then repair the
+   remainder. Recognizing an episode does not preinstall a protocol. Empty
+   episodes retain WAW; zero visits emit nothing; no successor means no release.
+4. Preserve disjoint-copy releases through later edits. Extend persistent source
+   support using scoped sufficient certificates and conservative invalidation,
+   including outward publications and exact gaps. Do not calculate complete
+   payload-order closures inside every production edit. Optional placement
+   failure retains a checked fallback; never discard a mandatory obligation.
+5. Align binding at a frozen logical request/milestone/packet shape: retained
+   certified bindings where required; complete helper-free eligible bindings
+   in stable key order; prescribed restoration/nonrecursive acknowledgment;
+   checked common-cut fallback. Helper-free means no added/restored consumption
+   helpers. All coverage/participation/ownership/neighbors/publication contracts
+   still pass. No arbitrary shape/source/owner-subset search. Extend Q/R with
+   actual-return reservation discharge and certified late WAIT placement at
+   actual republication deadlines; anticipated returns grant no credit.
+6. Compose independent x/y banks, initially Bx=2, By=3, through that same path.
+   Under isolated effects, retain M0 -> T3 -> L5 backpressure without introducing
+   C(M0) -> I(L2). No LCM product or two-level/GEMM recognizer. Check startup,
+   final uses, matching/rearming, and give the extension its own scoped proof.
+7. Remove covered old paths and close F/G ordering, L replay and R materialization
+   debts; recover GEMM/MAT and targeted sharing through the common constructor,
+   classify Qwen/DeepSeek results and obtain matched coupled device evidence.
+
+Every step replaces a real interpretation, retains all constituent physical
+witnesses and preserves M/N's extra coverage through exact-gap choice. Partitioning
+unchanged access incidences must not multiply normalized decisions. F4 ranking
+remains fixed during query migration. Classify changes as contract correction,
+query-equivalent refactor, precision extension, policy change or cost experiment.
+
+Cost recovery runs from step 2, not only step 7: report static/use/frontier/provider
+populations, qualifications, dirty evaluations, copied state and failed attempts.
+Fix newly introduced avoidable repetition before advancing; temporary necessary
+expansion needs an identified cause/recovery dependency. Fixed syntax and increasing
+trip counts cannot create one role per dynamic read. Vary syntax/nesting/selectors
+separately. Provider count in today's groups() is bounded by PipeCount-1; do not
+call its pairwise comparison program-sized cubic without a changed population.
+
+Each coherent increment: relevant tests and supported-input checks; independent
+architecture/generality, correctness and asymptotic-performance ACCEPT; update
+handoff/TODO/draft; commit; continue. Supported service and independent legality
+remain mandatory. Temporary recorded quality/work regressions are allowed, but
+isolated witnesses must meet their stated ordering claims. Unsupported/empty
+traces are unknown. No sanitizer without request. Aggregate two-worker limit;
+incremental builds and disk-backed artifacts. No push without request.
+
+Restricted indexes/scalar simplification require measured need and equivalent
+answers/decisions. Insertion-proof transport and resource-informed provider ranking
+remain inactive. Completion requires normal-path evidence and removal of replaced
+interpretations; a wrapper or reviewer verdict alone is not completion.
+
 ## Objective and acceptance boundary
 
 Recover the general algorithm, not the old branch commit by commit. Preserve

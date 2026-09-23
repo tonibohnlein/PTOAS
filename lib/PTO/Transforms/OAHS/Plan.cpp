@@ -977,6 +977,50 @@ const PhysicalUseFrontier& StorageFrontierAnalysis::nearestUses(
   return impl->useFrontiers.emplace(key, std::move(result)).first->second;
 }
 
+PhysicalUseSummary StorageFrontierAnalysis::nearestUseSummary(const OriginalUseQuery& query) const {
+  ++impl->statistics.useSummaryQueries;
+  PhysicalUseSummary result;
+  const auto size = impl->graph.sites.size();
+  const auto validSites = [&](const std::vector<std::size_t>& sites) {
+    return std::all_of(sites.begin(), sites.end(), [&](auto site) { return site < size; });
+  };
+  const bool invalidOccurrence = query.occurrence != NoAnalysisId && query.occurrence >= size;
+  const bool validInterval = validSites(query.starts) && validSites(query.stops);
+  const bool validCell = query.cell < impl->cells.size();
+  if (!impl->ok || !validCell || !validInterval || invalidOccurrence) {
+    result.reason = "invalid original-use interval";
+    return result;
+  }
+  const bool knownOwner = query.owner == NoAnalysisId || impl->originalOwners.count(query.owner);
+  if (!knownOwner) { result.reason = "unknown original physical-use owner"; return result; }
+  auto stops = query.stops;
+  std::sort(stops.begin(), stops.end());
+  stops.erase(std::unique(stops.begin(), stops.end()), stops.end());
+  std::vector<std::size_t> starts;
+  for (auto site : query.starts) {
+    if (!impl->reachable[site]) { continue; }
+    if (query.includeStarts) { starts.push_back(site); continue; }
+    // An empty interval cannot traverse beyond its stopping frontier.
+    if (std::binary_search(stops.begin(), stops.end(), site)) {
+      result.roles |= PhysicalUseSummary::IntervalStop;
+      continue;
+    }
+    const auto& next = query.backward ? impl->predecessors[site] : impl->graph.sites[site].successors;
+    const bool atEntry = query.backward && site == impl->graph.entry;
+    const bool boundary = next.empty() || atEntry;
+    if (boundary) {
+      result.roles |= query.backward ? PhysicalUseSummary::Entry : PhysicalUseSummary::Exit;
+    } else {
+      starts.insert(starts.end(), next.begin(), next.end());
+    }
+  }
+  result.roles |= impl->summarizeUses(query.cell, starts, stops, query.backward, query.includeStops);
+  constexpr unsigned ACCESSES = PhysicalUseSummary::Read | PhysicalUseSummary::FullWrite |
+      PhysicalUseSummary::PartialWrite | PhysicalUseSummary::ReadWrite;
+  result.status = (result.roles & ACCESSES) ? PhysicalUseSummary::Status::Present : PhysicalUseSummary::Status::NoHit;
+  return result;
+}
+
 ReaderBoundary StorageFrontierAnalysis::readerBoundary(std::size_t s,
                                                        unsigned c, Pipe pipe,
                                                        bool backward) const {

@@ -1,6 +1,7 @@
 # Selected-plan construction: draft F1–F8 implementation
 
-Specification: the synchronization draft v0.22, policies F1–F8.
+Specification: current synchronization draft v0.37, policies F1–F8.
+The sections below include explicitly bounded implementation refinements.
 See [shared semantic extraction](oahs-shared-semantics.md) and
 [storage and fixed-plan analysis](oahs-analysis.md) for the input contracts.
 `algorithm=handoff` uses this constructor. `algorithm=existing` remains the default
@@ -938,3 +939,46 @@ deferrals, remain unresolved policy/work costs. This is not a general performanc
 improvement. Evidence and separate command/key/work records are in refactor-step-r.
 Current key-use closure does not exploit all actual returns or move the original
 fallback WAIT; those are the next placement/discharge obligations after the pause.
+
+
+## Step S invariant — typed original-use boundary queries
+
+Missing fact: enclosing-reader placement consumes per-site marginal booleans and
+repeats physical corridor walks. The shared StorageFrontierAnalysis service will
+answer an explicit original owner/occurrence, inclusive/exclusive start/stop and
+direction query. A compact summary retains read, full/partial write, RMW and open
+boundary possibilities. It stops at ANY access, not only a definite overwrite.
+NoHit means no represented physical access within that interval; it never means
+completion, eventual exit or a drained token. Unsupported queries return Unknown.
+
+Immutable per-cell/direction/stop projections share intermediate facts across
+starts and original owner interpretations of the same graph; public requests
+retain their full owner/occurrence/interval identity. Exact origin output remains
+a separate lazy nearest-use query. Each finite role bit propagates monotonically;
+there is no origin-pair path search or dynamic trip enumeration.
+
+RequirementFrontiers projects the shared facts to typed first/final eligibility
+at EXISTING original endpoint occurrences. The original observation remains at its
+own anchor. Mixed participation retains may facts with Unknown; this increment
+cannot synthesize/hoist a later predicate. An interval stop is an open obligation,
+not a generation release. Enclosing qualification still checks every shared-word
+alias and matching. This is the first query-equivalent consumer migration; the
+full D3 guarded composition and residual-driven two-child construction follow.
+
+### Step S bounded scope and cost
+
+This increment is a query-equivalent nearest-role projection, not completion of
+the guarded typed-query milestone. Explicit starts/stops define the horizon;
+owner/occurrence annotations name caller identities but do not prove their
+correspondence. Existing occurrence, shared-word, balance and producer-support
+checks remain authoritative. `Exact` in the reader adapter means uniform
+eligibility at an existing endpoint. A partial write is a nearest access, not a
+proved generation kill. Mixed roles remain Unknown with may roles retained.
+
+At most two empty-stop projections are demanded per cell by this consumer.
+Each projection expands only demanded nearest-access corridors, caching fully
+solved closures (including zero-role cycles). No provisional result is exported.
+Each reached site/edge is expanded once per projection; monotone propagation adds
+only seven possible bits per site. Sparse maps introduce logarithmic lookup cost. Distinct stop projections and inherited
+all-cell loop scans remain separately charged work, not a near-linear whole-pass
+claim. Source subscriptions and Q/R selected-state handling are unchanged.

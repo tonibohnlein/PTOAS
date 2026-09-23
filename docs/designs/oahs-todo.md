@@ -40,7 +40,22 @@ Cost track: extract measured plan-equivalent reductions with their consumers;
 new caches/region execution require evidence and invalidation tests. Two local
 resource-intensive workers maximum in aggregate.
 
-## Resumed implementation queue
+## Current continuation after R
+
+User-approved sequence is the "Adopted continuation" in the canonical semantic
+correction plan: target reconciliation -> typed enclosing-reader consumer ->
+residual-activated two-child derivation -> disjoint-copy/persistent source support
+-> complete binding/actual rearming deadlines -> independent unequal banks ->
+consolidation/recovery. Same three-reviewer commit loop. Cost investigation runs
+throughout; no new synthesis or inactive policy experiments are prerequisites.
+
+S completed the bounded nearest-role projection and sparse shared query consumer;
+guarded owner/interval derivation remains unfinished. Active T captures immutable
+original structure/effects before refinement, then composes first/last/nonempty
+for one interval. Preserve original guard availability and refined correspondence.
+See HANDOFF for exact S evidence and remaining F/G/L/R debts.
+
+## Historical resumed implementation queue
 
 1. **Complete (`a361b3878`):** classification cost: cheap original reason flags separated from witness paths,
    shared site/cell facts, unused-classification fast paths and next-provider-only
@@ -98,8 +113,7 @@ latent-source protection. All three reviewers and bounded generality ACCEPT;
 same refusal.36 nonempty complete-order comparisons are unchanged;10 unsupported
 rows remain unknown. KDA/attention command and ownership-check growth is explicit
 recovery debt (HANDOFF and refactor-step-r/resources-work.json). Native latent-guard
-discovery remains unproved; its branch test uses a supplied ledger. Paused after R
-at user request. Next: actual-return reservation discharge and certified later WAIT
+discovery remains unproved; its branch test uses a supplied ledger. R was paused at user request; implementation has resumed under the adopted continuation. Remaining: actual-return reservation discharge and certified later WAIT
 placement; original-gap fallback does not complete that general mechanism.
 
 Each coherent increment requires architecture, correctness and asymptotic-cost

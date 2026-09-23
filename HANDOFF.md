@@ -1,6 +1,52 @@
 # OAHS current handoff
 
-## Paused after Step R — deferred owned common-cut returns
+## Completed Step S — shared nearest-use boundary summaries
+
+Baseline R `b436c3db0`. The adopted continuation is recorded at the start of
+`docs/designs/oahs-semantic-corrections.md`. S replaces enclosing-reader origin
+walks with typed nearest-use summaries and explicit existing-endpoint statuses.
+It is a query-equivalent prerequisite, NOT completion of guarded D3 or the
+owner/interval-qualified milestone. Explicit starts/stops define the horizon;
+owner/occurrence annotations do not prove correspondence. Partial writes stop
+nearest-use traversal without proving generation kills. Existing shared-word,
+participation, support and binding checks remain in force.
+
+Sparse demand closures are solved privately and cached only when complete,
+including zero-role cycles. Unrelated graph components are not initialized.
+Each reached site/edge is expanded once per projection, with seven-bit monotone
+propagation and sparse-map lookup cost. Different stop projections remain distinct.
+The old origin query remains for clients requiring actual identities. The target
+premise inventory in `oahs-shared-semantics.md` records unresolved scalar/GM,
+external-progress and authored UnitFlag qualifications; no new target credit.
+
+Architecture/generality, correctness and asymptotic-performance ACCEPT. Final
+22 portable suites, three native drivers, 88/88 corpus, 18/19 compatibility
+(same inherited refusal), GEMM, two prefills and three targets pass. All emitted
+plans are byte-identical to R: no changed payload order or event resources.
+Generated origin-differential tests cover 180 structured programs; explicit tests
+cover interval inclusion, malformed identity, copied-owner spelling, cached zero
+cycles, mixed cached/new closures and irrelevant suffixes. No sanitizer/device run.
+
+Evidence: `../oahs-gemm-base-builds/refactor-step-s/` (summary.json, source-pin.json,
+reviews.txt, test-all.log, validation.log, work.json). Native final sources include
+named-Boolean style edits after portable validation; their semantics are unchanged.
+Expanded physical query accounting reports279511->1154466 and discarded
+279902->396642 (now includes summary discovery, propagation and edge work, unlike
+R's nearest-use visits). Replay6313151 and ownership1687915 remain identical.
+No runtime speedup claim; F/G/L/R debts remain open.
+
+Next active increment T: capture a validated immutable original structure/effect
+view before refinement; compose first/last/nonempty over one named read interval
+and replace a real consumer. Current Program.body alone is insufficient because
+refinement may overwrite original operation effects, and observed-only inputs
+need not have validated structural bodies. Missing provenance returns Unknown.
+Reuse original observation atoms/unions; preserve guard availability and exact
+readback. Demand-local predicate correlation and LoopNonEmpty emission then enable
+optional sequential children. Residual-first recurring activation remains after
+these facts, followed by persistent publication support/binding/linked banks.
+Continue the same three-reviewer commit loop; no pause requested.
+
+## Completed Step R — deferred owned common-cut returns
 
 Baseline Q `a936e90d6`. R qualifies the complete immediate fallback at a single
 reachable acyclic occurrence, retains exact dormant endpoints, and propagates only
@@ -40,8 +86,8 @@ Evidence: `../oahs-gemm-base-builds/refactor-step-r/` (`summary.json`, `test-all
 `reviews.txt`). The draft receives a bounded implementation note, separately from
 this repository commit; its other existing changes are preserved.
 
-Paused at user request after committing R. No next implementation is started.
-On resumption: actual-return discharge of deferred reservations and certified later
+Historical R pause ended with the user instruction to implement the adopted plan.
+Remaining R-specific work: actual-return discharge of deferred reservations and certified later
 acknowledgment acquisition, then recurring obligations and outstanding F/G/L quality
 and work recovery. Current restoration uses original gaps and conservatively closes
 on key use; general late-WAIT placement and recurring deferral remain unfinished.

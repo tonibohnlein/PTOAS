@@ -238,7 +238,8 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     }
     const auto& work = storage.stats();
     out.endpointDiscoveryWork = work.staticSites + work.forwardEvaluations + work.backwardEvaluations +
-        work.nearestUseEvaluations + requirements.size() + control.loopEntryPreparationSites +
+        work.nearestUseEvaluations + work.useSummarySites + work.useSummaryEdges + requirements.size() +
+        control.loopEntryPreparationSites +
         requirements.endpointClassificationWork() + control.transitionClassificationWork;
   }
   for (auto loop : loops) {

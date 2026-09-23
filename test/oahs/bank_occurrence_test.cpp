@@ -433,8 +433,9 @@ void composedReaders(unsigned variant)
                 refined.program.operations[control.graph.operations[site]].original != operationIds.at(1)) {
                 continue;
             }
-            const auto& role = facts.readerParticipation(site, 0);
-            if (role.proved() && role.first) {
+            const auto& role = facts.readerBoundaries(site, 0);
+            const bool first = role.proved() && role.first.hit();
+            if (first) {
                 firstReader = site;
             } else if (role.proved()) {
                 continuingReader = site;

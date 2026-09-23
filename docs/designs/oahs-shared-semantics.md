@@ -243,3 +243,26 @@ The local A2/A3 and A5 PTO-ISA paths were inspected at
 translation for each architecture, and native OAHS construction on its current
 A3 target. This does not widen the native adapter's target contract or add an
 instruction-specific admission gate.
+
+## Step S target-premise audit (R baseline b436c3db0)
+
+This is a source-level qualification inventory, not new device evidence or a
+change to target semantics. The typed nearest-use migration grants no new native
+credit. These open premises constrain subsequent placement/general-progress claims.
+
+| Active premise | Source finding | Status / required qualification |
+| --- | --- | --- |
+| Scalar completion | `a3SyncProfile` marks S synchronous; causal transfer advances completion. | Automatic scalar synchronization is not by itself a universal complete-at-issue or cross-engine GM visibility proof. Qualify the exact operations and lowering before extending this credit. No reproduced device defect is claimed. |
+| Scalar GM stores | `ScalarPtr.cpp` emits a marker; `ptoas_cpp_rewrite.cpp` removes markers and emits ALL/DCCI/DSB at return/tail. | This does not establish an interior per-store flush before a later DMA read or peer publication. |
+| BT / matrix inputs | Pinned PTO ISA `0c112d61`: ordinary matrix path uses `cmatrixSource=false`; bias path passes an explicit BT pointer covered by shared bias effects. | No missing unconditional BT read demonstrated for these paths. Other variants need their own exact lowering evidence. |
+| GM visibility | Import retains physical aliases and descriptive invocation metadata. | Alias overlap and a legal event direction do not establish a cache/visibility protocol. Universal event-to-GM visibility remains unverified. |
+| External protocols | Shared protocol models retain queue/collective metadata; native preserves original operations and disables local retry for recognized external protocols. | These facts alone do not prove peer progress under inserted waits. Crossing blocking interfaces needs explicit placement/participation support. |
+| Authored UnitFlag | AccPhase/STPhase lower to stateful modes; audit describes incomplete phase contracts. Native import does not gate on that audit. | No UnitFlag completion credit is granted. Existing stateful blocking/permission effects still prevent a general progress claim. No new enablement, payload attribute changes, or fixed block-granularity assumption is authorized by this audit. |
+| Native ACC | Access-scoped protection and older incompatible access history remain separate from whole-operation completion. | Preserve operand-release, FIX and event-consumption obligations; this refactor does not broaden the adapter contract. |
+
+Resolve demonstrated effect defects in the shared instruction/lowering layer.
+Missing premises must not be papered over with an OAHS opcode whitelist. Ordinary
+local-core query equivalence can be tested while these broader target questions
+remain explicit; it does not close them. Target/API evidence must be pinned when
+an active premise is changed. The audit does not authorize treating existing
+external or authored stateful mechanisms as semantically inert.

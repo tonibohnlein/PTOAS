@@ -255,49 +255,50 @@ Cut RequirementFrontiers::recurringRelease(Cut site, unsigned cell) const
     return boundary.proved() ? boundary.word : NoAnalysisId;
 }
 
-const ReaderParticipation& RequirementFrontiers::readerParticipation(Cut site, unsigned cell) const
+const ReaderFrontiers& RequirementFrontiers::readerBoundaries(Cut site, unsigned cell, Id owner) const
 {
-    static const ReaderParticipation unknown;
+    static const ReaderFrontiers unknown;
     if (!ready || !storage || !control || site >= control->graph.sites.size() || use(site, cell).roles != 1) {
         return unknown;
     }
-    const auto key = std::make_pair(site, cell);
-    const auto cached = readerRoles.find(key);
-    if (cached != readerRoles.end()) {
-        return cached->second;
-    }
-    auto& result = readerRoles[key];
-    const auto& before = storage->nearestUses(control->predecessors[site], cell, {}, true);
-    const auto& after = storage->nearestUses(control->graph.sites[site].successors, cell);
-    if (!before.complete || !after.complete) {
-        result.reason = "physical-use succession is unavailable";
+    const auto key = std::make_tuple(owner, site, cell);
+    const auto cached = readerFrontiers.find(key);
+    if (cached != readerFrontiers.end()) { return cached->second; }
+    auto& result = readerFrontiers[key];
+    result.owner = owner;
+    OriginalUseQuery query;
+    query.cell = cell;
+    query.owner = owner;
+    query.occurrence = site;
+    query.starts = control->predecessors[site];
+    query.backward = true;
+    result.preceding = storage->nearestUseSummary(query);
+    query.backward = false;
+    query.starts = control->graph.sites[site].successors;
+    result.following = storage->nearestUseSummary(query);
+    const bool complete = result.preceding.complete() && result.following.complete();
+    if (!complete) {
+        result.reason = "original-use interval is unavailable";
         return result;
     }
-    result.preceding = before.accesses;
-    result.following = after.accesses;
-    result.entryBoundaries = before.boundaries;
-    result.exitBoundaries = after.boundaries;
-    auto roles = [&](const PhysicalUseFrontier& frontier) {
-        unsigned mask = frontier.boundaries.empty() ? 0u : 4u;
-        for (const auto& access : frontier.accesses) {
-            ++endpointWork;
-            const auto role = use(access.site, cell).roles;
-            if (role == 3 || !role) {
-                return 8u; // RMW cannot be classified as a fresh write episode.
-            }
-            mask |= role;
-        }
+    const auto role = [](const PhysicalUseSummary& summary) {
+        unsigned mask = 0;
+        if (summary.roles & PhysicalUseSummary::Read) { mask |= 1; }
+        if (summary.roles & (PhysicalUseSummary::FullWrite | PhysicalUseSummary::PartialWrite)) { mask |= 2; }
+        if (summary.roles & (PhysicalUseSummary::Entry | PhysicalUseSummary::Exit)) { mask |= 4; }
+        if (summary.roles & (PhysicalUseSummary::ReadWrite | PhysicalUseSummary::IntervalStop)) { mask |= 8; }
         return mask;
     };
-    const auto previous = roles(before), next = roles(after);
-    if ((previous != 1 && previous != 2) ||
-        (next != 1 && next != 2 && next != 4 && next != 6)) {
-        result.reason = "first/final participation needs control refinement";
+    const auto previous = role(result.preceding), next = role(result.following);
+    const bool firstUniform = previous == 1 || previous == 2;
+    const bool finalUniform = next == 1 || next == 2 || next == 4 || next == 6;
+    if (!firstUniform || !finalUniform) {
+        result.reason = "mixed participation needs an available original endpoint predicate";
         return result;
     }
-    result.first = previous == 2;
-    result.final = next != 1;
-    result.outcome = ProofOutcome::Proved;
+    const auto observation = program->observed ? program->observed->sites[site].observation : NoAnalysisId;
+    result.first = {previous == 2 ? ReaderEndpoint::Status::Exact : ReaderEndpoint::Status::NoHit, site, observation};
+    result.final = {next != 1 ? ReaderEndpoint::Status::Exact : ReaderEndpoint::Status::NoHit, site, observation};
     return result;
 }
 
