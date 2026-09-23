@@ -1319,3 +1319,44 @@ followed by a repeated reader child checks higher helper-free key selection and
 six nonempty execution paths. Native tests use the real target pools across a
 storage view and unrelated control/arithmetic. Older supporting-coverage, stale
 revision, shared-occurrence, barrier and ownership negatives remain active.
+
+## Step Z invariant — one complete ordinary acknowledgment packet
+
+Missing construction fact: a prospective consumption acknowledgment and the
+forward transfer it enables are one proposed edit. The single-consumption path
+currently commits/replays the reverse half first; dormant and joined paths already
+qualify complete packets. A publication-support query cannot assess the full edit
+while the first half is already selected.
+
+Replace the split path with the existing common exact packet interface. Retain
+the same forward/reverse key order, old consumption gap, selected source bound,
+and consumer deadline. Existing source-time/neighbor checks remain cheap filters;
+the complete packet and actual selected replay remain authoritative. Failure
+before commitment leaves the ledger, reservations and credit unchanged. Do not
+introduce source/shape search or select another provider. This is a construction
+interface consolidation, not a claim of order improvement.
+
+The normal witness Q:write U; P:write X; Q:read X; P:write Y; P:write Z;
+R:read Z; Q:read Y with one P/Q key imports Q's U completion through the new
+acknowledgment at Y's source. This remains an explicit unresolved resource/source
+tradeoff: moving the source past R's publication can instead import Z into Y's
+consumer. Persistent support must classify that change; atomicity alone does not
+prove its preservation. The next increment must retain publication identities,
+rooted contracts and dependencies through later ledger edits.
+
+Closed ordinary repairs privately evaluate their reverse prefix to obtain the
+continuation state the old selected intermediate update used. Exact current-word
+offsets include those staged endpoints; the new return references the combined
+packet's forward WAIT. This existing sufficient prefix-admission rule is not a
+general feasibility result for mutually supporting six-endpoint cycles. The
+private replay currently starts at the original entry and is counted separately;
+recover unchanged components through the existing dependency certificate before
+skipping that work. A failed complete deferral packet is not checked again.
+
+Portable fixed-ledger tests exercise terminal and future-payload closed requests
+through the public constructor, plus private six-endpoint ownership and rejection.
+They do not claim native authored-event support. Native ordinary four-endpoint
+activation uses an explicit one-key profile while retaining imported effects;
+real-target reconstruction is checked separately. Existing dormant/joined closed
+policy differences remain unchanged. Z consolidates the ordinary split mutation,
+not every remaining closed-protocol selection rule.

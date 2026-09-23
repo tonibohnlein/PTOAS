@@ -613,7 +613,7 @@ private:
     std::optional<bool> dormantTransfer(Pipe, Pipe, Cut, bool, SelectedDecision&);
     bool commitPacket(const OrderedPacket&, SelectedDecision&);
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&);
-    bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&, bool&);
+    bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&, bool&, OrderedPacket&);
     std::optional<bool> joinedAcknowledgment(Pipe, Pipe, Cut, SelectedDecision&);
     bool needsCommonAcknowledgment(const State&) const;
     void deferReturn(Id);

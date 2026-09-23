@@ -113,6 +113,9 @@ void scarcity()
     require(repaired != result.decisions.end() && repaired->repairedForwardKey == 0 &&
             repaired->repairReverseKey == 0 && repaired->repairInputVersion < repaired->repairOutputVersion,
             "T6b must record the complete stable repair certificate for key 0");
+    require(std::count_if(result.updates.begin(), result.updates.end(), [&](const auto& update) {
+                return update.version > repaired->repairInputVersion && update.version <= repaired->repairOutputVersion;
+            }) == 1, "ordinary acknowledgment exposed an intermediate selected ledger");
     require(repaired->endpoints.size() == 4,
             "T6b repair decision must name helper and forward endpoints together");
     require(repaired->repairedAcquisition < result.ledger.size() &&
@@ -120,6 +123,36 @@ void scarcity()
             "T6b acknowledgment must target the first acquisition");
     require(bool(oahs_oracle::graph(p, result.commands, {0, 1, 2, 3, 4, 5}, {{3, 5}})),
             "T6b stable repair added read-x completion before read-z issue");
+}
+void atomicClosedRepair()
+{
+    // Public portable fixed-ledger coverage; native authored events are skipped.
+    for (bool continuation : {false, true}) {
+        auto p = base(2, 1);
+        p.operations = {op(P, {}), op(P, {{0, false, true, true}}),
+            op(P, {{0, false, true, true}}), op(Q, {}), op(Q, {{0, true, false}})};
+        p.body = seq({leaf(0), {o::Region::Choice, {leaf(1), leaf(2)}}, leaf(3), leaf(4)});
+        if (continuation) {
+            p.operations.push_back(op(P, {{1, true, false}}));
+            p.body.children.push_back(leaf(5));
+        }
+        o::Commands fixed(o::commandCutCount(p));
+        fixed[0] = {{o::Command::Publish, P, Q, 0}};
+        fixed[3] = {{o::Command::Acquire, P, Q, 0}};
+        const auto plan = accepted(p, fixed);
+        require(plan.work.acknowledgmentPrefixReplays == 1 && plan.decisions.size() == 1,
+                "closed repair did not privately evaluate its reverse prefix");
+        const auto& repair = plan.decisions.front();
+        require(repair.repairedAcquisition != o::NoAnalysisId && repair.endpoints.size() == 4 &&
+                plan.work.rearmingDeferred == unsigned(continuation),
+                "closed repair lost terminal or dormant-return behavior");
+        require(std::count_if(plan.updates.begin(), plan.updates.end(), [&](const auto& update) {
+                    return update.version > repair.repairInputVersion && update.version <= repair.repairOutputVersion;
+                }) == 1, "closed repair exposed its private intermediate ledger");
+        for (const auto& trace : oahs_oracle::expand(p.body, 1, 100)) {
+            require(bool(oahs_oracle::graph(p, plan.commands, trace)), "closed repair failed independent graph check");
+        }
+    }
 }
 void structured()
 {
@@ -172,6 +205,7 @@ int main()
     straightLine();
     sharedCredit();
     scarcity();
+    atomicClosedRepair();
     structured();
     qualification();
     std::cout << "selected-plan named policy tests passed\n";

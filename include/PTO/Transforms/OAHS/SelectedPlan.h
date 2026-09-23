@@ -144,6 +144,7 @@ struct SelectedWork {
     uint64_t producerSupportWork = 0;
     uint64_t restorationDeadlineQueries = 0, restorationUseChecks = 0, deadlineRestorations = 0;
     uint64_t restorationPositionEntries = 0, restorationDeadlineFallbacks = 0;
+    uint64_t acknowledgmentPrefixReplays = 0, acknowledgmentPrefixReplaySites = 0;
     uint64_t sourceGapQueries = 0, sourceGapCommands = 0, earlyPublications = 0;
     // Native original-program discovery, before selected construction/retries.
     uint64_t nativeEndpointDiscoveryWork = 0;

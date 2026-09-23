@@ -1,5 +1,81 @@
 # OAHS current handoff
 
+## Paused after completed bounded Step Z — atomic ordinary acknowledgment packets
+
+User requested this commit followed by a pause and recap. Do not start the next
+implementation increment until resumed. Baseline Y `af1e1a0ed`; no push.
+
+Ordinary single-consumption acknowledgment selection now returns a private reverse
+prefix. The same `edge()` continuation appends the forward pair and, when needed,
+its closed return. The complete four/six-endpoint packet is qualified and committed
+once. Rejected candidates leave no partial helper, ownership or acquired credit.
+Closed selection privately evaluates the original reverse-prefix positions before
+choosing its continuation; exact offsets and the new forward-WAIT identity survive
+composition. A refused complete packet is not qualified twice. An independently
+selected dormant alternative does not inherit discarded-prefix repair metadata.
+This is an interface consolidation; provider/key/placement policy is unchanged.
+
+Architecture, bounded generality, correctness and asymptotic-performance ACCEPT.
+Final host evidence: 22/22 portable suites; three native drivers; 88/88 corpus;
+18/19 compatibility (same inherited refusal); GEMM, two prefills and three targets.
+All 113 campaign outputs, including the refused-input output, are byte-identical
+to Y. Successful payload/command identity establishes represented-order and event
+resource identity; no redundant closure comparison was run. This does not close
+older quality debts or imply a device performance result. No sanitizer/device run.
+
+Tests cover private-prefix rejection without ledger/state changes; public normal
+construction with one atomic update; six-endpoint return ownership naming the NEW
+forward receipt; invalid closed continuation; terminal/future variants through the
+portable public fixed-ledger interface; and three real-importer scarcity variants
+(original, equivalent view, unrelated control/arithmetic). The one-key test profile
+retains imported effects. Real-target reconstruction is checked separately. The
+fixed-ledger tests do not imply native authored-event support.
+
+Matched successful-input work: updates8181->8163; regular replay7064292->7056798;
+ownership checks564->579/sites2895187->2954816. Recurring analyzer202187 and staged
+replay241509 are unchanged, as are key queries4092 and loop-entry work70148. Private
+closed-prefix replays are explicitly counted: zero in this service campaign, with
+activation covered by portable tests. Discarded replay738963 unchanged. Successful
+elapsed331.72->336.19seconds and discarded31.12->33.46seconds are nonisolated.
+Ownership/loop-entry/recurring counters overlap; do not sum them as independent
+work. The remaining full-program qualification and conservative closed-prefix
+resume=0 are measured/identified recovery obligations, not a speedup claim.
+
+Evidence: `../oahs-gemm-base-builds/refactor-step-z/`: exact campaign build diff and
+binary pins, logs, summary/results, resources/work/order identity, review record,
+commit preview and final staged diff. Subsequent test-only named-condition/style
+cleanup changes no test predicate or production behavior; build and final diffs
+are retained separately. Compliance has zero findings.
+
+### Next on resume: persistent publication support
+
+A real normal-constructor witness now reproduces the missing invariant:
+Q writes U; P writes X; Q reads X; P writes Y; P writes Z; R reads Z; Q reads Y,
+with one P/Q key. A new acknowledgment WAIT at Y's source imports Q's unrelated U
+completion into the already selected P->R publication, ordering both P:write Z
+and R:read Z. See `refactor-step-z/acknowledgment-witness.txt` and `probe.cpp`.
+Atomicity does not remove this ordering. A reverse-key restoration probe already
+preserves independence and must not motivate an unnecessary special handler.
+
+Use the complete packet as the next shared certificate consumer. Retain the actual
+publication identity, original milestone/coverage, qualified incoming interface,
+exact event-generation dependencies and preservation status rooted at admission.
+Batch comparison over an affected acyclic corridor; account for earlier changed
+words and changed SETs feeding unchanged WAITs. Direct fences, erasure and later
+restoration must invalidate dependent contracts too. Unsupported correspondence
+or budgets yield Unknown, never a silently renewed preserved baseline. Symbolic
+ordering evidence grants no causal credit. Mandatory checked repair remains
+available with explicit loss/unproved placement; do not reject required service
+or perform arbitrary source/shape search. Moving Y's source past R may instead
+import Z into Y's consumer, so it is not automatically an ordering improvement.
+
+Remaining adopted work: persistent disjoint-copy support; both-optional/no-reader
+child composition and open lifetimes; independent unequal banks; v0.38 common
+request/recipe policy and local packet certificates; F/G/L/R/V quality and compiler
+work recovery; matched device evidence. Stages 1–4 remain partial. Keep existing
+bounded dormant/joined closed policy differences explicit. Draft v0.38's complete
+packet contract already covers Z; no new theorem or hardware premise is claimed.
+
 ## Completed bounded Step Y — preserve source milestones before key repair
 
 Baseline X `6614c84a4`. Ordinary direct binding proves the prescribed early gap

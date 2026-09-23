@@ -312,6 +312,89 @@ struct ReplayTestAccess {
                     "fallback lost the complete-check refusal reason");
         }
     }
+    static void privateAcknowledgment()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(2, 1);
+        p.operations = {op(P, {{0, false, true, true}}), op(P, {{1, false, true, true}}),
+                        op(Q, {{0, true, false}}), op(Q, {{1, true, false}})};
+        Constructor c(p);
+        c.ledger.append(1, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion);
+        c.ledger.append(2, {Command::Acquire, P, Q, 0}, EndpointPurpose::Completion);
+        c.current = 3;
+        c.activeComponent = c.control.component[c.current];
+        c.needsContextualReplay = true;
+        require(c.update(), c.result.reason);
+        const auto version = c.ledger.version(), records = c.ledger.records().size();
+        const auto state = c.currentState().causal;
+        Cut publication = 2;
+        Id key = NoAnalysisId;
+        bool completed = false;
+        SelectedDecision decision;
+        OrderedPacket prefix;
+        const bool selected = c.acknowledgment(P, Q, publication, key, decision, completed, prefix);
+        require(selected && !completed && prefix.size() == 2,
+                "ordinary acknowledgment did not return a private prefix");
+        require(c.ledger.version() == version && c.ledger.records().size() == records &&
+                c.currentState().causal == state && decision.endpoints.empty(),
+                "acknowledgment selection granted credit or installed endpoints");
+        prefix.push_back({publication, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion});
+        // A second publication cannot reuse the unconsumed new forward token.
+        prefix.push_back({3, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion});
+        require(!c.qualifyOwnedPacket(prefix, true), "invalid forward half accepted with a valid acknowledgment");
+        require(c.ledger.version() == version && c.ledger.records().size() == records &&
+                c.currentState().causal == state && c.result.work.acknowledgments == 0,
+                "rejected complete packet leaked its acknowledgment half");
+        prefix.back().command.kind = Command::Acquire;
+        const auto qualified = c.qualifyOwnedPacket(prefix, true);
+        require(qualified && c.commitOwnedPacket(*qualified, decision), "complete acknowledgment packet refused");
+        require(decision.endpoints.size() == 4 && c.ledger.version() == version + 4,
+                "complete acknowledgment committed a different endpoint population");
+        require(c.update() && checkCausalFrontier(p, c.ledger.commands()).accepted,
+                "actual packet credit did not discharge both storage requirements");
+    }
+    static void privateClosedAcknowledgment()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(3, 1);
+        p.operations = {op(P, {{0, false, true, true}}), op(P, {{1, false, true, true}}),
+            op(Q, {{0, true, false}}), op(Q, {{1, true, false}}), op(P, {{2, true, false}})};
+        Constructor c(p);
+        c.ledger.append(1, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion);
+        const auto oldWait = c.ledger.append(2, {Command::Acquire, P, Q, 0}, EndpointPurpose::Completion);
+        c.current = 3;
+        c.activeComponent = c.control.component[c.current];
+        c.needsContextualReplay = true;
+        require(c.update(), c.result.reason);
+        Cut publication = 3;
+        SelectedDecision decision;
+        require(c.edge(P, Q, publication, true, decision), c.result.reason);
+        require(decision.endpoints.size() == 6 && c.result.work.acknowledgmentPrefixReplays == 1,
+                "closed acknowledgment omitted its complete continuation");
+        const auto forwardWait = decision.endpoints[3];
+        const auto helperWait = decision.endpoints[5];
+        const auto& owner = c.rearming.at(helperWait);
+        require(owner.consumption == forwardWait && forwardWait != oldWait && owner.deferred,
+                "closed return does not own the new forward consumption");
+        for (Id i : {Id(4), Id(5)}) {
+            require(c.ledger.endpoint(decision.endpoints[i]).acknowledges == forwardWait &&
+                    !c.ledger.active(decision.endpoints[i]), "packet-relative return identity changed");
+        }
+        require(checkCausalFrontier(p, c.ledger.commands()).accepted,
+                "deferred closed packet lost required storage credit");
+        const auto version = c.ledger.version();
+        const auto state = c.currentState().causal;
+        OrderedPacket bad;
+        const auto gap = c.ledger.gapAfter(forwardWait);
+        require(bool(gap), "closed return lost its source gap");
+        bad.push_back(*c.ledger.restoration(owner.publication, *gap));
+        // Leave the reverse token unconsumed, then publish it again.
+        bad.push_back({4, c.ledger.endpoint(owner.publication).command, EndpointPurpose::Completion});
+        require(!c.qualifyOwnedPacket(bad, true), "invalid closed tail was accepted");
+        require(c.ledger.version() == version && c.currentState().causal == state &&
+                !c.ledger.active(owner.publication) && !c.ledger.active(owner.acquisition),
+                "invalid closed tail committed partial ownership or credit");
+    }
     static void ownedPackets(bool acknowledgment = false)
     {
         const auto P = Pipe::MTE2, Q = Pipe::V;
@@ -350,7 +433,8 @@ struct ReplayTestAccess {
             Id key = NoAnalysisId;
             SelectedDecision decision;
             bool completed = false;
-            require(c.acknowledgment(P, Q, publication, key, decision, completed) && completed,
+            OrderedPacket prefix;
+            require(c.acknowledgment(P, Q, publication, key, decision, completed, prefix) && completed,
                     "single-consumption repair did not realize its complete owned packet");
             require(c.result.work.ownershipBindings == 1 && c.result.work.rearmingRestored == 2,
                     "single-consumption repair bypassed shared owner closure");
@@ -1156,6 +1240,8 @@ int main()
     pendingAccumulatorHistories();
     repeatedJoinedPacket();
     joinedConsumptionReturn();
+    o::selected::ReplayTestAccess::privateAcknowledgment();
+    o::selected::ReplayTestAccess::privateClosedAcknowledgment();
     orderedPacketMaterialization();
     stablePacketGaps();
     aliasPacketGaps();

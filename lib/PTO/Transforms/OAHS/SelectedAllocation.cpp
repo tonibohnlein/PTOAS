@@ -530,7 +530,7 @@ std::vector<Pipe> Constructor::route(Pipe source, Pipe observer) const
     return path;
 }
 bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, Id& key,
-                                 SelectedDecision& decision, bool& completed)
+                                 SelectedDecision& decision, bool& completed, OrderedPacket& prefix)
 {
     Id oldWait = NoAnalysisId, reverse = NoAnalysisId;
     Cut moved = publication;
@@ -631,25 +631,15 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
     if (!gap) {
         return fail(SelectedFailure::SelectedUpdate, "consumption acknowledgment lost its source gap", moved);
     }
-    const OrderedPacket packet{
+    prefix = {
         {gap->cut, {Command::Publish, observer, source, identity.key},
          EndpointPurpose::ConsumptionAcknowledgment, request, oldWait, gap},
         {moved, {Command::Acquire, observer, source, identity.key},
          EndpointPurpose::ConsumptionAcknowledgment, request, oldWait}};
-    if (!commitPacket(packet, decision)) {
-        return false;
-    }
-    ++result.work.acknowledgments;
+    // This is a selected shape, not selected credit. edge() appends the forward
+    // transfer and any closed return before qualifying and committing one edit.
     decision.enlargedPrefix |= moved != publication;
     publication = moved;
-    if (!update()) {
-        return false;
-    }
-    decision.repairOutputVersion = ledger.version();
-    if (!canPublish(cache.cuts[publication].before, key)) {
-        return fail(SelectedFailure::SelectedUpdate,
-            "selected acknowledgment does not rearm its new publication", publication);
-    }
     return true;
 }
 std::optional<bool> Constructor::joinedAcknowledgment(
@@ -809,6 +799,7 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     const bool retained = recurringClosed && binding != closedBindings.end();
     Id key = retained ? binding->second.first : NoAnalysisId;
     std::optional<WordGap> selectedGap;
+    OrderedPacket prefix;
     if (!retained && !closed && source == decision.source && observer == decision.observer) {
         const auto milestone = earlyPublicationMilestone(publication, source);
         if (milestone) {
@@ -852,7 +843,7 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
                 return *owned;
             }
             bool completed = false;
-            if (!acknowledgment(source, observer, publication, key, decision, completed)) {
+            if (!acknowledgment(source, observer, publication, key, decision, completed, prefix)) {
                 return false;
             }
             if (completed) {
@@ -862,15 +853,30 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     }
     const auto number = frontier.keys()[key].key;
     const auto request = result.decisions.size();
-    OrderedPacket packet{
-        {publication, {Command::Publish, source, observer, number}, EndpointPurpose::Completion, request},
-        {current, {Command::Acquire, source, observer, number}, EndpointPurpose::Completion, request}};
+    OrderedPacket packet = prefix;
+    const auto forwardWait = packet.size() + 1;
+    packet.push_back({publication, {Command::Publish, source, observer, number}, EndpointPurpose::Completion, request});
+    packet.push_back({current, {Command::Acquire, source, observer, number}, EndpointPurpose::Completion, request});
+    const auto commit = [&]() {
+        if (prefix.empty()) { return commitPacket(packet, decision); }
+        const auto qualified = qualifyOwnedPacket(packet, true);
+        if (!qualified) {
+            return fail(SelectedFailure::SelectedUpdate, "complete acknowledgment packet was refused", current);
+        }
+        return commitOwnedPacket(*qualified, decision);
+    };
+    const auto selectedUpdate = [&]() {
+        if (!prefix.empty()) { ++result.work.acknowledgments; }
+        if (!update()) { return false; }
+        if (!prefix.empty()) { decision.repairOutputVersion = ledger.version(); }
+        return true;
+    };
     if (!closed) {
         if (selectedGap) {
             packet.front().gap = *selectedGap;
             ++result.work.earlyPublications;
         }
-        return commitPacket(packet, decision) && update();
+        return commit() && selectedUpdate();
     }
     // A recurring closed word is one selected edit. Replaying its forward half
     // over a backedge before adding its acknowledgment would reject a protocol
@@ -880,7 +886,22 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
         return fail(SelectedFailure::MissingParticipation, "closed word requires one common cut", current);
     }
     auto afterForward = currentState();
-    const auto offset = ledger.word(current).size();
+    auto offset = ledger.word(current).size();
+    if (!prefix.empty()) {
+        // Reproduce the old intermediate state privately to select the same
+        // closed continuation. It is not an independently selected protocol.
+        const auto staged = ledger.preparePacket(prefix);
+        const auto view = ledger.packetView(staged);
+        if (!view) { return fail(SelectedFailure::SelectedUpdate, "acknowledgment prefix changed", current); }
+        auto evaluated = evaluateContextual(&*view, producerSupportClasses, producerSupportConsumers, 0);
+        ++result.work.acknowledgmentPrefixReplays;
+        result.work.acknowledgmentPrefixReplaySites += evaluated.evaluations;
+        if (!evaluated.success) {
+            return fail(SelectedFailure::SelectedUpdate, evaluated.reason, evaluated.failureCut);
+        }
+        afterForward = evaluated.cuts[current].before;
+        offset = view->word(current).size();
+    }
     auto sent = frontier.command(afterForward.causal,
         {Command::Publish, source, observer, number}, {current, offset});
     if (!sent.applied) return fail(SelectedFailure::SelectedUpdate, sent.reason, current);
@@ -895,21 +916,30 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
         // such knowledge: simply omit its unused return transfer. Validation
         // and the native reconstruction checker are unchanged.
         ++result.work.commonCutTransfers;
-        return commitPacket(packet, decision) && update();
+        return commit() && selectedUpdate();
     }
     const auto reverse = retained ? binding->second.second : reusable(observer, source, afterForward);
     if (reverse == NoAnalysisId || !canPublish(afterForward, reverse)) {
         if (!retained) {
-            if (auto owned = dormantTransfer(source, observer, publication, true, decision)) { return *owned; }
+            auto alternative = decision;
+            if (!prefix.empty()) {
+                alternative.repairedAcquisition = NoAnalysisId;
+                alternative.repairedForwardKey = alternative.repairReverseKey = 0;
+                alternative.repairInputVersion = alternative.repairOutputVersion = 0;
+            }
+            if (auto owned = dormantTransfer(source, observer, publication, true, alternative)) {
+                if (*owned) { decision = std::move(alternative); }
+                return *owned;
+            }
         }
         return fail(SelectedFailure::EventResource,
             "common-cut acknowledgment has no independently reusable reverse key", current);
     }
     const auto reverseNumber = frontier.keys()[reverse].key;
     packet.push_back({current, {Command::Publish, observer, source, reverseNumber},
-                      EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
+                      EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, forwardWait});
     packet.push_back({current, {Command::Acquire, observer, source, reverseNumber},
-                      EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
+                      EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, forwardWait});
     bool defer = !retained && canDeferCommonReturn();
     bool committed = false;
     if (defer) {
@@ -920,10 +950,13 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
             if (!commitOwnedPacket(*qualified, decision)) { return false; }
             committed = true;
         } else {
+            if (!prefix.empty()) {
+                return fail(SelectedFailure::SelectedUpdate, "complete acknowledgment packet was refused", current);
+            }
             defer = false; // Retain the existing closed construction certificate.
         }
     }
-    if (!committed && !commitPacket(packet, decision)) { return false; }
+    if (!committed && !commit()) { return false; }
     const auto helperPub = decision.endpoints[decision.endpoints.size() - 2];
     const auto helperWait = decision.endpoints.back();
     rememberReturn(helperPub, helperWait);
@@ -932,7 +965,7 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     }
     result.work.acknowledgments += !defer;
     ++result.work.commonCutTransfers;
-    if (!update()) {
+    if (!selectedUpdate()) {
         if (!defer) { return false; }
         // Forward-only continuation refused: realize the preserved complete
         // fallback before rejecting this otherwise supported local decision.
@@ -941,6 +974,7 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
         result.reason.clear();
         result.cut = NoAnalysisId;
         if (!update()) { return false; }
+        if (!prefix.empty()) { decision.repairOutputVersion = ledger.version(); }
     }
     if (recurringClosed && !retained) {
         closedBindings[{source, observer}] = {key, reverse};

@@ -88,6 +88,13 @@ failed-forward diagnostics to avoid duplicate qualification. See HANDOFF for
 36 nonempty equal campaign comparisons, four unknown KDA rows and measured extra
 ownership-check work. This is not cross-request F4/v0.38 policy completion.
 
+Z removes the ordinary acknowledgment's split mutation: a private reverse prefix
+feeds one four/six-endpoint packet and one selected update. Closed continuation
+and dormant return identity are preserved. All 113 campaign outputs remain
+identical to Y; full checks, costs and reviewer ACCEPTs are in HANDOFF. User has
+requested a pause after this commit. Persistent publication support is the next
+implementation task when resumed, not part of Z's completion claim.
+
 Next: persistent publication-prefix support across changed words and incoming
 publication dependencies, consumed by owned-packet placement. Ephemeral source
 gap proofs do not cover later edits. Preserve mandatory checked fallback and

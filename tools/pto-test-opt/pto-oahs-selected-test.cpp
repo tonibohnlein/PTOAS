@@ -1337,6 +1337,77 @@ module attributes {pto.target_arch = "a3"} {
   return true;
 }
 
+bool atomicAcknowledgment(MLIRContext& context) {
+  const std::string input = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @atomic_ack(%src: !pto.partition_tensor_view<1x32xf32>, %choose: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 128 : i64
+    %a2 = arith.constant 256 : i64
+    %a3 = arith.constant 384 : i64
+    %x = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x32xf32>
+    %y = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 1x32xf32>
+    %spare = pto.alloc_tile addr = %a3 : !pto.tile_buf<vec, 1x32xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%x : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%y : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tabs ins(%x : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tabs ins(%y : !pto.tile_buf<vec, 1x32xf32>) outs(%spare : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+})mlir";
+  for (unsigned variant = 0; variant < 3; ++variant) {
+    auto source = input;
+    if (variant == 1) {
+      const auto at = source.find("    pto.tabs ins(%y");
+      source.insert(at, "    %view = pto.treshape %y : !pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 1x32xf32>\n");
+      const auto use = source.find("pto.tabs ins(%y");
+      source.replace(use, std::string("pto.tabs ins(%y").size(), "pto.tabs ins(%view");
+    }
+    if (variant == 2) {
+      const auto at = source.find("    pto.tload");
+      source.insert(at, "    %unused = arith.addi %a1, %a2 : i64\n    scf.if %choose { }\n");
+    }
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    const bool parsed = bool(module) && succeeded(verify(*module));
+    if (!check(parsed, "native atomic acknowledgment parse")) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("atomic_ack");
+    oahs::NativeAnalysis imported;
+    const bool importedOK = succeeded(oahs::testing::analyzeSelectedHandoffSync(function, imported));
+    if (!check(importedOK, "native atomic acknowledgment import")) { return false; }
+    // Explicit scarce resource profile; retain the original imported effects.
+    const auto P = oahs::Pipe::MTE2, Q = oahs::Pipe::V;
+    imported.program.target.keys[unsigned(P)][unsigned(Q)] = {0};
+    imported.program.target.keys[unsigned(Q)][unsigned(P)] = {0};
+    const auto plan = oahs::constructSelectedPlan(imported.program);
+    if (!check(plan.success && oahs::checkCausalFrontier(imported.program, plan.commands).accepted,
+               "native atomic acknowledgment construction")) { return false; }
+    const auto repair = std::find_if(plan.decisions.begin(), plan.decisions.end(), [](const auto& decision) {
+      return decision.repairedAcquisition != oahs::NoAnalysisId;
+    });
+    const bool completeRepair = repair != plan.decisions.end() && repair->endpoints.size() == 4;
+    if (!check(completeRepair, "native scarcity did not select the complete ordinary repair")) { return false; }
+    const auto updates = std::count_if(plan.updates.begin(), plan.updates.end(), [&](const auto& update) {
+      return update.version > repair->repairInputVersion && update.version <= repair->repairOutputVersion;
+    });
+    if (!check(updates == 1, "native acknowledgment selected an incomplete intermediate packet")) { return false; }
+    auto missing = plan.commands;
+    const auto& wait = plan.ledger[repair->endpoints[1]];
+    auto& word = missing[wait.cut];
+    const auto at = std::find_if(word.begin(), word.end(), [&](const auto& command) {
+      return oahs::selected::identical(command, wait.command);
+    });
+    if (!check(at != word.end(), "native atomic receipt missing")) { return false; }
+    word.erase(at);
+    if (!check(!oahs::checkCausalFrontier(imported.program, missing).accepted,
+               "native republication used anticipated acknowledgment credit")) { return false; }
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function)),
+               "native atomic fixture reconstruction under real target pools")) { return false; }
+  }
+  return true;
+}
+
 bool restorationDeadlines(MLIRContext& context) {
   const std::string input = R"mlir(
 module attributes {pto.target_arch = "a3"} {
@@ -1936,6 +2007,8 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " acknowledgment_check_sites=" << work.acknowledgmentCheckSites
                  << " joined_acknowledgments=" << work.joinedAcknowledgments
                  << " source_gap_queries=" << work.sourceGapQueries
+                 << " acknowledgment_prefix_replays=" << work.acknowledgmentPrefixReplays
+                 << " acknowledgment_prefix_replay_sites=" << work.acknowledgmentPrefixReplaySites
                  << " source_gap_commands=" << work.sourceGapCommands
                  << " early_publications=" << work.earlyPublications
                  << " key_queries=" << work.keyQueries << " invariant=" << work.invariantSiteEvaluations
@@ -2170,7 +2243,7 @@ int main(int argc, char **argv) {
                       originalResidueDecisions(context) && readerGenerations(context) &&
                       optionalReaderParticipation(context) &&
                       uniformEndpointRoles(context) && sourceGapPlacement(context) && milestoneKeyBinding(context) &&
-                      restorationDeadlines(context) &&
+                      atomicAcknowledgment(context) && restorationDeadlines(context) &&
                       requiredReturnCoverage(context) &&
                       accumulatorOrdering(context) && accumulatorEpisodes(context) && firstUseOrdering(context);
   return passed ? 0 : 1;

@@ -92,6 +92,18 @@ family-first selection and full-graph private qualification remain transitional.
 Integrate local source/target/unchanged-interval certificates into the common
 packet path before claiming the regular-pipeline construction milestone complete.
 
+### Z exact acknowledgment composition
+
+Z removes the ordinary single-consumption path's selected reverse-half update.
+Its selected prefix remains private until the forward pair and any closed return
+are assembled and checked through the common packet path. Closed continuation
+retains its existing sufficient intermediate-state query, now private and counted.
+The original source/target positions, key priority and actual-credit authority
+remain unchanged. The reproduced outward-publication contamination is explicitly
+unresolved; this increment supplies the complete candidate for adopted step 4's
+persistent support query. No additional paper theorem is required for atomic
+materialization of the existing prescribed packet.
+
 ### Y binding-policy alignment
 
 Y implements a bounded part of adopted step 5: preserve one frozen request's
