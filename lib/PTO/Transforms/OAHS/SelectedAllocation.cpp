@@ -15,57 +15,74 @@ bool Constructor::unownedKey(Id key) const
     return !closedKeys.count(key) && !recurringKeys.count(key) &&
            !ledger.hasDormantUses(frontier.keys()[key]);
 }
-std::optional<OwnedPacket> Constructor::prepareOwnedPacket(const OrderedPacket& proposed)
+std::optional<OwnedPacket> Constructor::prepareOwnedPacket(
+    const OrderedPacket& proposed, const std::vector<Id>& obligations)
 {
     ++result.work.ownershipQueries;
     std::set<std::tuple<Pipe, Pipe, unsigned>> touched;
-    std::set<std::pair<Id, Id>> owners;
-    for (const auto& item : proposed) {
-        const auto& c = item.command;
-        if (c.kind != Command::Publish && c.kind != Command::Acquire) { continue; }
-        const EventIdentity identity{c.source, c.observer, c.key};
-        const bool newOwnerQuery = ledger.hasDormantUses(identity) &&
-            touched.emplace(c.source, c.observer, c.key).second;
-        if (!newOwnerQuery) { continue; }
-        for (auto id : ledger.eventUses(identity)) {
-            if (ledger.active(id)) { continue; }
-            const auto owner = helperOwners.find(id);
-            if (owner == helperOwners.end()) { return {}; }
-            const auto pair = owner->second;
-            if (id != pair.first && id != pair.second) { return {}; }
-            const bool dormantPair = !ledger.active(pair.first) && !ledger.active(pair.second);
-            if (!dormantPair) { return {}; }
-            const auto& pub = ledger.endpoint(pair.first);
-            const auto& wait = ledger.endpoint(pair.second);
-            const auto anchor = wait.acknowledges;
-            const bool matching = pub.purpose == EndpointPurpose::ConsumptionAcknowledgment &&
-                wait.purpose == pub.purpose && pub.acknowledges == anchor &&
-                pub.command.kind == Command::Publish && wait.command.kind == Command::Acquire &&
-                pub.command.source == c.source && pub.command.observer == c.observer && pub.command.key == c.key &&
-                wait.command.source == c.source && wait.command.observer == c.observer && wait.command.key == c.key &&
-                anchor < ledger.records().size() && ledger.active(anchor);
-            if (!matching) { return {}; }
-            const auto& forward = ledger.endpoint(anchor).command;
-            const bool actualReceipt = forward.kind == Command::Acquire &&
-                forward.source == c.observer && forward.observer == c.source;
-            if (!actualReceipt) { return {}; }
-            owners.insert(pair);
+    std::set<Id> owners;
+    auto pending = obligations;
+    // Both a proposed physical use and an explicit rearming deadline request
+    // complete ownership, never a selected subset of the dormant population.
+    const auto touch = [&](const Command& command) {
+        if (command.kind != Command::Publish && command.kind != Command::Acquire) { return true; }
+        const EventIdentity identity{command.source, command.observer, command.key};
+        const bool newIdentity = ledger.hasDormantUses(identity) &&
+            touched.emplace(command.source, command.observer, command.key).second;
+        if (!newIdentity) { return true; }
+        for (auto endpoint : ledger.eventUses(identity)) {
+            if (ledger.active(endpoint)) { continue; }
+            const auto owner = helperOwners.find(endpoint);
+            if (owner == helperOwners.end()) { return false; }
+            const auto record = rearming.find(owner->second);
+            if (record == rearming.end()) { return false; }
+            if (endpoint != record->second.publication && endpoint != record->second.acquisition) { return false; }
+            pending.push_back(owner->second);
         }
+        return true;
+    };
+    for (const auto& item : proposed) {
+        if (!touch(item.command)) { return {}; }
+    }
+    for (Id index = 0; index < pending.size(); ++index) {
+        const auto id = pending[index];
+        if (!owners.insert(id).second) { continue; }
+        const auto found = rearming.find(id);
+        if (found == rearming.end()) { return {}; }
+        const auto& owner = found->second;
+        const bool validIds = owner.publication < ledger.records().size() &&
+            owner.acquisition < ledger.records().size() && owner.consumption < ledger.records().size();
+        if (!validIds) { return {}; }
+        const bool partiallyActive = ledger.active(owner.publication) || ledger.active(owner.acquisition);
+        if (partiallyActive) { return {}; }
+        const auto& pub = ledger.endpoint(owner.publication);
+        const auto& wait = ledger.endpoint(owner.acquisition);
+        const auto& forward = ledger.endpoint(owner.consumption).command;
+        const bool matching = pub.purpose == EndpointPurpose::ConsumptionAcknowledgment &&
+            wait.purpose == pub.purpose && pub.acknowledges == owner.consumption &&
+            wait.acknowledges == owner.consumption && ledger.active(owner.consumption) &&
+            pub.command.kind == Command::Publish && wait.command.kind == Command::Acquire &&
+            pub.command.source == wait.command.source && pub.command.observer == wait.command.observer &&
+            pub.command.key == wait.command.key && forward.kind == Command::Acquire &&
+            forward.source == wait.command.observer && forward.observer == wait.command.source &&
+            owner.forwardKey == keyIndex(frontier, forward);
+        if (!matching || !touch(wait.command)) { return {}; }
     }
     std::vector<Id> anchors;
-    for (const auto& owner : owners) { anchors.push_back(ledger.endpoint(owner.second).acknowledges); }
+    for (auto id : owners) { anchors.push_back(rearming.at(id).consumption); }
     const auto gaps = ledger.gapsAfter(anchors);
     OwnedPacket out;
     OrderedPacket packet;
-    for (const auto& owner : owners) {
-        const auto gap = gaps.find(ledger.endpoint(owner.second).acknowledges);
+    for (auto id : owners) {
+        const auto& owner = rearming.at(id);
+        const auto gap = gaps.find(owner.consumption);
         if (gap == gaps.end()) { return {}; }
-        const auto pub = ledger.restoration(owner.first, gap->second);
-        const auto wait = ledger.restoration(owner.second, gap->second);
+        const auto pub = ledger.restoration(owner.publication, gap->second);
+        const auto wait = ledger.restoration(owner.acquisition, gap->second);
         if (!pub || !wait) { return {}; }
         packet.push_back(*pub);
         packet.push_back(*wait);
-        out.restoredWaits.push_back(owner.second);
+        out.restoredWaits.push_back(id);
     }
     out.restoredEndpoints = packet.size();
     for (Id index = 0; index < proposed.size(); ++index) {
@@ -80,9 +97,10 @@ std::optional<OwnedPacket> Constructor::prepareOwnedPacket(const OrderedPacket& 
     if (!out.prepared.valid()) { return {}; }
     return out;
 }
-std::optional<OwnedPacket> Constructor::qualifyOwnedPacket(const OrderedPacket& proposed, bool alwaysCheck)
+std::optional<OwnedPacket> Constructor::qualifyOwnedPacket(
+    const OrderedPacket& proposed, bool alwaysCheck, const std::vector<Id>& obligations)
 {
-    auto out = prepareOwnedPacket(proposed);
+    auto out = prepareOwnedPacket(proposed, obligations);
     if (!out) { return {}; }
     if (alwaysCheck || !out->restoredWaits.empty()) {
         const auto commands = ledger.withPacket(out->prepared);
@@ -134,7 +152,7 @@ bool Constructor::commitOwnedPacket(const OwnedPacket& packet, SelectedDecision&
     decision.endpoints.insert(decision.endpoints.end(), ids.begin() + packet.restoredEndpoints, ids.end());
     if (!packet.restoredWaits.empty()) { ++result.work.ownershipBindings; }
     for (auto wait : packet.restoredWaits) {
-        requiredReturns.insert(wait);
+        rearming.at(wait).required = true;
         ++result.work.acknowledgments;
         ++result.work.rearmingRestored;
         --result.work.rearmingDischarged;
@@ -738,47 +756,49 @@ std::optional<bool> Constructor::dormantTransfer(
 }
 bool Constructor::restoreReturns(Id key)
 {
-    const auto& identity = frontier.keys()[key];
-    const auto found = pendingRearming.find({identity.observer, identity.source});
-    if (found == pendingRearming.end()) return false;
-    OrderedPacket packet;
-    std::vector<Id> restored;
-    std::vector<Id> anchors;
-    std::vector<std::pair<Id, Id>> selected;
-    for (const auto& helper : found->second) {
-        if (ledger.active(helper.second)) { continue; }
-        const auto wait = ledger.endpoint(helper.second).acknowledges;
-        const auto& forward = ledger.endpoint(wait).command;
-        const bool matches = forward.source == identity.source && forward.observer == identity.observer &&
-            forward.key == identity.key;
-        if (!matches) { continue; }
-        selected.push_back(helper);
-        anchors.push_back(wait);
+    const auto found = rearmingByKey.find(key);
+    if (found == rearmingByKey.end()) { return false; }
+    std::vector<Id> obligations;
+    for (auto id : found->second) {
+        if (!ledger.active(rearming.at(id).acquisition)) { obligations.push_back(id); }
     }
-    const auto gaps = ledger.gapsAfter(anchors);
-    for (const auto& helper : selected) {
-        const auto wait = ledger.endpoint(helper.second).acknowledges;
-        const auto gap = gaps.find(wait);
-        if (gap == gaps.end()) { return false; }
-        const auto publication = ledger.restoration(helper.first, gap->second);
-        const auto acquisition = ledger.restoration(helper.second, gap->second);
-        if (!publication || !acquisition) { return false; }
-        packet.push_back(*publication);
-        packet.push_back(*acquisition);
-        restored.push_back(helper.second);
+    if (obligations.empty()) { return false; }
+    // A single edit can expose several independent deadlines. Grow one private
+    // recovery from actual missing-consumption diagnostics, never try subsets.
+    // No partial restoration or assumed credit enters the selected ledger.
+    std::set<Id> selected(obligations.begin(), obligations.end());
+    std::set<Id> expandedKeys{key};
+    while (true) {
+        auto packet = prepareOwnedPacket({}, {selected.begin(), selected.end()});
+        if (!packet || packet->restoredWaits.empty()) { return false; }
+        const auto commands = ledger.withPacket(packet->prepared);
+        if (!commands) { return false; }
+        const auto checked = analyze(program, *commands, {false});
+        ++result.work.ownershipChecks;
+        result.work.ownershipCheckSites += checked.stats.siteEvaluations;
+        if (acceptOwnedPacket(*packet, checked)) {
+            SelectedDecision restoration;
+            return commitOwnedPacket(*packet, restoration);
+        }
+        if (!checked.complete || !checked.diagnostics.empty()) { return false; }
+        // Include closure owners in the progress measure; a diagnostic for one
+        // already staged cannot induce a redundant solve or a recovery cycle.
+        selected.insert(packet->restoredWaits.begin(), packet->restoredWaits.end());
+        const auto before = selected.size();
+        for (const auto& issue : checked.protocol) {
+            if (issue.kind != ProtocolObligation::ConsumptionNotEstablished) { continue; }
+            const auto failedKey = keyIndex(frontier,
+                {Command::Publish, issue.event.source, issue.event.observer, issue.event.key});
+            if (!expandedKeys.insert(failedKey).second) { continue; }
+            const auto failed = rearmingByKey.find(failedKey);
+            if (failed == rearmingByKey.end()) { continue; }
+            for (auto id : failed->second) {
+                if (!ledger.active(rearming.at(id).acquisition)) { selected.insert(id); }
+            }
+        }
+        const bool progress = selected.size() != before;
+        if (!progress) { return false; }
     }
-    if (packet.empty()) { return false; }
-    const auto prepared = ledger.preparePacket(packet);
-    const auto ids = ledger.appendPacket(prepared);
-    const bool completePacket = ids.size() == packet.size();
-    if (!completePacket) { return false; }
-    for (auto wait : restored) {
-        requiredReturns.insert(wait);
-        ++result.work.acknowledgments;
-        ++result.work.rearmingRestored;
-        --result.work.rearmingDischarged;
-    }
-    return true;
 }
 bool Constructor::restoreRearming(Id key, Cut publication)
 {
@@ -787,10 +807,18 @@ bool Constructor::restoreRearming(Id key, Cut publication)
 
 void Constructor::rememberReturn(Id publication, Id acquisition)
 {
-    const auto& c = ledger.endpoint(acquisition).command;
-    pendingRearming[{c.source, c.observer}].push_back({publication, acquisition});
-    helperOwners[publication] = {publication, acquisition};
-    helperOwners[acquisition] = {publication, acquisition};
+    const auto& endpoint = ledger.endpoint(acquisition);
+    const auto consumption = endpoint.acknowledges;
+    const auto forward = consumption < ledger.records().size()
+        ? keyIndex(frontier, ledger.endpoint(consumption).command) : NoAnalysisId;
+    const auto inserted = rearming.emplace(acquisition,
+        RearmingObligation{consumption, forward, publication, acquisition});
+    if (!inserted.second) { return; }
+    const auto& c = endpoint.command;
+    pendingRearming[{c.source, c.observer}].push_back(acquisition);
+    helperOwners[publication] = acquisition;
+    helperOwners[acquisition] = acquisition;
+    if (forward != NoAnalysisId) { rearmingByKey[forward].push_back(acquisition); }
 }
 
 bool Constructor::returnBeforeUse(Id helperWait, Id necessaryWait)
@@ -872,13 +900,16 @@ bool Constructor::settleRearming(const SelectedDecision& decision)
         if (paired.first == helpers && paired.second == actuals) continue;
         const auto firstHelper = paired.second == actuals ? paired.first : 0;
         for (Id h = firstHelper; h < helpers; ++h) {
-            const auto& helper = pending->second[h];
-            if (!ledger.active(helper.second) || requiredReturns.count(helper.second)) continue;
+            auto& helper = rearming.at(pending->second[h]);
+            const bool removable = ledger.active(helper.acquisition) && !helper.required;
+            if (!removable) { continue; }
             for (Id r = h < paired.first ? paired.second : 0; r < actuals; ++r) {
                 ++result.work.rearmingPairVisits;
-                if (!returnBeforeUse(helper.second, returns->second[r])) continue;
-                ledger.erase(helper.first);
-                ledger.erase(helper.second);
+                if (!returnBeforeUse(helper.acquisition, returns->second[r])) { continue; }
+                helper.supportingReceipt = returns->second[r];
+                helper.supportRevision = ledger.version();
+                ledger.erase(helper.publication);
+                ledger.erase(helper.acquisition);
                 --result.work.acknowledgments;
                 ++result.work.rearmingDischarged;
                 changed = true;

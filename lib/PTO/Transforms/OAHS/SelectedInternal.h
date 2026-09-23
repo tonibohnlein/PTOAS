@@ -20,6 +20,7 @@
 namespace mlir::pto::oahs::selected {
 
 using Id = std::size_t;
+Id keyIndex(const CausalFrontier&, const Command&);
 struct Component {
     std::vector<Id> sites, order, entries;
     bool cyclic = false;
@@ -415,6 +416,15 @@ struct Group {
     std::optional<OwnedPacket> packet;
 };
 
+// Each tracked fallback references its actual consumption, even when several
+// generations reuse a key. Activity/completion remain ledger/frontier facts.
+struct RearmingObligation {
+    Id consumption = NoAnalysisId, forwardKey = NoAnalysisId;
+    Id publication = NoAnalysisId, acquisition = NoAnalysisId;
+    bool required = false;
+    Id supportingReceipt = NoAnalysisId, supportRevision = NoAnalysisId;
+};
+
 class Constructor {
     friend struct ReplayTestAccess;
 public:
@@ -448,13 +458,14 @@ private:
     bool needsContextualReplay = false;
     // Each fallback return records a pending rearming obligation. A later
     // necessary transfer may discharge it; memory requirements remain separate.
-    std::map<std::pair<Pipe, Pipe>, std::vector<std::pair<Id, Id>>> pendingRearming;
-    std::map<Id, std::pair<Id, Id>> helperOwners;
+    std::map<Id, RearmingObligation> rearming;
+    std::map<std::pair<Pipe, Pipe>, std::vector<Id>> pendingRearming;
+    std::map<Id, Id> helperOwners;
+    std::map<Id, std::vector<Id>> rearmingByKey;
     std::map<std::pair<Pipe, Pipe>, std::vector<Id>> necessaryReturns;
     // Append-only populations already paired for each direction. Old helpers
     // see only new returns; new helpers see all returns, in the original order.
     std::map<std::pair<Pipe, Pipe>, std::pair<Id, Id>> pairedReturns;
-    std::set<Id> requiredReturns;
     bool restoreReturns(Id);
     bool restoreRearming(Id, Cut);
     bool settleRearming(const SelectedDecision&);
@@ -493,8 +504,9 @@ private:
                            const std::vector<FrontierRequirement>&, Group&);
     bool consume();
     bool bind(Group&, RequirementStage);
-    std::optional<OwnedPacket> prepareOwnedPacket(const OrderedPacket&);
-    std::optional<OwnedPacket> qualifyOwnedPacket(const OrderedPacket&, bool alwaysCheck = false);
+    std::optional<OwnedPacket> prepareOwnedPacket(const OrderedPacket&, const std::vector<Id>& obligations = {});
+    std::optional<OwnedPacket> qualifyOwnedPacket(const OrderedPacket&, bool alwaysCheck = false,
+                                                 const std::vector<Id>& obligations = {});
     bool acceptOwnedPacket(OwnedPacket&, const AnalysisResult&) const;
     bool commitOwnedPacket(const OwnedPacket&, SelectedDecision&);
     bool unownedKey(Id) const;

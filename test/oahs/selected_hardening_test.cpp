@@ -216,6 +216,17 @@ struct ReplayTestAccess {
             return;
         }
 
+        // An earlier forward-key deadline seeds one obligation. Its reverse
+        // identity is also owned by the other generation: both must participate.
+        const auto recovery = c.qualifyOwnedPacket({}, true, {helpers.front().second});
+        require(recovery && recovery->restoredWaits.size() == 2 && recovery->prepared.size() == 4,
+                "forward deadline did not close the other reverse-key owner");
+        require(!c.ledger.active(helpers.front().second) && !c.ledger.active(helpers.back().second),
+                "deadline qualification committed fallback credit");
+        const auto queries = c.result.work.ownershipQueries;
+        require(!c.restoreReturns(NoAnalysisId) && c.result.work.ownershipQueries == queries,
+                "unrelated rearming key performed an ownership solve");
+
         const OrderedPacket packet{
             {3, {Command::Publish, Q, P, 0}, EndpointPurpose::Completion},
             {3, {Command::Acquire, Q, P, 0}, EndpointPurpose::Completion}};
@@ -238,19 +249,22 @@ struct ReplayTestAccess {
         const auto prepared = c.qualifyOwnedPacket(packet);
         require(prepared && prepared->restoredWaits.size() == 2 && prepared->restoredEndpoints == 4,
                 "shared physical key did not close ALL dormant helper owners");
-        require(c.ledger.version() == revision && c.requiredReturns.empty(), "qualification mutated ownership");
+        require(c.ledger.version() == revision && !c.rearming.at(helpers.front().second).required &&
+                !c.rearming.at(helpers.back().second).required, "qualification mutated ownership");
         const auto staged = c.ledger.withPacket(prepared->prepared);
         require(staged && checkCausalFrontier(p, *staged).accepted, "complete owner closure failed causal checking");
         c.helperOwners.erase(helpers.front().first);
         require(!c.qualifyOwnedPacket(packet), "unaccounted dormant record was ignored");
-        c.helperOwners[helpers.front().first] = helpers.front();
+        c.helperOwners[helpers.front().first] = helpers.front().second;
         auto conflict = packet;
         conflict.back().command.kind = Command::Publish;
         require(!c.qualifyOwnedPacket(conflict), "invalid neighboring publication borrowed a dormant key");
-        require(c.ledger.version() == revision && c.requiredReturns.empty(), "refused packet partially committed");
+        require(c.ledger.version() == revision && !c.rearming.at(helpers.front().second).required &&
+                !c.rearming.at(helpers.back().second).required, "refused packet partially committed");
         SelectedDecision decision;
         require(c.commitOwnedPacket(*prepared, decision), c.result.reason);
-        require(decision.endpoints.size() == 2 && c.requiredReturns.size() == 2 &&
+        require(decision.endpoints.size() == 2 && c.rearming.at(helpers.front().second).required &&
+                c.rearming.at(helpers.back().second).required &&
                 c.result.work.rearmingRestored == 2 && c.result.work.rearmingDischarged == 0,
                 "owner closure bookkeeping lost an owner or mixed it with new requirements");
         require(checkCausalFrontier(p, c.ledger.commands()).accepted, "committed owner closure changed checked words");
@@ -305,7 +319,7 @@ struct ReplayTestAccess {
                 c.ledger.active(early.first) && c.ledger.active(early.second) &&
                 !c.ledger.active(late.first) && !c.ledger.active(late.second),
                 "candidate refusal restored a partial ledger or selected the wrong owner");
-        require(c.requiredReturns.size() == 1 && c.requiredReturns.count(early.second),
+        require(c.rearming.at(early.second).required && !c.rearming.at(late.second).required,
                 "failed ownership candidate changed the retained support set");
         require(checkCausalFrontier(p, c.ledger.commands()).accepted, "candidate retry broke causal/event legality");
     }

@@ -85,6 +85,13 @@ Default deadline deferral, persistent publication-prefix support and arbitrary
 lifetime-scoped borrowing remain open. Existing closed/recurring reservations are
 explicit sufficient restrictions, not a general ownership solution.
 
+Q replaces separate helper-pair/pin interpretations with shared consumption
+obligation records and ID indexes. Actual failed publication recovery uses the
+same all-owner packet qualification as new bindings; independent missing deadlines
+expand one private monotone closure and commit atomically. Support receipt/revision
+are historical evidence, never acquired credit. Actual deadline deferral remains
+next: protect latent fallback publication support before allowing helper omission.
+
 Each coherent increment requires architecture, correctness and asymptotic-cost
 review acceptance before its commit. Different selected ledger revisions are not
 by themselves evidence of acceptable aggregate cost. Existing unresolved and empty

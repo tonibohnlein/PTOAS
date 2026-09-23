@@ -190,6 +190,10 @@ struct ReplayTestAccess {
         require(c.settleRearming(decision), c.cache.reason);
         require(!c.ledger.active(helperSet) && !c.ledger.active(helperWait) &&
                 c.result.work.rearmingDischarged == 1, "fixture never discharged its helper");
+        const auto& obligation = c.rearming.at(helperWait);
+        require(obligation.consumption == forward && obligation.supportingReceipt == actual &&
+                obligation.supportRevision < c.ledger.version() && !obligation.required,
+                "actual return substitution lost its consumption/proof identity");
         compare();
         // New earlier republication needs the removed helper BEFORE the later
         // actual return. update() must restore original IDs and word positions.
@@ -197,7 +201,8 @@ struct ReplayTestAccess {
         append(2, Command::Acquire, P, Q, 0, EndpointPurpose::Completion);
         require(c.update(), c.cache.reason);
         require(c.result.work.rearmingRestored == 1 && c.result.work.rearmingDischarged == 0 &&
-                c.requiredReturns.count(helperWait) && c.ledger.word(1) == originalWord,
+                c.rearming.at(helperWait).required && c.ledger.word(1) == originalWord &&
+                c.result.work.ownershipBindings == 1 && c.result.work.ownershipChecks == 1,
                 "earlier deadline did not restore and pin original helper identities/positions");
         compare();
         require(checkCausalFrontier(p, c.ledger.commands()).accepted, "restored plan not accepted");
@@ -209,6 +214,56 @@ struct ReplayTestAccess {
         decision.endpoints.push_back(helperWait);
         require(c.settleRearming(decision) && c.ledger.word(1) == originalWord,
                 "required return was removed again");
+    }
+    static void multipleRearmingDeadlines(bool invalid)
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE3;
+        auto p = base(1, 2);
+        p.operations = {op(P, {{0, true, false}}), op(Q, {{0, true, false}}),
+                        op(R, {{0, true, false}}), op(P, {{0, true, false}})};
+        Constructor c(p);
+        c.needsContextualReplay = true;
+        std::vector<Id> owners;
+        for (auto observer : {Q, R}) {
+            c.ledger.append(1, {Command::Publish, P, observer, 0}, EndpointPurpose::Completion);
+            const auto forward = c.ledger.append(1, {Command::Acquire, P, observer, 0}, EndpointPurpose::Completion);
+            const auto pub = c.ledger.append(1, {Command::Publish, observer, P, 0},
+                EndpointPurpose::ConsumptionAcknowledgment, 0, forward);
+            const auto wait = c.ledger.append(1, {Command::Acquire, observer, P, 0},
+                EndpointPurpose::ConsumptionAcknowledgment, 0, forward);
+            c.rememberReturn(pub, wait);
+            c.ledger.erase(pub);
+            c.ledger.erase(wait);
+            owners.push_back(wait);
+            c.ledger.append(3, {Command::Publish, observer, P, 1}, EndpointPurpose::Completion);
+            c.ledger.append(3, {Command::Acquire, observer, P, 1}, EndpointPurpose::Completion);
+        }
+        c.result.work.rearmingDischarged = 2;
+        c.current = c.control.graph.exit;
+        c.activeComponent = c.control.component[c.current];
+        require(c.update(), c.cache.reason);
+        for (auto observer : {Q, R}) {
+            c.ledger.append(2, {Command::Publish, P, observer, 0}, EndpointPurpose::Completion);
+            c.ledger.append(2, {Command::Acquire, P, observer, 0}, EndpointPurpose::Completion);
+        }
+        if (invalid) {
+            c.ledger.append(2, {Command::Acquire, P, Q, 1}, EndpointPurpose::Completion);
+        }
+        const auto revision = c.ledger.version();
+        if (invalid) {
+            require(!c.restoreReturns(c.rearming.at(owners.front()).forwardKey),
+                    "recovery accepted an unsupported token acquisition");
+            require(c.ledger.version() == revision && !c.rearming.at(owners.front()).required &&
+                    !c.rearming.at(owners.back()).required && c.result.work.rearmingRestored == 0,
+                    "failed multi-key closure committed partial support");
+            return;
+        }
+        require(c.update(), c.cache.reason);
+        require(c.rearming.at(owners.front()).required && c.rearming.at(owners.back()).required &&
+                c.result.work.rearmingRestored == 2 && c.result.work.ownershipBindings == 1 &&
+                c.result.work.ownershipChecks == 2,
+                "one failed deadline prevented atomic recovery of independent deadlines");
+        require(checkCausalFrontier(p, c.ledger.commands()).accepted, "multi-key recovery failed final check");
     }
     // One edit, replayed with the reusable prefix kept and then entirely cold.
     // Returns how many components the incremental run actually kept.
@@ -467,6 +522,8 @@ void recurringRoleIsolation()
 int main()
 {
     o::selected::ReplayTestAccess::dischargeRestore();
+    o::selected::ReplayTestAccess::multipleRearmingDeadlines(false);
+    o::selected::ReplayTestAccess::multipleRearmingDeadlines(true);
     sourceTimeAndNeighbors();
     retirementAlternatives();
     joinedPrecisionBoundary();

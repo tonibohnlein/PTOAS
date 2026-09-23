@@ -845,3 +845,43 @@ must not be added to those counters as independent work. Exact per-case records:
 `../oahs-gemm-base-builds/refactor-step-p/`. Generality review accepts this shared
 ownership prerequisite, not default deferral, arbitrary ownership borrowing or
 persistent publication-prefix protection.
+
+
+## Shared consumption obligations and actual rearming deadlines (Q design)
+
+Missing fact: return substitution, key-pressure binding and replay recovery still
+interpret separate helper-pair/direction tables. One record per tracked fallback, referencing its actual forward
+consumption, owns the original fallback endpoints, forward physical key,
+pinned-support status and the actual receipt used to justify substitution.
+Direction, forward-key and helper-endpoint maps contain record IDs only. Ledger
+activity remains authoritative; no record grants completion. A saved supporting
+receipt and revision are historical evidence, never a reusable completion bit.
+
+At a failed actual republication, indexed dormant obligations seed the same
+complete ownership closure used by new packets. Closure includes every dormant
+owner of the restored reverse identities, validates each once, batches gap
+resolution and checks one exact packet before commit. It cannot depend on a
+successful pre-restoration replay. Empty/unrelated key queries do no graph work.
+Pins and counters change only after exact commitment; each restoration pins at
+least one previously dormant obligation, bounding replay recovery. The old direct
+restoreReturns mutation is replaced, not retained as a second repair mechanism.
+
+Necessary premises: live matching consumption, complete original helper identity,
+exact original gap, complete physical ownership and legal packet protocol. Existing
+closed/recurring reservations and source-time certificates remain sufficient
+restrictions with the replacement obligations stated in P. No datatype, allocation,
+expression or kernel gate is introduced. The native ownership variants exercise
+these representation/context invariants; changed-deadline and multiple-owner tests
+exercise the new repair consumer. Actual acknowledgment deferral additionally
+requires preserving fallback availability through later edits and reverse-key
+pressure; record consolidation alone does not enable that policy.
+
+Recovery may expose several missing consumptions from one selected edit. If the
+complete staged packet still reports missing consumption, add the registered
+dormant obligations of those actual failed identities and recheck the growing
+packet. Commit only the successful complete closure. Each further solve requires
+strict growth by a previously unstaged obligation; no owner subsets or alternate
+placements are explored. Exhaustion of new support refuses without mutations; every kind of failure
+must disappear before the complete packet can commit. Diagnostic forward keys
+are expanded once across all rounds because selected ledger activity is unchanged. This exceptional monotone dependency closure is charged per
+staged analysis; it is not a claim of constant replay cost per selected edit.

@@ -10,11 +10,6 @@
 #include <deque>
 
 namespace mlir::pto::oahs::selected {
-namespace {
-bool same(const State& a, const State& b)
-{
-    return a.causal == b.causal && a.latest == b.latest && a.consumptions == b.consumptions;
-}
 Id keyIndex(const CausalFrontier& frontier, const Command& command)
 {
     const auto& keys = frontier.keys();
@@ -26,6 +21,11 @@ Id keyIndex(const CausalFrontier& frontier, const Command& command)
         }
     }
     return NoAnalysisId;
+}
+namespace {
+bool same(const State& a, const State& b)
+{
+    return a.causal == b.causal && a.latest == b.latest && a.consumptions == b.consumptions;
 }
 bool refused(Replay& replay, Cut site, const FrontierStep& step)
 {

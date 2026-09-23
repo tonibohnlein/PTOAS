@@ -1,6 +1,45 @@
 # OAHS current handoff
 
-## Current iteration — Step P shared dormant ownership qualification
+## Current iteration — Step Q shared rearming obligations
+
+Baseline `b435e0850`. Each tracked fallback now has one record referencing its
+actual consumption, forward key, original endpoints, pin and supporting actual
+receipt/revision. Direction, endpoint and forward-key maps index those records;
+there is no second completion state. Saved support metadata is historical and
+never read as current credit. Helper/return enumeration retains its incremental
+cursors. The old direct restoration bypass is removed.
+
+An actual failed publication seeds indexed dormant obligations into the common
+packet owner closure. It includes all owners of every affected reverse identity.
+If staged checking exposes another missing consumption, recovery grows only from
+those actual diagnostics, then checks the complete packet again. Every additional
+round adds an unstaged owner, and each diagnostic key is expanded once. Nothing
+commits until the whole closure qualifies; pins/counters update together. Normal
+causal replay remains authoritative. This is bounded monotone recovery, not
+subset search or a guarantee of one check per selected edit.
+
+The new tests cover independent forward deadlines from one edit, all-owner closure,
+unsupported acquisition with atomic refusal, exact original gaps/IDs, historical
+support identity, and an unrelated-key no-op. No new dtype, scalar/control spelling
+or physical-storage gate. Existing native ownership variants exercise the shared
+consumer; no instruction/import semantics changed.
+
+Architecture, correctness and asymptotic-performance reviewers ACCEPT; separate
+bounded generality review ACCEPT. Full22portable, three native drivers,88corpus,
+18/19compatibility (same inherited refusal),GEMM,two prefills,three targets and
+native ownership variants pass. All emitted plans are identical to P; no new
+ordering comparison is needed for identical words. Scoped compliance is clean.
+Evidence: `../oahs-gemm-base-builds/refactor-step-q/`, summary.json, test-final.log,
+lit.log and source-work.json. Final portable run precedes braces/named-Booleans
+only; native checks use the final source. No device or sanitizer run.
+
+Next: protect un-emitted fallback publication gaps as support uses before enabling
+acyclic common-cut deferral. Every use of its forward/reverse identities must go
+through the shared owner/consumption contract; no expected return grants credit.
+Acknowledgment placement at arbitrary reuse deadlines and recurring deferral remain
+unfinished. The larger F/G/L quality/work recovery debts remain open.
+
+## Previous iteration — Step P shared dormant ownership qualification
 
 Baseline `bd6fd5bc1`. Ordinary, alternative, loop-entry, single-WAIT and joined
 acknowledgment clients now stage every dormant owner of each touched physical
