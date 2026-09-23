@@ -87,12 +87,12 @@ static bool IsSyncExist(const SyncOps &list, SyncOperation *newSync) {
   return false;
 }
 
-static void MergeSyncList(SyncOps &dstList, const SyncOps &srcList) {
+static void MergeSyncList(SyncOps &dstList, const SyncOps &srcList, SyncCodegen::CommandListPolicy policy) {
   for (auto *sync : srcList) {
     if (sync->uselessSync) {
       continue;
     }
-    if (!IsSyncExist(dstList, sync)) {
+    if (policy == SyncCodegen::CommandListPolicy::PreserveOrder || !IsSyncExist(dstList, sync)) {
       dstList.push_back(sync);
     }
   }
@@ -212,16 +212,16 @@ void SyncCodegen::UpdateOpInsertSync() {
 
 void SyncCodegen::UpdateCompoundOpInsertSync(CompoundInstanceElement *nowCompound) {
   auto &pipeBuild = op2InsertSync[nowCompound->elementOp];
-  MergeSyncList(pipeBuild.pipeBefore, nowCompound->pipeBefore);
-  MergeSyncList(pipeBuild.pipeAfter, nowCompound->pipeAfter);
+  MergeSyncList(pipeBuild.pipeBefore, nowCompound->pipeBefore, commandListPolicy_);
+  MergeSyncList(pipeBuild.pipeAfter, nowCompound->pipeAfter, commandListPolicy_);
 }
 
 void SyncCodegen::UpdateLoopOpInsertSync(LoopInstanceElement *nowElement) {
   if (nowElement->getLoopKind() == KindOfLoop::LOOP_END) {
     auto *loopBegin = dyn_cast<LoopInstanceElement>(syncIR_[nowElement->beginId].get());
     auto &pipeBuild = op2InsertSync[nowElement->elementOp];
-    MergeSyncList(pipeBuild.pipeBefore, loopBegin->pipeBefore);
-    MergeSyncList(pipeBuild.pipeAfter, nowElement->pipeAfter);
+    MergeSyncList(pipeBuild.pipeBefore, loopBegin->pipeBefore, commandListPolicy_);
+    MergeSyncList(pipeBuild.pipeAfter, nowElement->pipeAfter, commandListPolicy_);
   }
 }
 
@@ -229,8 +229,8 @@ void SyncCodegen::UpdateBranchOpInsertSync(BranchInstanceElement *nowElement) {
   if (nowElement->getBranchKind() == KindOfBranch::IF_END) {
     auto *branchBegin = dyn_cast<BranchInstanceElement>(syncIR_[nowElement->beginId].get());
     auto &pipeBuild = op2InsertSync[nowElement->elementOp];
-    MergeSyncList(pipeBuild.pipeBefore, branchBegin->pipeBefore);
-    MergeSyncList(pipeBuild.pipeAfter, nowElement->pipeAfter);
+    MergeSyncList(pipeBuild.pipeBefore, branchBegin->pipeBefore, commandListPolicy_);
+    MergeSyncList(pipeBuild.pipeAfter, nowElement->pipeAfter, commandListPolicy_);
   }
 }
 
@@ -280,8 +280,8 @@ void SyncCodegen::updatePlaceHolderOpInsertSync(PlaceHolderInstanceElement *plac
     return;
   }
   auto &pipeBuild = op2InsertSync[placeHolder->elementOp];
-  MergeSyncList(pipeBuild.pipeBefore, placeHolder->pipeBefore);
-  MergeSyncList(pipeBuild.pipeAfter, placeHolder->pipeAfter);
+  MergeSyncList(pipeBuild.pipeBefore, placeHolder->pipeBefore, commandListPolicy_);
+  MergeSyncList(pipeBuild.pipeAfter, placeHolder->pipeAfter, commandListPolicy_);
 }
 
 void SyncCodegen::SyncInsert(IRRewriter &rewriter, Operation *op,
@@ -326,7 +326,8 @@ void SyncCodegen::CreateBarrierOp(IRRewriter &rewriter, Operation *op,
   Block *block = rewriter.getInsertionBlock();
   Block::iterator ip = rewriter.getInsertionPoint();
   auto currentPipeAttr = getPipeAttr(rewriter, sync->GetActualSrcPipe());
-  if (hasNeighborBarrier(block, ip, currentPipeAttr, insertAtPos)) {
+  if (commandListPolicy_ == CommandListPolicy::MergeSignatures &&
+      hasNeighborBarrier(block, ip, currentPipeAttr, insertAtPos)) {
     return;
   }
 

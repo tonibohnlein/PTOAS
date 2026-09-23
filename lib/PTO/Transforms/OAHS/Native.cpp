@@ -76,6 +76,7 @@ PipelineType nativePipe(Pipe value) {
 }
 struct Import {
   Program program;
+  SyncSlotMapping::AnalysisContext scalarFacts;
   uint64_t endpointDiscoveryWork = 0;
   SmallVector<SyncProtocolModel, 0> protocols;
   SmallVector<mlir::Operation *> payload;
@@ -83,6 +84,7 @@ struct Import {
   SmallVector<mlir::Operation *> anchors;
   SmallVector<Cut> phaseCuts;
   DenseMap<std::size_t, scf::ForOp> loopOwners;
+  DenseMap<std::size_t, SyncSlotMapping::LoopDomain> loopDomains;
   struct SlotLoop {
     unsigned period = 1;
     std::vector<CountedLoopRegion::PeriodicEffects> effects;
@@ -206,17 +208,18 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
   }
   // Leaf loops are refined independently. No product of unrelated loop periods
   // is formed. Unsupported arithmetic keeps the original sound SCF graph.
-  auto integer = [](Value value) -> std::optional<int64_t> {
-    auto constant = value.getDefiningOp<arith::ConstantOp>();
-    if (!constant)
-      return {};
-    auto attr = dyn_cast<IntegerAttr>(constant.getValue());
-    if (!attr || attr.getValue().getBitWidth() > 64)
-      return {};
-    return attr.getInt();
-  };
+  auto &constants = out.scalarFacts.constants;
+  auto &ranges = out.scalarFacts.ranges;
+  auto integer = [&](Value value) { return SyncSlotMapping::evaluateConstant(value, constants); };
   SmallVector<scf::ForOp> loops;
   function.walk([&](scf::ForOp loop) { loops.push_back(loop); });
+  DenseMap<mlir::Operation *, SyncSlotMapping::LoopDomain> domains;
+  for (auto loop : loops) {
+    const auto &domain = out.scalarFacts.domain(loop);
+    if (domain) {
+      domains.try_emplace(loop.getOperation(), *domain);
+    }
+  }
   // Snapshot original requirements once: later control refinement must not
   // erase another endpoint role or manufacture a new source of causal credit.
   std::map<std::size_t, bool> endpointSeparation;
@@ -241,14 +244,12 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     loop.getRegion().walk([&](mlir::Operation *op) {
       nested |= isa<scf::ForOp, scf::WhileOp>(op);
     });
-    if (nested || !isa<IndexType>(loop.getInductionVar().getType()) ||
-        loop->hasAttr("unsignedCmp") || loop->hasAttr("unsigned_cmp") ||
-        integer(loop.getLowerBound()) != std::optional<int64_t>(0) ||
-        integer(loop.getStep()) != std::optional<int64_t>(1))
+    const auto domain = domains.find(loop.getOperation());
+    if (nested || domain == domains.end()) {
       continue;
+    }
     CountedLoopRegion model;
-    const auto bound = integer(loop.getUpperBound());
-    model.atLeastOnce = bound && *bound > 0;
+    model.atLeastOnce = domain->second.atLeastOnce;
     auto slots = out.slotLoops.find(loop.getOperation());
     if (slots != out.slotLoops.end()) {
       model.period = slots->second.period;
@@ -275,6 +276,11 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     if (!physicalResidues && !endpointSeparation.at(model.owner)) {
       continue; // No currently supported occurrence separation was requested.
     }
+    struct DecisionRelation {
+      unsigned period = 0;
+      std::map<uint64_t, std::optional<unsigned>> uniqueResidues;
+    };
+    DenseMap<Value, DecisionRelation> decisionRelations;
     loop.getRegion().walk([&](scf::IfOp choice) {
       auto cmp = choice.getCondition().getDefiningOp<arith::CmpIOp>();
       if (!cmp || (cmp.getPredicate() != arith::CmpIPredicate::eq &&
@@ -284,27 +290,43 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
       if (integer(expression)) {
         std::swap(expression, literal);
       }
-      Value lhs, rhs;
-      if (auto rem = expression.getDefiningOp<arith::RemUIOp>()) {
-        lhs = rem.getLhs();
-        rhs = rem.getRhs();
-      } else if (auto rem = expression.getDefiningOp<arith::RemSIOp>()) {
-        lhs = rem.getLhs();
-        rhs = rem.getRhs();
-      } else
+      const auto literalValue = integer(literal);
+      if (!literalValue) {
         return;
-      const auto modulus = integer(rhs), residue = integer(literal);
-      if (lhs != loop.getInductionVar() || !modulus || !residue ||
-          *modulus <= 0 || *residue < 0 || *residue >= *modulus)
-        return;
-      if (uint64_t(*modulus) > SyncSlotMapping::ExplorationLimit ||
-          (model.period != 1 && uint64_t(model.period) != uint64_t(*modulus))) {
-        return; // Leave this independent predicate in its original control.
       }
-      model.period = unsigned(*modulus);
-      model.decisions.push_back(
-          {ids.lookup(choice.getOperation()), uint64_t(*modulus),
-           uint64_t(*residue), cmp.getPredicate() == arith::CmpIPredicate::eq});
+      auto foundRelation = decisionRelations.find(expression);
+      if (foundRelation == decisionRelations.end()) {
+        DecisionRelation indexed;
+        if (auto relation = SyncSlotMapping::derive(loop, expression, out.scalarFacts)) {
+          indexed.period = relation->period;
+          for (unsigned residue = 0; residue < relation->period; ++residue) {
+            const auto value = relation->values[residue].find(expression);
+            if (value == relation->values[residue].end()) {
+              indexed.period = 0;
+              break;
+            }
+            auto entry = indexed.uniqueResidues.emplace(value->second, residue);
+            if (!entry.second) {
+              entry.first->second.reset();
+            }
+          }
+          out.endpointDiscoveryWork += relation->period;
+        }
+        foundRelation = decisionRelations.try_emplace(expression, std::move(indexed)).first;
+      }
+      const auto &relation = foundRelation->second;
+      if (!relation.period || (model.period != 1 && model.period % relation.period != 0)) {
+        return; // Keep independent or unrepresented original participation.
+      }
+      const auto matching = relation.uniqueResidues.find(*literalValue);
+      if (matching == relation.uniqueResidues.end() || !matching->second) {
+        return; // The current decision interface represents one matching residue.
+      }
+      if (model.period == 1) {
+        model.period = relation.period;
+      }
+      model.decisions.push_back({ids.lookup(choice.getOperation()), relation.period,
+          *matching->second, cmp.getPredicate() == arith::CmpIPredicate::eq});
     });
     // Optional control materialization has a separate work budget. Precise
     // physical relations above remain available when this expansion is skipped.
@@ -324,6 +346,7 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     // protocol construction is not a prerequisite for preserving those roles.
     out.program = std::move(refined.program);
     out.loopOwners[model.owner] = loop;
+    out.loopDomains[model.owner] = domain->second;
     if (slots != out.slotLoops.end())
       out.observationNotes.push_back("qualified original carried-slot orbit: period " +
                                      std::to_string(model.period));
@@ -334,8 +357,8 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     const auto slots = out.slotLoops.find(loop.getOperation());
     const bool usableOrbit = slots != out.slotLoops.end() && slots->second.enclosing &&
                              slots->second.period >= 2;
-    if (!usableOrbit || integer(loop.getLowerBound()) != std::optional<int64_t>(0) ||
-        integer(loop.getStep()) != std::optional<int64_t>(1)) {
+    const auto domain = domains.find(loop.getOperation());
+    if (!usableOrbit || domain == domains.end()) {
       continue;
     }
     const auto& control = *out.program.observed;
@@ -343,8 +366,7 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     model.owner = ids.lookup(loop.getOperation());
     model.period = slots->second.period;
     model.effects = slots->second.effects;
-    const auto bound = integer(loop.getUpperBound());
-    model.atLeastOnce = bound && *bound > 0;
+    model.atLeastOnce = domain->second.atLeastOnce;
     const bool uniqueHeader = control.sites[model.owner].successors.size() == 1;
     if (!uniqueHeader) {
       continue;
@@ -380,6 +402,7 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     }
     out.program = std::move(refined.program);
     out.loopOwners[model.owner] = loop;
+    out.loopDomains[model.owner] = domain->second;
     out.observationNotes.push_back("qualified enclosing bank occurrences: period " + std::to_string(model.period));
   }
   // Several analytical residues can map to the same unchanged instruction.
@@ -393,10 +416,10 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     auto &q = *out.program.observed;
     const auto owner = ids.lookup(loop.getOperation());
     if (llvm::any_of(q.loops, [&](const auto &r) { return r.owner == owner; })) continue;
-    const auto lower = integer(loop.getLowerBound()), upper = integer(loop.getUpperBound()),
-               step = integer(loop.getStep());
-    if (!lower || !upper || !step || *step <= 0 || *lower >= *upper ||
-        loop->hasAttr("unsignedCmp") || loop->hasAttr("unsigned_cmp")) continue;
+    const auto domain = domains.find(loop.getOperation());
+    if (domain == domains.end() || !domain->second.atLeastOnce) {
+      continue;
+    }
     if (q.sites[owner].successors.size() != 1) continue;
     const auto header = q.sites[owner].successors.front();
     if (q.sites[header].successors.size() != 2) continue;
@@ -413,6 +436,7 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     }
     q.loops.push_back(std::move(original));
   }
+  out.endpointDiscoveryWork += constants.evaluations + ranges.evaluations;
   native_detail::importFirstUse(function, out.program, ids, out.observationNotes);
   const auto originals = out.anchors;
   out.anchors.assign(commandCutCount(out.program), nullptr);
@@ -602,7 +626,7 @@ LogicalResult import(func::FuncOp function, Import &out,
           auto relation = relations.find(alloc.getAddr());
           if (relation == relations.end()) {
             relation = relations.try_emplace(alloc.getAddr(),
-                SyncSlotMapping::derive(loop, alloc.getAddr())).first;
+                SyncSlotMapping::derive(loop, alloc.getAddr(), out.scalarFacts)).first;
           }
           if (!relation->second) {
             continue;
@@ -910,14 +934,14 @@ LogicalResult import(func::FuncOp function, Import &out,
   return importObservedCuts(function, out, policy);
 }
 
-// Emit only total predicates over the original normalized induction variable
-// and upper bound. For an active visit 0<=i<N, N-i cannot overflow signed index
-// range; no new iteration/history counter or event-state query is introduced.
+// Emit total predicates over proved original loop domains. Active visits have
+// lower <= IV < upper and ordinal (IV-lower)/step. Remaining distance upper-IV
+// is nonnegative and representable; no history counter or event query is added.
 struct PredicateCache {
   struct BlockValues {
     std::map<uint64_t, Value> constants;
     std::map<std::pair<std::size_t, uint64_t>, Value> residues;
-    std::map<std::size_t, Value> remaining;
+    std::map<std::size_t, Value> remaining, ordinals;
     std::map<std::tuple<std::size_t, unsigned, uint64_t, uint64_t>, Value> atoms;
   };
   DenseMap<Block *, BlockValues> blocks;
@@ -947,10 +971,26 @@ emitObservationPredicate(const OriginalObservation &observation,
                                "observed endpoint"),
              failure();
     auto loop = owner->second;
+    const auto domain = input.loopDomains.find(atom.owner);
+    if (domain == input.loopDomains.end()) {
+      return anchor->emitError("handoff: missing original iteration-domain proof"), failure();
+    }
     Value lhs = loop.getInductionVar();
     auto constant = [&](uint64_t value) -> Value {
       return reuse(values.constants, value, [&]() -> Value {
         return builder.create<arith::ConstantIndexOp>(loc, static_cast<int64_t>(value));
+      });
+    };
+    auto ordinal = [&]() -> Value {
+      return reuse(values.ordinals, atom.owner, [&]() -> Value {
+        Value index = loop.getInductionVar();
+        if (domain->second.lower) {
+          index = builder.create<arith::SubIOp>(loc, index, loop.getLowerBound());
+        }
+        if (domain->second.step != 1) {
+          index = builder.create<arith::DivUIOp>(loc, index, loop.getStep());
+        }
+        return index;
       });
     };
     Value part;
@@ -961,7 +1001,7 @@ emitObservationPredicate(const OriginalObservation &observation,
       part = prior->second;
     } else if (atom.kind == ObservationAtom::LoopResidue) {
       lhs = reuse(values.residues, std::make_pair(atom.owner, atom.parameter), [&]() -> Value {
-        return builder.create<arith::RemUIOp>(loc, lhs, constant(atom.parameter));
+        return builder.create<arith::RemUIOp>(loc, ordinal(), constant(atom.parameter));
       });
       part = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, lhs,
                                            constant(atom.value));
@@ -969,15 +1009,19 @@ emitObservationPredicate(const OriginalObservation &observation,
       part = builder.create<arith::CmpIOp>(
           loc,
           atom.value ? arith::CmpIPredicate::sge : arith::CmpIPredicate::slt,
-          lhs, constant(atom.parameter));
+          ordinal(), constant(atom.parameter));
     } else if (atom.kind == ObservationAtom::LoopHasNext) {
-      lhs = reuse(values.remaining, atom.owner, [&]() -> Value {
-        return builder.create<arith::SubIOp>(loc, loop.getUpperBound(), lhs);
-      });
-      part = builder.create<arith::CmpIOp>(
-          loc,
-          atom.value ? arith::CmpIPredicate::sgt : arith::CmpIPredicate::sle,
-          lhs, constant(atom.parameter));
+      const auto distance = domain->second.distance(atom.parameter);
+      if (!distance) {
+        part = builder.create<arith::ConstantIntOp>(loc, atom.value ? 0 : 1, 1);
+      } else {
+        lhs = reuse(values.remaining, atom.owner, [&]() -> Value {
+          return builder.create<arith::SubIOp>(loc, loop.getUpperBound(), loop.getInductionVar());
+        });
+        part = builder.create<arith::CmpIOp>(
+            loc, atom.value ? arith::CmpIPredicate::sgt : arith::CmpIPredicate::sle,
+            lhs, constant(*distance));
+      }
     } else
       return anchor->emitError("handoff: unsupported native observation atom"),
              failure();
@@ -1025,10 +1069,39 @@ LogicalResult checkObservationPredicate(const OriginalObservation &observation,
       return anchor->emitError(
           "handoff: emitted predicate lost its original available owner");
     auto loop = owner->second;
+    const auto domain = input.loopDomains.find(atom.owner);
+    if (domain == input.loopDomains.end()) {
+      return anchor->emitError("handoff: emitted predicate has no original domain proof");
+    }
+    auto isOrdinal = [&](Value value) {
+      if (domain->second.step != 1) {
+        auto divide = value.getDefiningOp<arith::DivUIOp>();
+        if (!divide || divide.getRhs() != loop.getStep()) {
+          return false;
+        }
+        value = divide.getLhs();
+      }
+      if (domain->second.lower) {
+        auto subtract = value.getDefiningOp<arith::SubIOp>();
+        if (!subtract || subtract.getRhs() != loop.getLowerBound()) {
+          return false;
+        }
+        value = subtract.getLhs();
+      }
+      return value == loop.getInductionVar();
+    };
     bool matched = false;
     for (std::size_t i = 0; i < components.size() && !matched; ++i) {
       if (used[i])
         continue;
+      if (atom.kind == ObservationAtom::LoopHasNext && !domain->second.distance(atom.parameter)) {
+        auto constant = components[i].getDefiningOp<arith::ConstantOp>();
+        auto value = constant ? dyn_cast<IntegerAttr>(constant.getValue()) : IntegerAttr{};
+        matched = components[i].getType().isInteger(1) && value &&
+            (atom.value ? value.getValue().isZero() : value.getValue().isOne());
+        used[i] = matched;
+        continue;
+      }
       auto cmp = components[i].getDefiningOp<arith::CmpIOp>();
       if (!cmp)
         continue;
@@ -1039,13 +1112,13 @@ LogicalResult checkObservationPredicate(const OriginalObservation &observation,
         auto rem = cmp.getLhs().getDefiningOp<arith::RemUIOp>();
         matched =
             rem && cmp.getPredicate() == arith::CmpIPredicate::eq &&
-            rem.getLhs() == loop.getInductionVar() &&
+            isOrdinal(rem.getLhs()) &&
             integer(rem.getRhs()) ==
                 std::optional<int64_t>(static_cast<int64_t>(atom.parameter)) &&
             uint64_t(*rhs) == atom.value;
       } else if (atom.kind == ObservationAtom::LoopHasPrevious) {
         matched =
-            cmp.getLhs() == loop.getInductionVar() &&
+            isOrdinal(cmp.getLhs()) &&
             uint64_t(*rhs) == atom.parameter &&
             cmp.getPredicate() == (atom.value ? arith::CmpIPredicate::sge
                                               : arith::CmpIPredicate::slt);
@@ -1054,7 +1127,7 @@ LogicalResult checkObservationPredicate(const OriginalObservation &observation,
         matched =
             remaining && remaining.getLhs() == loop.getUpperBound() &&
             remaining.getRhs() == loop.getInductionVar() &&
-            uint64_t(*rhs) == atom.parameter &&
+            uint64_t(*rhs) == *domain->second.distance(atom.parameter) &&
             cmp.getPredicate() == (atom.value ? arith::CmpIPredicate::sgt
                                               : arith::CmpIPredicate::sle);
       }
@@ -1176,7 +1249,8 @@ LogicalResult execute(func::FuncOp function, NativeConstructor constructor,
     }
     emission.push_back(std::move(anchor));
   }
-  SyncCodegen codegen(emission, function, SyncAnalysisMode::NORMALSYNC);
+  SyncCodegen codegen(emission, function, SyncAnalysisMode::NORMALSYNC,
+                      SyncCodegen::CommandListPolicy::PreserveOrder);
   codegen.Run();
   // Guard expressions were built from the qualified original-value descriptor.
   // Preserve their exact operation/operand/attribute structure, not just a tag
@@ -1386,10 +1460,18 @@ LogicalResult testing::checkHandoffObservationPredicate(
   if (!anchor || !condition)
     return failure();
   Import input;
+  SyncSlotMapping::ConstantCache constants;
+  SyncSlotMapping::RangeCache ranges;
   for (const auto &[id, operation] : originalLoopOwners) {
     auto loop = dyn_cast_or_null<scf::ForOp>(operation);
-    if (!loop || !input.loopOwners.try_emplace(id, loop).second)
+    if (!loop || !input.loopOwners.try_emplace(id, loop).second) {
       return failure();
+    }
+    auto domain = SyncSlotMapping::originalLoopDomain(loop, constants, ranges);
+    if (!domain) {
+      return failure();
+    }
+    input.loopDomains.try_emplace(id, *domain);
   }
   return checkObservationPredicate(observation, anchor, input, condition);
 }

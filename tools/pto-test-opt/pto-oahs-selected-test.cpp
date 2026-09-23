@@ -8,6 +8,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/OAHS/Native.h"
 #include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
+#include "PTO/Transforms/InsertSync/SyncCodegen.h"
 #include "PTO/Transforms/InsertSync/SyncAccumulatorOrdering.h"
 #include "PTO/Transforms/OAHS/SelectedPlan.h"
 #include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
@@ -642,6 +643,250 @@ module attributes {pto.target_arch = "a3"} {
   }
   return true;
 }
+bool exactCommandEmission(MLIRContext &context) {
+  auto module = parseSourceString<ModuleOp>("module { func.func @exact() { return } }", &context);
+  if (!check(bool(module), "exact-word emitter fixture failed to parse")) {
+    return false;
+  }
+  auto function = *module->getOps<func::FuncOp>().begin();
+  SyncIRs emission;
+  SmallVector<std::unique_ptr<SyncOperation>> storage;
+  auto anchor = std::make_unique<PlaceHolderInstanceElement>(0, 0);
+  anchor->elementOp = function.getBody().front().getTerminator();
+  const auto P = oahs::Pipe::MTE2, Q = oahs::Pipe::V;
+  const std::vector<oahs::Command> expected{
+      {oahs::Command::Publish, P, Q, 0}, {oahs::Command::Acquire, P, Q, 0},
+      {oahs::Command::Publish, Q, P, 0}, {oahs::Command::Acquire, Q, P, 0},
+      {oahs::Command::Publish, P, Q, 0}, {oahs::Command::Acquire, P, Q, 0},
+      {oahs::Command::Publish, Q, P, 0}, {oahs::Command::Acquire, Q, P, 0},
+      {oahs::Command::Barrier, Q}, {oahs::Command::Barrier, Q}};
+  auto native = [&](oahs::Pipe pipe) {
+    return pipe == P ? PipelineType::PIPE_MTE2 : PipelineType::PIPE_V;
+  };
+  for (const auto &command : expected) {
+    const auto type = command.kind == oahs::Command::Publish ? SyncOperation::TYPE::SET_EVENT :
+        command.kind == oahs::Command::Acquire ? SyncOperation::TYPE::WAIT_EVENT : SyncOperation::TYPE::PIPE_BARRIER;
+    auto sync = std::make_unique<SyncOperation>(type, native(command.source), native(command.observer),
+                                               storage.size(), 0, std::nullopt);
+    sync->eventIds.push_back(command.key);
+    anchor->pipeBefore.push_back(sync.get());
+    storage.push_back(std::move(sync));
+  }
+  emission.push_back(std::move(anchor));
+  SyncCodegen codegen(emission, function, SyncAnalysisMode::NORMALSYNC, SyncCodegen::CommandListPolicy::PreserveOrder);
+  codegen.Run();
+  std::vector<oahs::Command> actual;
+  auto portable = [&](PIPE pipe) { return pipe == PIPE::PIPE_MTE2 ? P : Q; };
+  function.walk([&](mlir::Operation *operation) {
+    if (auto set = dyn_cast<SetFlagOp>(operation)) {
+      actual.push_back({oahs::Command::Publish, portable(set.getSrcPipe().getPipe()),
+          portable(set.getDstPipe().getPipe()), unsigned(set.getEventId().getEvent())});
+    } else if (auto wait = dyn_cast<WaitFlagOp>(operation)) {
+      actual.push_back({oahs::Command::Acquire, portable(wait.getSrcPipe().getPipe()),
+          portable(wait.getDstPipe().getPipe()), unsigned(wait.getEventId().getEvent())});
+    } else if (auto barrier = dyn_cast<BarrierOp>(operation)) {
+      actual.push_back({oahs::Command::Barrier, portable(barrier.getPipe().getPipe())});
+    }
+  });
+  return check(actual.size() == expected.size() &&
+               std::equal(actual.begin(), actual.end(), expected.begin(), oahs::selected::identical) &&
+               succeeded(verify(*module)), "shared emission merged or reordered a checked command word");
+}
+
+bool originalResidueDecisions(MLIRContext &context) {
+  const char *source = R"mlir(module attributes {pto.target_arch = "a3"} {
+    func.func @raw_residue(%src: !pto.partition_tensor_view<1x32xf32>)
+        attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+      %lower = arith.constant 3 : index
+      %upper = arith.constant 11 : index
+      %step = arith.constant 2 : index
+      %modulus = arith.constant 4 : index
+      %a = arith.constant 256 : i64
+      %b = arith.constant 4096 : i64
+      %bank = pto.alloc_tile addr = %a : !pto.tile_buf<vec, 1x32xf32>
+      %out = pto.alloc_tile addr = %b : !pto.tile_buf<vec, 1x32xf32>
+      scf.for %i = %lower to %upper step %step {
+        %residue = arith.remui %i, %modulus : index
+        %first = arith.cmpi eq, %residue, %lower : index
+        scf.if %first {
+          pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%bank : !pto.tile_buf<vec, 1x32xf32>)
+        } else {
+          pto.tabs ins(%bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+        }
+      }
+      return
+    }
+  })mlir";
+  auto module = parseSourceString<ModuleOp>(source, &context);
+  if (!check(bool(module), "raw residue fixture failed to parse")) {
+    return false;
+  }
+  auto function = *module->getOps<func::FuncOp>().begin();
+  oahs::NativeAnalysis imported;
+  if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, imported)),
+             "raw residue import failed")) {
+    return false;
+  }
+  const auto &graph = *imported.program.observed;
+  std::vector<bool> seen(graph.sites.size());
+  std::vector<std::size_t> todo{graph.entry};
+  bool witnessedLoad = false, witnessedRead = false;
+  while (!todo.empty()) {
+    const auto at = todo.back();
+    todo.pop_back();
+    if (seen[at]) {
+      continue;
+    }
+    seen[at] = true;
+    const auto &site = graph.sites[at];
+    if (site.operation != oahs::NoControlId) {
+      const auto pipe = imported.program.operations[site.operation].pipe;
+      const auto &atoms = graph.observations[site.observation].atoms;
+      const auto residue = std::find_if(atoms.begin(), atoms.end(), [](const auto &atom) {
+        return atom.kind == oahs::ObservationAtom::LoopResidue;
+      });
+      if (!check(residue != atoms.end() && residue->parameter == 2 &&
+                 residue->value == (pipe == oahs::Pipe::MTE2 ? 0u : 1u),
+                 "raw IV residue was confused with logical iteration residue")) {
+        return false;
+      }
+      witnessedLoad |= pipe == oahs::Pipe::MTE2;
+      witnessedRead |= pipe == oahs::Pipe::V;
+    }
+    for (auto next : site.successors) {
+      todo.push_back(next);
+    }
+  }
+  oahs::SelectedPlan plan;
+  return check(witnessedLoad && witnessedRead &&
+               succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)) &&
+               !plan.declinedObservation,
+               "normalized raw-residue protocol failed construction/reconstruction");
+}
+
+bool normalizedGuardReadback(MLIRContext &context) {
+  const char *source = R"mlir(module {
+    func.func @guards() {
+      %lower = arith.constant 3 : index
+      %upper = arith.constant 260 : index
+      %step = arith.constant 128 : index
+      scf.for %i = %lower to %upper step %step {}
+      return
+    }
+  })mlir";
+  auto module = parseSourceString<ModuleOp>(source, &context);
+  if (!check(bool(module), "normalized guard fixture failed to parse")) {
+    return false;
+  }
+  scf::ForOp loop;
+  module->walk([&](scf::ForOp found) { loop = found; });
+  auto *anchor = loop.getBody()->getTerminator();
+  const SmallVector<std::pair<std::size_t, mlir::Operation *>> owners{{42, loop.getOperation()}};
+  for (unsigned kind = 0; kind < 3; ++kind) {
+    for (unsigned mutation = 0; mutation < 4; ++mutation) {
+      OpBuilder builder(anchor);
+      const auto loc = anchor->getLoc();
+      auto constant = [&](uint64_t value) -> Value {
+        return builder.create<arith::ConstantIndexOp>(loc, int64_t(value));
+      };
+      Value distance = builder.create<arith::SubIOp>(loc, loop.getInductionVar(),
+          mutation == 1 ? loop.getStep() : loop.getLowerBound());
+      Value ordinal = builder.create<arith::DivUIOp>(loc, distance,
+          mutation == 2 ? loop.getLowerBound() : loop.getStep());
+      const auto role = kind == 0 ? oahs::ObservationAtom::LoopResidue :
+          kind == 1 ? oahs::ObservationAtom::LoopHasPrevious : oahs::ObservationAtom::LoopHasNext;
+      oahs::OriginalObservation observation{0, {{role, 42, 2, 1}}, true};
+      Value condition;
+      if (kind == 0) {
+        Value residue = builder.create<arith::RemUIOp>(loc, ordinal, constant(mutation == 3 ? 3 : 2));
+        condition = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, residue, constant(1));
+      } else if (kind == 1) {
+        condition = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge,
+            ordinal, constant(mutation == 3 ? 3 : 2));
+      } else {
+        Value remaining = builder.create<arith::SubIOp>(loc,
+            mutation == 1 ? loop.getLowerBound() : loop.getUpperBound(),
+            mutation == 2 ? ordinal : loop.getInductionVar());
+        condition = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sgt,
+            remaining, constant(mutation == 3 ? 2 : 256));
+      }
+      const auto status = oahs::testing::checkHandoffObservationPredicate(observation, anchor, owners, condition);
+      if (!check(succeeded(status) == (mutation == 0), "normalized guard mutation was not discriminated")) {
+        return false;
+      }
+    }
+  }
+  for (unsigned polarity = 0; polarity < 2; ++polarity) {
+    oahs::OriginalObservation observation{0, {{oahs::ObservationAtom::LoopHasNext, 42,
+        uint64_t(std::numeric_limits<int64_t>::max()), polarity}}, true};
+    OpBuilder builder(anchor);
+    Value good = builder.create<arith::ConstantIntOp>(anchor->getLoc(), !polarity, 1);
+    Value bad = builder.create<arith::ConstantIntOp>(anchor->getLoc(), polarity, 1);
+    if (!check(succeeded(oahs::testing::checkHandoffObservationPredicate(observation, anchor, owners, good)) &&
+               failed(oahs::testing::checkHandoffObservationPredicate(observation, anchor, owners, bad)),
+               "unrepresentable next distance did not preserve both predicate polarities")) {
+      return false;
+    }
+  }
+  return check(succeeded(verify(*module)), "guard tests produced invalid IR");
+}
+
+bool originalLoopDomains(MLIRContext &context) {
+  struct Case {
+    int64_t lower, upper, step;
+    bool dynamic, bounded, accepted, nonempty;
+  };
+  const auto maximum = std::numeric_limits<int64_t>::max();
+  const std::vector<Case> cases{
+      {0, 256, 128, false, false, true, true},
+      {3, 260, 128, false, false, true, true},
+      {3, 3, 128, false, false, true, false},
+      {3, 4, 128, false, false, true, true},
+      {0, maximum, 2, false, false, false, false},
+      {1, maximum, 2, false, false, true, true},
+      {0, 0, 1, true, false, true, false},
+      {0, 0, 2, true, false, false, false},
+      {1, 0, 2, true, false, true, false},
+      {0, 256, 128, true, true, true, false},
+      {-1, 2, 1, false, false, false, false},
+      {0, -1, 1, false, false, true, false}};
+  for (const auto &c : cases) {
+    std::string source = "module { func.func @domain(%n: index) {\n";
+    source += "%lower = arith.constant " + std::to_string(c.lower) + " : index\n";
+    source += "%upper = arith.constant " + std::to_string(c.upper) + " : index\n";
+    source += "%step = arith.constant " + std::to_string(c.step) + " : index\n";
+    source += "%bounded = arith.minsi %n, %upper : index\n";
+    source += "scf.for %i = %lower to " + std::string(c.bounded ? "%bounded" : c.dynamic ? "%n" : "%upper") +
+              " step %step {}\nreturn } }";
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module), "loop-domain fixture failed to parse")) {
+      return false;
+    }
+    scf::ForOp loop;
+    module->walk([&](scf::ForOp found) { loop = found; });
+    SyncSlotMapping::ConstantCache constants;
+    SyncSlotMapping::RangeCache ranges;
+    const auto domain = SyncSlotMapping::originalLoopDomain(loop, constants, ranges);
+    if (!check(bool(domain) == c.accepted, "original loop progression overflow proof differs")) {
+      return false;
+    }
+    if (domain && !check(domain->lower == uint64_t(c.lower) && domain->step == uint64_t(c.step) &&
+                         domain->atLeastOnce == c.nonempty, "original domain changed iteration coordinates")) {
+      return false;
+    }
+    const auto work = ranges.evaluations;
+    SyncSlotMapping::originalLoopDomain(loop, constants, ranges);
+    if (!check(ranges.evaluations == work, "shared scalar ranges were recomputed")) {
+      return false;
+    }
+    if (domain && c.step > 1 && !check(!domain->distance(uint64_t(maximum)),
+                                      "overflowing future-visit distance accepted")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool readerGenerations(MLIRContext &context) {
   const std::string input = R"mlir(
 module attributes {pto.target_arch = "a3"} {
@@ -676,7 +921,7 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
-  for (unsigned variant = 0; variant < 4; ++variant) {
+  for (unsigned variant = 0; variant < 9; ++variant) {
     std::string source = input;
     if (variant == 1) {
       source.replace(source.find("// RELOAD"), std::string("// RELOAD").size(),
@@ -699,6 +944,23 @@ module attributes {pto.target_arch = "a3"} {
       source.insert(end, "        %next_counter = arith.addi %counter, %one : index\n"
                          "        scf.yield %next_counter : index\n");
     }
+    if (variant >= 4) {
+      const bool shifted = variant >= 5;
+      const unsigned upper = variant == 6 ? 4 : variant == 7 ? 3 : shifted ? 260 : 256;
+      const std::string declarations =
+          "%child_lower_literal = arith.constant " + std::string(shifted ? "3" : "0") + " : index\n" +
+          "%child_upper = arith.constant " + std::to_string(upper) + " : index\n" +
+          "%child_step_literal = arith.constant 128 : index\n" +
+          (variant == 8 ? "%child_lower = arith.addi %child_lower_literal, %zero : index\n"
+                          "%child_step = arith.muli %child_step_literal, %one : index\n" : "");
+      source.insert(source.find("    scf.for %i"), declarations);
+      for (const std::string iv : {"j", "k"}) {
+        const std::string old = "scf.for %" + iv + " = %zero to %two step %one";
+        source.replace(source.find(old), old.size(), "scf.for %" + iv + " = " +
+            (variant == 8 ? "%child_lower" : "%child_lower_literal") + " to %child_upper step " +
+            (variant == 8 ? "%child_step" : "%child_step_literal"));
+      }
+    }
     auto module = parseSourceString<ModuleOp>(source, &context);
     if (!check(bool(module), "reader-generation fixture failed to parse")) {
       return false;
@@ -716,7 +978,8 @@ module attributes {pto.target_arch = "a3"} {
     const auto ready = std::count_if(plan.channels.begin(), plan.channels.end(), [](const auto& channel) {
       return channel.source == oahs::Pipe::MTE2 && channel.observer == oahs::Pipe::V && channel.period == 2;
     });
-    if (!check(ready == 2, "physical generation across children lost per-bank readiness")) {
+    if (!check(ready == (variant == 7 ? 0 : 2), "physical generation across children lost per-bank readiness")) {
+      llvm::errs() << "reader variant=" << variant << " ready=" << ready << "\n";
       return false;
     }
   }
@@ -1137,6 +1400,9 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " finite_occurrence_transitions=" << work.finiteOccurrenceTransitions
                  << " transition_classification_work=" << work.transitionClassificationWork
                  << " native_endpoint_discovery_work=" << work.nativeEndpointDiscoveryWork
+                 << " acknowledgment_checks=" << work.acknowledgmentChecks
+                 << " acknowledgment_check_sites=" << work.acknowledgmentCheckSites
+                 << " joined_acknowledgments=" << work.joinedAcknowledgments
                  << " key_queries=" << work.keyQueries << " invariant=" << work.invariantSiteEvaluations
                  << " prepare_microseconds=" << work.preparationMicroseconds
                  << " sites=" << work.constructedSites << " words=" << work.commandWords
@@ -1352,7 +1618,9 @@ int main(int argc, char **argv) {
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
-                      slotMappings(context) && slotDependencySlices(context) && readerGenerations(context) &&
+                      slotMappings(context) && slotDependencySlices(context) && originalLoopDomains(context) &&
+                      normalizedGuardReadback(context) && exactCommandEmission(context) &&
+                      originalResidueDecisions(context) && readerGenerations(context) &&
                       uniformEndpointRoles(context) &&
                       accumulatorOrdering(context) && firstUseOrdering(context);
   return passed ? 0 : 1;

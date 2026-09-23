@@ -543,3 +543,15 @@ draft when an established mechanism needs formulation or new proof obligations.
 The TODO tracks work, this document defines sequence and invariants, and the
 HANDOFF records exact current evidence and the next action. Historical results
 from the old branch are donor evidence, never validation of this checkout.
+
+## Step G checkpoint — original domains and joined consumption
+
+Shared original-loop domain/range analysis now feeds physical selectors and
+endpoint participation. Normalized guards have independent readback checks.
+The active constructor uses exact shared emission; joined consumption is
+realized by one checked reverse/forward packet, including repeated common words.
+This does not complete general deadline-driven ownership or exported support.
+The HANDOFF records final host evidence, finite ordering limitations and explicit
+compiler/resource regressions. No historical device result is attributed to G.
+Next replace whole-cell ACC qualification with sparse access-order partitions
+inside the existing causal history, retaining every incompatible obligation.

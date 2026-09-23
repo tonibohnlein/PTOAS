@@ -98,7 +98,8 @@ std::vector<Pipe> Constructor::route(Pipe source, Pipe observer) const
     std::reverse(path.begin(), path.end());
     return path;
 }
-bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, Id& key, SelectedDecision& decision)
+bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, Id& key,
+                                 SelectedDecision& decision, bool& completed)
 {
     Id oldWait = NoAnalysisId, reverse = NoAnalysisId;
     Cut moved = publication;
@@ -140,8 +141,24 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
         if (oldWait != NoAnalysisId) break;
     }
     if (oldWait == NoAnalysisId) {
-        return fail(SelectedFailure::EventResource,
-            "no reusable key or nonrecursive consumption acknowledgment", publication);
+        if (auto packet = joinedAcknowledgment(source, observer, publication, decision)) {
+            completed = true;
+            return *packet;
+        }
+        std::string reason = "no reusable key or nonrecursive consumption acknowledgment: source=" +
+            std::to_string(unsigned(source)) + " observer=" + std::to_string(unsigned(observer)) +
+            " deadline=" + std::to_string(current);
+        for (Id candidate = 0; candidate < frontier.keys().size(); ++candidate) {
+            const auto &identity = frontier.keys()[candidate];
+            if (identity.source == source && identity.observer == observer) {
+                const auto &state = cache.cuts[publication].before;
+                reason += " key=" + std::to_string(identity.key) +
+                    "/closed=" + std::to_string(closedKeys.count(candidate)) +
+                    "/occupancy=" + std::to_string(state.causal.facts()->events[candidate].occupancy) +
+                    "/receipts=" + std::to_string(state.consumptions[candidate].size());
+            }
+        }
+        return fail(SelectedFailure::EventResource, reason, publication);
     }
     const auto& identity = frontier.keys()[reverse];
     const auto request = result.decisions.size();
@@ -166,6 +183,87 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
     }
     return true;
 }
+std::optional<bool> Constructor::joinedAcknowledgment(
+    Pipe source, Pipe observer, Cut publication, SelectedDecision& decision)
+{
+    // Distinct original paths may consume one key at different WAITs. IDs are
+    // not the certificate: require actual empty occupancy, execute the return,
+    // and validate the complete reverse/forward exchange on the original graph.
+    if (!cache.success || !control.straight(publication, current)) {
+        return {};
+    }
+    const auto& state = cache.cuts[publication].before;
+    if (!state.causal.reachable()) {
+        return {};
+    }
+    for (Id forward = 0; forward < frontier.keys().size(); ++forward) {
+        const auto& a = frontier.keys()[forward];
+        if (a.source != source || a.observer != observer || closedKeys.count(forward) ||
+            state.causal.facts()->events[forward].occupancy != 1 ||
+            !clearInterval(forward, publication, current)) {
+            continue;
+        }
+        for (Id reverse = 0; reverse < frontier.keys().size(); ++reverse) {
+            const auto& b = frontier.keys()[reverse];
+            if (b.source != observer || b.observer != source || closedKeys.count(reverse)) {
+                continue;
+            }
+            const Command publish{Command::Publish, observer, source, b.key};
+            const Command acquire{Command::Acquire, observer, source, b.key};
+            bool supported = true;
+            for (auto at : control.wordOccurrences[control.canonicalCut[publication]]) {
+                if (!control.reachable[at]) {
+                    continue;
+                }
+                const auto& before = cache.cuts[at].before;
+                const auto offset = ledger.word(at).size();
+                auto sent = frontier.command(before.causal, publish, {at, offset});
+                if (!sent.applied) {
+                    supported = false;
+                    break;
+                }
+                auto received = frontier.command(sent.state, acquire, {at, offset + 1});
+                auto local = before;
+                local.causal = received.state;
+                if (!received.applied || !canPublish(local, forward)) {
+                    supported = false;
+                    break;
+                }
+            }
+            if (!supported) {
+                continue;
+            }
+            const auto request = result.decisions.size();
+            const OrderedPacket packet{
+                {publication, publish, EndpointPurpose::ConsumptionAcknowledgment, request},
+                {publication, acquire, EndpointPurpose::ConsumptionAcknowledgment, request},
+                {publication, {Command::Publish, source, observer, a.key}, EndpointPurpose::Completion, request},
+                {current, {Command::Acquire, source, observer, a.key}, EndpointPurpose::Completion, request}};
+            const auto checked = analyze(program, ledger.withPacket(packet), {false});
+            ++result.work.acknowledgmentChecks;
+            result.work.acknowledgmentCheckSites += checked.stats.siteEvaluations;
+            if (!checked.complete || !checked.protocol.empty() || !checked.diagnostics.empty() ||
+                !checked.phaseResources.empty()) {
+                continue;
+            }
+            // Commit exactly the packet checked above. In particular do not
+            // replay an incomplete reverse half: the forward receipt may rearm
+            // its reverse key on the next original visit. No promised credit.
+            auto endpoints = ledger.appendPacket(packet);
+            decision.endpoints.insert(decision.endpoints.end(), endpoints.begin(), endpoints.end());
+            decision.repairedForwardKey = a.key;
+            decision.repairReverseKey = b.key;
+            ++result.work.acknowledgments;
+            ++result.work.joinedAcknowledgments;
+            if (publication == current) {
+                ++result.work.commonCutTransfers;
+            }
+            return update();
+        }
+    }
+    return {};
+}
+
 bool Constructor::needsCommonAcknowledgment(const State& afterForward) const
 {
     // A syntactically last body operation is not a last dynamic operation. The
@@ -228,8 +326,14 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
                 break;
             }
         }
-        if (key == NoAnalysisId && !acknowledgment(source, observer, publication, key, decision)) {
-            return false;
+        if (key == NoAnalysisId) {
+            bool completed = false;
+            if (!acknowledgment(source, observer, publication, key, decision, completed)) {
+                return false;
+            }
+            if (completed) {
+                return true;
+            }
         }
     }
     const auto number = frontier.keys()[key].key;

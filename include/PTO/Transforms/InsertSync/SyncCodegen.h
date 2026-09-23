@@ -30,9 +30,14 @@ struct SyncPipeBuild {
  
 class SyncCodegen {
 public:
+  // Checked, active single-key words require exact multiplicity and order.
+  // Target-specific lowering, compensation and deferred-tail contracts remain
+  // unchanged; callers of PreserveOrder must already account for those rules.
+  enum class CommandListPolicy { MergeSignatures, PreserveOrder };
   SyncCodegen(SyncIRs &syncIR, func::FuncOp func,
-              SyncAnalysisMode syncAnalysisMode)
-      : syncIR_(syncIR), func_(func), syncAnalysisMode_(syncAnalysisMode) {};
+              SyncAnalysisMode syncAnalysisMode,
+              CommandListPolicy policy = CommandListPolicy::MergeSignatures)
+      : syncIR_(syncIR), func_(func), syncAnalysisMode_(syncAnalysisMode), commandListPolicy_(policy) {};
  
   ~SyncCodegen() = default;
  
@@ -82,6 +87,7 @@ private:
   SyncIRs &syncIR_;
   func::FuncOp func_;
   SyncAnalysisMode syncAnalysisMode_;
+  CommandListPolicy commandListPolicy_;
  
   // 记录 Op -> Sync 的映射
   DenseMap<const Operation *, SyncPipeBuild> op2InsertSync;

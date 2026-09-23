@@ -253,8 +253,8 @@ irrelevant: different producing identities and unavailable facts remain open.
 
 Classification is cached per access/cell/direction, independently of relationship
 multiplicity. Native discovery work is reported separately from construction.
-This increment keeps existing zero-lower/unit-step observation arithmetic;
-normalized positive-step participation is the next dependent change. Exclusive
+Original-loop domain proofs supply normalized observation arithmetic as described
+below; domain refusal retains original control. Exclusive
 resource-only requirements and terminal readers without a reuse relationship
 are not newly covered by this index.
 
@@ -281,3 +281,67 @@ reachability. An unreachable canonical representative retains its anchor when a
 reachable copy shares its word. Observations with no reachable occurrence have
 no emitted anchor. This prevents composed first-use refinement from exposing
 phantom command positions while retaining actual shared-word emission.
+
+### Original loop domains and endpoint participation
+
+The invariant is that an observation names logical participating visits of the
+original loop, not its raw induction value. Shared `SyncSlotMapping::LoopDomain`
+proves nonnegative constant lower, positive constant step, signed index control,
+and that every possible final executed increment is representable. Dialect
+constant folding and memoized `InferIntRangeInterface` queries supply scalar
+facts. The maximum upper bound determines the last possible active IV; the
+proof uses that IV's actual progression, not an unnecessarily strong upper+step
+bound. Unknown arguments keep full ranges. A failed proof retains original
+control; it does not erase independently proved carried-slot facts.
+
+For an active visit, k=(IV-lower)/step is exact and nonnegative. Residue and
+previous-use guards use k. A p-th next visit exists iff upper-IV > p*step.
+If p*step exceeds signed index range, that predicate is false (its negation is
+true); no overflowing arithmetic is emitted. Normalized ordinals and remaining
+values are reused per owner/insertion block. Reconstruction independently checks
+the original subtraction/division operands, comparison and threshold, including
+constant overflow results. No emitter-created tag supplies that proof.
+
+Raw scalar branch conditions use the shared finite dependency relation. They
+are not reinterpreted as predicates on k. The current decision representation
+admits one matching residue whose period divides the selected owner period;
+other relations keep the original branch. Distinct owners are not multiplied.
+The original first-use conjunction importer remains separately restricted to
+its proved literal-zero/unit-step predicates; this increment does not broaden
+that transformation's theorem. Negative/dynamic lower bounds, dynamic steps,
+and index contracts other than the existing signed 64-bit model remain unknown.
+
+### Consumption joins and exact ordered emission
+
+Refining participation can expose several concrete WAIT identities for one
+consumed key. Event emptiness and the observer's consumption knowledge are the
+semantic facts; one distinguished WAIT ID is not required. If the existing
+single-receipt repair has no candidate, construction may append a reverse
+publication/acquisition followed by the required forward publication/acquisition
+at the already selected publication/deadline gaps. It retains the current
+straight-interval qualification and closed-key ownership restrictions.
+
+Private causal execution at every participating source occurrence filters
+bindings. It supplies no public credit. The complete ordered packet then passes
+independent original-graph protocol, diagnostic and phase-resource checking.
+Construction commits those same four endpoints and propagates them together.
+Storage residuals outside the packet remain ordinary obligations. At a common
+cut, the reverse transfer returns prior consumption before the forward use;
+the forward receipt may establish reverse-key consumption for the next visit.
+Checking or propagating the reverse half alone would miss this mechanism.
+No cyclic-program exclusion or singleton-WAIT assumption supplies the proof.
+
+These newly inserted reverse endpoints remain explicit retained support. They
+are not yet represented by the existing single-WAIT dormant-helper mechanism,
+and this increment does not claim complete helper-ownership unification.
+A return at the selected gap can add ordering; exact protocol legality is not a
+publication-prefix improvement certificate. Packet check count/site work is
+reported separately from replay, command resources and payload ordering.
+
+The shared `SyncCodegen` now distinguishes mergeable synchronization requests
+from ordered command lists. OAHS selects `PreserveOrder`, retaining repeated
+SET/WAIT signatures and adjacent barriers. Target-mandated lowering and explicit
+compensation/deferred-tail behavior remain part of its input contract; the A3
+adapter supplies active single-key commands without those auxiliary policies.
+Independent native reconstruction still compares every actual ordered command
+against the selected word. It is not weakened to accommodate deduplication.

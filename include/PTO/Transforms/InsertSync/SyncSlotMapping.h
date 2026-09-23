@@ -10,6 +10,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/CastInterfaces.h"
+#include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include <limits>
@@ -213,20 +214,101 @@ public:
     return value;
   }
 
+  // Original scalar ranges share the dialect's semantics. Unknown arguments
+  // retain their full range; each SSA dependency is evaluated once per snapshot.
+  struct RangeCache {
+    llvm::DenseMap<Value, ConstantIntRanges> values;
+    uint64_t evaluations = 0;
+  };
+  static ConstantIntRanges range(Value value, RangeCache &cache) {
+    auto found = cache.values.find(value);
+    if (found != cache.values.end()) {
+      return found->second;
+    }
+    ++cache.evaluations;
+    const auto width = ConstantIntRanges::getStorageBitwidth(value.getType());
+    auto result = ConstantIntRanges::maxRange(width);
+    auto *op = value.getDefiningOp();
+    auto inference = dyn_cast_or_null<InferIntRangeInterface>(op);
+    if (inference && !op->getNumRegions()) {
+      SmallVector<ConstantIntRanges> operands;
+      for (Value operand : op->getOperands()) {
+        operands.push_back(range(operand, cache));
+      }
+      inference.inferResultRanges(operands, [&](Value output, const ConstantIntRanges &bounds) {
+        if (output == value) {
+          result = bounds;
+        }
+      });
+    }
+    cache.values.try_emplace(value, result);
+    return result;
+  }
+  struct LoopDomain {
+    uint64_t lower = 0, step = 1;
+    bool atLeastOnce = false;
+    // The distance to a p-th subsequent participating visit. No representable
+    // active upper-IV distance can exceed a product outside signed index range.
+    std::optional<uint64_t> distance(uint64_t period) const {
+      const auto maximum = uint64_t(std::numeric_limits<int64_t>::max());
+      if (period > maximum / step) {
+        return {};
+      }
+      return period * step;
+    }
+  };
+  static std::optional<LoopDomain> originalLoopDomain(
+      scf::ForOp loop, ConstantCache &constants, RangeCache &ranges) {
+    if (!isa<IndexType>(loop.getInductionVar().getType()) ||
+        loop->hasAttr("unsignedCmp") || loop->hasAttr("unsigned_cmp")) {
+      return {};
+    }
+    const auto lower = evaluateConstant(loop.getLowerBound(), constants);
+    const auto step = evaluateConstant(loop.getStep(), constants);
+    const auto maximum = uint64_t(std::numeric_limits<int64_t>::max());
+    if (!lower || !step || !*step || *lower > maximum || *step > maximum) {
+      return {};
+    }
+    const auto upper = range(loop.getUpperBound(), ranges);
+    if (upper.smax().isNonNegative()) {
+      const auto bound = upper.smax().getZExtValue();
+      if (bound > *lower) {
+        const auto last = *lower + ((bound - *lower - 1) / *step) * *step;
+        if (last > maximum - *step) {
+          return {}; // The original increment itself lacks a no-overflow proof.
+        }
+      }
+    }
+    const bool nonempty = upper.smin().isNonNegative() && upper.smin().getZExtValue() > *lower;
+    return LoopDomain{*lower, *step, nonempty};
+  }
+
+  struct AnalysisContext {
+    ConstantCache constants;
+    RangeCache ranges;
+    llvm::DenseMap<Operation *, std::optional<LoopDomain>> domains;
+    const std::optional<LoopDomain> &domain(scf::ForOp loop) {
+      auto found = domains.find(loop.getOperation());
+      if (found == domains.end()) {
+        found = domains.try_emplace(loop.getOperation(), originalLoopDomain(loop, constants, ranges)).first;
+      }
+      return found->second;
+    }
+  };
+
   // Exploration is compiler work, not a physical event-pool limit. Each query
   // follows one observation and its transitive backedge dependencies; unrelated
   // carried values never enter the state. Closing the entire dependency state
   // proves periodicity, unlike observing a repeated address in a finite sample.
   static constexpr unsigned ExplorationLimit = 256;
   static std::optional<SyncSlotMapping> derive(
-      scf::ForOp loop, Value observation, unsigned maximumStates = ExplorationLimit) {
+      scf::ForOp loop, Value observation, AnalysisContext &context, unsigned maximumStates = ExplorationLimit) {
     if (!observation || !maximumStates || !isa<IndexType>(loop.getInductionVar().getType()) ||
         loop->hasAttr("unsignedCmp") || loop->hasAttr("unsigned_cmp")) {
       return {};
     }
-    ConstantCache constants;
-    const auto lower = evaluateConstant(loop.getLowerBound(), constants);
-    const auto step = evaluateConstant(loop.getStep(), constants);
+    auto &constants = context.constants;
+    const auto &domain = context.domain(loop);
     auto yield = cast<scf::YieldOp>(loop.getBody()->getTerminator());
     std::vector<unsigned> carried;
     struct Projection { Value value; uint64_t modulus, mask; bool bitwise; };
@@ -253,7 +335,7 @@ public:
       // Congruence projections of the actual nonnegative induction sequence.
       // Other uses of the unbounded IV remain unknown. A masked projection
       // needs only the bits through its highest selected bit.
-      if (op->getNumOperands() == 2 && lower && step && *step &&
+      if (op->getNumOperands() == 2 && domain &&
           (isa<arith::RemSIOp, arith::RemUIOp>(op) || isa<arith::AndIOp>(op))) {
         Value variable = canonicalValue(op->getOperand(0), constants);
         Value constant = canonicalValue(op->getOperand(1), constants);
@@ -294,7 +376,7 @@ public:
       initial.push_back(*value);
     }
     for (const auto &projection : projections) {
-      initial.push_back(*lower % projection.modulus);
+      initial.push_back(domain->lower % projection.modulus);
     }
     SyncSlotMapping result;
     auto state = initial;
@@ -322,7 +404,7 @@ public:
       for (unsigned i = 0; i < projections.size(); ++i) {
         const auto modulus = projections[i].modulus;
         // Both summands are below 2^63, so the unsigned addition fits.
-        next.push_back((state[carried.size() + i] + *step % modulus) % modulus);
+        next.push_back((state[carried.size() + i] + domain->step % modulus) % modulus);
       }
       result.values.push_back(std::move(values));
       if (next == initial) {
@@ -332,6 +414,11 @@ public:
       state = std::move(next);
     }
     return {};
+  }
+  static std::optional<SyncSlotMapping> derive(
+      scf::ForOp loop, Value observation, unsigned maximumStates = ExplorationLimit) {
+    AnalysisContext context;
+    return derive(loop, observation, context, maximumStates);
   }
 };
 } // namespace mlir::pto

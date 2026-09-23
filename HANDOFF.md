@@ -1,5 +1,56 @@
 # OAHS current handoff
 
+## Current iteration — Step G original participation and complete rearming packets
+
+Step F committed `b77d0644c`. Shared scalar analysis now proves original positive-
+step loop domains, including nonzero lower bounds, bounded dynamic uppers and
+nondivisible final visits, without signed progression overflow. Physical selectors
+and endpoint decisions share cached range/domain facts. Emission uses the original
+logical ordinal; independent readback verifies its arithmetic and next-visit guard.
+Unsupported domains retain original control, not guessed participation.
+
+The richer facts exposed two real integration restrictions. OAHS now asks the
+shared emitter to preserve the exact checked ordered word, including repeated
+signatures and adjacent fences. InsertSync retains its default merge policy.
+Distinct actual WAIT identities can now support one rearming return: a complete
+reverse/forward packet is independently checked and committed in exactly that
+order. Its first receipt supplies credit only through actual execution. Retained
+support is not a dormant helper; general ownership/deadline composition is open.
+
+All three source reviewers ACCEPT. All 22 portable suites, three native drivers,
+88/88 corpus, 18/19 compatibility (same inherited topk refusal), GEMM, two prefills
+and three targets pass. KDA reconstruction and attention15/16 admission failures
+from the initial candidate are fixed. Evidence, initial failure records, exact
+input/binary/plan pins and work: `../oahs-gemm-base-builds/refactor-step-g/`.
+Only a test-expression line wrap follows the compiled campaign. Thirteen scoped
+compliance bracing reports are regex false positives; their bodies are braced.
+No sanitizer or device run.
+
+GEMM is byte-identical to F. Nineteen corpus, eight compatibility, both prefill
+and all three targeted plans change. Finite ordering diagnostics retain full
+relations where supported: no added relations were found in completed cases;
+compatibility1/7 cube remove568/320, compatibility15/16 vector tails remove72,
+RMSNorm removes10. This does NOT close the F quality ledger. Twenty-eight of90
+function/binding rows remain unresolved (queue/op mappings, carried scalar
+control, assertion or large-integer serialization); two prefills have empty
+traces under these bindings and supply no ordering evidence. Their native causal
+and reconstruction checks do pass. Diagnostic limitations are explicit in
+`changed-order.json`; no universal ordering or runtime claim follows.
+
+Temporary compiler/resource regressions are also explicit: compatibility5 replay
+5869→304129 and static SETs29→55; compatibility15/16 replay68895→587437 and
+SETs151→176; prefill qwen3217→16427, deepseek2666→19881 replay. Richer observation
+interfaces activate more endpoints and contextual work. Joined packet checks are
+only2 in case5 and1 each in15/16, not a subset/deletion search. Attention vector
+correspondence visits rise26109→1338559. Review confirms contextual solves match
+distinct updates plus initial propagation, not unchanged-ledger repeats. Consolidation must
+measure and recover unnecessary repeated propagation, without hiding endpoints
+behind a benefit gate or treating empty finite traces as quality acceptance.
+
+Continue immediately with sparse access-order histories replacing whole-cell ACC
+eligibility, then exported generation support, common packet binding and actual
+required-return/rearming composition. Stages1–5 remain open.
+
 ## Current iteration — Step F composed original endpoint demands
 
 Step E committed `a8af1636c`. Original cross-engine requirements now collect

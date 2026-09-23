@@ -431,7 +431,8 @@ private:
     bool consume();
     bool bind(Group&, RequirementStage);
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&);
-    bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&);
+    bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&, bool&);
+    std::optional<bool> joinedAcknowledgment(Pipe, Pipe, Cut, SelectedDecision&);
     bool needsCommonAcknowledgment(const State&) const;
     Id reusable(Pipe, Pipe, const State&);
     bool canPublish(const State&, Id) const;

@@ -21,10 +21,11 @@ Donors supply mechanisms/counterexamples, not a chronological cherry-pick queue.
   readers; staged producer-repair crossing guard implemented and reviewed.
   Complete open/exported obligations and access/episode-scoped ACC replacement.
 - [ ] **Stage 3 (active):** joint original endpoint demand collection and
-  demand-driven role separation implemented; normalize positive-step participation
-  and complete first-read/first-write/final-read endpoints with exact
+  demand-driven role separation and original positive-step participation implemented;
+  complete first-read/first-write/final-read endpoints with exact
   gaps, original participation and invalidated publication-prefix certificates.
-- [ ] **Stage 4:** complete actual-return support, common ordered packets,
+- [ ] **Stage 4 (active):** exact emission and joined-consumption complete packets
+  implemented; complete actual-return support, common ordered packets,
   deadline-specific binding/ownership and checked rearming.
 - [ ] **Stage 5:** remove replaced paths, restore reference overlap/sharing,
   explain corpus tradeoffs, coupled device validation and generality review.
