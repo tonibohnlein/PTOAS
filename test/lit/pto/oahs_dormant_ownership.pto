@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// A physical generation spans reductions, reloads and an output return.
+// RUN: pto-oahs-selected-test --construct %s 2>&1 >/dev/null | FileCheck %s
+// RUN: %python %S/../../oahs/check_dormant_ownership.py pto-oahs-selected-test %s
+// CHECK: function=post_rmsnorm construction=1 reconstruction=1
+// CHECK-SAME: ownership_bindings={{[1-9][0-9]*}}
+
+module attributes {pto.backend = "emitc", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a3"} {
+  func.func @post_rmsnorm(%arg0: !pto.ptr<bf16, gm>, %arg1: !pto.ptr<f32, gm>, %arg2: !pto.ptr<f32, gm>, %arg3: index, %arg4: index, %arg5: index, %arg6: i32, %arg7: i32) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c32_i64 = arith.constant 32 : i64
+    %c8224_i64 = arith.constant 8224 : i64
+    %c16416_i64 = arith.constant 16416 : i64
+    %c128 = arith.constant 128 : index
+    %c5120 = arith.constant 5120 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c8 = arith.constant 8 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %c20 = arith.constant 20 : index
+    %c256 = arith.constant 256 : index
+    %cst_0 = arith.constant 1.95312503E-4 : f32
+    %cst_1 = arith.constant 9.99999997E-7 : f32
+    %0 = pto.make_tensor_view %arg0, shape = [%c128, %c5120], strides = [%c5120, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+    %1 = pto.make_tensor_view %arg1, shape = [%c128, %c5120], strides = [%c5120, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %2 = pto.make_tensor_view %arg2, shape = [%arg5, %c5120], strides = [%c5120, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+    %3 = arith.index_cast %arg6 : i32 to index
+    scf.for %arg8 = %3 to %c16 step %c8 {
+      %4 = arith.muli %arg8, %c8 : index
+      %5 = arith.cmpi slt, %4, %arg3 : index
+      scf.if %5 {
+        %6 = arith.subi %arg3, %4 : index
+        %7 = arith.minsi %6, %c8 : index
+        %8 = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+        pto.texpands ins(%cst : f32) outs(%8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+        scf.for %arg9 = %c0 to %c20 step %c1 {
+          %14 = arith.muli %arg9, %c256 : index
+          %15 = pto.alloc_tile addr = %c32_i64 valid_row = %7 valid_col = %c256 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>
+          %16 = arith.maxsi %4, %c0 : index
+          %17 = arith.maxsi %14, %c0 : index
+          %18 = pto.partition_view %1, offsets = [%16, %17], sizes = [%7, %c256] : !pto.tensor_view<?x?xf32>
+          pto.tload ins(%18 : !pto.partition_tensor_view<?x256xf32>) outs(%15 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>) {layout = #pto.layout<nd>}
+          %19 = pto.alloc_tile addr = %c32_i64 valid_row = %7 valid_col = %c256 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>
+          pto.tmul ins(%15, %15 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>, !pto.tile_buf<vec, 8x256xf32, valid=?x?>) outs(%19 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>)
+          %20 = pto.alloc_tile addr = %c8224_i64 valid_row = %c8 valid_col = %c256 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>
+          %21 = pto.alloc_tile addr = %c16416_i64 valid_row = %7 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+          pto.trowsum ins(%19, %20 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>, !pto.tile_buf<vec, 8x256xf32, valid=?x?>) outs(%21 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>)
+          %22 = pto.alloc_tile addr = %c16416_i64 valid_row = %c1 valid_col = %7 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+          %23 = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+          pto.tadd ins(%8, %22 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%23 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+        }
+        %9 = pto.alloc_tile addr = %c32_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+        pto.tmuls ins(%8, %cst_0 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, f32) outs(%9 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+        %10 = pto.alloc_tile addr = %c32_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+        pto.tadds ins(%9, %cst_1 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>, f32) outs(%10 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+        %11 = pto.alloc_tile addr = %c32_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+        pto.tsqrt ins(%10 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%11 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+        %12 = pto.alloc_tile addr = %c0_i64 valid_row = %c1 valid_col = %c8 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>
+        pto.trecip ins(%11 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>) outs(%12 : !pto.tile_buf<vec, 1x8xf32, valid=?x?>)
+        %13 = pto.alloc_tile addr = %c0_i64 valid_row = %c8 valid_col = %c1 : !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>
+        scf.for %arg9 = %c0 to %c20 step %c1 {
+          %14 = arith.muli %arg9, %c256 : index
+          %15 = pto.alloc_tile addr = %c32_i64 valid_row = %7 valid_col = %c256 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>
+          %16 = arith.maxsi %4, %c0 : index
+          %17 = arith.maxsi %14, %c0 : index
+          %18 = pto.partition_view %1, offsets = [%16, %17], sizes = [%7, %c256] : !pto.tensor_view<?x?xf32>
+          pto.tload ins(%18 : !pto.partition_tensor_view<?x256xf32>) outs(%15 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>) {layout = #pto.layout<nd>}
+          %19 = pto.alloc_tile addr = %c8224_i64 valid_row = %c1 valid_col = %c256 : !pto.tile_buf<vec, 1x256xf32, valid=?x?>
+          %20 = arith.maxsi %arg4, %c0 : index
+          %21 = arith.maxsi %14, %c0 : index
+          %22 = pto.partition_view %2, offsets = [%20, %21], sizes = [%c1, %c256] : !pto.tensor_view<?x?xf32>
+          pto.tload ins(%22 : !pto.partition_tensor_view<1x256xf32>) outs(%19 : !pto.tile_buf<vec, 1x256xf32, valid=?x?>) {layout = #pto.layout<nd>}
+          %23 = pto.alloc_tile addr = %c32_i64 valid_row = %7 valid_col = %c256 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>
+          pto.trowexpandmul ins(%15, %13 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>, !pto.tile_buf<vec, 8x1xf32, valid=?x?, blayout=col_major>) outs(%23 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>)
+          %24 = pto.alloc_tile addr = %c32_i64 valid_row = %7 valid_col = %c256 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>
+          pto.tcolexpandmul ins(%23, %19 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>, !pto.tile_buf<vec, 1x256xf32, valid=?x?>) outs(%24 : !pto.tile_buf<vec, 8x256xf32, valid=?x?>)
+          %25 = pto.alloc_tile addr = %c32_i64 valid_row = %7 valid_col = %c256 : !pto.tile_buf<vec, 8x256xbf16, valid=?x?>
+          pto.tcvt ins(%24 {rmode = #pto<round_mode ROUND>, satmode = #pto<saturation_mode ON>} : !pto.tile_buf<vec, 8x256xf32, valid=?x?>) outs(%25 : !pto.tile_buf<vec, 8x256xbf16, valid=?x?>)
+          %26 = arith.maxsi %4, %c0 : index
+          %27 = arith.maxsi %14, %c0 : index
+          %28 = pto.partition_view %0, offsets = [%26, %27], sizes = [%7, %c256] : !pto.tensor_view<?x?xbf16>
+          pto.tstore ins(%25 : !pto.tile_buf<vec, 8x256xbf16, valid=?x?>) outs(%28 : !pto.partition_tensor_view<?x256xbf16>) {layout = #pto.layout<nd>}
+        }
+      } else {
+      }
+    }
+    return
+  }
+}

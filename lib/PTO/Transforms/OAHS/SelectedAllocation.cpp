@@ -10,18 +10,144 @@
 #include <deque>
 
 namespace mlir::pto::oahs::selected {
+bool Constructor::unownedKey(Id key) const
+{
+    return !closedKeys.count(key) && !recurringKeys.count(key) &&
+           !ledger.hasDormantUses(frontier.keys()[key]);
+}
+std::optional<OwnedPacket> Constructor::prepareOwnedPacket(const OrderedPacket& proposed)
+{
+    ++result.work.ownershipQueries;
+    std::set<std::tuple<Pipe, Pipe, unsigned>> touched;
+    std::set<std::pair<Id, Id>> owners;
+    for (const auto& item : proposed) {
+        const auto& c = item.command;
+        if (c.kind != Command::Publish && c.kind != Command::Acquire) { continue; }
+        const EventIdentity identity{c.source, c.observer, c.key};
+        const bool newOwnerQuery = ledger.hasDormantUses(identity) &&
+            touched.emplace(c.source, c.observer, c.key).second;
+        if (!newOwnerQuery) { continue; }
+        for (auto id : ledger.eventUses(identity)) {
+            if (ledger.active(id)) { continue; }
+            const auto owner = helperOwners.find(id);
+            if (owner == helperOwners.end()) { return {}; }
+            const auto pair = owner->second;
+            if (id != pair.first && id != pair.second) { return {}; }
+            const bool dormantPair = !ledger.active(pair.first) && !ledger.active(pair.second);
+            if (!dormantPair) { return {}; }
+            const auto& pub = ledger.endpoint(pair.first);
+            const auto& wait = ledger.endpoint(pair.second);
+            const auto anchor = wait.acknowledges;
+            const bool matching = pub.purpose == EndpointPurpose::ConsumptionAcknowledgment &&
+                wait.purpose == pub.purpose && pub.acknowledges == anchor &&
+                pub.command.kind == Command::Publish && wait.command.kind == Command::Acquire &&
+                pub.command.source == c.source && pub.command.observer == c.observer && pub.command.key == c.key &&
+                wait.command.source == c.source && wait.command.observer == c.observer && wait.command.key == c.key &&
+                anchor < ledger.records().size() && ledger.active(anchor);
+            if (!matching) { return {}; }
+            const auto& forward = ledger.endpoint(anchor).command;
+            const bool actualReceipt = forward.kind == Command::Acquire &&
+                forward.source == c.observer && forward.observer == c.source;
+            if (!actualReceipt) { return {}; }
+            owners.insert(pair);
+        }
+    }
+    std::vector<Id> anchors;
+    for (const auto& owner : owners) { anchors.push_back(ledger.endpoint(owner.second).acknowledges); }
+    const auto gaps = ledger.gapsAfter(anchors);
+    OwnedPacket out;
+    OrderedPacket packet;
+    for (const auto& owner : owners) {
+        const auto gap = gaps.find(ledger.endpoint(owner.second).acknowledges);
+        if (gap == gaps.end()) { return {}; }
+        const auto pub = ledger.restoration(owner.first, gap->second);
+        const auto wait = ledger.restoration(owner.second, gap->second);
+        if (!pub || !wait) { return {}; }
+        packet.push_back(*pub);
+        packet.push_back(*wait);
+        out.restoredWaits.push_back(owner.second);
+    }
+    out.restoredEndpoints = packet.size();
+    for (Id index = 0; index < proposed.size(); ++index) {
+        auto item = proposed[index];
+        if (item.acknowledgesPacket != NoAnalysisId) {
+            if (item.acknowledgesPacket >= index) { return {}; }
+            item.acknowledgesPacket += out.restoredEndpoints;
+        }
+        packet.push_back(std::move(item));
+    }
+    out.prepared = ledger.preparePacket(packet);
+    if (!out.prepared.valid()) { return {}; }
+    return out;
+}
+std::optional<OwnedPacket> Constructor::qualifyOwnedPacket(const OrderedPacket& proposed, bool alwaysCheck)
+{
+    auto out = prepareOwnedPacket(proposed);
+    if (!out) { return {}; }
+    if (alwaysCheck || !out->restoredWaits.empty()) {
+        const auto commands = ledger.withPacket(out->prepared);
+        if (!commands) { return {}; }
+        const auto checked = analyze(program, *commands, {false});
+        ++result.work.ownershipChecks;
+        result.work.ownershipCheckSites += checked.stats.siteEvaluations;
+        if (!acceptOwnedPacket(*out, checked)) { return {}; }
+    } else {
+        out->qualified = true; // Existing source-time and neighboring-use certificates.
+    }
+    return out;
+}
+bool Constructor::acceptOwnedPacket(OwnedPacket& packet, const AnalysisResult& checked) const
+{
+    const bool protocol = checked.complete && checked.protocol.empty() &&
+        checked.diagnostics.empty() && checked.phaseResources.empty();
+    if (!protocol) { return false; }
+    for (const auto& residual : checked.residuals) {
+        const auto cut = residual.consumerCut;
+        if (cut >= finalized.size()) { return false; }
+        if (finalized[cut]) { return false; }
+        const bool supported = cut < producerSupportConsumers.size() && producerSupportConsumers[cut];
+        if (!supported) { continue; }
+        const auto operation = control.graph.operations[cut];
+        if (operation == NoAnalysisId || residual.demand.producer >= program.operations.size()) { return false; }
+        const auto pipe = unsigned(program.operations[operation].pipe);
+        const auto source = unsigned(program.operations[residual.demand.producer].pipe);
+        const auto base = (Id(residual.producerAccess.cell) * PipeCount + source) * 2;
+        // Preserve both RMW roles; this filter may conservatively retain more
+        // than the native access exception. Selected causal replay is final.
+        const bool protectedRead = residual.producerAccess.read && producerSupportClasses[pipe].count(base);
+        const bool protectedWrite = residual.producerAccess.write && producerSupportClasses[pipe].count(base + 1);
+        if (protectedRead || protectedWrite) { return false; }
+    }
+    packet.qualified = true;
+    return true;
+}
+bool Constructor::commitOwnedPacket(const OwnedPacket& packet, SelectedDecision& decision)
+{
+    if (!packet.qualified) {
+        return fail(SelectedFailure::SelectedUpdate, "owned packet was not qualified", current);
+    }
+    const auto ids = ledger.appendPacket(packet.prepared);
+    const bool committed = ids.size() == packet.prepared.size();
+    if (!committed) {
+        return fail(SelectedFailure::SelectedUpdate, "owned packet changed after qualification", current);
+    }
+    decision.endpoints.insert(decision.endpoints.end(), ids.begin() + packet.restoredEndpoints, ids.end());
+    if (!packet.restoredWaits.empty()) { ++result.work.ownershipBindings; }
+    for (auto wait : packet.restoredWaits) {
+        requiredReturns.insert(wait);
+        ++result.work.acknowledgments;
+        ++result.work.rearmingRestored;
+        --result.work.rearmingDischarged;
+    }
+    return true;
+}
 bool Constructor::commitPacket(const OrderedPacket& packet, SelectedDecision& decision)
 {
-    const auto prepared = ledger.preparePacket(packet);
-    if (!prepared.valid()) {
-        return fail(SelectedFailure::SelectedUpdate, prepared.reason(), current);
+    const auto qualified = qualifyOwnedPacket(packet);
+    if (!qualified) {
+        return fail(SelectedFailure::SelectedUpdate, "packet has no complete ownership certificate", current);
     }
-    const auto ids = ledger.appendPacket(prepared);
-    if (ids.size() != packet.size()) {
-        return fail(SelectedFailure::SelectedUpdate, "packet changed after qualification", current);
-    }
-    decision.endpoints.insert(decision.endpoints.end(), ids.begin(), ids.end());
-    return true;
+    return commitOwnedPacket(*qualified, decision);
 }
 bool Constructor::canPublish(const State& state, Id key) const
 {
@@ -39,7 +165,7 @@ Id Constructor::reusable(Pipe source, Pipe observer, const State& state)
 {
     for (Id key = 0; key < frontier.keys().size(); ++key) {
         const auto& identity = frontier.keys()[key];
-        if (identity.source != source || identity.observer != observer || closedKeys.count(key)) {
+        if (identity.source != source || identity.observer != observer || !unownedKey(key)) {
             continue;
         }
         ++result.work.keyQueries;
@@ -251,6 +377,36 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
             if (reverseIdentity.source != observer || reverseIdentity.observer != source ||
                 closedKeys.count(reverseKey)) continue;
             ++result.work.keyQueries;
+            const bool dormant = ledger.hasDormantUses(identity) || ledger.hasDormantUses(reverseIdentity);
+            if (dormant) {
+                const auto gap = ledger.gapAfter(wait);
+                if (!gap) { continue; }
+                const auto request = result.decisions.size();
+                const OrderedPacket packet{
+                    {gap->cut, {Command::Publish, observer, source, reverseIdentity.key},
+                        EndpointPurpose::ConsumptionAcknowledgment, request, wait, gap},
+                    {newCut, {Command::Acquire, observer, source, reverseIdentity.key},
+                        EndpointPurpose::ConsumptionAcknowledgment, request, wait},
+                    {newCut, {Command::Publish, source, observer, identity.key}, EndpointPurpose::Completion, request},
+                    {current, {Command::Acquire, source, observer, identity.key},
+                        EndpointPurpose::Completion, request}};
+                const auto qualified = qualifyOwnedPacket(packet);
+                if (!qualified) { continue; }
+                const auto inputVersion = ledger.version();
+                if (!commitOwnedPacket(*qualified, decision)) { return false; }
+                decision.repairedAcquisition = wait;
+                decision.repairedForwardKey = identity.key;
+                decision.repairReverseKey = reverseIdentity.key;
+                decision.repairInputVersion = inputVersion;
+                decision.enlargedPrefix |= newCut != publication;
+                publication = newCut;
+                key = candidate;
+                completed = true;
+                ++result.work.acknowledgments;
+                if (!update()) { return false; }
+                decision.repairOutputVersion = ledger.version();
+                return true;
+            }
             if (!canPublish(after->second, reverseKey) || !clearInterval(reverseKey, cut, newCut)) continue;
             key = candidate;
             oldWait = wait;
@@ -338,24 +494,27 @@ std::optional<bool> Constructor::joinedAcknowledgment(
             }
             const Command publish{Command::Publish, observer, source, b.key};
             const Command acquire{Command::Acquire, observer, source, b.key};
+            const bool dormant = ledger.hasDormantUses(a) || ledger.hasDormantUses(b);
             bool supported = true;
-            for (auto at : control.wordOccurrences[control.canonicalCut[publication]]) {
-                if (!control.reachable[at]) {
-                    continue;
-                }
-                const auto& before = cache.cuts[at].before;
-                const auto offset = ledger.word(at).size();
-                auto sent = frontier.command(before.causal, publish, {at, offset});
-                if (!sent.applied) {
-                    supported = false;
-                    break;
-                }
-                auto received = frontier.command(sent.state, acquire, {at, offset + 1});
-                auto local = before;
-                local.causal = received.state;
-                if (!received.applied || !canPublish(local, forward)) {
-                    supported = false;
-                    break;
+            if (!dormant) {
+                for (auto at : control.wordOccurrences[control.canonicalCut[publication]]) {
+                    if (!control.reachable[at]) {
+                        continue;
+                    }
+                    const auto& before = cache.cuts[at].before;
+                    const auto offset = ledger.word(at).size();
+                    auto sent = frontier.command(before.causal, publish, {at, offset});
+                    if (!sent.applied) {
+                        supported = false;
+                        break;
+                    }
+                    auto received = frontier.command(sent.state, acquire, {at, offset + 1});
+                    auto local = before;
+                    local.causal = received.state;
+                    if (!received.applied || !canPublish(local, forward)) {
+                        supported = false;
+                        break;
+                    }
                 }
             }
             if (!supported) {
@@ -367,26 +526,15 @@ std::optional<bool> Constructor::joinedAcknowledgment(
                 {publication, acquire, EndpointPurpose::ConsumptionAcknowledgment, request},
                 {publication, {Command::Publish, source, observer, a.key}, EndpointPurpose::Completion, request},
                 {current, {Command::Acquire, source, observer, a.key}, EndpointPurpose::Completion, request}};
-            const auto prepared = ledger.preparePacket(packet);
-            const auto commands = ledger.withPacket(prepared);
-            if (!commands) {
-                return fail(SelectedFailure::SelectedUpdate, prepared.reason(), publication);
-            }
-            const auto checked = analyze(program, *commands, {false});
+            const auto beforeSites = result.work.ownershipCheckSites;
+            const auto qualified = qualifyOwnedPacket(packet, true);
             ++result.work.acknowledgmentChecks;
-            result.work.acknowledgmentCheckSites += checked.stats.siteEvaluations;
-            if (!checked.complete || !checked.protocol.empty() || !checked.diagnostics.empty() ||
-                !checked.phaseResources.empty()) {
-                continue;
-            }
+            result.work.acknowledgmentCheckSites += result.work.ownershipCheckSites - beforeSites;
+            if (!qualified) { continue; }
             // Commit exactly the packet checked above. In particular do not
             // replay an incomplete reverse half: the forward receipt may rearm
             // its reverse key on the next original visit. No promised credit.
-            auto endpoints = ledger.appendPacket(prepared);
-            if (endpoints.size() != packet.size()) {
-                return fail(SelectedFailure::SelectedUpdate, "joined packet changed after checking", publication);
-            }
-            decision.endpoints.insert(decision.endpoints.end(), endpoints.begin(), endpoints.end());
+            if (!commitOwnedPacket(*qualified, decision)) { return false; }
             decision.repairedForwardKey = a.key;
             decision.repairReverseKey = b.key;
             ++result.work.acknowledgments;
@@ -452,7 +600,7 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     } else {
         for (Id candidate = 0; candidate < frontier.keys().size(); ++candidate) {
             const auto& identity = frontier.keys()[candidate];
-            if (identity.source != source || identity.observer != observer || closedKeys.count(candidate)) {
+            if (identity.source != source || identity.observer != observer || !unownedKey(candidate)) {
                 continue;
             }
             ++result.work.keyQueries;
@@ -463,6 +611,9 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
             }
         }
         if (key == NoAnalysisId) {
+            if (auto owned = dormantTransfer(source, observer, publication, closed, decision)) {
+                return *owned;
+            }
             bool completed = false;
             if (!acknowledgment(source, observer, publication, key, decision, completed)) {
                 return false;
@@ -515,6 +666,9 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     }
     const auto reverse = retained ? binding->second.second : reusable(observer, source, afterForward);
     if (reverse == NoAnalysisId || !canPublish(afterForward, reverse)) {
+        if (!retained) {
+            if (auto owned = dormantTransfer(source, observer, publication, true, decision)) { return *owned; }
+        }
         return fail(SelectedFailure::EventResource,
             "common-cut acknowledgment has no independently reusable reverse key", current);
     }
@@ -539,6 +693,49 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     }
     return true;
 }
+std::optional<bool> Constructor::dormantTransfer(
+    Pipe source, Pipe observer, Cut publication, bool closed, SelectedDecision& decision)
+{
+    // Fixed hardware-key alternatives; never subsets of an owning population.
+    // Current publishability is not a premise: restoration may establish it.
+    if (closed && publication != current) { return {}; }
+    const auto request = result.decisions.size();
+    for (Id forward = 0; forward < frontier.keys().size(); ++forward) {
+        const auto& a = frontier.keys()[forward];
+        if (a.source != source || a.observer != observer || closedKeys.count(forward)) { continue; }
+        const auto count = closed ? frontier.keys().size() : 1;
+        for (Id reverse = 0; reverse < count; ++reverse) {
+            const auto& b = frontier.keys()[reverse];
+            if (closed && (b.source != observer || b.observer != source || closedKeys.count(reverse))) { continue; }
+            const bool dormant = ledger.hasDormantUses(a) || (closed && ledger.hasDormantUses(b));
+            if (!dormant) { continue; }
+            OrderedPacket packet{
+                {publication, {Command::Publish, source, observer, a.key}, EndpointPurpose::Completion, request},
+                {current, {Command::Acquire, source, observer, a.key}, EndpointPurpose::Completion, request}};
+            if (closed) {
+                packet.push_back({current, {Command::Publish, observer, source, b.key},
+                    EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
+                packet.push_back({current, {Command::Acquire, observer, source, b.key},
+                    EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
+            }
+            const auto qualified = qualifyOwnedPacket(packet);
+            if (!qualified) { continue; }
+            if (!commitOwnedPacket(*qualified, decision)) { return false; }
+            if (closed) {
+                rememberReturn(decision.endpoints[decision.endpoints.size() - 2], decision.endpoints.back());
+                ++result.work.acknowledgments;
+                ++result.work.commonCutTransfers;
+                if (control.components[activeComponent].cyclic) {
+                    closedBindings[{source, observer}] = {forward, reverse};
+                    closedKeys.insert(forward);
+                    closedKeys.insert(reverse);
+                }
+            }
+            return update();
+        }
+    }
+    return {};
+}
 bool Constructor::restoreReturns(Id key)
 {
     const auto& identity = frontier.keys()[key];
@@ -546,16 +743,25 @@ bool Constructor::restoreReturns(Id key)
     if (found == pendingRearming.end()) return false;
     OrderedPacket packet;
     std::vector<Id> restored;
+    std::vector<Id> anchors;
+    std::vector<std::pair<Id, Id>> selected;
     for (const auto& helper : found->second) {
-        if (ledger.active(helper.second)) continue;
+        if (ledger.active(helper.second)) { continue; }
         const auto wait = ledger.endpoint(helper.second).acknowledges;
         const auto& forward = ledger.endpoint(wait).command;
-        if (forward.source != identity.source || forward.observer != identity.observer || forward.key != identity.key)
-            continue;
-        const auto gap = ledger.gapAfter(wait);
-        if (!gap) { return false; }
-        const auto publication = ledger.restoration(helper.first, *gap);
-        const auto acquisition = ledger.restoration(helper.second, *gap);
+        const bool matches = forward.source == identity.source && forward.observer == identity.observer &&
+            forward.key == identity.key;
+        if (!matches) { continue; }
+        selected.push_back(helper);
+        anchors.push_back(wait);
+    }
+    const auto gaps = ledger.gapsAfter(anchors);
+    for (const auto& helper : selected) {
+        const auto wait = ledger.endpoint(helper.second).acknowledges;
+        const auto gap = gaps.find(wait);
+        if (gap == gaps.end()) { return false; }
+        const auto publication = ledger.restoration(helper.first, gap->second);
+        const auto acquisition = ledger.restoration(helper.second, gap->second);
         if (!publication || !acquisition) { return false; }
         packet.push_back(*publication);
         packet.push_back(*acquisition);
@@ -583,6 +789,8 @@ void Constructor::rememberReturn(Id publication, Id acquisition)
 {
     const auto& c = ledger.endpoint(acquisition).command;
     pendingRearming[{c.source, c.observer}].push_back({publication, acquisition});
+    helperOwners[publication] = {publication, acquisition};
+    helperOwners[acquisition] = {publication, acquisition};
 }
 
 bool Constructor::returnBeforeUse(Id helperWait, Id necessaryWait)
@@ -724,11 +932,7 @@ bool Constructor::bind(Group& group, RequirementStage stage)
                               EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, receipt});
         }
         if (group.packet) {
-            const auto ids = ledger.appendPacket(*group.packet);
-            if (ids.size() != packet.size()) {
-                return fail(SelectedFailure::SelectedUpdate, "source packet changed after checking", acquisition);
-            }
-            decision.endpoints.insert(decision.endpoints.end(), ids.begin(), ids.end());
+            if (!commitOwnedPacket(*group.packet, decision)) { return false; }
         } else if (!commitPacket(packet, decision)) {
             return false;
         }

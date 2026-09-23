@@ -100,6 +100,25 @@ std::optional<WordGap> Ledger::gapAfter(Id predecessor) const
     const auto next = std::next(found);
     return WordGap{cut, predecessor, next == ids.end() ? NoAnalysisId : *next};
 }
+std::map<Id, WordGap> Ledger::gapsAfter(const std::vector<Id>& anchors) const
+{
+    std::map<Cut, std::set<Id>> byWord;
+    for (auto id : anchors) {
+        const bool valid = id < endpoints.size() && active(id);
+        if (valid) { byWord[endpoints[id].cut].insert(id); }
+    }
+    std::map<Id, WordGap> result;
+    for (const auto& [cut, requested] : byWord) {
+        const auto& ids = word(cut);
+        for (Id offset = 0; offset < ids.size(); ++offset) {
+            if (requested.count(ids[offset])) {
+                result.emplace(ids[offset], WordGap{cut, ids[offset],
+                    offset + 1 == ids.size() ? NoAnalysisId : ids[offset + 1]});
+            }
+        }
+    }
+    return result;
+}
 PreparedPacket Ledger::preparePacket(const OrderedPacket& packet) const
 {
     PreparedPacket out;

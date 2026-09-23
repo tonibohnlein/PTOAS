@@ -74,10 +74,16 @@ used identities15→16 and compatibility2/7 replay increases separately from pai
 reductions. These finite checks do not close F/G/L recovery or device acceptance.
 
 O adds exact mixed restoration materialization and indexed dormant identities.
-The old direct restoreAfter path is removed. Shared ownership closure/pressure
-binding and default deadline deferral remain open; P must cover every binder client
-and batch touched-word gaps. O integrity generality review is accepted separately
-from the unfinished allocation mechanism.
+The old direct restoreAfter path is removed. P adds common complete dormant-owner
+closure and pressure binding for ordinary, alternative, loop-entry and acknowledgment
+clients, with batched touched-word gaps and atomic candidate refusal. All three
+reviews and separate bounded generality review ACCEPT. Native views/arithmetic/
+unrelated-context variants activate without retry.12campaign plans change;
+20nonempty complete-order comparisons are unchanged and20unsupported rows remain
+unknown. Restored support increases some event/work populations; see Step P handoff.
+Default deadline deferral, persistent publication-prefix support and arbitrary
+lifetime-scoped borrowing remain open. Existing closed/recurring reservations are
+explicit sufficient restrictions, not a general ownership solution.
 
 Each coherent increment requires architecture, correctness and asymptotic-cost
 review acceptance before its commit. Different selected ledger revisions are not

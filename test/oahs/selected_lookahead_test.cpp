@@ -590,6 +590,65 @@ o::Program enclosingChoice()
     p.observed = std::move(q);
     return p;
 }
+void normalDormantOwnership()
+{
+    // One selected generation spans a choice child and parent continuation.
+    // These are ordinary physical effects; discovery must use the public path.
+    auto p = base(4, 3);
+    p.operations = {op(Q, {{0, false, true}}), op(Q, {{0, false, true}}),
+        op(P, {{0, true, false}}), op(P, {{1, true, false}}),
+        op(P, {{1, true, true}}), op(P, {{2, true, true}}),
+        op(P, {{1, false, true}}), op(Q, {{0, false, true}}),
+        op(Q, {{1, true, true}}), op(Q, {{2, true, true}}),
+        op(R, {{1, true, false}}), op(R, {{1, false, true}}),
+        op(Q, {{0, true, true}}), op(Q, {{1, true, true}})};
+    o::ObservedControl g;
+    g.qualification = "original choice child, enclosing recurrence and parent continuation";
+    g.entry = 0;
+    g.exit = 20;
+    for (unsigned i = 0; i < 21; ++i) {
+        g.observations.push_back({i, {}, true});
+        g.sites.push_back({o::NoAnalysisId, i, {}, {}, 0});
+    }
+    g.sites[0].successors = {1, 8};
+    g.sites[1].successors = {2};
+    g.sites[2].successors = {3, 4};
+    g.sites[3].operation = 0; g.sites[3].successors = {5};
+    g.sites[4].operation = 1; g.sites[4].successors = {5};
+    g.sites[5].successors = {2, 6}; g.sites[5].backedgeOwners = {1, o::NoAnalysisId};
+    g.sites[6].successors = {7};
+    g.sites[7].operation = 2; g.sites[7].successors = {9};
+    for (unsigned i = 9; i < 20; ++i) {
+        g.sites[i].operation = i - 6;
+        g.sites[i].successors = {i + 1};
+    }
+    g.sites[13].successors = {1, 8}; g.sites[13].backedgeOwners = {0, o::NoAnalysisId};
+    g.sites[8].successors = {14};
+    g.loops.push_back({1, 1, 6, {2, 3, 4, 5}, 2, true});
+    p.observed = g;
+    const auto plan = accepted(p);
+    require(plan.work.ownershipBindings != 0, "normal constructor did not discover dormant ownership closure");
+    for (bool unrelated : {false, true}) {
+        auto variant = p;
+        // Physical relabeling and independent continuation do not change the
+        // ownership fact or introduce a spelling-dependent allocation gate.
+        for (auto& operation : variant.operations) {
+            for (auto& access : operation.accesses) {
+                access.cell = (access.cell + 1) % 3;
+            }
+        }
+        if (unrelated) {
+            variant.operations.push_back(op(o::Pipe::MTE1, {{3, true, false}}));
+            variant.observed->sites[20].operation = variant.operations.size() - 1;
+            variant.observed->sites[20].successors = {21};
+            variant.observed->observations.push_back({21, {}, true});
+            variant.observed->sites.push_back({o::NoAnalysisId, 21, {}, {}, 0});
+            variant.observed->exit = 21;
+        }
+        const auto selected = accepted(variant);
+        require(selected.work.ownershipBindings != 0, "unrelated context erased ownership realization");
+    }
+}
 void changedRepublicationDeadline()
 {
     auto p = base(1, 3);
@@ -653,6 +712,7 @@ int main()
     keepFuturePayloadReturn();
     keepFutureWordReturn();
     keepLoopReturn();
+    normalDormantOwnership();
     changedRepublicationDeadline();
     enclosingAcquisitionAndRearming();
     invariantLoopEntry();

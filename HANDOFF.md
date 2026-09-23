@@ -1,6 +1,50 @@
 # OAHS current handoff
 
-## Current iteration — Step O exact restoration packet foundation
+## Current iteration — Step P shared dormant ownership qualification
+
+Baseline `bd6fd5bc1`. Ordinary, alternative, loop-entry, single-WAIT and joined
+acknowledgment clients now stage every dormant owner of each touched physical
+key with the proposed transfer. The common qualifier preserves original helper
+identities and exact gaps, checks the complete packet, and commits those same
+words. Partial or unaccounted ownership refuses atomically. Rejected key candidates
+leave no reservations or credit; deterministic later candidates remain available.
+Touched-word gaps are collected once per word. The staged analyzer is a filter,
+not a replacement for authoritative causal replay, especially for mixed ACC
+incidences. A failed authoritative update aborts the construction attempt.
+
+Architecture, correctness and asymptotic-performance reviewers ACCEPT. Separate
+generality review ACCEPTS the bounded ownership mechanism. Public-constructor and
+real native tests activate ownership binding without retry; identity views,
+equivalent address arithmetic and unrelated producer/descriptor/control additions
+retain activation. Complete/partial ownership, stale words, missing rearming,
+invalid first candidate and successful later candidate have direct tests. Gate
+inventory: `oahs-selected-plan.md`, Step P. Closed/recurring reservations remain a
+sufficient scope restriction; arbitrary lifetime borrowing and default deferred
+acknowledgment are NOT implemented by this increment.
+
+Portable22/22 and final focused4/4 pass; final three native drivers and the new
+native lit/variants pass. Campaign:88/88corpus,18/19compatibility (same inherited
+refusal),GEMM,two prefills,three targets.12files change.20nonempty function/binding
+comparisons have identical COMPLETE order sets;20unsupported rows remain unknown.
+GEMM/prefills are unchanged. Extra restored support increases RMS pairs17→21,
+CSA100→107 and attention176→184. Replay and qualification work are recorded
+separately; ownership counters INCLUDE existing joined/loop-entry checks and
+must not be added to those counts as independent work. F/G/L recovery remains open.
+
+Evidence: `../oahs-gemm-base-builds/refactor-step-p/`, summary.json,
+changed-order.json, resources-work.json, final-units.json and lit-final.log.
+Campaign binaries precede a malformed packet-index guard and final formatting;
+final focused/native/lit checks cover final source. Final binaries are pinned in
+final-binaries/. No device, sanitizer or LaTeX build. Draft ownership formulation
+is updated separately, preserving prior uncommitted draft work.
+
+Next: persistent publication support and actual key-reuse obligations through
+these shared packets. Do not enable optimistic deferral from future-payload
+absence or anticipated returns. Preserve early source positions across later
+edits, distinguish resource-driven ordering from certified no-added-order, and
+continue the same three-reviewer loop. Full stages1–5 remain unfinished.
+
+## Previous iteration — Step O exact restoration packet foundation
 
 Baseline `2f676f302`. The common materializer accepts original dormant endpoints
 and new endpoints in one exact ordered packet. Restored endpoints retain their

@@ -165,6 +165,151 @@ struct ReplayTestAccess {
         constructor.needsContextualReplay = true;
         return constructor.run({}, false);
     }
+    static void ownedPackets(bool acknowledgment = false)
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(1, 2);
+        p.operations = {op(P, {{0, true, false}}), op(Q, {{0, true, false}}),
+                        op(P, {{0, true, false}}), op(Q, {{0, true, false}})};
+        Constructor c(p);
+        std::vector<std::pair<Id, Id>> helpers;
+        for (Cut cut : {1u, 2u}) {
+            c.ledger.append(cut, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion);
+            const auto forward = c.ledger.append(cut, {Command::Acquire, P, Q, 0}, EndpointPurpose::Completion);
+            const auto pub = c.ledger.append(cut, {Command::Publish, Q, P, 0},
+                EndpointPurpose::ConsumptionAcknowledgment, 0, forward);
+            const auto wait = c.ledger.append(cut, {Command::Acquire, Q, P, 0},
+                EndpointPurpose::ConsumptionAcknowledgment, 0, forward);
+            c.rememberReturn(pub, wait);
+            helpers.emplace_back(pub, wait);
+            c.ledger.append(cut, {Command::Publish, Q, P, 1}, EndpointPurpose::Completion);
+            c.ledger.append(cut, {Command::Acquire, Q, P, 1}, EndpointPurpose::Completion);
+        }
+        c.ledger.append(3, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion);
+        const auto latestWait = c.ledger.append(3, {Command::Acquire, P, Q, 0}, EndpointPurpose::Completion);
+        const auto marker = c.ledger.append(3, {Command::Barrier, Pipe::MTE1}, EndpointPurpose::Fixed);
+        for (const auto& helper : helpers) {
+            c.ledger.erase(helper.first);
+            c.ledger.erase(helper.second);
+        }
+        c.result.work.rearmingDischarged = helpers.size();
+        c.current = 3;
+        require(checkCausalFrontier(p, c.ledger.commands()).accepted, "dormant fixture's actual returns are invalid");
+        if (acknowledgment) {
+            c.needsContextualReplay = true;
+            c.activeComponent = c.control.component[c.current];
+            require(c.update(), c.result.reason);
+            Cut publication = 3;
+            Id key = NoAnalysisId;
+            SelectedDecision decision;
+            bool completed = false;
+            require(c.acknowledgment(P, Q, publication, key, decision, completed) && completed,
+                    "single-consumption repair did not realize its complete owned packet");
+            require(c.result.work.ownershipBindings == 1 && c.result.work.rearmingRestored == 2,
+                    "single-consumption repair bypassed shared owner closure");
+            const auto& word = c.ledger.word(3);
+            const auto anchor = std::find(word.begin(), word.end(), latestWait);
+            require(anchor != word.end() && *std::next(anchor) == decision.endpoints.front() &&
+                    std::find(word.begin(), word.end(), marker) > std::next(anchor),
+                    "dormant reverse ownership moved the early acknowledgment behind unrelated work");
+            require(checkCausalFrontier(p, c.ledger.commands()).accepted, "owned acknowledgment broke protocol");
+            return;
+        }
+
+        const OrderedPacket packet{
+            {3, {Command::Publish, Q, P, 0}, EndpointPurpose::Completion},
+            {3, {Command::Acquire, Q, P, 0}, EndpointPurpose::Completion}};
+        const auto incomplete = c.prepareOwnedPacket(packet);
+        require(bool(incomplete), "structural ownership packet could not be prepared");
+        const auto unqualifiedVersion = c.ledger.version();
+        SelectedDecision unchecked;
+        require(!c.commitOwnedPacket(*incomplete, unchecked) && c.ledger.version() == unqualifiedVersion,
+                "structural preparation bypassed shared qualification");
+        const auto partialGap = *c.ledger.gapAfter(c.ledger.endpoint(helpers.front().second).acknowledges);
+        const auto partial = *c.ledger.restoration(helpers.front().first, partialGap);
+        require(c.ledger.appendPacket(c.ledger.preparePacket({partial})).size() == 1,
+                "partial-owner negative fixture failed to install");
+        const auto partialVersion = c.ledger.version();
+        require(!c.qualifyOwnedPacket(packet) && c.ledger.version() == partialVersion,
+                "partial active/inactive ownership was treated as a complete helper");
+        c.ledger.erase(helpers.front().first);
+        const auto before = c.ledger.commands();
+        const auto revision = c.ledger.version();
+        const auto prepared = c.qualifyOwnedPacket(packet);
+        require(prepared && prepared->restoredWaits.size() == 2 && prepared->restoredEndpoints == 4,
+                "shared physical key did not close ALL dormant helper owners");
+        require(c.ledger.version() == revision && c.requiredReturns.empty(), "qualification mutated ownership");
+        const auto staged = c.ledger.withPacket(prepared->prepared);
+        require(staged && checkCausalFrontier(p, *staged).accepted, "complete owner closure failed causal checking");
+        c.helperOwners.erase(helpers.front().first);
+        require(!c.qualifyOwnedPacket(packet), "unaccounted dormant record was ignored");
+        c.helperOwners[helpers.front().first] = helpers.front();
+        auto conflict = packet;
+        conflict.back().command.kind = Command::Publish;
+        require(!c.qualifyOwnedPacket(conflict), "invalid neighboring publication borrowed a dormant key");
+        require(c.ledger.version() == revision && c.requiredReturns.empty(), "refused packet partially committed");
+        SelectedDecision decision;
+        require(c.commitOwnedPacket(*prepared, decision), c.result.reason);
+        require(decision.endpoints.size() == 2 && c.requiredReturns.size() == 2 &&
+                c.result.work.rearmingRestored == 2 && c.result.work.rearmingDischarged == 0,
+                "owner closure bookkeeping lost an owner or mixed it with new requirements");
+        require(checkCausalFrontier(p, c.ledger.commands()).accepted, "committed owner closure changed checked words");
+        require(!c.ledger.hasDormantUses({Q, P, 0}), "closed owners remained dormant");
+        const auto committed = c.ledger.commands();
+        require(staged->size() == committed.size(), "ownership packet changed command population");
+        for (Cut cut = 0; cut < committed.size(); ++cut) {
+            require((*staged)[cut].size() == committed[cut].size() &&
+                std::equal((*staged)[cut].begin(), (*staged)[cut].end(), committed[cut].begin(), identical),
+                "owner closure committed a different ordered word");
+        }
+    }
+
+    static void ownedCandidateOrder()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE3;
+        auto p = base(1, 2);
+        p.operations = {op(P, {{0, true, false}}), op(Q, {{0, true, false}}),
+                        op(P, {{0, true, false}}), op(Q, {{0, true, false}})};
+        Constructor c(p);
+        auto helper = [&](Cut cut, unsigned key) {
+            c.ledger.append(cut, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion);
+            const auto anchor = c.ledger.append(cut, {Command::Acquire, P, Q, 0}, EndpointPurpose::Completion);
+            const auto pub = c.ledger.append(cut, {Command::Publish, Q, P, key},
+                EndpointPurpose::ConsumptionAcknowledgment, 0, anchor);
+            const auto wait = c.ledger.append(cut, {Command::Acquire, Q, P, key},
+                EndpointPurpose::ConsumptionAcknowledgment, 0, anchor);
+            c.rememberReturn(pub, wait);
+            c.ledger.erase(pub);
+            c.ledger.erase(wait);
+            return std::make_pair(pub, wait);
+        };
+        const auto early = helper(1, 1);
+        c.ledger.append(2, {Command::Publish, Q, R, 0}, EndpointPurpose::Completion);
+        c.ledger.append(2, {Command::Acquire, Q, R, 0}, EndpointPurpose::Completion);
+        c.ledger.append(2, {Command::Publish, R, P, 0}, EndpointPurpose::Completion);
+        c.ledger.append(2, {Command::Acquire, R, P, 0}, EndpointPurpose::Completion);
+        const auto late = helper(3, 0);
+        c.result.work.rearmingDischarged = 2;
+        c.needsContextualReplay = true;
+        c.current = 3;
+        c.activeComponent = c.control.component[3];
+        require(c.update(), c.result.reason);
+        SelectedDecision decision;
+        decision.source = Q;
+        decision.observer = P;
+        Cut publication = 3;
+        require(c.edge(Q, P, publication, false, decision), c.result.reason);
+        require(c.result.work.ownershipChecks >= 2 && c.result.work.ownershipBindings == 1,
+                "lower unbindable dormant candidate hid a later complete certificate");
+        require(c.ledger.endpoint(decision.endpoints.front()).command.key == 1 &&
+                c.ledger.active(early.first) && c.ledger.active(early.second) &&
+                !c.ledger.active(late.first) && !c.ledger.active(late.second),
+                "candidate refusal restored a partial ledger or selected the wrong owner");
+        require(c.requiredReturns.size() == 1 && c.requiredReturns.count(early.second),
+                "failed ownership candidate changed the retained support set");
+        require(checkCausalFrontier(p, c.ledger.commands()).accepted, "candidate retry broke causal/event legality");
+    }
+
 };
 }
 namespace {
@@ -751,6 +896,9 @@ void deadlineFence()
 }
 int main()
 {
+    o::selected::ReplayTestAccess::ownedPackets();
+    o::selected::ReplayTestAccess::ownedPackets(true);
+    o::selected::ReplayTestAccess::ownedCandidateOrder();
     o::selected::ReplayTestAccess::exactSourceGap();
     o::selected::ReplayTestAccess::sourceGapOccurrences();
     o::selected::ReplayTestAccess::sourceGapBarriers();

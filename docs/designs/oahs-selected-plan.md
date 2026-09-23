@@ -770,3 +770,78 @@ and expression variants exercise the unchanged import boundary; this increment
 adds no physical/control recognizer, so new dtype/expression cases cannot activate
 its packet-integrity rules. General dormant-key pressure, multi-owner closure and
 common binding remain unfinished and require their own construction witnesses.
+
+
+## Shared dormant ownership qualification (P)
+
+Missing semantic fact: an empty physical event can still be owned by an erased,
+restorable helper. The existing ledger event-use index and helper provenance will
+supply a complete owner closure; every constructor packet client will consume
+that same closure. Ownership is independent of physical occurrence facts and
+actual consumption knowledge. No new default deferral is enabled by this work.
+
+A qualified packet retains exact prepared words and the restored helper receipts.
+For every touched dormant identity, all inactive records must belong to complete
+inactive helper pairs with live matching forward receipts. Original gaps are
+resolved in a batch per touched word. Unaccounted/partial ownership is unknown;
+no subset of owners is tried. The expanded packet is checked before commitment,
+and restored receipts become required only after the same prepared words commit.
+Ordinary unowned packets keep their existing local fast path. Exceptional pressure
+tries deterministic eligible hardware keys, not alternative whole plans.
+
+The independent fixed-plan analyzer is a precommit protocol/resource filter.
+Its residual abstraction is not equivalent to the causal frontier, especially for
+mixed ACC incidences; authoritative selected replay remains mandatory after the
+edit, and any refusal rejects the construction attempt. This is not a new promise
+of complete precommit causal qualification. Likewise restored early waits can add
+order: report that separately from safety and count it as resource-driven closure,
+not an order-preserving optimization. General publication-prefix protection remains
+open. Whole construction success, ordinary-path discovery and complete ordering
+comparisons are acceptance evidence separate from supplied-packet legality.
+
+
+P gate inventory and evidence:
+
+- Complete pair membership, original immutable endpoints and live acknowledged
+  forward receipts are necessary ownership/provenance premises. Every dormant
+  endpoint of a touched identity must be accounted for; partial/unknown owners
+  refuse without changing ledger or support sets. Equivalent IR spelling and
+  unrelated physical work do not change this query.
+- Existing closed/recurring reservations remain owner-specific. The run loop
+  initializes closedKeys from recurringKeys and inserts both for retained entry
+  roles. This is a sufficient current reservation scope, not general lifetime
+  coloring. Replacing it requires scoped ownership intervals, still unfinished.
+- Gap identity/revision and original-word restoration are necessary for the
+  admitted restoration operation. This API does not move existing endpoints
+  across words. Helpers with a different original placement need their own
+  preserved endpoint/support interface rather than silent relocation.
+- Complete fixed-plan protocol/resource checking and finalized/protected residual
+  filtering are shared by exceptional and structured packets. Ordinary unowned
+  bindings keep their existing local certificates. The analyzer's residual
+  filter is conservative and distinct from causal replay; a postcommit replay
+  refusal rejects the whole attempt. This is not a guaranteed recovery policy
+  for arbitrary deferred acknowledgments. Final retirement remains independently
+  checked; unfinished payload/retirement obligations do not veto an intermediate
+  packet merely because they are still pending.
+- Physical keys are tried deterministically. Rejected candidate zero cannot hide
+  candidate one; source positions are retained across binding attempts. Complete
+  packet order can establish later-leg rearming. No owner subsets are searched.
+
+Portable tests cover multiple owners, partial/unaccounted owners, unqualified
+commit refusal, exact early single-consumption repair and later-key success after
+atomic refusal. A public-constructor case spans a choice child, repeated entries
+and parent continuation, with physical relabeling and unrelated payload variants.
+The native post-RMSNorm fixture and identity-view, equivalent-address and unrelated
+producer/descriptor/control variants all bind dormant ownership without retry,
+then pass independent native reconstruction. These are effect/protocol tests;
+there is no datatype admission rule to qualify separately on a device.
+
+Twenty nonempty finite changed-plan comparisons preserve complete ordering sets;
+twenty unsupported diagnostic rows remain unresolved. Event overhead and work
+increase in some cases: RMSNorm pairs17→21, with unchanged tested ordering;
+CSA compatibility pairs100→107 and84,022 ownership-check site evaluations. Some
+ownership counters include the already-existing joined/loop-entry validation and
+must not be added to those counters as independent work. Exact per-case records:
+`../oahs-gemm-base-builds/refactor-step-p/`. Generality review accepts this shared
+ownership prerequisite, not default deferral, arbitrary ownership borrowing or
+persistent publication-prefix protection.

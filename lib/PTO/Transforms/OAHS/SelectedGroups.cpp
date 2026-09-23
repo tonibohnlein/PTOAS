@@ -68,7 +68,7 @@ bool Constructor::freshBetween(Cut source, Cut target, Id access) const
 }
 bool Constructor::sourceFrontier(
     Pipe source, const std::vector<FrontierRequirement>& required,
-    const std::vector<FrontierRequirement>& all, Group& group) const
+    const std::vector<FrontierRequirement>& all, Group& group)
 {
     // This extension is intentionally acyclic: static predecessor identities
     // are not a bank-generation correspondence across an unqualified loop.
@@ -144,21 +144,29 @@ bool Constructor::sourceFrontier(
     if (!control.correspondence(cuts, std::vector<Cut>{current}).proved()) {
         return false;
     }
-    // No edit/retry: only offer this vocabulary when an unused physical key has
-    // its complete source-time certificate at ALL alternative publications.
+    // Retain every original publication. Virgin keys use their local source
+    // certificate; dormant ownership submits the same complete packet.
     const auto observer = program.operations[control.graph.operations[current]].pipe;
     Id selected = NoAnalysisId;
     for (Id key = 0; key < frontier.keys().size(); ++key) {
         const auto& identity = frontier.keys()[key];
         if (identity.source != source || identity.observer != observer || closedKeys.count(key)) continue;
-        const bool used = std::any_of(ledger.records().begin(), ledger.records().end(), [&](const auto& endpoint) {
-            const auto& command = endpoint.command;
-            return (command.kind == Command::Publish || command.kind == Command::Acquire) &&
-                command.source == source && command.observer == observer && command.key == identity.key;
-        });
-        if (used || !std::all_of(cuts.begin(), cuts.end(), [&](Cut cut) {
-                return canPublish(cache.cuts[cut].before, key);
-            })) continue;
+        const bool existing = !ledger.eventUses(identity).empty();
+        if (!existing) {
+            if (!std::all_of(cuts.begin(), cuts.end(), [&](Cut cut) {
+                    return canPublish(cache.cuts[cut].before, key);
+                })) { continue; }
+        }
+        OrderedPacket packet;
+        for (auto cut : cuts) {
+            packet.push_back({cut, {Command::Publish, source, observer, identity.key},
+                EndpointPurpose::Completion, result.decisions.size()});
+        }
+        packet.push_back({current, {Command::Acquire, source, observer, identity.key},
+            EndpointPurpose::Completion, result.decisions.size()});
+        const auto qualified = qualifyOwnedPacket(packet, existing);
+        if (!qualified) { continue; }
+        group.packet = *qualified;
         selected = key;
         break;
     }
@@ -251,65 +259,71 @@ bool Constructor::loopEntryFrontier(
         if (!regional && !control.correspondence(publication, loop.entry).proved()) {
             continue;
         }
-        auto unused = [&](Pipe a, Pipe b) {
+        auto candidates = [&](Pipe a, Pipe b) {
+            std::vector<Id> keys;
             for (Id key = 0; key < frontier.keys().size(); ++key) {
                 const auto& e = frontier.keys()[key];
-                if (e.source != a || e.observer != b || closedKeys.count(key) || recurringKeys.count(key)) continue;
-                if (std::none_of(ledger.records().begin(), ledger.records().end(), [&](const auto& r) {
-                    if (!ledger.active(r.id)) return false;
-                    const auto& c = r.command;
-                    return (c.kind == Command::Publish || c.kind == Command::Acquire) &&
-                        c.source == a && c.observer == b && c.key == e.key;
-                })) return key;
+                const bool eligible = e.source == a && e.observer == b &&
+                    !closedKeys.count(key) && !recurringKeys.count(key);
+                if (eligible) {
+                    keys.push_back(key);
+                }
             }
-            return NoAnalysisId;
+            return keys;
         };
-        const auto forward = unused(source, observer);
-        if (forward == NoAnalysisId) continue;
+        const auto forwardKeys = candidates(source, observer);
+        const auto reverseKeys = candidates(observer, source);
         const bool repeats = control.components[control.component[publication]].cyclic;
-        Id reverse = NoAnalysisId;
+        Id forward = NoAnalysisId, reverse = NoAnalysisId;
+        std::optional<OwnedPacket> selectedPacket;
         const auto request = result.decisions.size();
-        OrderedPacket packet{
-            {publication, {Command::Publish, source, observer, frontier.keys()[forward].key},
-             EndpointPurpose::Completion, request},
-            {loop.entry, {Command::Acquire, source, observer, frontier.keys()[forward].key},
-             EndpointPurpose::Completion, request}};
-        auto prepared = ledger.preparePacket(packet);
-        auto commands = ledger.withPacket(prepared);
-        if (!commands) {
-            continue;
-        }
-        auto trial = analyze(program, *commands, {false});
-        result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
-        const bool needsConsumption = std::any_of(trial.protocol.begin(), trial.protocol.end(), [&](const auto& r) {
-            return r.kind == ProtocolObligation::ConsumptionNotEstablished &&
-                r.event.source == source && r.event.observer == observer &&
-                r.event.key == frontier.keys()[forward].key;
-        });
-        // Existing causal paths get the first opportunity to prove reuse. A
-        // return is justified by this key's missing consumption certificate,
-        // not merely by being textually inside a repeated component.
-        if (trial.complete && trial.diagnostics.empty() && repeats && needsConsumption) {
-            reverse = unused(observer, source);
-            if (reverse == NoAnalysisId) continue;
-            packet.push_back({loop.entry, {Command::Publish, observer, source, frontier.keys()[reverse].key},
-                              EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
-            packet.push_back({loop.entry, {Command::Acquire, observer, source, frontier.keys()[reverse].key},
-                              EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
-            prepared = ledger.preparePacket(packet);
-            commands = ledger.withPacket(prepared);
-            if (!commands) {
-                continue;
-            }
-            trial = analyze(program, *commands, {false});
+        for (auto key : forwardKeys) {
+            const auto number = frontier.keys()[key].key;
+            OrderedPacket packet{
+                {publication, {Command::Publish, source, observer, number}, EndpointPurpose::Completion, request},
+                {loop.entry, {Command::Acquire, source, observer, number}, EndpointPurpose::Completion, request}};
+            auto prepared = prepareOwnedPacket(packet);
+            if (!prepared) { continue; }
+            const auto commands = ledger.withPacket(prepared->prepared);
+            if (!commands) { continue; }
+            const auto trial = analyze(program, *commands, {false});
             result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
+            if (acceptOwnedPacket(*prepared, trial)) {
+                forward = key;
+                selectedPacket = std::move(*prepared);
+                break;
+            }
+            const bool needsConsumption = std::any_of(trial.protocol.begin(), trial.protocol.end(), [&](const auto& r) {
+                return r.kind == ProtocolObligation::ConsumptionNotEstablished &&
+                    r.event.source == source && r.event.observer == observer && r.event.key == number;
+            });
+            // An actual missing consumption obligation justifies this return.
+            const bool repairable = trial.complete && trial.diagnostics.empty() && repeats && needsConsumption;
+            if (!repairable) { continue; }
+            for (auto reply : reverseKeys) {
+                auto complete = packet;
+                const auto replyNumber = frontier.keys()[reply].key;
+                complete.push_back({loop.entry, {Command::Publish, observer, source, replyNumber},
+                    EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
+                complete.push_back({loop.entry, {Command::Acquire, observer, source, replyNumber},
+                    EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
+                const auto beforeSites = result.work.ownershipCheckSites;
+                auto qualified = qualifyOwnedPacket(complete, true);
+                result.work.loopEntryAnalysisSites += result.work.ownershipCheckSites - beforeSites;
+                if (!qualified) { continue; }
+                forward = key;
+                reverse = reply;
+                selectedPacket = std::move(*qualified);
+                break;
+            }
+            if (selectedPacket) { break; }
         }
-        if (!trial.complete || !trial.diagnostics.empty() || !trial.protocol.empty()) continue;
+        if (!selectedPacket) { continue; }
         group.publication = publication;
         group.publications = {publication};
         group.entryAcquisition = loop.entry;
         group.entryReturnKey = reverse;
-        group.packet = std::move(prepared);
+        group.packet = std::move(*selectedPacket);
         group.entryRepeats = repeats;
         group.forwardKey = forward;
         group.version = ledger.version();

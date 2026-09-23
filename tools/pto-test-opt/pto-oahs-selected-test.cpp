@@ -1631,6 +1631,10 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " finite_occurrence_transitions=" << work.finiteOccurrenceTransitions
                  << " transition_classification_work=" << work.transitionClassificationWork
                  << " native_endpoint_discovery_work=" << work.nativeEndpointDiscoveryWork
+                 << " ownership_queries=" << work.ownershipQueries
+                 << " ownership_checks=" << work.ownershipChecks
+                 << " ownership_sites=" << work.ownershipCheckSites
+                 << " ownership_bindings=" << work.ownershipBindings
                  << " acknowledgment_checks=" << work.acknowledgmentChecks
                  << " acknowledgment_check_sites=" << work.acknowledgmentCheckSites
                  << " joined_acknowledgments=" << work.joinedAcknowledgments

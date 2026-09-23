@@ -128,6 +128,7 @@ struct SelectedWork {
     uint64_t frontierVisits = 0, selectedUpdates = 0, replaySiteEvaluations = 0;
     uint64_t forwardSiteEvaluations = 0;
     uint64_t keyQueries = 0, invariantSiteEvaluations = 0;
+    uint64_t ownershipQueries = 0, ownershipChecks = 0, ownershipCheckSites = 0, ownershipBindings = 0;
     uint64_t acknowledgmentChecks = 0, acknowledgmentCheckSites = 0, joinedAcknowledgments = 0;
     // Total portable construction includes model/control/storage preparation and
     // final validation. It excludes native import/emission and test references.

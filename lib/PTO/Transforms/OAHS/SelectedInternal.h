@@ -146,6 +146,15 @@ private:
     std::map<Cut, std::map<Id, std::vector<Id>>> insertions;
 };
 
+class OwnedPacket {
+    friend class Constructor;
+    friend struct ReplayTestAccess;
+    bool qualified = false;
+    PreparedPacket prepared;
+    std::vector<Id> restoredWaits;
+    Id restoredEndpoints = 0;
+};
+
 class Ledger {
 public:
     // The canonical table belongs to the enclosing Control and outlives this.
@@ -154,6 +163,7 @@ public:
     Id append(Cut, Command, EndpointPurpose, Id request = NoAnalysisId, Id ack = NoAnalysisId);
     WordGap tail(Cut) const;
     std::optional<WordGap> gapAfter(Id) const;
+    std::map<Id, WordGap> gapsAfter(const std::vector<Id>&) const;
     const std::vector<Id>& word(Cut) const;
     const SelectedEndpoint& endpoint(Id) const;
     Commands commands() const;
@@ -402,7 +412,7 @@ struct Group {
     Cut entryAcquisition = NoAnalysisId;
     Id entryReturnKey = NoAnalysisId;
     bool entryRepeats = false;
-    std::optional<PreparedPacket> packet;
+    std::optional<OwnedPacket> packet;
 };
 
 class Constructor {
@@ -439,6 +449,7 @@ private:
     // Each fallback return records a pending rearming obligation. A later
     // necessary transfer may discharge it; memory requirements remain separate.
     std::map<std::pair<Pipe, Pipe>, std::vector<std::pair<Id, Id>>> pendingRearming;
+    std::map<Id, std::pair<Id, Id>> helperOwners;
     std::map<std::pair<Pipe, Pipe>, std::vector<Id>> necessaryReturns;
     // Append-only populations already paired for each direction. Old helpers
     // see only new returns; new helpers see all returns, in the original order.
@@ -477,11 +488,17 @@ private:
     std::set<Id> coverage(Cut, Pipe, const std::vector<FrontierRequirement>&) const;
     bool freshBetween(Cut, Cut, Id) const;
     bool sourceFrontier(Pipe, const std::vector<FrontierRequirement>&,
-                        const std::vector<FrontierRequirement>&, Group&) const;
+                        const std::vector<FrontierRequirement>&, Group&);
     bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&,
                            const std::vector<FrontierRequirement>&, Group&);
     bool consume();
     bool bind(Group&, RequirementStage);
+    std::optional<OwnedPacket> prepareOwnedPacket(const OrderedPacket&);
+    std::optional<OwnedPacket> qualifyOwnedPacket(const OrderedPacket&, bool alwaysCheck = false);
+    bool acceptOwnedPacket(OwnedPacket&, const AnalysisResult&) const;
+    bool commitOwnedPacket(const OwnedPacket&, SelectedDecision&);
+    bool unownedKey(Id) const;
+    std::optional<bool> dormantTransfer(Pipe, Pipe, Cut, bool, SelectedDecision&);
     bool commitPacket(const OrderedPacket&, SelectedDecision&);
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&);
     bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&, bool&);
