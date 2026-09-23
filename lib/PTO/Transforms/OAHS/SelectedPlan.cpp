@@ -106,6 +106,7 @@ SelectedPlan Constructor::run(const Commands& fixed, bool useRecurring)
         }
         result.work.sourceHandles = result.sources.size();
         result.work.occurrenceAnalysisSites = control.occurrenceAnalysisSites;
+        result.work.boundaryAnalysisSites = control.boundaryAnalysisSites;
         result.work.constructedSites = control.graph.sites.size();
         result.work.loopEntryPreparationSites = control.loopEntryPreparationSites;
         result.work.commandWords = commandCutCount(program);

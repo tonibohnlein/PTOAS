@@ -211,6 +211,45 @@ void joinedSources()
             "shared suffix work limit changed matching into partial credit");
 }
 
+void publicationBoundaries()
+{
+    auto p = sharedWords();
+    o::selected::Control control(p);
+    const auto& boundary = control.publicationAfter(1);
+    require(boundary.proved() && boundary.word == 2,
+            "equivalent payload copies lost the first shared release boundary");
+    const auto work = control.boundaryAnalysisSites;
+    require(&boundary == &control.publicationAfter(4) && work == control.boundaryAnalysisSites,
+            "shared payload copies recomputed the release boundary");
+    o::StorageFrontierAnalysis storage(p);
+    o::selected::RequirementFrontiers facts(p, control, storage);
+    require(facts.recurringRelease(1, 0) == 2,
+            "publication release still requires a single-owner occurrence grammar");
+    require(!control.publicationAfter(99).proved(), "invalid source gained a boundary");
+    p.observed->sites[0].successors.push_back(5);
+    o::selected::Control bypass(p);
+    require(!bypass.publicationAfter(1).proved(),
+            "release boundary can execute without its payload occurrence");
+    p = sharedWords();
+    p.observed->sites[5].observation = 5;
+    o::selected::Control split(p);
+    require(!split.publicationAfter(1).proved(),
+            "distinct release words were silently merged");
+    p = sharedWords();
+    p.observed->sites[2].observation = p.observed->sites[1].observation;
+    p.observed->sites[5].observation = p.observed->sites[4].observation;
+    o::selected::Control sameWord(p);
+    require(!sameWord.publicationAfter(1).proved(),
+            "before-payload word became its own after-payload release");
+    p = sharedWords();
+    // The first path has an unobservable intervening payload. It cannot be
+    // crossed merely because the second path still has its early boundary.
+    p.observed->sites[2].observation = o::NoAnalysisId;
+    p.observed->sites[2].operation = 1;
+    o::selected::Control crossed(p);
+    require(!crossed.publicationAfter(1).proved(), "release crossed an intervening payload");
+}
+
 void physicalDeadlines()
 {
     const auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE1;
@@ -270,6 +309,7 @@ int main()
     alternativeEndpoints();
     exhaustiveMatching();
     joinedSources();
+    publicationBoundaries();
     physicalDeadlines();
     o::selected::ReplayTestAccess::everyInterveningOccurrence();
     std::cout << "shared occurrence and physical-deadline queries passed\n";

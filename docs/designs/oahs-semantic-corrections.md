@@ -268,6 +268,20 @@ the user's asymptotic-complexity criterion. The observed older/newer campaign
 timing difference was not reproduced by serial alternating binaries. Continue
 with shared post-payload boundaries and generation/support obligations.
 
+### C — Shared after-payload publication boundaries
+
+Base: `3ee150030`. Architecture/design, correctness and performance: **ACCEPT**.
+One immutable all-occurrence boundary certificate replaces the recurring mode
+and observation-atom equality scans. Its gate inventory is in `oahs-analysis.md`.
+Native equivalence fixtures explicitly exercise boundary work and retain both
+per-bank directions without retry. 22 portable suites, all three native drivers
+and the complete pinned supported-input checks pass with unchanged plans.
+GEMM: 87 boundary visits, 74,466 correspondence visits, unchanged 21,846 replay
+visits. These are separate analyses, not acquired credit. The checker has one
+reviewed nested-call bracing-regex false positive; the body has braces.
+Continue into shared physical-use succession and scoped generation/support;
+this boundary fact alone does not establish either.
+
 ## Historical audit detail and restart checkpoints
 
 The material below records earlier reasoning/evidence. Its numbering and active

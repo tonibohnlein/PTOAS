@@ -827,6 +827,29 @@ module attributes {pto.target_arch = "a3"} {
                    std::to_string(variant))) {
       return false;
     }
+    if (variant <= 6 || variant == 10 || variant == 11) {
+      if (!check(plan.work.boundaryAnalysisSites != 0 && !plan.declinedObservation &&
+                     !plan.declinedRecurring,
+                 "equivalent native representation bypassed shared boundary construction, variant " +
+                     std::to_string(variant))) {
+        return false;
+      }
+      for (unsigned slot = 0; slot < 2; ++slot) {
+        for (auto sourcePipe : {oahs::Pipe::MTE2, oahs::Pipe::V}) {
+          const auto observer = sourcePipe == oahs::Pipe::MTE2 ? oahs::Pipe::V : oahs::Pipe::MTE2;
+          const bool retained = llvm::any_of(plan.channels, [&](const auto& channel) {
+            return channel.source == sourcePipe && channel.observer == observer &&
+                llvm::any_of(channel.cells, [&](unsigned cell) {
+                  return imported.program.cells[cell].ranges ==
+                      std::vector<std::pair<uint64_t, uint64_t>>{{256 + 128 * slot, 128}};
+                });
+          });
+          if (!check(retained, "equivalent native representation lost a bank readiness/release frontier")) {
+            return false;
+          }
+        }
+      }
+    }
     if (variant == 7 && !check(bool(plan.declinedObservation),
                              "unrealizable optional observations were not declined atomically")) {
       return false;
@@ -951,6 +974,7 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " microseconds=" << work.elapsedMicroseconds
                  << " forward=" << work.forwardSiteEvaluations << " visits=" << work.frontierVisits
                  << " occurrence_sites=" << work.occurrenceAnalysisSites
+                 << " boundary_sites=" << work.boundaryAnalysisSites
                  << " key_queries=" << work.keyQueries << " invariant=" << work.invariantSiteEvaluations
                  << " prepare_microseconds=" << work.preparationMicroseconds
                  << " sites=" << work.constructedSites << " words=" << work.commandWords
@@ -970,6 +994,8 @@ bool runFile(MLIRContext &context, const char *path) {
                  << (report.declinedObservation ? report.declinedObservation->work.replaySiteEvaluations : 0)
                  << " observation_discarded_occurrence_sites="
                  << (report.declinedObservation ? report.declinedObservation->work.occurrenceAnalysisSites : 0)
+                 << " observation_discarded_boundary_sites="
+                 << (report.declinedObservation ? report.declinedObservation->work.boundaryAnalysisSites : 0)
                  << " observation_discarded_elapsed_us="
                  << (report.declinedObservation ? report.declinedObservation->work.elapsedMicroseconds : 0)
                  << " recurring_declined=" << bool(report.declinedRecurring)
@@ -977,6 +1003,8 @@ bool runFile(MLIRContext &context, const char *path) {
                  << (report.declinedRecurring ? report.declinedRecurring->work.replaySiteEvaluations : 0)
                  << " discarded_occurrence_sites="
                  << (report.declinedRecurring ? report.declinedRecurring->work.occurrenceAnalysisSites : 0)
+                 << " discarded_boundary_sites="
+                 << (report.declinedRecurring ? report.declinedRecurring->work.boundaryAnalysisSites : 0)
                  << " discarded_elapsed_us="
                  << (report.declinedRecurring ? report.declinedRecurring->work.elapsedMicroseconds : 0)
                  << " recurring_trials=" << work.recurringTrials

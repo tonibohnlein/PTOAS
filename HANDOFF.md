@@ -1,5 +1,22 @@
 # OAHS current handoff
 
+## Current iteration — Step C publication boundaries
+
+Step B committed as `3ee150030`. Step C replaces the two private recurring
+publication scans with `Control::publicationAfter`: first legal boundary,
+no crossed payload, every original source-word occurrence, distinct source and
+boundary words, and exact equality with the shared matching pairs. The gate
+inventory and its unknown cases are documented in `oahs-analysis.md`.
+
+22 portable suites pass. Real native equivalence tests now assert query work,
+no optional retry, and retained per-bank readiness/release for carried/IV and
+equivalent scalar selectors, a view, unrelated carried state and unrelated
+control. All three native drivers and the pinned corpus campaign pass; every emitted
+plan remains identical to Step B. Artifacts: `../oahs-gemm-base-builds/refactor-step-c/`.
+GEMM charges 87 boundary-scan and 74,466 correspondence visits, with unchanged
+21,846 replay visits and 16 recurring channels. All three reviewers ACCEPT.
+The result is a position/participation proof, not a cell/generation certificate.
+
 ## Current iteration — Step B endpoint-set matching
 
 Step A committed as `b6958b0e4`. Step B replaces recurring, alternative-source

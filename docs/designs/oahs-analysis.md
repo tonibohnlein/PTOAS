@@ -148,3 +148,27 @@ sources. The independent 65,536-state query budget yields unknown without any
 usable pairs. It is a sufficient implementation bound, not a semantic limit.
 The exhaustive token oracle and joining-alternatives regression check matching,
 repeated participation, source identities and explicitly charged query work.
+
+
+### First publication boundary after an original payload
+
+`Control::publicationAfter` replaces the recurring clients' single-owner mode
+comparison and full observation-atom equality. It certifies position and
+participation over original control. It does not certify storage identity,
+generation coverage, acquired completion or legality of moving an existing
+selected endpoint. Those remain separate consumer obligations.
+
+| Premise | Protected obligation | Remaining representation limit |
+| --- | --- | --- |
+| Every reachable occurrence of the source word has a payload | No phantom publication source | Source words with payload-free occurrences return unknown. |
+| First legal boundary on each path, crossing no payload | Preserve the earliest available publication position | Multiple output words return unknown; a later endpoint-set client may represent them. |
+| Boundary word differs from source word | Do not confuse before-issue with after-issue or next-visit phases | Explicit phase/gap identities are needed before admitting a shared word. |
+| Found pairs equal shared matching pairs | Reject bypasses, extra receipts and repeated sources | Original participation, not predicate spelling, supplies the certificate. |
+| Bounded scan and immutable canonical-source cache | Account for exploration and avoid repeated work across cells | Exhaustion stays unknown and grants no selected credit. |
+
+Nearest-boundary work is reported separately, including discarded attempts.
+The query's cells-independent result may serve different physical uses; it does
+not assert that every payload copy uses one physical cell. Native equivalent
+bank-selector, scalar-expression, view and unrelated-state cases exercise the
+query through construction and require both bank readiness/release directions
+to remain selected without observation or recurring retry.

@@ -152,32 +152,11 @@ const LifecycleUse& RequirementFrontiers::use(Cut site, unsigned cell) const
 
 Cut RequirementFrontiers::recurringRelease(Cut site, unsigned cell) const
 {
-    const auto& source = use(site, cell);
-    if (!source.roles || !source.occurrence.valid) {
+    if (!use(site, cell).roles) {
         return NoAnalysisId;
     }
-    std::set<Cut> candidates, seen;
-    auto todo = control->graph.sites[site].successors;
-    while (!todo.empty()) {
-        const auto at = todo.back();
-        todo.pop_back();
-        if (!seen.insert(at).second) {
-            continue;
-        }
-        if (control->graph.legalCuts[at]) {
-            if (!(occurrenceMode(*program, at) == source.occurrence)) {
-                return NoAnalysisId;
-            }
-            candidates.insert(control->canonicalCut[at]);
-            continue;
-        }
-        if (control->graph.operations[at] != NoAnalysisId || at == control->graph.exit) {
-            return NoAnalysisId;
-        }
-        const auto& next = control->graph.sites[at].successors;
-        todo.insert(todo.end(), next.begin(), next.end());
-    }
-    return candidates.size() == 1 ? *candidates.begin() : NoAnalysisId;
+    const auto& boundary = control->publicationAfter(site);
+    return boundary.proved() ? boundary.word : NoAnalysisId;
 }
 
 std::vector<SelectedLifecycleDemand> RequirementFrontiers::demandsAt(

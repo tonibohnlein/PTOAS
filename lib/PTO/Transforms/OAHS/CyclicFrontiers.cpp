@@ -269,43 +269,6 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
     }
     if (producer == Pipe::Count || consumer == Pipe::Count || producer == consumer) return {};
 
-    auto atomsEqual = [&](Cut a, Cut b) {
-        const auto oa = p.observed->sites[a].observation;
-        const auto ob = p.observed->sites[b].observation;
-        if (oa == NoAnalysisId || ob == NoAnalysisId) return false;
-        auto left = p.observed->observations[oa].atoms;
-        auto right = p.observed->observations[ob].atoms;
-        auto less = [](const auto& x, const auto& y) {
-            return std::tie(x.owner, x.kind, x.parameter, x.value) <
-                   std::tie(y.owner, y.kind, y.parameter, y.value);
-        };
-        std::sort(left.begin(), left.end(), less);
-        std::sort(right.begin(), right.end(), less);
-        return left.size() == right.size() &&
-            std::equal(left.begin(), left.end(), right.begin(), [&](const auto& x, const auto& y) {
-                return !less(x, y) && !less(y, x);
-            });
-    };
-    auto afterObservation = [&](Id source) {
-        std::set<Cut> cuts;
-        auto todo = c.graph.sites[source].successors;
-        std::vector<bool> seen(c.graph.sites.size());
-        while (!todo.empty()) {
-            const auto at = todo.back(); todo.pop_back();
-            if (seen[at]) continue;
-            seen[at] = true;
-            if (c.graph.legalCuts[at]) {
-                if (!atomsEqual(source, at)) return Cut(NoAnalysisId);
-                cuts.insert(canonicalCommandCut(p, at));
-                continue;
-            }
-            if (c.graph.operations[at] != NoAnalysisId || at == c.graph.exit)
-                return Cut(NoAnalysisId);
-            const auto& next = c.graph.sites[at].successors;
-            todo.insert(todo.end(), next.begin(), next.end());
-        }
-        return cuts.size() == 1 ? *cuts.begin() : Cut(NoAnalysisId);
-    };
     struct ChildVisit { Id owner = NoAnalysisId; bool first = false, last = false, valid = false; };
     auto childVisit = [&](Id site) {
         ChildVisit out;
@@ -341,7 +304,7 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
     Id childOwner = NoAnalysisId;
     for (auto site : members) {
         if (!roles[site]) continue;
-        const auto endpoint = afterObservation(site);
+        const auto endpoint = frontiers.recurringRelease(site, cell);
         if (endpoint == NoAnalysisId) return {};
         if (roles[site] == 2) {
             ready.publications.push_back(endpoint);

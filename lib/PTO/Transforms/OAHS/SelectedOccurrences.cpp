@@ -98,4 +98,82 @@ OccurrenceCorrespondence Control::pairOccurrences(
     result.outcome = ProofOutcome::Proved;
     return result;
 }
+const PublicationBoundary& Control::publicationAfter(Cut origin) const
+{
+    static const PublicationBoundary unavailable{ProofOutcome::Unknown, NoAnalysisId, "invalid payload origin"};
+    if (!complete || origin >= canonicalCut.size()) {
+        return unavailable;
+    }
+    const auto word = canonicalCut[origin];
+    const auto found = publicationBoundaries.find(word);
+    if (found != publicationBoundaries.end()) {
+        return found->second;
+    }
+    return publicationBoundaries.emplace(word, findPublicationAfter(word)).first->second;
+}
+
+PublicationBoundary Control::findPublicationAfter(Cut source) const
+{
+    constexpr uint64_t budget = 65536;
+    uint64_t work = 0;
+    std::set<std::pair<Cut, Cut>> boundaries;
+    Cut word = NoAnalysisId;
+    auto unknown = [](const char* reason) {
+        return PublicationBoundary{ProofOutcome::Unknown, NoAnalysisId, reason};
+    };
+    for (auto origin : wordOccurrences[source]) {
+        if (!reachable[origin]) {
+            continue;
+        }
+        if (graph.operations[origin] == NoAnalysisId) {
+            return unknown("source word includes an occurrence without this payload");
+        }
+        std::vector<Cut> todo = graph.sites[origin].successors;
+        std::set<Cut> seen;
+        bool found = false;
+        while (!todo.empty()) {
+            const auto at = todo.back();
+            todo.pop_back();
+            if (!seen.insert(at).second) {
+                continue;
+            }
+            if (work == budget) {
+                return unknown("publication boundary analysis budget exhausted");
+            }
+            ++work;
+            ++boundaryAnalysisSites;
+            if (graph.legalCuts[at]) {
+                const auto candidate = canonicalCut[at];
+                if (candidate == source) {
+                    return unknown("next-visit word is not an after-payload boundary");
+                }
+                if (word != NoAnalysisId && candidate != word) {
+                    return unknown("payload has several distinct boundary words");
+                }
+                word = candidate;
+                boundaries.emplace(origin, at);
+                found = true;
+                continue;
+            }
+            if (graph.operations[at] != NoAnalysisId || graph.sites[at].successors.empty()) {
+                return unknown("payload or exit precedes a legal publication boundary");
+            }
+            const auto& next = graph.sites[at].successors;
+            todo.insert(todo.end(), next.begin(), next.end());
+        }
+        if (!found) {
+            return unknown("payload has no reachable publication boundary");
+        }
+    }
+    if (word == NoAnalysisId) {
+        return unknown("source has no participating payload occurrence");
+    }
+    const auto& matching = correspondence(source, word);
+    const std::vector<std::pair<Cut, Cut>> expected(boundaries.begin(), boundaries.end());
+    if (!matching.proved() || matching.pairs != expected) {
+        return unknown("publication boundary does not match every payload occurrence");
+    }
+    return {ProofOutcome::Proved, word, {}};
+}
+
 } // namespace mlir::pto::oahs::selected

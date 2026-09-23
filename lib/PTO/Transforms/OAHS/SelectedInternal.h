@@ -33,6 +33,12 @@ struct OccurrenceCorrespondence {
     std::vector<std::pair<Cut, Cut>> pairs;
     bool proved() const { return outcome == ProofOutcome::Proved; }
 };
+struct PublicationBoundary {
+    ProofOutcome outcome = ProofOutcome::Unknown;
+    Cut word = NoAnalysisId;
+    std::string reason;
+    bool proved() const { return outcome == ProofOutcome::Proved; }
+};
 struct Control {
     detail::ControlGraph graph;
     std::vector<std::vector<Id>> predecessors;
@@ -79,9 +85,13 @@ struct Control {
     // Repeated/canonical aliases in a query denote the same endpoint.
     const OccurrenceCorrespondence& correspondence(
         const std::vector<Cut>& publications, const std::vector<Cut>& acquisitions, Id budget = 65536) const;
+    const PublicationBoundary& publicationAfter(Cut) const;
     mutable uint64_t occurrenceAnalysisSites = 0;
+    mutable uint64_t boundaryAnalysisSites = 0;
 
 private:
+    PublicationBoundary findPublicationAfter(Cut) const;
+    mutable std::map<Cut, PublicationBoundary> publicationBoundaries;
     OccurrenceCorrespondence pairOccurrences(
         const std::vector<Cut>&, const std::vector<Cut>&, Id budget) const;
     mutable std::map<std::tuple<std::vector<Cut>, std::vector<Cut>, Id>,
