@@ -1061,8 +1061,12 @@ void resourceAdmission(unsigned keys)
         require(plan.declinedRecurring->work.recurringProposals != 0, "retry lost proposal accounting");
         compareWords(plan.commands, reference.commands);
     } else {
-        require(plan.work.recurringActivations == 1 && plan.channels.size() == 2,
-                "local decline did not preserve exactly the admitted complete family");
+        // Common provider competition may discharge the motivating demand
+        // before this optional family activates. Any activated packet remains
+        // complete; a declined population leaves no partial reservations.
+        require(plan.work.recurringActivations <= 1 &&
+                plan.channels.size() == 2 * plan.work.recurringActivations,
+                "declined family left a partial recurring protocol");
     }
     std::cout << "keys=" << keys << " local_declines=" << plan.work.recurringDeclines
               << " retry=" << bool(plan.declinedRecurring) << '\n';

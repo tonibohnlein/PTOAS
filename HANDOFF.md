@@ -1,5 +1,80 @@
 # OAHS current handoff
 
+## Active after Step AC — common certified normal-realization selection
+
+Continue the approved v0.38 sequence and three-reviewer commit loop. Baseline AB
+`ef25de4cb`. No pause or push. AC is the first common selection consumer, not the
+completed refactor or the complete four-class policy.
+
+Ordinary and recurring normal realizations now compete on one frozen complete
+residual. Each private record carries its own covered requirements, entire finite
+support, exact packet, physical-key certificate and preserved source milestones.
+The winner alone commits, propagates actual credit, runs mandatory maintenance,
+and must strictly decrease the fixed normalized residual. Physical subdivision
+with unchanged complete access incidences cannot multiply decision weight.
+Same-engine eligibility is retained for analysis-indexed returns; no arbitrary
+remote exchanges are invented for local hazards.
+
+Persistent old-publication preservation and the new source's physical milestone
+are distinct certificates. Unknown normal probes never invoke candidate global
+analysis. Identical complete recurring role shapes aggregate their physical
+witnesses before probing; sharing one role alone does not join protocols. Original
+support closures and physical milestone facts are shared/cached. Two bounded key
+bridges preserve composition: exact adoption of an existing complete role, and
+ordinary exchanges on provably control-disjoint alternatives. Every existing key
+use and ownership restriction remains checked; empty occupancy is insufficient.
+
+Validation: 25/25 portable suites, all three linked native drivers, 88/88 corpus,
+18/19 compatibility (same inherited refusal), GEMM, two prefills and three targets.
+32 emitted plans changed. GEMM and both prefills are byte-identical to AB.
+80 finite function/binding comparisons: 52 equal, four remove ordering, 24
+unresolved, no empty traces. No added order in the 56 comparable executions;
+this is finite evidence, not a general guarantee. hc_head_reduce and rms_norm
+remove 64 relations per checked binding. Unresolved rows retain unknown quality.
+No sanitizer or device campaign. All three reviewers ACCEPT the bounded scope.
+The explicit same-engine-only normal-constructor witness is still pending;
+current rings cover joint WAW/WAR. Do not report that acceptance item complete.
+
+Successful-input totals: selected updates8163->8222, replay7056798->7089903,
+sets3777->3814, waits3775->3813, barriers1721->1736. Command totals do not measure
+ordering. Candidate recurring whole-program analyzer/replay remain0. New normal
+candidates535, selected474, recurring-selected5; immutable role-query sites
+97072->104821. Publication-support sites215947->260569, normal publication-summary
+work320037, original incidence visits53378, key-related graph work2436874.
+Ownership sites2752629->2759523. Discarded-attempt replay728137 is unchanged.
+Elapsed319.39->328.08seconds is nonisolated. Full suffix support propagation and
+per-family original fixed points remain charged recovery targets; no whole-pass
+complexity bound is claimed. Reviewer-requested dedup/index/reachability changes
+remove avoidable repeated work before advancing.
+
+Evidence: `../oahs-gemm-base-builds/refactor-step-ac/`, including source/input/build
+pins, host logs/results, complete finite relations, work and review records.
+The changed-code checker has nine reviewed G.FMT.11 false positives: its regex
+backtracks to a nested call's closing parenthesis before &&/|| and mistakes the
+remaining condition for an unbraced body. All identified bodies have braces.
+Line-length findings were fixed. No analyzer-based complexity/duplication metrics
+or blanket compliance claim. Final formatting only changes whitespace/newlines.
+
+### Next: complete repair realizations and typed ordinary support
+
+Classes1–3 remain an explicit transitional path after certified normal competition;
+recurring-only producer-support closure remains a restriction. Migrate prescribed
+repair shapes into private complete records with source/target/key/support probes,
+then compare them through the same selector. Do not wrap per-candidate whole-root
+solves as local probes or classify unknown placement as a proved fallback. Include
+all restoration effects before selection. Preserve exact commitments and actual
+credit authority. Replace the family-only producer-repair requirement with scoped
+ordinary obligations while retaining its fence-relocation negative. Historical
+key reuse beyond exact adoption/control-disjoint alternatives needs full common
+neighbor/consumption proofs. Complete the same-engine-only constructor witness.
+
+Guarded readers, legacy first-use semantics, disjoint copies, independent unequal
+banks, F/G/L/R/V recovery and matched device evidence remain open. Separate draft
+complete-residual reconciliation is uncommitted; preserve other-agent paper edits.
+
+## Historical AB handoff
+
+
 ## Active after Step AB — immutable recurring induction interfaces
 
 Continue the approved v0.38 sequence and three-reviewer commit loop. Baseline AA

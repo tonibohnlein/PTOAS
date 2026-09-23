@@ -40,23 +40,24 @@ Cost track: extract measured plan-equivalent reductions with their consumers;
 new caches/region execution require evidence and invalidation tests. Two local
 resource-intensive workers maximum in aggregate.
 
-## Current v0.38 continuation after AB
+## Current v0.38 continuation after AC
 
-The opening v0.38 sequence in semantic-corrections is authoritative. AB supplies
-cached original two-role induction/coverage certificates and a real local recurring
-binding consumer. All 84 successful-campaign recurring packets avoid candidate
-full-program checks; authoritative selected replay remains unchanged. Three
-reviewers accepted this bounded dependency. It is not class-0 placement or common
-selection, and does not remove the family-only producer-support gate. AA provides
-admission-rooted existing-publication signatures through complete owned packets;
-three reviewers accepted its bounded scope and current host plans match Z.
-It does not classify complete realizations, unify selection, or certify cyclic
-publication preservation. Next: typed finite support plus common local ordinary/
-recurring realization probes, then one class-first selector over complete due
-obligations. Support/restoration effects are known before selection; only the
-winner becomes selected state. Retain same-engine indexed returns and the fixed
-normalized progress universe. Replace family-only repair and virgin-key gates
-through common certificates, preserving unknown facts and the negative tests.
+AA publication contracts, AB original induction certificates and AC common normal
+selection are implemented and reviewed. Ordinary/recurring normal candidates
+compete before any repair activation; exact private packets include complete finite
+support and normalized own coverage. Selected actual credit alone changes the
+residual. Physical subdivision preserves decision weight. Exact role adoption and
+control-disjoint ordinary reuse are bounded common-binding bridges, not general
+historical-key reuse. Host service is retained; see HANDOFF for finite quality,
+resource/work changes and unresolved rows.
+
+Remaining in the current policy milestone: classes1–3 must become complete locally
+qualified realizations under the common selection policy; family-only affected
+producer support must become typed ordinary obligations. The same-engine-only
+normal-constructor witness is pending (code includes complete residual eligibility).
+Broader binding, guarded participation, first-use semantic consolidation and
+pipeline/quality recovery remain open. All three reviewers accepted AC's bounded
+scope, not completion of these outstanding obligations.
 
 ## Current continuation after R
 

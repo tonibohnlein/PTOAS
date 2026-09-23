@@ -1448,3 +1448,97 @@ term. Qualification records sparse role bindings and checks their real uses.
 These sufficient restrictions (two roles, unused new keys, exact embedding,
 complete producer support) remain explicit replacement obligations for common
 binding/support; they are not hardware or datatype admission requirements.
+
+
+### AC implementation contract — common normal realization selection
+
+Missing decision: recurring eligibility still receives priority from a side-effecting
+prelude. The next common record contains the frozen request, complete packet,
+completion/consumption/F8 support references, guaranteed due coverage and placement
+certificate. Pure ordinary source discovery and local-only recurring preparation
+feed one normal-class competition before explicit transitional repairs. The latter
+must not run candidate whole-program checks while enumerating normal requests.
+
+Each recurring source/target retains its original physical milestone from the
+existing qualifier. A normal source is at the first qualified legal boundary after
+that use, before unrelated receipts; a normal target is the dependent physical use.
+The complete support packet must preserve those gaps, including cross-word support.
+Prime/drain endpoints lacking a physical milestone remain Unknown for this initial
+normal proof; their event legality is independent and retained by AB. This is a
+named sufficient placement limit, not rejection of the original physical facts.
+
+Existing publications use AA equality or a scoped absence certificate over every
+original occurrence, continuation and backedge, including Unknown contracts.
+Absence says nothing about a NEW source. A reverse reachability summary of selected
+publication sites is shared once per ledger version and charged separately; normal
+queries do not solve alternative selected programs. Additional return/support
+receipts cannot silently broaden the chosen source or change the checked shape.
+
+Select known-readiness/reuse candidates within the first certified realization
+class, then one stable strict-coverage dominance scan independent of discovery
+order and uniform witness subdivision. Eligibility uses the complete actual due
+residual, including only analysis-indexed same-engine returns. Apply actual credit
+and all maintenance, then require strict residual decrease by inclusion. Unknown
+normal cases retain explicitly transitional repair handling; this first migration
+is not completion of classes 1–3, common key reuse or the complete refactor.
+
+AC implementation evidence and boundaries:
+
+- The complete due universe is frozen after original-graph baseline evaluation.
+  Coalesced witnesses have identical complete original site/read/write/definite/
+  native-class incidence signatures, cell exclusion/storage/domain, source role,
+  consumer role and origin set. No footprint, target exception or participation
+  is inferred from a shared producer alone. Partial physical coverage cannot
+  count as discharge of the normalized obligation. Own coverage must be nonempty
+  and included in guaranteed coverage. Known preference also uses complete
+  normalized coverage, rather than one constituent access.
+- Normal ordinary and recurring records compete at the same frozen version.
+  Semantic source/target descriptors plus the COMPLETE support shape determine
+  stable order; carried sources use their role/owner description, not a claimed
+  dynamic position. A stable strict-containment scan follows class/Known priority.
+  Sorting is O(G log G), separately from its O(G b) dominance scan and probe work.
+  Exact identical complete role packets collect independently certified physical
+  witnesses BEFORE probing. Sharing one role alone does not combine packets.
+- Normal packets introduce no consumption-only helpers. Existing-publication
+  support includes the complete prepared packet; a new source separately needs
+  its physical milestone. Adopted publications must retain their leading position
+  before incoming receipts. Unknown priming, draining, and cyclic preservation
+  interfaces remain explicit transitional cases. Class-0 preference is not a
+  global ordering-optimality or runtime claim.
+- A key's active ordinary Completion endpoints can be adopted only as an exact
+  subset of the SAME complete recurring role. The shared checker validates all
+  existing and new occurrences, multiplicities, word order and consumption paths.
+  Dormant/closed/deferred owners are excluded. Alternatively, ordinary exchanges
+  may share a key when ALL old/new endpoint occurrences are control-disjoint in
+  both directions, including backedges. Neither rule infers rearming from empty
+  occupancy. These are bounded common-binding bridges, not general key borrowing.
+- Normal probes never call the candidate analyzer or contextual evaluator. Only
+  the winner gets actual causal propagation. Complete physical residual inclusion
+  and strict normalized decrease are checked after maintenance. Existing helper
+  discharge only removes certified endpoints; it cannot silently add a stronger
+  packet. Failure of mandatory selected evaluation remains failure.
+- Support closures share records for mutually reachable roots; exact complete
+  role shapes are grouped before binding. Immutable physical milestone checks
+  are indexed/cached per role. Deadline/cell indexes replace root-by-requirement
+  products. Publication continuation summaries are shared by ledger version;
+  alternative-key reachability is shared by gap qualification. Their visits,
+  original incidence preparation, candidate populations and selected choices are
+  separately observable. AA affected-suffix propagation and AB per-family CFG
+  fixed points remain charged costs, not claimed near-linear whole-pass bounds.
+
+The normal-constructor witnesses include one through four banks, ordinary versus
+recurring competition, later adoption, and 1/8/32 uniform physical subdivisions.
+Pure policy tests distinguish class preference from greater coverage and reject
+support-only progress. Source/key negatives cover tail-only credit, missing own
+milestones, duplicate/outside uses, receipt-before-adopted-publication, dormant
+ownership and original-control re-entry. Two changed straight-line plans compare
+complete nonempty payload-order sets with their former forwarding/separate-source
+protocols. Joint WAR/WAW return selection is covered; a same-engine-ONLY normal
+constructor witness remains an explicit acceptance item for subsequent typed
+support/return discovery. No internal probe test substitutes for that evidence.
+
+Remaining AC-to-next obligations: classes 1-3 must become certified records;
+family-only producer support must become typed ordinary support; cyclic publication
+support needs an affected-interface certificate; arbitrary historical-key binding
+is not established by the two bounded bridges above. No serializer, kernel
+recognizer, helper-deletion sweep, or alternative-ledger search was added.

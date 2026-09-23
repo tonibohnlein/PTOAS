@@ -2067,6 +2067,13 @@ bool runFile(MLIRContext &context, const char *path) {
                  << (report.declinedRecurring ? report.declinedRecurring->work.elapsedMicroseconds : 0)
                  << " recurring_trials=" << work.recurringTrials
                  << " recurring_removed=" << work.redundantRecurringChannels
+                 << " normal_candidates=" << work.normalCandidates
+                 << " normal_selected=" << work.normalSelected
+                 << " normal_recurring_selected=" << work.normalRecurringSelected
+                 << " normal_publication_sites=" << work.normalPublicationSites
+                 << " normal_key_sites=" << work.normalKeySites
+                 << " normalized_due=" << work.normalizedDue
+                 << " normalization_incidences=" << work.normalizationIncidences
                  << " recurring_interface_queries=" << work.recurringInterfaceQueries
                  << " recurring_interface_sites=" << work.recurringInterfaceSites
                  << " recurring_interface_accesses=" << work.recurringInterfaceAccesses

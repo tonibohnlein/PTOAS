@@ -707,7 +707,6 @@ struct ReplayTestAccess {
         first.observer = R;
         first.acquisitions = {2};
         first.supportSeeds.clear();
-        first.qualifiedCycle = true;
         auto second = first;
         second.source = R;
         second.observer = Q;
@@ -733,7 +732,6 @@ struct ReplayTestAccess {
         ready.publications = {2};
         ready.acquisitions = {2};
         ready.supportSeeds = {1};
-        ready.qualifiedCycle = true;
         auto release = ready;
         release.source = Q;
         release.observer = P;
@@ -791,7 +789,6 @@ struct ReplayTestAccess {
         ready.publications = {1};
         ready.acquisitions = {2};
         ready.supportSeeds = {3};
-        ready.qualifiedCycle = true;
         auto release = ready;
         release.source = Q;
         release.observer = P;

@@ -88,6 +88,13 @@ struct SelectedDecision {
     // acquired once at the common consumer. These are actual emitted cuts.
     std::vector<Cut> publicationFrontier = {};
 };
+struct SelectedRealizationChoice {
+    Cut deadline = NoAnalysisId;
+    unsigned placementClass = 0;
+    bool recurring = false, known = false;
+    std::size_t ordinaryCandidates = 0, recurringCandidates = 0, covered = 0;
+    uint64_t inputVersion = 0, outputVersion = 0;
+};
 struct SelectedRecurringActivation {
     Cut deadline = NoAnalysisId;
     std::vector<std::size_t> families;
@@ -174,6 +181,8 @@ struct SelectedWork {
     std::size_t sourceHandles = 0, acknowledgments = 0, commonCutTransfers = 0;
     std::size_t recurringChannels = 0, recurringProposals = 0;
     std::size_t recurringTrials = 0, redundantRecurringChannels = 0;
+    uint64_t normalCandidates = 0, normalSelected = 0, normalRecurringSelected = 0;
+    uint64_t normalPublicationSites = 0, normalizedDue = 0, normalizationIncidences = 0, normalKeySites = 0;
     uint64_t recurringInterfaceQueries = 0, recurringInterfaceSites = 0;
     uint64_t recurringInterfaceAccesses = 0, recurringLocalPackets = 0;
     uint64_t recurringInterfaceEmbedding = 0, recurringLocalDeclines = 0;
@@ -223,6 +232,7 @@ struct SelectedPlan {
     std::vector<SelectedEndpoint> ledger;
     std::vector<SelectedSource> sources;
     std::vector<SelectedDecision> decisions;
+    std::vector<SelectedRealizationChoice> realizationChoices;
     std::vector<SelectedChannel> channels;
     std::vector<SelectedRecurringActivation> activations;
     std::vector<SelectedRecurringRefusal> recurringRefusals;

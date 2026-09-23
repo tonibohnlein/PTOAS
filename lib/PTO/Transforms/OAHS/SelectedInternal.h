@@ -114,6 +114,7 @@ struct SourceGapQualification {
     Cut deadline = NoAnalysisId;
     uint64_t version = 0;
     std::vector<FrontierState> prefixes;
+    mutable std::vector<bool> controlRelated;
     std::string reason;
     bool proved() const { return outcome == ProofOutcome::Proved; }
 };
@@ -338,10 +339,9 @@ struct RecurringRequirement {
     std::vector<Cut> publications, acquisitions;
     Id owner = NoAnalysisId;
     uint64_t period = 0;
-    // Exact storage-cycle qualification supplies occurrence, endpoint and
-    // participation correspondence directly. Relationship-derived fallbacks
-    // remain eligible for conservative redundancy trials.
-    bool qualifiedCycle = false;
+    // Original physical uses witnessing the prescribed endpoint milestones.
+    std::vector<std::pair<Cut, Cut>> publicationOrigins, acquisitionOrigins;
+    mutable std::optional<bool> physicalQualified;
     bool storageRelease = false;
     // Producer deadlines whose preceding local repair can be replaced by this
     // complete cycle. Require scoped residual support before commitment.
@@ -382,6 +382,7 @@ struct RecurringPacket {
     Replay evaluated;
     bool localCertificate = false;
     std::map<Cut, std::set<Id>> guaranteed;
+    bool normalWords = false;
 };
 struct OccurrenceMode {
     Id owner = NoAnalysisId;
@@ -537,6 +538,29 @@ struct Group {
     std::optional<OwnedPacket> packet;
 };
 
+struct DueObligation {
+    std::set<Id> classes;
+};
+struct RealizationSupport {
+    enum Kind { Completion, Consumption, Induction } kind = Completion;
+    Id identity = NoAnalysisId;
+    Cut deadline = NoAnalysisId;
+};
+struct CertifiedRealization {
+    unsigned placementClass = 0;
+    uint64_t version = 0;
+    bool known = false;
+    Group ordinary;
+    std::optional<RecurringPacket> recurring;
+    std::vector<Id> families, newRoles;
+    std::vector<RealizationSupport> support;
+    std::set<Id> coverage, physicalCoverage, ownCoverage;
+    using Order = std::tuple<Id, Id, Cut, Pipe, Pipe, std::vector<Cut>, std::vector<Cut>>;
+    Order order;
+    std::vector<std::tuple<Pipe, Pipe, std::vector<Cut>, std::vector<Cut>>> shape;
+};
+Id selectRealization(const std::vector<CertifiedRealization>&);
+
 // Each tracked fallback references its actual consumption, even when several
 // generations reuse a key. Activity/completion remain ledger/frontier facts.
 struct RearmingObligation {
@@ -593,10 +617,10 @@ private:
         std::string reason;
     };
     std::map<Id, SupportLinks> recurringLinks;
-    std::map<Id, RecurringCertificate> recurringCertificates;
+    std::map<std::pair<Id, bool>, RecurringCertificate> recurringCertificates;
     std::map<unsigned, std::vector<std::pair<Id, Id>>> projectionAccesses;
     bool projectionIndexed = false;
-    const RecurringCertificate& recurringCertificate(Id);
+    const RecurringCertificate& recurringCertificate(Id, bool normal = false);
     bool qualifyRecurringInterface(const std::vector<Id>&, RecurringPacket&, const ProducerSupportScope&);
 
     ProducerSupportScope producerScope(const std::vector<RecurringRequirement>&);
@@ -648,7 +672,7 @@ private:
     std::map<Id, unsigned> reasons(Cut) const;
     std::vector<Group> groups(const std::vector<FrontierRequirement>&, RequirementStage);
     Group sourceGroup(Pipe, const std::vector<FrontierRequirement>&,
-                      const std::vector<FrontierRequirement>&);
+                      const std::vector<FrontierRequirement>&, bool structured = true);
     std::set<Id> sourceHistoryCoverage(
         const std::vector<Cut>&, Pipe, const std::vector<FrontierRequirement>&) const;
     std::set<Id> coverage(Cut, Pipe, const std::vector<FrontierRequirement>&) const;
@@ -658,6 +682,29 @@ private:
     bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&,
                            const std::vector<FrontierRequirement>&, Group&);
     bool consume();
+    bool ensureRecurringBaseline();
+    std::vector<DueObligation> normalizeDue(const std::vector<FrontierRequirement>&);
+    std::vector<Id> normalCellIdentities;
+    std::set<Id> normalizedCoverage(const std::vector<DueObligation>&,
+        const std::vector<FrontierRequirement>&, const std::set<Id>&) const;
+    std::optional<CertifiedRealization> normalOrdinary(
+        Group, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
+    std::optional<CertifiedRealization> normalRecurring(
+        const std::vector<Id>&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
+    std::optional<bool> selectNormal(const std::vector<DueObligation>&);
+    bool preservePublications(const OwnedPacket&);
+    bool physicalMilestones(const RecurringRequirement&) const;
+    struct SupportClosure {
+        bool complete = false;
+        std::vector<Id> families, roles;
+        ProducerSupportScope scope;
+    };
+    std::shared_ptr<const SupportClosure> normalSupport(Id);
+    uint64_t normalSupportVersion = NoAnalysisId;
+    std::map<Id, std::shared_ptr<const SupportClosure>> normalClosures;
+    uint64_t publicationReachVersion = NoAnalysisId;
+    std::vector<bool> publicationReach;
+
     bool bind(Group&, RequirementStage);
     std::optional<OwnedPacket> prepareOwnedPacket(const OrderedPacket&, const std::vector<Id>& obligations = {},
                                                    bool placeAtDeadline = true);
@@ -681,13 +728,14 @@ private:
     bool canPublish(const State&, Id) const;
     SourceGapQualification sourceGapFacts(
         const WordGap&, Pipe, Pipe, const std::vector<FrontierRequirement>&);
-    bool sourceGapKey(const SourceGapQualification&, Id) const;
+    bool sourceGapKey(const SourceGapQualification&, Id);
     std::optional<WordGap> earlyPublicationMilestone(Cut, Pipe) const;
     bool clearInterval(Id, Cut, Cut) const;
     std::vector<Pipe> route(Pipe, Pipe) const;
     std::optional<RecurringPacket> prepareRecurring(const std::vector<RecurringRequirement>&, std::string&,
                                                      const ProducerSupportScope* support = nullptr,
-                                                     const std::vector<Id>* families = nullptr);
+                                                     const std::vector<Id>* families = nullptr,
+                                                     bool normalOnly = false);
     bool commitRecurring(RecurringPacket&);
     bool activateRecurring();
     bool finish();

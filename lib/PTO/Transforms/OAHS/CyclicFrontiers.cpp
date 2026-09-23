@@ -136,7 +136,6 @@ std::vector<RecurringRequirement> qualifyCell(
         later.insert(later.end(), next.begin(), next.end());
     }
     RecurringRequirement ready, release;
-    ready.qualifiedCycle = release.qualifiedCycle = true;
     release.storageRelease = true;
     ready.cell = release.cell = cell;
     ready.cells = release.cells = {cell};
@@ -276,7 +275,6 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
     if (producer == Pipe::Count || consumer == Pipe::Count || producer == consumer) return {};
 
     RecurringRequirement ready, release;
-    ready.qualifiedCycle = release.qualifiedCycle = true;
     release.storageRelease = true;
     ready.cell = release.cell = cell;
     ready.cells = release.cells = {cell};
@@ -370,6 +368,26 @@ RecurringFrontiers qualifyCyclicFrontiers(
             RecurringFamily family;
             family.owner = loop.owner;
             family.cells = {cell};
+            for (auto& request : local) {
+                for (auto site : loop.sites) {
+                    const auto operation = c.graph.operations[site];
+                    if (operation == NoAnalysisId || !c.reachable[site]) { continue; }
+                    const auto& use = frontiers.use(site, cell);
+                    if (!use.roles) { continue; }
+                    if (use.pipe == request.source) {
+                        const auto after = frontiers.recurringRelease(site, cell);
+                        if (std::binary_search(request.publications.begin(), request.publications.end(), after)) {
+                            request.publicationOrigins.push_back({after, site});
+                        }
+                    }
+                    if (use.pipe == request.observer) {
+                        const auto before = c.canonicalCut[site];
+                        if (std::binary_search(request.acquisitions.begin(), request.acquisitions.end(), before)) {
+                            request.acquisitionOrigins.push_back({before, site});
+                        }
+                    }
+                }
+            }
             family.support = local;
             for (auto& request : local) {
                 const RoleKey key{request.source, request.observer, request.publications, request.acquisitions};
@@ -382,6 +400,13 @@ RecurringFrontiers qualifyCyclicFrontiers(
                 } else {
                     family.roles.push_back(found->second);
                     auto& role = out.roles[found->second];
+                    auto mergeOrigins = [](auto& target, const auto& source) {
+                        target.insert(target.end(), source.begin(), source.end());
+                        std::sort(target.begin(), target.end());
+                        target.erase(std::unique(target.begin(), target.end()), target.end());
+                    };
+                    mergeOrigins(role.publicationOrigins, request.publicationOrigins);
+                    mergeOrigins(role.acquisitionOrigins, request.acquisitionOrigins);
                     role.cells.insert(role.cells.end(), request.cells.begin(), request.cells.end());
                     std::sort(role.cells.begin(), role.cells.end());
                     role.cells.erase(std::unique(role.cells.begin(), role.cells.end()), role.cells.end());
@@ -533,10 +558,16 @@ const Constructor::SupportLinks& Constructor::recurringSupportLinks(Id id)
 }
 std::optional<RecurringPacket> Constructor::prepareRecurring(
     const std::vector<RecurringRequirement>& requests, std::string& reason,
-    const ProducerSupportScope* support, const std::vector<Id>* families)
+    const ProducerSupportScope* support, const std::vector<Id>* families, bool normalOnly)
 {
     RecurringPacket proposal;
     proposal.requests = requests;
+    proposal.normalWords = normalOnly;
+    if (normalOnly && std::any_of(requests.begin(), requests.end(),
+            [&](const auto& request) { return !physicalMilestones(request); })) {
+        reason = "normal role lacks a complete physical milestone certificate";
+        return {};
+    }
     proposal.supportClasses = producerSupportClasses;
     proposal.supportConsumers = producerSupportConsumers;
     std::set<Id> used;
@@ -545,8 +576,19 @@ std::optional<RecurringPacket> Constructor::prepareRecurring(
         for (Id key = 0; key < frontier.keys().size(); ++key) {
             const auto& identity = frontier.keys()[key];
             const bool eligible = identity.source == request.source && identity.observer == request.observer &&
-                !used.count(key) && unownedKey(key) && ledger.eventUses(identity).empty();
-            if (eligible) { selected = key; break; }
+                !used.count(key) && helperFreeKey(key);
+            if (!eligible) { continue; }
+            bool embedded = true;
+            for (auto endpoint : ledger.eventUses(identity)) {
+                const auto& existing = ledger.endpoint(endpoint);
+                const auto& cuts = existing.command.kind == Command::Publish
+                    ? request.publications : request.acquisitions;
+                embedded &= ledger.active(endpoint) && existing.purpose == EndpointPurpose::Completion &&
+                    std::binary_search(cuts.begin(), cuts.end(), existing.cut);
+            }
+            // Reuse a previously selected subset only when the SAME complete
+            // role word is proved below. This grants no anticipated consumption.
+            if (embedded) { selected = key; break; }
         }
         if (selected == NoAnalysisId) {
             reason = "qualified recurring roles exceed their eligible unused key pool";
@@ -556,18 +598,41 @@ std::optional<RecurringPacket> Constructor::prepareRecurring(
         proposal.keys.push_back(selected);
     }
     OrderedPacket endpoints;
+    auto alreadySelected = [&](Cut cut, const Command& command) {
+        const auto& word = ledger.word(cut);
+        return std::any_of(word.begin(), word.end(), [&](Id id) {
+            const auto& existing = ledger.endpoint(id).command;
+            return existing.kind == command.kind && existing.source == command.source &&
+                existing.observer == command.observer && existing.key == command.key;
+        });
+    };
     for (Id i = 0; i < requests.size(); ++i) {
         const auto& request = requests[i];
         const auto number = frontier.keys()[proposal.keys[i]].key;
         const auto channel = result.channels.size() + i;
         for (auto cut : request.publications) {
-            endpoints.push_back({cut, {Command::Publish, request.source, request.observer, number},
-                                 EndpointPurpose::RecurringCompletion, channel});
+            PacketEndpoint endpoint{cut, {Command::Publish, request.source, request.observer, number},
+                                    EndpointPurpose::RecurringCompletion, channel};
+            if (normalOnly) {
+                const auto& word = ledger.word(cut);
+                endpoint.gap = WordGap{control.canonicalCut[cut], NoAnalysisId,
+                                      word.empty() ? NoAnalysisId : word.front()};
+            }
+            if (!alreadySelected(cut, endpoint.command)) { endpoints.push_back(std::move(endpoint)); }
         }
         for (auto cut : request.acquisitions) {
-            endpoints.push_back({cut, {Command::Acquire, request.source, request.observer, number},
-                                 EndpointPurpose::RecurringCompletion, channel});
+            const Command command{Command::Acquire, request.source, request.observer, number};
+            if (!alreadySelected(cut, command)) {
+                endpoints.push_back({cut, command, EndpointPurpose::RecurringCompletion, channel});
+            }
         }
+    }
+    if (normalOnly) {
+        // Milestone publications precede incoming receipts at the same gap.
+        // This applies only to physically witnessed roles, never acknowledgments.
+        std::stable_sort(endpoints.begin(), endpoints.end(), [](const auto& a, const auto& b) {
+            return a.command.kind == Command::Publish && b.command.kind != Command::Publish;
+        });
     }
     auto owned = prepareOwnedPacket(endpoints);
     if (!owned) { reason = "recurring packet lacks complete ownership"; return {}; }
@@ -583,6 +648,7 @@ std::optional<RecurringPacket> Constructor::prepareRecurring(
         return proposal;
     }
     ++result.work.recurringLocalDeclines;
+    if (normalOnly) { reason = "normal role interface is unknown"; return {}; }
     const auto words = ledger.withPacket(proposal.packet.prepared);
     if (!words) { reason = "recurring packet changed during preparation"; return {}; }
     const auto checked = analyze(program, *words, {false});
@@ -638,7 +704,7 @@ bool Constructor::commitRecurring(RecurringPacket& proposal)
     ++result.work.unreusedUpdates;
     return true;
 }
-bool Constructor::activateRecurring()
+bool Constructor::ensureRecurringBaseline()
 {
     const auto operation = control.graph.operations[current];
     if (operation == NoAnalysisId || recurringFrontiers.families.empty()) { return true; }
@@ -656,6 +722,14 @@ bool Constructor::activateRecurring()
         if (!contextualReplay()) { return false; }
         recurringBaseline = true;
     }
+    return true;
+}
+bool Constructor::activateRecurring()
+{
+    if (!ensureRecurringBaseline()) { return false; }
+    const auto operation = control.graph.operations[current];
+    if (operation == NoAnalysisId || recurringFrontiers.families.empty()) { return true; }
+    const auto word = control.canonicalCut[current];
     auto classes = [](const std::vector<FrontierRequirement>& residuals) {
         std::set<Id> out;
         for (const auto& r : residuals) { out.insert(accessClass(r)); }
@@ -772,7 +846,9 @@ bool Constructor::activateRecurring()
             activated = true;
             break;
         }
-        if (!activated) { return true; }
+        // Give the common normal selector the next refreshed decision.
+        if (activated) { return true; }
+        return true;
     }
 }
 } // namespace mlir::pto::oahs::selected

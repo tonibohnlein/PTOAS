@@ -305,12 +305,21 @@ void preserveWinnerCoverageAtExactGap()
         const auto found = std::find_if(plan.decisions.begin(), plan.decisions.end(), [](const auto& d) {
             return d.consumer == 3 && d.source == P;
         });
-        require(found != plan.decisions.end() && !found->supporting.empty(),
-                "selected provider lost additional coverage used by the ranking");
-        require(plan.decisions.size() == 2 && plan.work.earlyPublications == 0,
-                "exact-gap motion erased selected extra coverage and forced a duplicate transfer");
-        require(bool(oahs_oracle::graph(p, plan.commands, {0, 1, 2, 3})),
-                "actual winner coverage did not establish the final consumer's requirements");
+        require(found != plan.decisions.end(), "required physical provider disappeared");
+        // Class-first policy can prefer the exact earlier milestone, then acquire
+        // the independent prerequisite directly. Compare the COMPLETE payload
+        // order with the former forwarding packet, not its transfer count.
+        o::Commands forwarding(p.operations.size()+1);
+        forwarding[1].push_back({o::Command::Publish,Q,P,0});
+        forwarding[2].push_back({o::Command::Acquire,Q,P,0});
+        forwarding[2].push_back({o::Command::Publish,P,R,0});
+        forwarding[3].push_back({o::Command::Acquire,P,R,0});
+        std::set<std::pair<unsigned,unsigned>> selectedOrder, oldOrder;
+        require(bool(oahs_oracle::graph(p,plan.commands,{0,1,2,3},{},nullptr,nullptr,&selectedOrder)) &&
+                bool(oahs_oracle::graph(p,forwarding,{0,1,2,3},{},nullptr,nullptr,&oldOrder)),
+                "forwarding comparison is not a valid complete protocol");
+        require(std::includes(oldOrder.begin(),oldOrder.end(),selectedOrder.begin(),selectedOrder.end()),
+                "milestone-preserving normal choices added payload ordering");
     }
 }
 void keepKnownPrefixSeparateFromOverlap()
@@ -333,8 +342,15 @@ void keepKnownPrefixSeparateFromOverlap()
     require(!plan.decisions.empty() && plan.decisions[0].stage == o::RequirementStage::Known &&
             plan.decisions[0].required.size() == 1,
             "known readiness was widened by an additional-overlap demand");
-    require(plan.decisions[0].publication == 1,
-            "lookahead moved the known source prefix past the later load");
+    o::Commands separate(4);
+    separate[1].push_back({o::Command::Publish,P,Q,0});
+    separate[2].push_back({o::Command::Publish,P,Q,1});
+    separate[2].push_back({o::Command::Acquire,P,Q,0});
+    separate[2].push_back({o::Command::Acquire,P,Q,1});
+    std::set<std::pair<unsigned,unsigned>> actual, reference;
+    require(bool(oahs_oracle::graph(p,plan.commands,{0,1,2},{},nullptr,nullptr,&actual)) &&
+            bool(oahs_oracle::graph(p,separate,{0,1,2},{},nullptr,nullptr,&reference)) && actual==reference,
+            "independently required later provider changed complete payload order at the shared deadline");
 }
 void keepDifferentDeadlines()
 {

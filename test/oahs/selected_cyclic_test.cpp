@@ -267,8 +267,8 @@ void sharedRecurringPrefixes()
     require(result.channels.size() == 2,
             "common matrix consumer and reuse frontier must share recurring ready/release prefixes");
     require(result.work.recurringFamilies == 2 && result.activations.size() == 1 &&
-                result.activations.front().families.size() == 1,
-            "sharing a role incorrectly activated every family using it");
+                result.activations.front().families.size() == 2,
+            "identical complete protocols lost their constituent physical witnesses");
     for (const auto& channel : result.channels) {
         require(channel.cells == std::vector<unsigned>({0, 1}),
                 "shared recurring channel must retain both physical obligations");

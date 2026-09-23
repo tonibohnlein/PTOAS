@@ -369,7 +369,7 @@ bool Constructor::loopEntryFrontier(
 }
 Group Constructor::sourceGroup(
     Pipe source, const std::vector<FrontierRequirement>& required,
-    const std::vector<FrontierRequirement>& all)
+    const std::vector<FrontierRequirement>& all, bool structured)
 {
     Group group;
     group.source = source;
@@ -385,8 +385,8 @@ Group Constructor::sourceGroup(
         if (!selected || control.position[handle.cut] < control.position[selected->cut]) selected = &handle;
     }
     const bool comparable = selected != nullptr;
-    if (!comparable && sourceFrontier(source, required, all, group)) { return group; }
-    if (!comparable && loopEntryFrontier(source, required, all, group)) { return group; }
+    if (structured && !comparable && sourceFrontier(source, required, all, group)) { return group; }
+    if (structured && !comparable && loopEntryFrontier(source, required, all, group)) { return group; }
     group.publication = comparable ? selected->cut : current;
     group.common = !comparable;
     group.coverage = coverage(group.publication, source, all);
@@ -479,27 +479,47 @@ bool Constructor::consume()
     if (operation == NoAnalysisId || !currentState().causal.reachable()) {
         return true;
     }
-    if (!activateRecurring()) { return false; }
+    if (!ensureRecurringBaseline()) { return false; }
     const auto observer = program.operations[operation].pipe;
-    auto crossCount = [&](const std::vector<FrontierRequirement>& values) {
-        return std::count_if(values.begin(), values.end(),
-            [&](const auto& r) { return r.source != observer; });
+    const auto universe = normalizeDue(residual());
+    result.work.normalizedDue += universe.size();
+    auto physical = [](const std::vector<FrontierRequirement>& due) {
+        std::set<Id> out;
+        for (const auto& r : due) { out.insert(accessClass(r)); }
+        return out;
     };
-    for (auto stage : {RequirementStage::Known, RequirementStage::Overlap}) {
-        while (true) {
-            const auto before = residual();
-            auto requests = groups(before, stage);
-            if (requests.empty()) break;
-            if (!bind(requests.front(), stage)) return false;
-            // A real acquisition can change which remaining prefix is best.
-            // Re-form groups from the new frontier; never retain a stale source
-            // requirement merely because it was in an earlier candidate list.
-            // No payload was issued, so strict residual decrease is the finite
-            // progress measure, not an iteration limit or a retry budget.
-            if (crossCount(residual()) >= crossCount(before)) {
-                return fail(SelectedFailure::MissingParticipation,
-                    "selected transfer did not reduce the cross-engine residual", current);
+    while (true) {
+        const auto before = residual();
+        if (before.empty()) { break; }
+        const auto oldClasses = physical(before);
+        const auto oldDue = normalizedCoverage(universe, before, oldClasses);
+        const auto normal = selectNormal(universe);
+        if (normal && !*normal) { return false; }
+        if (!normal) {
+            // Transitional recipes run only when no normal realization was
+            // certified. They do not reserve resources during normal probes.
+            const auto version = ledger.version();
+            if (!activateRecurring()) { return false; }
+            if (version == ledger.version()) {
+                auto requests = groups(before, RequirementStage::Known);
+                auto stage = RequirementStage::Known;
+                if (requests.empty()) {
+                    stage = RequirementStage::Overlap;
+                    requests = groups(before, stage);
+                }
+                if (requests.empty()) { break; }
+                if (!bind(requests.front(), stage)) { return false; }
             }
+        }
+        const auto after = residual();
+        const auto nextClasses = physical(after);
+        const auto nextDue = normalizedCoverage(universe, after, nextClasses);
+        const bool progress = nextDue.size() < oldDue.size() &&
+            std::includes(oldDue.begin(), oldDue.end(), nextDue.begin(), nextDue.end()) &&
+            std::includes(oldClasses.begin(), oldClasses.end(), nextClasses.begin(), nextClasses.end());
+        if (!progress) {
+            return fail(SelectedFailure::MissingParticipation,
+                "selected realization did not reduce the fixed complete due residual", current);
         }
     }
     const auto missing = residual();

@@ -46,7 +46,9 @@ std::optional<WordGap> Constructor::restorationDeadline(
             }
             found = positions.find(cut);
         }
-        if (endpoint == NoAnalysisId) { return ledger.word(cut).size(); }
+        if (endpoint == NoAnalysisId) {
+            return ledger.word(cut).size();
+        }
         const auto value = found->second.find(endpoint);
         if (value == found->second.end()) { return {}; }
         return value->second;
@@ -332,10 +334,14 @@ bool Constructor::commitOwnedPacket(const OwnedPacket& packet, SelectedDecision&
             obligation.deferred = false;
             auto& forwardOwners = deferredByKey.at(obligation.forwardKey);
             forwardOwners.erase(wait);
-            if (forwardOwners.empty()) { deferredByKey.erase(obligation.forwardKey); }
+            if (forwardOwners.empty()) {
+                deferredByKey.erase(obligation.forwardKey);
+            }
             auto& latent = latentReturns.at(obligation.consumption);
             latent.erase(wait);
-            if (latent.empty()) { latentReturns.erase(obligation.consumption); }
+            if (latent.empty()) {
+                latentReturns.erase(obligation.consumption);
+            }
             ++result.work.deferredMaterialized;
         } else {
             --result.work.rearmingDischarged;
@@ -476,16 +482,45 @@ SourceGapQualification Constructor::sourceGapFacts(
     }
     return out;
 }
-bool Constructor::sourceGapKey(const SourceGapQualification& facts, Id key) const
+bool Constructor::sourceGapKey(const SourceGapQualification& facts, Id key)
 {
     const bool currentFacts = facts.proved() && facts.version == ledger.version() &&
         facts.deadline == current && key < frontier.keys().size() && !facts.prefixes.empty();
     if (!currentFacts || !helperFreeKey(key)) { return false; }
     const auto& identity = frontier.keys()[key];
-    // Existing conservative neighbor certificate: no selected or dormant use.
-    // This is separate from the physical-source and complete-coverage proof.
-    if (identity.source != facts.source || identity.observer != facts.observer ||
-        !ledger.eventUses(identity).empty()) { return false; }
+    if (identity.source != facts.source || identity.observer != facts.observer) { return false; }
+    const auto& uses = ledger.eventUses(identity);
+    if (!uses.empty()) {
+        // Alternative exchanges may use one key only when no old endpoint can
+        // execute together with a new endpoint. This is stronger than empty
+        // occupancy and retains every original continuation/backedge.
+        if (facts.controlRelated.empty()) {
+            facts.controlRelated.resize(control.graph.sites.size());
+            result.work.normalKeySites += 3 * facts.controlRelated.size();
+            for (bool backward : {false, true}) {
+                std::vector<bool> seen(control.graph.sites.size());
+                std::vector<Cut> pending;
+                for (const auto& pair : control.correspondence(facts.gap.cut, current).pairs) {
+                    pending.push_back(pair.first); pending.push_back(pair.second);
+                }
+                while (!pending.empty()) {
+                    const auto site = pending.back(); pending.pop_back();
+                    if (!control.reachable[site] || seen[site]) { continue; }
+                    seen[site] = facts.controlRelated[site] = true;
+                    ++result.work.normalKeySites;
+                    const auto& next = backward ? control.predecessors[site] : control.graph.sites[site].successors;
+                    pending.insert(pending.end(), next.begin(), next.end());
+                }
+            }
+        }
+        for (auto id : uses) {
+            const auto& endpoint = ledger.endpoint(id);
+            if (!ledger.active(id) || endpoint.purpose != EndpointPurpose::Completion) { return false; }
+            for (auto site : control.wordOccurrences[endpoint.cut]) {
+                if (facts.controlRelated[site]) { return false; }
+            }
+        }
+    }
     for (const auto& prefix : facts.prefixes) {
         State atGap;
         atGap.causal = prefix;
@@ -870,7 +905,9 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     packet.push_back({publication, {Command::Publish, source, observer, number}, EndpointPurpose::Completion, request});
     packet.push_back({current, {Command::Acquire, source, observer, number}, EndpointPurpose::Completion, request});
     const auto commit = [&]() {
-        if (prefix.empty()) { return commitPacket(packet, decision); }
+        if (prefix.empty()) {
+            return commitPacket(packet, decision);
+        }
         const auto qualified = qualifyOwnedPacket(packet, true);
         if (!qualified) {
             return fail(SelectedFailure::SelectedUpdate, "complete acknowledgment packet was refused", current);
@@ -880,7 +917,9 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     const auto selectedUpdate = [&]() {
         if (!prefix.empty()) { ++result.work.acknowledgments; }
         if (!update()) { return false; }
-        if (!prefix.empty()) { decision.repairOutputVersion = ledger.version(); }
+        if (!prefix.empty()) {
+            decision.repairOutputVersion = ledger.version();
+        }
         return true;
     };
     if (!closed) {
@@ -986,7 +1025,9 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
         result.reason.clear();
         result.cut = NoAnalysisId;
         if (!update()) { return false; }
-        if (!prefix.empty()) { decision.repairOutputVersion = ledger.version(); }
+        if (!prefix.empty()) {
+            decision.repairOutputVersion = ledger.version();
+        }
     }
     if (recurringClosed && !retained) {
         closedBindings[{source, observer}] = {key, reverse};
@@ -1009,7 +1050,9 @@ std::optional<bool> Constructor::dormantTransfer(
         const auto count = closed ? frontier.keys().size() : 1;
         for (Id reverse = 0; reverse < count; ++reverse) {
             const auto& b = frontier.keys()[reverse];
-            if (closed && (b.source != observer || b.observer != source || closedKeys.count(reverse))) { continue; }
+            if (closed && (b.source != observer || b.observer != source || closedKeys.count(reverse))) {
+                continue;
+            }
             const bool dormant = deferred || ledger.hasDormantUses(a) || (closed && ledger.hasDormantUses(b));
             if (!dormant) { continue; }
             OrderedPacket packet{
@@ -1045,7 +1088,9 @@ bool Constructor::restoreReturns(Id key)
     if (found == rearmingByKey.end()) { return false; }
     std::vector<Id> obligations;
     for (auto id : found->second) {
-        if (!ledger.active(rearming.at(id).acquisition)) { obligations.push_back(id); }
+        if (!ledger.active(rearming.at(id).acquisition)) {
+            obligations.push_back(id);
+        }
     }
     if (obligations.empty()) { return false; }
     // A single edit can expose several independent deadlines. Grow one private
@@ -1078,7 +1123,9 @@ bool Constructor::restoreReturns(Id key)
             const auto failed = rearmingByKey.find(failedKey);
             if (failed == rearmingByKey.end()) { continue; }
             for (auto id : failed->second) {
-                if (!ledger.active(rearming.at(id).acquisition)) { selected.insert(id); }
+                if (!ledger.active(rearming.at(id).acquisition)) {
+                    selected.insert(id);
+                }
             }
         }
         const bool progress = selected.size() != before;

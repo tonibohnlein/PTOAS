@@ -10,12 +10,12 @@
 #include <deque>
 
 namespace mlir::pto::oahs::selected {
-const RecurringCertificate& Constructor::recurringCertificate(Id id)
+const RecurringCertificate& Constructor::recurringCertificate(Id id, bool normal)
 {
     ++result.work.recurringInterfaceQueries;
-    auto found = recurringCertificates.find(id);
+    auto found = recurringCertificates.find({id, normal});
     if (found != recurringCertificates.end()) { return found->second; }
-    auto& proof = recurringCertificates[id];
+    auto& proof = recurringCertificates[{id, normal}];
     const auto& family = recurringFrontiers.families[id];
     proof.reason = "finite role interface is not a paired exchange";
     // A reusable bounded lemma, not a dense virtual-key machine for a closure.
@@ -93,6 +93,18 @@ const RecurringCertificate& Constructor::recurringCertificate(Id id)
         for (auto cut : request.acquisitions) {
             words[cut].push_back({Command::Acquire, request.source, request.observer, 0});
             proof.words[cut].push_back({role, Command::Acquire});
+        }
+    }
+    if (normal) {
+        for (auto& word : words) {
+            std::stable_sort(word.second.begin(), word.second.end(), [](const auto& a, const auto& b) {
+                return a.kind == Command::Publish && b.kind != Command::Publish;
+            });
+        }
+        for (auto& word : proof.words) {
+            std::stable_sort(word.second.begin(), word.second.end(), [](const auto& a, const auto& b) {
+                return a.second == Command::Publish && b.second != Command::Publish;
+            });
         }
     }
     CausalFrontier projected(std::move(slice));
@@ -200,7 +212,7 @@ bool Constructor::qualifyRecurringInterface(
     std::set<Id> checkedUses;
     std::set<std::vector<Id>> checkedWords;
     for (auto family : families) {
-        const auto& proof = recurringCertificate(family);
+        const auto& proof = recurringCertificate(family, proposal.normalWords);
         if (!proof.complete) { return false; }
         for (auto role : recurringFrontiers.families[family].roles) {
             if (!checkedUses.insert(role).second) { continue; }

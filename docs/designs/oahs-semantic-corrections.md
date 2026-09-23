@@ -48,6 +48,21 @@ changed or unrepresented signatures remain Unknown. Persistent admission roots
 must never be reset after a permitted repair. Full-program causal checks remain
 authoritative; the certificate does not replace them.
 
+AC now instantiates normal-class competition for real ordinary and recurring
+clients. Immutable induction support, exact physical source/target milestones and
+persistent existing-publication preservation qualify private complete packets;
+normal probes cannot fall through to candidate whole-program analysis. Complete
+normalized residuals determine eligibility, coverage and strict post-maintenance
+progress. This is an explicit policy change, including independently required
+Overlap alternatives; it is not a plan-equivalent indexing change. Identical
+complete role shapes share physical witnesses without multiplying decision weight.
+Classes1–3 and typed ordinary producer-support discharge remain transitional and
+are the next replacement obligations. Exact historical-role adoption and
+control-disjoint alternative use are sufficient binding proofs; arbitrary reused
+keys remain unqualified. The same-engine-only construction acceptance witness
+remains open despite complete-residual code eligibility. See HANDOFF and AC
+artifacts for host evidence, finite nonempty comparisons and cost accounting.
+
 ## Adopted continuation — typed derivation and independent pipeline progress
 
 Continuation baseline: `b436c3db0` (Step R), not the Step P pin in
