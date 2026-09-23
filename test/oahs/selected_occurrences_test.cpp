@@ -308,6 +308,28 @@ void composedPhysicalUses()
 
 }
 
+void mixedReaderParticipation()
+{
+    for (bool before : {false, true}) {
+        auto p = base(1);
+        p.operations = {op(o::Pipe::MTE2, {{0, false, true}}),
+                        op(o::Pipe::V, {{0, true, false}}),
+                        op(o::Pipe::V, {{0, true, false}}),
+                        op(o::Pipe::MTE2, {{0, false, true}})};
+        const o::Region choice{o::Region::Choice, {leaf(2), seq({})}};
+        p.body = before ? seq({leaf(0), choice, leaf(1), leaf(3)})
+                        : seq({leaf(0), leaf(1), choice, leaf(3)});
+        o::selected::Control control(p);
+        o::StorageFrontierAnalysis storage(p);
+        o::selected::RequirementFrontiers facts(p, control, storage);
+        const auto sites = storage.sitesForOperation(1);
+        require(sites.size() == 1, "mixed participation fixture needs one queried reader");
+        require(facts.readerParticipation(sites.front(), 0).outcome == o::selected::ProofOutcome::Unknown,
+                before ? "mixed first/continuing participation was proved"
+                       : "mixed final/continuing participation was proved");
+    }
+}
+
 void physicalDeadlines()
 {
     const auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE1;
@@ -329,6 +351,24 @@ void physicalDeadlines()
     require(demands.size() == 1 && demands[0].release == 1 && demands[0].deadline == 1 &&
                 demands[0].returnDeadlines == std::vector<o::Cut>{3},
             "readiness and possible return were conflated or lost");
+    const auto& first = facts.readerParticipation(1, 0);
+    const auto& last = facts.readerParticipation(2, 0);
+    const auto& reloaded = facts.readerParticipation(4, 0);
+    require(first.proved() && first.first && !first.final && last.proved() && !last.first && last.final,
+            "different reader owners did not retain one write episode");
+    require(reloaded.proved() && reloaded.first && reloaded.final &&
+                reloaded.preceding.size() == 1 && reloaded.preceding.front().site == 3,
+            "reload did not start a separate reader episode");
+    const auto queryWork = storage.stats().nearestUseEvaluations;
+    require(&facts.readerParticipation(1, 0) == &first && storage.stats().nearestUseEvaluations == queryWork,
+            "immutable reader participation was recomputed");
+    auto uncertain = p;
+    uncertain.operations[3].accesses = {{0, true, true, false}};
+    o::selected::Control uncertainControl(uncertain);
+    o::StorageFrontierAnalysis uncertainStorage(uncertain);
+    o::selected::RequirementFrontiers uncertainFacts(uncertain, uncertainControl, uncertainStorage);
+    require(!uncertainFacts.readerParticipation(4, 0).proved(),
+            "RMW was treated as a fresh reader episode");
     const auto& later = facts.at(4);
     require(later.size() == 1 && later[0].relationship.source.site == 3,
             "reload reused the old physical generation's readiness provenance");
@@ -341,6 +381,36 @@ void physicalDeadlines()
 
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void omittedSupport()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE1;
+        auto p = base(2, 4);
+        p.operations = {op(P, {{1, false, true}}), op(P, {{0, false, true}}),
+                        op(P, {{1, false, true}}), op(Q, {{0, true, false}})};
+        Constructor constructor(p);
+        std::string reason;
+        require(constructor.ledger.initialize({}, reason), reason);
+        RecurringRequirement direct;
+        direct.source = P;
+        direct.observer = Q;
+        direct.publications = {2};
+        direct.acquisitions = {3};
+        direct.supportSeeds = {1};
+        auto first = direct;
+        first.observer = R;
+        first.acquisitions = {2};
+        first.supportSeeds.clear();
+        first.qualifiedCycle = true;
+        auto second = first;
+        second.source = R;
+        second.observer = Q;
+        second.acquisitions = {3};
+        require(!constructor.recurring({direct, first, second}) &&
+                    constructor.result.reason.find("producer repair") != std::string::npos,
+                "omitting a private channel dropped the proposal's residual-support obligation");
+        require(constructor.result.work.redundantRecurringChannels == 1 && constructor.ledger.records().empty(),
+                "support witness did not omit its private channel atomically");
+    }
     static void everyInterveningOccurrence()
     {
         auto p = sharedWords();
@@ -369,7 +439,9 @@ int main()
     joinedSources();
     publicationBoundaries();
     composedPhysicalUses();
+    mixedReaderParticipation();
     physicalDeadlines();
     o::selected::ReplayTestAccess::everyInterveningOccurrence();
+    o::selected::ReplayTestAccess::omittedSupport();
     std::cout << "shared occurrence and physical-deadline queries passed\n";
 }

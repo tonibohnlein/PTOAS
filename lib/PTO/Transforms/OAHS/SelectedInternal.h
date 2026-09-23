@@ -218,6 +218,9 @@ struct RecurringRequirement {
     // remain eligible for conservative redundancy trials.
     bool qualifiedCycle = false;
     bool storageRelease = false;
+    // Producer deadlines whose preceding local repair can be replaced by this
+    // complete cycle. Require scoped residual support before commitment.
+    std::vector<Cut> supportSeeds;
 };
 struct OccurrenceMode {
     Id owner = NoAnalysisId;
@@ -255,6 +258,17 @@ struct LifecycleUse {
     Cut release = NoAnalysisId;
     std::vector<Cut> deadlines, returns;
 };
+// Participation of a physical read within a write/read episode. Marginal
+// nearest-use facts include accesses outside lexical owners. Mixed participation
+// is unknown; neither a write nor a boundary implies acquired completion.
+struct ReaderParticipation {
+    ProofOutcome outcome = ProofOutcome::Unknown;
+    bool first = false, final = false;
+    std::string reason;
+    std::vector<StorageOrigin> preceding, following;
+    std::vector<Cut> entryBoundaries, exitBoundaries;
+    bool proved() const { return outcome == ProofOutcome::Proved; }
+};
 // One original storage requirement with both of its placement bounds retained.
 // This is immutable analysis metadata: it grants no completion receipt, event
 // token, or permission to merge requirements that happen to use one pipeline.
@@ -285,6 +299,7 @@ public:
     std::map<Id, unsigned> reasons(Cut site) const;
     const LifecycleUse& use(Cut site, unsigned cell) const;
     Cut recurringRelease(Cut site, unsigned cell) const;
+    const ReaderParticipation& readerParticipation(Cut site, unsigned cell) const;
     const PhysicalUseFrontier& nextUses(
         const std::vector<Cut>& starts, unsigned cell, const std::vector<Cut>& stops) const;
     std::vector<SelectedLifecycleDemand> demandsAt(
@@ -305,6 +320,7 @@ private:
     const Program* program = nullptr;
     const Control* control = nullptr;
     mutable std::map<std::pair<Cut, unsigned>, LifecycleUse> uses;
+    mutable std::map<std::pair<Cut, unsigned>, ReaderParticipation> readerRoles;
     std::vector<std::vector<RequirementFrontier>> byDeadline;
 };
 // A storage/control qualifier: it returns requirements and original frontiers,

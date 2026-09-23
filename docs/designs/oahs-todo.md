@@ -17,8 +17,9 @@ Donors supply mechanisms/counterexamples, not a chronological cherry-pick queue.
 - [ ] **Stage 1 (active):** shared physical-use/deadline records and bounded
   occurrence pairing are implemented and host-validated. Complete the remaining
   placement consumers and partial-knowledge inventory; retain copied children.
-- [ ] **Stage 2:** generation families, open region obligations and affected
-  producer-support intervals; access/episode-scoped ACC replacement.
+- [ ] **Stage 2 (active):** shared read episodes span children/reloads/outside
+  readers; staged producer-repair crossing guard implemented and reviewed.
+  Complete open/exported obligations and access/episode-scoped ACC replacement.
 - [ ] **Stage 3:** compose first-read/first-write/final-read endpoints with exact
   gaps, original participation and invalidated publication-prefix certificates.
 - [ ] **Stage 4:** complete actual-return support, common ordered packets,

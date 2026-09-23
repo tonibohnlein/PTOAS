@@ -159,6 +159,51 @@ Cut RequirementFrontiers::recurringRelease(Cut site, unsigned cell) const
     return boundary.proved() ? boundary.word : NoAnalysisId;
 }
 
+const ReaderParticipation& RequirementFrontiers::readerParticipation(Cut site, unsigned cell) const
+{
+    static const ReaderParticipation unknown;
+    if (!ready || !storage || !control || site >= control->graph.sites.size() || use(site, cell).roles != 1) {
+        return unknown;
+    }
+    const auto key = std::make_pair(site, cell);
+    const auto cached = readerRoles.find(key);
+    if (cached != readerRoles.end()) {
+        return cached->second;
+    }
+    auto& result = readerRoles[key];
+    const auto& before = storage->nearestUses(control->predecessors[site], cell, {}, true);
+    const auto& after = storage->nearestUses(control->graph.sites[site].successors, cell);
+    if (!before.complete || !after.complete) {
+        result.reason = "physical-use succession is unavailable";
+        return result;
+    }
+    result.preceding = before.accesses;
+    result.following = after.accesses;
+    result.entryBoundaries = before.boundaries;
+    result.exitBoundaries = after.boundaries;
+    auto roles = [&](const PhysicalUseFrontier& frontier) {
+        unsigned mask = frontier.boundaries.empty() ? 0u : 4u;
+        for (const auto& access : frontier.accesses) {
+            const auto role = use(access.site, cell).roles;
+            if (role == 3 || !role) {
+                return 8u; // RMW cannot be classified as a fresh write episode.
+            }
+            mask |= role;
+        }
+        return mask;
+    };
+    const auto previous = roles(before), next = roles(after);
+    if ((previous != 1 && previous != 2) ||
+        (next != 1 && next != 2 && next != 4 && next != 6)) {
+        result.reason = "first/final participation needs control refinement";
+        return result;
+    }
+    result.first = previous == 2;
+    result.final = next != 1;
+    result.outcome = ProofOutcome::Proved;
+    return result;
+}
+
 const PhysicalUseFrontier& RequirementFrontiers::nextUses(
     const std::vector<Cut>& starts, unsigned cell, const std::vector<Cut>& stops) const
 {

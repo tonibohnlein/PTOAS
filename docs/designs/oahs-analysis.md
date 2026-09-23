@@ -199,3 +199,38 @@ It does not yet remove the enclosing reader-owner gate or certify an affected
 producer interval. Such an interval must retain other outstanding storage and
 exported obligations, including the X/Y fence-relocation counterexample; the
 next same-cell writer is not by itself a sound closing boundary.
+
+### Reader participation across physical write episodes
+
+`RequirementFrontiers::readerParticipation` classifies a represented physical
+reader from its nearest accesses in both directions on original control. It
+starts on predecessor/successor edges, retains reloads and outside readers,
+and records open entry/exit boundaries. Writer-only predecessors identify first
+participation; reader-only predecessors identify continuation. Reader-only
+successors continue the episode; writer/exit-only successors end participation.
+Mixed participation and RMW boundaries remain unknown. A may-write stops physical
+succession but does not kill older writer provenance or prove initialization.
+
+The enclosing-cycle consumer replaces its child-owner/first-tail atom recognizer
+with this query. Every reachable copy sharing an emitted word must agree on its
+roles. Exact endpoint matching and final causal validation remain separate. The
+current consumer still qualifies one writer pipe and one reader pipe per cell;
+other physical facts are retained, not rewritten to satisfy that restriction.
+
+Before an enclosing cycle is committed, the exact selected packet must pass
+protocol analysis. Producer overwrite seeds also define a conservative repair
+interface: a remaining producer-targeted obligation is unsupported when its
+source may precede a seed and its consumer may follow a seed. Include other
+cells, backedges and continuations. Unioned reachability loses path correlation
+and may refuse unrelated paths; it never proves separation from that loss.
+Support seeds survive relationship replacement and private-channel omission.
+The work is two graph walks plus one operation-membership scan per participating
+producer and a linear residual scan, charged as `producerSupportWork`. Canonical
+seeds and reader words are processed once, including analytical copies.
+
+This is a producer-fence-relocation certificate, not the full Stage 2 affected
+interface or a publication-prefix theorem. Exported publication, consumer-side,
+continuation and retirement ordering remain separate obligations for later
+composition; independent validation still enforces safety and event legality.
+The new mechanism does not claim no added payload order. Full ordering sets,
+resources and compilation work must be reported independently on changed plans.

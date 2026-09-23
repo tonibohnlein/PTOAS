@@ -275,25 +275,6 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
     }
     if (producer == Pipe::Count || consumer == Pipe::Count || producer == consumer) return {};
 
-    struct ChildVisit { Id owner = NoAnalysisId; bool first = false, last = false, valid = false; };
-    auto childVisit = [&](Id site) {
-        ChildVisit out;
-        const auto observation = p.observed->sites[site].observation;
-        if (observation == NoAnalysisId) return out;
-        const auto& atoms = p.observed->observations[observation].atoms;
-        for (const auto& before : atoms) {
-            if (before.kind != ObservationAtom::LoopHasPrevious || before.parameter != 1 ||
-                before.owner == loop.owner) continue;
-            for (const auto& after : atoms) {
-                if (after.kind != ObservationAtom::LoopHasNext || after.parameter != 1 ||
-                    after.owner != before.owner) continue;
-                if (out.valid && out.owner != before.owner) return ChildVisit{};
-                out = {before.owner, before.value == 0, after.value == 0, true};
-            }
-        }
-        return out;
-    };
-
     RecurringRequirement ready, release;
     ready.qualifiedCycle = release.qualifiedCycle = true;
     release.storageRelease = true;
@@ -307,7 +288,7 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
     ready.period = release.period = bankPeriod ? bankPeriod : 1;
     release.publications.push_back(canonicalCommandCut(p, c.graph.entry));
     release.acquisitions.push_back(canonicalCommandCut(p, c.graph.exit));
-    Id childOwner = NoAnalysisId;
+    std::set<Cut> checkedReaderWords;
     for (auto site : members) {
         if (!roles[site]) continue;
         const auto endpoint = frontiers.recurringRelease(site, cell);
@@ -315,16 +296,31 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
         if (roles[site] == 2) {
             ready.publications.push_back(endpoint);
             release.acquisitions.push_back(canonicalCommandCut(p, site));
+            ready.supportSeeds.push_back(canonicalCommandCut(p, site));
             continue;
         }
-        const auto visit = childVisit(site);
-        if (!visit.valid || visit.owner == loop.owner ||
-            (childOwner != NoAnalysisId && childOwner != visit.owner)) return {};
-        childOwner = visit.owner;
-        if (visit.first) ready.acquisitions.push_back(canonicalCommandCut(p, site));
-        if (visit.last) release.publications.push_back(endpoint);
+        const auto& participation = frontiers.readerParticipation(site, cell);
+        if (!participation.proved()) {
+            return {};
+        }
+        if (checkedReaderWords.insert(c.canonicalCut[site]).second) {
+            for (auto occurrence : c.wordOccurrences[c.canonicalCut[site]]) {
+                if (!c.reachable[occurrence]) {
+                    continue;
+                }
+                const auto& other = frontiers.readerParticipation(occurrence, cell);
+                if (!other.proved() || other.first != participation.first || other.final != participation.final) {
+                    return {};
+                }
+            }
+        }
+        if (participation.first) {
+            ready.acquisitions.push_back(canonicalCommandCut(p, site));
+        }
+        if (participation.final) {
+            release.publications.push_back(endpoint);
+        }
     }
-    if (childOwner == NoAnalysisId) return {};
     for (auto* request : {&ready, &release}) {
         for (auto* cuts : {&request->publications, &request->acquisitions}) {
             std::sort(cuts->begin(), cuts->end());
@@ -483,6 +479,8 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
                 if (duplicate == requests.end()) requests.push_back(std::move(request));
                 else {
                     duplicate->qualifiedCycle &= request.qualifiedCycle;
+                    duplicate->supportSeeds.insert(duplicate->supportSeeds.end(),
+                        request.supportSeeds.begin(), request.supportSeeds.end());
                     duplicate->cells.insert(duplicate->cells.end(), request.cells.begin(), request.cells.end());
                     std::sort(duplicate->cells.begin(), duplicate->cells.end());
                     duplicate->cells.erase(std::unique(duplicate->cells.begin(), duplicate->cells.end()),
@@ -506,9 +504,14 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
             return std::includes(b.begin(), b.end(), a.begin(), a.end());
         };
         requests.erase(std::remove_if(requests.begin(), requests.end(), [&](const auto& old) {
-            return old.owner == candidate.owner && old.source == candidate.source &&
+            const bool replaced = old.owner == candidate.owner && old.source == candidate.source &&
                 old.observer == candidate.observer && subset(old.publications, candidate.publications) &&
                 subset(old.acquisitions, candidate.acquisitions);
+            if (replaced) {
+                candidate.supportSeeds.insert(candidate.supportSeeds.end(),
+                    old.supportSeeds.begin(), old.supportSeeds.end());
+            }
+            return replaced;
         }), requests.end());
         requests.push_back(std::move(candidate));
     }
@@ -528,6 +531,7 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
                 continue;
             }
             a.qualifiedCycle &= b.qualifiedCycle;
+            a.supportSeeds.insert(a.supportSeeds.end(), b.supportSeeds.begin(), b.supportSeeds.end());
             a.cells.insert(a.cells.end(), b.cells.begin(), b.cells.end());
             std::sort(a.cells.begin(), a.cells.end());
             a.cells.erase(std::unique(a.cells.begin(), a.cells.end()), a.cells.end());
@@ -644,6 +648,82 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
             selected = std::move(trial);
             ++result.work.redundantRecurringChannels;
         } else retained[index] = true;
+    }
+    std::array<std::vector<Cut>, PipeCount> seeds;
+    for (Id index = 0; index < requests.size(); ++index) {
+        // A replacement or omission can preserve the cycle's causal effect.
+        // Support belongs to the proposal, not the private channel identity.
+        auto& sites = seeds[unsigned(requests[index].source)];
+        sites.insert(sites.end(), requests[index].supportSeeds.begin(), requests[index].supportSeeds.end());
+    }
+    for (auto& sites : seeds) {
+        for (auto& site : sites) {
+            site = control.canonicalCut[site];
+        }
+        std::sort(sites.begin(), sites.end());
+        sites.erase(std::unique(sites.begin(), sites.end()), sites.end());
+    }
+    const bool needsSupport = std::any_of(seeds.begin(), seeds.end(), [](const auto& sites) {
+        return !sites.empty();
+    });
+    if (needsSupport) {
+        if (!selected) {
+            selected = analyze(program, candidate(), {false});
+            result.work.recurringAnalysisSites += selected->stats.siteEvaluations;
+        }
+        if (!selected->complete || !selected->diagnostics.empty() || !selected->protocol.empty() ||
+            !selected->phaseResources.empty()) {
+            return fail(SelectedFailure::LoopInvariant, "generation packet has unestablished protocol support");
+        }
+        // This certificate protects producer-repair relocation, not arbitrary
+        // endpoint motion. Both sides use original reachability, including
+        // backedges and continuations; an unrelated cell is never excluded.
+        for (unsigned pipe = 0; pipe < PipeCount; ++pipe) {
+            if (seeds[pipe].empty()) {
+                continue;
+            }
+            auto reached = [&](bool backward) {
+                std::vector<bool> seen(control.graph.sites.size());
+                std::vector<Cut> todo;
+                for (auto word : seeds[pipe]) {
+                    const auto& occurrences = control.wordOccurrences[control.canonicalCut[word]];
+                    todo.insert(todo.end(), occurrences.begin(), occurrences.end());
+                }
+                while (!todo.empty()) {
+                    const auto site = todo.back();
+                    todo.pop_back();
+                    if (seen[site] || !control.reachable[site]) {
+                        continue;
+                    }
+                    seen[site] = true;
+                    ++result.work.producerSupportWork;
+                    const auto& next = backward ? control.predecessors[site] : control.graph.sites[site].successors;
+                    todo.insert(todo.end(), next.begin(), next.end());
+                }
+                return seen;
+            };
+            const auto before = reached(true), after = reached(false);
+            std::vector<bool> precedingOperations(program.operations.size());
+            for (Cut site = 0; site < before.size(); ++site) {
+                ++result.work.producerSupportWork;
+                const auto operation = control.graph.operations[site];
+                if (before[site] && operation != NoAnalysisId) {
+                    precedingOperations[operation] = true;
+                }
+            }
+            for (const auto& residual : selected->residuals) {
+                ++result.work.producerSupportWork;
+                if (unsigned(program.operations[residual.demand.consumer].pipe) != pipe ||
+                    residual.consumerCut >= after.size() || !after[residual.consumerCut]) {
+                    continue;
+                }
+                if (precedingOperations[residual.demand.producer]) {
+                    return fail(SelectedFailure::LoopInvariant,
+                                "generation packet leaves a producer repair crossing its overwrite",
+                                residual.consumerCut);
+                }
+            }
+        }
     }
     ledger.appendPacket(packet());
     for (Id index = 0; index < requests.size(); ++index) {

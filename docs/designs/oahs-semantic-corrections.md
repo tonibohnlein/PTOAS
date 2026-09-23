@@ -300,6 +300,29 @@ This completes the shared succession replacement, not generation/support
 selection. Next: replace child-owner recognition with generation requirements
 and prove support for affected remaining repairs before admitting new cycles.
 
+### E — Reader episodes and scoped producer repair
+
+Base: `2a19c6f86`. Architecture/design, correctness and performance: **ACCEPT**.
+The enclosing-cycle client now uses original physical predecessor/successor roles
+across reader owners. Reloads start separate episodes, outside readers remain
+obligations, and mixed or inconsistent shared-word participation is unknown.
+The single-child observation recognizer is removed. Exact staged packet analysis
+checks event legality and producer repairs crossing selected overwrite seeds;
+those obligations survive channel replacement, sharing and omission.
+
+Portable/native positives and mixed-role, missing-return, RMW, shared-word and
+X/Y negatives pass. The X/Y synthetic refined input refuses the unsupported
+proposal; its ordinary retry also refuses, so this is not a supported-input
+service claim. All pinned supported outcomes/plans remain unchanged. New native
+retained/reload witnesses remove 110/82 payload-order relations with zero added;
+complete finite relation sets, event resources and compiler work are recorded
+separately in `../oahs-gemm-base-builds/refactor-step-e/`. No device claim.
+
+This is bounded generation composition and producer-repair protection, not the
+full Stage 2 affected interface. Exported-prefix/consumer-side/continuation and
+retirement ordering, broader endpoint participation and access-scoped ACC remain
+open. Continue directly with demanded endpoint discovery across reader regions.
+
 ## Historical audit detail and restart checkpoints
 
 The material below records earlier reasoning/evidence. Its numbering and active

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedTestSupport.h"
 #include "GraphOracle.h"
+#include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
 #include <functional>
 #include <set>
 using namespace selected_test;
@@ -249,9 +250,172 @@ void run(bool guarded, bool reentered, unsigned banks = 2)
               << " bank occurrence traces=" << traces << " channels=" << plan.channels.size()
               << " sites=" << p.observed->sites.size() << '\n';
 }
+// Two distinct reader owners use one physical generation. Reloads and outside
+// readers are represented as accesses, rather than another child-loop pattern.
+void composedReaders(unsigned variant)
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE3;
+    auto p = base(4, 8);
+    p.operations = {op(P, {{0, false, true, true}, {1, false, true, true}}),
+        op(Q, {{0, true, false}, {1, true, false}, {2, false, true, true}}),
+        op(R, {{2, true, false}}),
+        op(Q, {{0, true, false}, {1, true, false}, {2, false, true, true}}),
+        op(R, {{2, true, false}}),
+        op(Q, {{0, true, false}, {1, true, false}}),
+        op(P, {{0, false, true, true}, {1, false, true, true}}),
+        op(P, {{3, false, true, true}}), op(P, {{3, false, true, true}})};
+    for (std::size_t i = 0; i < p.operations.size(); ++i) {
+        p.operations[i].original = i;
+        for (auto& access : p.operations[i].accesses) {
+            access.definiteWrite = false;
+        }
+    }
+    o::Region first{o::Region::For, {seq({leaf(1), leaf(2)})}, 0, true};
+    o::Region second{o::Region::For, {seq({leaf(3), leaf(4)})}, 0, true};
+    auto body = seq({leaf(0)});
+    if (variant == 3) {
+        body.children.push_back(leaf(8));
+    }
+    body.children.push_back(first);
+    if (variant == 1) {
+        body.children.push_back(leaf(6));
+    }
+    body.children.push_back(second);
+    if (variant == 2) {
+        body.children.push_back(leaf(5));
+    }
+    p.body = {o::Region::For, {body}, 0, true};
+    if (variant == 3) {
+        p.body = seq({leaf(7), p.body});
+    }
+    if (variant == 4) {
+        p.body = seq({p.body, leaf(7)});
+    }
+    const auto originalOperations = p.operations;
+    p.operations.clear();
+    std::map<unsigned, unsigned> operationIds;
+    std::function<void(o::Region&)> remap = [&](o::Region& node) {
+        if (node.kind == o::Region::Operation) {
+            const auto old = unsigned(node.operation);
+            operationIds.emplace(old, unsigned(p.operations.size()));
+            node.operation = operationIds.at(old);
+            p.operations.push_back(originalOperations[old]);
+            p.operations.back().original = node.operation;
+        }
+        for (auto& child : node.children) {
+            remap(child);
+        }
+    };
+    remap(p.body);
+    auto imported = o::addStructuredBoundaryCuts(p);
+    require(imported.success, imported.reason);
+    auto program = imported.program;
+    std::vector<o::Cut> owners;
+    for (const auto& scope : program.observed->scopes) {
+        if (scope.kind == o::AnalysisContext::ForBody) {
+            owners.push_back(scope.ownerSite);
+        }
+    }
+    require(owners.size() == 3, "two child reader owners expected");
+    for (unsigned child = 1; child < 3; ++child) {
+        auto loop = region(program, owners[child]);
+        loop.period = 1;
+        auto refined = o::refineCountedLoop(program, loop);
+        require(refined.success, refined.reason);
+        program = std::move(refined.program);
+    }
+    auto bank = region(program, owners.front());
+    for (unsigned operation : {0u, 1u, 3u, 5u, 6u}) {
+        if ((operation == 5 && variant != 2) || (operation == 6 && variant != 1)) {
+            continue;
+        }
+        o::CountedLoopRegion::PeriodicEffects binding{operationIds.at(operation), {}};
+        for (unsigned residue = 0; residue < 2; ++residue) {
+            std::vector<o::Access> effects;
+            for (const auto& access : originalOperations[operation].accesses) {
+                if (access.cell >= 2 || access.cell == residue) {
+                    auto physical = access;
+                    physical.definiteWrite = false;
+                    effects.push_back(physical);
+                }
+            }
+            binding.residues.push_back(std::move(effects));
+        }
+        bank.effects.push_back(std::move(binding));
+    }
+    auto refined = o::refineBankOccurrences(program, bank);
+    require(refined.success, refined.reason);
+    if (variant == 5) {
+        o::selected::Control control(refined.program);
+        o::StorageFrontierAnalysis storage(refined.program);
+        o::selected::RequirementFrontiers facts(refined.program, control, storage);
+        o::Cut firstReader = o::NoAnalysisId, continuingReader = o::NoAnalysisId;
+        for (o::Cut site = 0; site < control.graph.sites.size(); ++site) {
+            if (facts.use(site, 0).roles != 1 ||
+                refined.program.operations[control.graph.operations[site]].original != operationIds.at(1)) {
+                continue;
+            }
+            const auto& role = facts.readerParticipation(site, 0);
+            if (role.proved() && role.first) {
+                firstReader = site;
+            } else if (role.proved()) {
+                continuingReader = site;
+            }
+        }
+        require(firstReader != o::NoAnalysisId && continuingReader != o::NoAnalysisId,
+                "shared-word fixture lacks distinct participating roles");
+        auto& graph = *refined.program.observed;
+        graph.sites[continuingReader].observation = graph.sites[firstReader].observation;
+        require(o::validateProgram(refined.program).success, "shared-word fixture is not valid input");
+        o::selected::Control sharedControl(refined.program);
+        o::StorageFrontierAnalysis sharedStorage(refined.program);
+        o::selected::RequirementFrontiers sharedFacts(refined.program, sharedControl, sharedStorage);
+        const auto requests = o::selected::qualifyCyclicFrontiers(refined.program, sharedControl, sharedFacts);
+        require(std::none_of(requests.begin(), requests.end(), [&](const auto& request) {
+                    return request.owner == bank.owner && request.source == P && request.observer == Q &&
+                        std::find(request.cells.begin(), request.cells.end(), 0) != request.cells.end();
+                }), "conflicting shared-word first/continuing roles produced one readiness acquisition");
+        return;
+    }
+    const auto plan = o::constructSelectedPlan(refined.program);
+    if (variant == 3) {
+        require(plan.declinedRecurring && plan.declinedRecurring->reason.find("producer repair") != std::string::npos,
+                "unsupported Y repair crossed the newly supported X overwrite");
+    } else {
+        require(plan.success && o::checkCausalFrontier(refined.program, plan.commands).accepted,
+                "composed reader construction was not independently accepted");
+        require(!plan.declinedRecurring, "composed reader protocol was declined");
+        const auto ready = std::count_if(plan.channels.begin(), plan.channels.end(), [&](const auto& channel) {
+            return channel.owner == bank.owner && channel.source == P && channel.observer == Q;
+        });
+        require(ready == 2, "shared generation across reader children was not constructed per bank");
+        const auto releases = std::count_if(plan.channels.begin(), plan.channels.end(), [&](const auto& channel) {
+            return channel.owner == bank.owner && channel.source == Q && channel.observer == P;
+        });
+        require(releases == 2, "composed generation lost a bank release");
+        for (const auto& channel : plan.channels) {
+            if (channel.owner != bank.owner || channel.source != Q || channel.observer != P) {
+                continue;
+            }
+            auto broken = plan.commands;
+            for (auto& word : broken) {
+                word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+                    return command.kind == o::Command::Acquire && command.source == Q &&
+                           command.observer == P && command.key == channel.key;
+                }), word.end());
+            }
+            require(!o::checkCausalFrontier(refined.program, broken).accepted,
+                    "removed generation return was accepted");
+        }
+    }
+}
+
 } // namespace
 int main()
 {
+    for (unsigned variant = 0; variant < 6; ++variant) {
+        composedReaders(variant);
+    }
     run(false, false);
     run(true, false);
     run(false, true);

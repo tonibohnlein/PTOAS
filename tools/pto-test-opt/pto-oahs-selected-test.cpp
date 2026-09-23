@@ -611,6 +611,71 @@ module attributes {pto.target_arch = "a3"} {
   }
   return true;
 }
+bool readerGenerations(MLIRContext &context) {
+  const std::string input = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @reader_generations(%src: !pto.partition_tensor_view<1x32xf32>,
+      %dst: !pto.partition_tensor_view<1x32xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %four = arith.constant 4 : index
+    %stride = arith.constant 128 : index
+    %base = arith.constant 256 : index
+    %out_addr = arith.constant 4096 : i64
+    %out = pto.alloc_tile addr = %out_addr : !pto.tile_buf<vec, 1x32xf32>
+    scf.for %i = %zero to %four step %one {
+      %slot = arith.remui %i, %two : index
+      %offset = arith.muli %slot, %stride : index
+      %address = arith.addi %offset, %base : index
+      %cast = arith.index_cast %address : index to i64
+      %bank = pto.alloc_tile addr = %cast : !pto.tile_buf<vec, 1x32xf32>
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%bank : !pto.tile_buf<vec, 1x32xf32>)
+      scf.for %j = %zero to %two step %one {
+        pto.tabs ins(%bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+        pto.tstore ins(%out : !pto.tile_buf<vec, 1x32xf32>) outs(%dst : !pto.partition_tensor_view<1x32xf32>)
+      }
+      // RELOAD
+      scf.for %k = %zero to %two step %one {
+        pto.tabs ins(%bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+        pto.tstore ins(%out : !pto.tile_buf<vec, 1x32xf32>) outs(%dst : !pto.partition_tensor_view<1x32xf32>)
+      }
+    }
+    return
+  }
+})mlir";
+  for (bool reload : {false, true}) {
+    std::string source = input;
+    if (reload) {
+      source.replace(source.find("// RELOAD"), std::string("// RELOAD").size(),
+          "pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) "
+          "outs(%bank : !pto.tile_buf<vec, 1x32xf32>)");
+    }
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module), "reader-generation fixture failed to parse")) {
+      return false;
+    }
+    auto function = *module->getOps<func::FuncOp>().begin();
+    oahs::SelectedPlan plan;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)),
+               "reader generation failed native construction/reconstruction")) {
+      return false;
+    }
+    if (!check(!plan.declinedObservation && !plan.declinedRecurring,
+               "reader generation depended on an optional fallback")) {
+      return false;
+    }
+    const auto ready = std::count_if(plan.channels.begin(), plan.channels.end(), [](const auto& channel) {
+      return channel.source == oahs::Pipe::MTE2 && channel.observer == oahs::Pipe::V && channel.period == 2;
+    });
+    if (!check(ready == 2, "physical generation across children lost per-bank readiness")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool slotDependencySlices(MLIRContext &context) {
   const std::string input = R"mlir(
 module attributes {pto.target_arch = "a3"} {
@@ -976,6 +1041,7 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " occurrence_sites=" << work.occurrenceAnalysisSites
                  << " boundary_sites=" << work.boundaryAnalysisSites
                  << " physical_use_sites=" << work.physicalUseQuerySites
+                 << " producer_support_work=" << work.producerSupportWork
                  << " key_queries=" << work.keyQueries << " invariant=" << work.invariantSiteEvaluations
                  << " prepare_microseconds=" << work.preparationMicroseconds
                  << " sites=" << work.constructedSites << " words=" << work.commandWords
@@ -995,6 +1061,8 @@ bool runFile(MLIRContext &context, const char *path) {
                  << (report.declinedObservation ? report.declinedObservation->work.replaySiteEvaluations : 0)
                  << " observation_discarded_occurrence_sites="
                  << (report.declinedObservation ? report.declinedObservation->work.occurrenceAnalysisSites : 0)
+                 << " observation_discarded_producer_support_work="
+                 << (report.declinedObservation ? report.declinedObservation->work.producerSupportWork : 0)
                  << " observation_discarded_physical_use_sites="
                  << (report.declinedObservation ? report.declinedObservation->work.physicalUseQuerySites : 0)
                  << " observation_discarded_boundary_sites="
@@ -1006,6 +1074,8 @@ bool runFile(MLIRContext &context, const char *path) {
                  << (report.declinedRecurring ? report.declinedRecurring->work.replaySiteEvaluations : 0)
                  << " discarded_occurrence_sites="
                  << (report.declinedRecurring ? report.declinedRecurring->work.occurrenceAnalysisSites : 0)
+                 << " discarded_producer_support_work="
+                 << (report.declinedRecurring ? report.declinedRecurring->work.producerSupportWork : 0)
                  << " discarded_physical_use_sites="
                  << (report.declinedRecurring ? report.declinedRecurring->work.physicalUseQuerySites : 0)
                  << " discarded_boundary_sites="
@@ -1185,6 +1255,7 @@ int main(int argc, char **argv) {
                       positive(context, recurrence, "recurrence") &&
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
-                      slotMappings(context) && slotDependencySlices(context) && accumulatorOrdering(context) && firstUseOrdering(context);
+                      slotMappings(context) && slotDependencySlices(context) && readerGenerations(context) &&
+                      accumulatorOrdering(context) && firstUseOrdering(context);
   return passed ? 0 : 1;
 }

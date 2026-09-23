@@ -1,5 +1,37 @@
 # OAHS current handoff
 
+## Current iteration — Step E reader episodes and scoped producer repair
+
+Step D committed `2a19c6f86`. The enclosing cycle now uses shared nearest-use
+reader participation instead of one-child observation grammar. Two-child, reload
+and outside-reader portable cases pass; the X/Y case declines its unsupported
+optional cycle. Its ordinary synthetic retry remains unable to construct a plan,
+so that negative is refusal evidence, not supported-input service evidence.
+All three reviewers ACCEPT the final source. All 22 portable suites passed;
+the final focused negatives and all three native drivers pass. The pinned
+campaign remains 88/88 corpus, 18/19 compatibility, GEMM, two prefills and three
+targets, with every plan/outcome unchanged. Evidence:
+`../oahs-gemm-base-builds/refactor-step-e/` (summary, order-witness, full relations,
+resources, diagnostics and source/binary pins).
+
+The real importer/constructor previously used four child channels but no bank
+cycle on the new two-child witness. The shared path now constructs eight channels
+including both per-bank directions, without observation/recurring retry. For four
+outer visits with two visits to each child, retained input removes 110 complete
+payload start/completion relations and adds zero; reload removes 82 and adds zero.
+Dynamic event pairs are 44→42 and 56→50; MTE2 barriers 4→0 and 8→0. One terminal
+ALL remains. These finite order checks are not numerical/device timing claims.
+Retained replay sites 1,052→282; query and staged support work are charged separately.
+GEMM keeps its exact plan/replay while charging 11,088 physical-use visits,
+1,997 producer-support work units and 2,698 staged analysis visits.
+
+Seven compliance reports are nested-condition regex false positives; all bodies
+are braced. Only a production line wrap follows the native campaign. The producer
+guard remains narrower than full ordering certification; Stage 2 is still active.
+Next extend demanded endpoint discovery and participation across reader-only
+regions, without a cross-engine-inside-child benefit gate. Keep exported-prefix,
+open-continuation and generation-scoped ACC obligations explicit.
+
 ## Current iteration — Step D physical-use succession
 
 Step C committed `54cee6cda`. The existing storage analysis now owns cached
