@@ -234,6 +234,11 @@ std::optional<OwnedPacket> Constructor::prepareOwnedPacket(
         packet.push_back(std::move(item));
     }
     out.prepared = ledger.preparePacket(packet);
+    publicationSupport.refresh(ledger);
+    const auto view = ledger.packetView(out.prepared);
+    if (view) {
+        out.publicationProbe = publicationSupport.inspect(ledger, &*view, view->changedCuts());
+    }
     if (!out.prepared.valid()) { return {}; }
     return out;
 }
@@ -296,11 +301,18 @@ bool Constructor::commitOwnedPacket(const OwnedPacket& packet, SelectedDecision&
     if (!packet.qualified) {
         return fail(SelectedFailure::SelectedUpdate, "owned packet was not qualified", current);
     }
+    const bool currentPublicationProof = packet.publicationProbe &&
+        packet.publicationProbe->version == ledger.version() + packet.prepared.size();
+    if (!currentPublicationProof) {
+        return fail(SelectedFailure::SelectedUpdate, "publication certificate changed after qualification", current);
+    }
     const auto ids = ledger.appendPacket(packet.prepared);
     const bool committed = ids.size() == packet.prepared.size();
     if (!committed) {
         return fail(SelectedFailure::SelectedUpdate, "owned packet changed after qualification", current);
     }
+    publicationSupport.accept(ledger, *packet.publicationProbe);
+    decision.existingPublicationsPreserved &= packet.publicationProbe->preserved;
     decision.endpoints.insert(decision.endpoints.end(), ids.begin() + packet.restoredEndpoints, ids.end());
     if (!packet.restoredWaits.empty()) { ++result.work.ownershipBindings; }
     for (auto wait : packet.restoredWaits) {

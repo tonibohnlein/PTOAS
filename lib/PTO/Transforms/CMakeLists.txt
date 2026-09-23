@@ -139,7 +139,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/PTOInsertSync.cpp
   OAHS/Plan.cpp
   OAHS/CausalFrontier.cpp
-  OAHS/SelectedLedger.cpp
+  OAHS/SelectedLedger.cpp OAHS/SelectedPublication.cpp
   OAHS/SelectedControl.cpp
   OAHS/SelectedLifecycles.cpp
   OAHS/SelectedOccurrences.cpp
@@ -389,7 +389,7 @@ endif()
 # Optimize OAHS analysis and construction while retaining the build's assertion
 # settings and leaving other translation units' optimization settings unchanged.
 set_source_files_properties(
-  OAHS/Plan.cpp OAHS/CausalFrontier.cpp OAHS/SelectedLedger.cpp
+  OAHS/Plan.cpp OAHS/CausalFrontier.cpp OAHS/SelectedLedger.cpp OAHS/SelectedPublication.cpp
   OAHS/SelectedControl.cpp OAHS/SelectedLifecycles.cpp OAHS/SelectedOccurrences.cpp
   OAHS/SelectedReplay.cpp OAHS/SelectedGroups.cpp
   OAHS/SelectedAllocation.cpp OAHS/SelectedPlan.cpp OAHS/CyclicFrontiers.cpp

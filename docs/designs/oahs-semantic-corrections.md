@@ -5,6 +5,49 @@ restart checkpoints and historical milestone queues below. Active branch:
 `codex/oahs-gemm-base`; starting HEAD `d5718272e`. Original audit:
 `/home/toni/work/pypto3_sync_more/region-prefill-review-20260922/REVIEW.md`.
 
+## Adopted v0.38 construction-policy continuation (after Z)
+
+User approved continuation from `2241b9ba9` with the same three-reviewer commit
+loop. The sequence below supersedes the older fixed-F4 instruction where they
+conflict. Preserve current mechanisms; no restart or whole donor port.
+
+1. Common realization/support records and persistent publication contracts.
+   Derive finite typed completion/consumption/F8 support before classifying the
+   complete private packet, including mandatory restorations. Admission-rooted
+   source signatures are ordering evidence, never completion credit. Implement
+   scoped normal probes with real ordinary and recurring consumers; wrappers
+   around full-program candidate evaluation do not complete this milestone.
+2. One class-first selector over ordinary and recurring requests. Freeze complete
+   due obligations, retain prescribed same-engine return eligibility, compare
+   normal/fixed-boundary/source-corridor/common-cut realizations, then reason and
+   stable strict-coverage dominance. Activate only the selected certified support;
+   commit cannot silently add stronger repair. Conditional F8 premises remain
+   explicit until sealing. Require strict subset decrease after all maintenance.
+3. Replace recurring-only producer-repair recipes with typed obligations handled
+   at their actual deadlines by applicable ordinary mechanisms. Preserve the
+   repair-relocation negative. Replace historical-unused-key admission only with
+   complete common occurrence/ownership/neighbor/consumption certificates.
+4. Complete guarded-reader composition and replace legacy literal first-use
+   recognition with shared loop-domain facts. Preserve broad semantic families,
+   original predicates, independent facts and conservative unknown outcomes.
+5. Derive the two-child, disjoint-copy and independent unequal-bank pipelines
+   through the same normal constructor; close ordering/cost recovery and matched
+   device evidence. No dynamic-visit or independent-selector product expansion.
+
+Support closure is inspected before selection, selected only afterward. Every
+support endpoint has an original or key-reuse obligation; no arbitrary repair
+network is searched. Probes mutate no selected state. Unknown normal placement
+is not a certificate for a fallback: each recipe needs its own legality proof.
+The old cross-only draft progress universe is reconciled to normalized complete
+original obligations; internal helper IDs never inflate its progress measure.
+
+AA begins dependency 1 with a structural publication-support certificate. It is
+not completion of the common selector/local recurring probe milestone. Exact
+symbolic equality is sufficient preservation, not complete order equivalence;
+changed or unrepresented signatures remain Unknown. Persistent admission roots
+must never be reset after a permitted repair. Full-program causal checks remain
+authoritative; the certificate does not replace them.
+
 ## Adopted continuation — typed derivation and independent pipeline progress
 
 Continuation baseline: `b436c3db0` (Step R), not the Step P pin in

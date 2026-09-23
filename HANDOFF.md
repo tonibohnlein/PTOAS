@@ -1,5 +1,77 @@
 # OAHS current handoff
 
+## Active after Step AA — admission-rooted publication support
+
+User resumed the full v0.38 construction-policy sequence with three reviewers
+per commit. Baseline Z `2241b9ba9`. Continue after this commit; no pause or push.
+Canonical active sequence: `docs/designs/oahs-semantic-corrections.md`, opening
+v0.38 continuation. The old paused status below is historical.
+
+AA adds observational persistent signatures of selected publication prefixes.
+The exact owned packet, including dormant restorations, is inspected privately;
+commit uses that same prepared signature delta. Missing/stale certificates fail
+before ledger mutation. Later edits compare with the immutable admission root,
+including changes propagated through unchanged waits, direct fences, erasure,
+and restoration. Exact structural equality is a sufficient preservation proof;
+changed signatures or unsupported cyclic interfaces are Unknown, not proof of
+increased ordering. No source signature grants causal credit or changes policy.
+
+This is the first dependency of common certified realization selection, NOT its
+completion. No normal-class claim follows from vacuous existing-publication
+preservation. Own coverage, exact milestones, occurrence, neighboring key uses,
+and conditional F8 support still require their certificates. Cyclic interfaces
+remain explicitly unknown. Full-program candidate checks and family-first
+selection are still transitional and must be replaced by the next increments.
+
+Evidence on this source: 23/23 portable suites passed; final atomicity and test
+amendments reran publication_support and selected_hardening (2/2). Three native
+drivers, 88/88 corpus, 18/19 compatibility (inherited refusal), one GEMM, two
+prefills and three targets passed. All 113 campaign outputs match Z byte for
+byte, including the refusal. Successful emitted identity establishes represented
+order/resource identity, not recovery of older ordering debts. No sanitizer or
+device campaign. Compliance: 12 changed code files, zero errors/warnings.
+
+Matched successful-input updates 8163 and regular replay 7056798 are unchanged.
+New support work: 215947 sites, 30332 commands, 4672 contract comparisons and
+96864 interned nodes. Elapsed 354.82 -> 322.61 seconds is nonisolated, not a speedup
+claim. A changed prefix can propagate over its entire affected suffix; rejected
+probe nodes remain interned and charged. This is not permission to perform this
+work for every class of every provider. Repeated identical probes intern no new
+nodes; accepted preparation reuses its delta without a second probe.
+
+Architecture/bounded-generality, correctness and asymptotic-performance reviewers
+all ACCEPT this bounded increment, source-only. Tests cover original choices,
+cyclic/stale unknowns, exact generation identities, indirect propagation, normal
+constructor contamination, physical subdivision, dormant closure and atomicity.
+Cost families of 16/64/256 sites preserve constant tail-edit propagation. Full
+normal-class and recurring local-probe review remains ahead.
+
+Artifacts: `../oahs-gemm-base-builds/refactor-step-aa/` contains native build and
+input/binary pins, campaign logs/results/summary, reviews and staged source diff.
+Paper progress reconciliation changes five files under the separate draft repo:
+Algorithm 1 and the progress argument use a fixed normalized complete residual;
+only prescribed indexed returns can sponsor same-engine communication. Ordinary
+fencing handles the remainder; internal maintenance records do not enlarge the
+progress universe. The cross-engine-only bound is explicitly scoped. Preserve the
+other agent's independent figure/storage-analysis edits; no paper commit yet.
+
+### Next increment: common complete realizations and local certificates
+
+Retain semantic evidence from existing recurring qualification as typed F8 and
+completion/consumption support obligations. Introduce complete realization records
+and actual local probes for one ordinary and one recurring client. Class/coverage
+must include every mandatory restoration and affected publication; probing grants
+no reservations. Unify competition over the complete actual residual, then commit
+only the selected certified packet and refresh with strict normalized progress.
+Do not wrap candidate whole-program solves and call that local qualification.
+Keep missing certificates explicit, with supported-input service and charged
+transitional paths. Next replace recurring-recipe-only producer support with
+ordinary typed repair, and virgin-key admission with common reuse certificates.
+Retain all F/G/L/R/V recovery debts and later reader/copy/unequal-bank milestones.
+
+## Historical Step Z handoff
+
+
 ## Paused after completed bounded Step Z — atomic ordinary acknowledgment packets
 
 User requested this commit followed by a pause and recap. Do not start the next

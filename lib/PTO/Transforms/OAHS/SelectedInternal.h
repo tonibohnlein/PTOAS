@@ -156,6 +156,44 @@ private:
     std::map<Cut, std::map<Id, std::vector<Id>>> insertions;
 };
 
+// Publication preservation is an ordering certificate, never completion credit.
+// Roots describe original issue/completion dependencies and exact selected event
+// identities. Admission roots are immutable even after a permitted repair.
+class PublicationSupport {
+public:
+    struct Probe {
+        uint64_t version = 0;
+        // Only affected existing source contracts; not own coverage, event
+        // legality, or complete normal-class qualification.
+        bool preserved = true;
+        std::map<Cut, std::vector<Id>> states;
+        std::map<std::pair<Id, Cut>, Id> roots;
+    };
+    PublicationSupport(const Program&, const Control&, const CausalFrontier&);
+    Probe inspect(const Ledger&, const PacketView*, const std::vector<Cut>&);
+    void accept(const Ledger&, Probe);
+    void refresh(const Ledger&);
+    const std::vector<SelectedPublicationSupport>& records() const { return contracts; }
+    uint64_t sites = 0, commands = 0, checks = 0, nodes = 0;
+private:
+    enum class Kind { Union, Choice, Publication, Receipt, Issue, Completion };
+    using Node = std::tuple<Kind, Id, std::vector<Id>>;
+    const Program& program;
+    const Control& control;
+    const CausalFrontier& frontier;
+    std::map<Node, Id> expressions;
+    std::vector<std::vector<Id>> outgoing;
+    std::map<std::pair<Id, Cut>, Id> byOccurrence;
+    std::vector<SelectedPublicationSupport> contracts;
+    uint64_t version = 0;
+    bool initialized = false;
+    Id expression(Kind, Id, std::vector<Id>);
+    Id unite(Id, Id);
+    std::vector<Id> incoming(Cut, const Probe&);
+    void command(std::vector<Id>&, const SelectedEndpoint&, Cut, Probe&);
+    void payload(std::vector<Id>&, Cut);
+};
+
 class OwnedPacket {
     friend class Constructor;
     friend struct ReplayTestAccess;
@@ -165,6 +203,8 @@ class OwnedPacket {
     Id restoredEndpoints = 0;
     std::map<Id, Id> deadlines;
     std::map<Id, std::string> fallbackReasons;
+    // Complete restoration effects are included before a recipe is classified.
+    std::optional<PublicationSupport::Probe> publicationProbe;
 };
 
 class Ledger {
@@ -218,6 +258,7 @@ public:
     const std::vector<Id>& word(Cut) const;
     const SelectedEndpoint& endpoint(Id) const;
     uint64_t version() const;
+    std::vector<Cut> changedCuts() const;
 private:
     const Ledger* ledger = nullptr;
     const PreparedPacket* packet = nullptr;
@@ -508,6 +549,7 @@ private:
     StorageFrontierAnalysis storage;
     RequirementFrontiers requirements;
     Ledger ledger;
+    PublicationSupport publicationSupport;
     SelectedPlan result;
     Replay cache;
     // Original scope of an admitted producer-support obligation. The classes

@@ -40,6 +40,19 @@ Cost track: extract measured plan-equivalent reductions with their consumers;
 new caches/region execution require evidence and invalidation tests. Two local
 resource-intensive workers maximum in aggregate.
 
+## Current v0.38 continuation after AA
+
+The opening v0.38 sequence in semantic-corrections is authoritative. AA provides
+admission-rooted existing-publication signatures through complete owned packets;
+three reviewers accepted its bounded scope and current host plans match Z.
+It does not classify complete realizations, unify selection, or certify cyclic
+publication preservation. Next: typed finite support plus common local ordinary/
+recurring realization probes, then one class-first selector over complete due
+obligations. Support/restoration effects are known before selection; only the
+winner becomes selected state. Retain same-engine indexed returns and the fixed
+normalized progress universe. Replace family-only repair and virgin-key gates
+through common certificates, preserving unknown facts and the negative tests.
+
 ## Current continuation after R
 
 User-approved sequence is the "Adopted continuation" in the canonical semantic

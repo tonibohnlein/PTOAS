@@ -201,6 +201,27 @@ struct ReplayTestAccess {
         constructor.needsContextualReplay = true;
         return constructor.run({}, false);
     }
+    static void publicationProofAtomicity()
+    {
+        for (unsigned variant = 0; variant < 2; ++variant) {
+            auto p = base(1);
+            p.operations = {op(Pipe::MTE2, {}), op(Pipe::V, {})};
+            Constructor c(p);
+            const OrderedPacket request{
+                {1, {Command::Publish, Pipe::MTE2, Pipe::V, 0}, EndpointPurpose::Completion},
+                {1, {Command::Acquire, Pipe::MTE2, Pipe::V, 0}, EndpointPurpose::Completion}};
+            auto packet = c.qualifyOwnedPacket(request, true);
+            require(bool(packet), "publication atomicity fixture qualification");
+            if (variant == 0) { packet->publicationProbe.reset(); }
+            else { ++packet->publicationProbe->version; }
+            const auto version = c.ledger.version(), population = c.ledger.records().size();
+            SelectedDecision decision;
+            require(!c.commitOwnedPacket(*packet, decision), "missing/stale publication proof committed");
+            require(c.ledger.version() == version && c.ledger.records().size() == population,
+                    "rejected publication proof mutated the ledger");
+        }
+    }
+
     static void restorationIntervals(unsigned variant)
     {
         const auto P = Pipe::MTE2, Q = Pipe::V;
@@ -234,6 +255,8 @@ struct ReplayTestAccess {
         }
         auto staged = c.prepareOwnedPacket(request, {wait});
         require(bool(staged), "interval fixture could not stage owned packet");
+        require(staged->publicationProbe && staged->publicationProbe->roots.count({pub, 0}) != 0,
+                "publication probe omitted mandatory restored support");
         const bool late = variant == 0 || variant == 3;
         require((!staged->deadlines.empty()) == late,
                 "deadline query confused packet index with emitted gap order: variant=" + std::to_string(variant) +
@@ -1229,6 +1252,7 @@ int main()
     for (unsigned variant = 0; variant < 4; ++variant) {
         o::selected::ReplayTestAccess::restorationIntervals(variant);
     }
+    o::selected::ReplayTestAccess::publicationProofAtomicity();
     o::selected::ReplayTestAccess::restorationFallback();
     o::selected::ReplayTestAccess::ownedPackets();
     o::selected::ReplayTestAccess::ownedPackets(true);

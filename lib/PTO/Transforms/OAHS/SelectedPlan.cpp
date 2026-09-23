@@ -12,7 +12,7 @@
 namespace mlir::pto::oahs::selected {
 Constructor::Constructor(const Program& p)
     : program(p), frontier(p), control(p), storage(p), requirements(p, control, storage),
-      ledger(p, control.canonicalCut), finalized(control.graph.sites.size())
+      ledger(p, control.canonicalCut), publicationSupport(p, control, frontier), finalized(control.graph.sites.size())
 {
     needsContextualReplay = control.unsummarizedBackedges != 0;
 }
@@ -36,6 +36,7 @@ bool Constructor::finish()
             ledger.append(exit, {Command::BarrierAll, Pipe::S, Pipe::S, 0}, EndpointPurpose::Retirement);
         }
     }
+    publicationSupport.refresh(ledger);
     auto commands = ledger.commands();
     result.certificate = checkCausalFrontier(program, commands);
     result.work.invariantSiteEvaluations += result.certificate.siteEvaluations;
@@ -113,6 +114,17 @@ SelectedPlan Constructor::run(const Commands& fixed, bool useRecurring)
                 placement.deadlinePublication = remap[placement.deadlinePublication];
             }
         }
+        for (auto contract : publicationSupport.records()) {
+            const bool live = contract.publication < remap.size() && remap[contract.publication] != NoAnalysisId;
+            if (live) {
+                contract.publication = remap[contract.publication];
+                result.publicationSupport.push_back(contract);
+            }
+        }
+        result.work.publicationSupportSites = publicationSupport.sites;
+        result.work.publicationSupportCommands = publicationSupport.commands;
+        result.work.publicationSupportChecks = publicationSupport.checks;
+        result.work.publicationSupportNodes = publicationSupport.nodes;
         result.work.sourceHandles = result.sources.size();
         result.work.occurrenceAnalysisSites = control.occurrenceAnalysisSites;
         result.work.boundaryAnalysisSites = control.boundaryAnalysisSites;

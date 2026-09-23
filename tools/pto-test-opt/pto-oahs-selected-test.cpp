@@ -1383,6 +1383,11 @@ module attributes {pto.target_arch = "a3"} {
     const auto plan = oahs::constructSelectedPlan(imported.program);
     if (!check(plan.success && oahs::checkCausalFrontier(imported.program, plan.commands).accepted,
                "native atomic acknowledgment construction")) { return false; }
+    const bool tracked = plan.work.publicationSupportSites != 0 &&
+        std::any_of(plan.publicationSupport.begin(), plan.publicationSupport.end(), [](const auto& contract) {
+          return contract.admittedRoot != oahs::NoAnalysisId && contract.preserved;
+        });
+    if (!check(tracked, "native equivalent views/control lost publication source contracts")) { return false; }
     const auto repair = std::find_if(plan.decisions.begin(), plan.decisions.end(), [](const auto& decision) {
       return decision.repairedAcquisition != oahs::NoAnalysisId;
     });
@@ -2000,6 +2005,10 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " restoration_positions=" << work.restorationPositionEntries
                  << " restoration_fallbacks=" << work.restorationDeadlineFallbacks
                  << " deadline_restorations=" << work.deadlineRestorations
+                 << " publication_support_sites=" << work.publicationSupportSites
+                 << " publication_support_commands=" << work.publicationSupportCommands
+                 << " publication_support_checks=" << work.publicationSupportChecks
+                 << " publication_support_nodes=" << work.publicationSupportNodes
                  << " ownership_checks=" << work.ownershipChecks
                  << " ownership_sites=" << work.ownershipCheckSites
                  << " ownership_bindings=" << work.ownershipBindings

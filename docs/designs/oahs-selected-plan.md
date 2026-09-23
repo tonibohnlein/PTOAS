@@ -1360,3 +1360,42 @@ activation uses an explicit one-key profile while retaining imported effects;
 real-target reconstruction is checked separately. Existing dormant/joined closed
 policy differences remain unchanged. Z consolidates the ordinary split mutation,
 not every remaining closed-protocol selection rule.
+
+## AA: admission-rooted publication source signatures (foundation)
+
+Missing fact: an earlier selected SET can acquire a new prerequisite through an
+inserted WAIT or through a changed SET feeding an unchanged WAIT. Stable gap and
+packet atomicity do not certify preserved source independence.
+
+`PublicationSupport` is the shared ordering-evidence service. It builds interned
+symbolic issue gates, completion aggregates, original choices and exact selected
+SET/WAIT identities. Payload completion retains its issue prerequisites. Each
+selected publication occurrence keeps its immutable admission root. Complete
+owned-packet preparation, including dormant restoration, obtains an affected
+source-preservation result. Commitment reuses the exact prepared delta. Direct
+fences, helper erasure and finalization refresh the same service before changes
+are forgotten. Ordinary and recurring clients consume the common path.
+
+This is a sufficient equality certificate only. Different expressions, unknown
+recurrence and unsupported continuation yield Unknown, not a proven increase in
+payload order. Unaffected unknown contracts remain unknown; a packet's Boolean
+speaks only about affected existing sources. It does not certify own coverage,
+newly gated payloads, full participation, event legality or a normal recipe class.
+The current constructor records the outcome but retains its checked policy.
+Persistent typed requirement/support records and common selection remain next.
+
+Gates: acyclic original dependencies and matching selected event identities are
+sufficient; native ACC never supplies operation completion. Original choice nodes
+retain alternatives structurally, not as acquired conjunctions. A dirty cyclic
+interface cannot become proved merely because Unknown compares equal to Unknown.
+No dtype/shape/cell-count gate is introduced. Equivalent physical subdivision does
+not affect signatures because they depend on original payload occurrences.
+
+Cost: hardware-width interfaces are recomputed for affected sites until unchanged;
+unchanged words/state remain shared. No payload-order closure, per-publication
+walk or dynamic unrolling occurs. An early edit can still reach the whole suffix,
+so this is not the completed local normal-probe contract. Interned expressions
+from rejected probes are retained and charged to all distinct candidate work.
+Identical repeated probes reuse nodes; committing a prepared delta does not rerun
+it. The future selector must not blindly multiply suffix propagation by all
+requests/classes. Counters report sites, commands, comparisons and new nodes.

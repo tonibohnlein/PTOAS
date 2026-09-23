@@ -290,6 +290,12 @@ const SelectedEndpoint& PacketView::endpoint(Id id) const
     if (moved != packet->relocated.end()) { return moved->second; }
     return id < packet->firstEndpoint ? ledger->endpoint(id) : packet->endpoints[id - packet->firstEndpoint];
 }
+std::vector<Cut> PacketView::changedCuts() const
+{
+    std::vector<Cut> cuts;
+    for (const auto& entry : words) { cuts.push_back(entry.first); }
+    return cuts;
+}
 uint64_t PacketView::version() const { return packet->version + packet->ordered.size(); }
 void Ledger::recordEvent(const SelectedEndpoint& endpoint)
 {

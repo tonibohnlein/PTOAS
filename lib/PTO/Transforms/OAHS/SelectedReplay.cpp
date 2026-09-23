@@ -642,6 +642,7 @@ bool Constructor::update()
     record.changedCuts = ledger.changes();
     result.work.unreusedUpdates += record.reusedComponents == 0;
     result.updates.push_back(std::move(record));
+    publicationSupport.refresh(ledger);
     ledger.clearChanges();
     ++result.work.selectedUpdates;
     return true;

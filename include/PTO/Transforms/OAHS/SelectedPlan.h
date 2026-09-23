@@ -42,6 +42,16 @@ struct SelectedRestoration {
     uint64_t version = 0;
     std::string fallbackReason;
 };
+// A sufficient structural ordering certificate, separate from causal legality.
+// Unknown includes a changed symbolic dependency and unsupported recurrence;
+// it is not a claim that the payload order necessarily grew.
+struct SelectedPublicationSupport {
+    std::size_t publication = NoAnalysisId;
+    Cut occurrence = NoAnalysisId;
+    uint64_t admittedVersion = 0, checkedVersion = 0;
+    std::size_t admittedRoot = NoAnalysisId;
+    bool preserved = false;
+};
 struct SelectedSource {
     Pipe pipe = Pipe::S;
     std::size_t origin = NoAnalysisId;
@@ -67,6 +77,7 @@ struct SelectedDecision {
     std::vector<SelectedLifecycleDemand> lifecycles;
     std::vector<std::size_t> endpoints;
     bool commonCut = false, enlargedPrefix = false;
+    bool existingPublicationsPreserved = true;
     // Present only when F7 repaired consumption-before-republication. These
     // are physical key numbers and actual ledger endpoint IDs, not a claim of
     // storage completion by the helper.
@@ -142,6 +153,8 @@ struct SelectedWork {
     uint64_t requirementClassifications = 0, classificationSites = 0, classificationOrigins = 0;
     uint64_t witnessQueries = 0, witnessSites = 0;
     uint64_t producerSupportWork = 0;
+    uint64_t publicationSupportSites = 0, publicationSupportCommands = 0;
+    uint64_t publicationSupportChecks = 0, publicationSupportNodes = 0;
     uint64_t restorationDeadlineQueries = 0, restorationUseChecks = 0, deadlineRestorations = 0;
     uint64_t restorationPositionEntries = 0, restorationDeadlineFallbacks = 0;
     uint64_t acknowledgmentPrefixReplays = 0, acknowledgmentPrefixReplaySites = 0;
@@ -213,6 +226,7 @@ struct SelectedPlan {
     std::vector<SelectedFence> fences;
     std::vector<SelectedRestoration> restorations;
     std::vector<SelectedUpdate> updates;
+    std::vector<SelectedPublicationSupport> publicationSupport;
     // Populated only from the final, entry-containing original-graph proof.
     std::vector<SelectedLoopInterface> loops;
     FrontierCheck certificate;
