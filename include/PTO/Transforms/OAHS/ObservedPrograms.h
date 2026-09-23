@@ -70,6 +70,23 @@ ObservedImport refineFirstUse(const Program &, const FirstUseRegion &);
 // retain their own modes and shared physical phases. Invariant effects are not
 // replaced by the enclosing bank's conservative may-footprints.
 ObservedImport refineBankOccurrences(const Program &, const CountedLoopRegion &);
+// Frontend-proved original Boolean, invariant for one entry-to-exit interval.
+// The two successor populations are the actual original decision alternatives.
+// Availability includes every retained command anchor, not only the decision.
+struct ParticipationRegion {
+  std::size_t entry = 0, exit = 0, decision = 0;
+  ObservationAtom predicate;
+  std::vector<std::size_t> whenFalse, whenTrue;
+  bool available = false;
+};
+struct ParticipationImport : ObservedImport {
+  std::vector<std::size_t> accepted;
+  std::vector<std::string> refusals;
+  uint64_t work = 0;
+  unsigned copies = 0, validations = 0, refreshes = 0;
+};
+ParticipationImport refineParticipations(const Program &, const std::vector<ParticipationRegion> &);
+ObservedImport refineParticipation(const Program &, const ParticipationRegion &);
 struct ObservedWord {
   OriginalObservation observation;
   std::vector<Command> commands;

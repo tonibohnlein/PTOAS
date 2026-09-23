@@ -1141,3 +1141,61 @@ RMSNorm ordering losses and global-evaluation cost are recorded in HANDOFF.
 Draft v0.38 local probes require a later replacement for both full-graph private
 checks; the present version does not claim that milestone or the new class-first
 single-scan policy. Admission success alone does not establish preserved overlap.
+
+## Step W invariant — executable original participation
+
+Missing fact: D3 retains a sibling LoopNonEmpty predicate, but an existing reader
+word cannot evaluate it or correlate it with the sibling's actual initial visit.
+Extend original endpoint-demand queries and native observation refinement. A
+qualified predicate names original lower/upper bounds with a positive-step domain;
+its values must dominate every annotated endpoint. Ordinal predicates keep their
+stronger active-owner/induction-variable premise. No scalar payload is speculated.
+
+A demand-local Boolean quotient carries only this original participation fact
+through its named read interval and correlates the actual child-entry decision.
+Every feasible original execution retains its payload and endpoint occurrences;
+each copied word names the exact predicate. Rejoining the continuation carries
+all causal/event state normally. Re-entry resamples original bounds; no runtime
+history counter and no completion credit. Existing readerBoundaries and finite
+families are the actual consumers. Unavailable bounds or unsupported correlations
+remain Unknown, retaining physical effects and ordinary construction.
+
+Initial scope is one independently materialized live predicate per affected
+interval; overlapping demands are an explicit unfinished precision limitation,
+not a hardware requirement. Independent disjoint intervals do not form a global
+product. Both-empty child families additionally require interval-nonempty
+readiness/release support and are not implied by the mandatory-first-child case.
+Use normal constructor tests, exact emitted predicate readback, negative polarity,
+reload/outside-reader cases and repeated-entry/scaling evidence before acceptance.
+
+W qualification inventory (sufficient representation certificates, not hardware
+limits):
+
+- Original positive-step domain and exact lower/upper values dominate the first
+  relevant read frontier and all annotated positions. Unavailable values remain
+  Unknown; neither scalar work nor a predicate is speculated.
+- The sampled initial child decision has exact disjoint empty/nonempty successors.
+  A single invocation contains the interval; internal entry predecessors and
+  decision re-entry are refused. Parent re-entry samples the bounds again.
+- All reachable occurrences of each affected original command word lie inside
+  the interval. The unconditional entry word has one occurrence and no payload;
+  cloned entry nodes have no word. This retains the early unconditional source
+  without executing a command word twice or changing its participation.
+- Only affected paired loop interfaces are remapped/refreshed. Unrelated legacy
+  unpaired interfaces remain unchanged. Proved NoHit prefix regions are trimmed
+  through the shared typed query; unrelated operations do not select the entry.
+- Disjoint demands are applied in one batch (one program copy and metadata pass).
+  Overlapping predicates, a relevant direct-payload entry without a separate
+  source gap, and unsupported copied-owner correspondence remain Unknown. These
+  require composed guarded-frontier and exact-gap representation, not more
+  syntax/dtype recognition. Both-optional/no-reader families remain unfinished.
+- The observation materialization budget bounds optional precision independently
+  of event pools; original effects and ordinary construction remain available.
+
+This is a precision extension. Immutable D3 demand discovery does not instantiate
+storage-history relationships or protocol candidates. Requested frontier roots
+share visited DAG traversal, but internal nodes do not cache transitive subject
+sets. Interval geometry is reused across predicates. Batch preparation/output and
+requested-root traversal have scaling evidence; arbitrary overlapping refusals
+and existing occurrence-metadata refresh have no universal linear-cost claim.
+The selected causal state, event ownership and authoritative checker are unchanged.

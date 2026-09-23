@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "SelectedTestSupport.h"
 #include "GraphOracle.h"
+#include "../../lib/PTO/Transforms/OAHS/OriginalReadQueries.h"
 #include "../../lib/PTO/Transforms/OAHS/SelectedInternal.h"
 #include <functional>
 #include <set>
@@ -508,9 +509,270 @@ void composedReaders(unsigned variant)
     }
 }
 
+void participationDemandScaling()
+{
+    uint64_t previous = 0;
+    for (unsigned count : {16u, 32u, 64u}) {
+        auto p = base(1);
+        p.operations = {op(o::Pipe::MTE2, {{0, false, true}}), op(o::Pipe::V, {{0, true, false}})};
+        auto body = seq({leaf(0), leaf(1)});
+        for (unsigned i = 0; i < count; ++i) {
+            const auto operation = p.operations.size();
+            p.operations.push_back(op(o::Pipe::V, {{0, true, false}}));
+            o::Region child{o::Region::For, {seq({leaf(operation)})}};
+            child.zeroTripPossible = true; body.children.push_back(child);
+        }
+        p.body = {o::Region::For, {body}};
+        const auto imported = o::addStructuredBoundaryCuts(p);
+        require(imported.success, imported.reason);
+        o::storage_detail::OriginalReadQueries reads(imported.program);
+        const auto demands = reads.participationDemands();
+        require(demands.size() == count, "optional sibling demand disappeared");
+        const auto work = reads.compositionParts;
+        require(!previous || work <= previous * 2 + 32, "linear frontier DAG materialized quadratic subject sets");
+        previous = work;
+    }
+}
+
+void participationBatchScaling()
+{
+    uint64_t previous = 0;
+    for (unsigned count : {4u, 8u, 16u}) {
+        auto p = base(1);
+        o::ObservedControl q; q.qualification = "test original independently sampled Boolean intervals";
+        q.scopes.push_back({0, o::NoControlId, o::NoControlId});
+        q.sites.resize(5 * count + 1); q.exit = 5 * count;
+        std::vector<o::ParticipationRegion> requests;
+        for (unsigned site = 0; site < q.sites.size(); ++site) {
+            q.sites[site].observation = q.observations.size();
+            q.observations.push_back({site, {}, true});
+            if (site != q.exit) { q.sites[site].successors = {site + 1}; }
+        }
+        for (unsigned i = 0; i < count; ++i) {
+            const auto start = 5 * i, decision = start + 2, stop = start + 4;
+            for (auto site : {start + 1, start + 3}) {
+                q.sites[site].operation = p.operations.size();
+                p.operations.push_back(op(o::Pipe::V, {{0, true, false}}));
+            }
+            q.sites[decision].successors = {start + 3, stop};
+            requests.push_back({start, stop, decision,
+                {o::ObservationAtom::LoopNonEmpty, decision, 0, 1}, {stop}, {start + 3}, true});
+        }
+        p.observed = q;
+        auto overlap = requests.front(); overlap.predicate.owner += q.sites.size();
+        requests.push_back(overlap);
+        const auto batch = o::refineParticipations(p, requests);
+        require(batch.success && batch.accepted.size() == count,
+                "disjoint demands lost to unrelated overlapping demand");
+        require(batch.copies == 1 && batch.validations == 2 && batch.refreshes == 1,
+                "participation repeats whole-program preparation per interval");
+        require(!batch.refusals.back().empty(), "unsupported overlap was silently accepted");
+        require(!previous || batch.work <= previous * 2 + 4, "disjoint predicate refinement work is not linear");
+        previous = batch.work;
+        require(batch.program.observed->sites.size() == 13 * count + 1,
+                "independent predicates formed a global product");
+        auto cyclic = p;
+        cyclic.observed->sites[1].successors.push_back(0);
+        const auto prefixCycle = o::refineParticipations(cyclic, {requests.front()});
+        require(prefixCycle.success && prefixCycle.accepted.empty() &&
+                prefixCycle.refusals.front().find("entry repeats") != std::string::npos,
+                "prefix cycle skipped the original unguarded entry word");
+        auto unrelated = p;
+        const auto other = 5 * (count - 1);
+        o::ObservedLoop legacy{other, other, other + 4, {other + 1, other + 2, other + 3}, other + 1, false};
+        legacy.entries = {other}; legacy.exits = {other + 4};
+        unrelated.observed->loops.push_back(legacy);
+        const auto local = o::refineParticipations(unrelated, {requests.front()});
+        require(local.success && local.accepted.size() == 1 &&
+                local.program.observed->loops.back().occurrences.empty() &&
+                local.program.observed->loops.back().sites == legacy.sites,
+                "unrelated unpaired loop blocked or changed a local participation interval");
+        auto alias = p;
+        alias.observed->sites[q.exit].observation = q.sites[2].observation;
+        const auto outside = o::refineParticipations(alias, {requests.front()});
+        require(outside.success && outside.accepted.empty() &&
+                outside.refusals.front().find("command words") != std::string::npos,
+                "outside word: " + outside.reason + (outside.refusals.empty() ? "" : outside.refusals.front()));
+        alias = p;
+        alias.observed->sites[2].observation = q.sites[0].observation;
+        const auto shared = o::refineParticipations(alias, {requests.front()});
+        require(shared.success && shared.accepted.empty() &&
+                shared.refusals.front().find("source gap") != std::string::npos,
+                "shared unguarded entry word was accepted");
+    }
+}
+
+void optionalReaderParticipation()
+{
+    auto p = base(1, 2);
+    p.operations = {op(o::Pipe::MTE2, {{0, false, true}}),
+                    op(o::Pipe::V, {{0, true, false}}), op(o::Pipe::V, {{0, true, false}})};
+    for (unsigned i = 0; i < p.operations.size(); ++i) { p.operations[i].original = i; }
+    o::Region a{o::Region::For, {seq({leaf(1)})}};
+    o::Region b{o::Region::For, {seq({leaf(2)})}}; b.zeroTripPossible = true;
+    p.body = {o::Region::For, {seq({leaf(0), a, b})}};
+    auto input = o::addStructuredBoundaryCuts(p);
+    require(input.success, input.reason);
+    p = std::move(input.program);
+    std::vector<o::Cut> owners;
+    for (const auto& scope : p.observed->scopes) {
+        if (scope.kind == o::AnalysisContext::ForBody) { owners.push_back(scope.ownerSite); }
+    }
+    for (unsigned child = 1; child <= 2; ++child) {
+        auto model = region(p, owners[child]); model.period = 1; model.atLeastOnce = child == 1;
+        auto refined = o::refineCountedLoop(p, model);
+        require(refined.success, refined.reason); p = std::move(refined.program);
+    }
+    auto parent = region(p, owners.front());
+    p.observed->loops.push_back({parent.owner, parent.owner, parent.continuation,
+                                parent.bodySites, parent.bodyEntry, true});
+    p.observed->loops.back().sites.push_back(parent.header);
+    o::selected::Control control(p);
+    o::StorageFrontierAnalysis storage(p);
+    o::selected::RequirementFrontiers frontiers(p, control, storage);
+    o::storage_detail::OriginalReadQueries reads(p);
+    const auto demands = reads.participationDemands();
+    require(demands.size() == 1 && demands.front().predicate.owner == owners[2], "D3 sibling participation demand");
+    o::ParticipationRegion model;
+    model.entry = owners[1]; model.exit = parent.header; model.decision = owners[2];
+    model.predicate = demands.front().predicate; model.available = true;
+    const auto choices = p.observed->sites[model.decision].successors;
+    model.whenFalse = {choices.front()}; model.whenTrue.assign(choices.begin() + 1, choices.end());
+    auto unavailable = model; unavailable.available = false;
+    require(!o::refineParticipation(p, unavailable).success, "unavailable predicate accepted");
+    auto malformed = model; malformed.whenTrue.push_back(choices.front());
+    require(!o::refineParticipation(p, malformed).success, "overlapping alternatives accepted");
+    auto refined = o::refineParticipation(p, model);
+    require(refined.success, refined.reason);
+    const auto plan = accepted(refined.program);
+    require(!plan.declinedRecurring && !plan.activations.empty(), "optional reader family not activated");
+    require(plan.channels.size() == 2, "optional child created a private protocol");
+    auto schema = o::exportObservedSchema(refined.program, plan.commands);
+    require(schema.complete && o::reconstructObservedSchema(refined.program, schema).success,
+            "optional participation reconstruction failed");
+    bool aRelease = false, bRelease = false;
+    for (const auto& channel : plan.channels) {
+        if (channel.source != o::Pipe::V) { continue; }
+        for (auto cut : channel.publications) {
+            const auto observation = refined.program.observed->sites[cut].observation;
+            if (observation == o::NoControlId) { continue; }
+            for (const auto& atom : refined.program.observed->observations[observation].atoms) {
+                if (atom.kind == o::ObservationAtom::LoopNonEmpty && atom.owner == owners[2]) {
+                    aRelease |= atom.value == 0; bRelease |= atom.value == 1;
+                }
+            }
+        }
+    }
+    require(aRelease && bRelease, "final release lost original child participation");
+    const auto baseline = accepted(p);
+    const auto& q = *refined.program.observed;
+    std::vector<o::Cut> oldWords(q.observations.size(), o::NoControlId);
+    for (std::size_t word = 0; word < q.observations.size(); ++word) {
+        auto original = q.observations[word];
+        original.atoms.erase(std::remove_if(original.atoms.begin(), original.atoms.end(), [&](const auto& atom) {
+            return atom.kind == o::ObservationAtom::LoopNonEmpty && atom.owner == owners[2];
+        }), original.atoms.end());
+        for (o::Cut site = 0; site < p.observed->sites.size(); ++site) {
+            const auto prior = p.observed->sites[site].observation;
+            if (prior == o::NoControlId) { continue; }
+            const auto& before = p.observed->observations[prior];
+            const bool sameAtoms = std::equal(before.atoms.begin(), before.atoms.end(),
+                original.atoms.begin(), original.atoms.end(), [](const auto& a, const auto& b) {
+                    return std::tie(a.kind, a.owner, a.parameter, a.value) ==
+                           std::tie(b.kind, b.owner, b.parameter, b.value);
+                });
+            if (before.anchor == original.anchor && sameAtoms) {
+                oldWords[word] = site; break;
+            }
+        }
+    }
+    unsigned traces = 0, removed = 0;
+    bool skipped = false, present = false, changedOnReentry = false;
+    std::vector<o::Cut> path;
+    std::map<o::Cut, unsigned> backedges;
+    auto checkTrace = [&]() {
+        auto truth = refined.program; truth.observed.reset(); truth.operations.clear();
+        std::array<o::Commands, 2> words;
+        std::array<std::vector<o::Command>, 2> pending;
+        std::vector<unsigned> visits;
+        for (auto site : path) {
+            const auto& node = q.sites[site];
+            for (const auto& command : plan.commands[site]) { pending[1].push_back(command); }
+            if (node.observation != o::NoControlId) {
+                require(oldWords[node.observation] != o::NoControlId, "participation lost original word projection");
+                for (const auto& command : baseline.commands[oldWords[node.observation]]) {
+                    pending[0].push_back(command);
+                }
+            }
+            if (node.operation == o::NoControlId) { continue; }
+            visits.push_back(truth.operations.size());
+            truth.operations.push_back(refined.program.operations[node.operation]);
+            for (unsigned version = 0; version < 2; ++version) {
+                words[version].push_back(std::move(pending[version])); pending[version].clear();
+            }
+        }
+        if (visits.empty()) { return; }
+        std::vector<unsigned> optionalReads;
+        for (const auto& operation : truth.operations) {
+            if (operation.original == 0) { optionalReads.push_back(0); }
+            if (operation.original == 2) { ++optionalReads.back(); }
+        }
+        for (std::size_t episode = 0; episode < optionalReads.size(); ++episode) {
+            skipped |= optionalReads[episode] == 0;
+            present |= optionalReads[episode] != 0;
+            if (episode) {
+                changedOnReentry |= bool(optionalReads[episode]) != bool(optionalReads[episode - 1]);
+            }
+        }
+        std::array<std::set<std::pair<unsigned, unsigned>>, 2> relations;
+        for (unsigned version = 0; version < 2; ++version) {
+            words[version].push_back(std::move(pending[version]));
+            require(bool(oahs_oracle::graph(truth, words[version], visits, {}, nullptr, nullptr, &relations[version])),
+                    "optional-reader concrete event or memory failure");
+        }
+        require(std::includes(relations[0].begin(), relations[0].end(), relations[1].begin(), relations[1].end()),
+                "participation added payload order on a complete nonempty trace");
+        removed += relations[0].size() - relations[1].size();
+        ++traces;
+    };
+    std::function<void(o::Cut, unsigned)> walk = [&](o::Cut at, unsigned payloads) {
+        payloads += q.sites[at].operation != o::NoControlId;
+        if (payloads > 10) { return; }
+        require(path.size() < 512, "participation introduced a payload-free cycle");
+        path.push_back(at);
+        if (at == q.exit) { checkTrace(); }
+        else {
+            const auto& node = q.sites[at];
+            for (std::size_t edge = 0; edge < node.successors.size(); ++edge) {
+                const auto owner = node.backedgeOwners.empty() ? o::NoControlId : node.backedgeOwners[edge];
+                if (owner != o::NoControlId && backedges[owner] == 2) { continue; }
+                if (owner != o::NoControlId) { ++backedges[owner]; }
+                walk(node.successors[edge], payloads);
+                if (owner != o::NoControlId) { --backedges[owner]; }
+            }
+        }
+        path.pop_back();
+    };
+    walk(q.entry, 0);
+    require(traces > 0 && skipped && present && changedOnReentry,
+            "optional-reader comparison missed empty/nonempty/reentered participation");
+    auto missing = plan.commands;
+    for (auto& word : missing) {
+        word.erase(std::remove_if(word.begin(), word.end(), [](const auto& command) {
+            return command.kind == o::Command::Publish && command.source == o::Pipe::V &&
+                   command.observer == o::Pipe::MTE2;
+        }), word.end());
+    }
+    require(!o::checkCausalFrontier(refined.program, missing).accepted, "missing final release was accepted");
+    std::cout << "optional reader traces=" << traces << " removed relations=" << removed << '\n';
+}
+
 } // namespace
 int main()
 {
+    participationDemandScaling();
+    participationBatchScaling();
+    optionalReaderParticipation();
     accumulatorOverlay(false);
     accumulatorOverlay(true);
     accumulatorOverlay(false, true);

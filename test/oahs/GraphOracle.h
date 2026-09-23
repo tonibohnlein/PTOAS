@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <map>
 #include <numeric>
+#include <set>
 #include <limits>
 #include <stdexcept>
 #include <tuple>
@@ -37,7 +38,8 @@ inline Verdict graph(const o::Program &truth, const o::Commands &commands,
               const std::vector<unsigned> &visits,
               const std::vector<std::pair<unsigned,unsigned>> &forbidden = {},
               std::vector<UncoveredConflict> *uncovered = nullptr,
-              PrefixProbe *prefix = nullptr) {
+              PrefixProbe *prefix = nullptr,
+              std::set<std::pair<unsigned, unsigned>> *payloadOrder = nullptr) {
   using K=std::tuple<o::Pipe,o::Pipe,unsigned>;
   std::vector<std::vector<unsigned>> edges;
   auto vertex=[&]() { edges.emplace_back(); return unsigned(edges.size()-1); };
@@ -135,6 +137,20 @@ inline Verdict graph(const o::Program &truth, const o::Commands &commands,
         for (const auto &claim : prefix->claims)
           if (claim.producer == visits[i] && claim.consumer == visits[j])
             prefix->coverage &= reaches(dones[i], observedPrefixes[j]);
+    }
+  }
+  if (payloadOrder) {
+    payloadOrder->clear();
+    // Even IDs denote payload issue, odd IDs completion. Compare every kind
+    // of payload relation, not just completion-to-issue prerequisites.
+    std::vector<unsigned> payloadVertices;
+    for (unsigned i = 0; i < visits.size(); ++i) {
+      payloadVertices.push_back(starts[i]); payloadVertices.push_back(dones[i]);
+    }
+    for (unsigned i = 0; i < payloadVertices.size(); ++i) {
+      for (unsigned j = 0; j < payloadVertices.size(); ++j) {
+        if (i != j && reaches(payloadVertices[i], payloadVertices[j])) { payloadOrder->emplace(i, j); }
+      }
     }
   }
   for(auto [a,b]:rearms) v.rearm &= reaches(a,b);

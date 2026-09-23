@@ -105,6 +105,10 @@ struct ReaderIntervalQuery {
   enum Scope { WholeRegion, BodyInterval } scope = WholeRegion;
   std::size_t begin = 0, end = NoAnalysisId;
 };
+struct OriginalParticipationDemand {
+  ReaderIntervalQuery interval;
+  ObservationAtom predicate;
+};
 struct OriginalReaderFrontiers {
   enum class Status { Unknown, NoHit, Exact } status = Status::Unknown;
   ReaderIntervalQuery interval;

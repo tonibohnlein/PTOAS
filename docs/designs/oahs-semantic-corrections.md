@@ -7,7 +7,7 @@ restart checkpoints and historical milestone queues below. Active branch:
 
 ## Adopted continuation — typed derivation and independent pipeline progress
 
-Current baseline: `b436c3db0` (Step R), not the Step P pin in
+Continuation baseline: `b436c3db0` (Step R), not the Step P pin in
 `../ENGINEER_DIRECTIONS.md`. The current v0.38 TeX (`7e8076e`) and code are co-developed;
 reconcile their contracts explicitly and preserve separate draft edits.
 This sequence supersedes the earlier active ordering below, retaining its
@@ -653,3 +653,20 @@ negatives pass. Four compatibility plans only delete M fences; reference/corpus
 plans remain unchanged. See HANDOFF and refactor-step-h artifacts for exact scope.
 General generation support and changed-footprint contract qualification remain
 separate work. The draft records the conditional class-partition history proof.
+
+## Step W checkpoint — executable sibling participation
+
+D3 original read-interval demands now reach native observation refinement and
+exact emitted-predicate readback. One mandatory reader child followed by an
+optional sibling can retain one readiness/release family, activated by V's actual
+residual. Original lower/upper values, not a may-nonempty flag, select its final
+reader. Disjoint demands share one materialization pass. Existing boundary and
+recurring consumers use the refined facts; no new protocol constructor exists.
+
+The gate inventory, focused normal-constructor and independent finite-order
+checks, exact campaign pin and remaining uncertainties are in HANDOFF and the
+selected-plan W section. This does not finish the general two-child theorem:
+both-optional/no-reader episodes, relevant payload-entry gaps and overlapping
+predicate composition remain open. The next end-to-end work must preserve those
+obligations while developing disjoint-copy source support and the v0.38 common
+request/local-probe contract. Keep V's ordering/cost recovery ledger active.

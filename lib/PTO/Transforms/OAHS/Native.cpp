@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/Native.h"
 #include "ObservationUnion.h"
+#include "OriginalReadQueries.h"
 #include "SelectedInternal.h"
 #include "NativeFirstUse.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
@@ -22,6 +23,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include <functional>
@@ -76,6 +78,7 @@ PipelineType nativePipe(Pipe value) {
   return PipelineType::PIPE_UNASSIGNED;
 }
 struct Import {
+  mutable DominanceInfo dominance;
   Program program;
   SyncSlotMapping::AnalysisContext scalarFacts;
   uint64_t endpointDiscoveryWork = 0;
@@ -248,6 +251,7 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
         control.loopEntryPreparationSites +
         requirements.endpointClassificationWork() + control.transitionClassificationWork;
   }
+  std::map<std::size_t, std::pair<std::vector<std::size_t>, std::vector<std::size_t>>> initialParticipation;
   for (auto loop : loops) {
     bool nested = false;
     loop.getRegion().walk([&](mlir::Operation *op) {
@@ -353,6 +357,12 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     // readers whose producer is outside this child. Successful local private
     // protocol construction is not a prerequisite for preserving those roles.
     out.program = std::move(refined.program);
+    if (!model.atLeastOnce) {
+      const auto& alternatives = out.program.observed->sites[model.owner].successors;
+      initialParticipation.emplace(model.owner, std::make_pair(
+          std::vector<std::size_t>{alternatives.front()},
+          std::vector<std::size_t>(alternatives.begin() + 1, alternatives.end())));
+    }
     out.loopOwners[model.owner] = loop;
     out.loopDomains[model.owner] = domain->second;
     if (slots != out.slotLoops.end())
@@ -446,6 +456,105 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
       for (auto next : q.sites[at].successors) todo.push_back(next);
     }
     q.loops.push_back(std::move(original));
+  }
+  // D3 demands, not protocol admission, select the original predicates worth
+  // retaining. Each interval is refined independently; no function-wide product.
+  if (out.program.originalStructure && !initialParticipation.empty()) {
+    storage_detail::OriginalReadQueries reads(out.program);
+    const auto demands = reads.participationDemands();
+    std::vector<ParticipationRegion> participation;
+    std::map<std::size_t, const Region*> originalOwners;
+    std::function<void(const Region&)> index = [&](const Region& region) {
+      if (region.originalOwner != NoControlId) { originalOwners.emplace(region.originalOwner, &region); }
+      for (const auto& child : region.children) { index(child); }
+    };
+    index(out.program.originalStructure->body);
+    auto anchor = [&](const Region& region) -> mlir::Operation* {
+      if (region.kind == Region::Operation) {
+        return region.operation < out.payload.size() ? out.payload[region.operation] : nullptr;
+      }
+      return region.originalOwner < out.anchors.size() ? out.anchors[region.originalOwner] : nullptr;
+    };
+    std::map<std::pair<std::size_t, std::size_t>, bool> intervalAvailability;
+    for (const auto& demand : demands) {
+      const auto original = originalOwners.find(demand.interval.owner);
+      const auto source = initialParticipation.find(demand.predicate.owner);
+      const auto subject = out.loopOwners.find(demand.predicate.owner);
+      const bool represented = original != originalOwners.end() && source != initialParticipation.end() &&
+          subject != out.loopOwners.end();
+      if (!represented) {
+        continue;
+      }
+      const auto& region = *original->second;
+      const bool sequence = region.children.size() == 1 && region.children.front().kind == Region::Sequence;
+      if (!sequence) { continue; }
+      const auto& parts = region.children.front().children;
+      const auto begin = demand.interval.begin, end = demand.interval.end;
+      if (begin >= end || end > parts.size()) { continue; }
+      auto* start = anchor(parts[begin]);
+      auto ownerLoop = dyn_cast_or_null<scf::ForOp>(out.anchors[demand.interval.owner]);
+      if (!ownerLoop || !start) { continue; }
+      auto* stop = end == parts.size() ? ownerLoop.getBody()->getTerminator() : anchor(parts[end]);
+      if (!stop) { continue; }
+      auto child = subject->second;
+      const bool boundsAvailable = out.dominance.dominates(child.getLowerBound(), start) &&
+          out.dominance.dominates(child.getUpperBound(), start);
+      if (!boundsAvailable) {
+        out.observationNotes.push_back("kept original participation: sibling bounds unavailable at interval entry");
+        continue;
+      }
+      ParticipationRegion model;
+      model.entry = ids.lookup(start); model.exit = ids.lookup(stop);
+      model.decision = demand.predicate.owner; model.predicate = demand.predicate;
+      model.whenFalse = source->second.first; model.whenTrue = source->second.second;
+      model.available = true;
+      // Bounds dominating entry are available at every original anchor that
+      // entry dominates. Prove this geometry once per interval, independently
+      // of the number of sibling predicates demanded there.
+      const auto key = std::make_pair(model.entry, model.exit);
+      auto prior = intervalAvailability.find(key);
+      if (prior == intervalAvailability.end()) {
+        std::set<std::size_t> members;
+        std::vector<std::size_t> pending{model.entry};
+        bool available = true;
+        while (!pending.empty()) {
+          const bool exhausted = members.size() > ObservationSiteBudget / 2;
+          if (exhausted) { break; }
+          const auto site = pending.back(); pending.pop_back();
+          if (site == model.exit || !members.insert(site).second) { continue; }
+          const auto& node = out.program.observed->sites[site];
+          if (node.observation != NoControlId) {
+            const auto cut = out.program.observed->observations[node.observation].anchor;
+            auto* position = cut < out.anchors.size() ? out.anchors[cut] : nullptr;
+            available &= position && (position == start || start->isProperAncestor(position) ||
+                                       out.dominance.dominates(start, position));
+          }
+          pending.insert(pending.end(), node.successors.begin(), node.successors.end());
+        }
+        out.endpointDiscoveryWork += members.size();
+        prior = intervalAvailability.emplace(key, available && members.size() <= ObservationSiteBudget / 2).first;
+      }
+      if (!prior->second) {
+        out.observationNotes.push_back("kept original participation: availability or materialization budget unknown");
+        continue;
+      }
+      participation.push_back(std::move(model));
+    }
+    if (!participation.empty()) {
+      auto refined = refineParticipations(out.program, participation);
+      out.endpointDiscoveryWork += refined.work;
+      for (const auto& reason : refined.refusals) {
+        if (!reason.empty()) { out.observationNotes.push_back("kept original participation: " + reason); }
+      }
+      if (refined.success) {
+        if (!refined.accepted.empty()) {
+          out.program = std::move(refined.program);
+          out.observationNotes.push_back("qualified original read-interval participation");
+        }
+      } else { out.observationNotes.push_back("kept original participation batch: " + refined.reason); }
+    }
+    out.endpointDiscoveryWork += reads.evaluations + reads.compositionParts +
+        reads.predicateCount() + reads.frontierCount();
   }
   out.endpointDiscoveryWork += constants.evaluations + ranges.evaluations;
   native_detail::importFirstUse(function, out.program, ids, out.observationNotes);
@@ -1024,7 +1133,7 @@ emitObservationPredicate(const OriginalObservation &observation,
   for (const auto &atom : observation.atoms) {
     auto owner = input.loopOwners.find(atom.owner);
     if (owner == input.loopOwners.end() ||
-        !owner->second->isProperAncestor(anchor))
+        (atom.kind != ObservationAtom::LoopNonEmpty && !owner->second->isProperAncestor(anchor)))
       return anchor->emitError("handoff: original loop values unavailable at "
                                "observed endpoint"),
              failure();
@@ -1032,6 +1141,11 @@ emitObservationPredicate(const OriginalObservation &observation,
     const auto domain = input.loopDomains.find(atom.owner);
     if (domain == input.loopDomains.end()) {
       return anchor->emitError("handoff: missing original iteration-domain proof"), failure();
+    }
+    if (atom.kind == ObservationAtom::LoopNonEmpty &&
+        (!input.dominance.dominates(loop.getLowerBound(), anchor) ||
+         !input.dominance.dominates(loop.getUpperBound(), anchor))) {
+      return anchor->emitError("handoff: original trip bounds unavailable at endpoint"), failure();
     }
     Value lhs = loop.getInductionVar();
     auto constant = [&](uint64_t value) -> Value {
@@ -1057,6 +1171,10 @@ emitObservationPredicate(const OriginalObservation &observation,
     if (prior != values.atoms.end() &&
         prior->second.getDefiningOp()->isBeforeInBlock(anchor)) {
       part = prior->second;
+    } else if (atom.kind == ObservationAtom::LoopNonEmpty) {
+      part = builder.create<arith::CmpIOp>(loc,
+          atom.value ? arith::CmpIPredicate::slt : arith::CmpIPredicate::sge,
+          loop.getLowerBound(), loop.getUpperBound());
     } else if (atom.kind == ObservationAtom::LoopResidue) {
       lhs = reuse(values.residues, std::make_pair(atom.owner, atom.parameter), [&]() -> Value {
         return builder.create<arith::RemUIOp>(loc, ordinal(), constant(atom.parameter));
@@ -1123,13 +1241,18 @@ LogicalResult checkObservationPredicate(const OriginalObservation &observation,
   for (const auto &atom : observation.atoms) {
     auto owner = input.loopOwners.find(atom.owner);
     if (owner == input.loopOwners.end() ||
-        !owner->second->isProperAncestor(anchor))
+        (atom.kind != ObservationAtom::LoopNonEmpty && !owner->second->isProperAncestor(anchor)))
       return anchor->emitError(
           "handoff: emitted predicate lost its original available owner");
     auto loop = owner->second;
     const auto domain = input.loopDomains.find(atom.owner);
     if (domain == input.loopDomains.end()) {
       return anchor->emitError("handoff: emitted predicate has no original domain proof");
+    }
+    if (atom.kind == ObservationAtom::LoopNonEmpty &&
+        (!input.dominance.dominates(loop.getLowerBound(), anchor) ||
+         !input.dominance.dominates(loop.getUpperBound(), anchor))) {
+      return anchor->emitError("handoff: emitted predicate uses unavailable original trip bounds");
     }
     auto isOrdinal = [&](Value value) {
       if (domain->second.step != 1) {
@@ -1163,6 +1286,12 @@ LogicalResult checkObservationPredicate(const OriginalObservation &observation,
       auto cmp = components[i].getDefiningOp<arith::CmpIOp>();
       if (!cmp)
         continue;
+      if (atom.kind == ObservationAtom::LoopNonEmpty) {
+        matched = cmp.getLhs() == loop.getLowerBound() && cmp.getRhs() == loop.getUpperBound() &&
+            cmp.getPredicate() == (atom.value ? arith::CmpIPredicate::slt : arith::CmpIPredicate::sge);
+        used[i] = matched;
+        continue;
+      }
       const auto rhs = integer(cmp.getRhs());
       if (!rhs || *rhs < 0)
         continue;

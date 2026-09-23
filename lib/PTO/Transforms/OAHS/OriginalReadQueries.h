@@ -246,10 +246,89 @@ public:
   GuardedReadFrontier frontier(std::size_t id) const {
     return id < frontiers.size() ? frontiers[id] : GuardedReadFrontier{};
   }
+  std::vector<OriginalParticipationDemand> participationDemands() {
+    std::vector<OriginalParticipationDemand> out;
+    if (!original) { return out; }
+    std::set<std::tuple<std::size_t, unsigned, unsigned, std::size_t, std::size_t>> visited;
+    std::set<std::tuple<std::size_t, std::size_t, std::size_t, std::size_t>> emitted;
+    // Enumerate original incidences once, not every copied analytical visit.
+    for (const auto& entry : operationRegions) {
+      const auto operation = entry.first;
+      const auto& op = original->operations[operation];
+      for (auto parent = parents.find(entry.second); parent != parents.end(); parent = parents.find(parent->second)) {
+        ++compositionParts;
+        const auto* owner = parent->second;
+        if (owner->kind != Region::For) { continue; }
+        for (const auto& access : op.accesses) {
+          ++compositionParts;
+          if (!access.read || access.write) { continue; }
+          const auto& found = segment(owner->originalOwner, operation, access.cell, op.pipe);
+          if (!found.complete || found.startsAtOwnerEntry) { continue; }
+          auto interval = found.interval;
+          const auto key = std::make_tuple(interval.owner, interval.cell, unsigned(interval.reader),
+                                             interval.begin, interval.end);
+          if (!visited.insert(key).second) { continue; }
+          const auto& answer = query(interval);
+          if (!answer.complete()) { continue; }
+          // The predicate is needed only from the first relevant original use.
+          // Unrelated payloads before it do not change that frontier's meaning.
+          while (interval.begin < interval.end) {
+            auto prefix = interval; prefix.end = prefix.begin + 1;
+            ++compositionParts;
+            if (query(prefix).status != OriginalReaderFrontiers::Status::NoHit) { break; }
+            ++interval.begin;
+          }
+          for (auto root : {answer.first, answer.last}) {
+            for (auto subject : frontierDemands(root)) {
+              const auto identity = std::make_tuple(interval.owner, interval.begin, interval.end, subject);
+              if (emitted.insert(identity).second) {
+                out.push_back({interval, {ObservationAtom::LoopNonEmpty, subject, 0, 1}});
+              }
+            }
+          }
+        }
+      }
+    }
+    return out;
+  }
   std::size_t evaluations = 0, compositionParts = 0;
   std::size_t predicateCount() const { return predicates.size(); }
   std::size_t frontierCount() const { return frontiers.size(); }
 private:
+  const std::set<std::size_t>& frontierDemands(std::size_t root) {
+    const auto cached = frontierDemandCache.find(root);
+    if (cached != frontierDemandCache.end()) { return cached->second; }
+    auto& out = frontierDemandCache[root];
+    // Cache only requested roots. Materializing each internal node's transitive
+    // subject set makes a linear optional-child chain quadratic.
+    std::set<std::size_t> visitedFrontiers, visitedPredicates;
+    std::vector<std::size_t> pending{root}, conditions;
+    while (!pending.empty()) {
+      const auto id = pending.back(); pending.pop_back();
+      if (!visitedFrontiers.insert(id).second) { continue; }
+      ++compositionParts;
+      const auto node = frontier(id);
+      for (auto child : {node.left, node.right}) {
+        if (child != NoAnalysisId) { pending.push_back(child); }
+      }
+      if (node.kind == GuardedReadFrontier::Guard) { conditions.push_back(node.predicate); }
+    }
+    while (!conditions.empty()) {
+      const auto id = conditions.back(); conditions.pop_back();
+      if (!visitedPredicates.insert(id).second) { continue; }
+      ++compositionParts;
+      const auto node = predicate(id);
+      if (node.kind == ParticipationExpression::Atom && node.atom.kind == ObservationAtom::LoopNonEmpty) {
+        out.insert(node.atom.owner);
+      } else {
+        for (auto child : {node.left, node.right}) {
+          if (child != NoAnalysisId) { conditions.push_back(child); }
+        }
+      }
+    }
+    return out;
+  }
+  std::map<std::size_t, std::set<std::size_t>> frontierDemandCache;
   struct Summary {
     bool complete = true;
     std::size_t nonempty = 0, first = 0, last = 0;

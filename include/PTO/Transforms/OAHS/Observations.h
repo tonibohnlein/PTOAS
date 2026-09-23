@@ -93,9 +93,10 @@ struct ObservedControl {
 };
 // Resolve each interface through the refined original graph. A pointwise
 // clone map does not capture a prefix that rejoins a shared suffix/backedge.
-inline bool refreshLoopOccurrences(ObservedControl& control)
+inline bool refreshLoopOccurrences(ObservedControl& control, const std::set<std::size_t>* affectedOwners = nullptr)
 {
   for (auto& loop : control.loops) {
+    if (affectedOwners && !affectedOwners->count(loop.owner)) { continue; }
     if (loop.occurrences.empty()) {
       continue;
     }

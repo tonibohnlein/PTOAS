@@ -1115,6 +1115,119 @@ module attributes {pto.target_arch = "a3"} {
   return true;
 }
 
+bool optionalReaderParticipation(MLIRContext& context) {
+  const std::string input = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @optional_readers(%src: !pto.partition_tensor_view<1x32xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %three = arith.constant 3 : index
+    %four = arith.constant 4 : index
+    %address = arith.constant 0 : i64
+    %out_address = arith.constant 4096 : i64
+    %bank = pto.alloc_tile addr = %address : !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %out_address : !pto.tile_buf<vec, 1x32xf32>
+    scf.for %i = %zero to %four step %one {
+      %optional = arith.remui %i, %three : index
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%bank : !pto.tile_buf<vec, 1x32xf32>)
+      scf.for %j = %zero to %two step %one {
+        pto.tabs ins(%bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+      }
+      // LATE
+      scf.for %k = %zero to %optional step %one {
+        pto.tabs ins(%bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+      }
+    }
+    return
+  }
+})mlir";
+  for (unsigned variant = 0; variant < 6; ++variant) {
+    auto source = input;
+    if (variant == 1) {
+      const std::string declaration = "%optional = arith.remui %i, %three : index";
+      source.replace(source.find(declaration), declaration.size(),
+          "%optional_raw = arith.remui %i, %three : index\n"
+          "      %optional = arith.addi %optional_raw, %zero : index");
+      source.insert(source.find("    scf.for %i"),
+          "    %view = pto.treshape %bank : !pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 1x32xf32>\n");
+      const std::string use = "pto.tabs ins(%bank :";
+      for (auto at = source.find(use); at != std::string::npos; at = source.find(use, at + 1)) {
+        source.replace(at, use.size(), "pto.tabs ins(%view :");
+      }
+    }
+    if (variant == 2) {
+      const std::string declaration = "      %optional = arith.remui %i, %three : index\n";
+      source.erase(source.find(declaration), declaration.size());
+      source.insert(source.find("      // LATE"), declaration);
+    }
+    if (variant == 3) {
+      source.insert(source.find("    scf.for %i"),
+          "    %spare_address = arith.constant 8192 : i64\n"
+          "    %spare = pto.alloc_tile addr = %spare_address : !pto.tile_buf<vec, 1x32xf32>\n");
+      source.insert(source.find("      scf.for %j"),
+          "      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) "
+          "outs(%spare : !pto.tile_buf<vec, 1x32xf32>)\n");
+    }
+    if (variant == 4) {
+      source.insert(source.find("      // LATE"),
+          "      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) "
+          "outs(%bank : !pto.tile_buf<vec, 1x32xf32>)\n");
+    }
+    if (variant == 5) {
+      source.insert(source.find("    }\n    return"),
+          "      pto.tabs ins(%bank : !pto.tile_buf<vec, 1x32xf32>) "
+          "outs(%out : !pto.tile_buf<vec, 1x32xf32>)\n");
+    }
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module), "optional reader fixture parse")) { return false; }
+    auto function = *module->getOps<func::FuncOp>().begin();
+    oahs::NativeAnalysis imported;
+    if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, imported)),
+               "optional reader shared import")) { return false; }
+    bool qualified = false;
+    for (const auto& observation : imported.program.observed->observations) {
+      for (const auto& atom : observation.atoms) { qualified |= atom.kind == oahs::ObservationAtom::LoopNonEmpty; }
+    }
+    const bool expectedParticipation = variant < 2 || variant == 3;
+    if (!check(qualified == expectedParticipation, "optional reader original bound availability")) {
+      return false;
+    }
+    SmallVector<scf::ForOp> loops;
+    function.walk<WalkOrder::PreOrder>([&](scf::ForOp loop) { loops.push_back(loop); });
+    auto sibling = loops[2];
+    auto* anchor = loops[1].getOperation();
+    OpBuilder builder(anchor);
+    auto good = builder.create<arith::CmpIOp>(anchor->getLoc(), arith::CmpIPredicate::slt,
+                                             sibling.getLowerBound(), sibling.getUpperBound());
+    auto wrong = builder.create<arith::CmpIOp>(anchor->getLoc(), arith::CmpIPredicate::sge,
+                                              sibling.getLowerBound(), sibling.getUpperBound());
+    const oahs::OriginalObservation observation{0, {{oahs::ObservationAtom::LoopNonEmpty, 42, 0, 1}}, true};
+    const SmallVector<std::pair<std::size_t, mlir::Operation*>> owners{{42, sibling.getOperation()}};
+    bool guardChecks;
+    {
+      ScopedDiagnosticHandler silence(&context, [](Diagnostic&) { return success(); });
+      const bool exact = succeeded(oahs::testing::checkHandoffObservationPredicate(
+          observation, anchor, owners, good));
+      const bool mutation = failed(oahs::testing::checkHandoffObservationPredicate(
+          observation, anchor, owners, wrong));
+      guardChecks = exact == (variant != 2) && mutation;
+    }
+    good.erase(); wrong.erase();
+    if (!check(guardChecks, "original sibling predicate readback accepted unavailable bounds or wrong polarity")) {
+      return false;
+    }
+    oahs::SelectedPlan plan;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)),
+               "optional reader native reconstruction")) { return false; }
+    if (expectedParticipation && !check(!plan.declinedObservation && !plan.declinedRecurring &&
+                              !plan.activations.empty() && plan.channels.size() == 2,
+                              "optional children require one activated readiness/return family")) { return false; }
+  }
+  return true;
+}
+
 bool sourceGapPlacement(MLIRContext &context) {
   const std::string input = R"mlir(
 module attributes {pto.target_arch = "a3"} {
@@ -1923,6 +2036,7 @@ int main(int argc, char **argv) {
                       slotMappings(context) && slotDependencySlices(context) && originalLoopDomains(context) &&
                       normalizedGuardReadback(context) && exactCommandEmission(context) &&
                       originalResidueDecisions(context) && readerGenerations(context) &&
+                      optionalReaderParticipation(context) &&
                       uniformEndpointRoles(context) && sourceGapPlacement(context) && requiredReturnCoverage(context) &&
                       accumulatorOrdering(context) && accumulatorEpisodes(context) && firstUseOrdering(context);
   return passed ? 0 : 1;

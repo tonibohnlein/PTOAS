@@ -1,5 +1,56 @@
 # OAHS current handoff
 
+## Completed bounded Step W — executable sibling participation
+
+Baseline V `fbdaed723`. Shared original D3 read-interval queries now retain
+executable sibling-nonempty predicates. Native import proves exact original bounds
+available across the affected interval, correlates the child's empty/nonempty
+entry and preserves paired occurrences. The existing reader boundary query and
+residual constructor consume these facts: a mandatory reader followed by an
+optional sibling uses one readiness/return family. Original effects/credit and
+independent checking are unchanged. This is a precision extension, not a policy
+or hardware-contract change.
+
+Disjoint demands share one copy/metadata pass. Original command words must be
+closed under the interval; the unique control-only entry remains unguarded and
+its clones carry no command word. Internal entry/decision cycles decline.
+Only affected paired loop interfaces are refreshed; unrelated unpaired loops
+remain unchanged. Shared NoHit queries remove unrelated prefix work from the
+predicate's live interval. See selected-plan W for the complete gate inventory.
+
+Validation: 22/22 portable suites, three native drivers, 88/88 corpus, 18/19
+compatibility (same inherited refusal), GEMM, two prefills and three targets.
+Every campaign plan is byte-identical to V; resources and represented order are
+unchanged. The new normal-constructor witness has 12 nonempty finite executions,
+including skipped/present sibling visits and changed participation on parent
+re-entry. Independent graph checking compares every issue/completion endpoint
+relation and finds zero added/removed relations versus its unrefined baseline.
+The unchanged causal checker rejects a removed final release. Native variants
+cover equivalent bounds/views, unrelated prefix storage, late bounds, reloads,
+and final outside readers; exact emitted readback rejects wrong predicate polarity.
+No sanitizer/device run. Finite equality is not a general quality theorem.
+
+Optional-sibling16/32/64 and disjoint-interval4/8/16 scaling pass. Requested-root
+DAG traversal avoids quadratic transitive-set caches; native interval geometry
+is reused across predicates. Successful regular replay7055155, staged replay240505,
+recurring analyzer202187 and ownership1919192 are unchanged. Native endpoint
+work9325964->9391415 (+65451). Recorded successful elapsed344.56->303.00seconds
+is not an isolated speedup measurement. Metadata-refresh and overlapping-refusal
+costs have no general linear guarantee. Existing F/G/L/R/V recovery debts stay open.
+
+Evidence: `../oahs-gemm-base-builds/refactor-step-w/` (summary/results/work,
+portable and native logs, source/binary pins, review record and commit preview).
+Architecture, separate bounded generality, correctness and asymptotic-performance
+source ACCEPT; service campaign satisfies their remaining validation condition.
+
+Next: continue the normal-constructor derivation and persistent disjoint-copy
+publication support. Both-optional/no-reader families, overlapping live predicates,
+relevant direct-payload entry gaps and copied-owner correlation remain unfinished.
+W does not complete the two-child theorem or v0.38's local/class-first policy.
+Keep these obligations visible while extending common source/request interfaces;
+do not add a second constructor or restore trial search. Same three-reviewer
+commit loop, two local resource workers, no push.
+
 ## Completed bounded Step V — residual activation
 
 Baseline U `43d477329`. Recurring discovery now retains logical roles and finite

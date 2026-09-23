@@ -64,6 +64,14 @@ residual before atomic commit. Sharing a role does not activate its other family
 Bulk relationship replacement and omission trials are removed. See HANDOFF for
 service, finite ordering and cost evidence; V is a bounded migration increment.
 
+W adds executable optional-sibling participation: D3 demands, original bounds
+availability, exact initial-decision correspondence and emitted readback feed the
+existing residual constructor. Disjoint intervals share one batch; unrelated
+prefix work/unpaired loops no longer suppress the facts. Bounded mandatory-first
+child support is implemented. Both-optional/no-reader composition, relevant direct
+payload entry gaps and overlapping live predicates remain open; see gate inventory
+in selected-plan. No general two-child or v0.38 policy completion claim.
+
 Open V recoveries: standalone/RMW support recipes (corpus36/82/83 added order),
 partial-admission interactions (target2 added order), ordinary/recurring provider
 competition, historical-unused-key restriction, and whole-graph private probes.
