@@ -51,6 +51,9 @@ struct SelectedDecision {
     RequirementStage stage = RequirementStage::Overlap;
     Pipe source = Pipe::S, observer = Pipe::S;
     std::vector<FrontierRequirement> required;
+    // Extra actual source coverage used to select this provider. Exact-gap
+    // placement must preserve it; only the executed receipt grants credit.
+    std::vector<FrontierRequirement> supporting;
     std::vector<SelectedLifecycleDemand> lifecycles;
     std::vector<std::size_t> endpoints;
     bool commonCut = false, enlargedPrefix = false;

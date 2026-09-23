@@ -52,6 +52,185 @@ struct ReplayTestAccess {
 using namespace selected_test;
 namespace {
 constexpr auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE3;
+void reuseThroughRequiredOverlapReadiness()
+{
+    for (bool connected : {true, false}) {
+        auto p = base(3, 2);
+        p.cells[2].storage = o::Cell::Storage::OverlapWitness;
+        p.operations = {op(P, {{0, false, true, true}}),
+                        op(Q, {{0, true, false}, {1, false, true, true}}),
+                        op(R, {{2, false, true}}),
+                        op(P, {{0, false, true, true}, {2, true, false}})};
+        if (connected) { p.operations[2].accesses.push_back({1, true, false}); }
+        p.body = seq({leaf(0), leaf(1), leaf(2), leaf(3)});
+        const auto plan = accepted(p);
+        const auto direct = std::count_if(plan.decisions.begin(), plan.decisions.end(), [](const auto& d) {
+            return d.consumer == 3 && d.source == Q;
+        });
+        require(direct == (connected ? 0 : 1),
+                "overlap readiness must carry actual reader completion to replace a direct return");
+        require(bool(oahs_oracle::graph(p, plan.commands, {0, 1, 2, 3})),
+                "three-engine completion support failed the independent oracle");
+        if (!connected) { continue; }
+        require(plan.decisions.size() == 3 && plan.decisions.back().source == R &&
+                plan.decisions.back().stage == o::RequirementStage::Known,
+                "necessary overlap provider was considered after the known reuse repair");
+        // Removing the supporting middle handoff must expose the old reader;
+        // a direction-level route or a future promised receipt is insufficient.
+        auto broken = plan.commands;
+        for (auto& word : broken) { word.erase(std::remove_if(word.begin(), word.end(), [](const auto& c) {
+            return (c.kind == o::Command::Publish || c.kind == o::Command::Acquire) &&
+                   c.source == Q && c.observer == R;
+        }), word.end()); }
+        require(!o::checkCausalFrontier(p, broken).accepted &&
+                !bool(oahs_oracle::graph(p, broken, {0, 1, 2, 3})),
+                "removing supporting readiness retained manufactured completion");
+
+        p.body = {o::Region::For, {p.body}, 0, true};
+        const auto repeated = accepted(p);
+        require(std::none_of(repeated.decisions.begin(), repeated.decisions.end(), [](const auto& d) {
+            return d.consumer == 3 && d.source == Q;
+        }), "repeated indirect readiness acquired a duplicate direct reader release");
+        for (unsigned count : {0u, 1u, 2u, 4u}) {
+            std::vector<unsigned> visits;
+            for (unsigned i = 0; i < count; ++i) visits.insert(visits.end(), {0, 1, 2, 3});
+            require(bool(oahs_oracle::graph(p, repeated.commands, visits)),
+                    "repeated third-engine receipt lost memory or consumption knowledge");
+        }
+    }
+}
+void alternativeReturnCoverage()
+{
+    for (unsigned variant = 0; variant < 3; ++variant) {
+        auto p = base(3, 4);
+        p.cells[2].storage = o::Cell::Storage::OverlapWitness;
+        p.operations = {op(P, {{0, false, true, true}}),
+                        op(Q, {{0, true, false}, {1, false, true, true}}),
+                        op(R, {{1, true, false}, {2, false, true}}),
+                        op(R, {{2, false, true}}), op(Q, {{0, true, false}}),
+                        op(P, {{0, false, true, true}, {2, true, false}})};
+        if (variant != 1) { p.operations[3].accesses.push_back({1, true, false}); }
+        o::ObservedControl graph;
+        graph.qualification = "required return from alternative original readers";
+        graph.entry = 0; graph.exit = 10;
+        const std::vector<std::size_t> operations{0, 1, o::NoAnalysisId, 2, o::NoAnalysisId,
+            o::NoAnalysisId, 3, o::NoAnalysisId, variant == 2 ? 4u : o::NoAnalysisId, 5, o::NoAnalysisId};
+        const std::vector<std::vector<std::size_t>> edges{
+            {1}, {2}, {3, 6}, {4}, {5}, {8}, {7}, {8}, {9}, {10}, {}};
+        for (std::size_t site = 0; site < operations.size(); ++site) {
+            graph.observations.push_back({site, {}, true});
+            graph.sites.push_back({operations[site], site, edges[site], {}, 0});
+        }
+        // Every represented physical phase must occur in the original graph.
+        if (variant != 2) {
+            p.operations.erase(p.operations.begin() + 4);
+            graph.sites[9].operation = 4;
+        }
+        p.observed = std::move(graph);
+        const auto plan = accepted(p);
+        const auto found = std::find_if(plan.decisions.begin(), plan.decisions.end(), [](const auto& d) {
+            return d.consumer == 9 && d.source == R && !d.supporting.empty();
+        });
+        require((found != plan.decisions.end()) == (variant == 0),
+                "alternative provider used missing or refreshed extra coverage");
+        if (variant == 0) {
+            require(found->publicationFrontier == std::vector<o::Cut>{4, 7},
+                    "additional coverage moved the selected alternative source boundaries");
+        }
+        for (const auto& path : {std::vector<o::Cut>{0, 1, 2, 3, 4, 5, 8, 9, 10},
+                                 std::vector<o::Cut>{0, 1, 2, 6, 7, 8, 9, 10}}) {
+            auto flat = p;
+            flat.observed.reset(); flat.operations.clear(); flat.body = {};
+            o::Commands words;
+            std::vector<o::Command> pending;
+            std::vector<unsigned> visits;
+            for (auto site : path) {
+                pending.insert(pending.end(), plan.commands[site].begin(), plan.commands[site].end());
+                const auto operation = p.observed->sites[site].operation;
+                if (operation == o::NoAnalysisId) { continue; }
+                visits.push_back(unsigned(flat.operations.size()));
+                flat.operations.push_back(p.operations[operation]);
+                words.push_back(std::move(pending)); pending.clear();
+            }
+            words.push_back(std::move(pending));
+            require(bool(oahs_oracle::graph(flat, words, visits)),
+                    "alternative actual return failed independent memory/event validation");
+        }
+    }
+}
+void loopReturnCoverage()
+{
+    for (bool refresh : {false, true}) {
+        auto p = base(3, 4);
+        p.cells[2].storage = o::Cell::Storage::OverlapWitness;
+        p.operations = {op(P, {{0, false, true, true}}),
+                        op(Q, {{0, true, false}, {1, false, true, true}}),
+                        op(R, {{1, true, false}, {2, false, true}}),
+                        op(P, {{0, false, true, true}, {2, true, false}})};
+        if (refresh) { p.operations.push_back(op(Q, {{0, true, false}})); }
+        o::ObservedControl graph;
+        graph.qualification = "actual extra return coverage through original loop entry";
+        graph.entry = 0; graph.exit = 8;
+        const std::vector<std::size_t> operations{0, 1, 2, o::NoAnalysisId, o::NoAnalysisId,
+            refresh ? 4u : o::NoAnalysisId, 3, o::NoAnalysisId, o::NoAnalysisId};
+        const std::vector<std::vector<std::size_t>> edges{{1}, {2}, {3}, {4}, {5, 8}, {6}, {7}, {4}, {}};
+        for (std::size_t site = 0; site < operations.size(); ++site) {
+            graph.observations.push_back({site, {}, true});
+            graph.sites.push_back({operations[site], site, edges[site], {}, 0});
+        }
+        graph.sites[7].backedgeOwners = {3};
+        graph.loops.push_back({3, 3, 8, {4, 5, 6, 7}, 5, true});
+        p.observed = std::move(graph);
+        const auto plan = accepted(p);
+        const bool promoted = std::any_of(plan.decisions.begin(), plan.decisions.end(), [](const auto& d) {
+            return d.consumer == 6 && d.source == R && !d.supporting.empty();
+        });
+        require(promoted == !refresh, "loop entry promoted extra history invalidated by a child access");
+        require(refresh || plan.work.loopEntryTransfers != 0,
+                "positive loop-entry coverage fixture used no entry transfer");
+        for (unsigned iterations : {1u, 2u, 4u}) {
+            std::vector<o::Cut> path{0, 1, 2, 3};
+            for (unsigned i = 0; i < iterations; ++i) path.insert(path.end(), {4, 5, 6, 7});
+            path.insert(path.end(), {4, 8});
+            auto flat = p;
+            flat.observed.reset(); flat.operations.clear(); flat.body = {};
+            o::Commands words;
+            std::vector<o::Command> pending;
+            std::vector<unsigned> visits;
+            for (auto site : path) {
+                pending.insert(pending.end(), plan.commands[site].begin(), plan.commands[site].end());
+                const auto operation = p.observed->sites[site].operation;
+                if (operation == o::NoAnalysisId) { continue; }
+                visits.push_back(unsigned(flat.operations.size()));
+                flat.operations.push_back(p.operations[operation]);
+                words.push_back(std::move(pending)); pending.clear();
+            }
+            words.push_back(std::move(pending));
+            require(bool(oahs_oracle::graph(flat, words, visits)),
+                    "loop-entry shared return failed independent repeated-trace validation");
+        }
+    }
+}
+void preserveWinnerCoverageAtExactGap()
+{
+    for (bool overlap : {false, true}) {
+        auto p = base(2, 4);
+        if (overlap) { p.cells[0].storage = o::Cell::Storage::OverlapWitness; }
+        p.operations = {op(Q, {{1, false, true, true}}), op(P, {{0, false, true, !overlap}}),
+                        op(P, {{1, true, false}}), op(R, {{0, true, false}, {1, true, false}})};
+        p.body = seq({leaf(0), leaf(1), leaf(2), leaf(3)});
+        const auto plan = accepted(p);
+        const auto found = std::find_if(plan.decisions.begin(), plan.decisions.end(), [](const auto& d) {
+            return d.consumer == 3 && d.source == P;
+        });
+        require(found != plan.decisions.end() && !found->supporting.empty(),
+                "selected provider lost additional coverage used by the ranking");
+        require(plan.decisions.size() == 2 && plan.work.earlyPublications == 0,
+                "exact-gap motion erased selected extra coverage and forced a duplicate transfer");
+        require(bool(oahs_oracle::graph(p, plan.commands, {0, 1, 2, 3})),
+                "actual winner coverage did not establish the final consumer's requirements");
+    }
+}
 void keepKnownPrefixSeparateFromOverlap()
 {
     auto p = base(2, 2);
@@ -464,6 +643,10 @@ int main()
 {
     for (auto n : {32u, 64u, 128u}) o::selected::ReplayTestAccess::pairEnumeration(n);
     keepKnownPrefixSeparateFromOverlap();
+    reuseThroughRequiredOverlapReadiness();
+    alternativeReturnCoverage();
+    loopReturnCoverage();
+    preserveWinnerCoverageAtExactGap();
     keepDifferentDeadlines();
     alternativeEarlySources();
     noUnusedTerminalReturn();

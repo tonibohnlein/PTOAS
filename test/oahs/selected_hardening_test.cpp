@@ -50,6 +50,13 @@ struct ReplayTestAccess {
                 "word-tail credit was borrowed before its incoming receipt");
         require(c.sourceGap(c.ledger.tail(2), key, incoming).proved(),
                 "actual incoming receipt did not establish gap coverage");
+        SelectedDecision provider;
+        provider.required = own;
+        require(c.earlyPublicationGap(2, key, provider).has_value(),
+                "fixture did not expose earlier motivating source");
+        provider.supporting = incoming;
+        require(!c.earlyPublicationGap(2, key, provider).has_value(),
+                "earlier publication erased the coverage used to select its provider");
         const auto publication = c.ledger.append(3, {Command::Publish, P, R, 0}, EndpointPurpose::Fixed);
         const auto receipt = c.ledger.append(3, {Command::Acquire, P, R, 0}, EndpointPurpose::Fixed);
         require(!c.sourceGap(before, key, own).proved(), "stale source-gap replay was reused");

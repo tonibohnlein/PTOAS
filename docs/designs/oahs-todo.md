@@ -58,12 +58,20 @@ resource-intensive workers maximum in aggregate.
    only when shared semantic certificates cover their existing obligations.
    Enclosing bank materialization now consumes semantic boundary/child checks
    directly; private-protocol feasibility is no longer an import prerequisite.
-4. Actual required-return sharing and deadline-driven rearming through the common
+4. **Active (shared actual provider coverage implemented):** N unifies ordinary/
+   alternative/loop-entry coverage and selects independently required returns
+   without moving their sources. Every winner retains extra coverage through
+   exact-gap placement. Continue deadline-driven rearming through the common
    interfaces, followed by outstanding F/G ordering recovery and consolidation.
    L adds a pinned CSA compilation recovery: sites367→913, requirements3727→32963,
    replay9068→959017 after removing protocol-based physical admission. The tested
    nonempty cube order sets are unchanged; the cost increase is not hidden by
    reinstating the admission gate. Evidence: refactor-step-l/csa-work-resources.json.
+
+N evidence:19changed files;38nonempty finite comparisons have identical orders;
+16unsupported and8empty rows remain unproven by that diagnostic. Record corpus83
+used identities15→16 and compatibility2/7 replay increases separately from pair
+reductions. These finite checks do not close F/G/L recovery or device acceptance.
 
 Each coherent increment requires architecture, correctness and asymptotic-cost
 review acceptance before its commit. Different selected ledger revisions are not

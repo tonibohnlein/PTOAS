@@ -384,7 +384,7 @@ std::vector<RecurringRequirement> qualifyCyclicFrontiers(
 struct Group {
     Pipe source = Pipe::S;
     Cut publication = NoAnalysisId;
-    std::vector<FrontierRequirement> requirements;
+    std::vector<FrontierRequirement> requirements, supporting;
     std::set<Id> coverage;
     bool common = false;
     // A participation-qualified set of alternative early source cuts. It uses
@@ -466,10 +466,14 @@ private:
     std::vector<Group> groups(const std::vector<FrontierRequirement>&, RequirementStage);
     Group sourceGroup(Pipe, const std::vector<FrontierRequirement>&,
                       const std::vector<FrontierRequirement>&);
+    std::set<Id> sourceHistoryCoverage(
+        const std::vector<Cut>&, Pipe, const std::vector<FrontierRequirement>&) const;
     std::set<Id> coverage(Cut, Pipe, const std::vector<FrontierRequirement>&) const;
     bool freshBetween(Cut, Cut, Id) const;
-    bool sourceFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&) const;
-    bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&);
+    bool sourceFrontier(Pipe, const std::vector<FrontierRequirement>&,
+                        const std::vector<FrontierRequirement>&, Group&) const;
+    bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&,
+                           const std::vector<FrontierRequirement>&, Group&);
     bool consume();
     bool bind(Group&, RequirementStage);
     bool commitPacket(const OrderedPacket&, SelectedDecision&);

@@ -1,6 +1,53 @@
 # OAHS current handoff
 
-## Current iteration — Step M exact direct source gaps
+## Current iteration — Step N shared actual provider coverage
+
+Baseline `9c212bab1`. Ordinary, alternative and loop-entry providers share an
+actual source-history intersection query. Their existing source discovery and
+original region indexes certify freshness; extra coverage does not move the
+selected source. An independently required Overlap provider can now compete for
+Known requirements it already covers. Every winner retains all advertised extra
+requirements separately from its motivating demand, so M cannot move its SET
+before a receipt that justified selecting it. Actual replay still supplies all
+credit and refreshes the residual. No new graph walk per class or candidate solve.
+
+Alternative crossed-class unions, whole-loop issued classes and same-engine
+Known/Overlap separation remain conservative sufficient policies, not exact
+generation coverage. General lifecycle/support/binding work remains open.
+
+All three reviewers ACCEPT. Portable22/22 before the final winner amendment;
+the final broad run had21/22 with one invalid test-only definite-write flag on an
+overlap cell. That fixture was corrected; final focused lookahead/hardening both
+pass. Native three drivers,88/88corpus,18/19compatibility (same refusal),GEMM,two
+prefills and three targets pass. Native allocation/view/unrelated-control fixtures
+activate actual sharing without retry. The four-payload native witness uses
+three pairs instead of four, updates4→3 and replay6→4, with identical complete
+ordering. Both Known and Overlap winner/gap composition tests run the normal
+constructor; missing-arm, later-refresh, child-refresh and repeated-trace negatives
+are independently checked.
+
+19campaign files change (11corpus,7compatibility,1target).38nonempty finite function/
+binding rows have identical complete order sets.16rows are unsupported by the
+finite diagnostic and8have empty traces; these provide no ordering evidence.
+All changed plans remove static event pairs, but resources are not conflated:
+corpus83 uses15→16 distinct physical identities despite22→20pairs. Compatibility2
+replay rises996891→1107507 and7 rises63468→64891; most changed cases use less work.
+These migration tradeoffs remain recorded; no claim of device improvement.
+GEMM and both pinned prefills remain byte-identical. F/G/L recovery debt stays open.
+
+Exact evidence: `../oahs-gemm-base-builds/refactor-step-n/`, especially summary.json,
+changed-order.json/full relation files, changed-resources-work.json and
+required-return-order.json. Final edits after native campaign are braces/named
+Boolean/line wrapping; focused tests and scoped compliance pass. No sanitizers or
+device runs. Draft F3 now states independently required-provider sharing and exact
+coverage preservation; draft changes remain separately uncommitted with H/K.
+
+Next: replace qualified common-cut future-payload acknowledgment with an explicit
+actual key-reuse obligation, using shared publication eligibility and existing
+actual consumption identities. Keep immediate complete packets where recurrence,
+neighboring uses or ownership remain unproved. Continue the three-reviewer loop.
+
+## Previous iteration — Step M exact direct source gaps
 
 Baseline `2ba083877`. A direct ordinary transfer can publish before unrelated
 incoming waits in the same word when its actual prefix already covers every

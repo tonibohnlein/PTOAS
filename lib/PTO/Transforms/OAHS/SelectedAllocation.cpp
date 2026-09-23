@@ -181,7 +181,9 @@ std::optional<WordGap> Constructor::earlyPublicationGap(Cut cut, Id key, const S
         return {};
     }
     const WordGap gap{control.canonicalCut[cut], offset == 0 ? NoAnalysisId : ids[offset - 1], ids[offset]};
-    const auto certificate = sourceGap(gap, key, decision.required);
+    auto required = decision.required;
+    required.insert(required.end(), decision.supporting.begin(), decision.supporting.end());
+    const auto certificate = sourceGap(gap, key, required);
     const bool currentProof = certificate.proved() && certificate.version == ledger.version();
     if (!currentProof) {
         return {};
@@ -693,6 +695,7 @@ bool Constructor::bind(Group& group, RequirementStage stage)
         decision.source = group.source;
         decision.observer = observer;
         decision.required = group.requirements;
+        decision.supporting = group.supporting;
         decision.lifecycles = requirements.demandsAt(current, group.requirements);
         const auto request = result.decisions.size();
         OrderedPacket packet;
@@ -752,6 +755,7 @@ bool Constructor::bind(Group& group, RequirementStage stage)
     decision.source = group.source;
     decision.observer = observer;
     decision.required = group.requirements;
+    decision.supporting = group.supporting;
     decision.lifecycles = requirements.demandsAt(current, group.requirements);
     decision.commonCut = group.common;
     auto source = group.publication;

@@ -700,3 +700,38 @@ ledger. It is not persistent absolute prefix protection or a guarantee that late
 greedy decisions add no ordering. General protection requires an affected-interface
 closure or withdrawal/requalification of the placement and dependent support. A
 later mandatory repair cannot simply be rejected to preserve an optional prefix.
+
+### Shared actual source coverage (Step N)
+
+Motivating requirements select a provider's source boundaries. A separate query
+intersects actual completion histories at its participating publication sites;
+additional coverage never changes those already selected boundaries. Ordinary
+sources retain the indexed source-to-deadline freshness check. Alternative
+sources collect intervening issued classes during the existing source-discovery
+walk, excluding its stopping source payloads. Loop-entry providers check every
+reachable source-word occurrence, source-to-entry freshness and the original
+region's issued classes. No prospective receipt supplies extra completion.
+
+An independently required Overlap provider may compete during Known selection
+when this actual coverage includes a due Known requirement. A source already
+providing Known requirements retains its earlier prefix rather than combining
+its demands with later Overlap work. Deterministic next-winner selection remains
+unchanged; after a real receipt, construction refreshes the complete residual.
+
+Every winning group and selected decision retain supporting requirements
+separately from the motivating demand, including extra coverage of an already
+Known provider. Earlier exact-gap placement must preserve these additional
+requirements too. Failure retains the existing source word tail; it cannot move
+the publication before the receipt which supplied its advertised coverage.
+This is selection metadata, not an additional causal completion state.
+
+Coverage work follows requested classes and represented source occurrences.
+Alternative freshness adds no graph traversal per class; loop-entry queries reuse
+original issued-class indexes and cached correspondence. Candidate populations
+remain bounded by the existing engine grouping, and no extra full-plan solve is
+introduced. The existing loop-entry packet qualification remains a separate cost.
+
+The alternative crossed-class union and whole-loop issued-class test are
+conservative sufficient freshness certificates, not exact generation intervals.
+They may decline valid extra coverage; a refined replacement must preserve their
+obligations rather than merely remove those tests.

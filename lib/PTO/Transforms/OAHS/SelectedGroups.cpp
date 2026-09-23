@@ -19,21 +19,42 @@ std::map<Id, unsigned> Constructor::reasons(Cut site) const
 {
     return requirements.reasons(site);
 }
-std::set<Id> Constructor::coverage(
-    Cut cut, Pipe source, const std::vector<FrontierRequirement>& requirements) const
+std::set<Id> Constructor::sourceHistoryCoverage(
+    const std::vector<Cut>& sources, Pipe source,
+    const std::vector<FrontierRequirement>& required) const
 {
     std::set<Id> out;
-    const auto& atSource = cache.cuts[cut].before;
-    if (!atSource.causal.reachable()) {
+    if (sources.empty()) {
         return out;
     }
-    const auto& history = atSource.causal.facts()->history;
-    for (const auto& r : requirements) {
-        const auto index = accessClass(r);
-        const auto* reached = history.find(index);
-        if (freshBetween(cut, current, index) && reached &&
-            frontierContains(*reached, PipeCount + unsigned(source))) {
-            out.insert(index);
+    for (const auto& r : required) {
+        out.insert(accessClass(r));
+    }
+    for (auto cut : sources) {
+        const auto& state = cache.cuts[cut].before.causal;
+        if (!state.reachable()) {
+            return {};
+        }
+        for (auto it = out.begin(); it != out.end();) {
+            const auto* history = state.facts()->history.find(*it);
+            if (!history || !frontierContains(*history, PipeCount + unsigned(source))) {
+                it = out.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    return out;
+}
+std::set<Id> Constructor::coverage(
+    Cut cut, Pipe source, const std::vector<FrontierRequirement>& required) const
+{
+    auto out = sourceHistoryCoverage({cut}, source, required);
+    for (auto it = out.begin(); it != out.end();) {
+        if (!freshBetween(cut, current, *it)) {
+            it = out.erase(it);
+        } else {
+            ++it;
         }
     }
     return out;
@@ -46,7 +67,8 @@ bool Constructor::freshBetween(Cut source, Cut target, Id access) const
         control.frame[source], access, control.position[source], control.position[target]);
 }
 bool Constructor::sourceFrontier(
-    Pipe source, const std::vector<FrontierRequirement>& required, Group& group) const
+    Pipe source, const std::vector<FrontierRequirement>& required,
+    const std::vector<FrontierRequirement>& all, Group& group) const
 {
     // This extension is intentionally acyclic: static predecessor identities
     // are not a bank-generation correspondence across an unqualified loop.
@@ -67,6 +89,7 @@ bool Constructor::sourceFrontier(
             availableSources.emplace(handle.origin, &handle);
     }
     std::set<Cut> publications;
+    std::set<Id> crossedClasses;
     std::vector<bool> seen(control.graph.sites.size());
     auto todo = control.predecessors[current];
     while (!todo.empty()) {
@@ -103,6 +126,16 @@ bool Constructor::sourceFrontier(
             publications.insert(handle.cut);
             continue;
         }
+        // This is the existing source-discovery traversal. Retain all classes
+        // issued strictly after its stopping publications, not a path per class.
+        if (operation != NoAnalysisId) {
+            const auto& op = program.operations[operation];
+            for (const auto& access : op.accesses) {
+                const auto base = (Id(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
+                if (access.read) { crossedClasses.insert(base); }
+                if (access.write) { crossedClasses.insert(base + 1); }
+            }
+        }
         if (site == control.graph.entry || control.predecessors[site].empty()) return false;
         const auto& before = control.predecessors[site];
         todo.insert(todo.end(), before.begin(), before.end());
@@ -136,10 +169,15 @@ bool Constructor::sourceFrontier(
     group.forwardKey = selected;
     group.version = cache.version;
     group.common = false;
-    group.coverage = std::move(needed); // conservative joint credit; no hypothetical receipt
+    group.coverage = sourceHistoryCoverage(group.publications, source, all);
+    for (auto access : crossedClasses) {
+        group.coverage.erase(access);
+    } // Coverage is opportunity metadata until an actual receipt propagates.
     return true;
 }
-bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequirement>& required, Group& group)
+bool Constructor::loopEntryFrontier(
+    Pipe source, const std::vector<FrontierRequirement>& required,
+    const std::vector<FrontierRequirement>& all, Group& group)
 {
     if (!program.observed || required.empty()) return false;
     std::set<Id> needed;
@@ -275,7 +313,28 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
         group.entryRepeats = repeats;
         group.forwardKey = forward;
         group.version = ledger.version();
-        group.coverage = needed;
+        std::vector<Cut> sources;
+        for (auto cut : control.wordOccurrences[control.canonicalCut[publication]]) {
+            if (control.reachable[cut]) { sources.push_back(cut); }
+        }
+        group.coverage = sourceHistoryCoverage(sources, source, all);
+        for (auto it = group.coverage.begin(); it != group.coverage.end();) {
+            bool fresh = !loop.issuedClasses.count(*it);
+            if (!regional) {
+                const auto& pairs = control.correspondence(publication, loop.entry).pairs;
+                for (const auto& pair : pairs) {
+                    fresh &= freshBetween(pair.first, pair.second, *it);
+                }
+            }
+            if (!fresh) {
+                it = group.coverage.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        // Retain motivating obligations already qualified above. Extra classes
+        // require all-occurrence history plus unchanged entry-to-deadline use.
+        group.coverage.insert(needed.begin(), needed.end());
         return true;
     }
     return false;
@@ -298,8 +357,8 @@ Group Constructor::sourceGroup(
         if (!selected || control.position[handle.cut] < control.position[selected->cut]) selected = &handle;
     }
     const bool comparable = selected != nullptr;
-    if (!comparable && sourceFrontier(source, required, group)) return group;
-    if (!comparable && loopEntryFrontier(source, required, group)) return group;
+    if (!comparable && sourceFrontier(source, required, all, group)) { return group; }
+    if (!comparable && loopEntryFrontier(source, required, all, group)) { return group; }
     group.publication = comparable ? selected->cut : current;
     group.common = !comparable;
     group.coverage = coverage(group.publication, source, all);
@@ -313,18 +372,38 @@ std::vector<Group> Constructor::groups(
         return {};
     }
     const auto labels = stage == RequirementStage::Known ? reasons(current) : std::map<Id, unsigned>{};
-    std::map<Pipe, std::vector<FrontierRequirement>> sources;
+    std::map<Pipe, std::vector<FrontierRequirement>> sources, overlapSources;
+    std::set<Id> known;
     for (const auto& r : all) {
         const auto found = labels.find(accessClass(r));
         const auto flags = found == labels.end() ? unsigned(AdditionalOverlap) : found->second;
-        if (r.source == observer || (stage == RequirementStage::Known && !(flags & (KnownReadiness | KnownReuse)))) {
+        if (r.source == observer) { continue; }
+        if (stage == RequirementStage::Known && !(flags & (KnownReadiness | KnownReuse))) {
+            overlapSources[r.source].push_back(r);
             continue;
         }
         sources[r.source].push_back(r);
+        known.insert(accessClass(r));
     }
     std::vector<Group> pending, ordered;
     for (const auto& source : sources) {
         pending.push_back(sourceGroup(source.first, source.second, all));
+    }
+    // An independently required provider may already carry Known completion.
+    // Preserve each existing Known provider's early source: never union its
+    // motivating demand with later same-engine overlap demands.
+    if (!known.empty()) {
+        for (const auto& source : overlapSources) {
+            if (sources.count(source.first)) { continue; }
+            auto group = sourceGroup(source.first, source.second, all);
+            for (const auto& r : all) {
+                const bool coversKnown = known.count(accessClass(r)) && group.coverage.count(accessClass(r));
+                if (coversKnown) {
+                    group.supporting.push_back(r);
+                }
+            }
+            if (!group.supporting.empty()) { pending.push_back(std::move(group)); }
+        }
     }
     if (!pending.empty()) {
         Id selected = NoAnalysisId;
@@ -348,7 +427,20 @@ std::vector<Group> Constructor::groups(
                 selected = i;
             }
         }
-        ordered.push_back(std::move(pending[selected]));
+        auto& winner = pending[selected];
+        std::set<Id> motivating;
+        for (const auto& r : winner.requirements) {
+            motivating.insert(accessClass(r));
+        }
+        winner.supporting.clear();
+        for (const auto& r : all) {
+            const auto access = accessClass(r);
+            const bool additional = !motivating.count(access) && winner.coverage.count(access);
+            if (additional) {
+                winner.supporting.push_back(r);
+            }
+        }
+        ordered.push_back(std::move(winner));
         // Actual receipt propagation invalidates the remaining ranking.
     }
     return ordered;

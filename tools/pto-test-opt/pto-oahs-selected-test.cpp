@@ -1120,6 +1120,63 @@ module attributes {pto.target_arch = "a3"} {
   return true;
 }
 
+bool requiredReturnCoverage(MLIRContext &context) {
+  const std::string input = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @required_return(%src: !pto.partition_tensor_view<1x32xi32>,
+                       %dst: !pto.partition_tensor_view<1x32xi32>, %predicate: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 256 : i64
+    %a2 = arith.constant 512 : i64
+    %a3 = arith.constant 768 : i64
+    %zero = arith.constant 0 : i32
+    %z = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x32xi32>
+    %x = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xi32>
+    %y = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 1x32xi32>
+    %w = pto.alloc_tile addr = %a3 : !pto.tile_buf<vec, 1x32xi32>
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xi32>) outs(%x : !pto.tile_buf<vec, 1x32xi32>)
+    pto.tadd ins(%x, %x : !pto.tile_buf<vec, 1x32xi32>, !pto.tile_buf<vec, 1x32xi32>)
+      outs(%y : !pto.tile_buf<vec, 1x32xi32>)
+    pto.tstore ins(%y : !pto.tile_buf<vec, 1x32xi32>) outs(%dst : !pto.partition_tensor_view<1x32xi32>)
+    pto.tload ins(%dst : !pto.partition_tensor_view<1x32xi32>) outs(%x : !pto.tile_buf<vec, 1x32xi32>)
+    return
+  }
+})mlir";
+  for (unsigned variant = 0; variant < 3; ++variant) {
+    auto source = input;
+    auto replace = [&](const std::string& from, const std::string& to) {
+      source.replace(source.find(from), from.size(), to);
+    };
+    if (variant == 1) {
+      replace("%x = pto.alloc_tile", "%allocation = pto.alloc_tile");
+      replace("%y = pto.alloc_tile", "%x = pto.treshape %allocation : "
+          "!pto.tile_buf<vec, 1x32xi32> -> !pto.tile_buf<vec, 1x32xi32>\n    %y = pto.alloc_tile");
+    }
+    if (variant == 2) {
+      replace("%z = pto.alloc_tile", "scf.if %predicate { }\n"
+          "    %unrelated = arith.addi %a0, %a1 : i64\n    %z = pto.alloc_tile");
+    }
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    const bool parsed = check(bool(module) && succeeded(verify(*module)),
+                              "required-return native fixture failed to parse");
+    if (!parsed) {
+      return false;
+    }
+    auto function = module->lookupSymbol<func::FuncOp>("required_return");
+    oahs::SelectedPlan plan;
+    const bool constructed = check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)) &&
+                   std::any_of(plan.decisions.begin(), plan.decisions.end(),
+                       [](const auto& decision) { return !decision.supporting.empty(); }) &&
+                   !plan.declinedObservation && !plan.declinedRecurring,
+               "native construction missed actual required-return coverage");
+    if (!constructed) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool uniformEndpointRoles(MLIRContext &context) {
   const char *input = R"mlir(
 module attributes {pto.target_arch = "a3"} {
@@ -1798,7 +1855,7 @@ int main(int argc, char **argv) {
                       slotMappings(context) && slotDependencySlices(context) && originalLoopDomains(context) &&
                       normalizedGuardReadback(context) && exactCommandEmission(context) &&
                       originalResidueDecisions(context) && readerGenerations(context) &&
-                      uniformEndpointRoles(context) && sourceGapPlacement(context) &&
+                      uniformEndpointRoles(context) && sourceGapPlacement(context) && requiredReturnCoverage(context) &&
                       accumulatorOrdering(context) && accumulatorEpisodes(context) && firstUseOrdering(context);
   return passed ? 0 : 1;
 }
