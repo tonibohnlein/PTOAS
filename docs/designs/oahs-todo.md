@@ -45,9 +45,12 @@ resource-intensive workers maximum in aggregate.
 1. **Complete (`a361b3878`):** classification cost: cheap original reason flags separated from witness paths,
    shared site/cell facts, unused-classification fast paths and next-provider-only
    selection. Preserve classification/policy; validate scaling and exact plans.
-2. **Active (shared materialization complete):** stable ordered gaps and common packet binding, including ordinary and joined
+2. **Active (shared materialization and local direct source-gap qualification complete):** stable ordered gaps and common packet binding, including ordinary and joined
    acknowledgments. Preserve publication-prefix dependencies across edits; add a
-   normal-constructor recurring joined-consumption witness.
+   normal-constructor recurring joined-consumption witness (implemented in J).
+   M qualifies one exact earlier source gap from actual per-occurrence history;
+   virgin-key/acyclic premises remain explicit. Persistent prefix closure and
+   common eligibility across all packet clients remain open.
 3. **Active (producer-repair persistence implemented):** generation support for
    publications, consumer prerequisites and continuations. The original affected
    consumer/source-class scope is rechecked on stabilized replay after edits;

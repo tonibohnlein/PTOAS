@@ -1063,6 +1063,63 @@ module attributes {pto.target_arch = "a3"} {
   return true;
 }
 
+bool sourceGapPlacement(MLIRContext &context) {
+  const std::string input = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @source_gap(%src: !pto.partition_tensor_view<1x32xi32>,
+                       %dst: !pto.partition_tensor_view<1x32xi32>, %predicate: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 256 : i64
+    %a2 = arith.constant 512 : i64
+    %a3 = arith.constant 768 : i64
+    %zero = arith.constant 0 : i32
+    %z = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x32xi32>
+    %x = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xi32>
+    %y = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 1x32xi32>
+    %w = pto.alloc_tile addr = %a3 : !pto.tile_buf<vec, 1x32xi32>
+    pto.tci ins(%zero : i32) outs(%z : !pto.tile_buf<vec, 1x32xi32>) {descending = false}
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xi32>) outs(%y : !pto.tile_buf<vec, 1x32xi32>)
+    pto.tadd ins(%z, %z : !pto.tile_buf<vec, 1x32xi32>, !pto.tile_buf<vec, 1x32xi32>)
+      outs(%x : !pto.tile_buf<vec, 1x32xi32>)
+    pto.tadd ins(%y, %y : !pto.tile_buf<vec, 1x32xi32>, !pto.tile_buf<vec, 1x32xi32>)
+      outs(%w : !pto.tile_buf<vec, 1x32xi32>)
+    pto.tstore ins(%x : !pto.tile_buf<vec, 1x32xi32>) outs(%dst : !pto.partition_tensor_view<1x32xi32>)
+    return
+  }
+})mlir";
+  for (unsigned variant = 0; variant < 3; ++variant) {
+    auto source = input;
+    auto replace = [&](const std::string& from, const std::string& to) {
+      source.replace(source.find(from), from.size(), to);
+    };
+    if (variant == 1) {
+      replace("%x = pto.alloc_tile", "%allocation = pto.alloc_tile");
+      replace("%y = pto.alloc_tile", "%x = pto.treshape %allocation : "
+          "!pto.tile_buf<vec, 1x32xi32> -> !pto.tile_buf<vec, 1x32xi32>\n    %y = pto.alloc_tile");
+    }
+    if (variant == 2) {
+      replace("%z = pto.alloc_tile", "scf.if %predicate { }\n"
+          "    %unrelated = arith.addi %a0, %a1 : i64\n    %z = pto.alloc_tile");
+    }
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    const bool parsed = check(bool(module) && succeeded(verify(*module)),
+                              "source-gap native fixture failed to parse");
+    if (!parsed) {
+      return false;
+    }
+    auto function = module->lookupSymbol<func::FuncOp>("source_gap");
+    oahs::SelectedPlan plan;
+    const bool constructed = check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)) &&
+                   plan.work.earlyPublications != 0 && !plan.declinedObservation && !plan.declinedRecurring,
+               "native exact-gap construction/reconstruction missed early publication");
+    if (!constructed) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool uniformEndpointRoles(MLIRContext &context) {
   const char *input = R"mlir(
 module attributes {pto.target_arch = "a3"} {
@@ -1520,6 +1577,9 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " acknowledgment_checks=" << work.acknowledgmentChecks
                  << " acknowledgment_check_sites=" << work.acknowledgmentCheckSites
                  << " joined_acknowledgments=" << work.joinedAcknowledgments
+                 << " source_gap_queries=" << work.sourceGapQueries
+                 << " source_gap_commands=" << work.sourceGapCommands
+                 << " early_publications=" << work.earlyPublications
                  << " key_queries=" << work.keyQueries << " invariant=" << work.invariantSiteEvaluations
                  << " prepare_microseconds=" << work.preparationMicroseconds
                  << " sites=" << work.constructedSites << " words=" << work.commandWords
@@ -1738,7 +1798,7 @@ int main(int argc, char **argv) {
                       slotMappings(context) && slotDependencySlices(context) && originalLoopDomains(context) &&
                       normalizedGuardReadback(context) && exactCommandEmission(context) &&
                       originalResidueDecisions(context) && readerGenerations(context) &&
-                      uniformEndpointRoles(context) &&
+                      uniformEndpointRoles(context) && sourceGapPlacement(context) &&
                       accumulatorOrdering(context) && accumulatorEpisodes(context) && firstUseOrdering(context);
   return passed ? 0 : 1;
 }

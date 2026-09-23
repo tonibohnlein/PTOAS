@@ -70,6 +70,7 @@ Id Ledger::insert(Cut cut, Id offset, Command command, EndpointPurpose purpose, 
     cut = canonical(cut);
     const auto id = endpoints.size();
     endpoints.push_back({id, cut, command, purpose, request, ack});
+    recordEvent(endpoints.back());
     words[cut].insert(words[cut].begin() + offset, id);
     ++revision;
     changed.push_back(cut);
@@ -180,6 +181,7 @@ std::vector<Id> Ledger::appendPacket(const PreparedPacket& packet)
     std::vector<Id> ids;
     for (const auto& endpoint : packet.endpoints) {
         ids.push_back(endpoint.id);
+        recordEvent(endpoint);
     }
     endpoints.insert(endpoints.end(), packet.endpoints.begin(), packet.endpoints.end());
     for (const auto& [cut, insertions] : packet.insertions) {
@@ -212,6 +214,19 @@ std::optional<Commands> Ledger::withPacket(const PreparedPacket& packet) const
         }
     }
     return out;
+}
+void Ledger::recordEvent(const SelectedEndpoint& endpoint)
+{
+    const auto& command = endpoint.command;
+    if (command.kind == Command::Publish || command.kind == Command::Acquire) {
+        byEvent[{command.source, command.observer, command.key}].push_back(endpoint.id);
+    }
+}
+const std::vector<Id>& Ledger::eventUses(const EventIdentity& identity) const
+{
+    static const std::vector<Id> empty;
+    const auto found = byEvent.find({identity.source, identity.observer, identity.key});
+    return found == byEvent.end() ? empty : found->second;
 }
 void Ledger::erase(Id id)
 {

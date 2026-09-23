@@ -1,6 +1,45 @@
 # OAHS current handoff
 
-## Current iteration — Step L semantic enclosing-bank admission
+## Current iteration — Step M exact direct source gaps
+
+Baseline `2ba083877`. A direct ordinary transfer can publish before unrelated
+incoming waits in the same word when its actual prefix already covers every
+required class at every matched source occurrence. Stable gap identities and the
+current revision bind the proof to the committed packet. Virgin-key ownership,
+acyclic straight correspondence and freshness are explicit sufficient premises.
+Outward publications, source fences, ALL and selected-key uses stop the suffix
+scan. Unknown retains the prior tail placement; no per-candidate full solve.
+
+The event-use index replaces whole-ledger scans for interval checks and retains
+dormant identities. Selection still tries its existing chosen key and only one
+earlier gap. This is local new-publication placement, not persistent absolute
+prefix protection or a guarantee about subsequent greedy decisions. General
+closure/withdrawal and reused-key/cyclic certificates remain open.
+
+Architecture, correctness and asymptotic-performance reviewers ACCEPT. All22
+portable suites plus final focused hardening, three native drivers,88/88corpus,
+18/19compatibility (same inherited refusal),GEMM,two prefills and three targets
+pass. Every pinned campaign plan remains byte-identical to L. Native activation
+passes direct allocation, equivalent view and unrelated-control variants without
+retry. The new native five-payload witness removes four issue/completion relations
+(one completion-to-issue relation) with zero additions. Three event pairs and
+three selected updates/seven replay evaluations are unchanged. Portable exhaustive
+16 completion-to-issue comparisons similarly remove one relation and add none.
+
+Tests cover all-occurrence history, missing credit, stale revisions, cyclic
+refusal, future/dormant key uses and outward/fence barriers. Final named-Boolean
+and fixture-line formatting follows the native campaign; focused portable test
+and scoped compliance pass on that final source. No device/sanitizer run. Evidence:
+`../oahs-gemm-base-builds/refactor-step-m/`, including native source-gap-order.json,
+exact plans and work logs. F/G/L recovery debt remains open.
+
+Next: shared actual source coverage for structured providers, then independently
+required-return selection. Extra coverage must hold at every participating source
+and survive through the consumer deadline. Preserve the selected early source;
+M's exact gap must retain any extra coverage that justified choosing that provider.
+Continue the same three-reviewer commit loop.
+
+## Previous iteration — Step L semantic enclosing-bank admission
 
 Baseline `b02d4de4f`. Successful enclosing bank refinement no longer depends on
 hasQualifiedRecurringAccesses; the redundant program copy/analysis wrapper and

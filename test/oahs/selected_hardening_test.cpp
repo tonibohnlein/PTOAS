@@ -23,6 +23,136 @@ struct ReplayTestAccess {
                 "pending compatible issue erased incompatible ACC history");
     }
 
+    static void exactSourceGap()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE1;
+        auto p = base(2, 2);
+        p.operations = {op(Q, {{1, false, true}}), op(P, {{0, false, true}}),
+                        op(P, {{1, true, false}}), op(R, {{0, true, false}, {1, true, false}})};
+        Constructor c(p);
+        c.current = 3;
+        c.ledger.append(1, {Command::Publish, Q, P, 0}, EndpointPurpose::Fixed);
+        const auto wait = c.ledger.append(2, {Command::Acquire, Q, P, 0}, EndpointPurpose::Fixed);
+        require(c.contextualReplay(), c.result.reason);
+        Id key = NoAnalysisId;
+        for (Id i = 0; i < c.frontier.keys().size(); ++i) {
+            const auto& identity = c.frontier.keys()[i];
+            if (identity.source == P && identity.observer == R && identity.key == 0) {
+                key = i;
+            }
+        }
+        require(key != NoAnalysisId, "missing source-gap fixture key");
+        const WordGap before{2, NoAnalysisId, wait};
+        const std::vector<FrontierRequirement> own{{0, P, true, 3, true, false}};
+        const std::vector<FrontierRequirement> incoming{{1, Q, true, 3, true, false}};
+        require(c.sourceGap(before, key, own).proved(), "exact prefix lost its own completed class");
+        require(!c.sourceGap(before, key, incoming).proved(),
+                "word-tail credit was borrowed before its incoming receipt");
+        require(c.sourceGap(c.ledger.tail(2), key, incoming).proved(),
+                "actual incoming receipt did not establish gap coverage");
+        const auto publication = c.ledger.append(3, {Command::Publish, P, R, 0}, EndpointPurpose::Fixed);
+        const auto receipt = c.ledger.append(3, {Command::Acquire, P, R, 0}, EndpointPurpose::Fixed);
+        require(!c.sourceGap(before, key, own).proved(), "stale source-gap replay was reused");
+        require(c.contextualReplay(), c.result.reason);
+        require(!c.sourceGap(before, key, own).proved(), "future key use lacked neighboring-generation check");
+        c.ledger.erase(publication);
+        c.ledger.erase(receipt);
+        require(c.contextualReplay(), c.result.reason);
+        require(!c.sourceGap(before, key, own).proved(), "dormant key use was mistaken for a virgin key");
+    }
+
+    static void sourceGapOccurrences()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE1;
+        for (bool missing : {false, true}) {
+            auto p = base(3, 2);
+            p.operations = {op(Q, {{1, false, true}}), op(P, {{0, false, true}}),
+                            op(P, {{missing ? 2u : 0u, false, true}}), op(R, {{0, true, false}})};
+            ObservedControl graph;
+            graph.qualification = "shared source and receipt words across two original alternatives";
+            graph.scopes = {{0, NoControlId, NoControlId}};
+            graph.entry = 0;
+            graph.exit = 8;
+            graph.sites.resize(9);
+            const std::vector<std::vector<std::size_t>> edges{{1}, {2, 5}, {3}, {4}, {8}, {6}, {7}, {8}, {}};
+            for (Id site = 0; site < graph.sites.size(); ++site) {
+                graph.sites[site].successors = edges[site];
+                graph.sites[site].observation = site;
+                graph.observations.push_back({site, {}, true});
+            }
+            graph.sites[0].operation = 0;
+            graph.sites[2].operation = 1;
+            graph.sites[5].operation = 2;
+            graph.sites[4].operation = graph.sites[7].operation = 3;
+            graph.sites[6].observation = 3;
+            graph.sites[7].observation = 4;
+            p.observed = std::move(graph);
+            Constructor c(p);
+            require(c.control.complete, c.control.reason);
+            c.current = 4;
+            c.ledger.append(1, {Command::Publish, Q, P, 0}, EndpointPurpose::Fixed);
+            const auto wait = c.ledger.append(3, {Command::Acquire, Q, P, 0}, EndpointPurpose::Fixed);
+            require(c.contextualReplay(), c.result.reason);
+            Id key = 0;
+            while (c.frontier.keys()[key].source != P || c.frontier.keys()[key].observer != R) {
+                ++key;
+            }
+            const auto proof = c.sourceGap({3, NoAnalysisId, wait}, key, {{0, P, true, 3, true, false}});
+            require(proof.proved() == !missing,
+                    "source gap did not check every shared-word occurrence's actual prefix");
+        }
+        auto p = base(1, 2);
+        p.operations = {op(P, {{0, false, true}}), op(R, {{0, true, false}})};
+        p.body = {Region::For, {seq({leaf(0), leaf(1)})}, 0, true};
+        const auto imported = addStructuredBoundaryCuts(p);
+        require(imported.success, imported.reason);
+        Constructor c(imported.program);
+        for (Cut site = 0; site < c.control.graph.operations.size(); ++site) {
+            if (c.control.graph.operations[site] == 1) {
+                c.current = site;
+            }
+        }
+        require(c.contextualReplay(), c.result.reason);
+        Id key = 0;
+        while (c.frontier.keys()[key].source != P || c.frontier.keys()[key].observer != R) {
+            ++key;
+        }
+        require(!c.sourceGap(c.ledger.tail(c.current), key, {{0, P, true, 1, true, false}}).proved(),
+                "acyclic source-gap certificate admitted a recurring occurrence");
+    }
+
+    static void sourceGapBarriers()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE1;
+        for (auto barrier : {Command::Barrier, Command::BarrierAll, Command::Publish}) {
+            auto p = base(2, 2);
+            p.operations = {op(Q, {{1, false, true}}), op(P, {{0, false, true}}),
+                            op(P, {{1, true, false}}), op(R, {{0, true, false}})};
+            Constructor c(p);
+            c.current = 3;
+            c.ledger.append(1, {Command::Publish, Q, P, 0}, EndpointPurpose::Fixed);
+            const auto wait = c.ledger.append(2, {Command::Acquire, Q, P, 0}, EndpointPurpose::Fixed);
+            c.ledger.append(2, {barrier, P, Q, 1}, EndpointPurpose::Fixed);
+            if (barrier == Command::Publish) {
+                c.ledger.append(3, {Command::Acquire, P, Q, 1}, EndpointPurpose::Fixed);
+            }
+            if (barrier != Command::BarrierAll) {
+                require(c.contextualReplay(), c.result.reason);
+            }
+            Id key = 0;
+            while (c.frontier.keys()[key].source != P || c.frontier.keys()[key].observer != R) {
+                ++key;
+            }
+            SelectedDecision decision;
+            decision.required = {{0, P, true, 3, true, false}};
+            require(!c.earlyPublicationGap(2, key, decision),
+                    "publication crossed an outward source publication or fence");
+            require(c.result.work.sourceGapQueries == 0,
+                    "outward boundary was crossed before consulting the source-gap proof");
+            require(c.ledger.active(wait), "gap query mutated its incoming receipt");
+        }
+    }
+
     static SelectedPlan contextual(const Program& p) {
         Constructor constructor(p);
         constructor.needsContextualReplay = true;
@@ -452,6 +582,41 @@ void separateReleaseFrontiers()
             "B reader completion gates the next A refill");
 }
 
+void earlyPublication()
+{
+    const auto R = o::Pipe::MTE1;
+    auto p = base(2, 2);
+    p.operations = {op(Q, {{1, false, true}}), op(P, {{0, false, true}}),
+                    op(P, {{1, true, false}}), op(R, {{0, true, false}})};
+    const auto plan = o::constructSelectedPlan(p);
+    require(plan.success, plan.reason);
+    require(plan.work.earlyPublications == 1, "ordinary construction missed its exact early source gap");
+    require(o::checkCausalFrontier(p, plan.commands).accepted, "early publication lost independent safety");
+    const auto& word = plan.commands[2];
+    require(word.size() == 2 && word[0].kind == o::Command::Publish && word[0].source == P &&
+                word[0].observer == R && word[1].kind == o::Command::Acquire && word[1].observer == P,
+            "new release publication did not precede the unrelated incoming wait");
+    std::vector<unsigned> visits{0, 1, 2, 3};
+    require(bool(oahs_oracle::graph(p, plan.commands, visits, {{0, 3}})),
+            "unrelated incoming completion still gates the independent reader");
+    auto tail = plan.commands;
+    std::swap(tail[2][0], tail[2][1]);
+    require(o::checkCausalFrontier(p, tail).accepted, "tail-placement reference is not valid");
+    require(!bool(oahs_oracle::graph(p, tail, visits, {{0, 3}})),
+            "ordering witness did not distinguish an enlarged publication prefix");
+    unsigned removed = 0;
+    for (unsigned from = 0; from < visits.size(); ++from) {
+        for (unsigned to = 0; to < visits.size(); ++to) {
+            const bool before = !bool(oahs_oracle::graph(p, tail, visits, {{from, to}}));
+            const bool after = !bool(oahs_oracle::graph(p, plan.commands, visits, {{from, to}}));
+            require(!after || before, "early source gap added a complete payload-order relation");
+            removed += before && !after;
+        }
+    }
+    require(removed == 1, "unexpected complete-order difference in early-publication witness");
+
+}
+
 void deadlineFence()
 {
     auto p = base(3, 4);
@@ -495,6 +660,10 @@ void deadlineFence()
 }
 int main()
 {
+    o::selected::ReplayTestAccess::exactSourceGap();
+    o::selected::ReplayTestAccess::sourceGapOccurrences();
+    o::selected::ReplayTestAccess::sourceGapBarriers();
+    earlyPublication();
     pendingAccumulatorHistories();
     repeatedJoinedPacket();
     joinedConsumptionReturn();

@@ -117,6 +117,7 @@ struct SelectedWork {
     uint64_t requirementClassifications = 0, classificationSites = 0, classificationOrigins = 0;
     uint64_t witnessQueries = 0, witnessSites = 0;
     uint64_t producerSupportWork = 0;
+    uint64_t sourceGapQueries = 0, sourceGapCommands = 0, earlyPublications = 0;
     // Native original-program discovery, before selected construction/retries.
     uint64_t nativeEndpointDiscoveryWork = 0;
     uint64_t unsummarizedBackedges = 0, finiteOccurrenceTransitions = 0;

@@ -671,3 +671,32 @@ a later unchanged residue or an outside occurrence, while preserving the
 validator's requirement that each physical phase appear in observed control.
 Per-phase preparation is cached; work follows represented effects and copies,
 without a fresh period-wide scan for every residue.
+
+### Exact source-gap qualification (Step M)
+
+An ordinary direct transfer may place its new publication before an incoming
+wait in the same selected command word. The query resolves stable left/right
+endpoint identities against the current ledger revision, executes that word's
+actual prefix from the cached incoming causal state, and checks publication
+legality and every required physical access at every matched occurrence.
+Correspondence must be proved; source and receipt are acyclic and straight, and
+no intervening issue may refresh a required class. Unknown retains tail placement.
+
+The initial neighboring-use certificate requires a virgin physical key, including
+dormant endpoint records. The ledger indexes all event uses by physical identity;
+active interval checks and virgin-key queries share that index. Removing endpoints
+does not erase ownership history. No new full-program solve is added per candidate.
+
+The client scans one word suffix, stopping at source publications, source fences,
+ALL, or a use of the selected key. It checks one earliest eligible gap; it does not
+search all intermediate positions or change the existing key-selection policy. A
+reused selected key can therefore retain tail placement even when another unused
+key exists. The qualified revision-bound gap is consumed by the existing exact
+packet materializer. Relay, recurring and structured-source clients retain their
+existing placement until their additional premises are represented.
+
+This is local qualification of a NEW publication under the current surrounding
+ledger. It is not persistent absolute prefix protection or a guarantee that later
+greedy decisions add no ordering. General protection requires an affected-interface
+closure or withdrawal/requalification of the placement and dependent support. A
+later mandatory repair cannot simply be rejected to preserve an optional prefix.

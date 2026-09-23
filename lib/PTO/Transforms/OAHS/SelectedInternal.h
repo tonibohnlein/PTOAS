@@ -106,6 +106,13 @@ struct WordGap {
     Cut cut = NoAnalysisId;
     Id left = NoAnalysisId, right = NoAnalysisId;
 };
+struct SourceGapQualification {
+    ProofOutcome outcome = ProofOutcome::Unknown;
+    WordGap gap;
+    uint64_t version = 0;
+    std::string reason;
+    bool proved() const { return outcome == ProofOutcome::Proved; }
+};
 struct PacketEndpoint {
     Cut cut;
     Command command;
@@ -147,6 +154,7 @@ public:
     const std::vector<Id>& word(Cut) const;
     const SelectedEndpoint& endpoint(Id) const;
     Commands commands() const;
+    const std::vector<Id>& eventUses(const EventIdentity&) const;
     PreparedPacket preparePacket(const OrderedPacket&) const;
     std::optional<Commands> withPacket(const PreparedPacket&) const;
     std::vector<Id> appendPacket(const PreparedPacket&);
@@ -167,6 +175,8 @@ private:
     std::vector<SelectedEndpoint> endpoints;
     std::vector<Cut> changed;
     std::set<Id> removed;
+    std::map<std::tuple<Pipe, Pipe, unsigned>, std::vector<Id>> byEvent;
+    void recordEvent(const SelectedEndpoint&);
     Id insert(Cut, Id, Command, EndpointPurpose, Id, Id);
 };
 
@@ -469,6 +479,9 @@ private:
     bool needsCommonAcknowledgment(const State&) const;
     Id reusable(Pipe, Pipe, const State&);
     bool canPublish(const State&, Id) const;
+    SourceGapQualification sourceGap(
+        const WordGap&, Id, const std::vector<FrontierRequirement>&);
+    std::optional<WordGap> earlyPublicationGap(Cut, Id, const SelectedDecision&);
     bool clearInterval(Id, Cut, Cut) const;
     std::vector<Pipe> route(Pipe, Pipe) const;
     bool recurring(const std::vector<RecurringRequirement>&);
