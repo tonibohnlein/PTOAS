@@ -544,26 +544,35 @@ bool Constructor::restoreReturns(Id key)
     const auto& identity = frontier.keys()[key];
     const auto found = pendingRearming.find({identity.observer, identity.source});
     if (found == pendingRearming.end()) return false;
-    bool changed = false;
+    OrderedPacket packet;
+    std::vector<Id> restored;
     for (const auto& helper : found->second) {
         if (ledger.active(helper.second)) continue;
         const auto wait = ledger.endpoint(helper.second).acknowledges;
         const auto& forward = ledger.endpoint(wait).command;
         if (forward.source != identity.source || forward.observer != identity.observer || forward.key != identity.key)
             continue;
-        // A newly selected publication can introduce an EARLIER deadline than
-        // the return which discharged this obligation. Restore its original
-        // source prefix, before advancing that publication; never assume a
-        // receipt from the still-later necessary transfer.
-        ledger.restoreAfter(helper.first, wait);
-        ledger.restoreAfter(helper.second, helper.first);
-        requiredReturns.insert(helper.second);
+        const auto gap = ledger.gapAfter(wait);
+        if (!gap) { return false; }
+        const auto publication = ledger.restoration(helper.first, *gap);
+        const auto acquisition = ledger.restoration(helper.second, *gap);
+        if (!publication || !acquisition) { return false; }
+        packet.push_back(*publication);
+        packet.push_back(*acquisition);
+        restored.push_back(helper.second);
+    }
+    if (packet.empty()) { return false; }
+    const auto prepared = ledger.preparePacket(packet);
+    const auto ids = ledger.appendPacket(prepared);
+    const bool completePacket = ids.size() == packet.size();
+    if (!completePacket) { return false; }
+    for (auto wait : restored) {
+        requiredReturns.insert(wait);
         ++result.work.acknowledgments;
         ++result.work.rearmingRestored;
         --result.work.rearmingDischarged;
-        changed = true;
     }
-    return changed;
+    return true;
 }
 bool Constructor::restoreRearming(Id key, Cut publication)
 {

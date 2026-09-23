@@ -1,6 +1,41 @@
 # OAHS current handoff
 
-## Current iteration — Step N shared actual provider coverage
+## Current iteration — Step O exact restoration packet foundation
+
+Baseline `2f676f302`. The common materializer accepts original dormant endpoints
+and new endpoints in one exact ordered packet. Restored endpoints retain their
+IDs, commands and provenance; packet-local references use the actual ordered IDs.
+Erase/restore changes activity and revision without duplicating event-use records.
+The indexed dormant-use fact is structural ownership history, not allocation or
+causal permission. Existing restoreReturns now uses this materializer and normal
+selected replay. The old direct restoreAfter mutation path is removed.
+
+Architecture, correctness and asymptotic-performance reviewers ACCEPT this scoped
+foundation. A separate architecture/generality verdict ACCEPTS its integrity rules;
+this is not acceptance of common ownership binding or default deferral. Gate
+inventory and category-specific test rationale: oahs-selected-plan.md, exact
+restoration section. Mixed IDs, stale/foreign packets, immutable provenance,
+inactive consumption anchors, interleaved unrelated commands and canonical aliases
+are covered. Existing normal-constructor changed-deadline tests exercise restoration.
+
+Final portable22/22, three native drivers,88/88corpus,18/19compatibility
+(same inherited refusal),GEMM,two prefills and three targets pass. All pinned plans
+are unchanged. Final brace/named-Boolean formatting follows the native campaign;
+four focused portable checks and scoped compliance pass on final sources. See
+`../oahs-gemm-base-builds/refactor-step-o/` for exact source/binaries and logs.
+No device or sanitizer checks. F/G/L ordering and compilation debts remain open.
+
+Next increment P: shared packet ownership qualification across ordinary, reverse,
+joined and structured clients. Collect ALL owning helper pairs for a candidate
+physical key; stage their original endpoints with the new packet, qualify and
+commit those exact words. Partial/unaccounted ownership refuses atomically.
+Batch touched-word gap lookup to remove the inherited helper-count × word-length
+assembly cost. No new deferral until this prerequisite is demonstrated. Do not
+use a dormant-key veto without a checked pressure path or treat analyzer residuals
+as equivalent to the causal frontier's mixed-incidence ACC histories. Preserve
+normal authoritative replay; safety checking alone does not prove no added order.
+
+## Previous iteration — Step N shared actual provider coverage
 
 Baseline `9c212bab1`. Ordinary, alternative and loop-entry providers share an
 actual source-history intersection query. Their existing source discovery and

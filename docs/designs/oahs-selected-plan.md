@@ -735,3 +735,38 @@ The alternative crossed-class union and whole-loop issued-class test are
 conservative sufficient freshness certificates, not exact generation intervals.
 They may decline valid extra coverage; a refined replacement must preserve their
 obligations rather than merely remove those tests.
+
+
+## Exact restoration packets (O foundation)
+
+Missing fact: a dormant endpoint retains its physical identity and provenance,
+but the append-only packet representation could not include it in the same
+transaction as a new transfer. Ledger preparation now resolves an ordered mixture
+of original inactive IDs and fresh endpoints. A packet-local acknowledgment names
+that ordered sequence, not an assumed contiguous range of new IDs. Candidate
+commands and committed words use the same materialization. Existing restoreReturns
+is a consumer; its subsequent selected replay remains the causal check.
+
+The ledger indexes dormant physical identities independently of occupancy and
+consumption knowledge. Erasure retains event-use membership; restoration changes
+activity without duplicating that membership. This index is not yet allocation
+permission. Default deferral remains disabled and shared owner closure is the
+next increment.
+
+Gate inventory: original cut/command/purpose/request/acknowledgment equality,
+inactive distinct restored IDs, active original acknowledgment anchors, adjacent
+stable gap neighbors, and ledger owner/revision equality are necessary integrity
+premises for this API. They are independent of dtype, address spelling and unrelated
+payload. Changed neighboring commands invalidate a prepared gap; a fresh query
+may recover it. Cross-word relocation is intentionally outside restoration:
+restoration preserves the original identity/word and does not certify motion.
+No new optimization admission restriction is introduced.
+
+Evidence includes mixed restored/new IDs and acknowledgments, stale and foreign
+ledgers, malformed identity/provenance/cuts, inactive anchors, unrelated interleaved
+commands and canonical-word aliases. Existing normal construction exercises
+helper discharge and changed republication deadlines. Native effect/descriptor
+and expression variants exercise the unchanged import boundary; this increment
+adds no physical/control recognizer, so new dtype/expression cases cannot activate
+its packet-integrity rules. General dormant-key pressure, multi-owner closure and
+common binding remain unfinished and require their own construction witnesses.

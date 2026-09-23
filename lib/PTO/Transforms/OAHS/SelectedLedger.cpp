@@ -111,6 +111,7 @@ PreparedPacket Ledger::preparePacket(const OrderedPacket& packet) const
         return out;
     }
     std::map<Cut, std::map<Id, Id>> positions;
+    std::set<Id> restoring;
     for (const auto& item : packet) {
         if (!legalCommandCut(program, item.cut)) {
             out.error = "packet has no legal original command word";
@@ -139,18 +140,37 @@ PreparedPacket Ledger::preparePacket(const OrderedPacket& packet) const
         }
         auto acknowledgment = item.acknowledges;
         if (item.acknowledgesPacket != NoAnalysisId) {
-            if (acknowledgment != NoAnalysisId || item.acknowledgesPacket >= out.endpoints.size()) {
+            if (acknowledgment != NoAnalysisId || item.acknowledgesPacket >= out.ordered.size()) {
                 out.error = "packet acknowledgment does not name an earlier endpoint";
                 return out;
             }
-            acknowledgment = out.firstEndpoint + item.acknowledgesPacket;
+            acknowledgment = out.ordered[item.acknowledgesPacket];
         } else if (acknowledgment != NoAnalysisId &&
                    (acknowledgment >= endpoints.size() || !active(acknowledgment))) {
             out.error = "packet acknowledgment names an inactive endpoint";
             return out;
         }
-        const auto id = out.firstEndpoint + out.endpoints.size();
-        out.endpoints.push_back({id, cut, item.command, item.purpose, item.request, acknowledgment});
+        auto id = item.restore;
+        if (id != NoAnalysisId) {
+            const bool invalidRestore = id >= endpoints.size() || active(id) || !restoring.insert(id).second;
+            if (invalidRestore) {
+                out.error = "packet restoration does not name a distinct inactive endpoint";
+                return out;
+            }
+            const auto& original = endpoints[id];
+            const bool changedIdentity = original.cut != cut || !identical(original.command, item.command) ||
+                original.purpose != item.purpose || original.request != item.request ||
+                original.acknowledges != acknowledgment;
+            if (changedIdentity) {
+                out.error = "packet restoration changes original endpoint identity or provenance";
+                return out;
+            }
+            out.restored.push_back(id);
+        } else {
+            id = out.firstEndpoint + out.endpoints.size();
+            out.endpoints.push_back({id, cut, item.command, item.purpose, item.request, acknowledgment});
+        }
+        out.ordered.push_back(id);
         out.insertions[cut][offset].push_back(id);
     }
     out.ready = true;
@@ -178,10 +198,11 @@ std::vector<Id> Ledger::appendPacket(const PreparedPacket& packet)
         packet.firstEndpoint != endpoints.size()) {
         return {};
     }
-    std::vector<Id> ids;
     for (const auto& endpoint : packet.endpoints) {
-        ids.push_back(endpoint.id);
         recordEvent(endpoint);
+    }
+    for (auto id : packet.restored) {
+        setDormant(id, false);
     }
     endpoints.insert(endpoints.end(), packet.endpoints.begin(), packet.endpoints.end());
     for (const auto& [cut, insertions] : packet.insertions) {
@@ -195,8 +216,8 @@ std::vector<Id> Ledger::appendPacket(const PreparedPacket& packet)
         }
         changed.push_back(cut);
     }
-    revision += packet.endpoints.size();
-    return ids;
+    revision += packet.ordered.size();
+    return packet.ordered;
 }
 std::optional<Commands> Ledger::withPacket(const PreparedPacket& packet) const
 {
@@ -228,21 +249,46 @@ const std::vector<Id>& Ledger::eventUses(const EventIdentity& identity) const
     const auto found = byEvent.find({identity.source, identity.observer, identity.key});
     return found == byEvent.end() ? empty : found->second;
 }
+bool Ledger::hasDormantUses(const EventIdentity& identity) const
+{
+    const auto found = dormantEvents.find({identity.source, identity.observer, identity.key});
+    return found != dormantEvents.end() && found->second != 0;
+}
+void Ledger::setDormant(Id id, bool dormant)
+{
+    const auto& command = endpoints.at(id).command;
+    if (dormant) {
+        removed.insert(id);
+    } else {
+        removed.erase(id);
+    }
+    if (command.kind == Command::Publish || command.kind == Command::Acquire) {
+        auto& count = dormantEvents[{command.source, command.observer, command.key}];
+        if (dormant) {
+            ++count;
+        } else {
+            --count;
+        }
+    }
+}
+std::optional<PacketEndpoint> Ledger::restoration(Id id, const WordGap& gap) const
+{
+    const bool unavailable = id >= endpoints.size() || active(id);
+    if (unavailable) {
+        return {};
+    }
+    const auto& e = endpoints[id];
+    return PacketEndpoint{e.cut, e.command, e.purpose, e.request, e.acknowledges, gap, NoAnalysisId, id};
+}
 void Ledger::erase(Id id)
 {
+    if (!active(id)) {
+        return;
+    }
     const auto cut = endpoints.at(id).cut;
     auto& word = words[cut];
     word.erase(std::find(word.begin(), word.end(), id));
-    removed.insert(id);
-    changed.push_back(cut);
-    ++revision;
-}
-void Ledger::restoreAfter(Id id, Id predecessor)
-{
-    const auto cut = endpoints.at(id).cut;
-    auto& word = words[cut];
-    word.insert(std::next(std::find(word.begin(), word.end(), predecessor)), id);
-    removed.erase(id);
+    setDormant(id, true);
     changed.push_back(cut);
     ++revision;
 }

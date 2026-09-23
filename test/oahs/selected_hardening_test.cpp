@@ -411,7 +411,9 @@ void stablePacketGaps()
     const auto restorationPacket = ledger.preparePacket({
         {1, {o::Command::Barrier, Q}, o::EndpointPurpose::LocalFence}});
     ledger.erase(outward);
-    ledger.restoreAfter(outward, ids.back());
+    const auto restored = ledger.restoration(outward, *ledger.gapAfter(ids.back()));
+    require(restored && ledger.appendPacket(ledger.preparePacket({*restored})).size() == 1,
+            "exact inactive endpoint restoration failed");
     compareWords(committed, ledger.commands());
     require(!ledger.withPacket(restorationPacket) && ledger.appendPacket(restorationPacket).empty(),
             "restoring identical words revived a stale proof revision");
@@ -423,6 +425,78 @@ void stablePacketGaps()
     malformed[0].acknowledges = o::NoAnalysisId;
     malformed[0].acknowledgesPacket = 1;
     require(!ledger.preparePacket(malformed).valid(), "forward packet-local reference was accepted");
+}
+void mixedRestorationPacket()
+{
+    auto p = base(1, 1);
+    p.operations = {op(P, {{0, false, true, true}}), op(Q, {{0, true, false}}),
+                    op(Q, {{0, true, false}})};
+    o::selected::Control control(p);
+    o::selected::Ledger ledger(p, control.canonicalCut);
+    ledger.append(1, {o::Command::Publish, P, Q, 0}, o::EndpointPurpose::Completion);
+    const auto wait = ledger.append(1, {o::Command::Acquire, P, Q, 0}, o::EndpointPurpose::Completion);
+    const auto publication = ledger.append(1, {o::Command::Publish, Q, P, 0},
+        o::EndpointPurpose::ConsumptionAcknowledgment, 0, wait);
+    const auto acquisition = ledger.append(1, {o::Command::Acquire, Q, P, 0},
+        o::EndpointPurpose::ConsumptionAcknowledgment, 0, wait);
+    const auto marker = ledger.append(1, {o::Command::Barrier, o::Pipe::MTE1}, o::EndpointPurpose::Fixed);
+    ledger.erase(publication);
+    ledger.erase(acquisition);
+    require(ledger.hasDormantUses({Q, P, 0}), "erased protocol lost physical ownership history");
+    const auto gap = *ledger.gapAfter(wait);
+    const auto pub = *ledger.restoration(publication, gap);
+    const auto acq = *ledger.restoration(acquisition, gap);
+    const o::selected::OrderedPacket proposal{pub, acq,
+        {1, {o::Command::Publish, P, Q, 0}, o::EndpointPurpose::Completion,
+            1, o::NoAnalysisId, gap, 1},
+        {2, {o::Command::Acquire, P, Q, 0}, o::EndpointPurpose::Completion}};
+    const auto prepared = ledger.preparePacket(proposal);
+    const auto staged = ledger.withPacket(prepared);
+    require(prepared.valid() && staged && o::checkCausalFrontier(p, *staged).accepted,
+            "complete restored/new packet failed independent protocol validation");
+    auto foreign = ledger;
+    require(foreign.appendPacket(prepared).empty(), "foreign ledger accepted a restoration certificate");
+    auto duplicate = proposal;
+    duplicate.push_back(pub);
+    const auto revision = ledger.version();
+    const auto before = ledger.commands();
+    require(!ledger.preparePacket(duplicate).valid(), "duplicate restoration was accepted");
+    auto changed = proposal;
+    changed[0].command.key = 1;
+    require(!ledger.preparePacket(changed).valid(), "restoration changed physical identity");
+    changed = proposal;
+    changed[0].acknowledges = marker;
+    require(!ledger.preparePacket(changed).valid(), "restoration changed consumption provenance");
+    changed = proposal;
+    changed[0].cut = 2;
+    require(!ledger.preparePacket(changed).valid(), "restoration crossed its original word");
+    require(ledger.version() == revision && ledger.hasDormantUses({Q, P, 0}),
+            "rejected restoration mutated version or ownership");
+    compareWords(before, ledger.commands());
+    const auto oldCount = ledger.records().size();
+    const auto ids = ledger.appendPacket(prepared);
+    require(ids == std::vector<std::size_t>{publication, acquisition, oldCount, oldCount + 1},
+            "mixed packet changed restored identities or fresh endpoint numbering");
+    require(ledger.endpoint(ids[2]).acknowledges == acquisition,
+            "packet-local acknowledgment confused restored and newly allocated identities");
+    require(ledger.word(1) == std::vector<std::size_t>{0, wait, publication, acquisition, ids[2], marker},
+            "restored and new endpoints lost exact shared-gap order");
+    require(!ledger.hasDormantUses({Q, P, 0}) && ledger.eventUses({Q, P, 0}).size() == 2,
+            "restoration duplicated event-use membership or retained stale dormant ownership");
+    compareWords(*staged, ledger.commands());
+    require(ledger.appendPacket(prepared).empty(), "stale restoration certificate was committed twice");
+    require(!ledger.restoration(publication, gap), "active endpoint offered for restoration");
+    ledger.erase(publication);
+    ledger.erase(acquisition);
+    const auto pending = ledger.preparePacket({*ledger.restoration(publication, *ledger.gapAfter(wait)),
+                                              *ledger.restoration(acquisition, *ledger.gapAfter(wait))});
+    ledger.erase(wait);
+    require(!ledger.withPacket(pending) && ledger.appendPacket(pending).empty(),
+            "inactive consumption anchor retained its old restoration certificate");
+    const auto newGap = ledger.tail(1);
+    require(!ledger.preparePacket({*ledger.restoration(publication, newGap),
+                                   *ledger.restoration(acquisition, newGap)}).valid(),
+            "fresh restoration accepted an inactive consumption anchor");
 }
 void aliasPacketGaps()
 {
@@ -451,6 +525,16 @@ void aliasPacketGaps()
     compareWords(*staged, ledger.commands());
     require(ledger.word(0) == ledger.word(1) && (*staged)[0].size() == 2 && (*staged)[1].size() == 2,
             "canonical packet word was not replicated at its original aliases");
+    const auto original = ledger.word(0).back();
+    ledger.erase(original);
+    const auto restoration = ledger.restoration(original, *ledger.gapAfter(wait));
+    require(bool(restoration), "canonical alias lost restoration anchor");
+    const auto restored = ledger.preparePacket({*restoration});
+    const auto restoredCommands = ledger.withPacket(restored);
+    require(restoredCommands && ledger.appendPacket(restored).size() == 1,
+            "canonical alias could not restore its original endpoint");
+    compareWords(*staged, *restoredCommands);
+    compareWords(*restoredCommands, ledger.commands());
 }
 void resourceAdmission(unsigned keys)
 {
@@ -677,6 +761,7 @@ int main()
     orderedPacketMaterialization();
     stablePacketGaps();
     aliasPacketGaps();
+    mixedRestorationPacket();
     resourceAdmission(1);
     resourceAdmission(2);
     deadlineFence();

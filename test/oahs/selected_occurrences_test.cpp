@@ -552,8 +552,13 @@ struct ReplayTestAccess {
                 "later deletion lost support at an unfinished producer deadline without invalidation");
         // Restoring an actual transfer re-establishes support; an old successful
         // replay revision cannot stand in for the receipt.
-        c.ledger.restoreAfter(publication, marker);
-        c.ledger.restoreAfter(acquisition, publication);
+        const auto gap = c.ledger.gapAfter(marker);
+        require(bool(gap), "restored return lost its original anchor");
+        const auto restoredPublication = c.ledger.restoration(publication, *gap);
+        const auto restoredAcquisition = c.ledger.restoration(acquisition, *gap);
+        require(restoredPublication && restoredAcquisition, "actual return restoration was not represented");
+        const auto packet = c.ledger.preparePacket({*restoredPublication, *restoredAcquisition});
+        require(c.ledger.appendPacket(packet).size() == 2, "actual return restoration was not atomic");
         require(c.contextualReplay(), "restored actual return did not re-establish support: " + c.result.reason);
         require(c.cache.version == c.ledger.version(), "support check retained a stale ledger revision");
         c.ledger.append(4, {Command::Barrier, Q}, EndpointPurpose::Fixed);

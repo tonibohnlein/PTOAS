@@ -121,6 +121,8 @@ struct PacketEndpoint {
     std::optional<WordGap> gap = {};
     // Reference to an earlier endpoint in this packet, resolved before commit.
     Id acknowledgesPacket = NoAnalysisId;
+    // Restore this inactive identity, preserving all original provenance.
+    Id restore = NoAnalysisId;
 };
 using OrderedPacket = std::vector<PacketEndpoint>;
 class Ledger;
@@ -128,7 +130,7 @@ class PreparedPacket {
 public:
     bool valid() const { return ready; }
     const std::string& reason() const { return error; }
-    Id size() const { return endpoints.size(); }
+    Id size() const { return ordered.size(); }
 
 private:
     friend class Ledger;
@@ -138,6 +140,7 @@ private:
     uint64_t version = 0;
     Id firstEndpoint = NoAnalysisId;
     std::vector<SelectedEndpoint> endpoints;
+    std::vector<Id> ordered, restored;
     // Frozen original offsets are derived from stable gaps once. Multiple
     // insertions at one gap retain packet order; no word is copied to prepare.
     std::map<Cut, std::map<Id, std::vector<Id>>> insertions;
@@ -155,12 +158,13 @@ public:
     const SelectedEndpoint& endpoint(Id) const;
     Commands commands() const;
     const std::vector<Id>& eventUses(const EventIdentity&) const;
+    bool hasDormantUses(const EventIdentity&) const;
+    std::optional<PacketEndpoint> restoration(Id, const WordGap&) const;
     PreparedPacket preparePacket(const OrderedPacket&) const;
     std::optional<Commands> withPacket(const PreparedPacket&) const;
     std::vector<Id> appendPacket(const PreparedPacket&);
     bool active(Id id) const { return !removed.count(id); }
     void erase(Id);
-    void restoreAfter(Id, Id);
     uint64_t version() const { return revision; }
     const std::vector<SelectedEndpoint>& records() const { return endpoints; }
     const std::vector<Cut>& changes() const { return changed; }
@@ -176,7 +180,9 @@ private:
     std::vector<Cut> changed;
     std::set<Id> removed;
     std::map<std::tuple<Pipe, Pipe, unsigned>, std::vector<Id>> byEvent;
+    std::map<std::tuple<Pipe, Pipe, unsigned>, Id> dormantEvents;
     void recordEvent(const SelectedEndpoint&);
+    void setDormant(Id, bool);
     Id insert(Cut, Id, Command, EndpointPurpose, Id, Id);
 };
 

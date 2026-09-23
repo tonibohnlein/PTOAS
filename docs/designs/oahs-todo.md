@@ -73,6 +73,12 @@ N evidence:19changed files;38nonempty finite comparisons have identical orders;
 used identities15→16 and compatibility2/7 replay increases separately from pair
 reductions. These finite checks do not close F/G/L recovery or device acceptance.
 
+O adds exact mixed restoration materialization and indexed dormant identities.
+The old direct restoreAfter path is removed. Shared ownership closure/pressure
+binding and default deadline deferral remain open; P must cover every binder client
+and batch touched-word gaps. O integrity generality review is accepted separately
+from the unfinished allocation mechanism.
+
 Each coherent increment requires architecture, correctness and asymptotic-cost
 review acceptance before its commit. Different selected ledger revisions are not
 by themselves evidence of acceptable aggregate cost. Existing unresolved and empty
