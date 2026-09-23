@@ -421,7 +421,7 @@ struct Group {
 struct RearmingObligation {
     Id consumption = NoAnalysisId, forwardKey = NoAnalysisId;
     Id publication = NoAnalysisId, acquisition = NoAnalysisId;
-    bool required = false;
+    bool required = false, deferred = false;
     Id supportingReceipt = NoAnalysisId, supportRevision = NoAnalysisId;
 };
 
@@ -462,6 +462,7 @@ private:
     std::map<std::pair<Pipe, Pipe>, std::vector<Id>> pendingRearming;
     std::map<Id, Id> helperOwners;
     std::map<Id, std::vector<Id>> rearmingByKey;
+    std::map<Id, std::set<Id>> deferredByKey, latentReturns;
     std::map<std::pair<Pipe, Pipe>, std::vector<Id>> necessaryReturns;
     // Append-only populations already paired for each direction. Old helpers
     // see only new returns; new helpers see all returns, in the original order.
@@ -516,6 +517,9 @@ private:
     bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&, bool&);
     std::optional<bool> joinedAcknowledgment(Pipe, Pipe, Cut, SelectedDecision&);
     bool needsCommonAcknowledgment(const State&) const;
+    void deferReturn(Id);
+    bool canDeferCommonReturn() const;
+    bool latentPublicationAfter(Id anchor, Pipe observer) const;
     Id reusable(Pipe, Pipe, const State&);
     bool canPublish(const State&, Id) const;
     SourceGapQualification sourceGap(

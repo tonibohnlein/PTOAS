@@ -1,6 +1,52 @@
 # OAHS current handoff
 
-## Current iteration — Step Q shared rearming obligations
+## Paused after Step R — deferred owned common-cut returns
+
+Baseline Q `a936e90d6`. R qualifies the complete immediate fallback at a single
+reachable acyclic occurrence, retains exact dormant endpoints, and propagates only
+actual forward credit. A use of either physical identity materializes the complete
+owner closure through the shared binder. Live forward-key and latent-publication
+indexes avoid historical scans. Required-return substitution protects the exact
+latent source gap on every original path. Shared/cyclic occurrences retain closed
+packets; refined acyclic first/final occurrences may qualify.
+
+Architecture, correctness and asymptotic-performance reviewers ACCEPT; separate
+bounded generality ACCEPT. Full 22 portable suites, three native drivers, 88/88
+corpus, 18/19 compatibility (same inherited refusal), GEMM, two prefills and three
+targets pass. Two native lit fixtures pass, including actual deferral without retry
+under identity views, equivalent addresses and unrelated producer/descriptor/control
+additions. No device, sanitizer or LaTeX run.
+
+Sixteen emitted files change. All 36 supported nonempty finite complete-order
+comparisons are identical (zero added/removed relations); 10 unsupported rows remain
+unknown, including KDA. No empty rows count as evidence. DeepSeek projection has
+218 payloads and identical order under recorded bindings; GEMM/Qwen remain unchanged.
+This is finite evidence, not a universal ordering-preservation or runtime claim.
+
+Resource/work recovery debt is substantial: KDA static SETs312→390 and WAITs318→385,
+ownership checks15→138 and sites103079→954169; 83 of90 deferrals materialize again.
+Attention materializes6/6, ownership sites6639→143139. These are accepted temporary
+migration costs, not performance improvements. Some RMS/DeepSeek plans lose commands;
+static guard splitting can increase emitted counts while analytical endpoints fall.
+`resources-work.json` separates static commands, direction/key identities and work.
+
+Portable tests cover no-use, forward/reverse pressure, skipped consumption, stale
+returns, recurring refusal and exact latent gaps. Branch-sensitive latent retention
+uses a supplied ledger through settleRearming; all native latent_support_retained
+counts remain zero. Public discovery of that guard has not been demonstrated.
+
+Evidence: `../oahs-gemm-base-builds/refactor-step-r/` (`summary.json`, `test-all.log`,
+`lit.log`, `changed-order.json`, complete relation files, `resources-work.json`,
+`reviews.txt`). The draft receives a bounded implementation note, separately from
+this repository commit; its other existing changes are preserved.
+
+Paused at user request after committing R. No next implementation is started.
+On resumption: actual-return discharge of deferred reservations and certified later
+acknowledgment acquisition, then recurring obligations and outstanding F/G/L quality
+and work recovery. Current restoration uses original gaps and conservatively closes
+on key use; general late-WAIT placement and recurring deferral remain unfinished.
+
+## Latest committed iteration — Step Q shared rearming obligations
 
 Baseline `b435e0850`. Each tracked fallback now has one record referencing its
 actual consumption, forward key, original endpoints, pin and supporting actual

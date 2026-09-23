@@ -140,6 +140,7 @@ struct SelectedWork {
     std::size_t loopEntryTransfers = 0;
     std::size_t rearmingDischarged = 0;
     std::size_t rearmingRestored = 0;
+    std::size_t rearmingDeferred = 0, deferredMaterialized = 0, latentSupportChecks = 0, latentSupportRetained = 0;
     uint64_t rearmingPairVisits = 0, rearmingQuerySites = 0;
     uint64_t loopEntryAnalysisSites = 0;
     uint64_t loopEntryPreparationSites = 0;

@@ -1693,6 +1693,10 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " unreused_updates=" << work.unreusedUpdates
                  << " sources=" << work.sourceHandles << " rearming_discharged=" << work.rearmingDischarged
                  << " rearming_restored=" << work.rearmingRestored
+                 << " rearming_deferred=" << work.rearmingDeferred
+                 << " deferred_materialized=" << work.deferredMaterialized
+                 << " latent_support_checks=" << work.latentSupportChecks
+                 << " latent_support_retained=" << work.latentSupportRetained
                  << " rearming_pairs=" << work.rearmingPairVisits
                  << " rearming_query_sites=" << work.rearmingQuerySites
                  << " acknowledgments=" << work.acknowledgments

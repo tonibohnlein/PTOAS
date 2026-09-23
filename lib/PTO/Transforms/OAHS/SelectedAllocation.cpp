@@ -27,9 +27,13 @@ std::optional<OwnedPacket> Constructor::prepareOwnedPacket(
     const auto touch = [&](const Command& command) {
         if (command.kind != Command::Publish && command.kind != Command::Acquire) { return true; }
         const EventIdentity identity{command.source, command.observer, command.key};
-        const bool newIdentity = ledger.hasDormantUses(identity) &&
-            touched.emplace(command.source, command.observer, command.key).second;
+        const bool newIdentity = touched.emplace(command.source, command.observer, command.key).second;
         if (!newIdentity) { return true; }
+        const auto forward = deferredByKey.find(keyIndex(frontier, command));
+        if (forward != deferredByKey.end()) {
+            pending.insert(pending.end(), forward->second.begin(), forward->second.end());
+        }
+        if (!ledger.hasDormantUses(identity)) { return true; }
         for (auto endpoint : ledger.eventUses(identity)) {
             if (ledger.active(endpoint)) { continue; }
             const auto owner = helperOwners.find(endpoint);
@@ -43,6 +47,7 @@ std::optional<OwnedPacket> Constructor::prepareOwnedPacket(
     };
     for (const auto& item : proposed) {
         if (!touch(item.command)) { return {}; }
+
     }
     for (Id index = 0; index < pending.size(); ++index) {
         const auto id = pending[index];
@@ -152,10 +157,22 @@ bool Constructor::commitOwnedPacket(const OwnedPacket& packet, SelectedDecision&
     decision.endpoints.insert(decision.endpoints.end(), ids.begin() + packet.restoredEndpoints, ids.end());
     if (!packet.restoredWaits.empty()) { ++result.work.ownershipBindings; }
     for (auto wait : packet.restoredWaits) {
-        rearming.at(wait).required = true;
+        auto& obligation = rearming.at(wait);
+        obligation.required = true;
         ++result.work.acknowledgments;
         ++result.work.rearmingRestored;
-        --result.work.rearmingDischarged;
+        if (obligation.deferred) {
+            obligation.deferred = false;
+            auto& forwardOwners = deferredByKey.at(obligation.forwardKey);
+            forwardOwners.erase(wait);
+            if (forwardOwners.empty()) { deferredByKey.erase(obligation.forwardKey); }
+            auto& latent = latentReturns.at(obligation.consumption);
+            latent.erase(wait);
+            if (latent.empty()) { latentReturns.erase(obligation.consumption); }
+            ++result.work.deferredMaterialized;
+        } else {
+            --result.work.rearmingDischarged;
+        }
     }
     return true;
 }
@@ -566,6 +583,38 @@ std::optional<bool> Constructor::joinedAcknowledgment(
     return {};
 }
 
+void Constructor::deferReturn(Id id)
+{
+    auto& obligation = rearming.at(id);
+    obligation.deferred = true;
+    deferredByKey[obligation.forwardKey].insert(id);
+    latentReturns[obligation.consumption].insert(id);
+    ledger.erase(obligation.publication);
+    ledger.erase(obligation.acquisition);
+    ++result.work.rearmingDeferred;
+}
+bool Constructor::canDeferCommonReturn() const
+{
+    const auto canonical = control.canonicalCut[current];
+    for (auto site : control.wordOccurrences[canonical]) {
+        if (control.reachable[site] && (site != current || control.components[control.component[site]].cyclic)) {
+            return false;
+        }
+    }
+    return control.reachable[current];
+}
+bool Constructor::latentPublicationAfter(Id anchor, Pipe observer) const
+{
+    const auto found = latentReturns.find(anchor);
+    if (found == latentReturns.end()) { return false; }
+    for (auto id : found->second) {
+        const auto& obligation = rearming.at(id);
+        if (obligation.deferred && ledger.endpoint(obligation.publication).command.source == observer) {
+            return true;
+        }
+    }
+    return false;
+}
 bool Constructor::needsCommonAcknowledgment(const State& afterForward) const
 {
     // A syntactically last body operation is not a last dynamic operation. The
@@ -695,14 +744,37 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
                       EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
     packet.push_back({current, {Command::Acquire, observer, source, reverseNumber},
                       EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
-    if (!commitPacket(packet, decision)) {
-        return false;
+    bool defer = !retained && canDeferCommonReturn();
+    bool committed = false;
+    if (defer) {
+        // Certify the complete fallback first. The dormant endpoints are owned
+        // structural records, never executed causal credit.
+        const auto qualified = qualifyOwnedPacket(packet, true);
+        if (qualified) {
+            if (!commitOwnedPacket(*qualified, decision)) { return false; }
+            committed = true;
+        } else {
+            defer = false; // Retain the existing closed construction certificate.
+        }
     }
-    rememberReturn(decision.endpoints[decision.endpoints.size() - 2], decision.endpoints.back());
-    ++result.work.acknowledgments;
+    if (!committed && !commitPacket(packet, decision)) { return false; }
+    const auto helperPub = decision.endpoints[decision.endpoints.size() - 2];
+    const auto helperWait = decision.endpoints.back();
+    rememberReturn(helperPub, helperWait);
+    if (defer) {
+        deferReturn(helperWait);
+    }
+    result.work.acknowledgments += !defer;
     ++result.work.commonCutTransfers;
     if (!update()) {
-        return false;
+        if (!defer) { return false; }
+        // Forward-only continuation refused: realize the preserved complete
+        // fallback before rejecting this otherwise supported local decision.
+        if (!restoreReturns(key)) { return false; }
+        result.failure = SelectedFailure::None;
+        result.reason.clear();
+        result.cut = NoAnalysisId;
+        if (!update()) { return false; }
     }
     if (recurringClosed && !retained) {
         closedBindings[{source, observer}] = {key, reverse};
@@ -721,11 +793,12 @@ std::optional<bool> Constructor::dormantTransfer(
     for (Id forward = 0; forward < frontier.keys().size(); ++forward) {
         const auto& a = frontier.keys()[forward];
         if (a.source != source || a.observer != observer || closedKeys.count(forward)) { continue; }
+        const bool deferred = deferredByKey.count(forward) != 0;
         const auto count = closed ? frontier.keys().size() : 1;
         for (Id reverse = 0; reverse < count; ++reverse) {
             const auto& b = frontier.keys()[reverse];
             if (closed && (b.source != observer || b.observer != source || closedKeys.count(reverse))) { continue; }
-            const bool dormant = ledger.hasDormantUses(a) || (closed && ledger.hasDormantUses(b));
+            const bool dormant = deferred || ledger.hasDormantUses(a) || (closed && ledger.hasDormantUses(b));
             if (!dormant) { continue; }
             OrderedPacket packet{
                 {publication, {Command::Publish, source, observer, a.key}, EndpointPurpose::Completion, request},
@@ -848,6 +921,13 @@ bool Constructor::returnBeforeUse(Id helperWait, Id necessaryWait)
         const auto& word = ledger.word(cut);
         bool acquired = false;
         for (; offset < word.size(); ++offset) {
+            if (offset != 0) {
+                ++result.work.latentSupportChecks;
+                if (latentPublicationAfter(word[offset - 1], helper.command.observer)) {
+                    ++result.work.latentSupportRetained;
+                    return false;
+                }
+            }
             const auto id = word[offset];
             const auto& c = ledger.endpoint(id).command;
             if (id == necessaryWait && published) { acquired = reached = true; break; }
@@ -860,7 +940,14 @@ bool Constructor::returnBeforeUse(Id helperWait, Id necessaryWait)
                 ((c.kind == Command::Publish || c.kind == Command::Acquire) && sameKey(c, helper.command)))
                 return false;
         }
-        if (acquired) continue;
+        if (acquired) { continue; }
+        if (!word.empty()) {
+            ++result.work.latentSupportChecks;
+            if (latentPublicationAfter(word.back(), helper.command.observer)) {
+                ++result.work.latentSupportRetained;
+                return false;
+            }
+        }
         const auto operation = control.graph.operations[cut];
         if (operation != NoAnalysisId && program.operations[operation].pipe == helper.command.observer)
             return false;

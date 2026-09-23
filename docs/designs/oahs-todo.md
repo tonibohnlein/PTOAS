@@ -92,6 +92,16 @@ expand one private monotone closure and commit atomically. Support receipt/revis
 are historical evidence, never acquired credit. Actual deadline deferral remains
 next: protect latent fallback publication support before allowing helper omission.
 
+R completes bounded acyclic common-cut deferral, live ownership indexes and exact
+latent-source protection. All three reviewers and bounded generality ACCEPT;
+22 portable suites, native drivers/lit,88corpus and18/19compatibility pass with the
+same refusal.36 nonempty complete-order comparisons are unchanged;10 unsupported
+rows remain unknown. KDA/attention command and ownership-check growth is explicit
+recovery debt (HANDOFF and refactor-step-r/resources-work.json). Native latent-guard
+discovery remains unproved; its branch test uses a supplied ledger. Paused after R
+at user request. Next: actual-return reservation discharge and certified later WAIT
+placement; original-gap fallback does not complete that general mechanism.
+
 Each coherent increment requires architecture, correctness and asymptotic-cost
 review acceptance before its commit. Different selected ledger revisions are not
 by themselves evidence of acceptable aggregate cost. Existing unresolved and empty

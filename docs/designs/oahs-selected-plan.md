@@ -885,3 +885,56 @@ placements are explored. Exhaustion of new support refuses without mutations; ev
 must disappear before the complete packet can commit. Diagnostic forward keys
 are expanded once across all rounds because selected ledger activity is unchanged. This exceptional monotone dependency closure is charged per
 staged analysis; it is not a claim of constant replay cost per selected edit.
+
+
+## Deferred owned common-cut returns (R design)
+
+This bounded policy separates a storage receipt from its future event-reuse obligation.
+At one original acyclic common-cut occurrence, first qualify the complete immediate
+forward/reverse fallback against the current ledger. Retain its exact original
+records as an owned, un-emitted fallback and propagate only the forward transfer.
+A future payload alone is not a reason to emit the reverse pair. A failed
+forward-only replay restores the already-qualified fallback before finalizing.
+Recurring/shared occurrences retain their existing closed exchange; this is a
+sufficient initial dynamic-generation boundary, not a general deferral theorem.
+
+Every proposed use of either reserved identity closes the deferred owner through
+the same packet binder. The fallback source remains the exact gap after the actual
+forward consumption. The gap is an outstanding support use of its publisher's
+knowledge: required-return substitution cannot erase another helper if that gap
+is reached before its actual replacement receipt on any original path. The query
+uses stable consumption anchors at every shared-word occurrence, including gaps
+inside words and at their ends. A latent source grants no completion or consumption.
+
+The bounded availability invariant combines a qualified original fallback,
+matching-preserving additions with shared identity ownership, and latent-source
+protection on the only later endpoint-erasure path. It does not justify arbitrary
+endpoint motion. Restoring the original pair is a conservative realization at
+an actual resource deadline; moving its acquisition later needs a separate exact
+placement certificate. This increment does not claim general recurring deferral
+or arbitrary late relocation. Event pressure may materialize the fallback even
+when another realization could use fewer commands; record that limitation.
+
+R gate inventory and evidence:
+- Single reachable acyclic occurrence is a sufficient generation boundary; shared
+  or cyclic cases keep the existing exchange. Refined acyclic roles can qualify.
+  Replace this restriction only with an explicit recurring obligation interface.
+- Complete initial fallback qualification, matching consumption and both-key owner
+  closure protect recoverability. Unknown qualification retains the eager path;
+  failed forward-only replay restores the exact fallback before acceptance.
+- Latent publication support is protected by the existing substitution traversal
+  at exact post-consumption gaps, including branch alternatives. No new whole-graph
+  search is introduced. Live indexes remove owners when materialized.
+- Native identity-view, equivalent-address and unrelated producer/descriptor/control
+  variants activate deferral without retry. There is no datatype gate. Normal
+  constructor tests cover stale receipts, skipped consumption and both key pressures.
+  Branch-sensitive latent retention is supplied-ledger evidence, not demonstrated
+  native selection (native counter zero).
+
+All three reviews and bounded generality accept this scope.36 nonempty finite
+complete-order comparisons are identical;10 unsupported rows remain unknown.
+KDA static SETs312→390 and ownership sites103079→954169, and attention's6/6 restored
+deferrals, remain unresolved policy/work costs. This is not a general performance
+improvement. Evidence and separate command/key/work records are in refactor-step-r.
+Current key-use closure does not exploit all actual returns or move the original
+fallback WAIT; those are the next placement/discharge obligations after the pause.

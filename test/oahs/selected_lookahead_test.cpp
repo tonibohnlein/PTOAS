@@ -41,6 +41,88 @@ struct ReplayTestAccess {
         }
         selected_test::require(c.result.work.rearmingDischarged == 0, "protected P payload ignored");
     }
+    static void latentSourceSupport(unsigned position)
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE3;
+        auto p = selected_test::base(1, 2);
+        p.operations = {selected_test::op(P, {{0, true, false}}),
+                        selected_test::op(P, {{0, true, false}})};
+        Constructor c(p);
+        c.ledger.append(0, {Command::Publish, Q, R, 0}, EndpointPurpose::Completion);
+        const auto supportAnchor = c.ledger.append(0, {Command::Acquire, Q, R, 0}, EndpointPurpose::Completion);
+        const auto supportPub = c.ledger.append(0, {Command::Publish, R, Q, 0},
+            EndpointPurpose::ConsumptionAcknowledgment, 0, supportAnchor);
+        const auto supportWait = c.ledger.append(0, {Command::Acquire, R, Q, 0},
+            EndpointPurpose::ConsumptionAcknowledgment, 0, supportAnchor);
+        c.rememberReturn(supportPub, supportWait);
+        const auto actualReturn = [&](Cut cut) {
+            c.ledger.append(cut, {Command::Publish, R, Q, 1}, EndpointPurpose::Completion);
+            return c.ledger.append(cut, {Command::Acquire, R, Q, 1}, EndpointPurpose::Completion);
+        };
+        Id actual = NoAnalysisId;
+        if (position == 0) { actual = actualReturn(1); }
+        c.ledger.append(1, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion);
+        const auto latentAnchor = c.ledger.append(1, {Command::Acquire, P, Q, 0}, EndpointPurpose::Completion);
+        const auto latentPub = c.ledger.append(1, {Command::Publish, Q, P, 0},
+            EndpointPurpose::ConsumptionAcknowledgment, 0, latentAnchor);
+        const auto latentWait = c.ledger.append(1, {Command::Acquire, Q, P, 0},
+            EndpointPurpose::ConsumptionAcknowledgment, 0, latentAnchor);
+        c.rememberReturn(latentPub, latentWait);
+        c.deferReturn(latentWait);
+        if (position != 0) { actual = actualReturn(position == 1 ? 1 : 2); }
+        selected_test::require(c.returnBeforeUse(supportWait, actual) == (position == 0),
+            "latent publication support ignored the actual within-word gap");
+        c.rearming.at(latentWait).deferred = false;
+        selected_test::require(c.returnBeforeUse(supportWait, actual),
+            "inactive latent-use index kept imposing a support obligation");
+    }
+    static void skippedLatentSupport()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE3;
+        auto p = selected_test::base(1, 2);
+        p.operations = {selected_test::op(P, {{0, true, false}})};
+        ObservedControl graph;
+        graph.entry = 0;
+        graph.exit = 5;
+        graph.qualification = "original choice with a skipped replacement receipt";
+        const std::vector<std::vector<Id>> edges{{1}, {2, 3}, {4}, {4}, {5}, {}};
+        for (Id site = 0; site < edges.size(); ++site) {
+            graph.observations.push_back({site, {}, true});
+            graph.sites.push_back({NoAnalysisId, site, edges[site], {}, 0});
+        }
+        graph.sites[0].operation = 0;
+        p.observed = graph;
+        Constructor c(p);
+        c.needsContextualReplay = true;
+        c.ledger.append(0, {Command::Publish, Q, R, 0}, EndpointPurpose::Completion);
+        const auto anchor = c.ledger.append(0, {Command::Acquire, Q, R, 0}, EndpointPurpose::Completion);
+        const auto pub = c.ledger.append(0, {Command::Publish, R, Q, 0},
+            EndpointPurpose::ConsumptionAcknowledgment, 0, anchor);
+        const auto wait = c.ledger.append(0, {Command::Acquire, R, Q, 0},
+            EndpointPurpose::ConsumptionAcknowledgment, 0, anchor);
+        c.rememberReturn(pub, wait);
+        c.ledger.append(2, {Command::Publish, R, Q, 1}, EndpointPurpose::Completion);
+        const auto actual = c.ledger.append(2, {Command::Acquire, R, Q, 1}, EndpointPurpose::Completion);
+        c.ledger.append(4, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion);
+        const auto forward = c.ledger.append(4, {Command::Acquire, P, Q, 0}, EndpointPurpose::Completion);
+        const auto latentPub = c.ledger.append(4, {Command::Publish, Q, P, 0},
+            EndpointPurpose::ConsumptionAcknowledgment, 0, forward);
+        const auto latentWait = c.ledger.append(4, {Command::Acquire, Q, P, 0},
+            EndpointPurpose::ConsumptionAcknowledgment, 0, forward);
+        c.rememberReturn(latentPub, latentWait);
+        c.deferReturn(latentWait);
+        c.result.work.acknowledgments = 1;
+        c.current = graph.exit;
+        c.activeComponent = c.control.component[c.current];
+        selected_test::require(c.update(), c.result.reason);
+        SelectedDecision decision;
+        decision.endpoints = {actual};
+        selected_test::require(c.settleRearming(decision), c.result.reason);
+        selected_test::require(c.ledger.active(wait) && c.result.work.latentSupportRetained != 0,
+            "helper deletion ignored a path reaching latent support without the actual replacement");
+        selected_test::require(checkCausalFrontier(p, c.ledger.commands()).accepted,
+            "latent support fixture has an invalid selected protocol");
+    }
     static SelectedPlan contextual(const Program& program)
     {
         Constructor constructor(program);
@@ -373,14 +455,14 @@ void noUnusedTerminalReturn()
             "terminal common cut still requires a reverse key");
     require(plan.work.acknowledgments == 0, "unused terminal consumption was acknowledged");
 }
-void keepFuturePayloadReturn()
+void deferFuturePayloadReturn()
 {
     auto p = joinedTerminal();
     p.operations.push_back(op(R, {{0, true, false}}));
     p.body.children.push_back(leaf(3));
     const auto plan = accepted(p);
-    require(plan.work.acknowledgments != 0,
-            "terminal optimization crossed a possible future payload");
+    require(plan.work.rearmingDeferred != 0 && plan.work.acknowledgments == 0,
+            "unrelated future payload forced a return before an actual key deadline");
 }
 void keepFutureWordReturn()
 {
@@ -390,8 +472,46 @@ void keepFutureWordReturn()
         {o::Command::Publish, o::Pipe::MTE1, R, 0},
         {o::Command::Acquire, o::Pipe::MTE1, R, 0}};
     const auto plan = accepted(p, fixed);
-    require(plan.work.acknowledgments != 0,
-            "later fixed event words were ignored by terminal optimization");
+    require(plan.work.rearmingDeferred != 0 && plan.work.acknowledgments == 0,
+            "unrelated fixed event identities forced an immediate return");
+}
+void deferredResourcePressure()
+{
+    for (unsigned variant = 0; variant < 4; ++variant) {
+        const bool reverse = variant == 1;
+        auto p = joinedTerminal();
+        p.cells.push_back(p.cells.front());
+        p.target.keys[unsigned(P)][unsigned(Q)] = {0};
+        p.target.keys[unsigned(Q)][unsigned(P)] = {0};
+        const auto producer = reverse ? Q : P;
+        const auto consumer = reverse ? P : Q;
+        p.operations.push_back(op(producer, {{1, false, true, true}}));
+        p.operations.push_back(op(consumer, {{1, true, false}}));
+        p.body.children.push_back(leaf(3));
+        p.body.children.push_back(leaf(4));
+        if (variant == 2) {
+            const auto first = seq({p.body.children[0], p.body.children[1]});
+            p.body = seq({{o::Region::Choice, {first, seq({})}}, leaf(3), leaf(4)});
+        }
+        o::Commands fixed;
+        if (variant == 3) {
+            const auto bounded = o::addStructuredBoundaryCuts(p);
+            require(bounded.success, bounded.reason);
+            p = bounded.program;
+            o::selected::Control control(p);
+            fixed.resize(o::commandCutCount(p));
+            fixed[control.graph.entry].push_back({o::Command::Publish, Q, P, 1});
+            const auto at = std::find(control.graph.operations.begin(), control.graph.operations.end(), 3);
+            require(at != control.graph.operations.end(), "stale-return fixture lost its later payload");
+            fixed[at - control.graph.operations.begin()].push_back({o::Command::Acquire, Q, P, 1});
+            p.target.keys[unsigned(Q)][unsigned(P)] = {0, 1};
+        }
+        const auto plan = accepted(p, fixed);
+        require(plan.work.rearmingDeferred != 0 && plan.work.deferredMaterialized != 0,
+                "actual key pressure did not close the reserved deferred fallback");
+        require(plan.work.ownershipBindings != 0,
+                "deferred fallback bypassed complete ownership qualification");
+    }
 }
 void keepLoopReturn()
 {
@@ -399,8 +519,8 @@ void keepLoopReturn()
     p.operations = {op(P, {{0, false, true, true}}), op(Q, {{0, true, false}})};
     p.body = {o::Region::For, {seq({leaf(0), leaf(1)})}, 0, true};
     const auto plan = accepted(p);
-    require(plan.work.acknowledgments + plan.work.rearmingDischarged != 0,
-            "last body issue was mistaken for invocation exit");
+    require(plan.work.acknowledgments + plan.work.rearmingDischarged != 0 && plan.work.rearmingDeferred == 0,
+            "recurring consumption was incorrectly admitted to acyclic deferral");
     auto missingReturn = plan.commands;
     for (auto& word : missingReturn) word.erase(std::remove_if(word.begin(), word.end(), [](const auto& c) {
         return (c.kind == o::Command::Publish || c.kind == o::Command::Acquire) && c.source == Q && c.observer == P;
@@ -700,6 +820,8 @@ void enclosingAcquisitionAndRearming()
 } // namespace
 int main()
 {
+    for (unsigned gap = 0; gap < 3; ++gap) { o::selected::ReplayTestAccess::latentSourceSupport(gap); }
+    o::selected::ReplayTestAccess::skippedLatentSupport();
     for (auto n : {32u, 64u, 128u}) o::selected::ReplayTestAccess::pairEnumeration(n);
     keepKnownPrefixSeparateFromOverlap();
     reuseThroughRequiredOverlapReadiness();
@@ -709,8 +831,9 @@ int main()
     keepDifferentDeadlines();
     alternativeEarlySources();
     noUnusedTerminalReturn();
-    keepFuturePayloadReturn();
+    deferFuturePayloadReturn();
     keepFutureWordReturn();
+    deferredResourcePressure();
     keepLoopReturn();
     normalDormantOwnership();
     changedRepublicationDeadline();
