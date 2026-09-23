@@ -639,8 +639,9 @@ void joinedConsumptionReturn()
     fixed[cut(1)] = fixed[cut(2)] = {{Command::Acquire,P,Q,0}};
     const auto plan = constructSelectedPlan(p,fixed);
     require(plan.success, "joined consumption construction: " + plan.reason);
-    require(plan.work.joinedAcknowledgments == 1 && plan.work.acknowledgmentChecks == 1,
-            "alternative consumptions did not select one checked return");
+    require(plan.work.joinedAcknowledgments == 1 && plan.work.repairSelected == 1 &&
+            plan.work.acknowledgmentChecks == 0,
+            "alternative consumptions did not select one locally certified return");
     require(checkCausalFrontier(p,plan.commands).accepted, "joined return failed cold validation");
     require(plan.decisions.back().publication == cut(4), "joined repair widened early source past unrelated load");
     std::function<void(Cut,Program,Commands,std::vector<Command>)> walk;
@@ -671,6 +672,14 @@ void joinedConsumptionReturn()
         }),word.end());
     }
     require(!checkCausalFrontier(p,missing).accepted, "missing joined consumption support was accepted");
+    auto returned = fixed;
+    returned[cut(3)] = {{Command::Publish,Q,P,0},{Command::Acquire,Q,P,0}};
+    const auto alreadyRearmed = constructSelectedPlan(p,returned);
+    require(alreadyRearmed.success && alreadyRearmed.work.repairSelected == 0 &&
+            alreadyRearmed.work.joinedAcknowledgments == 0,
+            "actual prior return was replaced by a consumption-only repair");
+    require(checkCausalFrontier(p,alreadyRearmed.commands).accepted,
+            "shared historical-key certificate failed independent checking");
     auto unavailable = p;
     unavailable.target.keys[unsigned(Q)][unsigned(P)].clear();
     const auto refused = constructSelectedPlan(unavailable,fixed);

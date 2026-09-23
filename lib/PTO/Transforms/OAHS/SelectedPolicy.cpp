@@ -186,7 +186,7 @@ bool Constructor::physicalMilestones(const RecurringRequirement& role) const
 }
 
 std::optional<CertifiedRealization> Constructor::normalOrdinary(
-    Group group, const std::vector<FrontierRequirement>& due, const std::vector<DueObligation>& universe)
+    Group group, const std::vector<FrontierRequirement>& due, const std::vector<DueObligation>& universe, bool repair)
 {
     if (group.common) { return {}; }
     const auto observer = program.operations[control.graph.operations[current]].pipe;
@@ -212,7 +212,12 @@ std::optional<CertifiedRealization> Constructor::normalOrdinary(
     out.coverage = normalizedCoverage(universe, due, out.physicalCoverage);
     out.ownCoverage = normalizedCoverage(universe, due, classes(group.requirements));
     if (out.coverage.empty() || out.ownCoverage.empty()) { return {}; }
-    for (Id key = 0; key < frontier.keys().size(); ++key) {
+    if (repair) {
+        if (!fixedBoundaryPacket(facts, group)) { return {}; }
+        out.placementClass = 1;
+        out.support.push_back({RealizationSupport::Consumption, group.forwardKey, gap.cut});
+    }
+    for (Id key = 0; !repair && key < frontier.keys().size(); ++key) {
         if (!sourceGapKey(facts, key)) { continue; }
         const auto& identity = frontier.keys()[key];
         OrderedPacket endpoints{
@@ -241,6 +246,9 @@ std::optional<CertifiedRealization> Constructor::normalOrdinary(
     out.order = {control.frame[group.publication], NoAnalysisId - control.position[group.publication],
                  group.publication, group.source, observer, {gap.cut}, {control.canonicalCut[current]}};
     out.shape.push_back({group.source, observer, {gap.cut}, {control.canonicalCut[current]}});
+    if (repair) {
+        out.shape.push_back({observer, group.source, {gap.cut}, {gap.cut}});
+    }
     out.ordinary = std::move(group);
     return out;
 }
@@ -426,11 +434,14 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
         candidate->known = std::any_of(normalizedKnown.begin(), normalizedKnown.end(), [&](Id obligation) {
             return candidate->coverage.count(obligation) != 0;
         });
-        ++result.work.normalCandidates;
+        if (candidate->placementClass == 0) { ++result.work.normalCandidates; }
+        else { ++result.work.repairCandidates; }
         candidates.push_back(std::move(*candidate));
     };
+    std::vector<Group> ordinaryRequests;
     for (const auto& demand : demands) {
-        retain(normalOrdinary(sourceGroup(demand.first.first, demand.second, due, false), due, universe));
+        ordinaryRequests.push_back(sourceGroup(demand.first.first, demand.second, due, false));
+        retain(normalOrdinary(ordinaryRequests.back(), due, universe));
     }
     std::map<std::vector<Id>, std::vector<Id>> roots;
     for (auto family : families) {
@@ -444,6 +455,11 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
         auto candidate = normalRecurring(entry.second, due, universe);
         if (candidate) {
             retain(std::move(candidate));
+        }
+    }
+    if (candidates.empty()) {
+        for (const auto& request : ordinaryRequests) {
+            retain(normalOrdinary(request, due, universe, true));
         }
     }
     const auto winner = selectRealization(candidates);
@@ -482,6 +498,11 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
         decision.required = group.requirements;
         decision.supporting = group.supporting;
         decision.lifecycles = requirements.demandsAt(current, group.requirements);
+        if (group.repairKey != NoAnalysisId) {
+            decision.repairedForwardKey = frontier.keys()[group.forwardKey].key;
+            decision.repairReverseKey = frontier.keys()[group.repairKey].key;
+            decision.repairInputVersion = ledger.version();
+        }
         const auto oldWord = ledger.word(group.publication);
         if (!commitOwnedPacket(*group.packet, decision) || !update() || !settleRearming(decision)) {
             return false;
@@ -490,6 +511,11 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
                 const auto& c = ledger.endpoint(id).command;
                 return c.kind == Command::Acquire && c.observer == group.source;
             })) { ++result.work.earlyPublications; }
+        if (group.repairKey != NoAnalysisId) {
+            decision.repairOutputVersion = ledger.version();
+            ++result.work.acknowledgments;
+            ++result.work.joinedAcknowledgments;
+        }
         result.decisions.push_back(std::move(decision));
     }
     auto predicted = classes(due);
@@ -499,7 +525,8 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
     }
     choice.outputVersion = ledger.version();
     result.realizationChoices.push_back(choice);
-    ++result.work.normalSelected;
+    if (selected.placementClass == 0) { ++result.work.normalSelected; }
+    else { ++result.work.repairSelected; }
     return true;
 }
 } // namespace mlir::pto::oahs::selected

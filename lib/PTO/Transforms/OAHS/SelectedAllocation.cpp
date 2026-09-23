@@ -482,45 +482,49 @@ SourceGapQualification Constructor::sourceGapFacts(
     }
     return out;
 }
-bool Constructor::sourceGapKey(const SourceGapQualification& facts, Id key)
+bool Constructor::sourceKeyNeighbors(const SourceGapQualification& facts, Id key)
 {
-    const bool currentFacts = facts.proved() && facts.version == ledger.version() &&
+    const bool valid = facts.proved() && facts.version == ledger.version() && cache.version == facts.version &&
         facts.deadline == current && key < frontier.keys().size() && !facts.prefixes.empty();
-    if (!currentFacts || !helperFreeKey(key)) { return false; }
+    if (!valid || !helperFreeKey(key)) { return false; }
     const auto& identity = frontier.keys()[key];
     if (identity.source != facts.source || identity.observer != facts.observer) { return false; }
     const auto& uses = ledger.eventUses(identity);
-    if (!uses.empty()) {
-        // Alternative exchanges may use one key only when no old endpoint can
-        // execute together with a new endpoint. This is stronger than empty
-        // occupancy and retains every original continuation/backedge.
-        if (facts.controlRelated.empty()) {
-            facts.controlRelated.resize(control.graph.sites.size());
-            result.work.normalKeySites += 3 * facts.controlRelated.size();
-            for (bool backward : {false, true}) {
-                std::vector<bool> seen(control.graph.sites.size());
-                std::vector<Cut> pending;
-                for (const auto& pair : control.correspondence(facts.gap.cut, current).pairs) {
-                    pending.push_back(pair.first); pending.push_back(pair.second);
-                }
-                while (!pending.empty()) {
-                    const auto site = pending.back(); pending.pop_back();
-                    if (!control.reachable[site] || seen[site]) { continue; }
-                    seen[site] = facts.controlRelated[site] = true;
-                    ++result.work.normalKeySites;
-                    const auto& next = backward ? control.predecessors[site] : control.graph.sites[site].successors;
-                    pending.insert(pending.end(), next.begin(), next.end());
-                }
-            }
+    if (uses.empty()) { return true; }
+    // Include every original continuation and backedge. Earlier uses and
+    // disjoint alternatives are permitted only with actual source-time rearming.
+    // Same-word uses remain Unknown: this certificate admits word-beginning gaps.
+    if (facts.futureSites.empty()) {
+        facts.futureSites.resize(control.graph.sites.size());
+        result.work.normalKeySites += facts.futureSites.size();
+        std::vector<Cut> pending;
+        for (const auto& pair : control.correspondence(facts.gap.cut, current).pairs) {
+            pending.push_back(pair.first);
         }
-        for (auto id : uses) {
-            const auto& endpoint = ledger.endpoint(id);
-            if (!ledger.active(id) || endpoint.purpose != EndpointPurpose::Completion) { return false; }
-            for (auto site : control.wordOccurrences[endpoint.cut]) {
-                if (facts.controlRelated[site]) { return false; }
-            }
+        while (!pending.empty()) {
+            const auto site = pending.back(); pending.pop_back();
+            if (!control.reachable[site] || facts.futureSites[site]) { continue; }
+            facts.futureSites[site] = true;
+            ++result.work.normalKeySites;
+            const auto& next = control.graph.sites[site].successors;
+            pending.insert(pending.end(), next.begin(), next.end());
         }
     }
+    for (auto id : uses) {
+        ++result.work.repairNeighborUses;
+        const auto& endpoint = ledger.endpoint(id);
+        const bool supported = ledger.active(id) &&
+            (endpoint.purpose == EndpointPurpose::Completion || endpoint.purpose == EndpointPurpose::Fixed);
+        if (!supported) { return false; }
+        for (auto site : control.wordOccurrences[endpoint.cut]) {
+            if (facts.futureSites[site]) { return false; }
+        }
+    }
+    return true;
+}
+bool Constructor::sourceGapKey(const SourceGapQualification& facts, Id key)
+{
+    if (!sourceKeyNeighbors(facts, key)) { return false; }
     for (const auto& prefix : facts.prefixes) {
         State atGap;
         atGap.causal = prefix;

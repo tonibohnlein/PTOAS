@@ -59,6 +59,12 @@ Broader binding, guarded participation, first-use semantic consolidation and
 pipeline/quality recovery remain open. All three reviewers accepted AC's bounded
 scope, not completion of these outstanding obligations.
 
+AD adds a bounded local joined-consumption class1 repair and shared historical
+key-neighbor proof. Host service passes, but `hc_head_reduce` adds 122 and removes
+20 finite payload-order relations in each of two checked bindings. Recovery is
+open; the unique-WAIT boundary alone did not resolve it. Class2/3 and typed
+ordinary producer support remain next. See HANDOFF and AD artifacts.
+
 ## Current continuation after R
 
 User-approved sequence is the "Adopted continuation" in the canonical semantic

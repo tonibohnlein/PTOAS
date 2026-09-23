@@ -114,7 +114,7 @@ struct SourceGapQualification {
     Cut deadline = NoAnalysisId;
     uint64_t version = 0;
     std::vector<FrontierState> prefixes;
-    mutable std::vector<bool> controlRelated;
+    mutable std::vector<bool> futureSites;
     std::string reason;
     bool proved() const { return outcome == ProofOutcome::Proved; }
 };
@@ -530,7 +530,7 @@ struct Group {
     // one virgin directional key, not one key per branch. Empty means the
     // original single-cut/F7 path. The candidate is tied to the selected map.
     std::vector<Cut> publications = {};
-    Id forwardKey = NoAnalysisId;
+    Id forwardKey = NoAnalysisId, repairKey = NoAnalysisId;
     uint64_t version = 0;
     Cut entryAcquisition = NoAnalysisId;
     Id entryReturnKey = NoAnalysisId;
@@ -688,7 +688,7 @@ private:
     std::set<Id> normalizedCoverage(const std::vector<DueObligation>&,
         const std::vector<FrontierRequirement>&, const std::set<Id>&) const;
     std::optional<CertifiedRealization> normalOrdinary(
-        Group, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
+        Group, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&, bool repair = false);
     std::optional<CertifiedRealization> normalRecurring(
         const std::vector<Id>&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
     std::optional<bool> selectNormal(const std::vector<DueObligation>&);
@@ -728,7 +728,9 @@ private:
     bool canPublish(const State&, Id) const;
     SourceGapQualification sourceGapFacts(
         const WordGap&, Pipe, Pipe, const std::vector<FrontierRequirement>&);
+    bool sourceKeyNeighbors(const SourceGapQualification&, Id);
     bool sourceGapKey(const SourceGapQualification&, Id);
+    bool fixedBoundaryPacket(const SourceGapQualification&, Group&);
     std::optional<WordGap> earlyPublicationMilestone(Cut, Pipe) const;
     bool clearInterval(Id, Cut, Cut) const;
     std::vector<Pipe> route(Pipe, Pipe) const;

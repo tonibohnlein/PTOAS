@@ -13,6 +13,7 @@ add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp
   ../../lib/PTO/Transforms/OAHS/CausalFrontier.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedLedger.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedPublication.cpp
+  ../../lib/PTO/Transforms/OAHS/SelectedRepairs.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedPolicy.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedRealizations.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedControl.cpp

@@ -1542,3 +1542,50 @@ family-only producer support must become typed ordinary support; cyclic publicat
 support needs an affected-interface certificate; arbitrary historical-key binding
 is not established by the two bounded bridges above. No serializer, kernel
 recognizer, helper-deletion sweep, or alternative-ledger search was added.
+
+
+## AD design — fixed-boundary source-word acknowledgment
+
+Missing capability: a consumed key whose publication engine lacks consumption
+knowledge cannot yet compete as a complete fixed-boundary repair. The existing
+joined acknowledgment already has its reverse pair at the new source word.
+Extend the common ordinary realization probe with that prescribed prefix, using
+the same exact gap/occurrence/freshness query and common packet commitment.
+
+The local invariant is reverse SET -> reverse WAIT -> forward SET at the exact
+source gap, followed by its matched forward WAIT at the unchanged deadline.
+Interpret the source prefix on every actual source snapshot. Retain only the
+original source's guaranteed physical coverage; helper-added completion is not
+assumed at the target. Neither key has an unaccounted later/same-gap use. Reverse
+keys are virgin; forward keys have complete helper-free ownership and no dormant
+population. The source/key-neighbor query is shared with class0, so already known
+consumption does not force a helper. Unknown occurrence or neighboring use retains
+the existing checked path. No candidate whole-program solve is introduced.
+
+This is a class1 policy/precision increment. Existing selected publications must
+still satisfy AA preservation; unsupported source contamination is not waived as
+repair. Noncontiguous acknowledgments, dormant restoration, class2/class3 and
+recurring repair remain transitional. The fixed forward/reverse key scan has no
+Cartesian backtracking. Key-independent future reach is shared across candidates;
+source primitive execution and key-use visits are charged. Normal-constructor
+selection, cold checks, missing support/branch/unavailable-direction negatives,
+stale gaps, later key uses, and publication contamination are required evidence.
+
+The source-local repair applies only to joined consumption without one original
+WAIT identity at every source occurrence. A unique WAIT already has an earlier
+prescribed helper publication. Moving that endpoint to the new forward source
+would be another policy, and the first AD campaign reproduced added ordering from
+that mistake. Preserve the unique-WAIT recipe until its unchanged-interval proof
+is available. This gate protects a source boundary; it is not an event-occupancy
+or kernel-shape restriction. Helper-free direct reuse remains available in both
+cases when the shared neighbor and actual-rearming certificates pass.
+
+AD final evidence qualifies the claim above: source and host checks pass, but
+`hc_head_reduce` adds 122 and removes 20 finite payload-order relations in each
+of two bindings. The unique-WAIT exclusion does not recover this case; the final
+candidate is byte-identical to the first attempted candidate there. A later
+input refill is gated by preceding vector work. Determine the first changed
+complete realization and whether source-local joined support or class0 historical
+key choice causes that edge. Keep this quality loss open while general support
+and binding migrate; do not add an example-specific veto or describe AD as
+order-preserving.

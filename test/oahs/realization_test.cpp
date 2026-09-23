@@ -13,6 +13,75 @@ using namespace selected_test;
 namespace s = o::selected;
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void fixedRepair(unsigned mutation)
+    {
+        const auto P=Pipe::MTE2, Q=Pipe::V, R=Pipe::M;
+        auto input=base(3,1);
+        input.operations={op(P,{{0,false,true}}),op(Q,{{0,true,false}}),
+            op(Q,{{0,true,false}}),op(P,{{1,false,true}}),op(P,{{2,false,true}}),
+            op(Q,{{1,true,false}})};
+        input.body=seq({leaf(0),{Region::Choice,{leaf(1),leaf(2)}},leaf(3),leaf(4),leaf(5)});
+        auto imported=addStructuredBoundaryCuts(input);
+        require(imported.success,imported.reason);
+        auto& p=imported.program;
+        if (mutation==1) { p.target.keys[unsigned(Q)][unsigned(P)].clear(); }
+        Constructor c(p);
+        auto cut=[&](unsigned op) {
+            for (Cut site=0;site<c.control.graph.operations.size();++site) {
+                if (c.control.graph.operations[site]==op) { return site; }
+            }
+            return NoAnalysisId;
+        };
+        c.current=cut(5);
+        const auto source=cut(4);
+        const auto publication=c.control.after(cut(0));
+        c.ledger.append(publication,{Command::Publish,P,Q,0},EndpointPurpose::Completion);
+        if (mutation==8) {
+            c.ledger.append(publication,{Command::Acquire,P,Q,0},EndpointPurpose::Completion);
+        } else {
+            c.ledger.append(cut(1),{Command::Acquire,P,Q,0},EndpointPurpose::Completion);
+        }
+        if (mutation!=2 && mutation!=8) {
+            c.ledger.append(cut(2),{Command::Acquire,P,Q,0},EndpointPurpose::Completion);
+        }
+        if (mutation==3) {
+            c.ledger.append(c.control.graph.exit,{Command::Publish,P,Q,0},EndpointPurpose::Completion);
+            c.ledger.append(c.control.graph.exit,{Command::Acquire,P,Q,0},EndpointPurpose::Completion);
+        }
+        if (mutation==5) {
+            c.ledger.append(source,{Command::Publish,P,R,0},EndpointPurpose::Completion);
+            c.ledger.append(c.control.graph.exit,{Command::Acquire,P,R,0},EndpointPurpose::Completion);
+        }
+        if (mutation==7) {
+            c.ledger.append(source,{Command::Publish,P,Q,0},EndpointPurpose::Completion);
+            c.ledger.append(source,{Command::Acquire,P,Q,0},EndpointPurpose::Completion);
+        }
+        if (!c.contextualReplay()) {
+            require(mutation!=0,"fixed repair source setup failed");
+            return;
+        }
+        Group group; group.source=P; group.publication=source;
+        group.requirements={{1,P,true,5,true,false}};
+        const auto& word=c.ledger.word(source);
+        const WordGap gap{source,NoAnalysisId,word.empty()?NoAnalysisId:word.front()};
+        const auto facts=c.sourceGapFacts(gap,P,Q,group.requirements);
+        require(facts.proved(),"fixed source requirement was not available");
+        if (mutation==4) {
+            const auto key=keyIndex(c.frontier,{Command::Publish,Q,P,0});
+            c.deferredByKey[key].insert(0);
+        }
+        if (mutation==6) {
+            c.ledger.append(c.current,{Command::Barrier,Q,Q,0},EndpointPurpose::LocalFence);
+        }
+        const auto version=c.ledger.version();
+        const auto updates=c.result.work.selectedUpdates;
+        const bool qualified=c.fixedBoundaryPacket(facts,group);
+        require(qualified==(mutation==0),"fixed repair accepted an unproved neighbor/support contract");
+        require(c.ledger.version()==version && c.result.work.selectedUpdates==updates,
+                "fixed repair probe changed the selected ledger");
+        require(c.result.work.ownershipChecks==0 && c.result.work.acknowledgmentChecks==0,
+                "fixed repair probe ran a whole-program candidate check");
+    }
     static void normalization(unsigned mutation)
     {
         auto p = base(2);
@@ -212,6 +281,7 @@ void subdivision()
 int main()
 {
     policy(); rings(); subdivision();
+    for (unsigned mutation=0;mutation!=9;++mutation) { s::ReplayTestAccess::fixedRepair(mutation); }
     s::ReplayTestAccess::tailOnlyCoverage();
     for (unsigned mutation=0;mutation!=3;++mutation) { s::ReplayTestAccess::alternativeKeys(mutation); }
     for (unsigned mutation=0;mutation!=4;++mutation) { s::ReplayTestAccess::normalization(mutation); }

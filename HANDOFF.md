@@ -1,5 +1,54 @@
 # OAHS current handoff
 
+## Active after Step AD — local joined-consumption repair
+
+AD extends common ordinary realization selection with a source-word class1
+acknowledgment for joined consumption, and shares source/key-neighbor proofs
+with class0. The packet is privately qualified in its exact word order;
+accepted endpoints are committed unchanged and only their actual causal credit
+reduces the residual. The new source packet is confined to matched acyclic
+occurrences and requires more than one actual prior consumption identity on
+every reachable source. Unique and mixed identities retain the earlier repair
+recipe. Source-time rearming admits historical helper-free keys with complete
+neighbor checks. This is a sufficient local recipe, not a general class1 or
+historical-key solution.
+
+Final host evidence on the corrected source: 25/25 portable suites, three native
+drivers, 88/88 corpus, 18/19 compatibility (the inherited refusal), GEMM, two
+prefills and three targeted cases. No service regression. Of 58 changed-function
+finite rows, 48 have nonempty comparable executions: 46 equal and two
+`hc_head_reduce` bindings each add 122 and remove 20 payload-order relations.
+Ten rows remain unresolved; empty traces establish no quality claim. The
+`hc_head_reduce` ordering loss remains OPEN despite the unique-WAIT gate. One
+new relation delays a later input load until earlier vector work completes; the
+plans are incomparable, since other relations disappear. The final candidate is
+byte-identical to the first AD attempt for this case. Its construction has four
+joined repairs versus two at AC and changes ordinary key choices. The exact
+packet/placement causing the refill edge still needs a traced decision ablation. The first AD
+attempt and its counterexample are preserved under `first-attempt/`. Do not
+report AD as order-preserving or a recovered quality milestone.
+
+Across successful inputs, selected updates 8222->8227, replay-site evaluations
+7089903->7101322, SETs 3814->3779, WAITs 3813->3778, barriers unchanged 1736.
+Normal candidates 535->674 and selected 474->612; four class1 candidates are
+selected. Historical-key reachability work 2436874->980610, publication-support
+sites 260569->263063, ownership sites 2759523->2685720; repair-neighbor visits
+15867. These are aggregate work counts, not isolated timings or asymptotic
+proofs. Full source/build/input/order/resource records are under
+`../oahs-gemm-base-builds/refactor-step-ad/`, including `host-final.log`,
+`summary.json`, `results.json`, `changed-order.json`, `reviews.md` and
+`work.json`. No sanitizer or device run.
+
+The architecture, correctness and asymptotic-performance reviewers accepted
+AD only as a bounded, documented migration step. Correctness acceptance does not
+imply an ordering-quality claim.
+Next: typed ordinary producer support and generality recovery through the common
+selector, with the `hc_head_reduce` added-order case tracked. Classes2/3,
+historical key ownership, same-engine-only cross-cell return, guarded readers,
+first-use and linked pipeline remain open. Continue the review/commit loop; do
+not treat validation of AD as completion of the v0.38 refactor. The separate
+paper has uncommitted other-agent edits; preserve them.
+
 ## Active after Step AC — common certified normal-realization selection
 
 Continue the approved v0.38 sequence and three-reviewer commit loop. Baseline AB

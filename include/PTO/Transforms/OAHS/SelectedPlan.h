@@ -182,6 +182,7 @@ struct SelectedWork {
     std::size_t recurringChannels = 0, recurringProposals = 0;
     std::size_t recurringTrials = 0, redundantRecurringChannels = 0;
     uint64_t normalCandidates = 0, normalSelected = 0, normalRecurringSelected = 0;
+    uint64_t repairCandidates = 0, repairSelected = 0, repairSourceCommands = 0, repairNeighborUses = 0;
     uint64_t normalPublicationSites = 0, normalizedDue = 0, normalizationIncidences = 0, normalKeySites = 0;
     uint64_t recurringInterfaceQueries = 0, recurringInterfaceSites = 0;
     uint64_t recurringInterfaceAccesses = 0, recurringLocalPackets = 0;

@@ -63,6 +63,14 @@ keys remain unqualified. The same-engine-only construction acceptance witness
 remains open despite complete-residual code eligibility. See HANDOFF and AC
 artifacts for host evidence, finite nonempty comparisons and cost accounting.
 
+AD supplies one scoped class1 joined-consumption source-word packet and common
+historical-key neighbor proof. It is a policy/precision increment, not a
+plan-equivalent rewrite. Its exact packet and authoritative causal update pass
+host service, but finite `hc_head_reduce` executions add ordering; the attempted
+unique-WAIT exclusion does not close that loss. Preserve this counterexample as
+an open quality recovery while replacing recurring-only producer repair with
+typed ordinary support. Class2/3 and general historical reuse are still pending.
+
 ## Adopted continuation — typed derivation and independent pipeline progress
 
 Continuation baseline: `b436c3db0` (Step R), not the Step P pin in
