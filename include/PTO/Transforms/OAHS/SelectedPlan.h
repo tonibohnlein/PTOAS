@@ -174,6 +174,9 @@ struct SelectedWork {
     std::size_t sourceHandles = 0, acknowledgments = 0, commonCutTransfers = 0;
     std::size_t recurringChannels = 0, recurringProposals = 0;
     std::size_t recurringTrials = 0, redundantRecurringChannels = 0;
+    uint64_t recurringInterfaceQueries = 0, recurringInterfaceSites = 0;
+    uint64_t recurringInterfaceAccesses = 0, recurringLocalPackets = 0;
+    uint64_t recurringInterfaceEmbedding = 0, recurringLocalDeclines = 0;
     uint64_t recurringAnalysisSites = 0, recurringReplaySites = 0, recurringSupportQueries = 0;
     std::size_t recurringFamilies = 0, recurringIndexEntries = 0;
     std::size_t recurringCandidates = 0, recurringAttempts = 0;

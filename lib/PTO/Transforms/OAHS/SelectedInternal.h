@@ -365,6 +365,14 @@ struct ProducerSupportScope {
     std::array<std::set<Id>, PipeCount> classes;
     std::vector<Cut> consumers;
 };
+// Immutable, conditional consequences of one finite two-role induction system.
+// These masks are opportunity proofs; only selected replay supplies live credit.
+struct RecurringCertificate {
+    bool complete = false;
+    std::string reason;
+    std::map<Cut, std::set<Id>> guaranteed;
+    std::map<Cut, std::vector<std::pair<Id, Command::Kind>>> words;
+};
 struct RecurringPacket {
     OwnedPacket packet;
     std::vector<RecurringRequirement> requests;
@@ -372,6 +380,8 @@ struct RecurringPacket {
     std::array<std::set<Id>, PipeCount> supportClasses;
     std::vector<bool> supportConsumers;
     Replay evaluated;
+    bool localCertificate = false;
+    std::map<Cut, std::set<Id>> guaranteed;
 };
 struct OccurrenceMode {
     Id owner = NoAnalysisId;
@@ -583,6 +593,12 @@ private:
         std::string reason;
     };
     std::map<Id, SupportLinks> recurringLinks;
+    std::map<Id, RecurringCertificate> recurringCertificates;
+    std::map<unsigned, std::vector<std::pair<Id, Id>>> projectionAccesses;
+    bool projectionIndexed = false;
+    const RecurringCertificate& recurringCertificate(Id);
+    bool qualifyRecurringInterface(const std::vector<Id>&, RecurringPacket&, const ProducerSupportScope&);
+
     ProducerSupportScope producerScope(const std::vector<RecurringRequirement>&);
     bool supportsRecurring(Id family, Cut, const FrontierRequirement&) const;
     const SupportLinks& recurringSupportLinks(Id family);
@@ -670,7 +686,8 @@ private:
     bool clearInterval(Id, Cut, Cut) const;
     std::vector<Pipe> route(Pipe, Pipe) const;
     std::optional<RecurringPacket> prepareRecurring(const std::vector<RecurringRequirement>&, std::string&,
-                                                     const ProducerSupportScope* support = nullptr);
+                                                     const ProducerSupportScope* support = nullptr,
+                                                     const std::vector<Id>* families = nullptr);
     bool commitRecurring(RecurringPacket&);
     bool activateRecurring();
     bool finish();

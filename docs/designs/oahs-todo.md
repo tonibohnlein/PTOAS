@@ -40,9 +40,14 @@ Cost track: extract measured plan-equivalent reductions with their consumers;
 new caches/region execution require evidence and invalidation tests. Two local
 resource-intensive workers maximum in aggregate.
 
-## Current v0.38 continuation after AA
+## Current v0.38 continuation after AB
 
-The opening v0.38 sequence in semantic-corrections is authoritative. AA provides
+The opening v0.38 sequence in semantic-corrections is authoritative. AB supplies
+cached original two-role induction/coverage certificates and a real local recurring
+binding consumer. All 84 successful-campaign recurring packets avoid candidate
+full-program checks; authoritative selected replay remains unchanged. Three
+reviewers accepted this bounded dependency. It is not class-0 placement or common
+selection, and does not remove the family-only producer-support gate. AA provides
 admission-rooted existing-publication signatures through complete owned packets;
 three reviewers accepted its bounded scope and current host plans match Z.
 It does not classify complete realizations, unify selection, or certify cyclic

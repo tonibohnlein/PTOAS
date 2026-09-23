@@ -1,5 +1,76 @@
 # OAHS current handoff
 
+## Active after Step AB — immutable recurring induction interfaces
+
+Continue the approved v0.38 sequence and three-reviewer commit loop. Baseline AA
+`92a31ebf2`. No pause or push. This is a second dependency increment, not completion
+of the common realization-policy milestone.
+
+Recurring preparation now consumes a cached original-program certificate for one
+finite readiness/release pair. The small causal model retains all incidences of
+its physical cells, including outside/older partial writes, and follows original
+choice, bypass, backedge, entry and exit control. It proves event consumption and
+complete-history coverage without a candidate ledger or physical key allocation.
+Only sparse relevant operations/accesses are copied; original control is shared.
+Logical keys are bounded to two per certificate; closures compose sparse proofs.
+
+Local binding verifies unused new keys, exact complete role-word embedding, every
+live use of active shared-role keys, terminal retirement, and affected producer
+residual support. Selection commits first, then runs the mandatory actual causal
+update. Its result must be contained in the certified remainder. A mandatory
+failure fails the attempt; the existing visible whole-attempt migration retry is
+separate. Unsupported interfaces retain the charged transitional candidate path.
+AA publication preservation remains independent: this certificate is NOT class 0.
+
+Validation: 24/24 portable suites; all three linked native drivers; 88/88 corpus;
+18/19 compatibility (same inherited refusal); GEMM, two prefills and three targets.
+All 113 outputs match AA, including refusal. Successful emitted identity proves
+represented-order/resource identity, not recovery of earlier quality debts.
+Native three-bank import explicitly asserts activation of local qualification.
+No sanitizer/device run. Compliance: nine changed code files, zero findings.
+Architecture/bounded-generality, correctness and asymptotic-performance ACCEPT
+(source-only reviews). Tests cover missing reverse endpoints, cache independence,
+older outside/initial WAW, partial writes, unrelated/renumbered operations, actual
+credit inclusion, extra shared-key use and uniform witness subdivision. The latter
+retains two channels/one activation at 1/8/32 cells and linear incidence visits.
+
+Matched successful-input work: updates8163 and regular replay7056798 unchanged.
+84 recurring packets use local certificates; candidate analyzer202187->0 and
+candidate contextual241509->0. The latter evaluation is now performed AFTER
+selection and is already included in unchanged regular replay: do not subtract
+it twice or claim that work disappeared. Immutable queries90, sites97072,
+incidences3603 and embedding2110; local declines0 in this campaign. Ownership
+checks579->495/sites2954816->2752629. Elapsed322.61->319.39seconds is nonisolated.
+Full CFG traversal per family and static publisher-alternative populations remain
+charged costs; this is not a contracted region executor or a whole-pass bound.
+
+Evidence: `../oahs-gemm-base-builds/refactor-step-ab/`, including input/binary pins,
+build/portable/native logs, results, work/review records and exact staged diff.
+
+### Next: common complete-realization selection
+
+Extract pure ordinary discovery from sourceGroup; its alternative/entry fallbacks
+already qualify and must not run during normal enumeration. Local recurring probes
+must not fall through to candidate whole-program checks. Represent complete support
+and restorations before classifying, with normalized due requirements and one frozen
+ledger version. Ordinary and recurring certified normal candidates compete through
+one stable dominance scan. No family-first priority when a normal candidate exists.
+Same-engine eligibility is limited to prescribed indexed returns; require strict
+complete-residual subset progress after actual maintenance/update.
+
+AA existing-publication equality plus a scoped absence query may establish source
+preservation; absence must include Unknown publications, continuation and backedges.
+That alone does NOT protect a new source. Check its full last-use-to-publication
+corridor against support receipts and preserve the decoded source/target gaps.
+Unknown proofs remain explicit, not invented class-0 labels. First ordinary/recurring
+normal competition is followed by migration of repairs1–3, typed ordinary producer
+support and common reusable-key binding. Reader/copy/unequal-bank and F/G/L/R/V
+quality/cost recovery remain open. The draft complete-residual reconciliation remains
+in its separate worktree; preserve the other agent's edits.
+
+## Historical AA handoff
+
+
 ## Active after Step AA — admission-rooted publication support
 
 User resumed the full v0.38 construction-policy sequence with three reviewers

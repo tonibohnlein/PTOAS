@@ -37,6 +37,9 @@ void checkSlots(unsigned slots)
     require(result.work.frontierPreviousUse != 0,
             "recurring release requirements lost previous-use correspondence");
     require(result.channels.size() == 2 * slots, "cyclic qualifier must derive both roles per slot");
+    require(result.work.recurringLocalPackets != 0 && result.work.recurringAnalysisSites == 0 &&
+            result.work.recurringReplaySites == 0,
+            "simple slot cycle did not use immutable local qualification");
     require(result.work.recurringActivations != 0 && !result.declinedRecurring,
             "normal constructor did not activate required cyclic support");
     for (const auto& activation : result.activations) {

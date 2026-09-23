@@ -1399,3 +1399,52 @@ from rejected probes are retained and charged to all distinct candidate work.
 Identical repeated probes reuse nodes; committing a prepared delta does not rerun
 it. The future selector must not blindly multiply suffix propagation by all
 requests/classes. Counters report sites, commands, comparisons and new nodes.
+
+
+### AB dependency: immutable finite recurring interface
+
+Missing fact: `qualifiedCycle` and cell/direction membership do not prove the two
+consumption-to-republication chains, or coverage of older outside accesses.
+The shared original-control/physical-use service supplies a conditional two-role
+certificate; recurring preparation consumes it before any selected update.
+
+One fixed pair of logical readiness/release roles is interpreted over the shared
+original CFG. A sparse per-cell operation index retains every original incidence
+of each represented cell, including outside accesses and partial writes. Only
+those operations enter a compact causal model; other payload is identity and
+removes possible support. Original choice, entry, bypass, backedge and exit edges
+remain unchanged. There are exactly two logical keys, independent of hardware
+capacity; arbitrary support closures never form a dense virtual-key relation.
+Opaque endpoint identities preserve each original (site, word offset), using one
+synthetic legal boundary in the compact model. They do not change participation.
+After convergence export only proved access-class coverage at relevant consumers
+and exact role-word obligations. No temporary projected state becomes live credit.
+
+Embedding requires unused distinct new keys and the exact relative role order in
+the complete staged words. Every live use of an active shared-role key is checked,
+including outside the listed words. Original causal paths survive these insertions;
+added commands can provide additional credit but cannot justify omitted original
+histories. The producer-repair guard requires every affected current residual to
+be proved by the finite support closure. Unknown cases retain the explicitly
+transitional full candidate checker. This does not yet replace its family-only
+support discovery gate, classify normal placement, or unify selection.
+
+The winner alone is committed and authoritatively replayed. A failed mandatory
+update fails that attempt; the existing visible whole-attempt migration retry is
+separate and is not locally certified success. Actual residual must be a subset
+of the certified remainder after all maintenance. A priming capacity token alone
+never proves completion of an older writer. Publication preservation remains AA's
+independent certificate; cyclic Unknown is not converted into class 0.
+
+Cost: one shared O(A) cell/access-incidence index; each immutable family currently scans
+the original CFG to a finite fixed point, O((N+E+A_f) h_f), retaining graph-sized
+temporary snapshots. This is not a contracted region executor. Histories have
+only the represented physical classes, not sets of original producer identities.
+The two-key causal matrix is fixed-size, but each key's static publisher-binding
+alternatives can grow with control. The bound also includes that B_f population
+and joined-state work; two keys do not make complete state hardware-constant.
+The cache avoids repeated ledger-version solves; it does not remove the F(N+E)
+term. Qualification records sparse role bindings and checks their real uses.
+These sufficient restrictions (two roles, unused new keys, exact embedding,
+complete producer support) remain explicit replacement obligations for common
+binding/support; they are not hardware or datatype admission requirements.

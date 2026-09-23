@@ -533,7 +533,7 @@ const Constructor::SupportLinks& Constructor::recurringSupportLinks(Id id)
 }
 std::optional<RecurringPacket> Constructor::prepareRecurring(
     const std::vector<RecurringRequirement>& requests, std::string& reason,
-    const ProducerSupportScope* support)
+    const ProducerSupportScope* support, const std::vector<Id>* families)
 {
     RecurringPacket proposal;
     proposal.requests = requests;
@@ -571,16 +571,6 @@ std::optional<RecurringPacket> Constructor::prepareRecurring(
     }
     auto owned = prepareOwnedPacket(endpoints);
     if (!owned) { reason = "recurring packet lacks complete ownership"; return {}; }
-    const auto words = ledger.withPacket(owned->prepared);
-    if (!words) { reason = "recurring packet changed during preparation"; return {}; }
-    const auto checked = analyze(program, *words, {false});
-    ++result.work.ownershipChecks;
-    result.work.ownershipCheckSites += checked.stats.siteEvaluations;
-    result.work.recurringAnalysisSites += checked.stats.siteEvaluations;
-    if (!acceptOwnedPacket(*owned, checked)) {
-        reason = "recurring packet lacks event or established support";
-        return {};
-    }
     proposal.packet = std::move(*owned);
     const auto scope = support ? *support : producerScope(requests);
     if (!scope.consumers.empty()) { proposal.supportConsumers.resize(control.graph.sites.size()); }
@@ -588,6 +578,21 @@ std::optional<RecurringPacket> Constructor::prepareRecurring(
         proposal.supportClasses[pipe].insert(scope.classes[pipe].begin(), scope.classes[pipe].end());
     }
     for (auto site : scope.consumers) { proposal.supportConsumers[site] = true; }
+    if (families && qualifyRecurringInterface(*families, proposal, scope)) {
+        ++result.work.recurringLocalPackets;
+        return proposal;
+    }
+    ++result.work.recurringLocalDeclines;
+    const auto words = ledger.withPacket(proposal.packet.prepared);
+    if (!words) { reason = "recurring packet changed during preparation"; return {}; }
+    const auto checked = analyze(program, *words, {false});
+    ++result.work.ownershipChecks;
+    result.work.ownershipCheckSites += checked.stats.siteEvaluations;
+    result.work.recurringAnalysisSites += checked.stats.siteEvaluations;
+    if (!acceptOwnedPacket(proposal.packet, checked)) {
+        reason = "recurring packet lacks event or established support";
+        return {};
+    }
     const auto view = ledger.packetView(proposal.packet.prepared);
     if (!view) { reason = "recurring overlay changed during qualification"; return {}; }
     proposal.evaluated = evaluateContextual(&*view, proposal.supportClasses, proposal.supportConsumers, 0);
@@ -612,7 +617,14 @@ bool Constructor::commitRecurring(RecurringPacket& proposal)
     }
     needsContextualReplay = true;
     result.work.recurringChannels = result.channels.size();
-    cache = std::move(proposal.evaluated);
+    if (proposal.localCertificate) {
+        // Only the selected packet updates actual causal state. Failure here
+        // is mandatory failure, never hidden by the immutable interface proof.
+        cache = evaluateContextual(nullptr, producerSupportClasses, producerSupportConsumers, 0);
+        if (!cache.success) { return fail(SelectedFailure::SelectedUpdate, cache.reason, cache.failureCut); }
+    } else {
+        cache = std::move(proposal.evaluated);
+    }
     refreshSources();
     SelectedUpdate update;
     update.version = ledger.version();
@@ -701,7 +713,8 @@ bool Constructor::activateRecurring()
             }
             if (supported && requests.empty()) { continue; }
             support.consumers.assign(supportConsumers.begin(), supportConsumers.end());
-            auto proposal = supported ? prepareRecurring(requests, reason, &support) : std::nullopt;
+            const std::vector<Id> familyIds(closure.begin(), closure.end());
+            auto proposal = supported ? prepareRecurring(requests, reason, &support, &familyIds) : std::nullopt;
             if (!proposal) {
                 ++result.work.recurringDeclines;
                 result.recurringRefusals.push_back({current, id, ledger.version(), reason});
@@ -716,10 +729,16 @@ bool Constructor::activateRecurring()
                     const auto op = control.graph.operations[site];
                     if (op == NoAnalysisId || !cache.cuts[site].before.causal.reachable()) { continue; }
                     const auto old = frontier.inspect(cache.cuts[site].before.causal, op);
-                    const auto next = frontier.inspect(proposal->evaluated.cuts[site].before.causal, op);
-                    const auto oldSet = classes(old.residuals), newSet = classes(next.residuals);
-                    const bool valid = next.failure == FrontierFailure::None ||
-                        next.failure == FrontierFailure::Payload;
+                    const auto oldSet = classes(old.residuals);
+                    auto newSet = oldSet;
+                    bool valid = true;
+                    if (proposal->localCertificate) {
+                        for (auto covered : proposal->guaranteed[site]) { newSet.erase(covered); }
+                    } else {
+                        const auto next = frontier.inspect(proposal->evaluated.cuts[site].before.causal, op);
+                        newSet = classes(next.residuals);
+                        valid = next.failure == FrontierFailure::None || next.failure == FrontierFailure::Payload;
+                    }
                     const bool reduced = valid && newSet.size() < oldSet.size() &&
                         std::includes(oldSet.begin(), oldSet.end(), newSet.begin(), newSet.end());
                     if (reduced) {
@@ -728,13 +747,21 @@ bool Constructor::activateRecurring()
                 }
             }
             if (!attempt.improving.count(current)) { ++result.work.recurringDeclines; continue; }
-            const auto candidate = frontier.inspect(proposal->evaluated.cuts[current].before.causal, operation);
-            const auto newClasses = classes(candidate.residuals);
+            auto newClasses = classes(before);
+            if (proposal->localCertificate) {
+                for (auto covered : proposal->guaranteed[current]) { newClasses.erase(covered); }
+            } else {
+                const auto candidate = frontier.inspect(proposal->evaluated.cuts[current].before.causal, operation);
+                newClasses = classes(candidate.residuals);
+            }
             const auto firstChannel = result.channels.size();
             if (!commitRecurring(*proposal)) { return false; }
             for (Id i = 0; i < newRoles.size(); ++i) { activeRoles.emplace(newRoles[i], firstChannel + i); }
             for (auto member : closure) { activeFamilies[member] = true; }
-            const bool sameResult = classes(residual()) == newClasses && cache.version == ledger.version();
+            const auto actualClasses = classes(residual());
+            const bool coveredResult = std::includes(newClasses.begin(), newClasses.end(),
+                                                    actualClasses.begin(), actualClasses.end());
+            const bool sameResult = coveredResult && cache.version == ledger.version();
             if (!sameResult) {
                 return fail(SelectedFailure::MissingParticipation,
                     "selected recurring packet did not reduce the complete actual residual", current);

@@ -13,6 +13,7 @@ add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp
   ../../lib/PTO/Transforms/OAHS/CausalFrontier.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedLedger.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedPublication.cpp
+  ../../lib/PTO/Transforms/OAHS/SelectedRealizations.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedControl.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedLifecycles.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedOccurrences.cpp
@@ -24,7 +25,8 @@ add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp
 target_include_directories(oahs-core-under-test PUBLIC ../../include)
 target_compile_features(oahs-core-under-test PUBLIC cxx_std_17)
 target_compile_options(oahs-core-under-test PRIVATE -Wall -Wextra -Werror -pedantic)
-set(OAHS_TEST_SUITES publication_support scaling analysis storage_frontier observed phase replay lifecycle
+set(OAHS_TEST_SUITES recurring_interface publication_support scaling analysis storage_frontier
+  observed phase replay lifecycle
   causal_frontier
   selected_plan selected_cyclic selected_hardening selected_update selected_lookahead
   observation_union bank_occurrence first_use selected_occurrences)

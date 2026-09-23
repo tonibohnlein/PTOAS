@@ -1903,6 +1903,9 @@ bool slotMappings(MLIRContext &context) {
   oahs::SelectedPlan plan;
   if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)) &&
              plan.work.recurringChannels == 6, "generic three-bank native recurrence")) return false;
+  if (!check(plan.work.recurringLocalPackets != 0 && plan.work.recurringAnalysisSites == 0 &&
+             plan.work.recurringReplaySites == 0,
+             "native recurrence lost immutable interface qualification")) return false;
 
   std::string nestedSource = slotInput;
   const auto insertion = nestedSource.find("      scf.yield %next");
@@ -2064,6 +2067,12 @@ bool runFile(MLIRContext &context, const char *path) {
                  << (report.declinedRecurring ? report.declinedRecurring->work.elapsedMicroseconds : 0)
                  << " recurring_trials=" << work.recurringTrials
                  << " recurring_removed=" << work.redundantRecurringChannels
+                 << " recurring_interface_queries=" << work.recurringInterfaceQueries
+                 << " recurring_interface_sites=" << work.recurringInterfaceSites
+                 << " recurring_interface_accesses=" << work.recurringInterfaceAccesses
+                 << " recurring_local_packets=" << work.recurringLocalPackets
+                 << " recurring_interface_embedding=" << work.recurringInterfaceEmbedding
+                 << " recurring_local_declines=" << work.recurringLocalDeclines
                  << " recurring_analysis_sites=" << work.recurringAnalysisSites
                  << " recurring_replay_sites=" << work.recurringReplaySites
                  << " recurring_support_queries=" << work.recurringSupportQueries
