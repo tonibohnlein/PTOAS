@@ -10,6 +10,19 @@
 #include <deque>
 
 namespace mlir::pto::oahs::selected {
+bool Constructor::commitPacket(const OrderedPacket& packet, SelectedDecision& decision)
+{
+    const auto prepared = ledger.preparePacket(packet);
+    if (!prepared.valid()) {
+        return fail(SelectedFailure::SelectedUpdate, prepared.reason(), current);
+    }
+    const auto ids = ledger.appendPacket(prepared);
+    if (ids.size() != packet.size()) {
+        return fail(SelectedFailure::SelectedUpdate, "packet changed after qualification", current);
+    }
+    decision.endpoints.insert(decision.endpoints.end(), ids.begin(), ids.end());
+    return true;
+}
 bool Constructor::canPublish(const State& state, Id key) const
 {
     if (!state.causal.reachable() || key >= frontier.keys().size()) {
@@ -166,10 +179,18 @@ bool Constructor::acknowledgment(Pipe source, Pipe observer, Cut& publication, I
     decision.repairedForwardKey = frontier.keys()[key].key;
     decision.repairReverseKey = identity.key;
     decision.repairInputVersion = ledger.version();
-    decision.endpoints.push_back(ledger.after(oldWait,
-        {Command::Publish, observer, source, identity.key}, EndpointPurpose::ConsumptionAcknowledgment, request, oldWait));
-    decision.endpoints.push_back(ledger.append(moved,
-        {Command::Acquire, observer, source, identity.key}, EndpointPurpose::ConsumptionAcknowledgment, request, oldWait));
+    const auto gap = ledger.gapAfter(oldWait);
+    if (!gap) {
+        return fail(SelectedFailure::SelectedUpdate, "consumption acknowledgment lost its source gap", moved);
+    }
+    const OrderedPacket packet{
+        {gap->cut, {Command::Publish, observer, source, identity.key},
+         EndpointPurpose::ConsumptionAcknowledgment, request, oldWait, gap},
+        {moved, {Command::Acquire, observer, source, identity.key},
+         EndpointPurpose::ConsumptionAcknowledgment, request, oldWait}};
+    if (!commitPacket(packet, decision)) {
+        return false;
+    }
     ++result.work.acknowledgments;
     decision.enlargedPrefix |= moved != publication;
     publication = moved;
@@ -239,7 +260,12 @@ std::optional<bool> Constructor::joinedAcknowledgment(
                 {publication, acquire, EndpointPurpose::ConsumptionAcknowledgment, request},
                 {publication, {Command::Publish, source, observer, a.key}, EndpointPurpose::Completion, request},
                 {current, {Command::Acquire, source, observer, a.key}, EndpointPurpose::Completion, request}};
-            const auto checked = analyze(program, ledger.withPacket(packet), {false});
+            const auto prepared = ledger.preparePacket(packet);
+            const auto commands = ledger.withPacket(prepared);
+            if (!commands) {
+                return fail(SelectedFailure::SelectedUpdate, prepared.reason(), publication);
+            }
+            const auto checked = analyze(program, *commands, {false});
             ++result.work.acknowledgmentChecks;
             result.work.acknowledgmentCheckSites += checked.stats.siteEvaluations;
             if (!checked.complete || !checked.protocol.empty() || !checked.diagnostics.empty() ||
@@ -249,7 +275,10 @@ std::optional<bool> Constructor::joinedAcknowledgment(
             // Commit exactly the packet checked above. In particular do not
             // replay an incomplete reverse half: the forward receipt may rearm
             // its reverse key on the next original visit. No promised credit.
-            auto endpoints = ledger.appendPacket(packet);
+            auto endpoints = ledger.appendPacket(prepared);
+            if (endpoints.size() != packet.size()) {
+                return fail(SelectedFailure::SelectedUpdate, "joined packet changed after checking", publication);
+            }
             decision.endpoints.insert(decision.endpoints.end(), endpoints.begin(), endpoints.end());
             decision.repairedForwardKey = a.key;
             decision.repairReverseKey = b.key;
@@ -338,13 +367,11 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     }
     const auto number = frontier.keys()[key].key;
     const auto request = result.decisions.size();
-    decision.endpoints.push_back(ledger.append(publication,
-        {Command::Publish, source, observer, number}, EndpointPurpose::Completion, request));
-    const auto wait = ledger.append(current,
-        {Command::Acquire, source, observer, number}, EndpointPurpose::Completion, request);
-    decision.endpoints.push_back(wait);
+    OrderedPacket packet{
+        {publication, {Command::Publish, source, observer, number}, EndpointPurpose::Completion, request},
+        {current, {Command::Acquire, source, observer, number}, EndpointPurpose::Completion, request}};
     if (!closed) {
-        return update();
+        return commitPacket(packet, decision) && update();
     }
     // A recurring closed word is one selected edit. Replaying its forward half
     // over a backedge before adding its acknowledgment would reject a protocol
@@ -354,7 +381,7 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
         return fail(SelectedFailure::MissingParticipation, "closed word requires one common cut", current);
     }
     auto afterForward = currentState();
-    const auto offset = ledger.word(current).size() - 2;
+    const auto offset = ledger.word(current).size();
     auto sent = frontier.command(afterForward.causal,
         {Command::Publish, source, observer, number}, {current, offset});
     if (!sent.applied) return fail(SelectedFailure::SelectedUpdate, sent.reason, current);
@@ -369,7 +396,7 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
         // such knowledge: simply omit its unused return transfer. Validation
         // and the native reconstruction checker are unchanged.
         ++result.work.commonCutTransfers;
-        return update();
+        return commitPacket(packet, decision) && update();
     }
     const auto reverse = retained ? binding->second.second : reusable(observer, source, afterForward);
     if (reverse == NoAnalysisId || !canPublish(afterForward, reverse)) {
@@ -377,10 +404,13 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
             "common-cut acknowledgment has no independently reusable reverse key", current);
     }
     const auto reverseNumber = frontier.keys()[reverse].key;
-    decision.endpoints.push_back(ledger.append(current,
-        {Command::Publish, observer, source, reverseNumber}, EndpointPurpose::ConsumptionAcknowledgment, request, wait));
-    decision.endpoints.push_back(ledger.append(current,
-        {Command::Acquire, observer, source, reverseNumber}, EndpointPurpose::ConsumptionAcknowledgment, request, wait));
+    packet.push_back({current, {Command::Publish, observer, source, reverseNumber},
+                      EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
+    packet.push_back({current, {Command::Acquire, observer, source, reverseNumber},
+                      EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
+    if (!commitPacket(packet, decision)) {
+        return false;
+    }
     rememberReturn(decision.endpoints[decision.endpoints.size() - 2], decision.endpoints.back());
     ++result.work.acknowledgments;
     ++result.work.commonCutTransfers;
@@ -552,14 +582,31 @@ bool Constructor::bind(Group& group, RequirementStage stage)
         decision.required = group.requirements;
         decision.lifecycles = requirements.demandsAt(current, group.requirements);
         const auto request = result.decisions.size();
+        OrderedPacket packet;
         for (auto cut : group.publications) {
-            decision.endpoints.push_back(ledger.append(cut,
-                {Command::Publish, group.source, observer, key.key}, EndpointPurpose::Completion, request));
+            packet.push_back({cut, {Command::Publish, group.source, observer, key.key},
+                              EndpointPurpose::Completion, request});
         }
         const auto acquisition = group.entryAcquisition == NoAnalysisId ? current : group.entryAcquisition;
-        const auto acquired = ledger.append(acquisition,
-            {Command::Acquire, group.source, observer, key.key}, EndpointPurpose::Completion, request);
-        decision.endpoints.push_back(acquired);
+        const auto receipt = packet.size();
+        packet.push_back({acquisition, {Command::Acquire, group.source, observer, key.key},
+                          EndpointPurpose::Completion, request});
+        if (group.entryReturnKey != NoAnalysisId) {
+            const auto& reply = frontier.keys()[group.entryReturnKey];
+            packet.push_back({acquisition, {Command::Publish, observer, group.source, reply.key},
+                              EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, receipt});
+            packet.push_back({acquisition, {Command::Acquire, observer, group.source, reply.key},
+                              EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, receipt});
+        }
+        if (group.packet) {
+            const auto ids = ledger.appendPacket(*group.packet);
+            if (ids.size() != packet.size()) {
+                return fail(SelectedFailure::SelectedUpdate, "source packet changed after checking", acquisition);
+            }
+            decision.endpoints.insert(decision.endpoints.end(), ids.begin(), ids.end());
+        } else if (!commitPacket(packet, decision)) {
+            return false;
+        }
         if (group.entryAcquisition != NoAnalysisId) {
             ++result.work.loopEntryTransfers;
             needsContextualReplay = true;
@@ -568,15 +615,10 @@ bool Constructor::bind(Group& group, RequirementStage stage)
                 closedKeys.insert(group.forwardKey);
             }
             if (group.entryReturnKey != NoAnalysisId) {
-                const auto& reply = frontier.keys()[group.entryReturnKey];
                 if (group.entryRepeats) {
                     recurringKeys.insert(group.entryReturnKey);
                     closedKeys.insert(group.entryReturnKey);
                 }
-                decision.endpoints.push_back(ledger.append(acquisition,
-                    {Command::Publish, observer, group.source, reply.key}, EndpointPurpose::ConsumptionAcknowledgment, request, acquired));
-                decision.endpoints.push_back(ledger.append(acquisition,
-                    {Command::Acquire, observer, group.source, reply.key}, EndpointPurpose::ConsumptionAcknowledgment, request, acquired));
                 rememberReturn(decision.endpoints[decision.endpoints.size() - 2], decision.endpoints.back());
                 ++result.work.acknowledgments;
             }

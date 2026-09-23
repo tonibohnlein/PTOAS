@@ -43,6 +43,37 @@ Ordinary completion endpoint `request` IDs index `decisions`. Endpoints with
 purpose `RecurringCompletion` index `channels`. Both kinds coexist in the same
 ledger; `channels` contains qualified physical access-role requests. Neither table supplies completion to the checker.
 
+## Stable packet gaps and exact commitment
+
+`WordGap` identifies a canonical command word and its adjacent endpoint IDs,
+including explicit word boundaries. `Ledger::preparePacket` resolves all such
+gaps against one ledger revision and freezes the insertion order, physical
+commands, provenance and references to earlier packet endpoints. Prepared fields
+are private to the ledger. It grants no causal or resource credit.
+
+Staging and commitment consume that same prepared value. The ledger rejects a
+foreign owner, changed revision or changed endpoint population before any
+mutation. Equal words after erase/restore do not revive a stale proof. Several
+commands at one original gap retain their packet order, and canonical observation
+aliases receive the same word. Tail packets avoid scanning/copying existing
+words; middle insertions index and merge each affected word once.
+
+Ordinary transfers, single-WAIT repairs, joined-consumption packets, common-cut
+exchanges, alternative sources, loop-entry transfers and recurring proposals use
+this materializer. Common-cut forward execution remains private while choosing
+the reverse key; its complete exchange is then committed together. Loop-entry,
+joined and recurring checks commit the exact prepared object they analyzed.
+Existing eligibility, ownership, occurrence and causal checking remain mandatory;
+ordinary transfers add no new full-program candidate solve.
+
+This closes exact materialization, not all binding/placement work. Stable gaps
+alone do not prove that a selected prefix is good or that a later edit in another
+word preserves its exported ordering. Persistent publication and generation
+support, neighboring-use qualification across discovery paths and further
+return sharing remain the next increments. The normal-constructor repeated-join
+test now requires the actual mechanism without a retry, including branch,
+missing-receipt, reverse-only and unavailable-direction negatives.
+
 ## Requirement classification cost
 
 `StorageFrontierAnalysis::classifyRequirement` supplies immutable reason flags

@@ -23,22 +23,6 @@ struct ReplayTestAccess {
                 "pending compatible issue erased incompatible ACC history");
     }
 
-    static SelectedPlan joinedAt(const Program& p, const Commands& fixed, Cut cut) {
-        Constructor c(p);
-        std::string reason;
-        require(c.ledger.initialize(fixed, reason), reason);
-        c.current = cut;
-        c.activeComponent = c.control.component[cut];
-        const auto& order = c.control.components[c.activeComponent].order;
-        c.activeOffset = std::find(order.begin(), order.end(), cut) - order.begin();
-        c.needsContextualReplay = true;
-        require(c.replay(), c.cache.reason);
-        SelectedDecision decision;
-        const auto joined = c.joinedAcknowledgment(Pipe::MTE2, Pipe::V, cut, decision);
-        require(joined && *joined, "same-word joined packet was not realized");
-        require(c.finish(), c.result.reason);
-        return c.result;
-    }
     static SelectedPlan contextual(const Program& p) {
         Constructor constructor(p);
         constructor.needsContextualReplay = true;
@@ -151,11 +135,12 @@ void joinedConsumptionReturn()
 
 void repeatedJoinedPacket()
 {
-    auto input = base(1, 1);
-    input.operations = {op(P, {{0, true, false}}), op(Q, {{0, true, false}}),
-                        op(Q, {{0, true, false}}), op(Q, {{0, true, false}})};
+    auto input = base(2, 1);
+    input.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}}),
+                        op(Q, {{0, true, false}}), op(P, {{1, false, true}}),
+                        op(Q, {{1, true, false}})};
     input.body = seq({leaf(0), {o::Region::Choice, {leaf(1), leaf(2)}},
-                      {o::Region::For, {leaf(3)}}});
+                      leaf(3), {o::Region::For, {leaf(4)}}});
     auto imported = o::addStructuredBoundaryCuts(input);
     require(imported.success, imported.reason);
     const auto& p = imported.program;
@@ -171,16 +156,19 @@ void repeatedJoinedPacket()
     o::Commands fixed(o::commandCutCount(p));
     fixed[graph.sites[cut(0)].successors.front()] = {{o::Command::Publish, P, Q, 0}};
     fixed[cut(1)] = fixed[cut(2)] = {{o::Command::Acquire, P, Q, 0}};
-    const auto plan = o::selected::ReplayTestAccess::joinedAt(p, fixed, cut(3));
-    const auto& packet = plan.commands[cut(3)];
+    const auto plan = o::constructSelectedPlan(p, fixed);
+    require(plan.success, "normal repeated joined construction: " + plan.reason);
+    require(plan.work.joinedAcknowledgments != 0, "normal constructor did not discover the joined packet");
+    require(!plan.declinedRecurring, "joined packet was discovered only through a retry");
+    const auto& packet = plan.commands[cut(4)];
     require(packet.size() == 4 && packet[0].source == Q && packet[2].source == P,
             "same-word packet did not return consumption before forward reuse");
     auto half = plan.commands;
-    half[cut(3)].resize(2);
+    half[cut(4)].resize(2);
     require(!o::checkCausalFrontier(p, half).accepted,
             "reverse-only half incorrectly rearms its next recurring publication");
     auto missingReceipt = plan.commands;
-    missingReceipt[cut(3)].pop_back();
+    missingReceipt[cut(4)].pop_back();
     require(!o::checkCausalFrontier(p, missingReceipt).accepted,
             "missing forward receipt incorrectly rearms the reverse key");
     unsigned paths = 0;
@@ -215,6 +203,15 @@ void repeatedJoinedPacket()
     flat.operations.clear();
     walk(graph.entry, flat, {}, {}, std::vector<unsigned>(graph.sites.size()));
     require(paths >= 8, "joined packet did not exercise branch alternatives and repeated visits");
+    auto missing = fixed;
+    missing[cut(2)].clear();
+    const auto unconsumed = o::constructSelectedPlan(p, missing);
+    require(!unconsumed.success && unconsumed.commands.empty(), "repeated joined packet ignored an unconsumed branch");
+    auto noReverse = p;
+    noReverse.target.keys[unsigned(Q)][unsigned(P)].clear();
+    const auto unavailable = o::constructSelectedPlan(noReverse, fixed);
+    require(!unavailable.success && unavailable.commands.empty(),
+            "repeated joined packet invented a reverse direction");
 }
 
 void orderedPacketMaterialization()
@@ -230,16 +227,93 @@ void orderedPacketMaterialization()
         {1, {o::Command::Acquire, P, Q, 0}, o::EndpointPurpose::RecurringCompletion, 0},
         {1, {o::Command::Publish, Q, P, 0}, o::EndpointPurpose::RecurringCompletion, 1},
         {2, {o::Command::Acquire, Q, P, 0}, o::EndpointPurpose::RecurringCompletion, 1}};
-    const auto staged = ledger.withPacket(packet);
+    const auto prepared = ledger.preparePacket(packet);
+    const auto staged = ledger.withPacket(prepared);
+    require(bool(staged), "packet preparation failed");
     compareWords(original, ledger.commands());
     require(ledger.version() == revision, "private packet changed live revision");
-    const auto ids = ledger.appendPacket(packet);
-    compareWords(staged, ledger.commands());
+    const auto ids = ledger.appendPacket(prepared);
+    compareWords(*staged, ledger.commands());
     require(ids.size() == 3 && ledger.endpoint(ids[1]).request == 1,
             "packet lost logical matching provenance");
-    require(staged[1].size() == 3 && staged[1][0].kind == o::Command::Barrier &&
-                staged[1][1].kind == o::Command::Acquire && staged[1][2].kind == o::Command::Publish,
+    require((*staged)[1].size() == 3 && (*staged)[1][0].kind == o::Command::Barrier &&
+                (*staged)[1][1].kind == o::Command::Acquire && (*staged)[1][2].kind == o::Command::Publish,
             "packet sorted publications ahead of an earlier receipt or fixed command");
+}
+void stablePacketGaps()
+{
+    auto p = base(1);
+    p.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}})};
+    o::selected::Control control(p);
+    o::selected::Ledger ledger(p, control.canonicalCut);
+    const auto wait = ledger.append(1, {o::Command::Acquire, P, Q, 0}, o::EndpointPurpose::Fixed);
+    const auto outward = ledger.append(1, {o::Command::Publish, Q, P, 1}, o::EndpointPurpose::Fixed);
+    const auto gap = ledger.gapAfter(wait);
+    require(gap && gap->right == outward, "gap lost outward publication boundary");
+    const o::selected::OrderedPacket packet{
+        {1, {o::Command::Publish, Q, P, 0}, o::EndpointPurpose::ConsumptionAcknowledgment, 0, wait, gap},
+        {1, {o::Command::Acquire, Q, P, 0}, o::EndpointPurpose::ConsumptionAcknowledgment, 0, wait, gap},
+        {1, {o::Command::Publish, P, Q, 0}, o::EndpointPurpose::Completion, 0, o::NoAnalysisId, gap, 1}};
+    const auto prepared = ledger.preparePacket(packet);
+    auto foreign = ledger;
+    require(!foreign.withPacket(prepared) && foreign.appendPacket(prepared).empty(),
+            "same-revision foreign ledger accepted another ledger's packet");
+    const auto staged = ledger.withPacket(prepared);
+    require(prepared.valid() && staged && ledger.word(1).size() == 2, "preparation mutated its ledger");
+    const auto ids = ledger.appendPacket(prepared);
+    require(ids.size() == 3 && ledger.word(1) == std::vector<std::size_t>{wait, ids[0], ids[1], ids[2], outward},
+            "same-gap endpoints lost their selected order");
+    require(ledger.endpoint(ids[2]).acknowledges == ids[1], "packet-local identity was not resolved");
+    compareWords(*staged, ledger.commands());
+    const auto committed = ledger.commands();
+    const auto revision = ledger.version();
+    require(!ledger.withPacket(prepared) && ledger.appendPacket(prepared).empty(), "stale packet was accepted");
+    require(ledger.version() == revision, "stale packet partially mutated the ledger");
+    compareWords(committed, ledger.commands());
+    require(!ledger.preparePacket(packet).valid(), "separated neighbors remained an adjacent gap");
+    const auto restorationPacket = ledger.preparePacket({
+        {1, {o::Command::Barrier, Q}, o::EndpointPurpose::LocalFence}});
+    ledger.erase(outward);
+    ledger.restoreAfter(outward, ids.back());
+    compareWords(committed, ledger.commands());
+    require(!ledger.withPacket(restorationPacket) && ledger.appendPacket(restorationPacket).empty(),
+            "restoring identical words revived a stale proof revision");
+    ledger.erase(wait);
+    require(!ledger.gapAfter(wait), "erased endpoint retained a usable gap");
+    require(!ledger.preparePacket(packet).valid(), "erased gap neighbor was accepted");
+    auto malformed = packet;
+    malformed[0].gap.reset();
+    malformed[0].acknowledges = o::NoAnalysisId;
+    malformed[0].acknowledgesPacket = 1;
+    require(!ledger.preparePacket(malformed).valid(), "forward packet-local reference was accepted");
+}
+void aliasPacketGaps()
+{
+    auto p = base(1, 1);
+    p.operations = {op(P, {{0, false, true, true}})};
+    o::ObservedControl graph;
+    graph.qualification = "original shared packet boundary";
+    graph.sites.resize(4);
+    graph.observations = {{10, {}, true}, {11, {}, true}, {12, {}, true}};
+    graph.entry = 2;
+    graph.exit = 3;
+    graph.sites[2] = {0, 0, {1}, {}, 0};
+    graph.sites[1] = {o::NoControlId, 1, {0}, {}, 0};
+    graph.sites[0] = {o::NoControlId, 1, {3}, {}, 0};
+    graph.sites[3] = {o::NoControlId, 2, {}, {}, 0};
+    p.observed = graph;
+    o::selected::Control control(p);
+    require(control.complete && control.canonicalCut[0] == control.canonicalCut[1], "invalid alias fixture");
+    o::selected::Ledger ledger(p, control.canonicalCut);
+    const auto wait = ledger.append(1, {o::Command::Acquire, P, Q, 0}, o::EndpointPurpose::Fixed);
+    const auto prepared = ledger.preparePacket({
+        {0, {o::Command::Publish, Q, P, 0}, o::EndpointPurpose::ConsumptionAcknowledgment,
+         0, wait, ledger.gapAfter(wait)}});
+    const auto staged = ledger.withPacket(prepared);
+    require(staged && ledger.appendPacket(prepared).size() == 1, "aliased gap did not materialize");
+    compareWords(*staged, ledger.commands());
+    require(ledger.word(0) == ledger.word(1) && (*staged)[0].size() == 2 && (*staged)[1].size() == 2,
+            "canonical packet word was not replicated at its original aliases");
 }
 void resourceAdmission(unsigned keys)
 {
@@ -425,6 +499,8 @@ int main()
     repeatedJoinedPacket();
     joinedConsumptionReturn();
     orderedPacketMaterialization();
+    stablePacketGaps();
+    aliasPacketGaps();
     resourceAdmission(1);
     resourceAdmission(2);
     deadlineFence();

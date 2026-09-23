@@ -42,10 +42,10 @@ resource-intensive workers maximum in aggregate.
 
 ## Resumed implementation queue
 
-1. Classification cost: cheap original reason flags separated from witness paths,
+1. **Complete (`a361b3878`):** classification cost: cheap original reason flags separated from witness paths,
    shared site/cell facts, unused-classification fast paths and next-provider-only
    selection. Preserve classification/policy; validate scaling and exact plans.
-2. Stable ordered gaps and common packet binding, including ordinary and joined
+2. **Active (shared materialization complete):** stable ordered gaps and common packet binding, including ordinary and joined
    acknowledgments. Preserve publication-prefix dependencies across edits; add a
    normal-constructor recurring joined-consumption witness.
 3. Persistent generation support for publications, consumer prerequisites and

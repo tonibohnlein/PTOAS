@@ -230,10 +230,18 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
         if (forward == NoAnalysisId) continue;
         const bool repeats = control.components[control.component[publication]].cyclic;
         Id reverse = NoAnalysisId;
-        auto commands = ledger.commands();
-        commands[publication].push_back({Command::Publish, source, observer, frontier.keys()[forward].key});
-        commands[loop.entry].push_back({Command::Acquire, source, observer, frontier.keys()[forward].key});
-        auto trial = analyze(program, commands, {false});
+        const auto request = result.decisions.size();
+        OrderedPacket packet{
+            {publication, {Command::Publish, source, observer, frontier.keys()[forward].key},
+             EndpointPurpose::Completion, request},
+            {loop.entry, {Command::Acquire, source, observer, frontier.keys()[forward].key},
+             EndpointPurpose::Completion, request}};
+        auto prepared = ledger.preparePacket(packet);
+        auto commands = ledger.withPacket(prepared);
+        if (!commands) {
+            continue;
+        }
+        auto trial = analyze(program, *commands, {false});
         result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
         const bool needsConsumption = std::any_of(trial.protocol.begin(), trial.protocol.end(), [&](const auto& r) {
             return r.kind == ProtocolObligation::ConsumptionNotEstablished &&
@@ -246,9 +254,16 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
         if (trial.complete && trial.diagnostics.empty() && repeats && needsConsumption) {
             reverse = unused(observer, source);
             if (reverse == NoAnalysisId) continue;
-            commands[loop.entry].push_back({Command::Publish, observer, source, frontier.keys()[reverse].key});
-            commands[loop.entry].push_back({Command::Acquire, observer, source, frontier.keys()[reverse].key});
-            trial = analyze(program, commands, {false});
+            packet.push_back({loop.entry, {Command::Publish, observer, source, frontier.keys()[reverse].key},
+                              EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
+            packet.push_back({loop.entry, {Command::Acquire, observer, source, frontier.keys()[reverse].key},
+                              EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
+            prepared = ledger.preparePacket(packet);
+            commands = ledger.withPacket(prepared);
+            if (!commands) {
+                continue;
+            }
+            trial = analyze(program, *commands, {false});
             result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
         }
         if (!trial.complete || !trial.diagnostics.empty() || !trial.protocol.empty()) continue;
@@ -256,6 +271,7 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
         group.publications = {publication};
         group.entryAcquisition = loop.entry;
         group.entryReturnKey = reverse;
+        group.packet = std::move(prepared);
         group.entryRepeats = repeats;
         group.forwardKey = forward;
         group.version = ledger.version();

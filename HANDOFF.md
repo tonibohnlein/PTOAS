@@ -1,6 +1,43 @@
 # OAHS current handoff
 
-## Current iteration — Step I witness-free requirement classification
+## Current iteration — Step J stable packet gaps and atomic materialization
+
+Baseline `a361b3878`. `WordGap` retains canonical-word neighbors rather than an
+unversioned offset. A private `PreparedPacket` freezes exact insertions, endpoint
+identities and earlier packet-local acknowledgment references. Foreign/stale
+packets are rejected before mutation, including after erase/restore produces
+identical words. Aliased observations share the same prepared and committed word.
+Tail packets retain append-sized work; middle insertions index/merge one word once.
+
+Ordinary, single-WAIT, joined, common-cut, alternative-source, loop-entry and
+recurring clients now share this materializer. Common-cut selection privately
+executes its actual forward receipt before choosing the return key and committing
+the whole packet. Joined/loop-entry/recurring clients retain the exact prepared
+object they checked. No ordinary candidate gains an extra full-program solve.
+Existing ownership/neighbor/occurrence qualification remains authoritative.
+
+All three reviewers ACCEPT.22 portable suites plus final focused hardening pass;
+three native drivers,88/88corpus,18/19compatibility (same refusal),GEMM,two prefills
+and three targets retain identical plans/outcomes to I. No payload-order rerun is
+needed for byte-identical plans. The repeated-join test now invokes the NORMAL
+constructor, proves discovery with no retry and exercises branch/repeat traces,
+reverse-only/missing-receipt/unconsumed-branch/unavailable-direction negatives.
+Foreign ledgers, stable middle gaps, packet-local references, erased neighbors,
+restored words and noncanonical aliases are also tested. The superseded internal
+joined-packet installer was removed. Eight compliance bracing matches are regex
+false positives with braced bodies; the single line-length issue is fixed.
+No sanitizer or device run. Exact evidence and pins:
+`../oahs-gemm-base-builds/refactor-step-j/`.
+
+Next: publication-support dependencies and persistent generation support. This
+increment closes shared exact materialization, NOT general ordering certification,
+common eligibility/binding qualification, or the F/G quality debt. Keep restricted
+certificate outcomes explicit; original physical facts cannot depend on whether
+a private event proposal happens to fit. Continue the three-reviewer commit loop.
+Use the focused build recipe in the evidence directory; never rebuild unrelated
+transforms merely to relink these drivers.
+
+## Previous iteration — Step I witness-free requirement classification
 
 Baseline `2f08f364f`. Ordinary reason flags now use original provenance-bit
 membership rather than extracting a path per relationship. Unique full-writer
@@ -34,7 +71,7 @@ for every ordinary candidate. Preserve the normal-constructor repeated-join
 acceptance witness. Continue through the resumed queue in `oahs-todo.md` with one
 reviewed commit per coherent increment; stages1–5 are not closed by Step I.
 
-## Current iteration — Step H access-scoped ACC histories
+## Previous iteration — Step H access-scoped ACC histories
 
 Step G committed `e7c21d67d`. The whole-cell ACC eligibility flag is removed.
 The shared documented MMAD contract is interned on exact original access
@@ -82,7 +119,7 @@ Continue immediately with actual required-provider coverage and one next-provide
 selection, then common packet binding, exported support and quality recovery.
 Stages1–5 remain active; this bounded correction does not close them wholesale.
 
-## Current iteration — Step G original participation and complete rearming packets
+## Previous iteration — Step G original participation and complete rearming packets
 
 Step F committed `b77d0644c`. Shared scalar analysis now proves original positive-
 step loop domains, including nonzero lower bounds, bounded dynamic uppers and
@@ -133,7 +170,7 @@ Continue immediately with sparse access-order histories replacing whole-cell ACC
 eligibility, then exported generation support, common packet binding and actual
 required-return/rearming composition. Stages1–5 remain open.
 
-## Current iteration — Step F composed original endpoint demands
+## Previous iteration — Step F composed original endpoint demands
 
 Step E committed `a8af1636c`. Original cross-engine requirements now collect
 first-consumer, first-write and final-reader roles together before refinement.
@@ -203,7 +240,7 @@ Next extend demanded endpoint discovery and participation across reader-only
 regions, without a cross-engine-inside-child benefit gate. Keep exported-prefix,
 open-continuation and generation-scoped ACC obligations explicit.
 
-## Current iteration — Step D physical-use succession
+## Previous iteration — Step D physical-use succession
 
 Step C committed `54cee6cda`. The existing storage analysis now owns cached
 nearest-use frontiers, including read/write/RMW and explicit open boundaries.
@@ -222,7 +259,7 @@ bodies are braced. A test-only line wrap follows the campaign. Do not mark
 full generation support complete from this query alone. Continue immediately
 into composed generation admission and affected producer-support obligations.
 
-## Current iteration — Step C publication boundaries
+## Previous iteration — Step C publication boundaries
 
 Step B committed as `3ee150030`. Step C replaces the two private recurring
 publication scans with `Control::publicationAfter`: first legal boundary,
@@ -239,7 +276,7 @@ GEMM charges 87 boundary-scan and 74,466 correspondence visits, with unchanged
 21,846 replay visits and 16 recurring channels. All three reviewers ACCEPT.
 The result is a position/participation proof, not a cell/generation certificate.
 
-## Current iteration — Step B endpoint-set matching
+## Previous iteration — Step B endpoint-set matching
 
 Step A committed as `b6958b0e4`. Step B replaces recurring, alternative-source
 and loop-entry matching with the common endpoint-set query. Both obsolete

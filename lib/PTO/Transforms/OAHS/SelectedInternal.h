@@ -100,16 +100,41 @@ private:
                      OccurrenceCorrespondence> correspondences;
 };
 
-// An ordered proposal, including provenance, materialized by the ledger once
-// for both private validation and commitment. This first contract appends at
-// existing word ends; it grants no placement, matching or resource certificate.
+// Stable original-word gap. Missing neighbors mean word beginning/end.
+// A proof is tied to the prepared packet revision, not just these identities.
+struct WordGap {
+    Cut cut = NoAnalysisId;
+    Id left = NoAnalysisId, right = NoAnalysisId;
+};
 struct PacketEndpoint {
     Cut cut;
     Command command;
     EndpointPurpose purpose;
     Id request = NoAnalysisId, acknowledges = NoAnalysisId;
+    std::optional<WordGap> gap = {};
+    // Reference to an earlier endpoint in this packet, resolved before commit.
+    Id acknowledgesPacket = NoAnalysisId;
 };
 using OrderedPacket = std::vector<PacketEndpoint>;
+class Ledger;
+class PreparedPacket {
+public:
+    bool valid() const { return ready; }
+    const std::string& reason() const { return error; }
+    Id size() const { return endpoints.size(); }
+
+private:
+    friend class Ledger;
+    bool ready = false;
+    std::string error;
+    const Ledger* owner = nullptr;
+    uint64_t version = 0;
+    Id firstEndpoint = NoAnalysisId;
+    std::vector<SelectedEndpoint> endpoints;
+    // Frozen original offsets are derived from stable gaps once. Multiple
+    // insertions at one gap retain packet order; no word is copied to prepare.
+    std::map<Cut, std::map<Id, std::vector<Id>>> insertions;
+};
 
 class Ledger {
 public:
@@ -117,12 +142,14 @@ public:
     Ledger(const Program&, const std::vector<Cut>&);
     bool initialize(const Commands&, std::string&);
     Id append(Cut, Command, EndpointPurpose, Id request = NoAnalysisId, Id ack = NoAnalysisId);
-    Id after(Id, Command, EndpointPurpose, Id request, Id ack);
+    WordGap tail(Cut) const;
+    std::optional<WordGap> gapAfter(Id) const;
     const std::vector<Id>& word(Cut) const;
     const SelectedEndpoint& endpoint(Id) const;
     Commands commands() const;
-    Commands withPacket(const OrderedPacket&) const;
-    std::vector<Id> appendPacket(const OrderedPacket&);
+    PreparedPacket preparePacket(const OrderedPacket&) const;
+    std::optional<Commands> withPacket(const PreparedPacket&) const;
+    std::vector<Id> appendPacket(const PreparedPacket&);
     bool active(Id id) const { return !removed.count(id); }
     void erase(Id);
     void restoreAfter(Id, Id);
@@ -359,6 +386,7 @@ struct Group {
     Cut entryAcquisition = NoAnalysisId;
     Id entryReturnKey = NoAnalysisId;
     bool entryRepeats = false;
+    std::optional<PreparedPacket> packet;
 };
 
 class Constructor {
@@ -429,6 +457,7 @@ private:
     bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&, Group&);
     bool consume();
     bool bind(Group&, RequirementStage);
+    bool commitPacket(const OrderedPacket&, SelectedDecision&);
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&);
     bool acknowledgment(Pipe, Pipe, Cut&, Id&, SelectedDecision&, bool&);
     std::optional<bool> joinedAcknowledgment(Pipe, Pipe, Cut, SelectedDecision&);

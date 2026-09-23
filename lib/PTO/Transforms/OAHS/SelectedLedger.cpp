@@ -80,28 +80,138 @@ Id Ledger::append(Cut cut, Command command, EndpointPurpose purpose, Id request,
     const auto leader = canonical(cut);
     return insert(leader, words[leader].size(), command, purpose, request, ack);
 }
-std::vector<Id> Ledger::appendPacket(const OrderedPacket& packet)
+WordGap Ledger::tail(Cut cut) const
 {
-    std::vector<Id> ids;
-    ids.reserve(packet.size());
-    for (const auto& endpoint : packet) {
-        ids.push_back(append(endpoint.cut, endpoint.command, endpoint.purpose,
-                             endpoint.request, endpoint.acknowledges));
+    const auto& ids = word(cut);
+    return {canonical(cut), ids.empty() ? NoAnalysisId : ids.back(), NoAnalysisId};
+}
+std::optional<WordGap> Ledger::gapAfter(Id predecessor) const
+{
+    if (predecessor >= endpoints.size() || !active(predecessor)) {
+        return {};
     }
+    const auto cut = endpoints[predecessor].cut;
+    const auto& ids = word(cut);
+    const auto found = std::find(ids.begin(), ids.end(), predecessor);
+    if (found == ids.end()) {
+        return {};
+    }
+    const auto next = std::next(found);
+    return WordGap{cut, predecessor, next == ids.end() ? NoAnalysisId : *next};
+}
+PreparedPacket Ledger::preparePacket(const OrderedPacket& packet) const
+{
+    PreparedPacket out;
+    out.owner = this;
+    out.version = revision;
+    out.firstEndpoint = endpoints.size();
+    if (packet.size() > endpoints.max_size() - endpoints.size()) {
+        out.error = "packet endpoint population exceeds representable storage";
+        return out;
+    }
+    std::map<Cut, std::map<Id, Id>> positions;
+    for (const auto& item : packet) {
+        if (!legalCommandCut(program, item.cut)) {
+            out.error = "packet has no legal original command word";
+            return out;
+        }
+        const auto cut = canonical(item.cut);
+        const auto gap = item.gap.value_or(tail(cut));
+        auto offset = word(cut).size();
+        if (gap.right != NoAnalysisId) {
+            auto at = positions.find(cut);
+            if (at == positions.end()) {
+                auto& index = positions[cut];
+                const auto& ids = word(cut);
+                for (Id indexOffset = 0; indexOffset < ids.size(); ++indexOffset) {
+                    index.emplace(ids[indexOffset], indexOffset);
+                }
+                at = positions.find(cut);
+            }
+            const auto right = at->second.find(gap.right);
+            offset = right == at->second.end() ? NoAnalysisId : right->second;
+        }
+        if (canonical(gap.cut) != cut || offset == NoAnalysisId ||
+            gap.left != (offset == 0 ? NoAnalysisId : word(cut)[offset - 1])) {
+            out.error = "packet gap neighbors are no longer adjacent in their original word";
+            return out;
+        }
+        auto acknowledgment = item.acknowledges;
+        if (item.acknowledgesPacket != NoAnalysisId) {
+            if (acknowledgment != NoAnalysisId || item.acknowledgesPacket >= out.endpoints.size()) {
+                out.error = "packet acknowledgment does not name an earlier endpoint";
+                return out;
+            }
+            acknowledgment = out.firstEndpoint + item.acknowledgesPacket;
+        } else if (acknowledgment != NoAnalysisId &&
+                   (acknowledgment >= endpoints.size() || !active(acknowledgment))) {
+            out.error = "packet acknowledgment names an inactive endpoint";
+            return out;
+        }
+        const auto id = out.firstEndpoint + out.endpoints.size();
+        out.endpoints.push_back({id, cut, item.command, item.purpose, item.request, acknowledgment});
+        out.insertions[cut][offset].push_back(id);
+    }
+    out.ready = true;
+    return out;
+}
+namespace {
+// Merge in one pass rather than shifting the original word for every gap.
+std::vector<Id> insertedWord(const std::vector<Id>& original,
+                            const std::map<Id, std::vector<Id>>& insertions)
+{
+    std::vector<Id> out;
+    Id first = 0;
+    for (const auto& [offset, ids] : insertions) {
+        out.insert(out.end(), original.begin() + first, original.begin() + offset);
+        out.insert(out.end(), ids.begin(), ids.end());
+        first = offset;
+    }
+    out.insert(out.end(), original.begin() + first, original.end());
+    return out;
+}
+} // namespace
+std::vector<Id> Ledger::appendPacket(const PreparedPacket& packet)
+{
+    if (!packet.ready || packet.owner != this || packet.version != revision ||
+        packet.firstEndpoint != endpoints.size()) {
+        return {};
+    }
+    std::vector<Id> ids;
+    for (const auto& endpoint : packet.endpoints) {
+        ids.push_back(endpoint.id);
+    }
+    endpoints.insert(endpoints.end(), packet.endpoints.begin(), packet.endpoints.end());
+    for (const auto& [cut, insertions] : packet.insertions) {
+        auto& word = words[cut];
+        if (insertions.size() == 1 && insertions.begin()->first == word.size()) {
+            // Ordinary append packets retain amortized append cost.
+            const auto& added = insertions.begin()->second;
+            word.insert(word.end(), added.begin(), added.end());
+        } else {
+            word = insertedWord(word, insertions);
+        }
+        changed.push_back(cut);
+    }
+    revision += packet.endpoints.size();
     return ids;
 }
-Commands Ledger::withPacket(const OrderedPacket& packet) const
+std::optional<Commands> Ledger::withPacket(const PreparedPacket& packet) const
 {
-    auto staged = *this;
-    staged.appendPacket(packet);
-    return staged.commands();
-}
-Id Ledger::after(Id predecessor, Command command, EndpointPurpose purpose, Id request, Id ack)
-{
-    const auto cut = endpoints.at(predecessor).cut;
-    const auto& ids = words[cut];
-    const auto found = std::find(ids.begin(), ids.end(), predecessor);
-    return insert(cut, Id(found - ids.begin()) + 1, command, purpose, request, ack);
+    if (!packet.ready || packet.owner != this || packet.version != revision ||
+        packet.firstEndpoint != endpoints.size()) {
+        return {};
+    }
+    Commands out(words.size());
+    for (Cut cut = 0; cut < words.size(); ++cut) {
+        const auto edits = packet.insertions.find(canonical(cut));
+        const auto ids = edits == packet.insertions.end() ? word(cut) : insertedWord(word(cut), edits->second);
+        for (auto id : ids) {
+            out[cut].push_back(id < endpoints.size() ? endpoints[id].command :
+                              packet.endpoints[id - packet.firstEndpoint].command);
+        }
+    }
+    return out;
 }
 void Ledger::erase(Id id)
 {

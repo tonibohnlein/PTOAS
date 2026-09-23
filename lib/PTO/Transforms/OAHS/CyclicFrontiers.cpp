@@ -597,7 +597,11 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
         }
         return endpoints;
     };
-    auto candidate = [&]() { return ledger.withPacket(packet()); };
+    auto prepared = ledger.preparePacket(packet());
+    if (!prepared.valid()) {
+        return fail(SelectedFailure::SelectedUpdate, prepared.reason());
+    }
+    auto candidate = [&]() { return *ledger.withPacket(prepared); };
     auto alternativeRoute = [&](Id omitted) {
         // Immutable topology is only a cheap opportunity filter. Actual prefix,
         // occurrence, and consumption coverage must pass full replay below.
@@ -629,6 +633,11 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
         if (!selected->complete || !selected->diagnostics.empty() ||
             !selected->protocol.empty() || !selected->phaseResources.empty()) break;
         retained[index] = false;
+        auto previousPacket = std::move(prepared);
+        prepared = ledger.preparePacket(packet());
+        if (!prepared.valid()) {
+            return fail(SelectedFailure::SelectedUpdate, prepared.reason());
+        }
         auto trial = analyze(program, candidate(), {false});
         ++result.work.recurringTrials;
         result.work.recurringAnalysisSites += trial.stats.siteEvaluations;
@@ -647,7 +656,10 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
         if (covered) {
             selected = std::move(trial);
             ++result.work.redundantRecurringChannels;
-        } else retained[index] = true;
+        } else {
+            retained[index] = true;
+            prepared = std::move(previousPacket);
+        }
     }
     std::array<std::vector<Cut>, PipeCount> seeds;
     for (Id index = 0; index < requests.size(); ++index) {
@@ -725,7 +737,9 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
             }
         }
     }
-    ledger.appendPacket(packet());
+    if (ledger.appendPacket(prepared).size() != prepared.size()) {
+        return fail(SelectedFailure::SelectedUpdate, "recurring packet changed after checking");
+    }
     for (Id index = 0; index < requests.size(); ++index) {
         if (!retained[index]) continue;
         const auto& request = requests[index];
