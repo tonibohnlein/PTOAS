@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/CausalFrontier.h"
 #include "PTO/Transforms/OAHS/Analysis.h"
+#include "PTO/Transforms/OAHS/ObservedPrograms.h"
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
@@ -263,10 +264,11 @@ void nativeAccumulatorOrdering()
     acc.storage = o::Cell::Storage::CanonicalInterval;
     acc.coordinateSpace = "physical-local";
     acc.ranges = {{0, 131072}};
-    acc.nativeMmadAccOrder = true;
+    acc.domain = o::Cell::Domain::Accumulator;
+    p.nativeAccumulatorClasses = 1;
     p.operations[0].pipe = p.operations[1].pipe = o::Pipe::M;
-    p.operations[0].accesses = {{0, false, true}, {1, true, false}};
-    p.operations[1].accesses = {{0, true, true}, {1, true, false}};
+    p.operations[0].accesses = {{0, false, true, false, 0}, {1, true, false}};
+    p.operations[1].accesses = {{0, true, true, false, 0}, {1, true, false}};
     p.operations[1].nativeMmadAccumulate = true;
     p.operations[2].pipe = o::Pipe::FIX;
     p.operations[2].accesses = {{0, true, false}};
@@ -292,12 +294,115 @@ void nativeAccumulatorOrdering()
     initializing.operations[1].nativeMmadAccumulate = false;
     o::CausalFrontier fresh(initializing);
     CHECK(!fresh.inspect(issue(fresh, fresh.initial(), 0), 1).applied);
-    p.cells[0].nativeMmadAccOrder = false;
+    p.operations[0].accesses[0].nativeAccumulatorClass = o::NoControlId;
     o::CausalFrontier conservative(p);
     CHECK(!conservative.inspect(issue(conservative, conservative.initial(), 0), 1).applied);
-    p.cells[0].nativeMmadAccOrder = true;
+    p.operations[0].accesses[0].nativeAccumulatorClass = 0;
     p.cells[0].storage = o::Cell::Storage::OverlapWitness;
     CHECK(!o::CausalFrontier(p).complete());
+}
+void scopedAccumulatorHistories()
+{
+    auto p = base(3, 1);
+    p.target = mlir::pto::a3SyncProfile(mlir::pto::SyncCore::Cube);
+    auto& cell = p.cells[0];
+    cell.storage = o::Cell::Storage::CanonicalInterval;
+    cell.domain = o::Cell::Domain::Accumulator;
+    cell.coordinateSpace = "physical-local";
+    cell.ranges = {{0, 131072}};
+    p.nativeAccumulatorClasses = 2;
+    for (auto& operation : p.operations) {
+        operation.pipe = o::Pipe::M;
+        operation.accesses = {{0, true, true, false, 0}};
+        operation.nativeMmadAccumulate = true;
+    }
+    p.operations[0].nativeMmadAccumulate = false;
+    p.operations[0].accesses[0].read = false;
+    o::Commands commands(4);
+    CHECK(o::checkCausalFrontier(p, commands).accepted);
+    CHECK(o::analyze(p, commands).verified());
+    for (auto oldClass : {std::size_t(1), o::NoControlId}) {
+        p.operations[0].accesses[0].nativeAccumulatorClass = oldClass;
+        o::CausalFrontier frontier(p);
+        const auto old = issue(frontier, frontier.initial(), 0);
+        CHECK(!frontier.inspect(old, 1).applied);
+        CHECK(!o::checkCausalFrontier(p, commands).accepted);
+        const auto pending = o::analyze(p, commands);
+        CHECK(std::any_of(pending.residuals.begin(), pending.residuals.end(), [](const auto& r) {
+            return r.demand.producer == 0 && r.demand.consumer == 2;
+        })); // later compatible issuance never hides the old incompatible access
+        for (const auto& order : {std::vector<std::size_t>{0, 1}, {1, 0}}) {
+            const auto hypothesis = frontier.assumePreviousAccesses(frontier.initial(), order);
+            CHECK(hypothesis.applied && !frontier.inspect(hypothesis.state, 2).applied);
+        }
+        const auto compatible = issue(frontier, frontier.initial(), 1);
+        const auto joined = frontier.join(old, compatible);
+        CHECK(joined.applied && !frontier.inspect(joined.state, 2).applied);
+        const auto skipped = frontier.join(old, frontier.initial());
+        CHECK(skipped.applied && !frontier.inspect(skipped.state, 2).applied);
+        const auto repaired = apply(frontier, old, fence(o::Pipe::M));
+        const auto accumulated = issue(frontier, repaired, 1);
+        CHECK(frontier.inspect(accumulated, 2).applied);
+        commands[1] = {fence(o::Pipe::M)};
+        CHECK(o::checkCausalFrontier(p, commands).accepted);
+        CHECK(o::analyze(p, commands).verified());
+        commands[1].clear();
+    }
+    p.operations[0].accesses[0].nativeAccumulatorClass = 0;
+    for (bool reverse : {false, true}) {
+        auto mixed = p;
+        mixed.operations[1].accesses.push_back({0, true, true, false, 1});
+        if (reverse) {
+            std::reverse(mixed.operations[1].accesses.begin(), mixed.operations[1].accesses.end());
+        }
+        CHECK(!o::checkCausalFrontier(mixed, commands).accepted);
+        CHECK(!o::analyze(mixed, commands).verified());
+    }
+    auto branch = p;
+    branch.operations[1].accesses[0].nativeAccumulatorClass = 1;
+    o::Region a, b, consumer, choice;
+    a.kind = b.kind = consumer.kind = o::Region::Operation;
+    a.operation = 0; b.operation = 1; consumer.operation = 2;
+    choice.kind = o::Region::Choice;
+    choice.children = {a, b};
+    branch.body.children = {choice, consumer};
+    commands.assign(o::commandCutCount(branch), {});
+    CHECK(!o::checkCausalFrontier(branch, commands).accepted);
+    CHECK(!o::analyze(branch, commands).verified());
+    auto periodic = p;
+    periodic.operations.resize(2);
+    periodic.operations[0].nativeMmadAccumulate = true;
+    periodic.cells.push_back(periodic.cells[0]);
+    periodic.cells[1].ranges = {{131072, 131072}};
+    const auto unchanged = o::makePeriodicLoop(periodic, 2, {{0, 0, {0, 0}}, {1, 0, {0, 0}}});
+    CHECK(unchanged.success);
+    CHECK(std::all_of(unchanged.program.operations.begin(), unchanged.program.operations.end(), [](const auto& op) {
+        return op.accesses[0].nativeAccumulatorClass == 0;
+    }));
+    CHECK(o::analyze(unchanged.program, o::Commands(o::commandCutCount(unchanged.program))).verified());
+    const auto moved = o::makePeriodicLoop(periodic, 2, {{0, 0, {0, 1}}, {1, 0, {0, 1}}});
+    CHECK(moved.success);
+    for (const auto& op : moved.program.operations) {
+        const auto& access = op.accesses[0];
+        CHECK(access.nativeAccumulatorClass == (access.cell == 0 ? 0 : o::NoControlId));
+    }
+    const auto movedReport = o::analyze(moved.program, o::Commands(o::commandCutCount(moved.program)));
+    CHECK(movedReport.complete && !movedReport.verified());
+    CHECK(std::all_of(movedReport.residuals.begin(), movedReport.residuals.end(), [](const auto& r) {
+        return r.demand.cell == 1;
+    }));
+    for (unsigned invalid = 0; invalid < 7; ++invalid) {
+        auto bad = p;
+        if (invalid == 0) { bad.operations[0].accesses[0].nativeAccumulatorClass = 2; }
+        if (invalid == 1) { bad.operations[0].pipe = o::Pipe::FIX; }
+        if (invalid == 2) { bad.cells[0].domain = o::Cell::Domain::General; }
+        if (invalid == 3) { bad.cells[0].storage = o::Cell::Storage::OverlapWitness; }
+        if (invalid == 4) { bad.cells[0].exclusive = true; }
+        if (invalid == 5) { bad.nativeAccumulatorClasses = o::NoControlId; }
+        if (invalid == 6) { bad.target.contract = "another target"; }
+        CHECK(!o::validateProgram(bad).success);
+        CHECK(!o::CausalFrontier(bad).complete());
+    }
 }
 void qualifications()
 {
@@ -342,5 +447,6 @@ int main()
     structured();
     qualifications();
     nativeAccumulatorOrdering();
+    scopedAccumulatorHistories();
     std::cout << "causal frontier: " << checks << " assertions passed\n";
 }

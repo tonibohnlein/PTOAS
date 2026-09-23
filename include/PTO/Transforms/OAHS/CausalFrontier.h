@@ -43,7 +43,9 @@ struct FrontierEvent {
 };
 
 // The must-history of the access classes, ordered
-// (cell * PipeCount + engine) * 2 + mode, R=0, W=1. Absence means no
+// (cell * PipeCount + engine) * 2 + mode, R=0, W=1, followed by sparse
+// per-cell native access-order partitions. All rows use identical causal
+// transport; partitions are obligations, not another completion state. Absence means no
 // represented history; a PRESENT EMPTY bitset means unresolved history, so the
 // two are distinct and `find` returning null is the only expression of absence.
 // Only present classes are stored: a program with many storage cells otherwise

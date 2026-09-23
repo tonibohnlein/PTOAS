@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <iterator>
 #include <limits>
+#include <map>
 
 namespace mlir::pto::oahs {
 namespace {
@@ -90,6 +91,19 @@ struct CausalFrontierModel {
     bool valid = false;
     std::string reason;
     std::vector<EventIdentity> keys;
+    // Aggregate rows keep ordinary coverage stable. Extra rows partition only
+    // represented M access contracts on affected cells, including unknown M.
+    std::map<unsigned, std::map<std::size_t, std::size_t>> accumulatorRows;
+    std::size_t historyClasses = 0;
+    std::size_t accumulatorRow(unsigned cell, std::size_t contract) const
+    {
+        const auto found = accumulatorRows.find(cell);
+        if (found == accumulatorRows.end()) {
+            return NoAnalysisId;
+        }
+        const auto row = found->second.find(contract);
+        return row == found->second.end() ? NoAnalysisId : row->second;
+    }
     explicit CausalFrontierModel(Program p) : program(std::move(p))
     {
         auto validation = validateProgram(program);
@@ -157,6 +171,27 @@ struct CausalFrontierModel {
             reason = "causal frontier dimensions are not representable";
             return;
         }
+        historyClasses = program.cells.size() * PipeCount * 2;
+        for (const auto& op : program.operations) {
+            for (const auto& access : op.accesses) {
+                if (access.nativeAccumulatorClass != NoControlId) {
+                    accumulatorRows[access.cell].emplace(access.nativeAccumulatorClass, 0);
+                }
+            }
+        }
+        for (auto& cell : accumulatorRows) {
+            // Allocate unknown before visiting the program: accesses before
+            // the first qualified one and loop hypotheses must retain it too.
+            cell.second.emplace(NoControlId, 0);
+            for (auto& row : cell.second) {
+                if (historyClasses > std::numeric_limits<std::size_t>::max() - 2) {
+                    reason = "native access-history classes are not representable";
+                    return;
+                }
+                row.second = historyClasses;
+                historyClasses += 2;
+            }
+        }
         valid = true;
     }
     std::size_t ports() const { return 2 * PipeCount + 2 * keys.size(); }
@@ -194,7 +229,7 @@ FrontierState CausalFrontier::initial() const
     for (std::size_t i = 0; i < n; ++i)
         if (frontierContains(active, i))
             s->facts.reach[i] = active;
-    s->facts.history.reset(model->program.cells.size() * PipeCount * 2);
+    s->facts.history.reset(model->historyClasses);
     s->facts.events.resize(keys().size());
     out.data = std::move(s);
     return out;
@@ -280,33 +315,56 @@ FrontierStep CausalFrontier::inspect(const FrontierState& s, std::size_t operati
     // in one residual and one update, independent of access-list ordering.
     // Only the cells this operation names are examined, in ascending cell order,
     // so the residual sequence is exactly the one the dense scan produced.
-    std::vector<std::pair<unsigned, std::pair<bool, bool>>> roles;
-    for (const auto& a : op.accesses) {
-        const auto at = std::lower_bound(
-            roles.begin(), roles.end(), a.cell,
-            [](const std::pair<unsigned, std::pair<bool, bool>>& entry, unsigned key) {
-                return entry.first < key;
-            });
-        if (at != roles.end() && at->first == a.cell) {
-            at->second.first |= a.read;
-            at->second.second |= a.write;
+    struct Role {
+        unsigned cell;
+        bool read, write;
+        std::size_t contract;
+    };
+    std::vector<Role> roles;
+    for (const auto& access : op.accesses) {
+        const auto at = std::lower_bound(roles.begin(), roles.end(), access.cell,
+            [](const Role& entry, unsigned cell) { return entry.cell < cell; });
+        if (at != roles.end() && at->cell == access.cell) {
+            at->read |= access.read;
+            at->write |= access.write;
+            if (at->contract != access.nativeAccumulatorClass) {
+                at->contract = NoControlId; // mixed incidences never pick one exemption
+            }
         } else {
-            roles.insert(at, {a.cell, {a.read, a.write}});
+            roles.insert(at, {access.cell, access.read, access.write, access.nativeAccumulatorClass});
         }
     }
-    for (const auto& entry : roles) {
-        const auto cell = entry.first;
-        const auto read = entry.second.first, write = entry.second.second;
-        if (!read && !write)
-            continue;
-        for (unsigned source = 0; source < PipeCount; ++source)
+    for (const auto& role : roles) {
+        for (unsigned source = 0; source < PipeCount; ++source) {
             for (unsigned mode = 0; mode < 2; ++mode) {
-                if (model->program.cells[cell].nativeMmadAccOrder &&
-                    op.nativeMmadAccumulate && op.pipe == Pipe::M && source == unsigned(Pipe::M)) continue;
-                const auto* h = s.data->facts.history.find((cell * PipeCount + source) * 2 + mode);
-                if ((write || (read && mode)) && h && !frontierContains(*h, unsigned(op.pipe)))
-                    failed.residuals.push_back({cell, Pipe(source), bool(mode), operation, read, write});
+                if (!(role.write || (role.read && mode))) {
+                    continue;
+                }
+                auto unresolved = [&](std::size_t row) {
+                    const auto* history = s.data->facts.history.find(row + mode);
+                    return history && !frontierContains(*history, unsigned(op.pipe));
+                };
+                bool missing = false;
+                if (role.contract != NoControlId && op.nativeMmadAccumulate &&
+                    op.pipe == Pipe::M && source == unsigned(Pipe::M)) {
+                    const auto partitions = model->accumulatorRows.find(role.cell);
+                    for (const auto& partition : partitions->second) {
+                        if (partition.first != role.contract && unresolved(partition.second)) {
+                            missing = true;
+                            break;
+                        }
+                    }
+                } else {
+                    missing = unresolved((std::size_t(role.cell) * PipeCount + source) * 2);
+                }
+                if (missing) {
+                    // Ordinary placement conservatively covers the aggregate
+                    // class. No consumer treats a skipped contract as completion.
+                    failed.residuals.push_back(
+                        {role.cell, Pipe(source), bool(mode), operation, role.read, role.write});
+                }
             }
+        }
     }
     if (!failed.residuals.empty())
         return failed;
@@ -368,6 +426,16 @@ FrontierStep CausalFrontier::assumePreviousAccesses(
             }
             if (access.write) {
                 data->facts.history.assign(index + 1, history);
+            }
+            const auto partition = op.pipe == Pipe::M
+                ? model->accumulatorRow(access.cell, access.nativeAccumulatorClass) : NoAnalysisId;
+            if (partition != NoAnalysisId) {
+                if (access.read) {
+                    data->facts.history.assign(partition, history);
+                }
+                if (access.write) {
+                    data->facts.history.assign(partition + 1, history);
+                }
             }
         }
     }
@@ -558,10 +626,22 @@ FrontierStep CausalFrontier::extend(
         }
         for (const auto& a : model->program.operations[operation].accesses) {
             const auto index = (std::size_t(a.cell) * PipeCount + unsigned(pipe)) * 2;
-            if (a.read)
+            if (a.read) {
                 out.history.assign(index, latest);
-            if (a.write)
+            }
+            if (a.write) {
                 out.history.assign(index + 1, latest);
+            }
+            const auto partition = pipe == Pipe::M
+                ? model->accumulatorRow(a.cell, a.nativeAccumulatorClass) : NoAnalysisId;
+            if (partition != NoAnalysisId) {
+                if (a.read) {
+                    out.history.assign(partition, latest);
+                }
+                if (a.write) {
+                    out.history.assign(partition + 1, latest);
+                }
+            }
         }
     }
     FrontierState result;

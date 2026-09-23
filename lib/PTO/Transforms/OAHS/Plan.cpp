@@ -220,10 +220,8 @@ bool valid(const Program &p, std::string &reason) {
     return false;
   }
   for (const auto& cell : p.cells) {
-      if (cell.nativeMmadAccOrder &&
-          (cell.storage != Cell::Storage::CanonicalInterval || cell.exclusive ||
-           p.finalBlocks || p.target.contract != "a3-aic-prefix-static-safe-v1")) {
-          reason = "unqualified native accumulator ordering contract";
+      if (cell.domain != Cell::Domain::General && cell.domain != Cell::Domain::Accumulator) {
+          reason = "invalid physical storage domain";
           return false;
       }
       if (cell.storage != Cell::Storage::Abstract && cell.storage != Cell::Storage::CanonicalInterval &&
@@ -238,6 +236,20 @@ bool valid(const Program &p, std::string &reason) {
           return false;
       }
   }
+  if (p.nativeAccumulatorClasses == NoControlId) {
+      reason = "unrepresentable native accumulator class population";
+      return false;
+  }
+  auto validAccumulatorAccess = [&](const Operation& op, const Access& access) {
+      if (access.nativeAccumulatorClass == NoControlId) {
+          return true;
+      }
+      const auto& cell = p.cells[access.cell];
+      return access.nativeAccumulatorClass < p.nativeAccumulatorClasses && op.pipe == Pipe::M &&
+          !p.finalBlocks && p.target.contract == "a3-aic-prefix-static-safe-v1" &&
+          cell.domain == Cell::Domain::Accumulator && cell.storage == Cell::Storage::CanonicalInterval &&
+          !cell.exclusive && !cell.unknownRange;
+  };
   for (const auto &op : p.operations) {
     if (op.nativeMmadAccumulate && (op.pipe != Pipe::M || p.finalBlocks ||
         p.target.contract != "a3-aic-prefix-static-safe-v1")) {
@@ -251,7 +263,8 @@ bool valid(const Program &p, std::string &reason) {
     }
     for (const auto &a : op.accesses)
         if (a.cell >= p.cells.size() || (!a.read && !a.write) ||
-            (a.definiteWrite && (!a.write || p.cells[a.cell].storage == Cell::Storage::OverlapWitness))) {
+            (a.definiteWrite && (!a.write || p.cells[a.cell].storage == Cell::Storage::OverlapWitness)) ||
+            !validAccumulatorAccess(op, a)) {
             reason = "invalid physical effect";
             return false;
         }
@@ -292,7 +305,8 @@ bool valid(const Program &p, std::string &reason) {
         for (const auto& access : residue) {
           if (access.cell >= p.cells.size() || (!access.read && !access.write) ||
               (access.definiteWrite && (!access.write ||
-               p.cells[access.cell].storage == Cell::Storage::OverlapWitness))) {
+               p.cells[access.cell].storage == Cell::Storage::OverlapWitness)) ||
+              !validAccumulatorAccess(p.operations[effects.operation], access)) {
             reason = "invalid physical-use effect";
             return false;
           }

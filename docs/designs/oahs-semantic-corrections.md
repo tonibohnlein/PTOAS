@@ -555,3 +555,14 @@ The HANDOFF records final host evidence, finite ordering limitations and explici
 compiler/resource regressions. No historical device result is attributed to G.
 Next replace whole-cell ACC qualification with sparse access-order partitions
 inside the existing causal history, retaining every incompatible obligation.
+
+## Step H checkpoint — access-order history partitions
+
+Whole-cell ACC compatibility is replaced by interned access contracts and sparse
+partitions within the existing causal history. Incompatible/unknown accesses
+remain obligations across later compatible issue, joins and loop hypotheses.
+Native descriptor episodes, independent access-pair checks and occurrence-overlay
+negatives pass. Four compatibility plans only delete M fences; reference/corpus
+plans remain unchanged. See HANDOFF and refactor-step-h artifacts for exact scope.
+General generation support and changed-footprint contract qualification remain
+separate work. The draft records the conditional class-partition history proof.

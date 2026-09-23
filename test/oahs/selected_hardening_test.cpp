@@ -13,6 +13,16 @@
 using namespace selected_test;
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void pendingAccumulator(const Program& p) {
+        Constructor c(p);
+        auto state = c.initial();
+        Replay replay;
+        require(c.payload(state, 0, replay, true), replay.reason);
+        require(c.payload(state, 1, replay, true), replay.reason);
+        require(!c.frontier.inspect(state.causal, 2).applied,
+                "pending compatible issue erased incompatible ACC history");
+    }
+
     static SelectedPlan joinedAt(const Program& p, const Commands& fixed, Cut cut) {
         Constructor c(p);
         std::string reason;
@@ -38,6 +48,26 @@ struct ReplayTestAccess {
 }
 namespace {
 const auto P = o::Pipe::MTE2, Q = o::Pipe::V;
+void pendingAccumulatorHistories()
+{
+    auto p = base(1, 2);
+    p.target = mlir::pto::a3SyncProfile(mlir::pto::SyncCore::Cube);
+    p.nativeAccumulatorClasses = 2;
+    auto& cell = p.cells[0];
+    cell.domain = o::Cell::Domain::Accumulator;
+    cell.storage = o::Cell::Storage::CanonicalInterval;
+    cell.coordinateSpace = "physical-local";
+    cell.ranges = {{0, 131072}};
+    p.operations = {op(o::Pipe::M, {{0, false, true, false, 1}}),
+                    op(o::Pipe::M, {{0, true, true, false, 0}}),
+                    op(o::Pipe::M, {{0, true, true, false, 0}})};
+    p.operations[1].nativeMmadAccumulate = p.operations[2].nativeMmadAccumulate = true;
+    for (auto contract : {std::size_t(1), o::NoControlId}) {
+        p.operations[0].accesses[0].nativeAccumulatorClass = contract;
+        o::selected::ReplayTestAccess::pendingAccumulator(p);
+    }
+}
+
 void compareWords(const o::Commands& left, const o::Commands& right)
 {
     require(left.size() == right.size(), "ordinary retry changed command-word population");
@@ -391,6 +421,7 @@ void deadlineFence()
 }
 int main()
 {
+    pendingAccumulatorHistories();
     repeatedJoinedPacket();
     joinedConsumptionReturn();
     orderedPacketMaterialization();

@@ -1,5 +1,53 @@
 # OAHS current handoff
 
+## Current iteration — Step H access-scoped ACC histories
+
+Step G committed `e7c21d67d`. The whole-cell ACC eligibility flag is removed.
+The shared documented MMAD contract is interned on exact original access
+incidences. Physical accumulator scope and compatibility are distinct facts.
+The causal frontier retains sparse M histories per cell and represented contract,
+including unknown accesses, alongside its existing aggregate histories. A
+matching accumulation bypasses only its matching access-order obligation;
+incompatible histories survive issue, pending construction, joins and loop
+hypotheses until actual synchronization covers them. No operand/FIX/event credit
+follows. The independent checker compares original access pairs separately.
+
+Native periodic overlays preserve certificates for identical original effects;
+address relocation clears them. Same-byte/different-contract enclosing overlays
+retain both classes. Changed-footprint contract qualification remains unknown,
+not an inherited proof. This is access-scoped ordering, not completion of general
+production-episode or exported-support analysis.
+
+Architecture, correctness and performance reviewers ACCEPT. All22 portable suites,
+three native drivers,88/88 corpus,18/19 compatibility (same topk refusal),GEMM,
+two prefills and three targets pass. Final pending/overlay/history focused tests
+also pass. Evidence: `../oahs-gemm-base-builds/refactor-step-h/` with exact plans,
+inputs/binaries, work, native witness, finite relations and structural comparison.
+Two compliance bracing reports are nested-condition regex false positives;
+bodies are braced. Only source line wrapping follows the native campaign.
+No sanitizer or device run.
+
+The real native mixed-episode witness changes3→1 M barriers; the required
+transition remains and its removal is rejected. Corpus, GEMM, prefills and targets
+have identical plans to G. Compatibility1/3/7 change4→2 M barriers and13 changes8→4.
+Every changed file differs ONLY by M-fence deletion: no payload, event, guard or
+other command changes. Thus this change adds no explicit-command ordering on any
+unchanged participating trace. Finite full relation comparisons remove80/80/64
+relations in1/7/13 and addzero. Case3 bindings remain unsupported by the trace
+script; its structural deletion check and native validation still pass. Event
+counts are unchanged; resources and compiler work are recorded separately.
+Previous F/G quality and cost recoveries remain open.
+
+The draft has an accompanying construction rule and conditional history-partition
+lemma at `sections/04_the_forward_construction_algorithm.tex` and
+`sections/theory/01_semantics_and_representation.tex` in the separate draft repo.
+Architecture and correctness reviews accept its explicit native, incoming-history
+and occurrence-uniformity premises. LaTeX was not rebuilt.
+
+Continue immediately with actual required-provider coverage and one next-provider
+selection, then common packet binding, exported support and quality recovery.
+Stages1–5 remain active; this bounded correction does not close them wholesale.
+
 ## Current iteration — Step G original participation and complete rearming packets
 
 Step F committed `b77d0644c`. Shared scalar analysis now proves original positive-

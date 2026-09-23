@@ -113,6 +113,58 @@ Fixture fixture(bool guarded, bool reentered, unsigned banks)
     return {std::move(refined.program), std::move(bank)};
 }
 
+void accumulatorOverlay()
+{
+    auto f = fixture(false, false, 2);
+    auto& p = f.child;
+    p.target = mlir::pto::a3SyncProfile(mlir::pto::SyncCore::Cube);
+    p.nativeAccumulatorClasses = 2;
+    o::Cell accumulator;
+    accumulator.domain = o::Cell::Domain::Accumulator;
+    accumulator.storage = o::Cell::Storage::CanonicalInterval;
+    accumulator.coordinateSpace = "physical-local-acc";
+    accumulator.ranges = {{0, 131072}};
+    const auto cell = unsigned(p.cells.size());
+    p.cells.push_back(accumulator);
+    for (std::size_t i = 0; i < p.operations.size(); ++i) {
+        auto& operation = p.operations[i];
+        if (operation.pipe != o::Pipe::M) {
+            continue;
+        }
+        operation.nativeMmadAccumulate = true;
+        operation.accesses.push_back({cell, true, true, false, 0});
+        auto other = operation.accesses;
+        other.back().nativeAccumulatorClass = 1;
+        // Same bytes and roles, different proved access contracts. An enclosing
+        // overlay must retain this distinction through a refined child.
+        f.bank.effects.push_back({i, {operation.accesses, std::move(other)}});
+    }
+    const auto refined = o::refineBankOccurrences(p, f.bank);
+    require(refined.success, refined.reason);
+    bool seen[2] = {false, false};
+    const auto& q = *refined.program.observed;
+    for (const auto& site : q.sites) {
+        if (site.operation == o::NoControlId || site.observation == o::NoControlId ||
+            refined.program.operations[site.operation].pipe != o::Pipe::M) {
+            continue;
+        }
+        for (const auto& atom : q.observations[site.observation].atoms) {
+            if (atom.owner != f.bank.owner || atom.kind != o::ObservationAtom::LoopResidue) {
+                continue;
+            }
+            require(atom.value < 2, "unexpected enclosing contract residue");
+            seen[atom.value] = true;
+            const auto& accesses = refined.program.operations[site.operation].accesses;
+            const auto access = std::find_if(accesses.begin(), accesses.end(), [&](const auto& a) {
+                return a.cell == cell;
+            });
+            require(access != accesses.end() && access->nativeAccumulatorClass == atom.value,
+                    "enclosing refinement replaced an exact child ACC access contract");
+        }
+    }
+    require(seen[0] && seen[1], "both enclosing access contracts must remain represented");
+}
+
 void concrete(const o::Program& p, const o::Commands& commands, const std::vector<std::size_t>& path)
 {
     auto truth = p;
@@ -417,6 +469,7 @@ void composedReaders(unsigned variant)
 } // namespace
 int main()
 {
+    accumulatorOverlay();
     for (unsigned variant = 0; variant < 6; ++variant) {
         composedReaders(variant);
     }

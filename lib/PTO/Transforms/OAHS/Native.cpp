@@ -27,6 +27,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <tuple>
 #include <set>
 
 namespace mlir::pto::oahs {
@@ -884,33 +885,68 @@ LogicalResult import(func::FuncOp function, Import &out,
   // A payload-free function has no core-specific obligations. A pure DMA
   // function derives its core from the actual local storage above.
   out.program.target = a3SyncProfile(cube ? SyncCore::Cube : SyncCore::Vector);
-  // Keep the existing whole-cell compatibility proof until generation-scoped
-  // support is represented. Descriptor state and storage identity are shared
-  // semantic facts; unrelated updates and allocation syntax are not vetoes.
+  // Intern the shared target contract on access incidences. Different or
+  // unqualified accesses to the same cell remain independent obligations.
   if (cube) {
     const SyncTileDescriptorState descriptors(function);
-    std::vector<std::optional<SyncAccumulatorOrder>> common(out.program.cells.size());
-    std::vector<bool> invalid(out.program.cells.size());
-    // Sparse effect incidences, rather than another cells-by-operations scan.
+    using Contract = std::tuple<std::array<uint64_t, 3>, std::vector<int64_t>, const void*, const void*>;
+    std::map<Contract, std::size_t> contracts;
+    for (auto& cell : out.program.cells) {
+      if (cell.addressSpace == std::to_string(unsigned(AddressSpace::ACC))) {
+        cell.domain = Cell::Domain::Accumulator;
+      }
+    }
     for (unsigned i = 0; i < out.program.operations.size(); ++i) {
-      const auto &op = out.program.operations[i];
-      if (op.pipe != Pipe::M) continue;
+      auto& op = out.program.operations[i];
+      if (op.pipe != Pipe::M) {
+        continue;
+      }
       const auto order = syncAccumulatorOrder(out.payload[i], descriptors, buffers);
-      out.program.operations[i].nativeMmadAccumulate = order && isa<TMatmulAccOp>(out.payload[i]);
-      for (const auto &access : op.accesses) {
-        const auto cell = access.cell;
-        const auto &atom = out.program.cells[cell];
-        if (invalid[cell] || atom.storage != Cell::Storage::CanonicalInterval || atom.unknownRange ||
-            atom.addressSpace != std::to_string(unsigned(AddressSpace::ACC))) continue;
-        if (!order || (common[cell] && !common[cell]->compatible(*order))) {
-          invalid[cell] = true;
-        } else {
-          common[cell] = order;
+      op.nativeMmadAccumulate = order && isa<TMatmulAccOp>(out.payload[i]);
+      if (!order) {
+        continue;
+      }
+      const auto shape = order->destinationType.getShape();
+      const Contract contract{order->signature, {shape.begin(), shape.end()},
+          order->destinationType.getElementType().getAsOpaquePointer(),
+          order->destinationType.getConfigAttr().getAsOpaquePointer()};
+      const auto id = contracts.try_emplace(contract, contracts.size()).first->second;
+      for (auto& access : op.accesses) {
+        const auto& cell = out.program.cells[access.cell];
+        if (cell.domain == Cell::Domain::Accumulator &&
+            cell.storage == Cell::Storage::CanonicalInterval && !cell.exclusive && !cell.unknownRange) {
+          access.nativeAccumulatorClass = id;
         }
       }
     }
-    for (unsigned cell = 0; cell < out.program.cells.size(); ++cell)
-      out.program.cells[cell].nativeMmadAccOrder = !invalid[cell] && common[cell].has_value();
+    out.program.nativeAccumulatorClasses = contracts.size();
+    // A periodic overlay must retain a proof only for the identical original
+    // effect. Moving an address does not move its ACC contract. Unknown or new
+    // footprints keep ordinary access obligations until separately proved.
+    auto annotate = [&](auto& effects) {
+      for (auto& binding : effects) {
+        std::map<std::tuple<unsigned, bool, bool, bool>, std::size_t> exact;
+        for (const auto& access : out.program.operations[binding.operation].accesses) {
+          const auto key = std::make_tuple(access.cell, access.read, access.write, access.definiteWrite);
+          const auto inserted = exact.emplace(key, access.nativeAccumulatorClass);
+          if (!inserted.second && inserted.first->second != access.nativeAccumulatorClass) {
+            inserted.first->second = NoControlId;
+          }
+        }
+        for (auto& residue : binding.residues) {
+          for (auto& access : residue) {
+            const auto found = exact.find({access.cell, access.read, access.write, access.definiteWrite});
+            access.nativeAccumulatorClass = found == exact.end() ? NoControlId : found->second;
+          }
+        }
+      }
+    };
+    for (auto& relation : out.physicalUses) {
+      annotate(relation.second.effects);
+    }
+    for (auto& slot : out.slotLoops) {
+      annotate(slot.second.effects);
+    }
   }
   for (const auto &phase : out.program.operations)
     if (!out.program.target.supported[unsigned(phase.pipe)])

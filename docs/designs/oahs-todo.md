@@ -19,7 +19,8 @@ Donors supply mechanisms/counterexamples, not a chronological cherry-pick queue.
   placement consumers and partial-knowledge inventory; retain copied children.
 - [ ] **Stage 2 (active):** shared read episodes span children/reloads/outside
   readers; staged producer-repair crossing guard implemented and reviewed.
-  Complete open/exported obligations and access/episode-scoped ACC replacement.
+  Access-scoped ACC history replacement is implemented and reviewed. Complete
+  open/exported obligations and general episode support.
 - [ ] **Stage 3 (active):** joint original endpoint demand collection and
   demand-driven role separation and original positive-step participation implemented;
   complete first-read/first-write/final-read endpoints with exact

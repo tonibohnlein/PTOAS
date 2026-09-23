@@ -410,7 +410,8 @@ bool accumulatorOrdering(MLIRContext &context) {
       if (!op.nativeMmadAccumulate) { return false; }
       return llvm::all_of(op.accesses, [&imported](const auto &access) {
         const auto &cell = imported.program.cells[access.cell];
-        return cell.addressSpace != std::to_string(unsigned(AddressSpace::ACC)) || cell.nativeMmadAccOrder;
+        return cell.domain != oahs::Cell::Domain::Accumulator ||
+               access.nativeAccumulatorClass != oahs::NoControlId;
       });
     });
     if (!check(qualified == fixture.second, "native ACC qualification scope")) {
@@ -430,6 +431,82 @@ bool accumulatorOrdering(MLIRContext &context) {
   }
   return accumulatorAccessScope(context);
 }
+bool accumulatorEpisodes(MLIRContext& context) {
+  const std::string original = matrixInput;
+  const std::string left = "!pto.tile_buf<left, 128x64xf16, valid=?x?, slayout=row_major>";
+  const std::string acc = "!pto.tile_buf<acc, 128x256xf32, valid=?x?, "
+                          "blayout=col_major, slayout=row_major, fractal=1024>";
+  const auto begin = original.find("    pto.tmatmul ins");
+  const auto middle = original.find("    pto.tmatmul.acc");
+  const auto end = original.find("    return");
+  const auto initialize = original.substr(begin, middle - begin);
+  const auto accumulate = original.substr(middle, end - middle);
+  auto shape = [&](const std::string& rows) {
+    return "    pto.set_validshape %a, " + rows + ", %k : " + left + "\n" +
+           "    pto.set_validshape %c, " + rows + ", %n : " + acc + "\n";
+  };
+  for (unsigned variant = 0; variant < 5; ++variant) {
+    const std::string other = variant == 1 ? "%unknown" : "%small";
+    std::string body;
+    if (variant == 2) {
+      body = initialize + accumulate + shape(other) + initialize + accumulate;
+    } else if (variant == 3) {
+      body = "    %choose = arith.cmpi eq, %unknown, %m : index\n"
+             "    scf.if %choose {\n" + shape(other) + initialize +
+             "    } else {\n" + initialize + "    }\n" +
+             shape("%m") + initialize + accumulate + accumulate;
+    } else {
+      body = shape(other) + initialize + shape("%m") +
+             (variant == 4 ? accumulate : initialize) + accumulate + accumulate;
+    }
+    const auto source = original.substr(0, begin) + "    %small = arith.constant 16 : index\n" +
+                        body + original.substr(end);
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    if (!check(bool(module), "parse mixed ACC episode fixture")) {
+      return false;
+    }
+    auto function = module->lookupSymbol<func::FuncOp>("matrix");
+    oahs::NativeAnalysis imported;
+    if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)), "import mixed ACC episodes")) {
+      return false;
+    }
+    const auto& last = imported.program.operations.back();
+    if (!check(last.nativeMmadAccumulate && llvm::any_of(last.accesses, [](const auto& access) {
+          return access.nativeAccumulatorClass != oahs::NoControlId;
+        }), "unrelated ACC episode erased a qualified access contract")) {
+      return false;
+    }
+    oahs::SelectedPlan plan;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)),
+               "construct mixed ACC episodes")) {
+      return false;
+    }
+    const auto barriers = std::count_if(plan.ledger.begin(), plan.ledger.end(), [](const auto& endpoint) {
+      return endpoint.command.kind == oahs::Command::Barrier && endpoint.command.source == oahs::Pipe::M;
+    });
+    if (!check(barriers == 1, "ACC episodes need their transition repair, not per-accumulation repairs")) {
+      llvm::errs() << "episode variant=" << variant << " barriers=" << barriers << "\n";
+      return false;
+    }
+    bool removed = false;
+    auto damaged = plan.commands;
+    for (auto& word : damaged) {
+      word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+        if (command.kind == oahs::Command::Barrier && command.source == oahs::Pipe::M) {
+          removed = true;
+          return true;
+        }
+        return false;
+      }), word.end());
+    }
+    if (!check(removed && !oahs::analyze(imported.program, damaged).verified(),
+               "mixed ACC transition lost its required independent-checker repair")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool firstUseOrdering(MLIRContext &context) {
   std::string original = matrixInput;
   const auto argument = original.find("%unknown: index");
@@ -1622,6 +1699,6 @@ int main(int argc, char **argv) {
                       normalizedGuardReadback(context) && exactCommandEmission(context) &&
                       originalResidueDecisions(context) && readerGenerations(context) &&
                       uniformEndpointRoles(context) &&
-                      accumulatorOrdering(context) && firstUseOrdering(context);
+                      accumulatorOrdering(context) && accumulatorEpisodes(context) && firstUseOrdering(context);
   return passed ? 0 : 1;
 }

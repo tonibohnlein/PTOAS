@@ -365,7 +365,8 @@ class Transfer {
         seen;
     for (const auto &access : p.operations[id].accesses)
       for (const auto &other : byCell[access.cell]) {
-        if (p.cells[access.cell].nativeMmadAccOrder &&
+        if (access.nativeAccumulatorClass != NoControlId &&
+            access.nativeAccumulatorClass == other.second.nativeAccumulatorClass &&
             p.operations[id].nativeMmadAccumulate &&
             p.operations[id].pipe == Pipe::M && p.operations[other.first].pipe == Pipe::M)
           continue;

@@ -15,12 +15,12 @@
 
 namespace mlir::pto::oahs {
 namespace bank_occurrence_detail {
-using Effect = std::tuple<unsigned, bool, bool, bool>;
+using Effect = std::tuple<unsigned, bool, bool, bool, std::size_t>;
 inline std::set<Effect> effectSet(const std::vector<Access>& accesses)
 {
     std::set<Effect> out;
     for (const auto& access : accesses) {
-        out.emplace(access.cell, access.read, access.write, access.definiteWrite);
+        out.emplace(access.cell, access.read, access.write, access.definiteWrite, access.nativeAccumulatorClass);
     }
     return out;
 }
@@ -47,12 +47,14 @@ inline std::vector<Access> specialize(const std::vector<Access>& accesses,
     }
     std::vector<Access> out;
     for (const auto& access : accesses) {
-        if (!varying.count({access.cell, access.read, access.write, access.definiteWrite})) {
+        if (!varying.count(
+                {access.cell, access.read, access.write, access.definiteWrite, access.nativeAccumulatorClass})) {
             out.push_back(access);
         }
     }
     for (const auto& access : binding.residues[residue]) {
-        if (varying.count({access.cell, access.read, access.write, access.definiteWrite})) {
+        if (varying.count(
+                {access.cell, access.read, access.write, access.definiteWrite, access.nativeAccumulatorClass})) {
             out.push_back(access);
         }
     }

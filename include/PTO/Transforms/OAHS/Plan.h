@@ -34,6 +34,9 @@ struct Access {
   // Reference succession ONLY: the frontend proves a definite full-cell write.
   // A strong update never clears acquired-completion or event state.
   bool definiteWrite = false;
+  // Trusted native access-order contract, not completion. Equal classes name
+  // compatible exact ACC accesses; unqualified incidences keep ordinary hazards.
+  std::size_t nativeAccumulatorClass = NoControlId;
 };
 // Finite physical effects indexed by visits to one original owner. Each
 // relation stands alone; storing it neither refines control nor grants credit.
@@ -78,11 +81,8 @@ struct Cell {
   // Function-local translated root identities, retained even when geometry is
   // unknown or several SSA roots name one physical atom. Not disjointness facts.
   std::vector<std::size_t> storageOrigins;
-  // Explicit target/lowering premise for all M accesses to this exact atom:
-  // qualified ordinary large-shape MMADs permit a subsequent accumulating
-  // consumer to rely on native ACC-local access ordering.
-  // This does NOT complete an operation or clear any pending source history.
-  bool nativeMmadAccOrder = false;
+  // Physical target domain, independent of access-order compatibility.
+  enum class Domain { General, Accumulator } domain = Domain::General;
 };
 struct Operation {
   Pipe pipe = Pipe::S;
@@ -120,6 +120,7 @@ using Target = ::mlir::pto::SyncTargetProfile;
 struct Program {
   std::vector<Cell> cells;
   std::vector<Operation> operations;
+  std::size_t nativeAccumulatorClasses = 0;
   Region body;
   // Optional qualified finite original-control quotient. It replaces, rather
   // than silently flattens, body. Effects still name original physical phases.

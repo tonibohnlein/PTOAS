@@ -86,6 +86,11 @@ ObservedImport makePeriodicLoop(const Program &body, unsigned period,
           const auto k = observed_detail::addMod(
               observed_detail::mulMod(residue, b.stride, b.cells.size()),
               b.offset % b.cells.size(), b.cells.size());
+          if (op.accesses[b.access].cell != b.cells[k]) {
+            // An address binding alone proves no target access-order contract
+            // at its new footprint. Native periodic effects carry their own tags.
+            op.accesses[b.access].nativeAccumulatorClass = NoControlId;
+          }
           op.accesses[b.access].cell = b.cells[k];
         }
       out.program.operations.push_back(std::move(op));

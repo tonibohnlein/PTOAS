@@ -345,3 +345,29 @@ compensation/deferred-tail behavior remain part of its input contract; the A3
 adapter supplies active single-key commands without those auxiliary policies.
 Independent native reconstruction still compares every actual ordered command
 against the selected word. It is not weakened to accommodate deduplication.
+
+## Access-scoped accumulator ordering
+
+Native ACC ordering is an original access relation. The shared MMAD contract
+provides compatible output address, effective M/N, layout and element type; K
+and unrelated descriptor updates do not define a compatibility class. The
+importer interns that exact relation on canonical ACC access incidences. The
+physical accumulator domain is separate from compatibility. Unknown accesses
+retain ordinary obligations, including an incompatible earlier or later episode
+on the same atom. Changed periodic footprints cannot inherit an address-specific
+contract; only identical original incidences retain their proof.
+
+The causal frontier retains its ordinary aggregate cell/pipe/read-write histories
+for placement and completion queries. For each affected cell it also retains
+sparse histories for represented M access-order classes and an unknown class.
+They are rows of the same history, with the same joins, command propagation and
+loop hypotheses. Issuing one class never erases another. A qualified accumulating
+consumer bypasses only its matching class; mixed consumer tags use the ordinary
+aggregate query. Any unmatched obligation produces a conservative aggregate
+residual. No class grants operation completion, operand release, FIX readiness
+or event-consumption knowledge. The independent checker tests producer/consumer
+access compatibility pairwise while retaining its original pending identities.
+
+Represented class growth is bounded by static effect incidences, not iterations
+or a cell-by-global-class product. This replaces whole-cell eligibility; it does
+not claim general generation-support or exported-prefix certification is complete.
