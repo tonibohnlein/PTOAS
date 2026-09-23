@@ -81,12 +81,18 @@ carry placement provenance, not causal credit. Multiple deadlines/reverse owners
 recurrence and persistent outward-publication support remain open. See selected-
 plan X for gates and replacement obligations; validation is in HANDOFF.
 
-Next binding increment: freeze the requested source milestone before numeric key
-choice. Prefer complete helper-free bindings at that gap before prescribed repair;
-retain the selected provider's full motivating and supporting coverage. This is
-an explicit binding policy change, not F4 provider ranking or a prefix-index
-optimization. Persistent support and the remaining two-child/unequal-bank work
-remain on the adopted dependency sequence.
+Y implements the bounded binding increment: one key-independent source-gap and
+complete-coverage proof feeds stable helper-free key checks before tail repair.
+Loop-entry probes helper-free complete packets before restoration, retaining
+failed-forward diagnostics to avoid duplicate qualification. See HANDOFF for
+36 nonempty equal campaign comparisons, four unknown KDA rows and measured extra
+ownership-check work. This is not cross-request F4/v0.38 policy completion.
+
+Next: persistent publication-prefix support across changed words and incoming
+publication dependencies, consumed by owned-packet placement. Ephemeral source
+gap proofs do not cover later edits. Preserve mandatory checked fallback and
+record lost/unproved optional placement contracts. Both-optional/no-reader child
+composition, independent unequal banks and the recovery ledger remain open.
 
 Open V recoveries: standalone/RMW support recipes (corpus36/82/83 added order),
 partial-admission interactions (target2 added order), ordinary/recurring provider

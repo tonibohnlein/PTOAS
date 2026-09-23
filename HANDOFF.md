@@ -1,5 +1,61 @@
 # OAHS current handoff
 
+## Completed bounded Step Y — preserve source milestones before key repair
+
+Baseline X `6614c84a4`. Ordinary direct binding proves the prescribed early gap
+and every motivating/supporting requirement once, independently of physical keys.
+It scans helper-free keys against the same actual occurrence prefixes before
+using the existing tail/repair path. Loop-entry binding checks all helper-free
+complete packets before dormant restoration or a prescribed acknowledgment.
+Failed forward-probe diagnostics are retained for repair eligibility, avoiding
+identical replay. This is an explicit within-request binding-policy change; F4
+provider ranking and v0.38 cross-request recipe classes remain unchanged.
+
+Architecture, bounded generality, correctness and asymptotic-performance ACCEPT.
+22/22 portable suites, three native drivers, 88/88 corpus, 18/19 compatibility
+(same inherited refusal), GEMM, two prefills and three targets pass. Compliance
+has zero findings. Normal construction with one/two/four keys strictly removes
+complete issue/completion relations when a spare key preserves the source gap;
+the one-key checked fallback remains. Six nonempty child-entry executions and
+three native real-target variants cover helper-free selection, equivalent views,
+and unrelated control/arithmetic. Stale state, missing supporting coverage,
+occupied/dormant keys and occurrence/barrier negatives remain active.
+
+Fourteen campaign plans change. Thirty-six nonempty finite function/binding
+comparisons have equal complete ordering versus X; four KDA queue rows remain
+UNKNOWN. No empty traces are counted. The diagnostic maps transpose and column
+broadcast to V from the shared OpPipeInterface. This does not close earlier
+F/G/L/R/V ordering debts or establish a device/runtime improvement. Static counts
+vary in both directions (including extra barriers); full per-input resources and
+relation sets are recorded, not hidden by aggregate command totals.
+
+Matched successful-input work: regular replay7054779->7064292; recurring analyzer
+202187 unchanged, staged replay240505->241509. Ownership checks467->564 and sites
+1930122->2895187; loop-entry analysis16188->70148 overlaps ownership and must not
+be added to it. More distinct complete helper-free bindings are examined before
+repair. Each frozen request has at most Kf forward probes and Kf*Kr prescribed
+repairs, where Kf/Kr are target-key counts. No identical forward probe or per-key
+prefix replay remains. Recover this measured cost through scoped packet/interface
+certificates, not first-key repair priority or an optimization-benefit gate.
+Source-gap queries22->2; campaign early placements0 in both versions (native
+mechanism tests separately demonstrate activation). Key queries4179->4092.
+Successful elapsed315.07->331.72seconds is nonisolated. Discarded replay738926
+->738963; discarded elapsed29.99->31.12seconds. No sanitizer/device run.
+
+Evidence: `../oahs-gemm-base-builds/refactor-step-y/` (source/binary pins, logs,
+summary/results, complete-order bitsets/unknowns, resources/work and reviews).
+Sufficient early-gap limits remain virgin neighboring use, acyclic straight
+occurrence matching and no crossed source publication/barrier. These are explicit
+unfinished scope limits, not target restrictions. The ephemeral prefix certificate
+is not persistent protection against later incoming completion.
+
+Next: persistent publication support consumed by common owned-packet placement.
+Reproduce an acknowledgment restoration crossing a useful outward publication;
+protect its causal prefix through affected words and incoming event dependencies,
+not only its unchanged cut. Keep mandatory checked fallback explicit. Remaining
+two-child/no-reader and unequal-bank work stays on the adopted plan. Continue the
+same three-reviewer commit loop, aggregate two-worker limit, no push.
+
 ## Completed bounded Step X — restoration at actual republication deadlines
 
 Baseline W `49e11a857`. The shared owned-packet path preserves a dormant helper's

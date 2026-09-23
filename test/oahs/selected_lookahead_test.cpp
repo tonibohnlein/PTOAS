@@ -682,6 +682,58 @@ void reuseOneShotEntryKey()
             "ending a reservation manufactured consumption knowledge");
 }
 
+void helperFreeLoopEntry()
+{
+    auto p = base(2, 2);
+    p.operations = {op(P, {{0, false, true, true}}), op(Q, {{0, true, false}}),
+                    op(P, {{1, false, true, true}}), op(Q, {{1, true, false}})};
+    o::ObservedControl g;
+    g.entry = 0; g.exit = 8; g.qualification = "bypass producer then a distinct reader child";
+    const std::vector<o::Cut> operations{o::NoAnalysisId, 0, 1, 2, o::NoAnalysisId,
+                                       o::NoAnalysisId, 3, o::NoAnalysisId, o::NoAnalysisId};
+    const std::vector<std::vector<o::Cut>> edges{{1, 2}, {2}, {3}, {4}, {5}, {6, 8}, {7}, {5}, {}};
+    for (o::Cut site = 0; site < operations.size(); ++site) {
+        g.observations.push_back({site, {}, true});
+        g.sites.push_back({operations[site], site, edges[site], {}, 0});
+    }
+    g.sites[7].backedgeOwners = {4};
+    g.loops.push_back({4, 4, 8, {5, 6, 7}, 6, true});
+    p.observed = g;
+    const auto plan = accepted(p);
+    require(plan.work.rearmingDeferred != 0 && plan.work.loopEntryTransfers == 1,
+            "structured helper-free fixture did not exercise a dormant owner and entry request");
+    require(plan.work.rearmingRestored == 0 && plan.work.acknowledgments == 0,
+            "low dormant key was restored before examining the higher helper-free key");
+    require(plan.commands[4].size() == 2 && plan.commands[4][0].kind == o::Command::Publish &&
+            plan.commands[4][0].key == 1 && plan.commands[4][1].kind == o::Command::Acquire &&
+            plan.commands[4][1].key == 1,
+            "loop-entry helper-free key did not preserve the frozen endpoints");
+    for (bool producer : {false, true}) {
+        for (unsigned trips : {1u, 2u, 4u}) {
+            std::vector<o::Cut> path{0};
+            if (producer) { path.push_back(1); }
+            path.insert(path.end(), {2, 3, 4});
+            for (unsigned i = 0; i < trips; ++i) { path.insert(path.end(), {5, 6, 7}); }
+            path.insert(path.end(), {5, 8});
+            auto flat = p; flat.observed.reset(); flat.operations.clear(); flat.body = {};
+            o::Commands words;
+            std::vector<o::Command> pending;
+            std::vector<unsigned> visits;
+            for (auto site : path) {
+                pending.insert(pending.end(), plan.commands[site].begin(), plan.commands[site].end());
+                const auto operation = g.sites[site].operation;
+                if (operation == o::NoAnalysisId) { continue; }
+                visits.push_back(unsigned(flat.operations.size()));
+                flat.operations.push_back(p.operations[operation]);
+                words.push_back(std::move(pending)); pending.clear();
+            }
+            words.push_back(std::move(pending));
+            require(bool(oahs_oracle::graph(flat, words, visits)),
+                    "helper-free entry failed independent occurrence/rearming validation");
+        }
+    }
+}
+
 void entryWaitMustNotCrossPublication()
 {
     auto p = invariantLoopProgram();
@@ -888,6 +940,7 @@ int main()
     enclosingAcquisitionAndRearming();
     invariantLoopEntry();
     reuseOneShotEntryKey();
+    helperFreeLoopEntry();
     entryWaitMustNotCrossPublication();
     std::cout << "selected lookahead, deadline and terminal-return tests passed\n";
 }

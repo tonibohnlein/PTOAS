@@ -1285,6 +1285,58 @@ module attributes {pto.target_arch = "a3"} {
   return true;
 }
 
+bool milestoneKeyBinding(MLIRContext& context) {
+  const std::string input = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @milestone_binding(%src: !pto.partition_tensor_view<1x32xf32>, %predicate: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 128 : i64
+    %a2 = arith.constant 256 : i64
+    %a3 = arith.constant 384 : i64
+    %a4 = arith.constant 512 : i64
+    %old = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x32xf32>
+    %first = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xf32>
+    %spare = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 1x32xf32>
+    %x = pto.alloc_tile addr = %a3 : !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %a4 : !pto.tile_buf<vec, 1x32xf32>
+    pto.tabs ins(%old : !pto.tile_buf<vec, 1x32xf32>) outs(%first : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%old : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tabs ins(%spare : !pto.tile_buf<vec, 1x32xf32>) outs(%x : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tabs ins(%old : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%x : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+})mlir";
+  for (unsigned variant = 0; variant < 3; ++variant) {
+    auto source = input;
+    if (variant == 1) {
+      const auto at = source.find("    pto.tabs ins(%old");
+      source.insert(at, "    %view = pto.treshape %x : !pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 1x32xf32>\n");
+      const auto use = source.find("outs(%x");
+      source.replace(use, std::string("outs(%x").size(), "outs(%view");
+    }
+    if (variant == 2) {
+      const auto at = source.find("    pto.tabs ins(%old");
+      source.insert(at, "    %unused = arith.addi %a0, %a4 : i64\n    scf.if %predicate { }\n");
+    }
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    const bool parsed = bool(module) && succeeded(verify(*module));
+    if (!check(parsed, "native milestone fixture parse")) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("milestone_binding");
+    oahs::SelectedPlan plan;
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)),
+               "native milestone construction/reconstruction")) { return false; }
+    const bool higher = std::any_of(plan.ledger.begin(), plan.ledger.end(), [](const auto& endpoint) {
+      return endpoint.command.kind == oahs::Command::Publish && endpoint.command.source == oahs::Pipe::V &&
+          endpoint.command.observer == oahs::Pipe::MTE2 && endpoint.command.key == 1;
+    });
+    if (!check(plan.work.earlyPublications != 0 && higher,
+               "native key selection lost the useful pre-receipt source milestone")) { return false; }
+  }
+  return true;
+}
+
 bool restorationDeadlines(MLIRContext& context) {
   const std::string input = R"mlir(
 module attributes {pto.target_arch = "a3"} {
@@ -2117,7 +2169,8 @@ int main(int argc, char **argv) {
                       normalizedGuardReadback(context) && exactCommandEmission(context) &&
                       originalResidueDecisions(context) && readerGenerations(context) &&
                       optionalReaderParticipation(context) &&
-                      uniformEndpointRoles(context) && sourceGapPlacement(context) && restorationDeadlines(context) &&
+                      uniformEndpointRoles(context) && sourceGapPlacement(context) && milestoneKeyBinding(context) &&
+                      restorationDeadlines(context) &&
                       requiredReturnCoverage(context) &&
                       accumulatorOrdering(context) && accumulatorEpisodes(context) && firstUseOrdering(context);
   return passed ? 0 : 1;

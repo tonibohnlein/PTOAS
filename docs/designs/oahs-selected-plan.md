@@ -1263,3 +1263,59 @@ views and unrelated arithmetic/control retain activation. Native reconstruction
 also runs with the real target pools. This distinction prevents a scarce-profile
 mechanism test from being presented as a device-performance result. Access-scoped
 native ACC and descriptor contracts are unchanged, so their existing suites apply.
+
+## Step Y invariant — preserve a frozen source milestone before key repair
+
+Missing construction fact: a key chosen from the word-tail state may require an
+incoming receipt which the selected physical source milestone does not require.
+A different available key may realize that earlier gap. Choosing the key before
+qualifying the gap can hide this independent progress.
+
+Split the existing source-gap query into one immutable exact-position/occurrence
+and selected-state coverage certificate, followed by key-specific ownership,
+neighbor and source-time checks. Retain motivating and supporting requirements;
+all actual occurrence prefixes must qualify. The ephemeral certificate is bound
+to the selected ledger revision, source/observer and deadline. Scan physical keys
+in stable order at that same prescribed gap, then retain existing checked repair
+if no complete helper-free binding exists. Do not replay the word per key.
+
+Existing virgin-key admission remains an explicitly sufficient neighboring-use
+certificate for early positions, including dormant owners. This increment does
+not generalize key reuse at arbitrary early gaps. Loop-entry candidates similarly
+try complete bindings without restored helpers before their prescribed repair.
+One frozen request/shape is the scope; F4 provider ranking and cross-request
+recipe classes are unchanged. A source gap lacking the winner's extra coverage
+must remain unavailable regardless of spare keys. Actual packets and subsequent
+independent event/causal validation remain authoritative.
+
+The source certificate stores actual prefix states only for this binding decision;
+`FrontierState` copies share immutable state storage. Physical-key scans neither
+reexecute command words nor repeat physical-history/freshness queries. Ledger
+revision, current deadline and direction are checked on every key query. Refusing
+an occupied/dormant key leaves the proved source facts available for another key.
+The old key-first production queries are removed, with only tiny test adapters
+composing the new interfaces.
+
+The prescribed earlier gap remains after the last source-side non-acquisition
+command, before intervening incoming waits. It does not cross a source publication
+or barrier. Every matched occurrence is acyclic/straight; unknown correspondence
+or missing motivating/supporting coverage retains ordinary checked placement.
+Keys are helper-free only when unreserved, without dormant event uses or deferred
+forward ownership. Early binding additionally requires no historical selected or
+dormant use: a sufficient restriction awaiting a general neighboring-use proof.
+No syntax, dtype, storage-cell uniformity or benefit gate is added.
+
+Loop-entry probes freeze publication and acquisition positions. A first stable-key
+pass admits only complete helper-free packets. A second pass retains the existing
+restoration/required-acknowledgment policy. Actual failed-forward diagnostics are
+stored as repair eligibility for the unchanged ledger, avoiding a second identical
+forward probe. The memo grants no credit and retains no candidate completion
+state. Full checking of each distinct prescribed repair is unchanged. This may
+probe more distinct hardware-key alternatives; it is not an asymptotic speedup.
+
+Normal-constructor tests compare all finite issue/completion relations against
+the legal reused-key tail reference with one/two/four keys. A bypassed producer
+followed by a repeated reader child checks higher helper-free key selection and
+six nonempty execution paths. Native tests use the real target pools across a
+storage view and unrelated control/arithmetic. Older supporting-coverage, stale
+revision, shared-occurrence, barrier and ownership negatives remain active.

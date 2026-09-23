@@ -110,7 +110,10 @@ struct WordGap {
 struct SourceGapQualification {
     ProofOutcome outcome = ProofOutcome::Unknown;
     WordGap gap;
+    Pipe source = Pipe::S, observer = Pipe::S;
+    Cut deadline = NoAnalysisId;
     uint64_t version = 0;
+    std::vector<FrontierState> prefixes;
     std::string reason;
     bool proved() const { return outcome == ProofOutcome::Proved; }
 };
@@ -606,6 +609,7 @@ private:
     bool acceptOwnedPacket(OwnedPacket&, const AnalysisResult&) const;
     bool commitOwnedPacket(const OwnedPacket&, SelectedDecision&);
     bool unownedKey(Id) const;
+    bool helperFreeKey(Id) const;
     std::optional<bool> dormantTransfer(Pipe, Pipe, Cut, bool, SelectedDecision&);
     bool commitPacket(const OrderedPacket&, SelectedDecision&);
     bool edge(Pipe, Pipe, Cut&, bool, SelectedDecision&);
@@ -617,9 +621,10 @@ private:
     bool latentPublicationAfter(Id anchor, Pipe observer) const;
     Id reusable(Pipe, Pipe, const State&);
     bool canPublish(const State&, Id) const;
-    SourceGapQualification sourceGap(
-        const WordGap&, Id, const std::vector<FrontierRequirement>&);
-    std::optional<WordGap> earlyPublicationGap(Cut, Id, const SelectedDecision&);
+    SourceGapQualification sourceGapFacts(
+        const WordGap&, Pipe, Pipe, const std::vector<FrontierRequirement>&);
+    bool sourceGapKey(const SourceGapQualification&, Id) const;
+    std::optional<WordGap> earlyPublicationMilestone(Cut, Pipe) const;
     bool clearInterval(Id, Cut, Cut) const;
     std::vector<Pipe> route(Pipe, Pipe) const;
     std::optional<RecurringPacket> prepareRecurring(const std::vector<RecurringRequirement>&, std::string&,

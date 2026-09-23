@@ -277,42 +277,58 @@ bool Constructor::loopEntryFrontier(
         Id forward = NoAnalysisId, reverse = NoAnalysisId;
         std::optional<OwnedPacket> selectedPacket;
         const auto request = result.decisions.size();
-        for (auto key : forwardKeys) {
-            const auto number = frontier.keys()[key].key;
-            OrderedPacket packet{
-                {publication, {Command::Publish, source, observer, number}, EndpointPurpose::Completion, request},
-                {loop.entry, {Command::Acquire, source, observer, number}, EndpointPurpose::Completion, request}};
-            AnalysisResult trial;
-            const auto beforeSites = result.work.ownershipCheckSites;
-            auto prepared = qualifyOwnedPacket(packet, true, {}, &trial);
-            result.work.loopEntryAnalysisSites += result.work.ownershipCheckSites - beforeSites;
-            if (prepared) {
-                forward = key;
-                selectedPacket = std::move(*prepared);
-                break;
-            }
-            const bool needsConsumption = std::any_of(trial.protocol.begin(), trial.protocol.end(), [&](const auto& r) {
-                return r.kind == ProtocolObligation::ConsumptionNotEstablished &&
-                    r.event.source == source && r.event.observer == observer && r.event.key == number;
-            });
-            // An actual missing consumption obligation justifies this return.
-            const bool repairable = trial.complete && trial.diagnostics.empty() && repeats && needsConsumption;
-            if (!repairable) { continue; }
-            for (auto reply : reverseKeys) {
-                auto complete = packet;
-                const auto replyNumber = frontier.keys()[reply].key;
-                complete.push_back({loop.entry, {Command::Publish, observer, source, replyNumber},
-                    EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
-                complete.push_back({loop.entry, {Command::Acquire, observer, source, replyNumber},
-                    EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
-                const auto beforeSites = result.work.ownershipCheckSites;
-                auto qualified = qualifyOwnedPacket(complete, true);
-                result.work.loopEntryAnalysisSites += result.work.ownershipCheckSites - beforeSites;
-                if (!qualified) { continue; }
-                forward = key;
-                reverse = reply;
-                selectedPacket = std::move(*qualified);
-                break;
+        // Freeze the source/entry shape. Every helper-free key gets its one
+        // complete probe before any candidate restores or adds a helper.
+        std::map<Id, bool> missingConsumption;
+        for (bool repair : {false, true}) {
+            for (auto key : forwardKeys) {
+                if (!repair && !helperFreeKey(key)) { continue; }
+                const auto number = frontier.keys()[key].key;
+                OrderedPacket packet{
+                    {publication, {Command::Publish, source, observer, number},
+                        EndpointPurpose::Completion, request},
+                    {loop.entry, {Command::Acquire, source, observer, number},
+                        EndpointPurpose::Completion, request}};
+                auto probed = missingConsumption.find(key);
+                if (probed == missingConsumption.end()) {
+                    AnalysisResult trial;
+                    const auto beforeSites = result.work.ownershipCheckSites;
+                    auto prepared = qualifyOwnedPacket(packet, true, {}, &trial);
+                    result.work.loopEntryAnalysisSites += result.work.ownershipCheckSites - beforeSites;
+                    if (prepared) {
+                        forward = key;
+                        selectedPacket = std::move(*prepared);
+                        break;
+                    }
+                    const bool needsConsumption = std::any_of(trial.protocol.begin(), trial.protocol.end(),
+                        [&](const auto& r) {
+                            return r.kind == ProtocolObligation::ConsumptionNotEstablished &&
+                                r.event.source == source && r.event.observer == observer && r.event.key == number;
+                        });
+                    const bool repairable = trial.complete && trial.diagnostics.empty() &&
+                        repeats && needsConsumption;
+                    probed = missingConsumption.emplace(key, repairable).first;
+                }
+                // The failed helper-free packet is not replayed a second time.
+                // Only its actual missing-consumption result admits the fixed repair.
+                if (!repair || !probed->second) { continue; }
+                for (auto reply : reverseKeys) {
+                    auto complete = packet;
+                    const auto replyNumber = frontier.keys()[reply].key;
+                    complete.push_back({loop.entry, {Command::Publish, observer, source, replyNumber},
+                        EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
+                    complete.push_back({loop.entry, {Command::Acquire, observer, source, replyNumber},
+                        EndpointPurpose::ConsumptionAcknowledgment, request, NoAnalysisId, {}, 1});
+                    const auto beforeSites = result.work.ownershipCheckSites;
+                    auto qualified = qualifyOwnedPacket(complete, true);
+                    result.work.loopEntryAnalysisSites += result.work.ownershipCheckSites - beforeSites;
+                    if (!qualified) { continue; }
+                    forward = key;
+                    reverse = reply;
+                    selectedPacket = std::move(*qualified);
+                    break;
+                }
+                if (selectedPacket) { break; }
             }
             if (selectedPacket) { break; }
         }

@@ -15,6 +15,10 @@ bool Constructor::unownedKey(Id key) const
     return !closedKeys.count(key) && !recurringKeys.count(key) &&
            !ledger.hasDormantUses(frontier.keys()[key]);
 }
+bool Constructor::helperFreeKey(Id key) const
+{
+    return unownedKey(key) && !deferredByKey.count(key);
+}
 std::optional<WordGap> Constructor::restorationDeadline(
     const RearmingObligation& owner, const OrderedPacket& proposed, Id deadline,
     const std::vector<Id>& proposedUses, std::map<Cut, std::map<Id, Id>>& positions, std::string& reason)
@@ -389,16 +393,19 @@ bool Constructor::clearInterval(Id key, Cut source, Cut target) const
     }
     return true;
 }
-SourceGapQualification Constructor::sourceGap(
-    const WordGap& gap, Id key, const std::vector<FrontierRequirement>& required)
+SourceGapQualification Constructor::sourceGapFacts(
+    const WordGap& gap, Pipe source, Pipe observer, const std::vector<FrontierRequirement>& required)
 {
     ++result.work.sourceGapQueries;
     SourceGapQualification out;
     out.gap = gap;
+    out.source = source;
+    out.observer = observer;
+    out.deadline = current;
     out.version = ledger.version();
     out.reason = "source gap lacks a current matched occurrence certificate";
     const bool invalidQuery = !cache.success || cache.version != ledger.version() ||
-        key >= frontier.keys().size() || required.empty() || gap.cut >= control.graph.sites.size();
+        required.empty() || gap.cut >= control.graph.sites.size();
     if (invalidQuery) {
         return out;
     }
@@ -409,14 +416,6 @@ SourceGapQualification Constructor::sourceGap(
         gap.left != (offset == 0 ? NoAnalysisId : ids[offset - 1]);
     if (changedGap) {
         out.reason = "source gap neighbors changed";
-        return out;
-    }
-    const auto& identity = frontier.keys()[key];
-    // The initial early-placement client uses a virgin physical key. This is a
-    // sufficient neighboring-generation certificate, including dormant uses;
-    // source-time publishability alone would not protect a later republication.
-    if (!ledger.eventUses(identity).empty()) {
-        out.reason = "early gap lacks neighboring-generation support for an existing key";
         return out;
     }
     const auto& correspondence = control.correspondence(gap.cut, current);
@@ -446,22 +445,17 @@ SourceGapQualification Constructor::sourceGap(
             }
             state = step.state;
         }
-        State atGap;
-        atGap.causal = state;
-        if (!canPublish(atGap, key)) {
-            out.reason = "source gap has no established publication credit";
-            return out;
-        }
         for (const auto& requirement : required) {
             const auto access = accessClass(requirement);
             const auto* history = state.facts()->history.find(access);
-            const bool covered = history && frontierContains(*history, PipeCount + unsigned(identity.source)) &&
+            const bool covered = history && frontierContains(*history, PipeCount + unsigned(source)) &&
                 freshBetween(pair.first, pair.second, access);
             if (!covered) {
                 out.reason = "source gap does not cover the required physical occurrence";
                 return out;
             }
         }
+        out.prefixes.push_back(std::move(state));
         reached = true;
     }
     if (reached) {
@@ -470,37 +464,42 @@ SourceGapQualification Constructor::sourceGap(
     }
     return out;
 }
-std::optional<WordGap> Constructor::earlyPublicationGap(Cut cut, Id key, const SelectedDecision& decision)
+bool Constructor::sourceGapKey(const SourceGapQualification& facts, Id key) const
 {
+    const bool currentFacts = facts.proved() && facts.version == ledger.version() &&
+        facts.deadline == current && key < frontier.keys().size() && !facts.prefixes.empty();
+    if (!currentFacts || !helperFreeKey(key)) { return false; }
     const auto& identity = frontier.keys()[key];
+    // Existing conservative neighbor certificate: no selected or dormant use.
+    // This is separate from the physical-source and complete-coverage proof.
+    if (identity.source != facts.source || identity.observer != facts.observer ||
+        !ledger.eventUses(identity).empty()) { return false; }
+    for (const auto& prefix : facts.prefixes) {
+        State atGap;
+        atGap.causal = prefix;
+        if (!canPublish(atGap, key)) { return false; }
+    }
+    return true;
+}
+std::optional<WordGap> Constructor::earlyPublicationMilestone(Cut cut, Pipe source) const
+{
     const auto& ids = ledger.word(cut);
     auto offset = ids.size();
     bool incomingWait = false;
     while (offset != 0) {
         const auto& command = ledger.endpoint(ids[offset - 1]).command;
-        const bool event = command.kind == Command::Publish || command.kind == Command::Acquire;
         const auto pipe = command.kind == Command::Acquire ? command.observer : command.source;
         if (command.kind == Command::BarrierAll ||
-            (event && command.source == identity.source && command.observer == identity.observer &&
-             command.key == identity.key) ||
-            (pipe == identity.source && command.kind != Command::Acquire)) {
+            (pipe == source && command.kind != Command::Acquire)) {
             break;
         }
-        incomingWait |= command.kind == Command::Acquire && command.observer == identity.source;
+        incomingWait |= command.kind == Command::Acquire && command.observer == source;
         --offset;
     }
     if (!incomingWait) {
         return {};
     }
-    const WordGap gap{control.canonicalCut[cut], offset == 0 ? NoAnalysisId : ids[offset - 1], ids[offset]};
-    auto required = decision.required;
-    required.insert(required.end(), decision.supporting.begin(), decision.supporting.end());
-    const auto certificate = sourceGap(gap, key, required);
-    const bool currentProof = certificate.proved() && certificate.version == ledger.version();
-    if (!currentProof) {
-        return {};
-    }
-    return certificate.gap;
+    return WordGap{control.canonicalCut[cut], offset == 0 ? NoAnalysisId : ids[offset - 1], ids[offset]};
 }
 std::vector<Pipe> Constructor::route(Pipe source, Pipe observer) const
 {
@@ -809,16 +808,36 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
     const auto binding = closedBindings.find({source, observer});
     const bool retained = recurringClosed && binding != closedBindings.end();
     Id key = retained ? binding->second.first : NoAnalysisId;
+    std::optional<WordGap> selectedGap;
+    if (!retained && !closed && source == decision.source && observer == decision.observer) {
+        const auto milestone = earlyPublicationMilestone(publication, source);
+        if (milestone) {
+            auto required = decision.required;
+            required.insert(required.end(), decision.supporting.begin(), decision.supporting.end());
+            const auto facts = sourceGapFacts(*milestone, source, observer, required);
+            if (facts.proved()) {
+                for (Id candidate = 0; candidate < frontier.keys().size(); ++candidate) {
+                    const auto& identity = frontier.keys()[candidate];
+                    if (identity.source != source || identity.observer != observer) { continue; }
+                    ++result.work.keyQueries;
+                    if (!sourceGapKey(facts, candidate)) { continue; }
+                    key = candidate;
+                    selectedGap = *milestone;
+                    break;
+                }
+            }
+        }
+    }
     if (retained) {
         if (!canPublish(cache.cuts[publication].before, key) &&
             !restoreRearming(key, publication)) {
             return fail(SelectedFailure::EventResource,
                 "recurring forward role lacks its consumption path", publication);
         }
-    } else {
+    } else if (key == NoAnalysisId) {
         for (Id candidate = 0; candidate < frontier.keys().size(); ++candidate) {
             const auto& identity = frontier.keys()[candidate];
-            if (identity.source != source || identity.observer != observer || !unownedKey(candidate)) {
+            if (identity.source != source || identity.observer != observer || !helperFreeKey(candidate)) {
                 continue;
             }
             ++result.work.keyQueries;
@@ -847,13 +866,9 @@ bool Constructor::edge(Pipe source, Pipe observer, Cut& publication, bool closed
         {publication, {Command::Publish, source, observer, number}, EndpointPurpose::Completion, request},
         {current, {Command::Acquire, source, observer, number}, EndpointPurpose::Completion, request}};
     if (!closed) {
-        // Relay and common-cut simulations still use their checked tail order.
-        // Qualify only this new direct SET; no existing endpoint is moved.
-        if (source == decision.source && observer == decision.observer) {
-            if (auto gap = earlyPublicationGap(publication, key, decision)) {
-                packet.front().gap = *gap;
-                ++result.work.earlyPublications;
-            }
+        if (selectedGap) {
+            packet.front().gap = *selectedGap;
+            ++result.work.earlyPublications;
         }
         return commitPacket(packet, decision) && update();
     }

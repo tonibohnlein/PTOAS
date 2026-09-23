@@ -23,6 +23,23 @@ struct ReplayTestAccess {
                 "pending compatible issue erased incompatible ACC history");
     }
 
+    static SourceGapQualification sourceGap(Constructor& c, const WordGap& gap, Id key,
+                                             const std::vector<FrontierRequirement>& required)
+    {
+        const auto& identity = c.frontier.keys()[key];
+        auto facts = c.sourceGapFacts(gap, identity.source, identity.observer, required);
+        if (!c.sourceGapKey(facts, key)) { facts.outcome = ProofOutcome::Unknown; }
+        return facts;
+    }
+    static std::optional<WordGap> earlyGap(Constructor& c, Cut cut, Id key, const SelectedDecision& decision)
+    {
+        const auto gap = c.earlyPublicationMilestone(cut, c.frontier.keys()[key].source);
+        if (!gap) { return {}; }
+        auto required = decision.required;
+        required.insert(required.end(), decision.supporting.begin(), decision.supporting.end());
+        if (!sourceGap(c, *gap, key, required).proved()) { return {}; }
+        return gap;
+    }
     static void exactSourceGap()
     {
         const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE1;
@@ -45,27 +62,46 @@ struct ReplayTestAccess {
         const WordGap before{2, NoAnalysisId, wait};
         const std::vector<FrontierRequirement> own{{0, P, true, 3, true, false}};
         const std::vector<FrontierRequirement> incoming{{1, Q, true, 3, true, false}};
-        require(c.sourceGap(before, key, own).proved(), "exact prefix lost its own completed class");
-        require(!c.sourceGap(before, key, incoming).proved(),
+        require(sourceGap(c, before, key, own).proved(), "exact prefix lost its own completed class");
+        require(!sourceGap(c, before, key, incoming).proved(),
                 "word-tail credit was borrowed before its incoming receipt");
-        require(c.sourceGap(c.ledger.tail(2), key, incoming).proved(),
+        require(sourceGap(c, c.ledger.tail(2), key, incoming).proved(),
                 "actual incoming receipt did not establish gap coverage");
         SelectedDecision provider;
         provider.required = own;
-        require(c.earlyPublicationGap(2, key, provider).has_value(),
+        require(earlyGap(c, 2, key, provider).has_value(),
                 "fixture did not expose earlier motivating source");
         provider.supporting = incoming;
-        require(!c.earlyPublicationGap(2, key, provider).has_value(),
+        require(!earlyGap(c, 2, key, provider).has_value(),
                 "earlier publication erased the coverage used to select its provider");
+        const auto facts = c.sourceGapFacts(before, P, R, own);
+        require(facts.proved() && c.sourceGapKey(facts, key), "shared gap facts did not support key query");
+        const auto queries = c.result.work.sourceGapQueries, commands = c.result.work.sourceGapCommands;
+        for (unsigned repeat = 0; repeat < 32; ++repeat) {
+            for (Id candidate = 0; candidate < c.frontier.keys().size(); ++candidate) {
+                const auto& identity = c.frontier.keys()[candidate];
+                const bool expected = identity.source == P && identity.observer == R;
+                require(c.sourceGapKey(facts, candidate) == expected, "gap facts leaked to a different key direction");
+            }
+        }
+        require(queries == c.result.work.sourceGapQueries && commands == c.result.work.sourceGapCommands,
+                "physical-key alternatives reexecuted the same source prefix");
+        c.current = 2;
+        require(!c.sourceGapKey(facts, key), "gap proof leaked to a different deadline at the same revision");
+        c.current = 3;
         const auto publication = c.ledger.append(3, {Command::Publish, P, R, 0}, EndpointPurpose::Fixed);
         const auto receipt = c.ledger.append(3, {Command::Acquire, P, R, 0}, EndpointPurpose::Fixed);
-        require(!c.sourceGap(before, key, own).proved(), "stale source-gap replay was reused");
+        require(!sourceGap(c, before, key, own).proved(), "stale source-gap replay was reused");
+        require(!c.sourceGapKey(facts, key), "ledger edit retained stale gap binding");
         require(c.contextualReplay(), c.result.reason);
-        require(!c.sourceGap(before, key, own).proved(), "future key use lacked neighboring-generation check");
+        const auto occupiedFacts = c.sourceGapFacts(before, P, R, own);
+        require(occupiedFacts.proved() && !c.sourceGapKey(occupiedFacts, key),
+                "physical-key refusal erased valid physical source facts");
+        require(!sourceGap(c, before, key, own).proved(), "future key use lacked neighboring-generation check");
         c.ledger.erase(publication);
         c.ledger.erase(receipt);
         require(c.contextualReplay(), c.result.reason);
-        require(!c.sourceGap(before, key, own).proved(), "dormant key use was mistaken for a virgin key");
+        require(!sourceGap(c, before, key, own).proved(), "dormant key use was mistaken for a virgin key");
     }
 
     static void sourceGapOccurrences()
@@ -104,7 +140,7 @@ struct ReplayTestAccess {
             while (c.frontier.keys()[key].source != P || c.frontier.keys()[key].observer != R) {
                 ++key;
             }
-            const auto proof = c.sourceGap({3, NoAnalysisId, wait}, key, {{0, P, true, 3, true, false}});
+            const auto proof = sourceGap(c, {3, NoAnalysisId, wait}, key, {{0, P, true, 3, true, false}});
             require(proof.proved() == !missing,
                     "source gap did not check every shared-word occurrence's actual prefix");
         }
@@ -124,7 +160,7 @@ struct ReplayTestAccess {
         while (c.frontier.keys()[key].source != P || c.frontier.keys()[key].observer != R) {
             ++key;
         }
-        require(!c.sourceGap(c.ledger.tail(c.current), key, {{0, P, true, 1, true, false}}).proved(),
+        require(!sourceGap(c, c.ledger.tail(c.current), key, {{0, P, true, 1, true, false}}).proved(),
                 "acyclic source-gap certificate admitted a recurring occurrence");
     }
 
@@ -152,7 +188,7 @@ struct ReplayTestAccess {
             }
             SelectedDecision decision;
             decision.required = {{0, P, true, 3, true, false}};
-            require(!c.earlyPublicationGap(2, key, decision),
+            require(!earlyGap(c, 2, key, decision),
                     "publication crossed an outward source publication or fence");
             require(c.result.work.sourceGapQueries == 0,
                     "outward boundary was crossed before consulting the source-gap proof");
@@ -1031,6 +1067,38 @@ void earlyPublication()
 
 }
 
+void chooseKeyAtPreservedGap()
+{
+    const auto R = o::Pipe::MTE3;
+    for (unsigned keys : {1u, 2u, 4u}) {
+        auto p = base(3, keys);
+        p.operations = {op(P, {{0, false, true, true}}),
+            op(R, {{0, true, false}, {1, false, true, true}}), op(P, {{2, false, true, true}}),
+            op(P, {{1, true, false}}), op(R, {{2, true, false}})};
+        const auto plan = accepted(p);
+        const bool spare = keys > 1;
+        require((plan.work.earlyPublications == 1) == spare, "spare key did not preserve source milestone");
+        const auto pub = std::find_if(plan.commands[3].begin(), plan.commands[3].end(), [&](const auto& command) {
+            return command.kind == o::Command::Publish && command.source == P && command.observer == R;
+        });
+        require(pub != plan.commands[3].end() && pub->key == unsigned(spare),
+                "binding key priority did not follow the qualified milestone");
+        if (!spare) { continue; }
+        auto tail = plan.commands;
+        std::swap(tail[3][0], tail[3][1]);
+        tail[3][1].key = 0; tail[4][0].key = 0;
+        require(o::checkCausalFrontier(p, tail).accepted, "reused-key tail reference is not legal");
+        std::set<std::pair<unsigned, unsigned>> before, after;
+        const std::vector<unsigned> visits{0, 1, 2, 3, 4};
+        require(bool(oahs_oracle::graph(p, tail, visits, {}, nullptr, nullptr, &before)),
+                "tail reference failed independent check");
+        require(bool(oahs_oracle::graph(p, plan.commands, visits, {{1, 4}}, nullptr, nullptr, &after)),
+                "higher helper-free key still imports the unrelated return");
+        require(after.size() < before.size() && std::includes(before.begin(), before.end(), after.begin(), after.end()),
+                "milestone-first binding added complete payload ordering");
+    }
+}
+
 void deadlineFence()
 {
     auto p = base(3, 4);
@@ -1095,6 +1163,7 @@ int main()
     relocatedRestorationPacket();
     resourceAdmission(1);
     resourceAdmission(2);
+    chooseKeyAtPreservedGap();
     deadlineFence();
     separateReleaseFrontiers();
     return 0;

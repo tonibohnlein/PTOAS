@@ -92,6 +92,22 @@ family-first selection and full-graph private qualification remain transitional.
 Integrate local source/target/unchanged-interval certificates into the common
 packet path before claiming the regular-pipeline construction milestone complete.
 
+### Y binding-policy alignment
+
+Y implements a bounded part of adopted step 5: preserve one frozen request's
+source milestone and full supporting coverage before choosing its physical key.
+The key-independent proof is evaluated once; loop-entry complete helper-free
+bindings precede prescribed restoration. Actual packet checking and causal replay
+remain authoritative. This does not change provider ranking or implement v0.38's
+cross-request class policy. Current early-position neighboring-use proof requires
+a virgin key and acyclic straight correspondence; general neighboring-use and
+persistent publication support remain separate obligations. The paper's existing
+F5/F7 contracts apply; no new ordinary-core theorem or ACC premise is asserted.
+
+The additional distinct full-program binding probes are measured cost debt.
+Affected-interface packet certificates are the recovery dependency. Their bounds
+and invalidation must be established before skipping authoritative work.
+
 ### X binding continuation
 
 Step X instantiates the existing F7 consumption-deadline contract: it relocates an
