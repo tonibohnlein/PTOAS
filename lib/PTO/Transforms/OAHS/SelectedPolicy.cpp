@@ -186,17 +186,25 @@ bool Constructor::physicalMilestones(const RecurringRequirement& role) const
 }
 
 std::optional<CertifiedRealization> Constructor::normalOrdinary(
-    Group group, const std::vector<FrontierRequirement>& due, const std::vector<DueObligation>& universe, bool repair)
+    Group group, const std::vector<FrontierRequirement>& due, const std::vector<DueObligation>& universe,
+    bool repair, std::optional<WordGap> prescribedGap, Id prescribedKey,
+    const SourceGapQualification* prescribedFacts)
 {
     if (group.common) { return {}; }
     const auto observer = program.operations[control.graph.operations[current]].pipe;
     const auto& word = ledger.word(group.publication);
-    const WordGap gap{control.canonicalCut[group.publication], NoAnalysisId,
-                      word.empty() ? NoAnalysisId : word.front()};
-    const auto facts = sourceGapFacts(gap, group.source, observer, group.requirements);
+    const WordGap gap = prescribedGap.value_or(WordGap{control.canonicalCut[group.publication], NoAnalysisId,
+        word.empty() ? NoAnalysisId : word.front()});
+    const Cut sourceMilestone = group.publication;
+    group.publication = gap.cut;
+    const auto computed = prescribedFacts ? SourceGapQualification{} :
+        sourceGapFacts(gap, group.source, observer, group.requirements);
+    const auto& facts = prescribedFacts ? *prescribedFacts : computed;
     if (!facts.proved()) { return {}; }
     CertifiedRealization out;
     out.version = ledger.version();
+    out.sourceMilestone = sourceMilestone;
+    out.selectedSourceGap = gap;
     for (const auto& r : due) {
         const auto access = accessClass(r);
         bool covered = true;
@@ -218,6 +226,7 @@ std::optional<CertifiedRealization> Constructor::normalOrdinary(
         out.support.push_back({RealizationSupport::Consumption, group.forwardKey, gap.cut});
     }
     for (Id key = 0; !repair && key < frontier.keys().size(); ++key) {
+        if (prescribedKey != NoAnalysisId && key != prescribedKey) { continue; }
         if (!sourceGapKey(facts, key)) { continue; }
         const auto& identity = frontier.keys()[key];
         OrderedPacket endpoints{
@@ -251,6 +260,83 @@ std::optional<CertifiedRealization> Constructor::normalOrdinary(
     }
     out.ordinary = std::move(group);
     return out;
+}
+void Constructor::indexSelectedReturns()
+{
+    const auto& endpoints = ledger.records();
+    while (indexedReturnEndpoints < endpoints.size()) {
+        const auto id = indexedReturnEndpoints++;
+        const auto& endpoint = endpoints[id];
+        if (endpoint.command.kind != Command::Acquire ||
+            (endpoint.purpose != EndpointPurpose::Completion &&
+             endpoint.purpose != EndpointPurpose::Fixed) ||
+            endpoint.cut >= control.position.size()) { continue; }
+        selectedReturnGaps[{endpoint.command.source, endpoint.command.observer}]
+            [control.position[endpoint.cut]].push_back(id);
+    }
+}
+std::optional<CertifiedRealization> Constructor::normalCorridor(
+    const Group& group, const std::vector<FrontierRequirement>& due,
+    const std::vector<DueObligation>& universe)
+{
+    if (group.common) { return {}; }
+    const auto observer = program.operations[control.graph.operations[current]].pipe;
+    indexSelectedReturns();
+    // Skip returns with no actual rearming transition. The first relevant
+    // receipt fixes one gap; a failed packet does not start a source search.
+    const auto direction = selectedReturnGaps.find({observer, group.source});
+    if (direction == selectedReturnGaps.end()) { return {}; }
+    const auto first = direction->second.lower_bound(control.position[group.publication]);
+    for (auto bucket = first; bucket != direction->second.end(); ++bucket) {
+        if (bucket->first > control.position[current]) { break; }
+        // Endpoint IDs are append order. The selected word may contain later
+        // insertions, so use its actual order for receipts at one position.
+        std::set<Id> indexed(bucket->second.begin(), bucket->second.end());
+        std::set<Cut> cuts;
+        for (auto id : bucket->second) if (ledger.active(id)) {
+            cuts.insert(ledger.endpoint(id).cut);
+        }
+        for (auto cut : cuts) {
+            if (!control.straight(group.publication, cut) ||
+                !control.straight(cut, current)) { continue; }
+            for (auto receipt : ledger.word(cut)) {
+                ++result.work.corridorWordEndpoints;
+                if (!indexed.count(receipt)) { continue; }
+                ++result.work.corridorReceiptScans;
+                const auto before = cache.beforeReceiptPublishable.find(receipt);
+                const auto after = cache.afterEndpoint.find(receipt);
+                if (before == cache.beforeReceiptPublishable.end() ||
+                    after == cache.afterEndpoint.end()) { continue; }
+                std::vector<Id> transitioned;
+                for (Id key = 0; key < frontier.keys().size(); ++key) {
+                    const auto& identity = frontier.keys()[key];
+                    if (identity.source == group.source && identity.observer == observer &&
+                        helperFreeKey(key) && !before->second.count(key) &&
+                        canPublish(after->second, key)) {
+                        transitioned.push_back(key);
+                    }
+                }
+                if (transitioned.empty()) { continue; }
+                const auto gap = ledger.gapAfter(receipt);
+                if (!gap) { return {}; }
+                const auto facts = sourceGapFacts(*gap, group.source, observer,
+                    group.requirements);
+                if (!facts.proved()) { return {}; }
+                for (auto key : transitioned) {
+                    if (!sourceGapKey(facts, key)) { continue; }
+                    auto candidate = normalOrdinary(group, due, universe, false, gap,
+                        key, &facts);
+                    if (!candidate) { continue; }
+                    candidate->placementClass = 2;
+                    candidate->supportingReceipt = receipt;
+                    candidate->support.push_back({RealizationSupport::Consumption, receipt, gap->cut});
+                    return candidate;
+                }
+                return {};
+            }
+        }
+    }
+    return {};
 }
 std::shared_ptr<const Constructor::SupportClosure> Constructor::normalSupport(Id id)
 {
@@ -499,6 +585,13 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
             retain(normalOrdinary(request, due, universe, true));
         }
     }
+    const bool hasPreferred = std::any_of(candidates.begin(), candidates.end(),
+        [](const auto& candidate) { return candidate.placementClass <= 1; });
+    if (!hasPreferred) {
+        for (const auto& request : ordinaryRequests) {
+            retain(normalCorridor(request, due, universe));
+        }
+    }
     const auto winner = selectRealization(candidates);
     if (winner == NoAnalysisId) { return {}; }
     auto& selected = candidates[winner];
@@ -529,6 +622,11 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
         SelectedDecision decision;
         decision.consumer = current;
         decision.publication = group.publication;
+        decision.sourceMilestone = selected.sourceMilestone;
+        decision.publicationGapLeft = selected.selectedSourceGap.left;
+        decision.publicationGapRight = selected.selectedSourceGap.right;
+        decision.supportingReceipt = selected.supportingReceipt;
+        decision.enlargedPrefix = selected.placementClass == 2;
         decision.source = group.source;
         decision.observer = observer;
         decision.stage = selected.known ? RequirementStage::Known : RequirementStage::Overlap;
@@ -544,7 +642,8 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
         if (!commitOwnedPacket(*group.packet, decision) || !update() || !settleRearming(decision)) {
             return false;
         }
-        if (std::any_of(oldWord.begin(), oldWord.end(), [&](Id id) {
+        if (selected.selectedSourceGap.left == NoAnalysisId &&
+            std::any_of(oldWord.begin(), oldWord.end(), [&](Id id) {
                 const auto& c = ledger.endpoint(id).command;
                 return c.kind == Command::Acquire && c.observer == group.source;
             })) { ++result.work.earlyPublications; }

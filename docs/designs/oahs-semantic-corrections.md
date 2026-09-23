@@ -71,6 +71,15 @@ unique-WAIT exclusion does not close that loss. Preserve this counterexample as
 an open quality recovery while replacing recurring-only producer repair with
 typed ordinary support. Class2/3 and general historical reuse are still pending.
 
+AF supplies a bounded class2 selected-return corridor through the same ordinary
+request and exact packet path. A returned key becomes eligible only after an
+actual selected receipt changes the causal rearming fact on the matched straight
+corridor; the original source milestone, exact later gap and unchanged deadline
+remain in the decision record. Class0/1 outrank it. This is a policy/precision
+extension, not a general no-added-order claim. The AD `hc_head_reduce` loss,
+general class2/3, cross-cell/recurring return transport and historical ownership
+remain open; see HANDOFF and selected-plan AF design for gates and evidence.
+
 ## Adopted continuation — typed derivation and independent pipeline progress
 
 Continuation baseline: `b436c3db0` (Step R), not the Step P pin in

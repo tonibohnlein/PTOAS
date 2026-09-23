@@ -105,6 +105,12 @@ SelectedPlan Constructor::run(const Commands& fixed, bool useRecurring)
             decision.endpoints = std::move(live);
             if (decision.repairedAcquisition != NoAnalysisId)
                 decision.repairedAcquisition = remap[decision.repairedAcquisition];
+            if (decision.publicationGapLeft != NoAnalysisId)
+                decision.publicationGapLeft = remap[decision.publicationGapLeft];
+            if (decision.publicationGapRight != NoAnalysisId)
+                decision.publicationGapRight = remap[decision.publicationGapRight];
+            if (decision.supportingReceipt != NoAnalysisId)
+                decision.supportingReceipt = remap[decision.supportingReceipt];
         }
         for (auto& placement : result.restorations) {
             placement.consumption = remap[placement.consumption];

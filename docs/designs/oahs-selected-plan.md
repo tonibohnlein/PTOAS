@@ -1616,3 +1616,54 @@ replay remains authoritative and persistently checks the affected producer
 scope after later edits. Unknown paths or unsupported cross-engine residuals
 retain the existing refusal. The former broad producer-scope guard remains until
 all of its obligations have scoped replacements.
+
+
+## AF design — selected-return source corridor
+
+A previously selected reverse receipt can rearm an ordinary forward key after
+its original source milestone. The ordinary request keeps its original source,
+complete due coverage and consumer deadline. Class0 and class1 realizations are
+probed first. Only if neither is available does the class2 query inspect actual
+selected reverse receipts between that milestone and deadline. No anticipated
+return and no unselected candidate ledger supplies credit.
+
+The query follows current selected-word order, not endpoint creation order.
+For each reached completion receipt it retains a hardware-sized summary of
+forward keys publishable before any occurrence. The joined causal state after
+that receipt must prove a previously unproved key publishable. Closed, recurring,
+dormant and deferred-owned keys are excluded before fixing a corridor. An earlier
+reverse receipt with no such rearming effect is irrelevant and does not hide a
+later one. At the first relevant receipt, the constructor computes one exact
+source-gap qualification and checks eligible physical keys in stable order,
+reusing those facts. The same ordinary coverage, occurrence, key-neighbor,
+complete-packet and persistent-publication checks remain mandatory. Selection
+commits exactly the privately checked packet, then authoritative propagation
+must reduce the complete residual.
+
+The decision retains the original source milestone, exact selected gap neighbors,
+and actual supporting receipt. It records prefix enlargement even when the cut
+number is unchanged: a publication after a WAIT can import completion that a
+publication before it did not. The early-publication counter therefore counts
+only a genuinely earlier gap. This is a class2 policy extension, not an
+order-preservation certificate. A selected return can broaden the new
+publication, and complete payload-order comparisons remain required for quality
+claims.
+
+The current recipe covers matched straight ordinary corridors and helper-free
+bindings. At its first applicable return, unknown source/gap or packet support
+conservatively leaves the ordinary repair path; it does not search later source
+positions or alternative ledgers. The key-transition summary is an eligibility
+filter, not acquired credit or proof of concrete necessity. Native recurring
+return transport, non-straight correspondence, persistent cross-cell support,
+class3 placement and general historical-key binding remain open. The AD
+`hc_head_reduce` added-order counterexample is not recovered by AF.
+
+The normal-constructor fixture selects the return-supported class2 packet and
+checks its exported source/receipt record and cold causal validity. A second
+fixture puts an unrelated reverse receipt first; it cannot masquerade as
+consumption support or hide the actual return. Erasing the return refuses the
+corridor. Existing early-publication hardening confirms that a late class2
+placement is not reported as an early source. Further conditional-credit,
+intervening-conflict and shared-word mutations remain acceptance work for the
+broader class2/general-binding interface. Scanned receipt and word populations
+are counted; one request can still inspect an interval of selected receipts.

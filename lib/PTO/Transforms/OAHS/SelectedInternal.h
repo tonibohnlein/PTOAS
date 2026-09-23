@@ -325,6 +325,9 @@ struct Replay {
     std::string reason;
     std::vector<Checkpoint> cuts;
     std::map<Id, State> afterEndpoint;
+    // Keys publishable before any occurrence of an indexed selected receipt.
+    // An absent key means no visited incoming state proved it publishable.
+    std::map<Id, std::set<Id>> beforeReceiptPublishable;
     // Leading components whose cuts hold their actual fixed point rather than
     // the construction-only hypothesis traversal of the active component. Only
     // those may be reused by a later replay; everything else is recomputed.
@@ -569,6 +572,9 @@ struct CertifiedRealization {
     uint64_t version = 0;
     bool known = false;
     Group ordinary;
+    Cut sourceMilestone = NoAnalysisId;
+    WordGap selectedSourceGap;
+    Id supportingReceipt = NoAnalysisId;
     std::optional<RecurringPacket> recurring;
     std::vector<Id> families, newRoles;
     std::vector<RealizationSupport> support;
@@ -714,7 +720,14 @@ private:
     std::set<Id> normalizedCoverage(const std::vector<DueObligation>&,
         const std::vector<FrontierRequirement>&, const std::set<Id>&) const;
     std::optional<CertifiedRealization> normalOrdinary(
-        Group, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&, bool repair = false);
+        Group, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&,
+        bool repair = false, std::optional<WordGap> prescribedGap = {},
+        Id prescribedKey = NoAnalysisId, const SourceGapQualification* prescribedFacts = nullptr);
+    std::optional<CertifiedRealization> normalCorridor(
+        const Group&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
+    void indexSelectedReturns();
+    Id indexedReturnEndpoints = 0;
+    std::map<std::pair<Pipe, Pipe>, std::map<Id, std::vector<Id>>> selectedReturnGaps;
     std::optional<CertifiedRealization> normalRecurring(
         const std::vector<Id>&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
     std::optional<bool> selectNormal(const std::vector<DueObligation>&);

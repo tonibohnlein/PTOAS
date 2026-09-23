@@ -68,6 +68,11 @@ struct SelectedLifecycleDemand {
 };
 struct SelectedDecision {
     Cut consumer = NoAnalysisId, publication = NoAnalysisId;
+    // Original source milestone and exact selected word gap. A later selected
+    // return can intentionally broaden this new publication's prefix.
+    Cut sourceMilestone = NoAnalysisId;
+    std::size_t publicationGapLeft = NoAnalysisId, publicationGapRight = NoAnalysisId;
+    std::size_t supportingReceipt = NoAnalysisId;
     RequirementStage stage = RequirementStage::Overlap;
     Pipe source = Pipe::S, observer = Pipe::S;
     std::vector<FrontierRequirement> required;
@@ -183,6 +188,7 @@ struct SelectedWork {
     std::size_t recurringTrials = 0, redundantRecurringChannels = 0;
     uint64_t normalCandidates = 0, normalSelected = 0, normalRecurringSelected = 0;
     uint64_t repairCandidates = 0, repairSelected = 0, repairSourceCommands = 0, repairNeighborUses = 0;
+    uint64_t corridorReceiptScans = 0, corridorWordEndpoints = 0;
     uint64_t normalPublicationSites = 0, normalizedDue = 0, normalizationIncidences = 0, normalKeySites = 0;
     uint64_t recurringInterfaceQueries = 0, recurringInterfaceSites = 0;
     uint64_t recurringInterfaceAccesses = 0, recurringLocalPackets = 0;

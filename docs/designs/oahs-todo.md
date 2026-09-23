@@ -75,6 +75,18 @@ from AD; the open AD `hc_head_reduce` ordering loss is not recovered. See
 HANDOFF and AE artifacts. Cross-engine producer support, replacement of the
 broad repair-scope guard, class2/3 competition and complete binding remain open.
 
+## Current continuation after AF
+
+AF adds one bounded class2 selected-return corridor to the common ordinary
+selector. It preserves the original source milestone and deadline, qualifies
+one actual rearming receipt and exact later gap, records prefix enlargement,
+and uses the common packet/binding and actual-credit update. Class0/1 remain
+preferred. The selected-return scan has compact key facts and explicit work
+counters. Portable/native/corpus evidence is in HANDOFF and AF artifacts.
+This is not general class2, class3, recurring return transport or AD ordering
+recovery. Extend conditional participation, affected-interval support and
+historical-key binding through shared queries rather than another recipe.
+
 ## Current continuation after R
 
 User-approved sequence is the "Adopted continuation" in the canonical semantic

@@ -92,6 +92,18 @@ bool Constructor::word(State& state, Cut site, Replay& replay, const PacketView*
     const auto& word = proposed ? proposed->word(site) : ledger.word(site);
     for (auto id : word) {
         const auto& endpoint = proposed ? proposed->endpoint(id) : ledger.endpoint(id);
+        if (endpoint.command.kind == Command::Acquire &&
+            (endpoint.purpose == EndpointPurpose::Completion ||
+             endpoint.purpose == EndpointPurpose::Fixed ||
+             endpoint.purpose == EndpointPurpose::RecurringCompletion)) {
+            auto& publishable = replay.beforeReceiptPublishable[id];
+            for (Id key = 0; key < frontier.keys().size(); ++key) {
+                const auto& identity = frontier.keys()[key];
+                if (identity.source == endpoint.command.observer &&
+                    identity.observer == endpoint.command.source &&
+                    canPublish(state, key)) { publishable.insert(key); }
+            }
+        }
         auto step = frontier.command(state.causal, endpoint.command, {site, offset++});
         if (!step.applied) {
             replay.failureEndpoint = id;
@@ -337,9 +349,13 @@ Replay Constructor::evaluateContextual(const PacketView* proposed,
         for (auto site : control.components[index].sites) {
             fresh.cuts[site] = cache.cuts[site];
             for (auto id : ledger.word(site)) {
-                const auto found = cache.afterEndpoint.find(id);
-                if (found != cache.afterEndpoint.end()) {
-                    fresh.afterEndpoint.emplace(id, found->second);
+                const auto before = cache.beforeReceiptPublishable.find(id);
+                if (before != cache.beforeReceiptPublishable.end()) {
+                    fresh.beforeReceiptPublishable.emplace(id, before->second);
+                }
+                const auto after = cache.afterEndpoint.find(id);
+                if (after != cache.afterEndpoint.end()) {
+                    fresh.afterEndpoint.emplace(id, after->second);
                 }
             }
             for (auto next : control.graph.sites[site].successors) {
@@ -496,9 +512,13 @@ bool Constructor::replay()
         for (auto site : control.components[index].sites) {
             fresh.cuts[site] = cache.cuts[site];
             for (auto id : ledger.word(site)) {
-                const auto found = cache.afterEndpoint.find(id);
-                if (found != cache.afterEndpoint.end()) {
-                    fresh.afterEndpoint.emplace(id, found->second);
+                const auto before = cache.beforeReceiptPublishable.find(id);
+                if (before != cache.beforeReceiptPublishable.end()) {
+                    fresh.beforeReceiptPublishable.emplace(id, before->second);
+                }
+                const auto after = cache.afterEndpoint.find(id);
+                if (after != cache.afterEndpoint.end()) {
+                    fresh.afterEndpoint.emplace(id, after->second);
                 }
             }
             for (auto next : control.graph.sites[site].successors) {

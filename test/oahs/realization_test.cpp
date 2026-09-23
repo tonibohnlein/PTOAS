@@ -82,6 +82,105 @@ struct ReplayTestAccess {
         require(c.result.work.ownershipChecks==0 && c.result.work.acknowledgmentChecks==0,
                 "fixed repair probe ran a whole-program candidate check");
     }
+    static void selectedReturnCorridor(bool irrelevant = false)
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto input = base(3, irrelevant ? 2 : 1);
+        input.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}}),
+            op(Q, {{0, true, false}}), op(P, {{1, false, true}}),
+            op(P, {{2, false, true}}), op(Q, {{1, true, false}})};
+        input.body = seq({leaf(0), {Region::Choice, {leaf(1), leaf(2)}},
+            leaf(3), leaf(4), leaf(5)});
+        auto imported = addStructuredBoundaryCuts(input);
+        require(imported.success, imported.reason);
+        Constructor c(imported.program);
+        auto site = [&](unsigned operation) {
+            for (Cut cut = 0; cut < c.control.graph.operations.size(); ++cut) {
+                if (c.control.graph.operations[cut] == operation) { return cut; }
+            }
+            return NoAnalysisId;
+        };
+        const auto first = c.control.after(site(0));
+        const auto readerA = site(1), readerB = site(2);
+        const auto source = c.control.after(site(3)), returnAt = site(4);
+        require(first != NoAnalysisId && source != NoAnalysisId &&
+            readerA != NoAnalysisId && readerB != NoAnalysisId && returnAt != NoAnalysisId,
+            "selected-return fixture lacks legal source cuts");
+        c.current = site(5);
+        c.ledger.append(first, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion);
+        for (auto reader : {readerA, readerB}) {
+            if (irrelevant) {
+                c.ledger.append(reader, {Command::Publish, Q, P, 1},
+                    EndpointPurpose::Completion);
+            }
+            c.ledger.append(reader, {Command::Acquire, P, Q, 0}, EndpointPurpose::Completion);
+            c.ledger.append(reader, {Command::Publish, Q, P, 0},
+                EndpointPurpose::Completion);
+        }
+        if (irrelevant) {
+            c.ledger.append(returnAt, {Command::Acquire, Q, P, 1},
+                EndpointPurpose::Completion);
+        }
+        const auto returnId = c.ledger.append(returnAt,
+            {Command::Acquire, Q, P, 0}, EndpointPurpose::Completion);
+        require(c.contextualReplay(), "selected-return corridor setup failed");
+        Group group;
+        group.source = P;
+        group.publication = source;
+        group.requirements = {{1, P, true, c.current, true, false}};
+        const auto due = group.requirements;
+        const auto universe = c.normalizeDue(due);
+        const auto returnGap = c.ledger.gapAfter(returnId);
+        require(bool(returnGap), "selected-return gap missing");
+        const auto facts = c.sourceGapFacts(*returnGap, P, Q, due);
+        require(facts.proved(), "selected-return source gap: " + facts.reason);
+        const auto local = c.normalOrdinary(group, due, universe, false, returnGap);
+        require(bool(local), "selected-return ordinary packet failed");
+        require(c.canPublish(c.cache.afterEndpoint.at(returnId), local->ordinary.forwardKey),
+            "selected return did not establish forward-key consumption");
+        const auto proposal = c.normalCorridor(group, due, universe);
+        require(proposal && proposal->placementClass == 2 &&
+                proposal->ordinary.packet && proposal->ordinary.forwardKey != NoAnalysisId,
+            "selected actual return did not enable a class-2 source gap: source=" +
+            std::to_string(c.control.position[source]) + " return=" +
+            std::to_string(c.control.position[returnAt]) + " current=" +
+            std::to_string(c.control.position[c.current]) + " indexed=" +
+            std::to_string(c.selectedReturnGaps[{Q, P}].size()));
+        require(proposal->supportingReceipt == returnId &&
+                proposal->support.back().identity == returnId,
+            "class-2 corridor chose an unrelated earlier return");
+        require(c.ledger.records().size() == (irrelevant ? 9u : 6u),
+            "class-2 private qualification changed the selected ledger");
+        if (irrelevant) { return; }
+        Commands fixed(commandCutCount(imported.program));
+        fixed[first] = {{Command::Publish, P, Q, 0}};
+        for (auto reader : {readerA, readerB}) {
+            fixed[reader] = {{Command::Acquire, P, Q, 0},
+                {Command::Publish, Q, P, 0}};
+        }
+        fixed[returnAt] = {{Command::Acquire, Q, P, 0}};
+        const auto plan = constructSelectedPlan(imported.program, fixed);
+        require(plan.success && checkCausalFrontier(imported.program, plan.commands).accepted,
+            "normal constructor rejected selected-return corridor: " + plan.reason);
+        require(std::any_of(plan.realizationChoices.begin(), plan.realizationChoices.end(),
+                [](const auto& choice) { return choice.placementClass == 2; }),
+            "normal constructor did not select the actual-return corridor");
+        require(plan.work.repairCandidates > 0 && plan.work.repairSelected > 0,
+            "normal constructor did not account for the corridor realization");
+        require(std::any_of(plan.decisions.begin(), plan.decisions.end(),
+                [&](const auto& decision) {
+                    return decision.consumer == c.current && decision.enlargedPrefix &&
+                        decision.sourceMilestone == source &&
+                        decision.publicationGapLeft != NoAnalysisId &&
+                        decision.supportingReceipt == decision.publicationGapLeft;
+                }), "class-2 decision lost its source milestone or return gap");
+        require(plan.work.corridorReceiptScans > 0 &&
+                plan.work.corridorWordEndpoints >= plan.work.corridorReceiptScans,
+            "corridor scan work was not recorded");
+        c.ledger.erase(returnId);
+        require(!c.normalCorridor(group, due, universe),
+            "inactive return incorrectly supported a class-2 corridor");
+    }
     static void normalization(unsigned mutation)
     {
         auto p = base(2);
@@ -282,6 +381,8 @@ int main()
 {
     policy(); rings(); subdivision();
     for (unsigned mutation=0;mutation!=9;++mutation) { s::ReplayTestAccess::fixedRepair(mutation); }
+    s::ReplayTestAccess::selectedReturnCorridor();
+    s::ReplayTestAccess::selectedReturnCorridor(true);
     s::ReplayTestAccess::tailOnlyCoverage();
     for (unsigned mutation=0;mutation!=3;++mutation) { s::ReplayTestAccess::alternativeKeys(mutation); }
     for (unsigned mutation=0;mutation!=4;++mutation) { s::ReplayTestAccess::normalization(mutation); }

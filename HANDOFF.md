@@ -1,5 +1,51 @@
 # OAHS current handoff
 
+## Active after Step AF — actual selected-return source corridor
+
+AF adds a bounded class2 ordinary realization. A previously selected reverse
+receipt can rearm the forward key after its original source milestone. The
+normal selector considers it only when no class0/1 realization is available.
+A compact replay summary proves the key was not publishable on any recorded
+incoming receipt occurrence and the actual post-receipt causal state proves it
+publishable. The common exact source-gap, physical coverage, occurrence,
+neighbor, ownership, packet and persistent-publication checks still decide
+admission. The first relevant selected receipt fixes one source gap; eligible
+keys at that gap are checked in stable order. No candidate global solve or
+alternative-ledger search is added. The decision exports the original source,
+actual later gap and supporting receipt, and marks prefix enlargement even
+when the cut remains the same. Only selected causal replay grants credit.
+
+Validation on the final source: 25/25 portable checks; all three linked native
+drivers; 88/88 corpus, 18/19 compatibility (the inherited refusal), GEMM, two
+prefills and three targeted cases. All campaign outputs are byte-identical to
+AE, so the complete finite payload-order delta is empty. This does not repair
+AD's `hc_head_reduce` +122/-20 comparison. The focused normal-constructor
+fixture selects class2 and cold-checks its emitted packet; an unrelated earlier
+reverse receipt is skipped, and deactivating the supporting receipt refuses the
+corridor. The existing spare-key/early-publication witness remains passing.
+No sanitizer or device campaign.
+
+Successful-input totals versus AE: selected updates 8227->8227, replay sites
+7101322->7101322, normal candidates 674->674, repair candidates 4->4,
+SETs 3779->3779 and WAITs 3778->3778. New corridor queries inspected 23
+receipt IDs and 35 selected-word endpoints; source-gap queries 5073->5077,
+normal-key work 980610->985158, publication-support sites 263063->263121.
+These counts expose query cost; unchanged plans are not a general runtime or
+quality improvement claim. Artifacts: `../oahs-gemm-base-builds/refactor-step-af/`
+(`host-final.log`, `summary.json`, `results.json`, `changed-order.json`,
+`work.json`, focused logs and `reviews.md`).
+
+Architecture/generality, correctness and asymptotic-performance reviewers
+ACCEPT AF's bounded fragment after revisions. Remaining limitations: matched
+straight ordinary corridors and helper-free keys; conditional-credit,
+intervening-conflict, same-word ordering and historical-key mutations need
+broader acceptance coverage. Class3/common-cut placement, general recurring and
+cross-cell return transport, guarded-reader and first-use consolidation,
+independent unequal-bank composition, AD quality recovery and device evidence
+remain open. Next: decide a common class3/cross-cell return increment from one
+physical lifetime, preserving complete residual competition and actual reuse
+deadlines. Continue the three-reviewer commit loop.
+
 ## Active after Step AE — typed ordinary producer support
 
 AE makes an unrelated same-engine producer repair a typed support obligation

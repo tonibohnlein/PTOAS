@@ -2071,6 +2071,8 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " repair_selected=" << work.repairSelected
                  << " repair_source_commands=" << work.repairSourceCommands
                  << " repair_neighbor_uses=" << work.repairNeighborUses
+                 << " corridor_receipt_scans=" << work.corridorReceiptScans
+                 << " corridor_word_endpoints=" << work.corridorWordEndpoints
                  << " normal_candidates=" << work.normalCandidates
                  << " normal_selected=" << work.normalSelected
                  << " normal_recurring_selected=" << work.normalRecurringSelected
