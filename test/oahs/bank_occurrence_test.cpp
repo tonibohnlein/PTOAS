@@ -450,7 +450,7 @@ void composedReaders(unsigned variant)
         o::StorageFrontierAnalysis sharedStorage(refined.program);
         o::selected::RequirementFrontiers sharedFacts(refined.program, sharedControl, sharedStorage);
         const auto requests = o::selected::qualifyCyclicFrontiers(refined.program, sharedControl, sharedFacts);
-        require(std::none_of(requests.begin(), requests.end(), [&](const auto& request) {
+        require(std::none_of(requests.roles.begin(), requests.roles.end(), [&](const auto& request) {
                     return request.owner == bank.owner && request.source == P && request.observer == Q &&
                         std::find(request.cells.begin(), request.cells.end(), 0) != request.cells.end();
                 }), "conflicting shared-word first/continuing roles produced one readiness acquisition");
@@ -462,15 +462,30 @@ void composedReaders(unsigned variant)
                 "cyclic occurrence interfaces lost original-edge replay");
     }
     if (variant == 3) {
-        require(plan.declinedRecurring && plan.declinedRecurring->reason.find("producer repair") != std::string::npos,
-                "unsupported Y repair crossed the newly supported X overwrite");
+        const bool localRefusal = std::any_of(plan.recurringRefusals.begin(), plan.recurringRefusals.end(),
+                                            [](const auto& refusal) {
+            return refusal.reason.find("producer repair") != std::string::npos;
+        });
+        const bool retryRefusal = plan.declinedRecurring &&
+            plan.declinedRecurring->reason.find("producer repair") != std::string::npos;
+        require(localRefusal || retryRefusal, "unsupported Y repair crossed the newly supported X overwrite");
     } else {
         require(plan.success && o::checkCausalFrontier(refined.program, plan.commands).accepted,
                 "composed reader construction was not independently accepted");
         require(!plan.declinedRecurring, "composed reader protocol was declined");
+        require(plan.work.recurringActivations != 0 &&
+                    std::any_of(plan.activations.begin(), plan.activations.end(), [](const auto& activation) {
+                        return activation.families.size() >= 2 && activation.after.size() < activation.before.size();
+                    }), "normal constructor did not close required multi-bank support from an actual residual");
         const auto ready = std::count_if(plan.channels.begin(), plan.channels.end(), [&](const auto& channel) {
             return channel.owner == bank.owner && channel.source == P && channel.observer == Q;
         });
+        if (ready != 2) {
+            for (const auto& refusal : plan.recurringRefusals) {
+                std::cerr << "variant=" << variant << " family=" << refusal.family << " at=" << refusal.deadline
+                          << " refusal=" << refusal.reason << '\n';
+            }
+        }
         require(ready == 2, "shared generation across reader children was not constructed per bank");
         const auto releases = std::count_if(plan.channels.begin(), plan.channels.end(), [&](const auto& channel) {
             return channel.owner == bank.owner && channel.source == Q && channel.observer == P;

@@ -127,6 +127,7 @@ struct PacketEndpoint {
 };
 using OrderedPacket = std::vector<PacketEndpoint>;
 class Ledger;
+class PacketView;
 class PreparedPacket {
 public:
     bool valid() const { return ready; }
@@ -135,6 +136,7 @@ public:
 
 private:
     friend class Ledger;
+    friend class PacketView;
     bool ready = false;
     std::string error;
     const Ledger* owner = nullptr;
@@ -173,6 +175,7 @@ public:
     std::optional<PacketEndpoint> restoration(Id, const WordGap&) const;
     PreparedPacket preparePacket(const OrderedPacket&) const;
     std::optional<Commands> withPacket(const PreparedPacket&) const;
+    std::optional<PacketView> packetView(const PreparedPacket&) const;
     std::vector<Id> appendPacket(const PreparedPacket&);
     bool active(Id id) const { return !removed.count(id); }
     void erase(Id);
@@ -195,6 +198,21 @@ private:
     void recordEvent(const SelectedEndpoint&);
     void setDormant(Id, bool);
     Id insert(Cut, Id, Command, EndpointPurpose, Id, Id);
+};
+
+// Immutable overlay of the exact checked packet. Unchanged words and endpoint
+// records stay shared with the ledger; only changed words are materialized.
+class PacketView {
+    friend class Ledger;
+public:
+    const std::vector<Id>& word(Cut) const;
+    const SelectedEndpoint& endpoint(Id) const;
+    uint64_t version() const;
+private:
+    const Ledger* ledger = nullptr;
+    const PreparedPacket* packet = nullptr;
+    const std::vector<Cut>* canonical = nullptr;
+    std::map<Cut, std::vector<Id>> words;
 };
 
 // The last original static origin per access class. Only the classes an
@@ -277,6 +295,32 @@ struct RecurringRequirement {
     // Producer deadlines whose preceding local repair can be replaced by this
     // complete cycle. Require scoped residual support before commitment.
     std::vector<Cut> supportSeeds;
+};
+// Logical roles are shared by exact endpoint identity. A family names its own
+// finite support recipe; sharing a role does not activate every other family.
+struct RecurringFamily {
+    Id owner = NoAnalysisId;
+    std::vector<unsigned> cells;
+    std::vector<Id> roles;
+    std::vector<RecurringRequirement> support;
+    std::vector<Cut> deadlines;
+};
+struct RecurringFrontiers {
+    std::vector<RecurringRequirement> roles;
+    std::vector<RecurringFamily> families;
+    std::map<std::pair<Cut, unsigned>, std::vector<Id>> at;
+};
+struct ProducerSupportScope {
+    std::array<std::set<Id>, PipeCount> classes;
+    std::vector<Cut> consumers;
+};
+struct RecurringPacket {
+    OwnedPacket packet;
+    std::vector<RecurringRequirement> requests;
+    std::vector<Id> keys;
+    std::array<std::set<Id>, PipeCount> supportClasses;
+    std::vector<bool> supportConsumers;
+    Replay evaluated;
 };
 struct OccurrenceMode {
     Id owner = NoAnalysisId;
@@ -411,7 +455,7 @@ private:
 };
 // A storage/control qualifier: it returns requirements and original frontiers,
 // not commands or physical key choices. Empty means ordinary F1--F8 applies.
-std::vector<RecurringRequirement> qualifyCyclicFrontiers(
+RecurringFrontiers qualifyCyclicFrontiers(
     const Program&, const Control&, const RequirementFrontiers&);
 
 struct Group {
@@ -469,6 +513,27 @@ private:
     // key must not be borrowed as another recurring channel's forward key.
     std::map<std::pair<Pipe, Pipe>, std::pair<Id, Id>> closedBindings;
     std::set<Id> closedKeys, recurringKeys;
+    RecurringFrontiers recurringFrontiers;
+    std::vector<bool> activeFamilies;
+    struct RecurringAttempt {
+        uint64_t version = 0;
+        bool evaluated = false;
+        std::set<Cut> improving;
+    };
+    std::vector<RecurringAttempt> attemptedFamilies;
+    std::map<Id, Id> activeRoles;
+    bool recurringBaseline = false;
+    std::map<Id, ProducerSupportScope> recurringScopes;
+    struct SupportLinks {
+        uint64_t version = 0;
+        bool complete = false;
+        std::vector<Id> families;
+        std::string reason;
+    };
+    std::map<Id, SupportLinks> recurringLinks;
+    ProducerSupportScope producerScope(const std::vector<RecurringRequirement>&);
+    bool supportsRecurring(Id family, Cut, const FrontierRequirement&) const;
+    const SupportLinks& recurringSupportLinks(Id family);
     // Contextual state propagation is also needed for one-shot loop-entry
     // receipts. It does not reserve a physical key or establish rearming.
     bool needsContextualReplay = false;
@@ -492,9 +557,11 @@ private:
     bool fail(SelectedFailure, std::string, Cut = NoAnalysisId);
     State initial() const;
     bool join(State&, const State&);
-    bool word(State&, Cut, Replay&);
+    bool word(State&, Cut, Replay&, const PacketView* = nullptr);
     bool payload(State&, Cut, Replay&, bool pending = false);
     bool contextualReplay();
+    Replay evaluateContextual(const PacketView*, const std::array<std::set<Id>, PipeCount>&,
+                              const std::vector<bool>&, Id resume);
     bool fixedComponent(Id, const std::vector<State>&, Replay&, std::vector<State>&);
     bool partialComponent(Id, const std::vector<State>&, Replay&);
     bool partialSite(Id, Cut, std::vector<State>&, Replay&);
@@ -543,7 +610,10 @@ private:
     std::optional<WordGap> earlyPublicationGap(Cut, Id, const SelectedDecision&);
     bool clearInterval(Id, Cut, Cut) const;
     std::vector<Pipe> route(Pipe, Pipe) const;
-    bool recurring(const std::vector<RecurringRequirement>&);
+    std::optional<RecurringPacket> prepareRecurring(const std::vector<RecurringRequirement>&, std::string&,
+                                                     const ProducerSupportScope* support = nullptr);
+    bool commitRecurring(RecurringPacket&);
+    bool activateRecurring();
     bool finish();
 };
 

@@ -8,7 +8,7 @@ restart checkpoints and historical milestone queues below. Active branch:
 ## Adopted continuation — typed derivation and independent pipeline progress
 
 Current baseline: `b436c3db0` (Step R), not the Step P pin in
-`../ENGINEER_DIRECTIONS.md`. The current v0.37 TeX and code are co-developed;
+`../ENGINEER_DIRECTIONS.md`. The current v0.38 TeX (`7e8076e`) and code are co-developed;
 reconcile their contracts explicitly and preserve separate draft edits.
 This sequence supersedes the earlier active ordering below, retaining its
 acceptance boundary and historical evidence. User resumed implementation.
@@ -78,6 +78,19 @@ Restricted indexes/scalar simplification require measured need and equivalent
 answers/decisions. Insertion-proof transport and resource-informed provider ranking
 remain inactive. Completion requires normal-path evidence and removal of replaced
 interpretations; a wrapper or reviewer verdict alone is not completion.
+
+### Draft reconciliation during V
+
+The paper independently advanced to v0.38 (`7e8076e`). Its new pipeline-decision
+section makes canonical request normalization, recipe classes, frozen-state local
+probes, class-first selection and a single dominance scan explicit. Preserve the
+query-migration policy until the named construction-policy replacement; do not
+report this new selection rule as an indexing-only change. No Cartesian key or
+packet-shape search. The selected packet still undergoes authoritative update.
+V's residual-activated finite families are a prerequisite, not that replacement:
+family-first selection and full-graph private qualification remain transitional.
+Integrate local source/target/unchanged-interval certificates into the common
+packet path before claiming the regular-pipeline construction milestone complete.
 
 ## Objective and acceptance boundary
 

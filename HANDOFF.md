@@ -1,5 +1,68 @@
 # OAHS current handoff
 
+## Completed bounded Step V — residual activation
+
+Baseline U `43d477329`. Recurring discovery now retains logical roles and finite
+family support recipes without installing commands or reserving keys. Normal
+construction activates a matching family from the actual complete residual,
+including same-engine WAW/WAR. Finite support links include other affected
+producer repairs. Role sharing does not merge activating families. The exact
+private packet passes event analysis and authoritative contextual evaluation;
+only strict residual progress permits atomic commitment and actual credit.
+Rejected proposals leave selected state unchanged. Accepted evaluation is reused.
+The bulk installer, broad relationship replacement and omission trials are gone.
+
+Architecture, bounded generality, correctness and asymptotic-performance ACCEPT.
+22/22 portable suites, three native drivers, 88/88 corpus, 18/19 compatibility
+(the inherited refusal), GEMM, two prefills and three targets pass. 26 plans
+changed: 15 corpus, nine compatibility, one target and GEMM. Both prefills are
+unchanged. Finite complete-order comparisons: 44 nonempty, four empty and 20
+unsupported rows. 36 nonempty rows are equal, including the 225-payload GEMM
+execution; eight add ordering. Empty/unsupported rows establish no quality claim.
+No sanitizer/device campaign. Evidence: `../oahs-gemm-base-builds/refactor-step-v/`
+(summary/results, changed-order/order-summary, complete relation bitsets, work,
+source-pin, review records, native and portable logs).
+
+Temporary quality ledger, with two scalar bindings for each cited witness:
+
+- Corpus36 final_rmsnorm: +390 relations; corpus82 rms_norm_rows: +42;
+  corpus83 rms_norm: +6, none removed. Earlier V accumulation now precedes a
+  later MTE2 load. Trial-dependent recurring populations shrink 6->2, 6->2 and
+  4->2 channels; ordinary repairs replace unsupported standalone/RMW recipes.
+  Recovery: derive their finite completion/rearming support through shared
+  requests, not restoration of omission search.
+- Target2 rms_norm: +64, none removed. A later MTE2 load precedes a V conversion.
+  Baseline discarded the whole optional population; V admits six roles across
+  three activations. Partial admission changes later repair/binding choices.
+  Recovery: common provider competition and persistent milestone/binding support.
+- GEMM retains 40 static pairs and identical order on the named nonempty trace.
+  This is finite host evidence, not current device parity or universal equality.
+- All other changed plans have per-case resources in results.json. Unsupported
+  rows remain explicit recovery/diagnostic work, not presumed nonregressions.
+
+Cost: successful regular replay6313151->7055155, recurring analyzer67014->202187,
+new staged causal replay240505, discarded regular replay1047017->738926. Analyzer
+work overlaps ownership_sites; do not sum those counters. Discarded new phase
+counters are not separately printed; discarded elapsed includes their execution.
+Compatibility0 takes49.91->116.11s, chiefly0->168 contextual updates; only9 packet
+attempts. Compatibility2 takes43.86->4.12s. GEMM1.12->1.82s reflects five distinct
+activations rather than one population check. These runs are not isolated timing
+benchmarks. No final compilation-cost acceptance; F/G/L/R and V debt remain open.
+
+Remaining sufficient restrictions: family-first selection precedes ordinary
+provider competition; historically unused keys only; conservative affected-repair
+closure; qualified slot/enclosing recipes only. Source snapshots are never
+invented. Two whole-graph private qualification passes remain transitional.
+They are not the local probe interfaces now required by draft v0.38 (`7e8076e`).
+The draft changed independently during V; its canonical requests, recipe classes,
+one-pass dominance policy and local probes are explicit next migration contracts,
+not already implemented claims. Native ACC still has a separate adapter contract.
+
+Next: finish common request/support selection and occurrence-qualified child
+participation, then persistent publication support and frozen-request binding.
+Use the two-child/disjoint-copy normal-constructor witnesses; keep the complete
+recovery ledger active. Continue the three-reviewer commit loop, no push.
+
 ## Completed Step U — existing-word reader endpoint applicability
 
 Baseline T `d7f7e26f4`. Shared write-delimited original read intervals and D3

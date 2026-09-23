@@ -352,329 +352,63 @@ bool balanced(const Control& c, const std::vector<Cut>& publications,
     return c.correspondence(publications, acquisitions).proved();
 }
 
-std::vector<RecurringRequirement> qualifyRelationships(
-    const Program& p, const Control& c, const RequirementFrontiers& frontiers)
-{
-    using Key = std::tuple<Id, uint64_t, Pipe, Pipe, Id, Id>;
-    std::map<Key, RecurringRequirement> grouped;
-    if (!p.observed) return {};
-    for (const auto& loop : p.observed->loops) {
-        const std::set<Id> members(loop.sites.begin(), loop.sites.end());
-        for (auto target : loop.sites) {
-            if (target >= c.graph.sites.size() || !c.reachable[target]) continue;
-            const auto targetOperation = c.graph.operations[target];
-            if (targetOperation == NoAnalysisId) continue;
-            const auto targetMode = occurrenceMode(p, target);
-            if (!targetMode.valid || targetMode.owner != loop.owner) continue;
-            const auto targetPipe = p.operations[targetOperation].pipe;
-            if (p.target.synchronous[unsigned(targetPipe)]) continue;
-            for (const auto& requirement : frontiers.at(target)) {
-                const auto& relationship = requirement.relationship;
-                const auto sourceSite = relationship.source.site;
-                if (!members.count(sourceSite) || sourceSite >= c.graph.sites.size()) continue;
-                const auto sourceOperation = c.graph.operations[sourceSite];
-                if (sourceOperation == NoAnalysisId || relationship.cell >= p.cells.size() ||
-                    p.cells[relationship.cell].exclusive) continue;
-                const auto sourcePipe = p.operations[sourceOperation].pipe;
-                const auto sourceMode = occurrenceMode(p, sourceSite);
-                if (sourcePipe == targetPipe || p.target.synchronous[unsigned(sourcePipe)] ||
-                    !sourceMode.valid || sourceMode.owner != loop.owner ||
-                    sourceMode.period != targetMode.period) continue;
-                const auto publication = frontiers.recurringRelease(sourceSite, relationship.cell);
-                if (publication == NoAnalysisId) continue;
-                for (const auto key : {
-                        Key{loop.owner, sourceMode.period, sourcePipe, targetPipe,
-                            NoAnalysisId, NoAnalysisId},
-                        Key{loop.owner, sourceMode.period, sourcePipe, targetPipe,
-                            sourceOperation, targetOperation}}) {
-                    auto& request = grouped[key];
-                    request.source = sourcePipe;
-                    request.observer = targetPipe;
-                    request.owner = loop.owner;
-                    request.period = sourceMode.period;
-                    request.cells.push_back(relationship.cell);
-                    request.publications.push_back(publication);
-                    request.acquisitions.push_back(canonicalCommandCut(p, target));
-                }
-            }
-        }
-    }
-    std::vector<RecurringRequirement> out;
-    auto normalize = [&](RecurringRequirement& request) {
-        std::sort(request.cells.begin(), request.cells.end());
-        request.cells.erase(std::unique(request.cells.begin(), request.cells.end()), request.cells.end());
-        for (auto* values : {&request.publications, &request.acquisitions}) {
-            std::sort(values->begin(), values->end());
-            values->erase(std::unique(values->begin(), values->end()), values->end());
-        }
-        request.cell = request.cells.front();
-    };
-    for (auto& [key, request] : grouped) normalize(request);
-    std::set<std::tuple<Id, uint64_t, Pipe, Pipe>> coarseAccepted;
-    for (auto& [key, request] : grouped) {
-        const auto [owner, period, source, observer, sourceOperation, targetOperation] = key;
-        const auto coarse = std::make_tuple(owner, period, source, observer);
-        if (sourceOperation != NoAnalysisId) continue;
-        if (balanced(c, request.publications, request.acquisitions)) {
-            coarseAccepted.insert(coarse);
-            out.push_back(request);
-        }
-    }
-    for (auto& [key, request] : grouped) {
-        const auto [owner, period, source, observer, sourceOperation, targetOperation] = key;
-        const auto coarse = std::make_tuple(owner, period, source, observer);
-        if (sourceOperation == NoAnalysisId) continue;
-        if (!coarseAccepted.count(coarse) && balanced(c, request.publications, request.acquisitions)) {
-            out.push_back(request);
-        }
-    }
-    return out;
-}
-
-bool protocolCompatible(const Program& p, const Control& c,
-                        const std::vector<RecurringRequirement>& requests)
-{
-    Commands commands(commandCutCount(p));
-    std::map<std::pair<Pipe, Pipe>, std::set<unsigned>> used;
-    for (const auto& reservation : p.reservations) {
-        used[{reservation.source, reservation.observer}].insert(reservation.key);
-    }
-    for (const auto& request : requests) {
-        const auto direction = std::make_pair(request.source, request.observer);
-        unsigned number = std::numeric_limits<unsigned>::max();
-        for (auto candidate : p.target.keys[unsigned(request.source)][unsigned(request.observer)]) {
-            if (!used[direction].count(candidate)) {
-                number = candidate;
-                break;
-            }
-        }
-        if (number == std::numeric_limits<unsigned>::max()) return false;
-        used[direction].insert(number);
-        auto add = [&](Cut cut, Command::Kind kind) {
-            const auto canonical = c.canonicalCut[cut];
-            for (auto site : c.wordOccurrences[canonical]) {
-                commands[site].push_back({kind, request.source, request.observer, number});
-            }
-        };
-        for (auto cut : request.publications) add(cut, Command::Publish);
-        for (auto cut : request.acquisitions) add(cut, Command::Acquire);
-    }
-    const auto checked = analyze(p, commands, {false});
-    if (!checked.complete || !checked.diagnostics.empty()) return false;
-    return std::none_of(checked.protocol.begin(), checked.protocol.end(), [](const auto& obligation) {
-        return obligation.kind != ProtocolObligation::ReceiptNotEstablished;
-    });
-}
 } // namespace
 
-std::vector<RecurringRequirement> qualifyCyclicFrontiers(
+RecurringFrontiers qualifyCyclicFrontiers(
     const Program& p, const Control& c, const RequirementFrontiers& frontiers)
 {
-    std::vector<RecurringRequirement> requests;
-    if (!p.observed) return requests;
+    RecurringFrontiers out;
+    if (!p.observed) { return out; }
+    using RoleKey = std::tuple<Pipe, Pipe, std::vector<Cut>, std::vector<Cut>>;
+    std::map<RoleKey, Id> roles;
     for (const auto& loop : p.observed->loops) {
         for (unsigned cell = 0; cell < p.cells.size(); ++cell) {
             auto local = loop.bodyEntry == NoAnalysisId
                 ? qualifyCell(p, c, frontiers, loop, cell)
                 : qualifyEnclosingCell(p, c, frontiers, loop, cell);
+            if (local.empty()) { continue; }
+            RecurringFamily family;
+            family.owner = loop.owner;
+            family.cells = {cell};
+            family.support = local;
             for (auto& request : local) {
-                // Several conservative storage witnesses can name the same
-                // physical role. One actual prefix serves their conjunction.
-                const auto duplicate = std::find_if(requests.begin(), requests.end(), [&](const auto& old) {
-                    return old.source == request.source && old.observer == request.observer &&
-                        old.publications == request.publications && old.acquisitions == request.acquisitions;
-                });
-                if (duplicate == requests.end()) requests.push_back(std::move(request));
-                else {
-                    duplicate->qualifiedCycle &= request.qualifiedCycle;
-                    duplicate->supportSeeds.insert(duplicate->supportSeeds.end(),
-                        request.supportSeeds.begin(), request.supportSeeds.end());
-                    duplicate->cells.insert(duplicate->cells.end(), request.cells.begin(), request.cells.end());
-                    std::sort(duplicate->cells.begin(), duplicate->cells.end());
-                    duplicate->cells.erase(std::unique(duplicate->cells.begin(), duplicate->cells.end()),
-                                           duplicate->cells.end());
+                const RoleKey key{request.source, request.observer, request.publications, request.acquisitions};
+                const auto found = roles.find(key);
+                if (found == roles.end()) {
+                    const auto id = out.roles.size();
+                    roles.emplace(key, id);
+                    family.roles.push_back(id);
+                    out.roles.push_back(std::move(request));
+                } else {
+                    family.roles.push_back(found->second);
+                    auto& role = out.roles[found->second];
+                    role.cells.insert(role.cells.end(), request.cells.begin(), request.cells.end());
+                    std::sort(role.cells.begin(), role.cells.end());
+                    role.cells.erase(std::unique(role.cells.begin(), role.cells.end()), role.cells.end());
                 }
             }
+            std::set<Cut> deadlines;
+            for (auto site : loop.sites) {
+                const auto operation = c.graph.operations[site];
+                if (operation == NoAnalysisId || !c.reachable[site]) { continue; }
+                if (frontiers.use(site, cell).roles) { deadlines.insert(c.canonicalCut[site]); }
+            }
+            family.deadlines.assign(deadlines.begin(), deadlines.end());
+            const auto id = out.families.size();
+            for (auto deadline : family.deadlines) { out.at[{deadline, cell}].push_back(id); }
+            out.families.push_back(std::move(family));
         }
     }
-    // Complex loops can contain RMW accesses and more than two participating
-    // pipelines. Build their recurring frontiers from the shared storage
-    // succession relation. Prefer a direction-wide word; if its uses do not
-    // alternate, retain independently balanced operation-pair words. Every
-    // retained word has exact original-control participation under the finite
-    // balance monitor, and the combined protocol is checked below.
-    // This grants no completion credit: the completed combined ledger is still
-    // checked by the causal frontier before emission.
-    const auto ordinary = requests;
-    auto relationshipRequests = qualifyRelationships(p, c, frontiers);
-    for (auto& candidate : relationshipRequests) {
-        auto subset = [](const std::vector<Cut>& a, const std::vector<Cut>& b) {
-            return std::includes(b.begin(), b.end(), a.begin(), a.end());
-        };
-        requests.erase(std::remove_if(requests.begin(), requests.end(), [&](const auto& old) {
-            const bool replaced = old.owner == candidate.owner && old.source == candidate.source &&
-                old.observer == candidate.observer && subset(old.publications, candidate.publications) &&
-                subset(old.acquisitions, candidate.acquisitions);
-            if (replaced) {
-                candidate.supportSeeds.insert(candidate.supportSeeds.end(),
-                    old.supportSeeds.begin(), old.supportSeeds.end());
-            }
-            return replaced;
-        }), requests.end());
-        requests.push_back(std::move(candidate));
-    }
-    if (!relationshipRequests.empty() && !protocolCompatible(p, c, requests)) requests = ordinary;
-    // Sharing is position-preserving. Occurrence balance and straight paths
-    // do not prove that delaying a publication or advancing an acquisition
-    // preserves the surrounding payload order. Keep distinct boundaries until
-    // a contextual ordering certificate can justify their movement.
-    for (Id i = 0; i < requests.size(); ++i) {
-        auto& a = requests[i];
-        for (Id j = i + 1; j < requests.size();) {
-            const auto& b = requests[j];
-            if (a.source != b.source || a.observer != b.observer || a.owner != b.owner ||
-                a.period != b.period || a.storageRelease != b.storageRelease ||
-                a.publications != b.publications || a.acquisitions != b.acquisitions) {
-                ++j;
-                continue;
-            }
-            a.qualifiedCycle &= b.qualifiedCycle;
-            a.supportSeeds.insert(a.supportSeeds.end(), b.supportSeeds.begin(), b.supportSeeds.end());
-            a.cells.insert(a.cells.end(), b.cells.begin(), b.cells.end());
-            std::sort(a.cells.begin(), a.cells.end());
-            a.cells.erase(std::unique(a.cells.begin(), a.cells.end()), a.cells.end());
-            a.cell = a.cells.front();
-            requests.erase(requests.begin() + j);
-        }
-    }
-    return requests;
+    return out;
 }
-bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
+ProducerSupportScope Constructor::producerScope(const std::vector<RecurringRequirement>& obligations)
 {
-    auto& reserved = recurringKeys;
-    std::set<Id> fixedKeys;
-    for (const auto& endpoint : ledger.records()) {
-        const auto& command = endpoint.command;
-        if (command.kind != Command::Publish && command.kind != Command::Acquire) continue;
-        for (Id key = 0; key < frontier.keys().size(); ++key) {
-            const auto& identity = frontier.keys()[key];
-            if (identity.source == command.source && identity.observer == command.observer && identity.key == command.key)
-                fixedKeys.insert(key);
-        }
-    }
-    // Allocate the proposed words without committing them to the ledger. A
-    // channel is not necessary merely because its participation is qualified.
-    std::vector<Id> keys;
-    std::set<Id> proposedKeys;
-    for (const auto& request : requests) {
-        Id selected = NoAnalysisId;
-        for (Id key = 0; key < frontier.keys().size(); ++key) {
-            const auto& identity = frontier.keys()[key];
-            if (identity.source == request.source && identity.observer == request.observer && !proposedKeys.count(key) && !fixedKeys.count(key)) {
-                selected = key;
-                break;
-            }
-        }
-        if (selected == NoAnalysisId) {
-            return fail(SelectedFailure::EventResource, "qualified recurring roles exceed their eligible key pool");
-        }
-        proposedKeys.insert(selected);
-        keys.push_back(selected);
-    }
-    std::vector<bool> retained(requests.size(), true);
-    auto packet = [&]() {
-        OrderedPacket endpoints;
-        Id channel = result.channels.size();
-        for (Id i = 0; i < requests.size(); ++i) {
-            if (!retained[i]) {
-                continue;
-            }
-            const auto& request = requests[i];
-            const auto number = frontier.keys()[keys[i]].key;
-            auto add = [&](Cut cut, Command::Kind kind) {
-                endpoints.push_back({cut, {kind, request.source, request.observer, number},
-                                     EndpointPurpose::RecurringCompletion, channel});
-            };
-            for (auto cut : request.publications) {
-                add(cut, Command::Publish);
-            }
-            for (auto cut : request.acquisitions) {
-                add(cut, Command::Acquire);
-            }
-            ++channel;
-        }
-        return endpoints;
-    };
-    auto prepared = ledger.preparePacket(packet());
-    if (!prepared.valid()) {
-        return fail(SelectedFailure::SelectedUpdate, prepared.reason());
-    }
-    auto candidate = [&]() { return *ledger.withPacket(prepared); };
-    auto alternativeRoute = [&](Id omitted) {
-        // Immutable topology is only a cheap opportunity filter. Actual prefix,
-        // occurrence, and consumption coverage must pass full replay below.
-        std::set<Pipe> reached{requests[omitted].source};
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            for (Id i = 0; i < requests.size(); ++i)
-                if (i != omitted && retained[i] && reached.count(requests[i].source))
-                    changed |= reached.insert(requests[i].observer).second;
-        }
-        return reached.count(requests[omitted].observer) != 0;
-    };
-    auto requirementKeys = [](const AnalysisResult& report) {
-        std::set<std::tuple<Cut, Id, Id, unsigned, unsigned, unsigned>> out;
-        for (const auto& r : report.residuals)
-            out.emplace(r.consumerCut, r.demand.producer, r.demand.consumer,
-                        r.demand.cell, unsigned(r.kind), unsigned(r.demand.property));
-        return out;
-    };
-    std::optional<AnalysisResult> selected;
-    for (Id index = requests.size(); index-- > 0;) {
-        if (requests[index].qualifiedCycle) continue;
-        if (!alternativeRoute(index)) continue;
-        if (!selected) {
-            selected = analyze(program, candidate(), {false});
-            result.work.recurringAnalysisSites += selected->stats.siteEvaluations;
-        }
-        if (!selected->complete || !selected->diagnostics.empty() ||
-            !selected->protocol.empty() || !selected->phaseResources.empty()) break;
-        retained[index] = false;
-        auto previousPacket = std::move(prepared);
-        prepared = ledger.preparePacket(packet());
-        if (!prepared.valid()) {
-            return fail(SelectedFailure::SelectedUpdate, prepared.reason());
-        }
-        auto trial = analyze(program, candidate(), {false});
-        ++result.work.recurringTrials;
-        result.work.recurringAnalysisSites += trial.stats.siteEvaluations;
-        const auto before = requirementKeys(*selected), after = requirementKeys(trial);
-        // An otherwise memory-redundant return may be the only acknowledgment
-        // for another key. Require all remaining event preconditions, not only
-        // byte completion, and never accept a newly uncovered payload demand.
-        const bool covered = trial.complete && trial.diagnostics.empty() &&
-            trial.protocol.empty() && trial.phaseResources.empty() &&
-            std::includes(before.begin(), before.end(), after.begin(), after.end()) &&
-            std::all_of(trial.retirement.begin(), trial.retirement.end(), [&](const auto& r) {
-                return std::any_of(selected->retirement.begin(), selected->retirement.end(), [&](const auto& old) {
-                    return r.operation == old.operation && r.observer == old.observer;
-                });
-            });
-        if (covered) {
-            selected = std::move(trial);
-            ++result.work.redundantRecurringChannels;
-        } else {
-            retained[index] = true;
-            prepared = std::move(previousPacket);
-        }
-    }
+    ProducerSupportScope out;
     std::array<std::vector<Cut>, PipeCount> seeds;
-    for (Id index = 0; index < requests.size(); ++index) {
-        // A replacement or omission can preserve the cycle's causal effect.
-        // Support belongs to the proposal, not the private channel identity.
-        auto& sites = seeds[unsigned(requests[index].source)];
-        sites.insert(sites.end(), requests[index].supportSeeds.begin(), requests[index].supportSeeds.end());
+    for (const auto& obligation : obligations) {
+        // Support belongs to the selected family even when a role is shared.
+        auto& sites = seeds[unsigned(obligation.source)];
+        sites.insert(sites.end(), obligation.supportSeeds.begin(), obligation.supportSeeds.end());
     }
     for (auto& sites : seeds) {
         for (auto& site : sites) {
@@ -687,15 +421,6 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
         return !sites.empty();
     });
     if (needsSupport) {
-        producerSupportConsumers.resize(control.graph.sites.size());
-        if (!selected) {
-            selected = analyze(program, candidate(), {false});
-            result.work.recurringAnalysisSites += selected->stats.siteEvaluations;
-        }
-        if (!selected->complete || !selected->diagnostics.empty() || !selected->protocol.empty() ||
-            !selected->phaseResources.empty()) {
-            return fail(SelectedFailure::LoopInvariant, "generation packet has unestablished protocol support");
-        }
         // This certificate protects producer-repair relocation, not arbitrary
         // endpoint motion. Both sides use original reachability, including
         // backedges and continuations; an unrelated cell is never excluded.
@@ -734,10 +459,10 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
                     for (const auto& access : op.accesses) {
                         const auto base = (Id(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
                         if (access.read) {
-                            producerSupportClasses[pipe].insert(base);
+                            out.classes[pipe].insert(base);
                         }
                         if (access.write) {
-                            producerSupportClasses[pipe].insert(base + 1);
+                            out.classes[pipe].insert(base + 1);
                         }
                     }
                 }
@@ -746,44 +471,281 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
                 const auto operation = control.graph.operations[site];
                 if (after[site] && operation != NoAnalysisId &&
                     unsigned(program.operations[operation].pipe) == pipe) {
-                    producerSupportConsumers[site] = true;
+                    out.consumers.push_back(site);
                 }
             }
-            for (const auto& residual : selected->residuals) {
-                ++result.work.producerSupportWork;
-                if (unsigned(program.operations[residual.demand.consumer].pipe) != pipe ||
-                    residual.consumerCut >= after.size() || !after[residual.consumerCut]) {
-                    continue;
-                }
-                if (precedingOperations[residual.demand.producer]) {
-                    return fail(SelectedFailure::LoopInvariant,
-                                "generation packet leaves a producer repair crossing its overwrite",
-                                residual.consumerCut);
-                }
-            }
+
         }
     }
-    if (ledger.appendPacket(prepared).size() != prepared.size()) {
-        return fail(SelectedFailure::SelectedUpdate, "recurring packet changed after checking");
+    return out;
+}
+bool Constructor::supportsRecurring(Id id, Cut site, const FrontierRequirement& requirement) const
+{
+    const auto& family = recurringFrontiers.families[id];
+    const auto observer = program.operations[control.graph.operations[site]].pipe;
+    const bool cell = std::find(family.cells.begin(), family.cells.end(), requirement.cell) != family.cells.end();
+    if (!cell) { return false; }
+    return std::any_of(family.support.begin(), family.support.end(), [&](const auto& role) {
+        const bool incoming = role.observer == observer && role.source == requirement.source &&
+            requirement.sourceWrite != role.storageRelease;
+        const bool writerReturn = role.source == observer && requirement.source == observer &&
+            requirement.sourceWrite && requirement.consumerWrite && !role.storageRelease;
+        return incoming || writerReturn;
+    });
+}
+const Constructor::SupportLinks& Constructor::recurringSupportLinks(Id id)
+{
+    auto found = recurringLinks.find(id);
+    const bool cached = found != recurringLinks.end() && found->second.version == ledger.version();
+    if (cached) { return found->second; }
+    auto scope = recurringScopes.find(id);
+    if (scope == recurringScopes.end()) {
+        scope = recurringScopes.emplace(id, producerScope(recurringFrontiers.families[id].support)).first;
     }
-    for (Id index = 0; index < requests.size(); ++index) {
-        if (!retained[index]) continue;
-        const auto& request = requests[index];
-        reserved.insert(keys[index]);
-        needsContextualReplay = true;
-        const auto number = frontier.keys()[keys[index]].key;
-        result.channels.push_back({request.cell, number, request.cells, request.source, request.observer,
-                                   request.publications, request.acquisitions, request.owner,
-                                   request.period});
+    SupportLinks links;
+    links.version = ledger.version();
+    std::set<Id> dependencies;
+    for (auto site : scope->second.consumers) {
+        ++result.work.recurringSupportQueries;
+        const auto operation = control.graph.operations[site];
+        const auto missing = frontier.inspect(cache.cuts[site].before.causal, operation).residuals;
+        const auto pipe = unsigned(program.operations[operation].pipe);
+        for (const auto& r : missing) {
+            if (!scope->second.classes[pipe].count(accessClass(r))) { continue; }
+            const auto candidates = recurringFrontiers.at.find({control.canonicalCut[site], r.cell});
+            Id selected = NoAnalysisId;
+            if (candidates != recurringFrontiers.at.end()) {
+                for (auto family : candidates->second) {
+                    ++result.work.recurringSupportQueries;
+                    if (supportsRecurring(family, site, r)) { selected = family; break; }
+                }
+            }
+            if (selected == NoAnalysisId) {
+                links.reason = "generation packet leaves a producer repair without a supporting recipe";
+                return recurringLinks.insert_or_assign(id, std::move(links)).first->second;
+            }
+            dependencies.insert(selected);
+        }
     }
-    // Obligations survive omission of their private channel. Even if every
-    // channel was redundant, hypothesis traversal cannot certify continuations.
-    needsContextualReplay |= needsSupport;
+    links.complete = true;
+    links.families.assign(dependencies.begin(), dependencies.end());
+    return recurringLinks.insert_or_assign(id, std::move(links)).first->second;
+}
+std::optional<RecurringPacket> Constructor::prepareRecurring(
+    const std::vector<RecurringRequirement>& requests, std::string& reason,
+    const ProducerSupportScope* support)
+{
+    RecurringPacket proposal;
+    proposal.requests = requests;
+    proposal.supportClasses = producerSupportClasses;
+    proposal.supportConsumers = producerSupportConsumers;
+    std::set<Id> used;
+    for (const auto& request : requests) {
+        Id selected = NoAnalysisId;
+        for (Id key = 0; key < frontier.keys().size(); ++key) {
+            const auto& identity = frontier.keys()[key];
+            const bool eligible = identity.source == request.source && identity.observer == request.observer &&
+                !used.count(key) && unownedKey(key) && ledger.eventUses(identity).empty();
+            if (eligible) { selected = key; break; }
+        }
+        if (selected == NoAnalysisId) {
+            reason = "qualified recurring roles exceed their eligible unused key pool";
+            return {};
+        }
+        used.insert(selected);
+        proposal.keys.push_back(selected);
+    }
+    OrderedPacket endpoints;
+    for (Id i = 0; i < requests.size(); ++i) {
+        const auto& request = requests[i];
+        const auto number = frontier.keys()[proposal.keys[i]].key;
+        const auto channel = result.channels.size() + i;
+        for (auto cut : request.publications) {
+            endpoints.push_back({cut, {Command::Publish, request.source, request.observer, number},
+                                 EndpointPurpose::RecurringCompletion, channel});
+        }
+        for (auto cut : request.acquisitions) {
+            endpoints.push_back({cut, {Command::Acquire, request.source, request.observer, number},
+                                 EndpointPurpose::RecurringCompletion, channel});
+        }
+    }
+    auto owned = prepareOwnedPacket(endpoints);
+    if (!owned) { reason = "recurring packet lacks complete ownership"; return {}; }
+    const auto words = ledger.withPacket(owned->prepared);
+    if (!words) { reason = "recurring packet changed during preparation"; return {}; }
+    const auto checked = analyze(program, *words, {false});
+    ++result.work.ownershipChecks;
+    result.work.ownershipCheckSites += checked.stats.siteEvaluations;
+    result.work.recurringAnalysisSites += checked.stats.siteEvaluations;
+    if (!acceptOwnedPacket(*owned, checked)) {
+        reason = "recurring packet lacks event or established support";
+        return {};
+    }
+    proposal.packet = std::move(*owned);
+    const auto scope = support ? *support : producerScope(requests);
+    if (!scope.consumers.empty()) { proposal.supportConsumers.resize(control.graph.sites.size()); }
+    for (unsigned pipe = 0; pipe < PipeCount; ++pipe) {
+        proposal.supportClasses[pipe].insert(scope.classes[pipe].begin(), scope.classes[pipe].end());
+    }
+    for (auto site : scope.consumers) { proposal.supportConsumers[site] = true; }
+    const auto view = ledger.packetView(proposal.packet.prepared);
+    if (!view) { reason = "recurring overlay changed during qualification"; return {}; }
+    proposal.evaluated = evaluateContextual(&*view, proposal.supportClasses, proposal.supportConsumers, 0);
+    result.work.recurringReplaySites += proposal.evaluated.evaluations;
+    if (!proposal.evaluated.success) { reason = proposal.evaluated.reason; return {}; }
+    return proposal;
+}
+bool Constructor::commitRecurring(RecurringPacket& proposal)
+{
+    SelectedDecision record;
+    if (!commitOwnedPacket(proposal.packet, record)) { return false; }
+    producerSupportClasses = proposal.supportClasses;
+    producerSupportConsumers = proposal.supportConsumers;
+    for (Id i = 0; i < proposal.requests.size(); ++i) {
+        const auto& request = proposal.requests[i];
+        const auto key = proposal.keys[i];
+        recurringKeys.insert(key);
+        closedKeys.insert(key);
+        result.channels.push_back({request.cell, frontier.keys()[key].key, request.cells,
+            request.source, request.observer, request.publications, request.acquisitions,
+            request.owner, request.period});
+    }
+    needsContextualReplay = true;
     result.work.recurringChannels = result.channels.size();
-    // These are physical access roles, not definite-write/content certificates.
-    // They are symbolic obligations, not assumed fresh-entry receipts.
-    // finish() checks the entire selected ledger from the original root, through
-    // every original entry/backedge/exit. Failure exports no executable program.
+    cache = std::move(proposal.evaluated);
+    refreshSources();
+    SelectedUpdate update;
+    update.version = ledger.version();
+    update.siteEvaluations = cache.evaluations;
+    update.contextual = true;
+    update.finalizedQueries = std::count(finalized.begin(), finalized.end(), true);
+    update.changedCuts = ledger.changes();
+    result.updates.push_back(std::move(update));
+    ledger.clearChanges();
+    ++result.work.selectedUpdates;
+    ++result.work.unreusedUpdates;
     return true;
+}
+bool Constructor::activateRecurring()
+{
+    const auto operation = control.graph.operations[current];
+    if (operation == NoAnalysisId || recurringFrontiers.families.empty()) { return true; }
+    const auto word = control.canonicalCut[current];
+    bool indexed = false;
+    for (const auto& access : program.operations[operation].accesses) {
+        indexed |= recurringFrontiers.at.count({word, access.cell}) != 0;
+    }
+    if (!indexed) { return true; }
+    if (!recurringBaseline) {
+        // Hypothesis traversal is not the residual used to select a recurrence.
+        // Establish one cold, command-free fixed point of the selected ledger.
+        needsContextualReplay = true;
+        cache = {};
+        if (!contextualReplay()) { return false; }
+        recurringBaseline = true;
+    }
+    auto classes = [](const std::vector<FrontierRequirement>& residuals) {
+        std::set<Id> out;
+        for (const auto& r : residuals) { out.insert(accessClass(r)); }
+        return out;
+    };
+    while (true) {
+        const auto before = residual();
+        if (before.empty()) { return true; }
+        std::set<Id> candidates;
+        for (const auto& r : before) {
+            const auto found = recurringFrontiers.at.find({word, r.cell});
+            if (found == recurringFrontiers.at.end()) { continue; }
+            result.work.recurringCandidates += found->second.size();
+            for (auto id : found->second) {
+                if (supportsRecurring(id, current, r)) { candidates.insert(id); }
+            }
+        }
+        bool activated = false;
+        for (auto id : candidates) {
+            auto& attempt = attemptedFamilies[id];
+            if (activeFamilies[id]) { continue; }
+            const bool cachedRefusal = attempt.evaluated && attempt.version == ledger.version() &&
+                !attempt.improving.count(current);
+            if (cachedRefusal) { continue; }
+            attempt = {ledger.version(), true, {}};
+            ++result.work.recurringAttempts;
+            const auto& family = recurringFrontiers.families[id];
+            std::set<Id> closure, roles;
+            std::vector<Id> pending{id};
+            ProducerSupportScope support;
+            std::set<Cut> supportConsumers;
+            std::string reason;
+            bool supported = true;
+            while (!pending.empty()) {
+                const auto member = pending.back(); pending.pop_back();
+                if (!closure.insert(member).second) { continue; }
+                ++result.work.recurringSupportQueries;
+                const auto& recipe = recurringFrontiers.families[member];
+                roles.insert(recipe.roles.begin(), recipe.roles.end());
+                const auto& links = recurringSupportLinks(member);
+                const auto& scope = recurringScopes.at(member);
+                for (unsigned pipe = 0; pipe < PipeCount; ++pipe) {
+                    support.classes[pipe].insert(scope.classes[pipe].begin(), scope.classes[pipe].end());
+                }
+                supportConsumers.insert(scope.consumers.begin(), scope.consumers.end());
+                if (!links.complete) { supported = false; reason = links.reason; break; }
+                pending.insert(pending.end(), links.families.begin(), links.families.end());
+            }
+            std::vector<RecurringRequirement> requests;
+            std::vector<Id> newRoles;
+            for (auto role : roles) {
+                if (activeRoles.count(role)) { continue; }
+                newRoles.push_back(role);
+                requests.push_back(recurringFrontiers.roles[role]);
+            }
+            if (supported && requests.empty()) { continue; }
+            support.consumers.assign(supportConsumers.begin(), supportConsumers.end());
+            auto proposal = supported ? prepareRecurring(requests, reason, &support) : std::nullopt;
+            if (!proposal) {
+                ++result.work.recurringDeclines;
+                result.recurringRefusals.push_back({current, id, ledger.version(), reason});
+                continue;
+            }
+            // One staged fixed point answers every occurrence of this recipe.
+            // Remember improving deadlines, not a blanket family refusal: an
+            // unrelated prelude can leave this same family useful later with
+            // no intervening ledger change.
+            for (auto deadline : family.deadlines) {
+                for (auto site : control.wordOccurrences[deadline]) {
+                    const auto op = control.graph.operations[site];
+                    if (op == NoAnalysisId || !cache.cuts[site].before.causal.reachable()) { continue; }
+                    const auto old = frontier.inspect(cache.cuts[site].before.causal, op);
+                    const auto next = frontier.inspect(proposal->evaluated.cuts[site].before.causal, op);
+                    const auto oldSet = classes(old.residuals), newSet = classes(next.residuals);
+                    const bool valid = next.failure == FrontierFailure::None ||
+                        next.failure == FrontierFailure::Payload;
+                    const bool reduced = valid && newSet.size() < oldSet.size() &&
+                        std::includes(oldSet.begin(), oldSet.end(), newSet.begin(), newSet.end());
+                    if (reduced) {
+                        attempt.improving.insert(site);
+                    }
+                }
+            }
+            if (!attempt.improving.count(current)) { ++result.work.recurringDeclines; continue; }
+            const auto candidate = frontier.inspect(proposal->evaluated.cuts[current].before.causal, operation);
+            const auto newClasses = classes(candidate.residuals);
+            const auto firstChannel = result.channels.size();
+            if (!commitRecurring(*proposal)) { return false; }
+            for (Id i = 0; i < newRoles.size(); ++i) { activeRoles.emplace(newRoles[i], firstChannel + i); }
+            for (auto member : closure) { activeFamilies[member] = true; }
+            const bool sameResult = classes(residual()) == newClasses && cache.version == ledger.version();
+            if (!sameResult) {
+                return fail(SelectedFailure::MissingParticipation,
+                    "selected recurring packet did not reduce the complete actual residual", current);
+            }
+            ++result.work.recurringActivations;
+            result.activations.push_back({current, {closure.begin(), closure.end()},
+                                          before, residual(), ledger.version()});
+            activated = true;
+            break;
+        }
+        if (!activated) { return true; }
+    }
 }
 } // namespace mlir::pto::oahs::selected

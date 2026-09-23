@@ -86,11 +86,12 @@ bool Constructor::join(State& target, const State& input)
     target.causal = std::move(merged.state);
     return true;
 }
-bool Constructor::word(State& state, Cut site, Replay& replay)
+bool Constructor::word(State& state, Cut site, Replay& replay, const PacketView* proposed)
 {
     Id offset = 0;
-    for (auto id : ledger.word(site)) {
-        const auto& endpoint = ledger.endpoint(id);
+    const auto& word = proposed ? proposed->word(site) : ledger.word(site);
+    for (auto id : word) {
+        const auto& endpoint = proposed ? proposed->endpoint(id) : ledger.endpoint(id);
         auto step = frontier.command(state.causal, endpoint.command, {site, offset++});
         if (!step.applied) {
             replay.failureEndpoint = id;
@@ -307,14 +308,15 @@ bool Constructor::partialSite(Id index, Cut site, std::vector<State>& incoming, 
     }
     return true;
 }
-bool Constructor::contextualReplay()
+Replay Constructor::evaluateContextual(const PacketView* proposed,
+    const std::array<std::set<Id>, PipeCount>& supportClasses,
+    const std::vector<bool>& supportConsumers, Id resume)
 {
     // Solve the actual selected word on every original edge. Unfinished payloads
     // contribute pending effects, never their desired conflict edges. In
     // particular a child region does not reset events or erase incoming work.
     Replay fresh;
-    fresh.version = ledger.version();
-    ++result.work.contextualReplays;
+    fresh.version = proposed ? proposed->version() : ledger.version();
     fresh.cuts.resize(control.graph.sites.size());
     std::vector<State> incoming(control.graph.sites.size());
     std::deque<Id> queue;
@@ -331,7 +333,6 @@ bool Constructor::contextualReplay()
     // recomputed region is still solved over the WHOLE remaining graph from its
     // actual incoming interface; nothing is truncated at the active component,
     // so an aggregate over a shared word stays complete.
-    const auto resume = reusablePrefix();
     for (Id index = 0; fresh.success && index < resume; ++index) {
         for (auto site : control.components[index].sites) {
             fresh.cuts[site] = cache.cuts[site];
@@ -368,7 +369,7 @@ bool Constructor::contextualReplay()
         auto state = incoming[site];
         ++fresh.evaluations;
         fresh.cuts[site].incoming = state;
-        if (!word(state, site, fresh)) break;
+        if (!word(state, site, fresh, proposed)) { break; }
         fresh.cuts[site].before = state;
         if (!payload(state, site, fresh, true)) break;
         fresh.cuts[site].outgoing = state;
@@ -392,7 +393,7 @@ bool Constructor::contextualReplay()
     // Test the stabilized states, not an intermediate worklist approximation.
     for (Cut site = 0; fresh.success && site < finalized.size(); ++site) {
         const auto operation = control.graph.operations[site];
-        const bool supported = site < producerSupportConsumers.size() && producerSupportConsumers[site];
+        const bool supported = site < supportConsumers.size() && supportConsumers[site];
         if ((!finalized[site] && !supported) || operation == NoAnalysisId ||
             !fresh.cuts[site].before.causal.reachable()) {
             continue;
@@ -407,7 +408,7 @@ bool Constructor::contextualReplay()
             const auto pipe = unsigned(program.operations[operation].pipe);
             for (const auto& residual : checked.residuals) {
                 ++result.work.producerSupportWork;
-                if (producerSupportClasses[pipe].count(accessClass(residual))) {
+                if (supportClasses[pipe].count(accessClass(residual))) {
                     fresh.success = false;
                     fresh.failure = FrontierFailure::Payload;
                     fresh.failureCut = site;
@@ -417,9 +418,15 @@ bool Constructor::contextualReplay()
             }
         }
     }
+    return fresh;
+}
+bool Constructor::contextualReplay()
+{
+    ++result.work.contextualReplays;
+    auto fresh = evaluateContextual(nullptr, producerSupportClasses, producerSupportConsumers, reusablePrefix());
     result.work.replaySiteEvaluations += fresh.evaluations;
     cache = std::move(fresh);
-    if (!cache.success) return fail(SelectedFailure::SelectedUpdate, cache.reason, cache.failureCut);
+    if (!cache.success) { return fail(SelectedFailure::SelectedUpdate, cache.reason, cache.failureCut); }
     refreshSources();
     return true;
 }

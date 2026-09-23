@@ -754,11 +754,18 @@ void resourceAdmission(unsigned keys)
     if (keys == 2) {
         require(plan.success, "exact-fit cohort stranded a feasible ordinary handoff: " + plan.reason);
     }
-    require(plan.declinedRecurring.has_value(), "optional cohort should be declined");
-    require(plan.declinedRecurring->work.recurringProposals != 0 && plan.channels.empty(),
-            "optional cohort was not discarded completely");
-    compareWords(plan.commands, reference.commands);
-    std::cout << "keys=" << keys << " declined=" << plan.declinedRecurring->reason << '\n';
+    require(plan.declinedRecurring || plan.work.recurringDeclines != 0,
+            "unbound optional support must be visibly declined");
+    if (plan.declinedRecurring) {
+        require(plan.channels.empty(), "whole-attempt retry retained recurring reservations");
+        require(plan.declinedRecurring->work.recurringProposals != 0, "retry lost proposal accounting");
+        compareWords(plan.commands, reference.commands);
+    } else {
+        require(plan.work.recurringActivations == 1 && plan.channels.size() == 2,
+                "local decline did not preserve exactly the admitted complete family");
+    }
+    std::cout << "keys=" << keys << " local_declines=" << plan.work.recurringDeclines
+              << " retry=" << bool(plan.declinedRecurring) << '\n';
 }
 void separateReleaseFrontiers()
 {

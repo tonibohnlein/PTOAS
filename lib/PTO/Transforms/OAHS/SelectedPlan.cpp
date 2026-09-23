@@ -161,11 +161,12 @@ SelectedPlan Constructor::run(const Commands& fixed, bool useRecurring)
         return complete();
     }
     if (useRecurring) {
-        const auto channels = qualifyCyclicFrontiers(program, control, requirements);
-        result.work.recurringProposals = channels.size();
-        if (!channels.empty() && !recurring(channels)) {
-            return complete();
-        }
+        recurringFrontiers = qualifyCyclicFrontiers(program, control, requirements);
+        result.work.recurringProposals = recurringFrontiers.roles.size();
+        result.work.recurringFamilies = recurringFrontiers.families.size();
+        for (const auto& entry : recurringFrontiers.at) { result.work.recurringIndexEntries += entry.second.size(); }
+        activeFamilies.resize(recurringFrontiers.families.size());
+        attemptedFamilies.resize(recurringFrontiers.families.size());
     }
     for (activeComponent = 0; activeComponent < control.components.size(); ++activeComponent) {
         // End compiler role reservations, not physical event state. Actual D/S

@@ -255,6 +255,29 @@ std::optional<Commands> Ledger::withPacket(const PreparedPacket& packet) const
     }
     return out;
 }
+std::optional<PacketView> Ledger::packetView(const PreparedPacket& packet) const
+{
+    if (!packet.ready || packet.owner != this || packet.version != revision ||
+        packet.firstEndpoint != endpoints.size()) { return {}; }
+    PacketView view;
+    view.ledger = this;
+    view.packet = &packet;
+    view.canonical = &canonicalCut;
+    for (const auto& entry : packet.insertions) {
+        view.words.emplace(entry.first, insertedWord(word(entry.first), entry.second));
+    }
+    return view;
+}
+const std::vector<Id>& PacketView::word(Cut site) const
+{
+    const auto found = words.find((*canonical)[site]);
+    return found == words.end() ? ledger->word(site) : found->second;
+}
+const SelectedEndpoint& PacketView::endpoint(Id id) const
+{
+    return id < packet->firstEndpoint ? ledger->endpoint(id) : packet->endpoints[id - packet->firstEndpoint];
+}
+uint64_t PacketView::version() const { return packet->version + packet->ordered.size(); }
 void Ledger::recordEvent(const SelectedEndpoint& endpoint)
 {
     const auto& command = endpoint.command;

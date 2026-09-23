@@ -465,6 +465,7 @@ bool Constructor::consume()
     if (operation == NoAnalysisId || !currentState().causal.reachable()) {
         return true;
     }
+    if (!activateRecurring()) { return false; }
     const auto observer = program.operations[operation].pipe;
     auto crossCount = [&](const std::vector<FrontierRequirement>& values) {
         return std::count_if(values.begin(), values.end(),

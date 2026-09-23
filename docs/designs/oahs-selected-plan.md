@@ -1087,3 +1087,57 @@ is memoized per applicability query; owner interface memberships reference share
 records rather than copying each exit for each member/cell. Counters now include
 original composition and endpoint applicability. Unknowns preserve obligations;
 this checkpoint does not synthesize optional-child guards or activate protocols.
+
+## Step V design invariant — residual-activated finite support
+
+Missing fact: flat recurring channels erase which complete decoded lifetime needs
+which support. Retain logical role identities and explicit family-to-role recipes;
+sharing a role never joins the activating families. Index candidate families by
+actual payload word/cell. Discovery reserves no key and grants no causal credit.
+
+At the first indexed deadline, establish a cold contextual baseline of the current
+ledger, then use its actual complete residual, including producer WAW/WAR. Select
+one matching finite recipe in stable order. Stage its exact packet, all existing
+ownership and new producer-support obligations privately. Reject without changing
+ledger, reservations, support records or causal state. On acceptance commit the
+same packet, propagate its actual credit and require strict complete-residual
+decrease. No source snapshots are invented for future payloads.
+
+The initial replacement consumes qualified slot/enclosing recipes. Standalone
+relationship opportunities without explicit finite rearming support use ordinary
+construction; the old population-level protocol trial and omission sweep are
+removed rather than used to infer a selected recipe. This is an explicit migration
+limitation: recover their useful support through common logical recipes, not by
+restoring broader word replacement or completed-plan deletion. Temporary quality
+changes are recorded; supported-input service and independent checking remain
+mandatory. Preserve original recipes and exact endpoints, including GEMM banks.
+
+New certificate state is private until commitment. The producer-support check
+remains a sufficient interval-crossing safeguard, not full publication-prefix
+certification. Complete ownership/neighbor checking uses the common owned packet
+path. Key allocation initially chooses unused, unowned keys deterministically;
+reuse across certified disjoint lifetimes belongs to the binding-policy increment.
+
+V final scope: each family caches its affected scope; support closure follows
+finite indexed family links and unions cached scopes. Current-ledger residuals
+can overapproximate support needed after packet legs. Missing support declines,
+never grants credit. Unhelpful proof results retain per-deadline improvement
+information at the exact ledger version, so a later useful deadline is not
+silently suppressed. A complete merged support rectangle is checked privately.
+
+`PacketView` overlays only changed words, retaining exact endpoint order and
+revision. The common contextual evaluator executes that view using the same
+pending-issue, native-access history and join semantics as selected evaluation.
+The event analyzer is an additional check, not an authoritative-credit substitute.
+After exact commit, the accepted evaluation supplies the new selected state;
+refresh source handles without a third complete replay. No future payload snapshot
+is fabricated. Failed candidate caches are diagnostic/query state only.
+
+This is a construction-policy migration, not a query-equivalent refactor.
+Family-first selection, conservative support closure and unused-key allocation
+remain sufficient unfinished restrictions. Supported RMW relationships need
+explicit recipes before regaining the old trial-dependent protocols. The finite
+RMSNorm ordering losses and global-evaluation cost are recorded in HANDOFF.
+Draft v0.38 local probes require a later replacement for both full-graph private
+checks; the present version does not claim that milestone or the new class-first
+single-scan policy. Admission success alone does not establish preserved overlap.

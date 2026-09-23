@@ -57,11 +57,21 @@ S; optional-child predicate materialization remains unfinished. Native evidence
 is typed-query activation plus normal-constructor validation, not proof that every
 selected channel used typed facts. See HANDOFF for exact evidence/restrictions.
 
-Next V: residual-driven activation of prescribed finite support, replacing the
-upfront recurring installer. Include same-engine WAW deadlines; stage ownership,
-support and reservations atomically; actual propagation must discharge the trigger.
-Then finish optional-child composition, persistent publication support, binding
-policy and linked independent banks. F/G/L/R recovery remains open throughout.
+V replaces upfront installation with actual-residual activation of finite family
+support. Exact private packets must pass both event analysis and shared causal
+replay, preserve merged producer support, and strictly reduce the complete
+residual before atomic commit. Sharing a role does not activate its other family.
+Bulk relationship replacement and omission trials are removed. See HANDOFF for
+service, finite ordering and cost evidence; V is a bounded migration increment.
+
+Open V recoveries: standalone/RMW support recipes (corpus36/82/83 added order),
+partial-admission interactions (target2 added order), ordinary/recurring provider
+competition, historical-unused-key restriction, and whole-graph private probes.
+The independently updated draft v0.38 (`7e8076e`) now explicitly specifies local
+probe interfaces, recipe classes and a single dominance scan. Implement these
+as named policy/interface changes; V has not implemented that policy. Complete
+optional-child participation, persistent source support and independent banks;
+F/G/L/R cost/quality closure remains open throughout.
 
 ## Historical resumed implementation queue
 

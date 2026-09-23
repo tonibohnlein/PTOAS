@@ -1738,6 +1738,14 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " recurring_trials=" << work.recurringTrials
                  << " recurring_removed=" << work.redundantRecurringChannels
                  << " recurring_analysis_sites=" << work.recurringAnalysisSites
+                 << " recurring_replay_sites=" << work.recurringReplaySites
+                 << " recurring_support_queries=" << work.recurringSupportQueries
+                 << " recurring_families=" << work.recurringFamilies
+                 << " recurring_index_entries=" << work.recurringIndexEntries
+                 << " recurring_candidates=" << work.recurringCandidates
+                 << " recurring_attempts=" << work.recurringAttempts
+                 << " recurring_activations=" << work.recurringActivations
+                 << " recurring_declines=" << work.recurringDeclines
                  << " loop_entry_transfers=" << work.loopEntryTransfers
                  << " loop_entry_analysis_sites=" << work.loopEntryAnalysisSites
                  << " loop_entry_preparation_sites=" << work.loopEntryPreparationSites

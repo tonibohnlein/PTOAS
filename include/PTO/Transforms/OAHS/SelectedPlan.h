@@ -67,6 +67,18 @@ struct SelectedDecision {
     // acquired once at the common consumer. These are actual emitted cuts.
     std::vector<Cut> publicationFrontier = {};
 };
+struct SelectedRecurringActivation {
+    Cut deadline = NoAnalysisId;
+    std::vector<std::size_t> families;
+    std::vector<FrontierRequirement> before, after;
+    uint64_t version = 0;
+};
+struct SelectedRecurringRefusal {
+    Cut deadline = NoAnalysisId;
+    std::size_t family = NoAnalysisId;
+    uint64_t version = 0;
+    std::string reason;
+};
 struct SelectedUpdate {
     uint64_t version = 0, siteEvaluations = 0;
     std::size_t finalizedQueries = 0;
@@ -136,7 +148,10 @@ struct SelectedWork {
     std::size_t sourceHandles = 0, acknowledgments = 0, commonCutTransfers = 0;
     std::size_t recurringChannels = 0, recurringProposals = 0;
     std::size_t recurringTrials = 0, redundantRecurringChannels = 0;
-    uint64_t recurringAnalysisSites = 0;
+    uint64_t recurringAnalysisSites = 0, recurringReplaySites = 0, recurringSupportQueries = 0;
+    std::size_t recurringFamilies = 0, recurringIndexEntries = 0;
+    std::size_t recurringCandidates = 0, recurringAttempts = 0;
+    std::size_t recurringActivations = 0, recurringDeclines = 0;
     std::size_t loopEntryTransfers = 0;
     std::size_t rearmingDischarged = 0;
     std::size_t rearmingRestored = 0;
@@ -180,6 +195,8 @@ struct SelectedPlan {
     std::vector<SelectedSource> sources;
     std::vector<SelectedDecision> decisions;
     std::vector<SelectedChannel> channels;
+    std::vector<SelectedRecurringActivation> activations;
+    std::vector<SelectedRecurringRefusal> recurringRefusals;
     std::vector<SelectedFence> fences;
     std::vector<SelectedUpdate> updates;
     // Populated only from the final, entry-containing original-graph proof.

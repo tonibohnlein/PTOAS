@@ -537,7 +537,7 @@ void mixedEndpointProofs()
     require(first.proved() && second.proved() && first.originalInterval && !second.originalInterval,
             "mixed-proof alias fixture did not distinguish equivalent endpoint proofs");
     const auto requests = o::selected::qualifyCyclicFrontiers(p, control, facts);
-    require(!requests.empty(), "equivalent endpoint roles depended on using the same proof path");
+    require(!requests.roles.empty(), "equivalent endpoint roles depended on using the same proof path");
     const auto plan = accepted(p);
     require(o::checkCausalFrontier(p, plan.commands).accepted, "mixed endpoint proof paths lost matching");
 }
@@ -594,6 +594,100 @@ void physicalDeadlines()
 
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static bool install(Constructor& c, const std::vector<RecurringRequirement>& requests)
+    {
+        std::string reason;
+        auto proposal = c.prepareRecurring(requests, reason);
+        if (!proposal) { c.result.reason = reason; return false; }
+        return c.commitRecurring(*proposal);
+    }
+    static void nonImprovingRecurring()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(1, 4);
+        p.operations = {op(P, {{0, false, true}}), op(Q, {}), op(P, {{0, false, true}})};
+        Constructor c(p);
+        RecurringRequirement ready;
+        ready.source = P; ready.observer = Q; ready.cells = {0};
+        ready.publications = {0}; ready.acquisitions = {1};
+        auto release = ready;
+        release.source = Q; release.observer = P; release.storageRelease = true;
+        release.publications = release.acquisitions = {2};
+        c.recurringFrontiers.roles = {ready, release};
+        RecurringFamily family;
+        family.cells = {0}; family.roles = {0, 1}; family.support = {ready, release}; family.deadlines = {2};
+        c.recurringFrontiers.families = {family}; c.recurringFrontiers.at[{2, 0}] = {0};
+        c.activeFamilies.resize(1); c.attemptedFamilies.resize(1); c.current = 2;
+        require(c.activateRecurring(), "legal non-improving packet poisoned ordinary construction");
+        require(c.result.work.recurringDeclines == 1 && c.ledger.records().empty() &&
+                    c.recurringKeys.empty() && c.result.channels.empty() && !c.residual().empty(),
+                "non-improving packet mutated state or received hypothetical credit");
+        const auto work = c.result.work.recurringReplaySites;
+        require(c.activateRecurring() && c.result.work.recurringReplaySites == work,
+                "unchanged no-progress packet repeated its whole-graph proof");
+    }
+    static void mergedRecurringSupport()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(2, 4);
+        p.operations = {op(P, {{0, false, true}}), op(P, {{1, false, true}}),
+                        op(P, {{0, false, true}}), op(Q, {{1, true, false}}),
+                        op(P, {{1, false, true}})};
+        RecurringRequirement ready;
+        ready.source = P; ready.observer = Q; ready.publications = ready.acquisitions = {3};
+        ready.supportSeeds = {4};
+        auto release = ready;
+        release.source = Q; release.observer = P; release.publications = release.acquisitions = {4};
+        release.supportSeeds.clear();
+        Constructor separate(p);
+        std::string reason;
+        require(bool(separate.prepareRecurring({ready, release}, reason)),
+                "new support rectangle should be qualified alone: " + reason);
+        Constructor joined(p);
+        joined.producerSupportConsumers.resize(p.operations.size() + 1);
+        joined.producerSupportConsumers[2] = true;
+        joined.producerSupportClasses[unsigned(P)].insert((PipeCount + unsigned(P)) * 2 + 1);
+        require(joined.contextualReplay(), "old support rectangle should be qualified alone");
+        const auto before = joined.producerSupportClasses;
+        require(!joined.prepareRecurring({ready, release}, reason) &&
+                    reason.find("generation support") != std::string::npos && joined.ledger.records().empty() &&
+                    joined.producerSupportClasses == before && joined.result.channels.empty(),
+                "merged support omitted an old-consumer/new-class obligation or mutated state");
+    }
+    static void recurringOverlay()
+    {
+        auto p = base(1, 4);
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        p.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}})};
+        Constructor c(p);
+        c.ledger.append(1, {Command::Barrier, Q}, EndpointPurpose::Fixed);
+        RecurringRequirement ready;
+        ready.source = P; ready.observer = Q; ready.publications = ready.acquisitions = {1};
+        auto release = ready;
+        release.source = Q; release.observer = P; release.publications = release.acquisitions = {2};
+        std::string reason;
+        auto proposal = c.prepareRecurring({ready, release}, reason);
+        require(bool(proposal), "mixed old/new packet qualification failed: " + reason);
+        const auto version = c.ledger.version();
+        require(c.ledger.records().size() == 1 && c.recurringKeys.empty() && c.result.channels.empty(),
+                "private packet evaluation mutated live state");
+        require(c.commitRecurring(*proposal), c.result.reason);
+        const auto cold = checkCausalFrontier(p, c.ledger.commands());
+        require(cold.accepted && c.cache.version == c.ledger.version() && c.ledger.version() > version,
+                "committed exact packet disagreed with cold checking");
+        for (Cut site = 0; site < cold.cuts.size(); ++site) {
+            require(*cold.cuts[site].beforeIssue.facts() == *c.cache.cuts[site].before.causal.facts(),
+                    "packet overlay did not preserve exact old/new word state");
+        }
+        Constructor stale(p);
+        auto pending = stale.prepareRecurring({ready, release}, reason);
+        require(bool(pending), reason);
+        stale.ledger.append(0, {Command::Barrier, P}, EndpointPurpose::Fixed);
+        const auto changed = stale.ledger.version();
+        require(!stale.commitRecurring(*pending) && stale.ledger.version() == changed &&
+                    stale.result.channels.empty() && stale.recurringKeys.empty(),
+                "stale recurring packet changed commands or metadata");
+    }
     static void omittedSupport()
     {
         const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE1;
@@ -618,11 +712,11 @@ struct ReplayTestAccess {
         second.source = R;
         second.observer = Q;
         second.acquisitions = {3};
-        require(!constructor.recurring({direct, first, second}) &&
-                    constructor.result.reason.find("producer repair") != std::string::npos,
+        require(!install(constructor, {direct, first, second}) &&
+                    constructor.result.reason.find("generation support") != std::string::npos,
                 "omitting a private channel dropped the proposal's residual-support obligation");
-        require(constructor.result.work.redundantRecurringChannels == 1 && constructor.ledger.records().empty(),
-                "support witness did not omit its private channel atomically");
+        require(constructor.ledger.records().empty() && constructor.producerSupportConsumers.empty(),
+                "rejected support packet mutated the ledger or support records");
     }
     static void persistentSupport()
     {
@@ -646,7 +740,7 @@ struct ReplayTestAccess {
         release.publications = {3};
         release.acquisitions = {3};
         release.supportSeeds.clear();
-        require(c.recurring({ready, release}), c.result.reason);
+        require(install(c, {ready, release}), c.result.reason);
         require(c.contextualReplay(), "actual return did not establish generation support: " + c.result.reason);
         require(std::none_of(c.finalized.begin(), c.finalized.end(), [](bool value) { return value; }),
                 "support test must exercise unfinished consumer deadlines");
@@ -703,7 +797,7 @@ struct ReplayTestAccess {
         release.observer = P;
         release.publications = release.acquisitions = {3};
         release.supportSeeds.clear();
-        require(c.recurring({ready, release}) && c.contextualReplay(),
+        require(install(c, {ready, release}) && c.contextualReplay(),
                 "actual return failed to cover older incompatible ACC support: " + c.result.reason);
         for (const auto& endpoint : c.ledger.records()) {
             if (endpoint.command.source == Q && endpoint.command.observer == P) {
@@ -754,6 +848,9 @@ int main()
     typedReaderEndpoints();
     mixedEndpointProofs();
     o::selected::ReplayTestAccess::everyInterveningOccurrence();
+    o::selected::ReplayTestAccess::nonImprovingRecurring();
+    o::selected::ReplayTestAccess::mergedRecurringSupport();
+    o::selected::ReplayTestAccess::recurringOverlay();
     o::selected::ReplayTestAccess::omittedSupport();
     std::cout << "shared occurrence and physical-deadline queries passed\n";
 }

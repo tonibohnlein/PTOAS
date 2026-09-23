@@ -37,6 +37,15 @@ void checkSlots(unsigned slots)
     require(result.work.frontierPreviousUse != 0,
             "recurring release requirements lost previous-use correspondence");
     require(result.channels.size() == 2 * slots, "cyclic qualifier must derive both roles per slot");
+    require(result.work.recurringActivations != 0 && !result.declinedRecurring,
+            "normal constructor did not activate required cyclic support");
+    for (const auto& activation : result.activations) {
+        require(!activation.before.empty() && activation.after.size() < activation.before.size(),
+                "recurring support was installed without actual deadline progress");
+    }
+    const auto covered = accepted(input.program, result.commands);
+    require(covered.work.recurringFamilies != 0 && covered.activations.empty() && covered.channels.empty(),
+            "already covered recurring opportunities allocated another protocol");
     require(result.work.acknowledgments == 0 && count(result, o::Command::Barrier) == 0 &&
             count(result, o::Command::BarrierAll) == 0, "qualified slot cycle must not select extra barriers/helpers");
     for (const auto& channel : result.channels) {
@@ -254,6 +263,9 @@ void sharedRecurringPrefixes()
     const auto result = accepted(input.program);
     require(result.channels.size() == 2,
             "common matrix consumer and reuse frontier must share recurring ready/release prefixes");
+    require(result.work.recurringFamilies == 2 && result.activations.size() == 1 &&
+                result.activations.front().families.size() == 1,
+            "sharing a role incorrectly activated every family using it");
     for (const auto& channel : result.channels) {
         require(channel.cells == std::vector<unsigned>({0, 1}),
                 "shared recurring channel must retain both physical obligations");
@@ -285,21 +297,31 @@ void transitiveRecurringCoverage()
     const auto result = accepted(program);
     std::cout << "transitive channels=" << result.channels.size()
               << " removed=" << result.work.redundantRecurringChannels << '\n';
-    require(result.channels.size() == 3 && result.work.redundantRecurringChannels == 3,
-            "load/RMW/store recurrence must retain only its ready/ready/release chain");
-    require(result.work.acknowledgments == 0, "real storage release already supplies rearming");
-    // A remaining storage-release channel is also part of the rearming proof.
-    // Deleting any complete channel must invalidate the combined cycle.
-    for (const auto &channel : result.channels) {
-        auto words = result.commands;
-        for (auto &word : words)
-            word.erase(std::remove_if(word.begin(), word.end(), [&](const auto &command) {
-                return (command.kind == o::Command::Publish || command.kind == o::Command::Acquire) &&
-                    command.source == channel.source && command.observer == channel.observer && command.key == channel.key;
-            }), word.end());
-        require(!o::checkCausalFrontier(program, words).accepted,
-                "removing a necessary whole channel was accepted");
+    // The old three-channel result was obtained by completed-population
+    // omission trials. Its quality recovery needs a finite RMW support recipe;
+    // keep this service/negative witness without restoring that search policy.
+    require(result.work.recurringTrials == 0, "recurring construction restored omission search");
+    std::set<std::tuple<o::Pipe, o::Pipe, unsigned>> channels;
+    for (const auto& word : result.commands) {
+        for (const auto& command : word) {
+            if (command.kind == o::Command::Acquire) {
+                channels.emplace(command.source, command.observer, command.key);
+            }
+        }
     }
+    require(!channels.empty(), "RMW recurrence lost all actual transfers");
+    unsigned necessary = 0;
+    for (const auto& channel : channels) {
+        auto words = result.commands;
+        for (auto& word : words) {
+            word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+                return (command.kind == o::Command::Publish || command.kind == o::Command::Acquire) &&
+                    std::make_tuple(command.source, command.observer, command.key) == channel;
+            }), word.end());
+        }
+        necessary += !o::checkCausalFrontier(program, words).accepted;
+    }
+    require(necessary != 0, "RMW channel deletion negatives became vacuous");
 }
 // The frontend specializes physical effects, never payload order. Check that
 // ACC reuse remains a compute obligation and cannot gate the next bank fill.
