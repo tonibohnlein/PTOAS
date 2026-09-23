@@ -1199,3 +1199,67 @@ sets. Interval geometry is reused across predicates. Batch preparation/output an
 requested-root traversal have scaling evidence; arbitrary overlapping refusals
 and existing occurrence-metadata refresh have no universal linear-cost claim.
 The selected causal state, event ownership and authoritative checker are unchanged.
+
+## Step X invariant — restored consumption waits at selected reuse deadlines
+
+Missing fact: a dormant consumption-only helper records the consumed forward
+publication but restoration currently binds both return endpoints immediately
+after that old consumption. Later required forward-key reuse has an actual
+selected republication deadline. Returning knowledge before that deadline does
+not require gating the publisher at the old consumption point.
+
+Extend the existing rearming obligation/common owned-packet path: retain the
+return publication at its original consumption gap; qualify the return wait at
+the exact gap preceding the proposed forward-key publication. The immutable
+occurrence query must prove the same one-shot participating interval. The exact
+complete staged packet must retain all active/dormant ownership, matching,
+neighboring-use and rearming checks. A future return supplies no credit. Source
+and target endpoints are committed exactly as checked.
+
+This is a binding-policy/placement extension. It is not a proof that every later
+publication prefix stays unchanged. It preserves existing independent publication
+positions before this reuse deadline; existing causal/event checking still
+handles the full packet. Unsupported occurrence or neighboring-use cases retain
+the checked original closed restoration, recorded as a conservative repair.
+Do not erase a mandatory rearming obligation when deadline placement is unknown.
+The normal-constructor witness, complete payload-order comparison, intended
+WAIT-before-republication case and guarded/multiple-owner negatives are required.
+
+The selected restoration keeps one endpoint identity. `originalCut` preserves the
+fallback word; `SelectedRestoration` records the consumed identity, helper pair,
+actual republication identity, placed/fallback words, revision and refusal reason.
+These are diagnostic construction records, never acquired completion. Private
+packet views expose the relocated record; commitment installs those exact words.
+Active publications, fixed endpoints and helper provenance cannot be relocated.
+
+The current sufficient certificate requires one proposed forward republication,
+one dormant owner on the reverse key, proved acyclic straight occurrence pairing,
+and no earlier selected/proposed use of either key inside the interval. Exact
+word gaps order uses; packet order only breaks ties at the same gap. Multiple
+owners/deadlines and recurrence are unfinished composition limits, not hardware
+restrictions. Their replacement needs a joint deadline/neighbor proof. No dtype,
+opcode, allocation-spelling or producer-uniformity condition is introduced.
+
+The whole dormant-owner closure is still authoritative. If local late placement
+passes but its complete packet fails, qualify the same closure and frozen request
+once at original gaps. Record the complete-check failure; do not try subsets,
+other sources or helper networks. Loop-entry selection uses this same qualifier
+and retains the final refusal diagnostics for its existing required-repair rule.
+Raw recurring preparation currently uses unused keys; explicit `restoreReturns`
+has no proposed republication and retains original placement.
+
+Position indexes are local to one packet preparation and shared by every owner
+query. Each touched original word is indexed once; key-use populations and
+occurrence pairs remain charged explicitly. Full packet analysis and ordinary
+selected causal replay remain separate costs. The fallback adds at most one
+extra preparation/check for a failed late realization. This does not resolve the
+open whole-graph replay cost or establish a whole-pass complexity bound.
+
+The normal-constructor two-branch witness strictly removes complete finite
+issue/completion relations versus the legal original-gap protocol. It keeps the
+same communication population. Native tests retain imported effects/control and
+restrict only the two relevant event pools to one key to force reuse; equivalent
+views and unrelated arithmetic/control retain activation. Native reconstruction
+also runs with the real target pools. This distinction prevents a scarce-profile
+mechanism test from being presented as a device-performance result. Access-scoped
+native ACC and descriptor contracts are unchanged, so their existing suites apply.

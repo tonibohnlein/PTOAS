@@ -92,6 +92,20 @@ family-first selection and full-graph private qualification remain transitional.
 Integrate local source/target/unchanged-interval certificates into the common
 packet path before claiming the regular-pipeline construction milestone complete.
 
+### X binding continuation
+
+Step X instantiates the existing F7 consumption-deadline contract: it relocates an
+inactive acknowledgment WAIT, preserving its original return publication and
+owner, only through a qualified complete packet. Failed late qualification has
+one prescribed original-gap repair of the same population. This changes binding
+placement, not provider ranking. The paper already specifies this deadline rule;
+X does not require a new ordinary-core axiom or enlarge a scoped theorem.
+
+The next binding dependency is common helper-free selection at a frozen source
+gap before repair/key order broadens it. This remains distinct from v0.38's later
+cross-request recipe-class policy. Complete persistent publication-support and
+normal-constructor two-child/linked-bank acceptance are still open.
+
 ## Objective and acceptance boundary
 
 Recover the general algorithm, not the old branch commit by commit. Preserve

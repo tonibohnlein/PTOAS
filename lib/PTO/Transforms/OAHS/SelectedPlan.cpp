@@ -105,6 +105,14 @@ SelectedPlan Constructor::run(const Commands& fixed, bool useRecurring)
             if (decision.repairedAcquisition != NoAnalysisId)
                 decision.repairedAcquisition = remap[decision.repairedAcquisition];
         }
+        for (auto& placement : result.restorations) {
+            placement.consumption = remap[placement.consumption];
+            placement.publication = remap[placement.publication];
+            placement.acquisition = remap[placement.acquisition];
+            if (placement.deadlinePublication != NoAnalysisId) {
+                placement.deadlinePublication = remap[placement.deadlinePublication];
+            }
+        }
         result.work.sourceHandles = result.sources.size();
         result.work.occurrenceAnalysisSites = control.occurrenceAnalysisSites;
         result.work.boundaryAnalysisSites = control.boundaryAnalysisSites;

@@ -124,6 +124,9 @@ struct PacketEndpoint {
     Id acknowledgesPacket = NoAnalysisId;
     // Restore this inactive identity, preserving all original provenance.
     Id restore = NoAnalysisId;
+    // Explicit relocation of an inactive consumption-only WAIT. Ordinary
+    // restoration still requires the exact original word and provenance.
+    bool relocate = false;
 };
 using OrderedPacket = std::vector<PacketEndpoint>;
 class Ledger;
@@ -144,6 +147,7 @@ private:
     Id firstEndpoint = NoAnalysisId;
     std::vector<SelectedEndpoint> endpoints;
     std::vector<Id> ordered, restored;
+    std::map<Id, SelectedEndpoint> relocated;
     // Frozen original offsets are derived from stable gaps once. Multiple
     // insertions at one gap retain packet order; no word is copied to prepare.
     std::map<Cut, std::map<Id, std::vector<Id>>> insertions;
@@ -156,6 +160,8 @@ class OwnedPacket {
     PreparedPacket prepared;
     std::vector<Id> restoredWaits;
     Id restoredEndpoints = 0;
+    std::map<Id, Id> deadlines;
+    std::map<Id, std::string> fallbackReasons;
 };
 
 class Ledger {
@@ -173,6 +179,7 @@ public:
     const std::vector<Id>& eventUses(const EventIdentity&) const;
     bool hasDormantUses(const EventIdentity&) const;
     std::optional<PacketEndpoint> restoration(Id, const WordGap&) const;
+    std::optional<PacketEndpoint> relocateAcknowledgment(Id, const WordGap&) const;
     PreparedPacket preparePacket(const OrderedPacket&) const;
     std::optional<Commands> withPacket(const PreparedPacket&) const;
     std::optional<PacketView> packetView(const PreparedPacket&) const;
@@ -548,6 +555,9 @@ private:
     // Append-only populations already paired for each direction. Old helpers
     // see only new returns; new helpers see all returns, in the original order.
     std::map<std::pair<Pipe, Pipe>, std::pair<Id, Id>> pairedReturns;
+    std::optional<WordGap> restorationDeadline(
+        const RearmingObligation&, const OrderedPacket&, Id, const std::vector<Id>&,
+        std::map<Cut, std::map<Id, Id>>&, std::string&);
     bool restoreReturns(Id);
     bool restoreRearming(Id, Cut);
     bool settleRearming(const SelectedDecision&);
@@ -588,9 +598,11 @@ private:
                            const std::vector<FrontierRequirement>&, Group&);
     bool consume();
     bool bind(Group&, RequirementStage);
-    std::optional<OwnedPacket> prepareOwnedPacket(const OrderedPacket&, const std::vector<Id>& obligations = {});
+    std::optional<OwnedPacket> prepareOwnedPacket(const OrderedPacket&, const std::vector<Id>& obligations = {},
+                                                   bool placeAtDeadline = true);
     std::optional<OwnedPacket> qualifyOwnedPacket(const OrderedPacket&, bool alwaysCheck = false,
-                                                 const std::vector<Id>& obligations = {});
+                                                 const std::vector<Id>& obligations = {},
+                                                 AnalysisResult* refusal = nullptr);
     bool acceptOwnedPacket(OwnedPacket&, const AnalysisResult&) const;
     bool commitOwnedPacket(const OwnedPacket&, SelectedDecision&);
     bool unownedKey(Id) const;

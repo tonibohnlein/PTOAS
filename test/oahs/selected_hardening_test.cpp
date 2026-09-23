@@ -165,6 +165,117 @@ struct ReplayTestAccess {
         constructor.needsContextualReplay = true;
         return constructor.run({}, false);
     }
+    static void restorationIntervals(unsigned variant)
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(1, 2);
+        for (unsigned i = 0; i < 5; ++i) { p.operations.push_back(op(P, {{0, true, false}})); }
+        Constructor c(p);
+        c.ledger.append(0, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion);
+        const auto consumed = c.ledger.append(0, {Command::Acquire, P, Q, 0}, EndpointPurpose::Completion);
+        const auto pub = c.ledger.append(0, {Command::Publish, Q, P, 0},
+            EndpointPurpose::ConsumptionAcknowledgment, 0, consumed);
+        const auto wait = c.ledger.append(0, {Command::Acquire, Q, P, 0},
+            EndpointPurpose::ConsumptionAcknowledgment, 0, consumed);
+        c.rememberReturn(pub, wait);
+        c.ledger.erase(pub); c.ledger.erase(wait);
+        const auto marker = c.ledger.append(3, {Command::Barrier, Pipe::MTE1}, EndpointPurpose::Fixed);
+        const WordGap head{3, NoAnalysisId, marker};
+        OrderedPacket request{
+            {3, {Command::Acquire, P, Q, 0}, EndpointPurpose::Completion, 0, NoAnalysisId, c.ledger.tail(3)},
+            {3, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion, 0, NoAnalysisId, head}};
+        if (variant == 1) {
+            request[0].gap = head; request[1].gap = c.ledger.tail(3);
+            std::swap(request[0], request[1]);
+        }
+        if (variant == 2) {
+            c.ledger.append(1, {Command::Publish, Q, P, 0}, EndpointPurpose::Completion);
+            c.ledger.append(1, {Command::Acquire, Q, P, 0}, EndpointPurpose::Completion);
+        }
+        if (variant == 3) {
+            request = {{0, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion},
+                       {0, {Command::Acquire, P, Q, 0}, EndpointPurpose::Completion}};
+        }
+        auto staged = c.prepareOwnedPacket(request, {wait});
+        require(bool(staged), "interval fixture could not stage owned packet");
+        const bool late = variant == 0 || variant == 3;
+        require((!staged->deadlines.empty()) == late,
+                "deadline query confused packet index with emitted gap order: variant=" + std::to_string(variant) +
+                " reason=" + staged->fallbackReasons.at(wait));
+        if (late) {
+            const auto commands = c.ledger.withPacket(staged->prepared);
+            require(commands && checkCausalFrontier(p, *commands).accepted,
+                    "qualified gap interval did not establish actual rearming");
+        } else {
+            const auto expected = variant == 1 ? "packet has an earlier use of a restored key" :
+                                                 "earlier selected forward or reverse key use";
+            require(staged->fallbackReasons.at(wait) == expected, "interval refusal lost its precise premise");
+        }
+        require(c.result.work.restorationPositionEntries <= c.ledger.records().size(),
+                "position index scanned one word repeatedly");
+    }
+    static void restorationFallback()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE1;
+        auto p = base(1, 2);
+        for (unsigned i = 0; i < 8; ++i) { p.operations.push_back(op(P, {{0, true, false}})); }
+        Constructor c(p);
+        const auto exchange = [&](Cut cut, Pipe source, Pipe observer) {
+            c.ledger.append(cut, {Command::Publish, source, observer, 0}, EndpointPurpose::Completion);
+            return c.ledger.append(cut, {Command::Acquire, source, observer, 0}, EndpointPurpose::Completion);
+        };
+        const auto helper = [&](Cut cut, Pipe source, Pipe observer, Id consumed) {
+            const auto pub = c.ledger.append(cut, {Command::Publish, source, observer, 0},
+                EndpointPurpose::ConsumptionAcknowledgment, 0, consumed);
+            const auto wait = c.ledger.append(cut, {Command::Acquire, source, observer, 0},
+                EndpointPurpose::ConsumptionAcknowledgment, 0, consumed);
+            c.rememberReturn(pub, wait);
+            return std::make_pair(pub, wait);
+        };
+        c.ledger.append(0, {Command::Publish, R, P, 0}, EndpointPurpose::Completion);
+        exchange(1, P, R);
+        exchange(1, R, Q);
+        const auto consumedA = exchange(2, P, Q);
+        const auto a = helper(2, Q, P, consumedA);
+        const auto consumedB = c.ledger.append(3, {Command::Acquire, R, P, 0}, EndpointPurpose::Completion);
+        const auto b = helper(3, P, R, consumedB);
+        for (const auto& pair : {a, b}) { c.ledger.erase(pair.first); c.ledger.erase(pair.second); }
+        c.result.work.rearmingDischarged = 2;
+        require(checkCausalFrontier(p, c.ledger.commands()).accepted, "fallback fixture has invalid dormant ledger");
+        const OrderedPacket request{
+            {6, {Command::Publish, P, Q, 0}, EndpointPurpose::Completion},
+            {7, {Command::Acquire, P, Q, 0}, EndpointPurpose::Completion}};
+        const auto revision = c.ledger.version();
+        auto late = c.prepareOwnedPacket(request, {a.second, b.second});
+        require(late && late->deadlines.size() == 1, "fixture did not propose late A restoration");
+        const auto staged = c.ledger.withPacket(late->prepared);
+        require(staged && !checkCausalFrontier(p, *staged).accepted,
+                "late A receipt incorrectly retained B's consumption support");
+        const auto qualified = c.qualifyOwnedPacket(request, true, {a.second, b.second});
+        require(qualified && qualified->deadlines.empty() && c.result.work.restorationDeadlineFallbacks == 1,
+                "complete late failure did not recover the same owner population at original gaps");
+        require(c.ledger.version() == revision,
+                "qualification mutated the selected ledger");
+        const auto checked = c.ledger.withPacket(qualified->prepared);
+        SelectedDecision decision;
+        require(c.commitOwnedPacket(*qualified, decision), "qualified fallback failed commit");
+        require(checked && checkCausalFrontier(p, *checked).accepted,
+                "fallback did not commit its exact checked words");
+        const auto committed = c.ledger.commands();
+        require(committed.size() == checked->size(), "fallback changed command population");
+        for (Cut cut = 0; cut < committed.size(); ++cut) {
+            require(committed[cut].size() == (*checked)[cut].size() &&
+                    std::equal(committed[cut].begin(), committed[cut].end(), (*checked)[cut].begin(), identical),
+                    "fallback committed words differ from checked words");
+        }
+        require(c.ledger.endpoint(a.second).cut == 2 && c.ledger.endpoint(b.second).cut == 3 &&
+                c.result.restorations.size() == 2 && c.result.work.rearmingRestored == 2,
+                "fallback selected only part of the dormant ownership population");
+        for (const auto& restored : c.result.restorations) {
+            require(restored.fallbackReason == "deadline realization failed complete packet qualification",
+                    "fallback lost the complete-check refusal reason");
+        }
+    }
     static void ownedPackets(bool acknowledgment = false)
     {
         const auto P = Pipe::MTE2, Q = Pipe::V;
@@ -657,6 +768,52 @@ void mixedRestorationPacket()
                                    *ledger.restoration(acquisition, newGap)}).valid(),
             "fresh restoration accepted an inactive consumption anchor");
 }
+void relocatedRestorationPacket()
+{
+    auto p = base(1, 1);
+    p.operations = {op(P, {{0, false, true, true}}), op(Q, {{0, true, false}}),
+                    op(Q, {{0, true, false}})};
+    o::selected::Control control(p);
+    o::selected::Ledger ledger(p, control.canonicalCut);
+    ledger.append(1, {o::Command::Publish, P, Q, 0}, o::EndpointPurpose::Completion);
+    const auto consumed = ledger.append(1, {o::Command::Acquire, P, Q, 0}, o::EndpointPurpose::Completion);
+    const auto pub = ledger.append(1, {o::Command::Publish, Q, P, 0},
+        o::EndpointPurpose::ConsumptionAcknowledgment, 0, consumed);
+    const auto wait = ledger.append(1, {o::Command::Acquire, Q, P, 0},
+        o::EndpointPurpose::ConsumptionAcknowledgment, 0, consumed);
+    ledger.erase(pub);
+    ledger.erase(wait);
+    const o::selected::OrderedPacket proposal{
+        *ledger.restoration(pub, *ledger.gapAfter(consumed)),
+        *ledger.relocateAcknowledgment(wait, ledger.tail(2)),
+        {2, {o::Command::Publish, P, Q, 0}, o::EndpointPurpose::Completion},
+        {2, {o::Command::Acquire, P, Q, 0}, o::EndpointPurpose::Completion}};
+    const auto prepared = ledger.preparePacket(proposal);
+    const auto staged = ledger.withPacket(prepared);
+    require(staged && o::checkCausalFrontier(p, *staged).accepted, "relocated packet is not legal");
+    const auto revision = ledger.version();
+    auto changed = proposal;
+    changed[1].acknowledges = pub;
+    require(!ledger.preparePacket(changed).valid(), "relocation changed acknowledgment provenance");
+    require(!ledger.relocateAcknowledgment(pub, ledger.tail(2)), "publication was offered as movable consumption wait");
+    require(ledger.version() == revision && ledger.endpoint(wait).cut == 1,
+            "staging mutated original placement");
+    const auto ids = ledger.appendPacket(prepared);
+    require(ids.size() == 4 && ids[1] == wait && ledger.endpoint(wait).cut == 2 &&
+            ledger.endpoint(wait).originalCut == 1 && ledger.endpoint(wait).acknowledges == consumed,
+            "relocation lost identity, provenance or original placement");
+    require(ledger.word(2).front() == wait && ledger.gapAfter(wait)->right == ids[2],
+            "relocated wait did not precede its exact republication");
+    require(ledger.eventUses({Q, P, 0}).size() == 2 && !ledger.hasDormantUses({Q, P, 0}),
+            "relocation duplicated or orphaned event ownership");
+    compareWords(*staged, ledger.commands());
+    const auto committed = ledger.commands();
+    require(ledger.appendPacket(prepared).empty(), "stale relocated packet committed twice");
+    compareWords(committed, ledger.commands());
+    ledger.erase(wait);
+    require(!ledger.gapAfter(wait) && ledger.word(2).size() == 2 && ledger.hasDormantUses({Q, P, 0}),
+            "erase used the original rather than relocated word");
+}
 void aliasPacketGaps()
 {
     auto p = base(1, 1);
@@ -917,6 +1074,10 @@ void deadlineFence()
 }
 int main()
 {
+    for (unsigned variant = 0; variant < 4; ++variant) {
+        o::selected::ReplayTestAccess::restorationIntervals(variant);
+    }
+    o::selected::ReplayTestAccess::restorationFallback();
     o::selected::ReplayTestAccess::ownedPackets();
     o::selected::ReplayTestAccess::ownedPackets(true);
     o::selected::ReplayTestAccess::ownedCandidateOrder();
@@ -931,6 +1092,7 @@ int main()
     stablePacketGaps();
     aliasPacketGaps();
     mixedRestorationPacket();
+    relocatedRestorationPacket();
     resourceAdmission(1);
     resourceAdmission(2);
     deadlineFence();

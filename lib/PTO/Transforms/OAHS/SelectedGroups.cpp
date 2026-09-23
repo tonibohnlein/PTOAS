@@ -282,13 +282,11 @@ bool Constructor::loopEntryFrontier(
             OrderedPacket packet{
                 {publication, {Command::Publish, source, observer, number}, EndpointPurpose::Completion, request},
                 {loop.entry, {Command::Acquire, source, observer, number}, EndpointPurpose::Completion, request}};
-            auto prepared = prepareOwnedPacket(packet);
-            if (!prepared) { continue; }
-            const auto commands = ledger.withPacket(prepared->prepared);
-            if (!commands) { continue; }
-            const auto trial = analyze(program, *commands, {false});
-            result.work.loopEntryAnalysisSites += trial.stats.siteEvaluations;
-            if (acceptOwnedPacket(*prepared, trial)) {
+            AnalysisResult trial;
+            const auto beforeSites = result.work.ownershipCheckSites;
+            auto prepared = qualifyOwnedPacket(packet, true, {}, &trial);
+            result.work.loopEntryAnalysisSites += result.work.ownershipCheckSites - beforeSites;
+            if (prepared) {
                 forward = key;
                 selectedPacket = std::move(*prepared);
                 break;

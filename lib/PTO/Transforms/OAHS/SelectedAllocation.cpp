@@ -15,8 +15,106 @@ bool Constructor::unownedKey(Id key) const
     return !closedKeys.count(key) && !recurringKeys.count(key) &&
            !ledger.hasDormantUses(frontier.keys()[key]);
 }
+std::optional<WordGap> Constructor::restorationDeadline(
+    const RearmingObligation& owner, const OrderedPacket& proposed, Id deadline,
+    const std::vector<Id>& proposedUses, std::map<Cut, std::map<Id, Id>>& positions, std::string& reason)
+{
+    ++result.work.restorationDeadlineQueries;
+    const auto& consumption = ledger.endpoint(owner.consumption);
+    const auto& publication = proposed[deadline];
+    reason = "reuse deadline has no valid selected word gap";
+    if (publication.cut >= control.graph.sites.size()) { return {}; }
+    const auto gap = publication.gap.value_or(ledger.tail(publication.cut));
+    const bool invalidGap = gap.cut >= control.graph.sites.size() ||
+        control.canonicalCut[gap.cut] != control.canonicalCut[publication.cut];
+    if (invalidGap) { return {}; }
+    // Packet-local index: each touched word is scanned once, even when several
+    // owners and occurrence pairs query positions in that word.
+    const auto position = [&](Cut cut, Id endpoint) -> std::optional<Id> {
+        cut = control.canonicalCut[cut];
+        auto found = positions.find(cut);
+        if (found == positions.end()) {
+            auto& index = positions[cut];
+            const auto& word = ledger.word(cut);
+            for (Id offset = 0; offset < word.size(); ++offset) {
+                index.emplace(word[offset], offset);
+                ++result.work.restorationPositionEntries;
+            }
+            found = positions.find(cut);
+        }
+        if (endpoint == NoAnalysisId) { return ledger.word(cut).size(); }
+        const auto value = found->second.find(endpoint);
+        if (value == found->second.end()) { return {}; }
+        return value->second;
+    };
+    const auto gapOffset = [&](const WordGap& at) -> std::optional<Id> {
+        if (at.cut >= control.graph.sites.size()) { return {}; }
+        const auto offset = position(at.cut, at.right);
+        if (!offset) { return {}; }
+        const auto& word = ledger.word(at.cut);
+        if (at.left != (*offset ? word[*offset - 1] : NoAnalysisId)) { return {}; }
+        return offset;
+    };
+    const auto target = gapOffset(gap);
+    const auto consumed = position(consumption.cut, owner.consumption);
+    if (!target || !consumed) { return {}; }
+    const auto targetOffset = *target;
+    const auto sourceOffset = *consumed + 1;
+    reason = "reuse deadline lacks one acyclic matched occurrence interval";
+    const auto& relation = control.correspondence(consumption.cut, publication.cut);
+    if (!relation.proved()) { return {}; }
+    const auto reverseKey = keyIndex(frontier, ledger.endpoint(owner.acquisition).command);
+    auto within = [&](Cut cut, Id offset, const auto& pair) {
+        const bool enclosed = control.straight(pair.first, cut) && control.straight(cut, pair.second);
+        if (!enclosed) { return false; }
+        if (cut == pair.first && offset < sourceOffset) { return false; }
+        if (cut == pair.second && offset >= targetOffset) { return false; }
+        return true;
+    };
+    for (const auto& pair : relation.pairs) {
+        if (!control.reachable[pair.first]) { continue; }
+        const bool cyclic = control.components[control.component[pair.first]].cyclic ||
+            control.components[control.component[pair.second]].cyclic;
+        if (cyclic || !control.straight(pair.first, pair.second)) { return {}; }
+        if (pair.first == pair.second && sourceOffset > targetOffset) { return {}; }
+        // The inactive return may remain live until this deadline only when
+        // neither key has an earlier selected use. Event population is sparse.
+        for (auto key : {owner.forwardKey, reverseKey}) {
+            for (auto id : ledger.eventUses(frontier.keys()[key])) {
+                if (!ledger.active(id)) { continue; }
+                ++result.work.restorationUseChecks;
+                const auto& endpoint = ledger.endpoint(id);
+                const auto offset = position(endpoint.cut, id);
+                if (!offset) { return {}; }
+                for (auto site : control.wordOccurrences[endpoint.cut]) {
+                    if (within(site, *offset, pair)) {
+                        reason = "earlier selected forward or reverse key use"; return {};
+                    }
+                }
+            }
+        }
+        for (auto index : proposedUses) {
+            if (index == deadline) { continue; }
+            ++result.work.restorationUseChecks;
+            const auto& use = proposed[index];
+            const auto useGap = use.gap.value_or(ledger.tail(use.cut));
+            const auto offset = gapOffset(useGap);
+            if (!offset || control.canonicalCut[useGap.cut] != control.canonicalCut[use.cut]) { return {}; }
+            for (auto site : control.wordOccurrences[control.canonicalCut[use.cut]]) {
+                const bool afterSource = site != pair.first || *offset >= sourceOffset;
+                const bool beforeTarget = site != pair.second || *offset < targetOffset ||
+                    (*offset == targetOffset && index < deadline);
+                const bool earlier = control.straight(pair.first, site) && control.straight(site, pair.second) &&
+                    afterSource && beforeTarget;
+                if (earlier) { reason = "packet has an earlier use of a restored key"; return {}; }
+            }
+        }
+    }
+    reason.clear();
+    return gap;
+}
 std::optional<OwnedPacket> Constructor::prepareOwnedPacket(
-    const OrderedPacket& proposed, const std::vector<Id>& obligations)
+    const OrderedPacket& proposed, const std::vector<Id>& obligations, bool placeAtDeadline)
 {
     ++result.work.ownershipQueries;
     std::set<std::tuple<Pipe, Pipe, unsigned>> touched;
@@ -46,8 +144,8 @@ std::optional<OwnedPacket> Constructor::prepareOwnedPacket(
         return true;
     };
     for (const auto& item : proposed) {
-        if (!touch(item.command)) { return {}; }
-
+        const bool supported = legalCommandCut(program, item.cut) && touch(item.command);
+        if (!supported) { return {}; }
     }
     for (Id index = 0; index < pending.size(); ++index) {
         const auto id = pending[index];
@@ -78,12 +176,45 @@ std::optional<OwnedPacket> Constructor::prepareOwnedPacket(
     const auto gaps = ledger.gapsAfter(anchors);
     OwnedPacket out;
     OrderedPacket packet;
+    std::map<Id, std::vector<Id>> publications, uses;
+    std::map<Id, Id> reverseOwners;
+    std::map<Cut, std::map<Id, Id>> positions;
+    for (Id index = 0; index < proposed.size(); ++index) {
+        const auto& command = proposed[index].command;
+        if (command.kind != Command::Publish && command.kind != Command::Acquire) { continue; }
+        const auto key = keyIndex(frontier, command);
+        uses[key].push_back(index);
+        if (command.kind == Command::Publish) { publications[key].push_back(index); }
+    }
+    for (auto id : owners) {
+        ++reverseOwners[keyIndex(frontier, ledger.endpoint(rearming.at(id).acquisition).command)];
+    }
     for (auto id : owners) {
         const auto& owner = rearming.at(id);
         const auto gap = gaps.find(owner.consumption);
         if (gap == gaps.end()) { return {}; }
         const auto pub = ledger.restoration(owner.publication, gap->second);
-        const auto wait = ledger.restoration(owner.acquisition, gap->second);
+        auto wait = ledger.restoration(owner.acquisition, gap->second);
+        auto& reason = out.fallbackReasons[id];
+        reason = "no proposed forward republication deadline";
+        const auto found = publications.find(owner.forwardKey);
+        const auto reverse = keyIndex(frontier, ledger.endpoint(owner.acquisition).command);
+        const bool single = found != publications.end() && found->second.size() == 1 && reverseOwners[reverse] == 1;
+        const bool multiple = found != publications.end() && found->second.size() != 1;
+        if (multiple) {
+            reason = "multiple proposed forward republication deadlines";
+        }
+        if (reverseOwners[reverse] != 1) { reason = "multiple dormant reverse-key owners"; }
+        if (!placeAtDeadline) { reason = "deadline realization failed complete packet qualification"; }
+        if (single && placeAtDeadline) {
+            auto relevant = uses[owner.forwardKey];
+            relevant.insert(relevant.end(), uses[reverse].begin(), uses[reverse].end());
+            const auto deadline = found->second.front();
+            if (const auto late = restorationDeadline(owner, proposed, deadline, relevant, positions, reason)) {
+                wait = ledger.relocateAcknowledgment(owner.acquisition, *late);
+                out.deadlines.emplace(id, deadline);
+            }
+        }
         if (!pub || !wait) { return {}; }
         packet.push_back(*pub);
         packet.push_back(*wait);
@@ -103,17 +234,29 @@ std::optional<OwnedPacket> Constructor::prepareOwnedPacket(
     return out;
 }
 std::optional<OwnedPacket> Constructor::qualifyOwnedPacket(
-    const OrderedPacket& proposed, bool alwaysCheck, const std::vector<Id>& obligations)
+    const OrderedPacket& proposed, bool alwaysCheck, const std::vector<Id>& obligations, AnalysisResult* refusal)
 {
     auto out = prepareOwnedPacket(proposed, obligations);
     if (!out) { return {}; }
     if (alwaysCheck || !out->restoredWaits.empty()) {
-        const auto commands = ledger.withPacket(out->prepared);
-        if (!commands) { return {}; }
-        const auto checked = analyze(program, *commands, {false});
-        ++result.work.ownershipChecks;
-        result.work.ownershipCheckSites += checked.stats.siteEvaluations;
-        if (!acceptOwnedPacket(*out, checked)) { return {}; }
+        const auto qualify = [&](OwnedPacket& candidate) {
+            const auto commands = ledger.withPacket(candidate.prepared);
+            if (!commands) { return false; }
+            auto checked = analyze(program, *commands, {false});
+            ++result.work.ownershipChecks;
+            result.work.ownershipCheckSites += checked.stats.siteEvaluations;
+            const bool accepted = acceptOwnedPacket(candidate, checked);
+            if (!accepted && refusal) { *refusal = std::move(checked); }
+            return accepted;
+        };
+        if (!qualify(*out)) {
+            // One prescribed fallback, with the same complete dormant-owner
+            // closure and logical request. Never search owner subsets or shapes.
+            if (out->deadlines.empty()) { return {}; }
+            ++result.work.restorationDeadlineFallbacks;
+            out = prepareOwnedPacket(proposed, obligations, false);
+            if (!out || !qualify(*out)) { return {}; }
+        }
     } else {
         out->qualified = true; // Existing source-time and neighboring-use certificates.
     }
@@ -159,6 +302,14 @@ bool Constructor::commitOwnedPacket(const OwnedPacket& packet, SelectedDecision&
     for (auto wait : packet.restoredWaits) {
         auto& obligation = rearming.at(wait);
         obligation.required = true;
+        const auto deadline = packet.deadlines.find(wait);
+        const auto& placed = ledger.endpoint(obligation.acquisition);
+        const auto originalCut = placed.originalCut == NoAnalysisId ? placed.cut : placed.originalCut;
+        const auto publication = deadline == packet.deadlines.end() ? NoAnalysisId :
+            ids[packet.restoredEndpoints + deadline->second];
+        result.restorations.push_back({obligation.consumption, obligation.publication, obligation.acquisition,
+            publication, originalCut, placed.cut, ledger.version(), packet.fallbackReasons.at(wait)});
+        result.work.deadlineRestorations += deadline != packet.deadlines.end();
         ++result.work.acknowledgments;
         ++result.work.rearmingRestored;
         if (obligation.deferred) {

@@ -31,6 +31,16 @@ struct SelectedEndpoint {
     // RecurringCompletion indexes channels; ordinary completion indexes decisions.
     std::size_t request = NoAnalysisId;
     std::size_t acknowledges = NoAnalysisId;
+    // Original dormant fallback word, retained when its inactive WAIT is placed
+    // at a proved later reuse deadline. No duplicate ownership is introduced.
+    Cut originalCut = NoAnalysisId;
+};
+struct SelectedRestoration {
+    std::size_t consumption = NoAnalysisId, publication = NoAnalysisId, acquisition = NoAnalysisId;
+    std::size_t deadlinePublication = NoAnalysisId;
+    Cut fallbackCut = NoAnalysisId, placedCut = NoAnalysisId;
+    uint64_t version = 0;
+    std::string fallbackReason;
 };
 struct SelectedSource {
     Pipe pipe = Pipe::S;
@@ -132,6 +142,8 @@ struct SelectedWork {
     uint64_t requirementClassifications = 0, classificationSites = 0, classificationOrigins = 0;
     uint64_t witnessQueries = 0, witnessSites = 0;
     uint64_t producerSupportWork = 0;
+    uint64_t restorationDeadlineQueries = 0, restorationUseChecks = 0, deadlineRestorations = 0;
+    uint64_t restorationPositionEntries = 0, restorationDeadlineFallbacks = 0;
     uint64_t sourceGapQueries = 0, sourceGapCommands = 0, earlyPublications = 0;
     // Native original-program discovery, before selected construction/retries.
     uint64_t nativeEndpointDiscoveryWork = 0;
@@ -198,6 +210,7 @@ struct SelectedPlan {
     std::vector<SelectedRecurringActivation> activations;
     std::vector<SelectedRecurringRefusal> recurringRefusals;
     std::vector<SelectedFence> fences;
+    std::vector<SelectedRestoration> restorations;
     std::vector<SelectedUpdate> updates;
     // Populated only from the final, entry-containing original-graph proof.
     std::vector<SelectedLoopInterface> loops;

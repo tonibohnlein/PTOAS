@@ -1,5 +1,62 @@
 # OAHS current handoff
 
+## Completed bounded Step X — restoration at actual republication deadlines
+
+Baseline W `49e11a857`. The shared owned-packet path preserves a dormant helper's
+return publication and relocates its inactive WAIT to the exact gap before the
+selected forward-key republication. Identity, owner and original fallback cut
+remain explicit. Acyclic correspondence and sparse neighboring-use checks qualify
+placement; complete event/causal checking remains authoritative. Failure of the
+late complete packet retries the same whole owner population at original gaps
+once. Loop-entry selection uses the common qualifier and retains its final
+missing-consumption diagnostics. This is a binding-placement policy extension.
+
+Architecture, separate bounded generality, correctness and asymptotic-performance
+ACCEPT. Final validation: 22/22 portable suites; three native drivers; 88/88 corpus;
+18/19 compatibility (same inherited refusal); GEMM, two prefills and three targets.
+Compliance zero findings. Native equivalence variants activate the mechanism under
+an explicit one-key profile, retain original imported effects/control, and reject
+a missing receipt. Real target construction/emission/reconstruction is tested
+separately. Multi-owner negative forces the complete original-gap fallback;
+exact-gap, same-word, stale packet and provenance regressions pass. No sanitizer
+or device run.
+
+The normal-constructor two-branch witness strictly removes complete issue and
+completion ordering versus the legal original-gap protocol. Three campaign plans
+change: corpus36 final_rmsnorm, targeted0 KDA and targeted2 RMSNorm. Four nonempty
+finite RMS executions (484/421 payloads) have equal complete ordering sets; four
+KDA rows remain UNKNOWN because the diagnostic does not model their queue ops.
+Changed KDA waits and guard regrouping pass native independent reconstruction,
+but no KDA ordering improvement or no-added-order claim is made. This quality
+comparison remains an explicit recovery debt; it does not close F/G/L/R/V debts.
+Static command counts: corpus36 SET26->27/WAIT26 unchanged; KDA SET390->395 and
+WAIT385->388; targeted2 SET66 unchanged/WAIT69->70. Barriers are unchanged. Count
+changes include regrouped emitted predicates; they are not dynamic traffic claims.
+
+Matched successful-input rows: regular replay7054779 unchanged; recurring analyzer
+202187 and staged replay240505 unchanged. Ownership checks465->467, sites1919192
+->1930122 include loop-entry work newly counted in both ownership and loop-entry
+counters; do not sum those populations. Deadline queries223, relevant-use checks
+710, indexed word entries2015, late restorations10; campaign complete-check fallback0.
+Successful elapsed302.99->315.07seconds is nonisolated, not a performance claim.
+Discarded replay738926 unchanged; discarded elapsed29.36->29.99seconds. These totals
+exclude the entire inherited refused input, unlike some older function-level totals.
+Evidence: `../oahs-gemm-base-builds/refactor-step-x/` (pins, full diff, logs, campaign,
+complete-order bitsets/unknowns, resources, work, reviews and commit preview).
+
+Remaining sufficient limits: one proposed forward deadline, one dormant owner per
+reverse key, acyclic straight matched interval and no earlier use of either key.
+Replace these only with joint deadline/neighbor support. Restoration records are
+not a persistent outward-publication certificate and grant no completion credit.
+
+Next Y: choose helper-free bindings at a frozen useful source gap before numeric
+key order broadens its prefix. Share the key-independent gap/coverage proof, then
+scan eligible keys; preserve full selected supporting coverage. Apply the same
+priority to loop-entry candidates. This is separate from v0.38 cross-request
+class-first policy. Persistent disjoint-copy support, remaining two-child and
+unequal-bank construction remain on the adopted plan. Commit X, then continue Y
+with the same three reviewers, aggregate two-worker limit and no push.
+
 ## Completed bounded Step W — executable sibling participation
 
 Baseline V `fbdaed723`. Shared original D3 read-interval queries now retain

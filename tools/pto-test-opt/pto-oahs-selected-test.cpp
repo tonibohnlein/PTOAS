@@ -1285,6 +1285,81 @@ module attributes {pto.target_arch = "a3"} {
   return true;
 }
 
+bool restorationDeadlines(MLIRContext& context) {
+  const std::string input = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @restore_deadline(%src: !pto.partition_tensor_view<1x32xf32>,
+      %dst: !pto.partition_tensor_view<1x32xf32>, %choose: i1)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 128 : i64
+    %a2 = arith.constant 256 : i64
+    %a3 = arith.constant 384 : i64
+    %a4 = arith.constant 512 : i64
+    %x = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x32xf32>
+    %z = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xf32>
+    %y = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %a3 : !pto.tile_buf<vec, 1x32xf32>
+    %spare = pto.alloc_tile addr = %a4 : !pto.tile_buf<vec, 1x32xf32>
+    pto.tabs ins(%spare : !pto.tile_buf<vec, 1x32xf32>) outs(%spare : !pto.tile_buf<vec, 1x32xf32>)
+    scf.if %choose {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%x : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%z : !pto.tile_buf<vec, 1x32xf32>)
+    } else {
+    }
+    pto.tabs ins(%x : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tstore ins(%z : !pto.tile_buf<vec, 1x32xf32>) outs(%dst : !pto.partition_tensor_view<1x32xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%y : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tabs ins(%y : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    return
+  }
+})mlir";
+  for (unsigned variant = 0; variant < 3; ++variant) {
+    auto source = input;
+    if (variant == 1) {
+      const auto at = source.find("    pto.tabs ins(%x");
+      source.insert(at, "    %view = pto.treshape %x : !pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 1x32xf32>\n");
+      const auto use = source.find("pto.tabs ins(%x");
+      source.replace(use, std::string("pto.tabs ins(%x").size(), "pto.tabs ins(%view");
+    }
+    if (variant == 2) {
+      const auto at = source.find("    scf.if %choose");
+      source.insert(at, "    %unused = arith.addi %a1, %a2 : i64\n    scf.if %choose { }\n");
+    }
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    const bool parsed = bool(module) && succeeded(verify(*module));
+    if (!check(parsed, "native restoration fixture parse")) { return false; }
+    auto function = module->lookupSymbol<func::FuncOp>("restore_deadline");
+    oahs::NativeAnalysis imported;
+    if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, imported)),
+               "native restoration fixture import")) { return false; }
+    // A restricted resource profile exercises scarcity without changing any
+    // imported effects, occurrence facts or construction policy.
+    const auto P = oahs::Pipe::MTE2, Q = oahs::Pipe::V;
+    imported.program.target.keys[unsigned(P)][unsigned(Q)] = {0};
+    imported.program.target.keys[unsigned(Q)][unsigned(P)] = {0};
+    const auto plan = oahs::constructSelectedPlan(imported.program);
+    if (!check(plan.success && oahs::checkCausalFrontier(imported.program, plan.commands).accepted,
+               "native scarcity profile failed construction/checking")) { return false; }
+    const bool activated = plan.work.deadlineRestorations == 1 && plan.restorations.size() == 1;
+    if (!check(activated, "native equivalent spelling lost actual-deadline restoration")) { return false; }
+    const auto& restored = plan.restorations.front();
+    const auto& wait = plan.ledger[restored.acquisition];
+    auto missing = plan.commands;
+    auto& word = missing[wait.cut];
+    const auto at = std::find_if(word.begin(), word.end(), [&](const auto& command) {
+      return oahs::selected::identical(command, wait.command);
+    });
+    if (!check(at != word.end(), "native restoration lost its emitted wait")) { return false; }
+    word.erase(at);
+    if (!check(!oahs::checkCausalFrontier(imported.program, missing).accepted,
+               "native reused key accepted without restored consumption")) { return false; }
+    if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function)),
+               "native restoration fixture reconstruction under target profile")) { return false; }
+  }
+  return true;
+}
+
 bool requiredReturnCoverage(MLIRContext &context) {
   const std::string input = R"mlir(
 module attributes {pto.target_arch = "a3"} {
@@ -1797,6 +1872,11 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " transition_classification_work=" << work.transitionClassificationWork
                  << " native_endpoint_discovery_work=" << work.nativeEndpointDiscoveryWork
                  << " ownership_queries=" << work.ownershipQueries
+                 << " restoration_deadlines=" << work.restorationDeadlineQueries
+                 << " restoration_uses=" << work.restorationUseChecks
+                 << " restoration_positions=" << work.restorationPositionEntries
+                 << " restoration_fallbacks=" << work.restorationDeadlineFallbacks
+                 << " deadline_restorations=" << work.deadlineRestorations
                  << " ownership_checks=" << work.ownershipChecks
                  << " ownership_sites=" << work.ownershipCheckSites
                  << " ownership_bindings=" << work.ownershipBindings
@@ -2037,7 +2117,8 @@ int main(int argc, char **argv) {
                       normalizedGuardReadback(context) && exactCommandEmission(context) &&
                       originalResidueDecisions(context) && readerGenerations(context) &&
                       optionalReaderParticipation(context) &&
-                      uniformEndpointRoles(context) && sourceGapPlacement(context) && requiredReturnCoverage(context) &&
+                      uniformEndpointRoles(context) && sourceGapPlacement(context) && restorationDeadlines(context) &&
+                      requiredReturnCoverage(context) &&
                       accumulatorOrdering(context) && accumulatorEpisodes(context) && firstUseOrdering(context);
   return passed ? 0 : 1;
 }

@@ -513,6 +513,53 @@ void deferredResourcePressure()
                 "deferred fallback bypassed complete ownership qualification");
     }
 }
+void restoreAtReuseDeadline()
+{
+    auto p = base(4, 2);
+    p.target.keys[unsigned(P)][unsigned(Q)] = {0};
+    p.target.keys[unsigned(Q)][unsigned(P)] = {0};
+    p.operations = {op(Q, {{3, false, true}}),
+        op(P, {{0, false, true, true}, {1, false, true, true}}),
+        op(P, {{0, false, true, true}, {1, false, true, true}}),
+        op(Q, {{0, true, false}}), op(R, {{1, true, false}}),
+        op(P, {{2, false, true, true}}), op(Q, {{2, true, false}})};
+    p.body = seq({leaf(0), {o::Region::Choice, {leaf(1), leaf(2)}},
+                  leaf(3), leaf(4), leaf(5), leaf(6)});
+    const auto plan = accepted(p);
+    require(plan.work.deadlineRestorations == 1 && plan.restorations.size() == 1,
+            "normal construction did not restore at the selected republication deadline");
+    const auto& restored = plan.restorations.front();
+    const auto& wait = plan.ledger[restored.acquisition];
+    require(restored.fallbackCut == 3 && restored.placedCut == 6 && restored.fallbackReason.empty(),
+            "restoration lost original gap or selected deadline provenance");
+    require(plan.ledger[restored.deadlinePublication].cut == wait.cut,
+            "restoration deadline does not name the actual selected publication");
+    auto old = plan.commands;
+    auto& late = old[wait.cut];
+    const auto found = std::find_if(late.begin(), late.end(), [&](const auto& command) {
+        return o::selected::identical(command, wait.command);
+    });
+    require(found != late.end(), "restored wait missing from emitted word");
+    late.erase(found);
+    old[restored.fallbackCut].push_back(wait.command);
+    require(o::checkCausalFrontier(p, old).accepted, "original-gap reference is not legal");
+    for (const auto& trace : oahs_oracle::expand(p.body, 1, 100)) {
+        std::set<std::pair<unsigned, unsigned>> before, after;
+        require(bool(oahs_oracle::graph(p, old, trace, {}, nullptr, nullptr, &before)),
+                "original-gap reference failed independent validation");
+        require(bool(oahs_oracle::graph(p, plan.commands, trace, {{0, 3}}, nullptr, nullptr, &after)),
+                "late restoration imported unrelated completion into another publication");
+        require(after.size() < before.size() && std::includes(before.begin(), before.end(), after.begin(), after.end()),
+                "deadline placement did not strictly remove complete payload ordering");
+    }
+    auto missing = plan.commands;
+    missing[wait.cut].erase(missing[wait.cut].begin());
+    require(!o::checkCausalFrontier(p, missing).accepted,
+            "republication accepted without actual consumption knowledge");
+    auto tooLate = plan.commands;
+    std::swap(tooLate[wait.cut][0], tooLate[wait.cut][1]);
+    require(!o::checkCausalFrontier(p, tooLate).accepted, "wait after republication granted anticipated credit");
+}
 void keepLoopReturn()
 {
     auto p = base(1, 2);
@@ -834,6 +881,7 @@ int main()
     deferFuturePayloadReturn();
     keepFutureWordReturn();
     deferredResourcePressure();
+    restoreAtReuseDeadline();
     keepLoopReturn();
     normalDormantOwnership();
     changedRepublicationDeadline();

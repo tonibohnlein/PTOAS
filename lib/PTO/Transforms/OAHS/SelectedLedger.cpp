@@ -177,15 +177,25 @@ PreparedPacket Ledger::preparePacket(const OrderedPacket& packet) const
                 return out;
             }
             const auto& original = endpoints[id];
-            const bool changedIdentity = original.cut != cut || !identical(original.command, item.command) ||
+            const bool relocation = item.relocate && original.command.kind == Command::Acquire &&
+                original.purpose == EndpointPurpose::ConsumptionAcknowledgment;
+            const bool changedIdentity = (original.cut != cut && !relocation) ||
+                (item.relocate && !relocation) || !identical(original.command, item.command) ||
                 original.purpose != item.purpose || original.request != item.request ||
                 original.acknowledges != acknowledgment;
             if (changedIdentity) {
                 out.error = "packet restoration changes original endpoint identity or provenance";
                 return out;
             }
+            if (relocation) {
+                auto placed = original;
+                if (placed.originalCut == NoAnalysisId) { placed.originalCut = original.cut; }
+                placed.cut = cut;
+                out.relocated.emplace(id, std::move(placed));
+            }
             out.restored.push_back(id);
         } else {
+            if (item.relocate) { out.error = "relocation requires an inactive acknowledgment identity"; return out; }
             id = out.firstEndpoint + out.endpoints.size();
             out.endpoints.push_back({id, cut, item.command, item.purpose, item.request, acknowledgment});
         }
@@ -220,6 +230,7 @@ std::vector<Id> Ledger::appendPacket(const PreparedPacket& packet)
     for (const auto& endpoint : packet.endpoints) {
         recordEvent(endpoint);
     }
+    for (const auto& [id, endpoint] : packet.relocated) { endpoints[id] = endpoint; }
     for (auto id : packet.restored) {
         setDormant(id, false);
     }
@@ -275,6 +286,8 @@ const std::vector<Id>& PacketView::word(Cut site) const
 }
 const SelectedEndpoint& PacketView::endpoint(Id id) const
 {
+    const auto moved = packet->relocated.find(id);
+    if (moved != packet->relocated.end()) { return moved->second; }
     return id < packet->firstEndpoint ? ledger->endpoint(id) : packet->endpoints[id - packet->firstEndpoint];
 }
 uint64_t PacketView::version() const { return packet->version + packet->ordered.size(); }
@@ -321,6 +334,15 @@ std::optional<PacketEndpoint> Ledger::restoration(Id id, const WordGap& gap) con
     }
     const auto& e = endpoints[id];
     return PacketEndpoint{e.cut, e.command, e.purpose, e.request, e.acknowledges, gap, NoAnalysisId, id};
+}
+std::optional<PacketEndpoint> Ledger::relocateAcknowledgment(Id id, const WordGap& gap) const
+{
+    auto item = restoration(id, gap);
+    if (!item || item->command.kind != Command::Acquire ||
+        item->purpose != EndpointPurpose::ConsumptionAcknowledgment) { return {}; }
+    item->cut = gap.cut;
+    item->relocate = true;
+    return item;
 }
 void Ledger::erase(Id id)
 {

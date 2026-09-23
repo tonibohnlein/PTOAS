@@ -72,6 +72,22 @@ child support is implemented. Both-optional/no-reader composition, relevant dire
 payload entry gaps and overlapping live predicates remain open; see gate inventory
 in selected-plan. No general two-child or v0.38 policy completion claim.
 
+X implements bounded late restoration through the common owned-packet path.
+A dormant helper retains its original return SET and places its WAIT before the
+actual selected forward-key republication when acyclic occurrence/neighbor facts
+prove the interval. Complete packet failure retries the same owner population at
+original gaps once. Loop-entry and ordinary clients share qualification. Records
+carry placement provenance, not causal credit. Multiple deadlines/reverse owners,
+recurrence and persistent outward-publication support remain open. See selected-
+plan X for gates and replacement obligations; validation is in HANDOFF.
+
+Next binding increment: freeze the requested source milestone before numeric key
+choice. Prefer complete helper-free bindings at that gap before prescribed repair;
+retain the selected provider's full motivating and supporting coverage. This is
+an explicit binding policy change, not F4 provider ranking or a prefix-index
+optimization. Persistent support and the remaining two-child/unequal-bank work
+remain on the adopted dependency sequence.
+
 Open V recoveries: standalone/RMW support recipes (corpus36/82/83 added order),
 partial-admission interactions (target2 added order), ordinary/recurring provider
 competition, historical-unused-key restriction, and whole-graph private probes.
