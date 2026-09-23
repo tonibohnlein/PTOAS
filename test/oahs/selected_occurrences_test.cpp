@@ -250,6 +250,64 @@ void publicationBoundaries()
     require(!crossed.publicationAfter(1).proved(), "release crossed an intervening payload");
 }
 
+void composedPhysicalUses()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::V;
+    auto p = base(2);
+    p.operations = {op(P, {{0, false, true, true}}), op(Q, {{0, true, false}}),
+                    op(Q, {{0, true, false}}), op(P, {{0, false, true, true}}),
+                    op(Q, {{0, true, false}}), op(P, {{1, false, true, true}})};
+    p.body = seq({leaf(0), {o::Region::For, {leaf(1)}, 0, true},
+                  {o::Region::For, {leaf(2)}, 0, true}, leaf(3), leaf(4), leaf(5)});
+    o::selected::Control control(p);
+    o::StorageFrontierAnalysis storage(p);
+    require(control.complete && storage.complete(), "invalid physical-use fixture");
+    const auto reader = storage.sitesForOperation(1).front();
+    const auto nextReader = storage.sitesForOperation(2).front();
+    auto contains = [](const o::PhysicalUseFrontier& frontier, o::Cut site) {
+        return std::any_of(frontier.accesses.begin(), frontier.accesses.end(),
+                           [&](const auto& origin) { return origin.site == site; });
+    };
+    const auto& next = storage.nearestUses(control.graph.sites[reader].successors, 0);
+    require(next.complete && contains(next, reader) && contains(next, nextReader),
+            "physical uses lost repeated or following child participation");
+    const auto work = storage.stats().nearestUseEvaluations;
+    require(&next == &storage.nearestUses(control.graph.sites[reader].successors, 0) &&
+                storage.stats().nearestUseEvaluations == work,
+            "immutable physical-use query repeated its graph traversal");
+    const auto reload = storage.sitesForOperation(3).front();
+    const auto& afterChild = storage.nearestUses(control.graph.sites[nextReader].successors, 0);
+    require(contains(afterChild, reload), "next overwrite disappeared behind the lexical child boundary");
+    const auto& afterReload = storage.nearestUses(control.graph.sites[reload].successors, 0);
+    require(contains(afterReload, storage.sitesForOperation(4).front()) && !contains(afterReload, reader),
+            "reload inherited the earlier generation's reader occurrence");
+    const auto outside = storage.sitesForOperation(4).front();
+    const auto& tail = storage.nearestUses(control.graph.sites[outside].successors, 0);
+    require(tail.complete && tail.accesses.empty() && tail.boundaries == std::vector<o::Cut>{control.graph.exit},
+            "unrelated storage obscured the open final-use obligation");
+    const auto& stopped = storage.nearestUses(std::vector<o::Cut>{nextReader}, 0,
+                                            std::vector<o::Cut>{nextReader});
+    require(stopped.accesses.empty() && stopped.boundaries == std::vector<o::Cut>{nextReader},
+            "open boundary was implicitly consumed as a storage access");
+    require(!storage.nearestUses(std::vector<o::Cut>{control.graph.sites.size()}, 0).complete,
+            "invalid use query returned a complete empty interface");
+    const auto& previous = storage.nearestUses(control.predecessors[outside], 0, {}, true);
+    require(previous.complete && contains(previous, reload), "backward use query crossed a reload");
+    for (bool readModifyWrite : {false, true}) {
+        auto partial = p;
+        partial.operations[3].accesses = {{0, readModifyWrite, true, false}};
+        o::StorageFrontierAnalysis uncertain(partial);
+        const auto& front = uncertain.nearestUses(control.graph.sites[nextReader].successors, 0);
+        require(front.complete && contains(front, reload) && !contains(front, outside),
+                "may-write or RMW was skipped as if it established no physical obligation");
+        const auto oldWriters = uncertain.previousWriters(outside, 0);
+        require(std::any_of(oldWriters.begin(), oldWriters.end(), [](const auto& origin) {
+                    return origin.operation == 0;
+                }), "nearest-use query converted a partial write into a full-generation kill");
+    }
+
+}
+
 void physicalDeadlines()
 {
     const auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE1;
@@ -310,6 +368,7 @@ int main()
     exhaustiveMatching();
     joinedSources();
     publicationBoundaries();
+    composedPhysicalUses();
     physicalDeadlines();
     o::selected::ReplayTestAccess::everyInterveningOccurrence();
     std::cout << "shared occurrence and physical-deadline queries passed\n";

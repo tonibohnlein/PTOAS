@@ -172,3 +172,30 @@ not assert that every payload copy uses one physical cell. Native equivalent
 bank-selector, scalar-expression, view and unrelated-state cases exercise the
 query through construction and require both bank readiness/release directions
 to remain selected without observation or recurring retry.
+
+
+### Physical-use succession and open boundaries
+
+`StorageFrontierAnalysis::nearestUses` projects original control to the nearest
+represented access to one cell. Starts are inclusive; explicit stop boundaries
+take precedence over accesses. Forward and backward queries preserve original
+occurrence identities. Reads, writes, may-writes and RMW all stop the traversal;
+none is silently converted into a definite overwrite or causal receipt.
+
+The result separately records physical accesses and open entry/exit/region
+boundaries. `complete` describes finite marginal reachability, not termination,
+event matching or a fully qualified generation family. Invalid inputs return
+incomplete; recurring qualification explicitly refuses that result. A boundary
+is an obligation to the surrounding interface, not an implicit drain.
+
+The recurring qualifier consumes this shared analysis in place of its private
+nearest-access traversal. Exact normalized queries are cached in the existing
+immutable storage-analysis owner; work is reported separately. Tests retain
+repeated-child and following-child uses, reloads, outside readers, unrelated
+storage, explicit stops, and old producer provenance across may-write/RMW.
+
+This establishes succession facts needed for generation/support construction.
+It does not yet remove the enclosing reader-owner gate or certify an affected
+producer interval. Such an interval must retain other outstanding storage and
+exported obligations, including the X/Y fence-relocation counterexample; the
+next same-cell writer is not by itself a sound closing boundary.

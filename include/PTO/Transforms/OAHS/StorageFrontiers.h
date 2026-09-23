@@ -54,6 +54,15 @@ struct StorageLifecycle {
     // another access to the cell. Region boundaries themselves do not drain it.
     bool mayExitWithoutFurtherAccess = false;
 };
+// Nearest original physical uses, before crossing another access to this cell.
+// Starts are inclusive; explicit stops take precedence over physical accesses.
+// Complete describes finite marginal reachability, not eventual progress.
+// Boundary sites are open obligations, not completion or implicit drains.
+struct PhysicalUseFrontier {
+  bool complete = false;
+  std::vector<StorageOrigin> accesses;
+  std::vector<std::size_t> boundaries;
+};
 struct ReaderBoundary {
   bool boundary = false;
   std::vector<StorageOrigin> readers;
@@ -75,6 +84,7 @@ struct SuccessionSummary {
 struct StorageFrontierStats {
   std::size_t staticSites = 0, originIncidences = 0, storageWords = 0;
   std::size_t forwardEvaluations = 0, backwardEvaluations = 0;
+  std::size_t nearestUseEvaluations = 0;
 };
 // Owns ORIGINAL effects/control; no candidate commands are an input.
 // Marginal witnesses are existential paths, never completion certificates.
@@ -103,6 +113,9 @@ public:
   // retain incoming origins; definiteWriteFree records that loss of precision.
   StoragePath witness(std::size_t source, std::size_t target,
                       unsigned cell) const;
+  const PhysicalUseFrontier& nearestUses(
+      const std::vector<std::size_t>& starts, unsigned cell,
+      const std::vector<std::size_t>& stops = {}, bool backward = false) const;
   ReaderBoundary readerBoundary(std::size_t site, unsigned cell, Pipe,
                                 bool backward) const;
   std::vector<Cut> corridor(std::size_t site, Pipe, bool backward,

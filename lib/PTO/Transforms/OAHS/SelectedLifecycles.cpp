@@ -159,6 +159,13 @@ Cut RequirementFrontiers::recurringRelease(Cut site, unsigned cell) const
     return boundary.proved() ? boundary.word : NoAnalysisId;
 }
 
+const PhysicalUseFrontier& RequirementFrontiers::nextUses(
+    const std::vector<Cut>& starts, unsigned cell, const std::vector<Cut>& stops) const
+{
+    static const PhysicalUseFrontier unknown;
+    return ready && storage ? storage->nearestUses(starts, cell, stops) : unknown;
+}
+
 std::vector<SelectedLifecycleDemand> RequirementFrontiers::demandsAt(
     Cut site, const std::vector<FrontierRequirement>& required) const
 {

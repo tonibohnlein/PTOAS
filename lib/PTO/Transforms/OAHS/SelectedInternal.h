@@ -285,6 +285,8 @@ public:
     std::map<Id, unsigned> reasons(Cut site) const;
     const LifecycleUse& use(Cut site, unsigned cell) const;
     Cut recurringRelease(Cut site, unsigned cell) const;
+    const PhysicalUseFrontier& nextUses(
+        const std::vector<Cut>& starts, unsigned cell, const std::vector<Cut>& stops) const;
     std::vector<SelectedLifecycleDemand> demandsAt(
         Cut, const std::vector<FrontierRequirement>&) const;
     std::size_t size() const { return population; }

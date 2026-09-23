@@ -828,8 +828,8 @@ module attributes {pto.target_arch = "a3"} {
       return false;
     }
     if (variant <= 6 || variant == 10 || variant == 11) {
-      if (!check(plan.work.boundaryAnalysisSites != 0 && !plan.declinedObservation &&
-                     !plan.declinedRecurring,
+      if (!check(plan.work.boundaryAnalysisSites != 0 && plan.work.physicalUseQuerySites != 0 &&
+                     !plan.declinedObservation && !plan.declinedRecurring,
                  "equivalent native representation bypassed shared boundary construction, variant " +
                      std::to_string(variant))) {
         return false;
@@ -975,6 +975,7 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " forward=" << work.forwardSiteEvaluations << " visits=" << work.frontierVisits
                  << " occurrence_sites=" << work.occurrenceAnalysisSites
                  << " boundary_sites=" << work.boundaryAnalysisSites
+                 << " physical_use_sites=" << work.physicalUseQuerySites
                  << " key_queries=" << work.keyQueries << " invariant=" << work.invariantSiteEvaluations
                  << " prepare_microseconds=" << work.preparationMicroseconds
                  << " sites=" << work.constructedSites << " words=" << work.commandWords
@@ -994,6 +995,8 @@ bool runFile(MLIRContext &context, const char *path) {
                  << (report.declinedObservation ? report.declinedObservation->work.replaySiteEvaluations : 0)
                  << " observation_discarded_occurrence_sites="
                  << (report.declinedObservation ? report.declinedObservation->work.occurrenceAnalysisSites : 0)
+                 << " observation_discarded_physical_use_sites="
+                 << (report.declinedObservation ? report.declinedObservation->work.physicalUseQuerySites : 0)
                  << " observation_discarded_boundary_sites="
                  << (report.declinedObservation ? report.declinedObservation->work.boundaryAnalysisSites : 0)
                  << " observation_discarded_elapsed_us="
@@ -1003,6 +1006,8 @@ bool runFile(MLIRContext &context, const char *path) {
                  << (report.declinedRecurring ? report.declinedRecurring->work.replaySiteEvaluations : 0)
                  << " discarded_occurrence_sites="
                  << (report.declinedRecurring ? report.declinedRecurring->work.occurrenceAnalysisSites : 0)
+                 << " discarded_physical_use_sites="
+                 << (report.declinedRecurring ? report.declinedRecurring->work.physicalUseQuerySites : 0)
                  << " discarded_boundary_sites="
                  << (report.declinedRecurring ? report.declinedRecurring->work.boundaryAnalysisSites : 0)
                  << " discarded_elapsed_us="

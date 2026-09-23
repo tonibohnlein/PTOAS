@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <deque>
 #include <limits>
+#include <map>
+#include <tuple>
 #include <set>
 
 namespace mlir::pto::oahs {
@@ -63,6 +65,9 @@ struct StorageFrontierAnalysis::Impl {
     storage_detail::Matrix fw, fr, bw, br;
   };
   std::vector<CellInfo> cells;
+  using UseQuery = std::tuple<unsigned, std::vector<std::size_t>,
+                              std::vector<std::size_t>, bool>;
+  std::map<UseQuery, PhysicalUseFrontier> useFrontiers;
   StorageFrontierStats statistics;
   bool ok = false;
   std::string error;

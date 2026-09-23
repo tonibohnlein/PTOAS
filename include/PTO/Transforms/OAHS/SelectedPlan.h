@@ -113,6 +113,7 @@ struct SelectedLoopInterface {
 struct SelectedWork {
     uint64_t occurrenceAnalysisSites = 0;
     uint64_t boundaryAnalysisSites = 0;
+    uint64_t physicalUseQuerySites = 0;
     uint64_t frontierVisits = 0, selectedUpdates = 0, replaySiteEvaluations = 0;
     uint64_t forwardSiteEvaluations = 0;
     uint64_t keyQueries = 0, invariantSiteEvaluations = 0;

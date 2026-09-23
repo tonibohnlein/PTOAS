@@ -282,6 +282,24 @@ reviewed nested-call bracing-regex false positive; the body has braces.
 Continue into shared physical-use succession and scoped generation/support;
 this boundary fact alone does not establish either.
 
+### D — Shared physical-use succession
+
+Base: `54cee6cda`. Architecture/design, correctness and performance: **ACCEPT**.
+The existing storage analysis owns memoized nearest physical uses in either
+direction, including explicit open boundaries. The recurring client no longer
+walks its own access graph. Unknown is distinct from a proved empty frontier;
+may-writes and RMW stop traversal without killing older writer provenance.
+A two-child/reload/outside-reader test protects this distinction and query reuse.
+Native equivalent-representation tests require the new query to be exercised.
+
+22 portable suites initially and four focused suites after review amendments
+pass, as do all three native drivers and every previously supported pinned
+input. All plans equal Step C. GEMM uses 2,792 physical-use visits; ordering,
+resources and replay are unchanged. Evidence: `../oahs-gemm-base-builds/refactor-step-d/`.
+This completes the shared succession replacement, not generation/support
+selection. Next: replace child-owner recognition with generation requirements
+and prove support for affected remaining repairs before admitting new cycles.
+
 ## Historical audit detail and restart checkpoints
 
 The material below records earlier reasoning/evidence. Its numbering and active

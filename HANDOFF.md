@@ -1,5 +1,24 @@
 # OAHS current handoff
 
+## Current iteration — Step D physical-use succession
+
+Step C committed `54cee6cda`. The existing storage analysis now owns cached
+nearest-use frontiers, including read/write/RMW and explicit open boundaries.
+The recurring qualifier consumes this query and its private traversal is removed.
+Incomplete facts cause explicit refusal. This is succession, not generation
+completion or acquired causal credit; scoped support is the next responsibility.
+
+All three reviewers ACCEPT the final source. The initial 22 portable suites and
+four focused suites after the incomplete-result/RMW amendments pass. All three
+native drivers and the pinned supported-input campaign pass: 88/88 corpus,
+18/19 compatibility (unchanged topk refusal), GEMM, two prefills and three targets.
+Every plan/outcome equals Step C. Artifacts: `../oahs-gemm-base-builds/refactor-step-d/`.
+GEMM charges 2,792 physical-use visits, with unchanged replay/resources. Two
+compliance bracing reports are nested-condition regex false positives; both
+bodies are braced. A test-only line wrap follows the campaign. Do not mark
+full generation support complete from this query alone. Continue immediately
+into composed generation admission and affected producer-support obligations.
+
 ## Current iteration — Step C publication boundaries
 
 Step B committed as `3ee150030`. Step C replaces the two private recurring

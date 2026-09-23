@@ -66,25 +66,23 @@ std::vector<RecurringRequirement> qualifyCell(
         roles[site] = role;
     }
     if (producer == Pipe::Count || consumer == Pipe::Count || producer == consumer) return {};
-    auto nextAccess = [&](const std::vector<Id>& starts) {
-        std::set<Id> out;
-        auto todo = starts;
-        std::vector<bool> seen(c.graph.sites.size());
-        while (!todo.empty()) {
-            const auto at = todo.back(); todo.pop_back();
-            if (seen[at]) continue;
-            seen[at] = true;
-            const bool foundAccess = exits.count(at) || roles[at];
-            if (foundAccess) {
-                out.insert(at);
-            } else if (members.count(at) || entries.count(at)) {
-                const auto& next = c.graph.sites[at].successors;
-                todo.insert(todo.end(), next.begin(), next.end());
-            }
+    const std::vector<Cut> boundaries(exits.begin(), exits.end());
+    auto nextAccess = [&](const std::vector<Id>& starts) -> std::optional<std::set<Id>> {
+        const auto& next = frontiers.nextUses(starts, cell, boundaries);
+        if (!next.complete) {
+            return std::nullopt;
+        }
+        std::set<Id> out(next.boundaries.begin(), next.boundaries.end());
+        for (const auto& access : next.accesses) {
+            out.insert(access.site);
         }
         return out;
     };
-    for (auto first : nextAccess(std::vector<Id>(entries.begin(), entries.end()))) {
+    const auto firstUses = nextAccess(std::vector<Id>(entries.begin(), entries.end()));
+    if (!firstUses) {
+        return {};
+    }
+    for (auto first : *firstUses) {
         const bool invalidFirstAccess = !exits.count(first) &&
             (roles[first] != 2 || modes[first].previous);
         if (invalidFirstAccess) {
@@ -109,8 +107,10 @@ std::vector<RecurringRequirement> qualifyCell(
     std::vector<unsigned> predecessors(c.graph.sites.size());
     for (auto site : members) if (roles[site]) {
         const auto next = nextAccess(c.graph.sites[site].successors);
-        if (next.empty()) return {};
-        for (auto target : next) {
+        if (!next || next->empty()) {
+            return {};
+        }
+        for (auto target : *next) {
             if (exits.count(target)) {
                 if (roles[site] == 2 || modes[site].next) return {};
             } else {
@@ -176,8 +176,11 @@ std::vector<RecurringRequirement> qualifyCell(
             if (predecessors[site] == 2) ready.acquisitions.push_back(cut);
             else if (predecessors[site] != 1) return {}; // ambiguous first reader
             const auto next = nextAccess(c.graph.sites[site].successors);
+            if (!next) {
+                return {};
+            }
             unsigned nextRoles = 0;
-            for (auto target : next) {
+            for (auto target : *next) {
                 nextRoles |= exits.count(target) ? 4u : roles[target];
             }
             if ((nextRoles & 1) && nextRoles != 1) return {}; // ambiguous last reader
@@ -205,7 +208,10 @@ std::vector<RecurringRequirement> qualifyCell(
                 open.acquisitions.push_back(canonicalCommandCut(p, site));
             else if (roles[site] == 1) {
                 const auto next = nextAccess(c.graph.sites[site].successors);
-                if (std::none_of(next.begin(), next.end(), [&](Id target) {
+                if (!next) {
+                    return {};
+                }
+                if (std::none_of(next->begin(), next->end(), [&](Id target) {
                         return !exits.count(target) && roles[target] == 1;
                     }))
                     open.publications.push_back(frontiers.recurringRelease(site, cell));

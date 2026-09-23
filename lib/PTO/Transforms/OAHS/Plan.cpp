@@ -902,6 +902,63 @@ StorageFrontierAnalysis::relationshipsAt(std::size_t s) const {
   }
   return out;
 }
+const PhysicalUseFrontier& StorageFrontierAnalysis::nearestUses(
+    const std::vector<std::size_t>& starts, unsigned cell,
+    const std::vector<std::size_t>& stops, bool backward) const {
+  static const PhysicalUseFrontier unknown;
+  const auto size = impl->graph.sites.size();
+  auto valid = [&](const std::vector<std::size_t>& sites) {
+    return std::all_of(sites.begin(), sites.end(), [&](auto site) { return site < size; });
+  };
+  if (!impl->ok || cell >= impl->cells.size() || !valid(starts) || !valid(stops)) {
+    return unknown;
+  }
+  auto normalize = [](std::vector<std::size_t> sites) {
+    std::sort(sites.begin(), sites.end());
+    sites.erase(std::unique(sites.begin(), sites.end()), sites.end());
+    return sites;
+  };
+  const auto key = std::make_tuple(cell, normalize(starts), normalize(stops), backward);
+  const auto found = impl->useFrontiers.find(key);
+  if (found != impl->useFrontiers.end()) {
+    return found->second;
+  }
+  const auto& boundaries = std::get<2>(key);
+  PhysicalUseFrontier result;
+  std::vector<bool> seen(size);
+  auto todo = std::get<1>(key);
+  while (!todo.empty()) {
+    const auto site = todo.back();
+    todo.pop_back();
+    if (seen[site] || !impl->reachable[site]) {
+      continue;
+    }
+    seen[site] = true;
+    ++impl->statistics.nearestUseEvaluations;
+    if (std::binary_search(boundaries.begin(), boundaries.end(), site)) {
+      result.boundaries.push_back(site);
+      continue;
+    }
+    const auto& access = impl->cells[cell].accessAt[site];
+    if (access.read || access.write) {
+      result.accesses.push_back(impl->origin(site));
+      continue;
+    }
+    const auto& next = backward ? impl->predecessors[site] : impl->graph.sites[site].successors;
+    if (next.empty() || (backward && site == impl->graph.entry)) {
+      result.boundaries.push_back(site);
+    } else {
+      todo.insert(todo.end(), next.begin(), next.end());
+    }
+  }
+  std::sort(result.accesses.begin(), result.accesses.end(), [](const auto& a, const auto& b) {
+    return a.site < b.site;
+  });
+  std::sort(result.boundaries.begin(), result.boundaries.end());
+  result.complete = true;
+  return impl->useFrontiers.emplace(key, std::move(result)).first->second;
+}
+
 ReaderBoundary StorageFrontierAnalysis::readerBoundary(std::size_t s,
                                                        unsigned c, Pipe pipe,
                                                        bool backward) const {
