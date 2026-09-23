@@ -1,6 +1,38 @@
 # OAHS current handoff
 
-## Current iteration — Step J stable packet gaps and atomic materialization
+## Current iteration — Step K persistent producer-repair support
+
+Baseline `8ed95b6da`. Generation proposals retain their original affected consumer
+sites and every preceding read/write access class. Stabilized contextual replay
+checks this scope initially and after ledger edits, including unfinished
+consumers. Private-channel omission cannot erase its support obligation. Actual
+returns discharge the requirements; the latest static origin cannot hide older
+incompatible ACC history. No extra fixed-point solve is added per edit.
+
+This is a conservative producer-repair certificate: unioned seed regions and
+aggregate access classes can conflate generations. General publication-prefix
+protection and exact generation/support intervals remain open. The existing
+origin-sensitive admission check is retained; initial and subsequent replay use
+the same stricter class predicate. A failed optional attempt uses the existing
+fresh ordinary retry. No new serializer or search policy is introduced.
+
+All three reviewers ACCEPT. All22 portable suites, three native drivers,88/88corpus,
+18/19compatibility (same inherited refusal),GEMM,two prefills and three targets
+pass with identical plans/outcomes to J. Tests exercise lost/restored actual
+returns at unfinished deadlines, unrelated later edits, and older incompatible
+ACC obligations despite a newer compatible latest origin. Existing normal retry
+checks retain atomic rollback coverage. One final brace-only source cleanup and
+the added ACC test follow the native campaign; final portable checks cover both.
+Evidence: `../oahs-gemm-base-builds/refactor-step-k/`. No sanitizer/device run.
+Draft construction section now states this restricted support invariant; draft
+changes remain separately uncommitted alongside H's access-history formulation.
+
+Next: separate enclosing physical occurrence materialization from protocol
+feasibility, then close publication-support/binding and actual-return/rearming
+work through the shared interfaces. F/G ordering recovery remains open. Continue
+the three-reviewer commit loop; no stage is closed solely by this checkpoint.
+
+## Previous iteration — Step J stable packet gaps and atomic materialization
 
 Baseline `a361b3878`. `WordGap` retains canonical-word neighbors rather than an
 unversioned offset. A private `PreparedPacket` freezes exact insertions, endpoint

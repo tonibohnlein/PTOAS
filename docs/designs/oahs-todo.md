@@ -48,8 +48,10 @@ resource-intensive workers maximum in aggregate.
 2. **Active (shared materialization complete):** stable ordered gaps and common packet binding, including ordinary and joined
    acknowledgments. Preserve publication-prefix dependencies across edits; add a
    normal-constructor recurring joined-consumption witness.
-3. Persistent generation support for publications, consumer prerequisites and
-   continuations. Replace the overwrite guard/enclosing protocol-admission gate
+3. **Active (producer-repair persistence implemented):** generation support for
+   publications, consumer prerequisites and continuations. The original affected
+   consumer/source-class scope is rechecked on stabilized replay after edits;
+   general publication-prefix and exact generation-family support remain open. Replace the overwrite guard/enclosing protocol-admission gate
    only when shared semantic certificates cover their existing obligations.
 4. Actual required-return sharing and deadline-driven rearming through the common
    interfaces, followed by outstanding F/G ordering recovery and consolidation.

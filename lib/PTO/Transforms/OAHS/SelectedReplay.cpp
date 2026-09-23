@@ -392,10 +392,30 @@ bool Constructor::contextualReplay()
     // Test the stabilized states, not an intermediate worklist approximation.
     for (Cut site = 0; fresh.success && site < finalized.size(); ++site) {
         const auto operation = control.graph.operations[site];
-        if (!finalized[site] || operation == NoAnalysisId ||
-            !fresh.cuts[site].before.causal.reachable()) continue;
+        const bool supported = site < producerSupportConsumers.size() && producerSupportConsumers[site];
+        if ((!finalized[site] && !supported) || operation == NoAnalysisId ||
+            !fresh.cuts[site].before.causal.reachable()) {
+            continue;
+        }
         const auto checked = frontier.inspect(fresh.cuts[site].before.causal, operation);
-        if (!checked.applied) refused(fresh, site, checked);
+        if (!checked.applied && (finalized[site] || checked.failure != FrontierFailure::Payload)) {
+            refused(fresh, site, checked);
+            continue;
+        }
+        if (supported) {
+            ++result.work.producerSupportWork;
+            const auto pipe = unsigned(program.operations[operation].pipe);
+            for (const auto& residual : checked.residuals) {
+                ++result.work.producerSupportWork;
+                if (producerSupportClasses[pipe].count(accessClass(residual))) {
+                    fresh.success = false;
+                    fresh.failure = FrontierFailure::Payload;
+                    fresh.failureCut = site;
+                    fresh.reason = "generation support lost a preceding access before its producer deadline";
+                    break;
+                }
+            }
+        }
     }
     result.work.replaySiteEvaluations += fresh.evaluations;
     cache = std::move(fresh);

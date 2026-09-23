@@ -404,6 +404,11 @@ private:
     Ledger ledger;
     SelectedPlan result;
     Replay cache;
+    // Original scope of an admitted producer-support obligation. The classes
+    // include every potentially preceding access, not just LatestOrigins.
+    // Only stabilized contextual replay can discharge these obligations.
+    std::array<std::set<Id>, PipeCount> producerSupportClasses;
+    std::vector<bool> producerSupportConsumers;
     std::vector<bool> finalized;
     std::map<Cut, std::vector<Id>> sourcesAtCut;
     Id activeComponent = 0, activeOffset = 0;

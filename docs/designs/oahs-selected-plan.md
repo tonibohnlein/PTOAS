@@ -615,3 +615,32 @@ Selected decisions also retain `SelectedLifecycleDemand` provenance from the
 shared physical-use index. Its release candidates and return deadlines cannot
 be used as completion or consumption credit. Actual command execution and the
 unchanged independent checker remain authoritative.
+
+### Persistent producer-support scope (Step K)
+
+An admitted generation proposal retains an immutable support scope: for each
+producer engine, the original consumer sites reachable after its overwrite seeds
+and the read/write access classes of every operation that can precede those seeds.
+All aliases participate. These are obligations, not completion facts or private
+channel ownership; omission of a private channel does not remove the scope.
+
+The existing contextual evaluator checks this scope after convergence, initially
+and after every changed ledger. At every affected consumer, including unfinished
+ones, no residual may belong to a protected source class. Finalized payload and
+protocol checks remain separate. Actual causal propagation can discharge the
+obligation; an endpoint identifier or the latest static origin cannot. In
+particular a later compatible ACC issue cannot hide an older incompatible
+history. A failed optional attempt is discarded by the existing fresh ordinary
+retry, without retaining its scope, bindings or credit.
+
+This is a sufficient producer-repair certificate. Unioning seed regions and
+aggregate access classes can conservatively include a newer generation even if
+the earlier origin is complete. The initial origin-sensitive admission check is
+retained; first replay and subsequent replays use the same stronger class check.
+It is not yet an exact generation-family interface or a certificate that later
+edits preserve every publication's causal prefix. Those remain explicit work.
+
+Scope preparation reuses the original reachability traversal and visits each
+original operation's access list once per producer engine. Revalidation extends
+the existing stabilized inspection pass; it adds no fixed-point solve or witness
+search per relationship/edit. Work is charged separately in producerSupportWork.

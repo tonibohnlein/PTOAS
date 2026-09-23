@@ -679,6 +679,7 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
         return !sites.empty();
     });
     if (needsSupport) {
+        producerSupportConsumers.resize(control.graph.sites.size());
         if (!selected) {
             selected = analyze(program, candidate(), {false});
             result.work.recurringAnalysisSites += selected->stats.siteEvaluations;
@@ -719,8 +720,25 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
             for (Cut site = 0; site < before.size(); ++site) {
                 ++result.work.producerSupportWork;
                 const auto operation = control.graph.operations[site];
-                if (before[site] && operation != NoAnalysisId) {
+                if (before[site] && operation != NoAnalysisId && !precedingOperations[operation]) {
                     precedingOperations[operation] = true;
+                    const auto& op = program.operations[operation];
+                    for (const auto& access : op.accesses) {
+                        const auto base = (Id(access.cell) * PipeCount + unsigned(op.pipe)) * 2;
+                        if (access.read) {
+                            producerSupportClasses[pipe].insert(base);
+                        }
+                        if (access.write) {
+                            producerSupportClasses[pipe].insert(base + 1);
+                        }
+                    }
+                }
+            }
+            for (Cut site = 0; site < after.size(); ++site) {
+                const auto operation = control.graph.operations[site];
+                if (after[site] && operation != NoAnalysisId &&
+                    unsigned(program.operations[operation].pipe) == pipe) {
+                    producerSupportConsumers[site] = true;
                 }
             }
             for (const auto& residual : selected->residuals) {
@@ -750,6 +768,9 @@ bool Constructor::recurring(const std::vector<RecurringRequirement>& requests)
                                    request.publications, request.acquisitions, request.owner,
                                    request.period});
     }
+    // Obligations survive omission of their private channel. Even if every
+    // channel was redundant, hypothesis traversal cannot certify continuations.
+    needsContextualReplay |= needsSupport;
     result.work.recurringChannels = result.channels.size();
     // These are physical access roles, not definite-write/content certificates.
     // They are symbolic obligations, not assumed fresh-entry receipts.

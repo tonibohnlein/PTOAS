@@ -512,6 +512,93 @@ struct ReplayTestAccess {
         require(constructor.result.work.redundantRecurringChannels == 1 && constructor.ledger.records().empty(),
                 "support witness did not omit its private channel atomically");
     }
+    static void persistentSupport()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(3, 4);
+        p.operations = {op(P, {{1, false, true}}), op(P, {{0, false, true}}),
+                        op(Q, {{0, true, false}}), op(P, {{1, false, true}}),
+                        op(P, {{2, false, true}})};
+        Constructor c(p);
+        const auto marker = c.ledger.append(3, {Command::Barrier, Q}, EndpointPurpose::Fixed);
+        RecurringRequirement ready;
+        ready.source = P;
+        ready.observer = Q;
+        ready.publications = {2};
+        ready.acquisitions = {2};
+        ready.supportSeeds = {1};
+        ready.qualifiedCycle = true;
+        auto release = ready;
+        release.source = Q;
+        release.observer = P;
+        release.publications = {3};
+        release.acquisitions = {3};
+        release.supportSeeds.clear();
+        require(c.recurring({ready, release}), c.result.reason);
+        require(c.contextualReplay(), "actual return did not establish generation support: " + c.result.reason);
+        require(std::none_of(c.finalized.begin(), c.finalized.end(), [](bool value) { return value; }),
+                "support test must exercise unfinished consumer deadlines");
+        Id publication = NoAnalysisId, acquisition = NoAnalysisId;
+        for (const auto& endpoint : c.ledger.records()) {
+            if (endpoint.command.source == Q && endpoint.command.observer == P) {
+                (endpoint.command.kind == Command::Publish ? publication : acquisition) = endpoint.id;
+            }
+        }
+        require(publication != NoAnalysisId && acquisition != NoAnalysisId, "missing required return");
+        c.ledger.erase(publication);
+        c.ledger.erase(acquisition);
+        require(!c.contextualReplay() && c.result.reason.find("generation support lost") != std::string::npos &&
+                    c.result.cut == 3,
+                "later deletion lost support at an unfinished producer deadline without invalidation");
+        // Restoring an actual transfer re-establishes support; an old successful
+        // replay revision cannot stand in for the receipt.
+        c.ledger.restoreAfter(publication, marker);
+        c.ledger.restoreAfter(acquisition, publication);
+        require(c.contextualReplay(), "restored actual return did not re-establish support: " + c.result.reason);
+        require(c.cache.version == c.ledger.version(), "support check retained a stale ledger revision");
+        c.ledger.append(4, {Command::Barrier, Q}, EndpointPurpose::Fixed);
+        require(c.contextualReplay(), "unrelated later engine work invalidated producer support");
+    }
+    static void olderAccumulatorSupport()
+    {
+        const auto P = Pipe::M, Q = Pipe::MTE1;
+        auto p = base(2, 4);
+        p.target = mlir::pto::a3SyncProfile(mlir::pto::SyncCore::Cube);
+        p.nativeAccumulatorClasses = 2;
+        p.cells[0].domain = Cell::Domain::Accumulator;
+        p.cells[0].storage = Cell::Storage::CanonicalInterval;
+        p.cells[0].coordinateSpace = "physical-local";
+        p.cells[0].ranges = {{0, 131072}};
+        p.operations = {op(P, {{0, false, true, false, 1}}),
+                        op(P, {{0, false, true, false, 0}}),
+                        op(Q, {{1, false, true}}), op(P, {{0, true, true, false, 0}})};
+        p.operations[3].nativeMmadAccumulate = true;
+        Constructor c(p);
+        RecurringRequirement ready;
+        ready.source = P;
+        ready.observer = Q;
+        ready.publications = {1};
+        ready.acquisitions = {2};
+        ready.supportSeeds = {3};
+        ready.qualifiedCycle = true;
+        auto release = ready;
+        release.source = Q;
+        release.observer = P;
+        release.publications = release.acquisitions = {3};
+        release.supportSeeds.clear();
+        require(c.recurring({ready, release}) && c.contextualReplay(),
+                "actual return failed to cover older incompatible ACC support: " + c.result.reason);
+        for (const auto& endpoint : c.ledger.records()) {
+            if (endpoint.command.source == Q && endpoint.command.observer == P) {
+                c.ledger.erase(endpoint.id);
+            }
+        }
+        require(!c.contextualReplay() && c.result.cut == 3 &&
+                    c.result.reason.find("generation support lost") != std::string::npos,
+                "new compatible ACC origin hid an older incompatible support obligation");
+        require(c.cache.cuts[3].before.latest.get(unsigned(P) * 2 + 1) == 1,
+                "ACC witness must distinguish latest origin from older residual support");
+    }
     static void everyInterveningOccurrence()
     {
         auto p = sharedWords();
@@ -534,6 +621,8 @@ struct ReplayTestAccess {
 }
 int main()
 {
+    mlir::pto::oahs::selected::ReplayTestAccess::persistentSupport();
+    mlir::pto::oahs::selected::ReplayTestAccess::olderAccumulatorSupport();
     correspondence();
     alternativeEndpoints();
     exhaustiveMatching();
