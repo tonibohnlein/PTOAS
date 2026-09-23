@@ -1589,3 +1589,30 @@ complete realization and whether source-local joined support or class0 historica
 key choice causes that edge. Keep this quality loss open while general support
 and binding migrate; do not add an example-specific veto or describe AD as
 order-preserving.
+
+## AE design — typed ordinary producer support
+
+A recurring x packet may remove a producer fence that also protected an
+unrelated same-engine z access. The current family-only link treats a missing
+z recipe as a refusal. Retain z as a typed obligation at its actual consumer
+occurrence and deadline, with its original physical access class and producer
+seed interval. A same-engine barrier at the end of each designated producer
+seed word is one prescribed ordinary discharge, when it precedes the seed
+payload and every participating z deadline after all outstanding z accesses.
+It may add old-z -> new-x order and is therefore a repair, not class0.
+
+The proof asks which original accesses can reach each qualified deadline
+without crossing its designated pre-payload producer fence. A backward query
+collects all source-pipe access classes in one traversal, includes the payload
+at the fence site because it executes after the fence, and retains prior visits
+through backedges. Absence of the required class proves its older original
+accesses have completed on every path. The original-use result is cached by
+producer pipe, exact fence interface and deadline; packet embedding is checked
+separately. No definite-write shortcut is used. All missing typed obligations in the complete selected
+closure must be proved together; repeated physical witnesses do not add fences.
+The barrier and recurring endpoints form one exact ordered packet, with
+publication preservation and shared-word occurrence agreement. Selected causal
+replay remains authoritative and persistently checks the affected producer
+scope after later edits. Unknown paths or unsupported cross-engine residuals
+retain the existing refusal. The former broad producer-scope guard remains until
+all of its obligations have scoped replacements.

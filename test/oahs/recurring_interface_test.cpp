@@ -11,6 +11,59 @@
 using namespace selected_test;
 namespace mlir::pto::oahs::selected {
 struct ReplayTestAccess {
+    static void ordinaryFenceProof(unsigned mutation)
+    {
+        const auto P = Pipe::MTE2;
+        auto p = base(2, 1);
+        p.operations = {op(P, {{1, false, true}}), op(P, {{0, false, true}}),
+                        op(P, {{1, false, true}})};
+        if (mutation == 5) { p.target.barriers[unsigned(P)] = false; }
+        if (mutation == 6) { p.operations[1] = op(Pipe::V, {{0, false, true}}); }
+        if (mutation == 3) { p.operations.push_back(op(P, {{1, false, true}})); }
+        if (mutation == 7) { p.operations.push_back(op(Pipe::V, {{0, false, true}})); }
+        if (mutation == 3 || mutation == 7) {
+            p.body = seq({leaf(0), leaf(1), leaf(3), leaf(2)});
+        } else if (mutation == 4) {
+            p.body = seq({leaf(0), {Region::Choice, {leaf(1), seq({})}}, leaf(2)});
+        } else {
+            p.body = seq({leaf(0), leaf(1), leaf(2)});
+        }
+        auto imported = addStructuredBoundaryCuts(p);
+        require(imported.success, imported.reason);
+        Constructor c(imported.program);
+        auto site = [&](unsigned operation) {
+            for (Cut cut = 0; cut < c.control.graph.operations.size(); ++cut) {
+                if (c.control.graph.operations[cut] == operation) { return cut; }
+            }
+            return NoAnalysisId;
+        };
+        const auto seed = site(1), deadline = site(2);
+        require(seed != NoAnalysisId && deadline != NoAnalysisId, "ordinary support fixture lost sites");
+        ProducerSupportScope scope;
+        scope.seeds[unsigned(P)].push_back(c.control.canonicalCut[seed]);
+        const auto access = (Id(1) * PipeCount + unsigned(P)) * 2 + 1;
+        std::vector<Cut> seeds{c.control.canonicalCut[seed]};
+        if (mutation == 7) { seeds.push_back(c.control.canonicalCut[site(3)]); }
+        scope.ordinary.push_back({deadline, access, P,
+            std::make_shared<const std::vector<Cut>>(seeds)});
+        OrderedPacket packet;
+        if (mutation != 1) {
+            const auto position = mutation == 2 ? deadline : seed;
+            packet.push_back({position, {Command::Barrier, P, Pipe::S, 0}, EndpointPurpose::LocalFence});
+        }
+        const auto prepared = c.ledger.preparePacket(packet);
+        require(prepared.valid(), prepared.reason());
+        const auto view = c.ledger.packetView(prepared);
+        require(bool(view), "ordinary support packet view missing");
+        const auto proved = c.ordinarySupportGuarantee(scope, *view);
+        require(bool(proved) == (mutation == 0), "ordinary support accepted an unproved original path");
+        if (mutation == 7) {
+            require(c.ordinaryFenceSites.empty(), "failed seed interface was cached partially");
+            require(!c.ordinarySupportGuarantee(scope, *view),
+                    "second invalid seed query reused a partial interface");
+        }
+        require(c.ledger.records().empty(), "ordinary support probe selected a command");
+    }
     static RecurringCertificate proof(const Program& p, unsigned mutation = 0)
     {
         Constructor c(p);
@@ -151,6 +204,9 @@ void inclusion(const o::Program& p)
 }
 int main()
 {
+    for (unsigned mutation = 0; mutation != 8; ++mutation) {
+        o::selected::ReplayTestAccess::ordinaryFenceProof(mutation);
+    }
     const auto p = periodic();
     inclusion(p);
     inclusion(periodic(8)); // Original operation IDs and unrelated storage both change.

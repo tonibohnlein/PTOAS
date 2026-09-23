@@ -275,7 +275,11 @@ std::shared_ptr<const Constructor::SupportClosure> Constructor::normalSupport(Id
         const auto& scope = recurringScopes.at(member);
         for (unsigned pipe = 0; pipe < PipeCount; ++pipe) {
             out->scope.classes[pipe].insert(scope.classes[pipe].begin(), scope.classes[pipe].end());
+            out->scope.seeds[pipe].insert(out->scope.seeds[pipe].end(),
+                scope.seeds[pipe].begin(), scope.seeds[pipe].end());
         }
+        out->scope.ordinary.insert(out->scope.ordinary.end(),
+            links.ordinary.begin(), links.ordinary.end());
         consumers.insert(scope.consumers.begin(), scope.consumers.end());
         for (auto next : links.families) { previous[next].push_back(member); pending.push_back(next); }
     }
@@ -283,6 +287,13 @@ std::shared_ptr<const Constructor::SupportClosure> Constructor::normalSupport(Id
     out->families.assign(closure.begin(), closure.end());
     out->roles.assign(roles.begin(), roles.end());
     out->scope.consumers.assign(consumers.begin(), consumers.end());
+    for (auto& seeds : out->scope.seeds) {
+        std::sort(seeds.begin(), seeds.end());
+        seeds.erase(std::unique(seeds.begin(), seeds.end()), seeds.end());
+    }
+    std::sort(out->scope.ordinary.begin(), out->scope.ordinary.end());
+    out->scope.ordinary.erase(std::unique(out->scope.ordinary.begin(), out->scope.ordinary.end(),
+        [](const auto& a, const auto& b) { return !(a < b) && !(b < a); }), out->scope.ordinary.end());
     // Roots mutually reachable from this root have exactly the same finite
     // closure. Share its representation and its eventual probe, not F copies.
     std::set<Id> equivalent;
@@ -319,12 +330,23 @@ std::optional<CertifiedRealization> Constructor::normalRecurring(
         for (unsigned pipe=0; pipe<PipeCount; ++pipe) {
             closure->scope.classes[pipe].insert(support->scope.classes[pipe].begin(),
                                                support->scope.classes[pipe].end());
+            closure->scope.seeds[pipe].insert(closure->scope.seeds[pipe].end(),
+                support->scope.seeds[pipe].begin(), support->scope.seeds[pipe].end());
         }
+        closure->scope.ordinary.insert(closure->scope.ordinary.end(),
+            support->scope.ordinary.begin(), support->scope.ordinary.end());
     }
     // Exact COMPLETE role identity collects independent physical witnesses.
     // Sharing only one endpoint/role never joins these proof populations.
     closure->families.assign(families.begin(),families.end());
     closure->scope.consumers.assign(consumers.begin(),consumers.end());
+    for (auto& seeds : closure->scope.seeds) {
+        std::sort(seeds.begin(), seeds.end());
+        seeds.erase(std::unique(seeds.begin(), seeds.end()), seeds.end());
+    }
+    std::sort(closure->scope.ordinary.begin(), closure->scope.ordinary.end());
+    closure->scope.ordinary.erase(std::unique(closure->scope.ordinary.begin(), closure->scope.ordinary.end(),
+        [](const auto& a, const auto& b) { return !(a < b) && !(b < a); }), closure->scope.ordinary.end());
     CertifiedRealization out;
     out.version = ledger.version();
     out.families = closure->families;
@@ -338,6 +360,10 @@ std::optional<CertifiedRealization> Constructor::normalRecurring(
     }
     if (requests.empty()) { return {}; }
     for (auto member : closure->families) { out.support.push_back({RealizationSupport::Induction, member, current}); }
+    if (!closure->scope.ordinary.empty()) { out.placementClass = 1; }
+    for (const auto& row : closure->scope.ordinary) {
+        out.support.push_back({RealizationSupport::OrdinaryRepair, row.access, row.consumer});
+    }
     std::string reason;
     auto packet = prepareRecurring(requests, reason, &closure->scope, &out.families, true);
     if (!packet || !packet->localCertificate || !preservePublications(packet->packet)) { return {}; }
@@ -400,7 +426,15 @@ std::optional<CertifiedRealization> Constructor::normalRecurring(
         const auto& role = recurringFrontiers.roles[id];
         out.shape.push_back({role.source, role.observer, role.publications, role.acquisitions});
     }
+    std::set<std::tuple<Pipe, Cut, std::shared_ptr<const std::vector<Cut>>>> ordinaryShapes;
+    for (const auto& row : closure->scope.ordinary) {
+        ordinaryShapes.emplace(row.source, row.consumer, row.seeds);
+    }
+    for (const auto& [pipe, consumer, seeds] : ordinaryShapes) {
+        out.shape.push_back({pipe, pipe, *seeds, {consumer}});
+    }
     std::sort(out.shape.begin(), out.shape.end());
+    out.shape.erase(std::unique(out.shape.begin(), out.shape.end()), out.shape.end());
     out.recurring = std::move(*packet);
     return out;
 }
@@ -457,7 +491,10 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
             retain(std::move(candidate));
         }
     }
-    if (candidates.empty()) {
+    const bool hasNormal = std::any_of(candidates.begin(), candidates.end(), [](const auto& candidate) {
+        return candidate.placementClass == 0;
+    });
+    if (!hasNormal) {
         for (const auto& request : ordinaryRequests) {
             retain(normalOrdinary(request, due, universe, true));
         }

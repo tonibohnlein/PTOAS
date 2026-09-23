@@ -342,7 +342,8 @@ void composedReaders(unsigned variant)
         op(R, {{2, true, false}}),
         op(Q, {{0, true, false}, {1, true, false}}),
         op(P, {{0, false, true, true}, {1, false, true, true}}),
-        op(P, {{3, false, true, true}}), op(P, {{3, false, true, true}})};
+        op(P, {{3, false, true, true}}), op(P, {{3, false, true, true}}),
+        op(P, {{3, false, true, true}})};
     for (std::size_t i = 0; i < p.operations.size(); ++i) {
         p.operations[i].original = i;
         for (auto& access : p.operations[i].accesses) {
@@ -352,8 +353,9 @@ void composedReaders(unsigned variant)
     o::Region first{o::Region::For, {seq({leaf(1), leaf(2)})}, 0, true};
     o::Region second{o::Region::For, {seq({leaf(3), leaf(4)})}, 0, true};
     auto body = seq({leaf(0)});
-    if (variant == 3) {
+    if (variant == 3 || variant == 6) {
         body.children.push_back(leaf(8));
+        if (variant == 6) { body.children.push_back(leaf(9)); }
     }
     body.children.push_back(first);
     if (variant == 1) {
@@ -364,7 +366,7 @@ void composedReaders(unsigned variant)
         body.children.push_back(leaf(5));
     }
     p.body = {o::Region::For, {body}, 0, true};
-    if (variant == 3) {
+    if (variant == 3 || variant == 6) {
         p.body = seq({leaf(7), p.body});
     }
     if (variant == 4) {
@@ -463,13 +465,48 @@ void composedReaders(unsigned variant)
                 "cyclic occurrence interfaces lost original-edge replay");
     }
     if (variant == 3) {
-        const bool localRefusal = std::any_of(plan.recurringRefusals.begin(), plan.recurringRefusals.end(),
-                                            [](const auto& refusal) {
-            return refusal.reason.find("producer repair") != std::string::npos;
+        require(plan.success && o::checkCausalFrontier(refined.program, plan.commands).accepted,
+                "ordinary producer support did not reconstruct");
+        require(plan.work.recurringActivations != 0 && !plan.declinedRecurring,
+                "unrelated producer repair still disabled the x lifetime");
+        bool hasProducerFence = false;
+        for (const auto& word : plan.commands) {
+            hasProducerFence |= std::any_of(word.begin(), word.end(), [&](const auto& command) {
+                return command.kind == o::Command::Barrier && command.source == P;
+            });
+        }
+        require(hasProducerFence, "typed ordinary producer support omitted its fence");
+        const auto ready = std::count_if(plan.channels.begin(), plan.channels.end(), [&](const auto& channel) {
+            return channel.owner == bank.owner && channel.source == P && channel.observer == Q;
         });
-        const bool retryRefusal = plan.declinedRecurring &&
-            plan.declinedRecurring->reason.find("producer repair") != std::string::npos;
-        require(localRefusal || retryRefusal, "unsupported Y repair crossed the newly supported X overwrite");
+        const auto release = std::count_if(plan.channels.begin(), plan.channels.end(), [&](const auto& channel) {
+            return channel.owner == bank.owner && channel.source == Q && channel.observer == P;
+        });
+        require(ready == 2 && release == 2, "unrelated z repair erased the two-bank x protocol");
+        o::selected::Control selectedControl(refined.program);
+        bool fencedSeed = false;
+        for (o::Cut site = 0; site < selectedControl.graph.operations.size(); ++site) {
+            const auto opId = selectedControl.graph.operations[site];
+            const bool selectedSeed = opId == operationIds.at(0) && selectedControl.reachable[site];
+            if (!selectedSeed) { continue; }
+            const auto word = selectedControl.canonicalCut[site];
+            const bool populated = word < plan.commands.size() && !plan.commands[word].empty();
+            if (!populated) { continue; }
+            const auto& last = plan.commands[word].back();
+            fencedSeed |= last.kind == o::Command::Barrier && last.source == P;
+        }
+        require(fencedSeed, "ordinary z support fence was not at the x producer seed");
+        auto missing = plan.commands;
+        for (auto& word : missing) {
+            word.erase(std::remove_if(word.begin(), word.end(), [&](const auto& command) {
+                return command.kind == o::Command::Barrier && command.source == P;
+            }), word.end());
+        }
+        require(!o::checkCausalFrontier(refined.program, missing).accepted,
+                "removing ordinary producer support kept the z protocol valid");
+    } else if (variant == 6) {
+        require(plan.success && o::checkCausalFrontier(refined.program, plan.commands).accepted,
+                "intervening z access lost conservative service");
     } else {
         require(plan.success && o::checkCausalFrontier(refined.program, plan.commands).accepted,
                 "composed reader construction was not independently accepted");
@@ -776,7 +813,7 @@ int main()
     accumulatorOverlay(false);
     accumulatorOverlay(true);
     accumulatorOverlay(false, true);
-    for (unsigned variant = 0; variant < 6; ++variant) {
+    for (unsigned variant = 0; variant < 7; ++variant) {
         composedReaders(variant);
     }
     run(false, false);

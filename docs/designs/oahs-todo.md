@@ -65,6 +65,16 @@ key-neighbor proof. Host service passes, but `hc_head_reduce` adds 122 and remov
 open; the unique-WAIT boundary alone did not resolve it. Class2/3 and typed
 ordinary producer support remain next. See HANDOFF and AD artifacts.
 
+## Current continuation after AE
+
+AE adds typed ordinary same-engine producer support to recurring packets. The
+unrelated-z repair fixture now constructs the x lifetime with a prescribed
+producer fence; the fence-relocation negatives remain. All three reviewers
+accepted this bounded step. Full host service and campaign plans are unchanged
+from AD; the open AD `hc_head_reduce` ordering loss is not recovered. See
+HANDOFF and AE artifacts. Cross-engine producer support, replacement of the
+broad repair-scope guard, class2/3 competition and complete binding remain open.
+
 ## Current continuation after R
 
 User-approved sequence is the "Adopted continuation" in the canonical semantic

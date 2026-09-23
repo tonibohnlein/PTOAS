@@ -1,5 +1,45 @@
 # OAHS current handoff
 
+## Active after Step AE — typed ordinary producer support
+
+AE makes an unrelated same-engine producer repair a typed support obligation
+instead of requiring it to match another recurring family. The prescribed
+pre-payload producer fence and recurring x roles are privately qualified as one
+exact packet. An immutable original-use query proves, for each qualified
+consumer deadline, that no older required source-pipe access can reach it
+without crossing that fence. Shared-word placement, target barrier capability,
+publication support and the existing broad repair-relocation guard remain
+checked. Only actual selected causal replay grants credit. The witness with
+an unrelated z WAW now constructs the useful x lifetime and its necessary z
+fence; bypass, moved/missing fence, intervening access, unsupported barrier and
+partial-cache negatives remain conservative.
+
+Final evidence on this head: 25/25 portable suites, three native drivers,
+88/88 corpus, 18/19 compatibility (same inherited refusal), GEMM, two
+prefills and three targeted cases. AE changes no campaign output from AD;
+complete finite payload-order comparison has no new rows, and aggregate
+commands and measured work counters are unchanged. This says the newly admitted
+focused lifetime is outside those campaign variants, not that the mechanism
+has broad performance coverage. The AD `hc_head_reduce` +122/-20 ordering loss
+remains open. Changed-code checking reports zero errors/warnings; `git diff
+--check` passes. No sanitizer or device run.
+
+Three independent source reviews ACCEPT AE as a bounded step: architecture
+requires later ordinary/recurring class1 competition evidence; correctness
+retains the broad scope guard; performance identifies inherited scope preparation
+and distinct interface/deadline traversals as remaining costs. Records are in
+`../oahs-gemm-base-builds/refactor-step-ae/` (`summary.json`, `results.json`,
+`changed-order.json`, `work.json`, host logs and review record).
+
+AE is not general producer support: cross-engine repairs still decline, the
+historical broad producer-scope guard remains, and current same-engine support
+uses a fence at the prescribed producer seed. Next: make other prescribed
+repair realizations compete through the common selector with scoped source,
+neighbor, publication and support certificates, while tracing the AD ordering
+loss. The remaining v0.38 milestones include guarded readers, first-use
+consolidation, independent buffered levels, general binding/ownership, and
+quality/cost/device closure. Continue the three-reviewer commit loop.
+
 ## Active after Step AD — local joined-consumption repair
 
 AD extends common ordinary realization selection with a source-word class1

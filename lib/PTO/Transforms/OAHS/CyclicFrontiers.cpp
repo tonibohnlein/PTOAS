@@ -442,6 +442,18 @@ ProducerSupportScope Constructor::producerScope(const std::vector<RecurringRequi
         std::sort(sites.begin(), sites.end());
         sites.erase(std::unique(sites.begin(), sites.end()), sites.end());
     }
+    out.seeds = seeds;
+    for (unsigned pipe = 0; pipe < PipeCount; ++pipe) {
+        if (!seeds[pipe].empty()) {
+            const auto key = std::make_pair(Pipe(pipe), seeds[pipe]);
+            auto found = producerSeedHandles.find(key);
+            if (found == producerSeedHandles.end()) {
+                found = producerSeedHandles.emplace(key,
+                    std::make_shared<const std::vector<Cut>>(seeds[pipe])).first;
+            }
+            out.seedHandles[pipe] = found->second;
+        }
+    }
     const bool needsSupport = std::any_of(seeds.begin(), seeds.end(), [](const auto& sites) {
         return !sites.empty();
     });
@@ -546,14 +558,22 @@ const Constructor::SupportLinks& Constructor::recurringSupportLinks(Id id)
                 }
             }
             if (selected == NoAnalysisId) {
-                links.reason = "generation packet leaves a producer repair without a supporting recipe";
-                return recurringLinks.insert_or_assign(id, std::move(links)).first->second;
+                if (r.source != program.operations[operation].pipe ||
+                    scope->second.seeds[pipe].empty()) {
+                    links.reason = "generation packet leaves a producer repair without a supporting recipe";
+                    return recurringLinks.insert_or_assign(id, std::move(links)).first->second;
+                }
+                links.ordinary.push_back({site, accessClass(r), r.source, scope->second.seedHandles[pipe]});
+            } else {
+                dependencies.insert(selected);
             }
-            dependencies.insert(selected);
         }
     }
     links.complete = true;
     links.families.assign(dependencies.begin(), dependencies.end());
+    std::sort(links.ordinary.begin(), links.ordinary.end());
+    links.ordinary.erase(std::unique(links.ordinary.begin(), links.ordinary.end(),
+        [](const auto& a, const auto& b) { return !(a < b) && !(b < a); }), links.ordinary.end());
     return recurringLinks.insert_or_assign(id, std::move(links)).first->second;
 }
 std::optional<RecurringPacket> Constructor::prepareRecurring(
@@ -634,10 +654,27 @@ std::optional<RecurringPacket> Constructor::prepareRecurring(
             return a.command.kind == Command::Publish && b.command.kind != Command::Publish;
         });
     }
+    const auto scope = support ? *support : producerScope(requests);
+    std::set<std::pair<Cut, Pipe>> fences;
+    for (const auto& obligation : scope.ordinary) {
+        for (auto seed : *obligation.seeds) { fences.emplace(seed, obligation.source); }
+    }
+    for (const auto& [seed, pipe] : fences) {
+        const auto index = unsigned(pipe);
+        const bool supported = index < PipeCount && program.target.supported[index] &&
+            program.target.barriers[index];
+        if (!supported) {
+            reason = "typed producer repair lacks a supported pipe barrier";
+            return {};
+        }
+        const Command fence{Command::Barrier, pipe, Pipe::S, 0};
+        if (!alreadySelected(seed, fence)) {
+            endpoints.push_back({seed, fence, EndpointPurpose::LocalFence, NoAnalysisId});
+        }
+    }
     auto owned = prepareOwnedPacket(endpoints);
     if (!owned) { reason = "recurring packet lacks complete ownership"; return {}; }
     proposal.packet = std::move(*owned);
-    const auto scope = support ? *support : producerScope(requests);
     if (!scope.consumers.empty()) { proposal.supportConsumers.resize(control.graph.sites.size()); }
     for (unsigned pipe = 0; pipe < PipeCount; ++pipe) {
         proposal.supportClasses[pipe].insert(scope.classes[pipe].begin(), scope.classes[pipe].end());
@@ -773,7 +810,10 @@ bool Constructor::activateRecurring()
                 const auto& scope = recurringScopes.at(member);
                 for (unsigned pipe = 0; pipe < PipeCount; ++pipe) {
                     support.classes[pipe].insert(scope.classes[pipe].begin(), scope.classes[pipe].end());
+                    support.seeds[pipe].insert(support.seeds[pipe].end(),
+                        scope.seeds[pipe].begin(), scope.seeds[pipe].end());
                 }
+                support.ordinary.insert(support.ordinary.end(), links.ordinary.begin(), links.ordinary.end());
                 supportConsumers.insert(scope.consumers.begin(), scope.consumers.end());
                 if (!links.complete) { supported = false; reason = links.reason; break; }
                 pending.insert(pending.end(), links.families.begin(), links.families.end());
@@ -787,6 +827,13 @@ bool Constructor::activateRecurring()
             }
             if (supported && requests.empty()) { continue; }
             support.consumers.assign(supportConsumers.begin(), supportConsumers.end());
+            for (auto& seeds : support.seeds) {
+                std::sort(seeds.begin(), seeds.end());
+                seeds.erase(std::unique(seeds.begin(), seeds.end()), seeds.end());
+            }
+            std::sort(support.ordinary.begin(), support.ordinary.end());
+            support.ordinary.erase(std::unique(support.ordinary.begin(), support.ordinary.end(),
+                [](const auto& a, const auto& b) { return !(a < b) && !(b < a); }), support.ordinary.end());
             const std::vector<Id> familyIds(closure.begin(), closure.end());
             auto proposal = supported ? prepareRecurring(requests, reason, &support, &familyIds) : std::nullopt;
             if (!proposal) {

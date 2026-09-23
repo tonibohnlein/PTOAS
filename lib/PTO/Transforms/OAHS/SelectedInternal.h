@@ -361,9 +361,27 @@ struct RecurringFrontiers {
     std::vector<RecurringFamily> families;
     std::map<std::pair<Cut, unsigned>, std::vector<Id>> at;
 };
+struct OrdinaryProducerSupport {
+    Cut consumer = NoAnalysisId;
+    Id access = NoAnalysisId;
+    Pipe source = Pipe::S;
+    std::shared_ptr<const std::vector<Cut>> seeds;
+    bool operator<(const OrdinaryProducerSupport& b) const
+    {
+        const auto a = std::tie(consumer, access, source);
+        const auto other = std::tie(b.consumer, b.access, b.source);
+        if (a != other) { return a < other; }
+        if (seeds == b.seeds) { return false; }
+        const std::vector<Cut> empty;
+        return (seeds ? *seeds : empty) < (b.seeds ? *b.seeds : empty);
+    }
+};
 struct ProducerSupportScope {
     std::array<std::set<Id>, PipeCount> classes;
+    std::array<std::vector<Cut>, PipeCount> seeds;
+    std::array<std::shared_ptr<const std::vector<Cut>>, PipeCount> seedHandles;
     std::vector<Cut> consumers;
+    std::vector<OrdinaryProducerSupport> ordinary;
 };
 // Immutable, conditional consequences of one finite two-role induction system.
 // These masks are opportunity proofs; only selected replay supplies live credit.
@@ -542,7 +560,7 @@ struct DueObligation {
     std::set<Id> classes;
 };
 struct RealizationSupport {
-    enum Kind { Completion, Consumption, Induction } kind = Completion;
+    enum Kind { Completion, Consumption, Induction, OrdinaryRepair } kind = Completion;
     Id identity = NoAnalysisId;
     Cut deadline = NoAnalysisId;
 };
@@ -614,14 +632,22 @@ private:
         uint64_t version = 0;
         bool complete = false;
         std::vector<Id> families;
+        std::vector<OrdinaryProducerSupport> ordinary;
         std::string reason;
     };
     std::map<Id, SupportLinks> recurringLinks;
+    std::map<std::pair<Pipe, std::vector<Cut>>, std::shared_ptr<const std::vector<Cut>>> producerSeedHandles;
+    std::map<std::pair<Pipe, std::shared_ptr<const std::vector<Cut>>>, std::set<Cut>> ordinaryFenceSites;
+    std::map<std::tuple<Pipe, std::shared_ptr<const std::vector<Cut>>, Cut>, std::set<Id>> ordinaryFenceMay;
+    std::vector<uint64_t> ordinaryVisitStamp;
+    uint64_t ordinaryVisitEpoch = 0;
     std::map<std::pair<Id, bool>, RecurringCertificate> recurringCertificates;
     std::map<unsigned, std::vector<std::pair<Id, Id>>> projectionAccesses;
     bool projectionIndexed = false;
     const RecurringCertificate& recurringCertificate(Id, bool normal = false);
     bool qualifyRecurringInterface(const std::vector<Id>&, RecurringPacket&, const ProducerSupportScope&);
+    std::optional<std::map<Cut, std::set<Id>>> ordinarySupportGuarantee(
+        const ProducerSupportScope&, const PacketView&);
 
     ProducerSupportScope producerScope(const std::vector<RecurringRequirement>&);
     bool supportsRecurring(Id family, Cut, const FrontierRequirement&) const;

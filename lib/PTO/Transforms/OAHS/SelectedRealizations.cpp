@@ -175,6 +175,98 @@ const RecurringCertificate& Constructor::recurringCertificate(Id id, bool normal
     return proof;
 }
 
+std::optional<std::map<Cut, std::set<Id>>> Constructor::ordinarySupportGuarantee(
+    const ProducerSupportScope& scope, const PacketView& view)
+{
+    std::map<Cut, std::set<Id>> guaranteed;
+    using Interface = std::pair<Pipe, std::shared_ptr<const std::vector<Cut>>>;
+    std::map<Interface, std::vector<const OrdinaryProducerSupport*>> groups;
+    for (const auto& row : scope.ordinary) {
+        const auto pipe = unsigned(row.source);
+        if (pipe >= PipeCount || !program.target.supported[pipe] || !program.target.barriers[pipe] ||
+            row.consumer >= control.graph.sites.size() || !control.reachable[row.consumer] ||
+            !row.seeds || row.seeds->empty()) { return {}; }
+        groups[{row.source, row.seeds}].push_back(&row);
+    }
+    for (const auto& [group, rows] : groups) {
+        const auto& [pipe, seeds] = group;
+        const auto interface = std::make_pair(pipe, seeds);
+        auto known = ordinaryFenceSites.find(interface);
+        if (known == ordinaryFenceSites.end()) {
+            std::set<Cut> complete;
+            for (auto seed : *seeds) {
+                if (seed >= control.graph.sites.size()) { return {}; }
+                for (auto site : control.wordOccurrences[control.canonicalCut[seed]]) {
+                    if (!control.reachable[site]) { continue; }
+                    const auto operation = control.graph.operations[site];
+                    if (operation == NoAnalysisId || program.operations[operation].pipe != pipe) {
+                        return {};
+                    }
+                    complete.insert(site);
+                }
+            }
+            if (complete.empty()) { return {}; }
+            known = ordinaryFenceSites.emplace(interface, std::move(complete)).first;
+        }
+        const auto& fenceSites = known->second;
+        for (auto site : fenceSites) {
+            const auto& word = view.word(site);
+            if (word.empty()) { return {}; }
+            const auto& command = view.endpoint(word.back()).command;
+            if (command.kind != Command::Barrier || command.source != pipe) { return {}; }
+        }
+        for (const auto* row : rows) {
+            const auto key = std::make_tuple(pipe, seeds, row->consumer);
+            auto found = ordinaryFenceMay.find(key);
+            if (found == ordinaryFenceMay.end()) {
+                std::set<Id> may;
+                // The current deadline payload is excluded. A prior visit to
+                // that same site, reached through a backedge, is included.
+                const bool stopsAtConsumer = fenceSites.count(row->consumer) != 0;
+                if (!stopsAtConsumer) {
+                    const auto size = control.graph.sites.size();
+                    ordinaryVisitStamp.resize(size, 0);
+                    if (++ordinaryVisitEpoch == 0) {
+                        std::fill(ordinaryVisitStamp.begin(), ordinaryVisitStamp.end(), 0);
+                        ordinaryVisitEpoch = 1;
+                    }
+                    std::deque<Cut> pending;
+                    const auto& preceding = control.predecessors[row->consumer];
+                    pending.insert(pending.end(), preceding.begin(), preceding.end());
+                    while (!pending.empty()) {
+                        const auto site = pending.front(); pending.pop_front();
+                        if (!control.reachable[site] || ordinaryVisitStamp[site] == ordinaryVisitEpoch) {
+                            continue;
+                        }
+                        ordinaryVisitStamp[site] = ordinaryVisitEpoch;
+                        ++result.work.producerSupportWork;
+                        const auto operation = control.graph.operations[site];
+                        if (operation != NoAnalysisId) {
+                            const auto& op = program.operations[operation];
+                            if (op.pipe == pipe) {
+                                for (const auto& access : op.accesses) {
+                                    const auto base = (Id(access.cell) * PipeCount + unsigned(pipe)) * 2;
+                                    if (access.read) { may.insert(base); }
+                                    if (access.write) { may.insert(base + 1); }
+                                }
+                            }
+                        }
+                        // A seed payload executes after its pre-payload fence:
+                        // collect it, then stop before older original accesses.
+                        if (fenceSites.count(site)) { continue; }
+                        const auto& preceding = control.predecessors[site];
+                        pending.insert(pending.end(), preceding.begin(), preceding.end());
+                    }
+                }
+                found = ordinaryFenceMay.emplace(key, std::move(may)).first;
+            }
+            if (found->second.count(row->access)) { return {}; }
+            guaranteed[row->consumer].insert(row->access);
+        }
+    }
+    return guaranteed;
+}
+
 bool Constructor::qualifyRecurringInterface(
     const std::vector<Id>& families, RecurringPacket& proposal, const ProducerSupportScope& scope)
 {
@@ -257,6 +349,13 @@ bool Constructor::qualifyRecurringInterface(
         for (const auto& at : proof.guaranteed) {
             proposal.guaranteed[at.first].insert(at.second.begin(), at.second.end());
         }
+    }
+    // Ordinary support is a separate original-access certificate, not part of
+    // the immutable paired-role induction proof.
+    const auto ordinary = ordinarySupportGuarantee(scope, *view);
+    if (!ordinary) { return false; }
+    for (const auto& [site, accesses] : *ordinary) {
+        proposal.guaranteed[site].insert(accesses.begin(), accesses.end());
     }
     // Keep the repair-relocation guard. This certificate can discharge its
     // actual obligations; a discovery match alone cannot grant that coverage.
