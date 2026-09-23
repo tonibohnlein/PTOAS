@@ -50,14 +50,18 @@ consolidation/recovery. Same three-reviewer commit loop. Cost investigation runs
 throughout; no new synthesis or inactive policy experiments are prerequisites.
 
 S completed the bounded nearest-role projection. T captures immutable original
-structure/effects and composes guarded first/last/nonempty over a named interval,
-with a real endpoint-vocabulary consumer. This is not actual placement migration.
-Next U: write-delimited read segments (not implicit generation kills), original
-frontier applicability at all existing word occurrences, and replacement of the
-remaining enclosing marginal endpoint interpretation. Preserve guard availability,
-paired owner correspondence, early source subscriptions and unknown may facts.
-Then residual-driven activation of prescribed finite support, rather than the
-current upfront recurring installer. See HANDOFF for evidence and F/G/L/R debts.
+structure/effects and guarded first/last/nonempty intervals. U now feeds those
+facts into the real enclosing existing-word endpoint consumer, with actual
+boundary support and mixed-proof aliases. Unknown guards/incoming scope retain
+S; optional-child predicate materialization remains unfinished. Native evidence
+is typed-query activation plus normal-constructor validation, not proof that every
+selected channel used typed facts. See HANDOFF for exact evidence/restrictions.
+
+Next V: residual-driven activation of prescribed finite support, replacing the
+upfront recurring installer. Include same-engine WAW deadlines; stage ownership,
+support and reservations atomically; actual propagation must discharge the trigger.
+Then finish optional-child composition, persistent publication support, binding
+policy and linked independent banks. F/G/L/R recovery remains open throughout.
 
 ## Historical resumed implementation queue
 

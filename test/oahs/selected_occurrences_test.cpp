@@ -447,6 +447,101 @@ void mixedReaderParticipation()
     }
 }
 
+o::Program withOuterInterface(o::Program input)
+{
+    auto imported = o::addStructuredBoundaryCuts(input);
+    require(imported.success, imported.reason);
+    auto& q = *imported.program.observed;
+    const auto& root = imported.program.body;
+    const auto owner = root.kind == o::Region::For ? root.originalOwner : root.children.front().originalOwner;
+    const auto header = q.sites[owner].successors.front();
+    const auto body = q.sites[header].successors.front();
+    const auto exit = q.sites[header].successors.back();
+    std::set<o::Cut> members;
+    std::vector<o::Cut> pending{body};
+    while (!pending.empty()) {
+        const auto site = pending.back(); pending.pop_back();
+        if (site == header || !members.insert(site).second) { continue; }
+        for (auto next : q.sites[site].successors) { pending.push_back(next); }
+    }
+    o::ObservedLoop loop{owner, owner, exit, {members.begin(), members.end()}};
+    loop.bodyEntry = body; loop.atLeastOnce = true;
+    q.loops.push_back(std::move(loop));
+    return imported.program;
+}
+void typedReaderEndpoints()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::V;
+    for (unsigned variant = 0; variant != 6; ++variant) {
+        auto p = base(2);
+        p.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}}),
+                        op(P, {{0, false, true}}), op(Q, {{0, true, false}}),
+                        op(P, {{1, false, true}})};
+        auto delimiter = variant == 1 ? o::Region{o::Region::Choice, {leaf(2), seq({})}} : leaf(2);
+        p.body = {o::Region::For, {seq({leaf(0), leaf(1), delimiter, leaf(3), leaf(4)})}};
+        if (variant == 0 || variant == 4 || variant == 5) {
+            p.body.children[0] = seq({leaf(0), leaf(1), seq({leaf(4)}), leaf(3), leaf(2)});
+        }
+        if (variant == 2) { p.body.children[0] = seq({seq({leaf(0), leaf(1)}), leaf(3), leaf(2), leaf(4)}); }
+        if (variant == 4) {
+            p.operations[2].accesses = {{1, false, true}};
+            p.operations.push_back(op(Q, {{0, true, false}}));
+            p.body = seq({p.body, leaf(5)});
+        }
+        p = withOuterInterface(std::move(p));
+        const auto owner = p.observed->loops.front().owner;
+        if (variant == 3) { p.operations[2].accesses.clear(); } // frozen delimiter no longer executes its write
+        if (variant == 5) {
+            p.observed->loops[0].entries = {p.observed->loops[0].entry}; // unpaired legacy metadata
+        }
+        o::selected::Control control(p);
+        o::StorageFrontierAnalysis storage(p);
+        o::selected::RequirementFrontiers facts(p, control, storage);
+        const auto site = storage.sitesForOperation(3).front();
+        const auto& endpoints = facts.readerBoundaries(site, 0, owner);
+        if (variant == 0) {
+            require(endpoints.originalInterval && endpoints.proved() && !endpoints.first.hit() && endpoints.final.hit(),
+                    "typed same-interval reader roles were not consumed");
+            require(endpoints.ownerInterfaces && !endpoints.ownerInterfaces->empty(),
+                    "typed endpoint lost its paired owner interface");
+            const auto first = storage.sitesForOperation(1).front();
+            require(facts.readerBoundaries(first, 0, owner).originalInterval &&
+                    facts.readerBoundaries(first, 0, owner).first.hit(), "typed first reader was lost");
+            const auto plan = accepted(p);
+            require(o::checkCausalFrontier(p, plan.commands).accepted, "typed endpoint construction lost obligations");
+        } else {
+            require(!endpoints.originalInterval, "unproved delimiter or owner correspondence became exact");
+        }
+    }
+}
+
+void mixedEndpointProofs()
+{
+    auto p = base(1, 4);
+    p.operations = {op(o::Pipe::MTE2, {{0, false, true}}),
+                    op(o::Pipe::V, {{0, true, false}}), op(o::Pipe::V, {{0, true, false}})};
+    p.body = {o::Region::For, {seq({leaf(0), {o::Region::Choice, {leaf(1), leaf(2)}}})}};
+    p = withOuterInterface(std::move(p));
+    o::StorageFrontierAnalysis original(p);
+    const auto a = original.sitesForOperation(1).front(), b = original.sitesForOperation(2).front();
+    auto& graph = *p.observed;
+    const auto branchContext = graph.sites[b].context;
+    graph.sites[b].context = graph.scopes[branchContext].parent; // valid but weaker original branch metadata
+    graph.sites[b].observation = graph.sites[a].observation;
+    o::selected::Control control(p);
+    o::StorageFrontierAnalysis storage(p);
+    o::selected::RequirementFrontiers facts(p, control, storage);
+    const auto owner = graph.loops.front().owner;
+    const auto& first = facts.readerBoundaries(a, 0, owner);
+    const auto& second = facts.readerBoundaries(b, 0, owner);
+    require(first.proved() && second.proved() && first.originalInterval && !second.originalInterval,
+            "mixed-proof alias fixture did not distinguish equivalent endpoint proofs");
+    const auto requests = o::selected::qualifyCyclicFrontiers(p, control, facts);
+    require(!requests.empty(), "equivalent endpoint roles depended on using the same proof path");
+    const auto plan = accepted(p);
+    require(o::checkCausalFrontier(p, plan.commands).accepted, "mixed endpoint proof paths lost matching");
+}
+
 void physicalDeadlines()
 {
     const auto P = o::Pipe::MTE2, Q = o::Pipe::V, R = o::Pipe::MTE1;
@@ -656,6 +751,8 @@ int main()
     composedEndpointDemands();
     mixedReaderParticipation();
     physicalDeadlines();
+    typedReaderEndpoints();
+    mixedEndpointProofs();
     o::selected::ReplayTestAccess::everyInterveningOccurrence();
     o::selected::ReplayTestAccess::omittedSupport();
     std::cout << "shared occurrence and physical-deadline queries passed\n";

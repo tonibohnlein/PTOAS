@@ -324,6 +324,9 @@ struct ReaderEndpoint {
 };
 struct ReaderFrontiers {
     Id owner = NoAnalysisId;
+    bool originalInterval = false;
+    ReaderIntervalQuery interval;
+    const std::vector<Id>* ownerInterfaces = nullptr;
     ReaderEndpoint first, final;
     PhysicalUseSummary preceding, following;
     std::string reason;
@@ -399,6 +402,12 @@ private:
     mutable uint64_t endpointWork = 0;
     mutable std::map<std::tuple<Cut, unsigned, bool>, bool> separationByUse;
     mutable std::map<Id, std::vector<EndpointRequirement>> byOwner;
+    ReaderFrontiers originalReaderBoundaries(Cut, unsigned, Id) const;
+    mutable bool pairedReadersIndexed = false;
+    mutable std::vector<ObservedLoopOccurrence> readerOwnerInterfaces;
+    mutable std::map<std::pair<Id, Cut>, std::vector<Id>> pairedReaderInterfaces;
+    using PredicateKey = std::tuple<unsigned, Id, uint64_t>;
+    mutable std::map<Cut, std::map<PredicateKey, uint64_t>> readerPredicateFacts;
 };
 // A storage/control qualifier: it returns requirements and original frontiers,
 // not commands or physical key choices. Empty means ordinary F1--F8 applies.

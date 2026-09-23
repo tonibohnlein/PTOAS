@@ -79,6 +79,8 @@ public:
       pending.pop_back();
       ids.emplace(region, regions.size());
       regions.push_back(region);
+      if (region->kind == Region::Operation) { operationRegions.emplace(region->operation, region); }
+      for (const auto& child : region->children) { parents.emplace(&child, region); }
       if (region->originalOwner != NoControlId) {
         const auto added = owners.emplace(region->originalOwner, region);
         if (!added.second) { added.first->second = nullptr; }
@@ -151,6 +153,92 @@ public:
     }
     assign(result, sequence(parts));
     return result;
+  }
+  const OriginalReadSegment& segment(std::size_t ownerId, std::size_t operation, unsigned cell, Pipe reader) {
+    const auto key = std::make_tuple(ownerId, operation, cell, unsigned(reader));
+    const auto prior = segments.find(key);
+    if (prior != segments.end()) { return prior->second; }
+    auto& result = segments[key];
+    result.reason = "original access has no qualified sequence read interval";
+    const auto owner = owners.find(ownerId);
+    const auto access = operationRegions.find(operation);
+    const bool valid = original && owner != owners.end() && owner->second && access != operationRegions.end();
+    if (!valid) { return result; }
+    const auto* sequence = owner->second;
+    const bool countedSequence = sequence->kind == Region::For && sequence->children.size() == 1;
+    if (countedSequence) { sequence = &sequence->children.front(); }
+    if (sequence->kind != Region::Sequence) { return result; }
+    const auto positionKey = std::make_pair(ownerId, operation);
+    auto positionFound = childPositions.find(positionKey);
+    if (positionFound == childPositions.end()) {
+      const auto* child = access->second;
+      auto parent = parents.find(child);
+      while (parent != parents.end()) {
+        if (parent->second == sequence) { break; }
+        ++compositionParts;
+        child = parent->second;
+        parent = parents.find(child);
+      }
+      const auto position = parent == parents.end() ? NoAnalysisId :
+          std::size_t(child - sequence->children.data());
+      positionFound = childPositions.emplace(positionKey, position).first;
+    }
+    const auto position = positionFound->second;
+    if (position == NoAnalysisId) { return result; }
+    const auto projection = std::make_pair(ids.at(sequence), cell);
+    auto writes = delimiters.find(projection);
+    if (writes == delimiters.end()) {
+      std::vector<std::size_t> positions;
+      for (std::size_t i = 0; i < sequence->children.size(); ++i) {
+        if (containsWrite(sequence->children[i], cell)) { positions.push_back(i); }
+      }
+      writes = delimiters.emplace(projection, std::move(positions)).first;
+    }
+    const auto next = std::lower_bound(writes->second.begin(), writes->second.end(), position);
+    const bool writingChild = next != writes->second.end() && *next == position;
+    if (writingChild) {
+      result.reason = "reader child contains an overlapping write";
+      return result;
+    }
+    const auto end = next == writes->second.end() ? sequence->children.size() : *next;
+    const auto begin = next == writes->second.begin() ? 0 : *std::prev(next) + 1;
+    result.interval = {ownerId, cell, reader, ReaderIntervalQuery::BodyInterval, begin, end};
+    result.startsAtOwnerEntry = begin == 0;
+    result.endsAtOwnerExit = end == sequence->children.size();
+    if (!result.startsAtOwnerEntry) { result.before = ids.at(&sequence->children[begin - 1]); }
+    if (!result.endsAtOwnerExit) { result.after = ids.at(&sequence->children[end]); }
+    result.complete = true;
+    result.reason.clear();
+    return result;
+  }
+  std::size_t condition(std::size_t root, std::size_t operation) {
+    if (root >= frontiers.size()) { return NoAnalysisId; }
+    auto found = conditions.find(root);
+    if (found == conditions.end()) {
+      std::map<std::size_t, std::size_t> incoming{{root, 1}}, leaves;
+      // Interned nodes refer only to lower IDs. Descending propagation visits
+      // each relevant node once, including shared frontier subexpressions.
+      while (!incoming.empty()) {
+        auto current = std::prev(incoming.end());
+        ++compositionParts;
+        const auto node = frontiers[current->first];
+        const auto guard = current->second;
+        incoming.erase(current);
+        auto send = [&](std::size_t child, std::size_t predicate) {
+          incoming[child] = combine(false, incoming[child], predicate);
+        };
+        if (node.kind == GuardedReadFrontier::Access) {
+          leaves[node.operation] = combine(false, leaves[node.operation], guard);
+        } else if (node.kind == GuardedReadFrontier::Union) {
+          send(node.left, guard); send(node.right, guard);
+        } else if (node.kind == GuardedReadFrontier::Guard) {
+          send(node.left, combine(true, guard, node.predicate));
+        }
+      }
+      found = conditions.emplace(root, std::move(leaves)).first;
+    }
+    const auto leaf = found->second.find(operation);
+    return leaf == found->second.end() ? 0 : leaf->second;
   }
   ParticipationExpression predicate(std::size_t id) const {
     return id < predicates.size() ? predicates[id] : ParticipationExpression{};
@@ -251,6 +339,21 @@ private:
     summaries.emplace(key, result);
     return result;
   }
+  bool containsWrite(const Region& region, unsigned cell) {
+    const auto key = std::make_pair(ids.at(&region), cell);
+    const auto prior = writeSummaries.find(key);
+    if (prior != writeSummaries.end()) { return prior->second; }
+    ++compositionParts;
+    bool writes = false;
+    if (region.kind == Region::Operation && region.operation < original->operations.size()) {
+      for (const auto& access : original->operations[region.operation].accesses) {
+        writes |= access.cell == cell && access.write;
+      }
+    }
+    for (const auto& child : region.children) { writes |= containsWrite(child, cell); }
+    writeSummaries.emplace(key, writes);
+    return writes;
+  }
   Summary derive(const Region& region, unsigned cell, Pipe reader) {
     if (region.kind == Region::Operation) {
       if (region.operation >= original->operations.size()) { return unknown("invalid original access identity"); }
@@ -324,6 +427,13 @@ private:
   std::map<std::size_t, const Region*> owners;
   std::vector<ParticipationExpression> predicates;
   std::vector<GuardedReadFrontier> frontiers;
+  std::map<const Region*, const Region*> parents;
+  std::map<std::pair<std::size_t, std::size_t>, std::size_t> childPositions;
+  std::map<std::size_t, const Region*> operationRegions;
+  std::map<std::pair<std::size_t, unsigned>, bool> writeSummaries;
+  std::map<std::pair<std::size_t, unsigned>, std::vector<std::size_t>> delimiters;
+  std::map<std::tuple<std::size_t, std::size_t, unsigned, unsigned>, OriginalReadSegment> segments;
+  std::map<std::size_t, std::map<std::size_t, std::size_t>> conditions;
   using PredicateKey = std::tuple<unsigned, std::size_t, std::size_t, unsigned, std::size_t, uint64_t, uint64_t>;
   std::map<PredicateKey, std::size_t> predicateIds;
   std::map<std::tuple<unsigned, std::size_t, std::size_t, std::size_t, std::size_t>, std::size_t> frontierIds;

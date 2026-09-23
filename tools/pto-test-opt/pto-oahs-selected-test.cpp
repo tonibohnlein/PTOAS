@@ -998,7 +998,8 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
-  for (unsigned variant = 0; variant < 9; ++variant) {
+  std::pair<unsigned, unsigned> typedCounts;
+  for (unsigned variant = 0; variant < 12; ++variant) {
     std::string source = input;
     if (variant == 1) {
       source.replace(source.find("// RELOAD"), std::string("// RELOAD").size(),
@@ -1038,11 +1039,61 @@ module attributes {pto.target_arch = "a3"} {
             (variant == 8 ? "%child_step" : "%child_step_literal"));
       }
     }
+    if (variant >= 9) {
+      const std::string selector = "%slot = arith.remui %i, %two : index";
+      source.replace(source.find(selector), selector.size(), "%slot = arith.constant 0 : index");
+    }
+    if (variant == 10) {
+      const auto at = source.find("      pto.tload");
+      source.insert(at, "      %bank_view = pto.treshape %bank : !pto.tile_buf<vec, 1x32xf32> "
+                        "-> !pto.tile_buf<vec, 1x32xf32>\n");
+      const std::string use = "pto.tabs ins(%bank :";
+      for (auto pos = source.find(use); pos != std::string::npos; pos = source.find(use, pos + 1)) {
+        source.replace(pos, use.size(), "pto.tabs ins(%bank_view :");
+      }
+    }
+    if (variant == 11) {
+      const auto at = source.find("    scf.for %i");
+      source.insert(at, "    %predicate = arith.cmpi eq, %zero, %one : index\n"
+                        "    %width = arith.constant 32 : index\n"
+                        "    %spare_addr = arith.constant 8192 : i64\n"
+                        "    %spare = pto.alloc_tile addr = %spare_addr valid_row = %one valid_col = %width : "
+                        "!pto.tile_buf<vec, 1x32xf32, valid=?x?>\n"
+                        "    scf.if %predicate {\n"
+                        "      pto.set_validshape %spare, %one, %width : !pto.tile_buf<vec, 1x32xf32, valid=?x?>\n"
+                        "    }\n");
+    }
     auto module = parseSourceString<ModuleOp>(source, &context);
     if (!check(bool(module), "reader-generation fixture failed to parse")) {
       return false;
     }
     auto function = *module->getOps<func::FuncOp>().begin();
+    if (variant >= 9) {
+      oahs::NativeAnalysis imported;
+      if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, imported)),
+                 "typed reader fixture failed shared import")) { return false; }
+      oahs::selected::Control control(imported.program);
+      oahs::StorageFrontierAnalysis storage(imported.program);
+      oahs::selected::RequirementFrontiers facts(imported.program, control, storage);
+      unsigned first = 0, final = 0;
+      for (const auto& loop : imported.program.observed->loops) {
+        for (auto site : loop.sites) {
+          const auto operation = control.graph.operations[site];
+          if (operation == oahs::NoAnalysisId) { continue; }
+          for (const auto& access : imported.program.operations[operation].accesses) {
+            if (!access.read || access.write) { continue; }
+            const auto& endpoints = facts.readerBoundaries(site, access.cell, loop.owner);
+            if (endpoints.originalInterval) {
+              first += endpoints.first.hit(); final += endpoints.final.hit();
+            }
+          }
+        }
+      }
+      if (!check(first && final, "native enclosing readers did not consume typed endpoint frontiers")) { return false; }
+      if (variant == 9) { typedCounts = {first, final}; }
+      if (!check(typedCounts == std::make_pair(first, final),
+                 "equivalent view or unrelated descriptor/control changed typed endpoint facts")) { return false; }
+    }
     oahs::SelectedPlan plan;
     if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)),
                "reader generation failed native construction/reconstruction")) {
@@ -1055,7 +1106,8 @@ module attributes {pto.target_arch = "a3"} {
     const auto ready = std::count_if(plan.channels.begin(), plan.channels.end(), [](const auto& channel) {
       return channel.source == oahs::Pipe::MTE2 && channel.observer == oahs::Pipe::V && channel.period == 2;
     });
-    if (!check(ready == (variant == 7 ? 0 : 2), "physical generation across children lost per-bank readiness")) {
+    const bool expectedReady = variant >= 9 || ready == (variant == 7 ? 0 : 2);
+    if (!check(expectedReady, "physical generation across children lost per-bank readiness")) {
       llvm::errs() << "reader variant=" << variant << " ready=" << ready << "\n";
       return false;
     }

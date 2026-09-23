@@ -1,5 +1,44 @@
 # OAHS current handoff
 
+## Completed Step U — existing-word reader endpoint applicability
+
+Baseline T `d7f7e26f4`. Shared write-delimited original read intervals and D3
+leaf conditions now supply the enclosing reader's existing first/final endpoints.
+Actual predecessor/continuation summaries must support each boundary; skipped
+reloads, trailing/outside readers and removed delimiter writes remain protected.
+Partial writes delimit access intervals, never kill older histories. A lexical
+owner exit is not an invocation drain. Mixed typed/shared-summary proofs may
+retain one shared emitted word when their actual roles agree.
+
+Architecture, bounded generality, correctness and asymptotic-performance ACCEPT.
+22/22 portable suites, three native drivers, 88/88 corpus, 18/19 compatibility
+(same inherited refusal), GEMM, two prefills and three targets pass. Every plan
+is byte-identical to T: no changed represented payload order or event resources.
+Native tests establish real-importer typed-query activation and unchanged facts
+under views/unrelated conditional descriptor updates, then normal construction
+and reconstruction without retry. They do not independently prove that every
+selected channel consumed those typed results. Portable tests exercise the real
+consumer, mixed-proof aliases and the boundary-support negatives. 16/32/64 reader
+scaling covers shared segment and leaf-condition indexes. No sanitizer/device run.
+
+Evidence: `../oahs-gemm-base-builds/refactor-step-u/` (summary.json, results.json,
+test-all.log, validation.log, work.json, reviews.txt, source-pin.json).
+Physical-use counters now additionally charge original DAG/interval/applicability
+work; compare the expanded accounting separately from unchanged replay/ownership.
+No compilation speedup claim. F/G/L/R recovery debts remain open.
+
+Boundaries: existing-word predicate implication only; unavailable guards, incoming
+scope or provenance retain S's shared-summary fallback. Paired owner metadata is
+not a generation certificate. Nearest-use boundary support is a sufficient local
+condition, not complete episode support. Optional-child guard materialization,
+open incoming lifetimes and residual-first activation are unfinished.
+
+Next V: retain logical recurring opportunity/support identities, select from the
+actual complete residual (including same-engine WAW), then atomically qualify,
+bind and propagate the selected finite packet before refreshing the residual.
+Do not call the startup-only bulk installer mid-traversal. Continue three-reviewer
+commits; no push or pause requested.
+
 ## Completed Step T — guarded original read intervals
 
 Baseline S `2e516d2a4`. Validated immutable original syntax/effects survive
@@ -8,7 +47,8 @@ frontier DAGs derive first/last/nonempty over one named read-only interval.
 Native endpoint-vocabulary discovery consumes exact read results; first-write
 and unknown read cases retain checked marginal discovery. No protocol activation,
 placement, guard availability or completion credit is implied by these facts.
-Actual enclosing placement migration is still next, not declared complete.
+At T, actual enclosing placement remained on S. U now replaces that interpretation
+for the admitted existing-word fragment; general placement remains unfinished.
 
 All three reviewers ACCEPT; bounded separate generality ACCEPT. Final 22 portable
 suites, three native drivers, 88/88 corpus, 18/19 compatibility (same inherited

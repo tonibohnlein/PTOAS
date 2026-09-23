@@ -114,6 +114,14 @@ struct OriginalReaderFrontiers {
   std::string reason;
   bool complete() const { return status != Status::Unknown; }
 };
+// A read-only structural segment, not a fresh-generation/strong-update proof.
+struct OriginalReadSegment {
+  bool complete = false;
+  ReaderIntervalQuery interval;
+  std::size_t before = NoAnalysisId, after = NoAnalysisId;
+  bool startsAtOwnerEntry = true, endsAtOwnerExit = true;
+  std::string reason;
+};
 struct ReaderBoundary {
   bool boundary = false;
   std::vector<StorageOrigin> readers;
@@ -176,6 +184,9 @@ public:
   // Summarizes the FIRST physical access on each path; this is not All(U).
   PhysicalUseSummary nearestUseSummary(const OriginalUseQuery&) const;
   const OriginalReaderFrontiers& originalReaderFrontiers(const ReaderIntervalQuery&) const;
+  const OriginalReadSegment& originalReadSegment(std::size_t owner, std::size_t operation,
+                                                  unsigned cell, Pipe reader) const;
+  std::size_t readerFrontierCondition(std::size_t frontier, std::size_t operation) const;
   ParticipationExpression participationExpression(std::size_t) const;
   GuardedReadFrontier guardedReadFrontier(std::size_t) const;
   ReaderBoundary readerBoundary(std::size_t site, unsigned cell, Pipe,

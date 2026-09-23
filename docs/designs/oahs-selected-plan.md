@@ -1052,3 +1052,38 @@ iterated. `readCompositionParts` charges sequence/range scans separately; distin
 overlapping ranges still cost the sum of their lengths. No current production
 client enumerates all ranges. A future range-heavy client requires shared range
 composition rather than claiming that summary memoization removes that cost.
+
+## Step U invariant — read segments and existing endpoint applicability
+
+Missing fact: a whole enclosing owner contains producer writes, so its D3 result
+cannot describe the read-only segment between them. Extend the same original
+index with write-delimited sequence intervals and leaf-conditioned frontier
+queries. A may/partial write is a delimiter, not a generation kill. Missing
+producer or successor remains an explicit open boundary. This does not certify
+that all readers of a physical generation have been covered.
+
+The enclosing consumer asks whether its existing reader occurrence satisfies
+the original first/final frontier condition. Three-valued implication uses exact
+original observation atoms and lexical branch context; residues alone do not
+prove first/final visits. Unknown never means NoHit. Paired owner interfaces and
+all reachable word aliases must retain compatible interval roles. Final roles
+are transported only through the existing checked publicationAfter relation.
+Keep independent balance, producer-support, ownership and causal checks. This
+step does not activate protocols or promise future acquired credit. The existing
+bulk recurring installer is a separate subsequent migration.
+
+U accepted scope: existing original observation/lexical predicates prove endpoint
+implication; unavailable guards or an open incoming segment use S's shared
+nearest-role fallback. Exact first/final hits additionally require actual graph
+support: predecessors end at writes, and continuations end at writes or true
+invocation exits. A write-containing child is not by itself a generation boundary.
+Mixed typed/S proofs need equal roles; compare interval identities only when both
+proofs are typed. Paired interface records are metadata, not generation matching.
+The existing publication transport and full protocol checks remain authoritative.
+
+The original query indexes parents and operation positions once, delimiters per
+sequence/cell, and leaf conditions per shared frontier root. Predicate evaluation
+is memoized per applicability query; owner interface memberships reference shared
+records rather than copying each exit for each member/cell. Counters now include
+original composition and endpoint applicability. Unknowns preserve obligations;
+this checkpoint does not synthesize optional-child guards or activate protocols.

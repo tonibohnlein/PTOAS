@@ -311,7 +311,12 @@ std::vector<RecurringRequirement> qualifyEnclosingCell(
                 const auto& other = frontiers.readerBoundaries(occurrence, cell, loop.owner);
                 const bool sameRoles = other.first.status == participation.first.status &&
                     other.final.status == participation.final.status;
-                const bool compatible = other.proved() && sameRoles;
+                const bool bothTyped = other.originalInterval && participation.originalInterval;
+                const bool sameInterval = !bothTyped ||
+                    (other.interval.owner == participation.interval.owner &&
+                     other.interval.begin == participation.interval.begin &&
+                     other.interval.end == participation.interval.end);
+                const bool compatible = other.proved() && sameRoles && sameInterval;
                 if (!compatible) {
                     return {};
                 }

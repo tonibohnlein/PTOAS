@@ -856,6 +856,12 @@ const std::string &StorageFrontierAnalysis::reason() const {
   return impl->error;
 }
 const StorageFrontierStats &StorageFrontierAnalysis::stats() const {
+  if (impl->originalReads) {
+    impl->statistics.originalReadRegions = impl->originalReads->evaluations;
+    impl->statistics.participationNodes = impl->originalReads->predicateCount();
+    impl->statistics.readFrontierNodes = impl->originalReads->frontierCount();
+    impl->statistics.readCompositionParts = impl->originalReads->compositionParts;
+  }
   return impl->statistics;
 }
 std::vector<std::size_t>
@@ -1034,6 +1040,16 @@ const OriginalReaderFrontiers& StorageFrontierAnalysis::originalReaderFrontiers(
   impl->statistics.readFrontierNodes = impl->originalReads->frontierCount();
   impl->statistics.readCompositionParts = impl->originalReads->compositionParts;
   return result;
+}
+const OriginalReadSegment& StorageFrontierAnalysis::originalReadSegment(
+    std::size_t owner, std::size_t operation, unsigned cell, Pipe reader) const {
+  if (!impl->originalReads) {
+    impl->originalReads = std::make_unique<storage_detail::OriginalReadQueries>(impl->program);
+  }
+  return impl->originalReads->segment(owner, operation, cell, reader);
+}
+std::size_t StorageFrontierAnalysis::readerFrontierCondition(std::size_t frontier, std::size_t operation) const {
+  return impl->originalReads ? impl->originalReads->condition(frontier, operation) : NoAnalysisId;
 }
 ParticipationExpression StorageFrontierAnalysis::participationExpression(std::size_t id) const {
   return impl->originalReads ? impl->originalReads->predicate(id) : ParticipationExpression{};

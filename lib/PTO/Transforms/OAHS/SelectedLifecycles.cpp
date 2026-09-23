@@ -8,6 +8,7 @@
 // Shared immutable lifecycle view for placement, recurrence and binding.
 // Physical histories and possible returns are candidates, never causal credit.
 #include "SelectedInternal.h"
+#include <functional>
 
 namespace mlir::pto::oahs::selected {
 RequirementFrontiers::RequirementFrontiers(
@@ -267,6 +268,125 @@ Cut RequirementFrontiers::recurringRelease(Cut site, unsigned cell) const
     return boundary.proved() ? boundary.word : NoAnalysisId;
 }
 
+ReaderFrontiers RequirementFrontiers::originalReaderBoundaries(Cut site, unsigned cell, Id owner) const
+{
+    ReaderFrontiers result;
+    result.owner = owner;
+    const auto operation = control->graph.operations[site];
+    const bool mapped = program->observed && operation < program->originalOperations.size();
+    if (!mapped) { return result; }
+    if (!pairedReadersIndexed) {
+        for (const auto& loop : program->observed->loops) {
+            for (auto occurrence : loopEntryOccurrences(loop)) {
+                const auto identity = readerOwnerInterfaces.size();
+                for (auto member : occurrence.sites) {
+                    ++endpointWork;
+                    pairedReaderInterfaces[{loop.owner, member}].push_back(identity);
+                }
+                endpointWork += occurrence.exits.size();
+                readerOwnerInterfaces.push_back(std::move(occurrence));
+            }
+        }
+        pairedReadersIndexed = true;
+    }
+    const auto paired = pairedReaderInterfaces.find({owner, site});
+    const bool participating = paired != pairedReaderInterfaces.end() && !paired->second.empty();
+    if (!participating) { return result; }
+    const auto original = program->originalOperations[operation];
+    const auto& segment = storage->originalReadSegment(owner, original, cell, program->operations[operation].pipe);
+    // The entry may carry older readers. Keep the existing interpretation until
+    // an explicit incoming interface supports this open read segment.
+    if (!segment.complete || segment.startsAtOwnerEntry) { return result; }
+    const auto& frontiers = storage->originalReaderFrontiers(segment.interval);
+    if (!frontiers.complete()) { return result; }
+    const auto observation = program->observed->sites[site].observation;
+    if (observation == NoAnalysisId) { return result; }
+    const auto& word = program->observed->observations[observation];
+    if (!word.available) { return result; }
+    enum Truth { Unknown, False, True };
+    auto available = readerPredicateFacts.find(site);
+    if (available == readerPredicateFacts.end()) {
+        std::map<PredicateKey, uint64_t> values;
+        for (const auto& atom : word.atoms) {
+            ++endpointWork;
+            values.emplace(PredicateKey{unsigned(atom.kind), atom.owner, atom.parameter}, atom.value);
+        }
+        for (auto scope = control->graph.cutContexts[site]; scope != NoAnalysisId;
+             scope = control->graph.contexts[scope].parent) {
+            ++endpointWork;
+            const auto& context = control->graph.contexts[scope];
+            if (context.kind == AnalysisContext::ThenArm || context.kind == AnalysisContext::ElseArm) {
+                values.emplace(PredicateKey{ObservationAtom::OriginalBoolean, context.ownerSite, 0},
+                               context.kind == AnalysisContext::ThenArm);
+            }
+            if (context.kind == AnalysisContext::ForBody) {
+                values.emplace(PredicateKey{ObservationAtom::LoopNonEmpty, context.ownerSite, 0}, 1);
+            }
+        }
+        available = readerPredicateFacts.emplace(site, std::move(values)).first;
+    }
+    auto atomValue = [&](const ObservationAtom& wanted) -> Truth {
+        const auto fact = available->second.find({unsigned(wanted.kind), wanted.owner, wanted.parameter});
+        if (fact == available->second.end()) { return Unknown; }
+        return fact->second == wanted.value ? True : False;
+    };
+    std::map<Id, Truth> evaluated;
+    std::function<Truth(Id)> evaluate = [&](Id id) -> Truth {
+        const auto cached = evaluated.find(id);
+        if (cached != evaluated.end()) { return cached->second; }
+        ++endpointWork;
+        const auto predicate = storage->participationExpression(id);
+        Truth truth = Unknown;
+        if (predicate.kind == ParticipationExpression::False) { truth = False; }
+        else if (predicate.kind == ParticipationExpression::True) { truth = True; }
+        else if (predicate.kind == ParticipationExpression::Atom) { truth = atomValue(predicate.atom); }
+        else if (predicate.kind == ParticipationExpression::Not) {
+            const auto child = evaluate(predicate.left);
+            truth = child == Unknown ? Unknown : child == True ? False : True;
+        } else if (predicate.kind == ParticipationExpression::And || predicate.kind == ParticipationExpression::Or) {
+            const auto left = evaluate(predicate.left), right = evaluate(predicate.right);
+            if (predicate.kind == ParticipationExpression::And) {
+                truth = left == False || right == False ? False : left == True && right == True ? True : Unknown;
+            } else {
+                truth = left == True || right == True ? True : left == False && right == False ? False : Unknown;
+            }
+        }
+        evaluated.emplace(id, truth);
+        return truth;
+    };
+    auto endpoint = [&](Id root) {
+        const auto condition = storage->readerFrontierCondition(root, original);
+        const auto truth = evaluate(condition);
+        const auto status = truth == True ? ReaderEndpoint::Status::Exact :
+            truth == False ? ReaderEndpoint::Status::NoHit : ReaderEndpoint::Status::Unknown;
+        return ReaderEndpoint{status, site, observation};
+    };
+    result.first = endpoint(frontiers.first);
+    result.final = endpoint(frontiers.last);
+    // A lexical possible write is not an executed episode boundary. Prove
+    // actual boundary incidence/participation and the complete continuation.
+    auto boundarySupport = [&](bool backward) {
+        OriginalUseQuery query;
+        query.owner = owner; query.occurrence = site; query.cell = cell;
+        query.backward = backward;
+        query.starts = backward ? control->predecessors[site] : control->graph.sites[site].successors;
+        const auto support = storage->nearestUseSummary(query);
+        const unsigned writers = PhysicalUseSummary::FullWrite | PhysicalUseSummary::PartialWrite;
+        const unsigned permitted = backward ? writers : writers | PhysicalUseSummary::Exit;
+        return support.complete() && support.roles != 0 && (support.roles & ~permitted) == 0;
+    };
+    const bool missingEntry = result.first.hit() && !boundarySupport(true);
+    const bool missingExit = result.final.hit() && !boundarySupport(false);
+    if (missingEntry) { result.first.status = ReaderEndpoint::Status::Unknown; }
+    if (missingExit) { result.final.status = ReaderEndpoint::Status::Unknown; }
+    result.ownerInterfaces = &paired->second;
+    result.originalInterval = result.proved();
+    result.interval = segment.interval;
+    if (missingEntry || missingExit) { result.reason = "original segment lacks actual boundary/continuation support"; }
+    else if (!result.proved()) { result.reason = "original reader predicate is unavailable at the existing word"; }
+    return result;
+}
+
 const ReaderFrontiers& RequirementFrontiers::readerBoundaries(Cut site, unsigned cell, Id owner) const
 {
     static const ReaderFrontiers unknown;
@@ -277,6 +397,9 @@ const ReaderFrontiers& RequirementFrontiers::readerBoundaries(Cut site, unsigned
     const auto cached = readerFrontiers.find(key);
     if (cached != readerFrontiers.end()) { return cached->second; }
     auto& result = readerFrontiers[key];
+    result = originalReaderBoundaries(site, cell, owner);
+    if (result.proved()) { return result; }
+    result = {};
     result.owner = owner;
     OriginalUseQuery query;
     query.cell = cell;

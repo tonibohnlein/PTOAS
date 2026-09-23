@@ -513,9 +513,42 @@ void originalReadRefusalsAndScaling() {
   }
 }
 
+void readSegmentIndexScaling() {
+  for (unsigned size : {16u, 32u, 64u}) {
+    auto p = base(); p.operations = {op(0, 0, 2)};
+    auto body = seq({leaf(0)});
+    for (unsigned i = 1; i <= size; ++i) {
+      p.operations.push_back(op(1, 0, 1)); body.children.push_back(leaf(i));
+    }
+    p.operations.push_back(op(0, 0, 2)); body.children.push_back(leaf(size + 1));
+    p.body = {o::Region::For, {body}};
+    p.body.originalOwner = 100; p.body.qualifiedCounted = true;
+    CHECK(o::captureOriginalStructure(p).success);
+    o::StorageFrontierAnalysis facts(p);
+    for (unsigned i = 1; i <= size; ++i) {
+      const auto& segment = facts.originalReadSegment(100, i, 0, o::Pipe(1));
+      CHECK(segment.complete && !segment.startsAtOwnerEntry && !segment.endsAtOwnerExit);
+      CHECK(segment.interval.begin == 1 && segment.interval.end == size + 1);
+      const auto& frontiers = facts.originalReaderFrontiers(segment.interval);
+      CHECK(frontiers.complete());
+      CHECK(facts.readerFrontierCondition(frontiers.first, i) == unsigned(i == 1));
+      CHECK(facts.readerFrontierCondition(frontiers.last, i) == unsigned(i == size));
+    }
+    const auto work = facts.stats().readCompositionParts;
+    CHECK(work < 8 * size);
+    for (unsigned i = 1; i <= size; ++i) {
+      const auto& segment = facts.originalReadSegment(100, i, 0, o::Pipe(1));
+      const auto& frontiers = facts.originalReaderFrontiers(segment.interval);
+      CHECK(facts.readerFrontierCondition(frontiers.first, i) == unsigned(i == 1));
+    }
+    CHECK(facts.stats().readCompositionParts == work);
+  }
+}
+
 } // namespace
 int main() {
   originalReadIntervals();
+  readSegmentIndexScaling();
   originalReadRefusalsAndScaling();
   classificationScaling();
   summaryIntervalsAndScaling();
