@@ -39,11 +39,19 @@ struct SelectedSource {
     uint64_t version = 0;
     FrontierState snapshot;
 };
+// Original physical relationship and endpoint bounds retained by a binding.
+// Return deadlines are possible support; they are never acquired event credit.
+struct SelectedLifecycleDemand {
+    StorageRelationship relationship;
+    Cut release = NoAnalysisId, deadline = NoAnalysisId;
+    std::vector<Cut> returnDeadlines;
+};
 struct SelectedDecision {
     Cut consumer = NoAnalysisId, publication = NoAnalysisId;
     RequirementStage stage = RequirementStage::Overlap;
     Pipe source = Pipe::S, observer = Pipe::S;
     std::vector<FrontierRequirement> required;
+    std::vector<SelectedLifecycleDemand> lifecycles;
     std::vector<std::size_t> endpoints;
     bool commonCut = false, enlargedPrefix = false;
     // Present only when F7 repaired consumption-before-republication. These
@@ -103,6 +111,7 @@ struct SelectedLoopInterface {
     std::vector<SelectedRoleClause> clauses;
 };
 struct SelectedWork {
+    uint64_t occurrenceAnalysisSites = 0;
     uint64_t frontierVisits = 0, selectedUpdates = 0, replaySiteEvaluations = 0;
     uint64_t forwardSiteEvaluations = 0;
     uint64_t keyQueries = 0, invariantSiteEvaluations = 0;

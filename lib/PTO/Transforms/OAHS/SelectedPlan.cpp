@@ -105,6 +105,7 @@ SelectedPlan Constructor::run(const Commands& fixed, bool useRecurring)
                 decision.repairedAcquisition = remap[decision.repairedAcquisition];
         }
         result.work.sourceHandles = result.sources.size();
+        result.work.occurrenceAnalysisSites = control.occurrenceAnalysisSites;
         result.work.constructedSites = control.graph.sites.size();
         result.work.loopEntryPreparationSites = control.loopEntryPreparationSites;
         result.work.commandWords = commandCutCount(program);

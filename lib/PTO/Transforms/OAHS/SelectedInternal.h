@@ -24,6 +24,15 @@ struct Component {
     std::vector<Id> sites, order, entries;
     bool cyclic = false;
 };
+enum class ProofOutcome { Unknown, Proved, Disproved };
+struct OccurrenceCorrespondence {
+    ProofOutcome outcome = ProofOutcome::Unknown;
+    std::string reason;
+    Cut failedAt = NoAnalysisId;
+    uint64_t siteEvaluations = 0;
+    std::vector<std::pair<Cut, Cut>> pairs;
+    bool proved() const { return outcome == ProofOutcome::Proved; }
+};
 struct Control {
     detail::ControlGraph graph;
     std::vector<std::vector<Id>> predecessors;
@@ -62,7 +71,27 @@ struct Control {
     explicit Control(const Program&);
     bool straight(Id, Id) const;
     Cut after(Id) const;
+    // The budget bounds analysis work, independently of physical event capacity.
+    // Same-word correspondence assumes publication precedes acquisition; exact
+    // endpoint order, acquired credit and key legality remain binder obligations.
+    const OccurrenceCorrespondence& correspondence(Cut, Cut, Id budget = 65536) const;
+    mutable uint64_t occurrenceAnalysisSites = 0;
+
+private:
+    OccurrenceCorrespondence pairOccurrences(Cut, Cut, Id budget) const;
+    mutable std::map<std::tuple<Cut, Cut, Id>, OccurrenceCorrespondence> correspondences;
 };
+
+// An ordered proposal, including provenance, materialized by the ledger once
+// for both private validation and commitment. This first contract appends at
+// existing word ends; it grants no placement, matching or resource certificate.
+struct PacketEndpoint {
+    Cut cut;
+    Command command;
+    EndpointPurpose purpose;
+    Id request = NoAnalysisId, acknowledges = NoAnalysisId;
+};
+using OrderedPacket = std::vector<PacketEndpoint>;
 
 class Ledger {
 public:
@@ -74,6 +103,8 @@ public:
     const std::vector<Id>& word(Cut) const;
     const SelectedEndpoint& endpoint(Id) const;
     Commands commands() const;
+    Commands withPacket(const OrderedPacket&) const;
+    std::vector<Id> appendPacket(const OrderedPacket&);
     bool active(Id id) const { return !removed.count(id); }
     void erase(Id);
     void restoreAfter(Id, Id);
@@ -198,6 +229,16 @@ enum class RequirementOccurrence : unsigned {
     Unknown,
     Count
 };
+// Immutable physical access facts, shared by ordinary and recurring clients.
+// Deadlines retain every required continuation; none allocates a private event.
+struct LifecycleUse {
+    unsigned cell = 0, roles = 0;
+    StorageOrigin origin;
+    Pipe pipe = Pipe::S;
+    OccurrenceMode occurrence;
+    Cut release = NoAnalysisId;
+    std::vector<Cut> deadlines, returns;
+};
 // One original storage requirement with both of its placement bounds retained.
 // This is immutable analysis metadata: it grants no completion receipt, event
 // token, or permission to merge requirements that happen to use one pipeline.
@@ -218,6 +259,7 @@ struct RequirementFrontier {
     // The original consumer launch deadline. Several records may deliberately
     // share a pipeline while retaining different publications or deadlines.
     Cut deadline = NoAnalysisId;
+    Cut lifecycleRelease = NoAnalysisId;
 };
 class RequirementFrontiers {
 public:
@@ -226,6 +268,10 @@ public:
     const std::string& reason() const { return error; }
     const std::vector<RequirementFrontier>& at(Cut site) const;
     std::map<Id, unsigned> reasons(Cut site) const;
+    const LifecycleUse& use(Cut site, unsigned cell) const;
+    Cut recurringRelease(Cut site, unsigned cell) const;
+    std::vector<SelectedLifecycleDemand> demandsAt(
+        Cut, const std::vector<FrontierRequirement>&) const;
     std::size_t size() const { return population; }
     std::size_t sourceBoundaries() const { return boundedSources; }
     const std::array<std::size_t, unsigned(RequirementOccurrence::Count)>& occurrenceCounts() const
@@ -239,6 +285,9 @@ private:
     std::size_t population = 0, boundedSources = 0;
     std::array<std::size_t, unsigned(RequirementOccurrence::Count)> occurrences{};
     const StorageFrontierAnalysis* storage = nullptr;
+    const Program* program = nullptr;
+    const Control* control = nullptr;
+    mutable std::map<std::pair<Cut, unsigned>, LifecycleUse> uses;
     std::vector<std::vector<RequirementFrontier>> byDeadline;
 };
 // A storage/control qualifier: it returns requirements and original frontiers,

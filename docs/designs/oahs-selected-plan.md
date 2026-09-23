@@ -534,3 +534,20 @@ actual selected receipts. Analytical copies sharing an emitted word share its
 fence, but unfinished distinct future words receive no speculative repairs.
 This preserves the opportunity for intervening required transfers to satisfy
 those later demands without introducing another local fence.
+
+## Ordered proposal materialization
+
+Recurring proposal trials and their commitment use `OrderedPacket` through the
+same ledger append path. Packet sequence is preserved within each actual word;
+fixed prefixes and analytical copies use the ledger's existing canonical-word
+mapping. A private materialization leaves live endpoints, revision and change
+tracking untouched. Accepted materialization retains logical request provenance.
+This removes duplicate candidate/commit encoding; it does not itself prove
+placement quality, resource availability or completion. The initial interface
+appends at word ends. Exact arbitrary gaps and common multi-leg qualification
+remain Stage 3/4 work.
+
+Selected decisions also retain `SelectedLifecycleDemand` provenance from the
+shared physical-use index. Its release candidates and return deadlines cannot
+be used as completion or consumption credit. Actual command execution and the
+unchanged independent checker remain authoritative.

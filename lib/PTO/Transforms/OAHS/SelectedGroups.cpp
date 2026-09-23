@@ -153,11 +153,9 @@ bool Constructor::loopEntryFrontier(Pipe source, const std::vector<FrontierRequi
             control.canonicalCut[loop.entry] == loop.entry;
         if (!eligible) continue;
         if (!std::all_of(first.begin(), first.end(), [&](Cut cut) {
-            const auto& op = program.operations[control.graph.operations[cut]];
             return std::all_of(required.begin(), required.end(), [&](const auto& r) {
-                return std::any_of(op.accesses.begin(), op.accesses.end(), [&](const auto& a) {
-                    return a.cell == r.cell && (a.write || (a.read && r.sourceWrite));
-                });
+                const auto roles = requirements.use(cut, r.cell).roles;
+                return (roles & 2) || ((roles & 1) && r.sourceWrite);
             });
         })) continue;
         // Moving a wait ahead of Q's first payload can still order another

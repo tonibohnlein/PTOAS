@@ -33,6 +33,30 @@ void compareWords(const o::Commands& left, const o::Commands& right)
         }
     }
 }
+void orderedPacketMaterialization()
+{
+    auto p = base(1);
+    p.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}})};
+    o::selected::Control control(p);
+    o::selected::Ledger ledger(p, control.canonicalCut);
+    ledger.append(1, {o::Command::Barrier, Q}, o::EndpointPurpose::Fixed);
+    const auto original = ledger.commands();
+    const auto revision = ledger.version();
+    const o::selected::OrderedPacket packet{
+        {1, {o::Command::Acquire, P, Q, 0}, o::EndpointPurpose::RecurringCompletion, 0},
+        {1, {o::Command::Publish, Q, P, 0}, o::EndpointPurpose::RecurringCompletion, 1},
+        {2, {o::Command::Acquire, Q, P, 0}, o::EndpointPurpose::RecurringCompletion, 1}};
+    const auto staged = ledger.withPacket(packet);
+    compareWords(original, ledger.commands());
+    require(ledger.version() == revision, "private packet changed live revision");
+    const auto ids = ledger.appendPacket(packet);
+    compareWords(staged, ledger.commands());
+    require(ids.size() == 3 && ledger.endpoint(ids[1]).request == 1,
+            "packet lost logical matching provenance");
+    require(staged[1].size() == 3 && staged[1][0].kind == o::Command::Barrier &&
+                staged[1][1].kind == o::Command::Acquire && staged[1][2].kind == o::Command::Publish,
+            "packet sorted publications ahead of an earlier receipt or fixed command");
+}
 void resourceAdmission(unsigned keys)
 {
     auto p = base(3, keys);
@@ -213,6 +237,7 @@ void deadlineFence()
 }
 int main()
 {
+    orderedPacketMaterialization();
     resourceAdmission(1);
     resourceAdmission(2);
     deadlineFence();

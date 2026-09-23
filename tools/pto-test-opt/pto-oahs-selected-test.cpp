@@ -950,6 +950,7 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " updates=" << work.selectedUpdates << " replay=" << work.replaySiteEvaluations
                  << " microseconds=" << work.elapsedMicroseconds
                  << " forward=" << work.forwardSiteEvaluations << " visits=" << work.frontierVisits
+                 << " occurrence_sites=" << work.occurrenceAnalysisSites
                  << " key_queries=" << work.keyQueries << " invariant=" << work.invariantSiteEvaluations
                  << " prepare_microseconds=" << work.preparationMicroseconds
                  << " sites=" << work.constructedSites << " words=" << work.commandWords
@@ -967,11 +968,15 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " observation_declined=" << bool(report.declinedObservation)
                  << " observation_discarded_replay_sites="
                  << (report.declinedObservation ? report.declinedObservation->work.replaySiteEvaluations : 0)
+                 << " observation_discarded_occurrence_sites="
+                 << (report.declinedObservation ? report.declinedObservation->work.occurrenceAnalysisSites : 0)
                  << " observation_discarded_elapsed_us="
                  << (report.declinedObservation ? report.declinedObservation->work.elapsedMicroseconds : 0)
                  << " recurring_declined=" << bool(report.declinedRecurring)
                  << " discarded_replay_sites="
                  << (report.declinedRecurring ? report.declinedRecurring->work.replaySiteEvaluations : 0)
+                 << " discarded_occurrence_sites="
+                 << (report.declinedRecurring ? report.declinedRecurring->work.occurrenceAnalysisSites : 0)
                  << " discarded_elapsed_us="
                  << (report.declinedRecurring ? report.declinedRecurring->work.elapsedMicroseconds : 0)
                  << " recurring_trials=" << work.recurringTrials

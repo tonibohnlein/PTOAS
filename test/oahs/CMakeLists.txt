@@ -13,6 +13,8 @@ add_library(oahs-core-under-test STATIC ../../lib/PTO/Transforms/OAHS/Plan.cpp
   ../../lib/PTO/Transforms/OAHS/CausalFrontier.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedLedger.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedControl.cpp
+  ../../lib/PTO/Transforms/OAHS/SelectedLifecycles.cpp
+  ../../lib/PTO/Transforms/OAHS/SelectedOccurrences.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedReplay.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedGroups.cpp
   ../../lib/PTO/Transforms/OAHS/SelectedAllocation.cpp
@@ -23,7 +25,7 @@ target_compile_features(oahs-core-under-test PUBLIC cxx_std_17)
 target_compile_options(oahs-core-under-test PRIVATE -Wall -Wextra -Werror -pedantic)
 set(OAHS_TEST_SUITES scaling analysis storage_frontier observed phase replay lifecycle causal_frontier
   selected_plan selected_cyclic selected_hardening selected_update selected_lookahead
-  observation_union bank_occurrence first_use)
+  observation_union bank_occurrence first_use selected_occurrences)
 foreach(suite ${OAHS_TEST_SUITES})
   add_executable(oahs-${suite}-test ${suite}_test.cpp)
   target_link_libraries(oahs-${suite}-test PRIVATE oahs-core-under-test)

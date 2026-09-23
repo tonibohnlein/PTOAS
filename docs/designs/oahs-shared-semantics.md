@@ -228,3 +228,18 @@ publication contents or operand effects. Consequently neither operand release
 nor M-to-FIX readiness follows from this exception. Existing actual transfers
 can still establish completion and remove requirements through the normal path.
 The `existing` comparison algorithm is unchanged.
+
+## Merge-sort executed-count effects
+
+Format-2 `tmrgsort` declares a write to its executed-count operand only when
+`exhausted` is true. The emitted `TMRGSORT` template argument controls
+`GetExhaustedData`; the false variant leaves those counters untouched. Source
+and scratch reads, scratch writes and destination writes remain represented.
+The correction is shared by both synchronization constructors. The true variant's
+output effect does not grant completion or model its internal V-to-S event.
+
+The local A2/A3 and A5 PTO-ISA paths were inspected at
+`0c112d61f41342bd0867ce1080c29f1590d72484`. Tests exercise shared effects and
+translation for each architecture, and native OAHS construction on its current
+A3 target. This does not widen the native adapter's target contract or add an
+instruction-specific admission gate.

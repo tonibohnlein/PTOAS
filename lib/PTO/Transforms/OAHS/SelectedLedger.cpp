@@ -80,6 +80,22 @@ Id Ledger::append(Cut cut, Command command, EndpointPurpose purpose, Id request,
     const auto leader = canonical(cut);
     return insert(leader, words[leader].size(), command, purpose, request, ack);
 }
+std::vector<Id> Ledger::appendPacket(const OrderedPacket& packet)
+{
+    std::vector<Id> ids;
+    ids.reserve(packet.size());
+    for (const auto& endpoint : packet) {
+        ids.push_back(append(endpoint.cut, endpoint.command, endpoint.purpose,
+                             endpoint.request, endpoint.acknowledges));
+    }
+    return ids;
+}
+Commands Ledger::withPacket(const OrderedPacket& packet) const
+{
+    auto staged = *this;
+    staged.appendPacket(packet);
+    return staged.commands();
+}
 Id Ledger::after(Id predecessor, Command command, EndpointPurpose purpose, Id request, Id ack)
 {
     const auto cut = endpoints.at(predecessor).cut;

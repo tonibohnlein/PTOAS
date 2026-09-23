@@ -133,7 +133,17 @@ int main() {
   const auto& child = refined.program.observed->loops.back();
   require(child.occurrences.size() == 2, "first-use prefix lost the copied child entry");
   for (const auto& occurrence : o::loopEntryOccurrences(child)) {
-    require(occurrence.exits == std::vector<std::size_t>{11}, "prefix lost its shared child exit");
+    // The copied prefix can bypass the child through a copied exit, or join
+    // its original suffix and exit there. Both preserve the same native gap.
+    require(std::find(occurrence.exits.begin(), occurrence.exits.end(), 11) != occurrence.exits.end(),
+            "prefix lost its original shared child exit");
+    require(occurrence.exits.size() == (occurrence.entry == child.entry ? 1u : 2u),
+            "prefix lost its zero-trip or shared-suffix exit");
+    for (auto exit : occurrence.exits) {
+      const auto& control = *refined.program.observed;
+      require(control.observations[control.sites[exit].observation].anchor == 11,
+              "child occurrence escaped its original exit boundary");
+    }
     require(std::find(occurrence.sites.begin(), occurrence.sites.end(), 9) != occurrence.sites.end(),
             "prefix lost the original later-iteration suffix");
   }

@@ -1,4 +1,258 @@
-# Semantic correction sequence
+# OAHS refactor: shared facts, composed lifetimes and sound construction
+
+Approved consolidated implementation sequence, 2026-09-23. This supersedes the
+restart checkpoints and historical milestone queues below. Active branch:
+`codex/oahs-gemm-base`; starting HEAD `d5718272e`. Original audit:
+`/home/toni/work/pypto3_sync_more/region-prefill-review-20260922/REVIEW.md`.
+
+## Objective and acceptance boundary
+
+Recover the general algorithm, not the old branch commit by commit. Preserve
+GEMM enclosing-bank construction and complete readiness/release support while
+replacing representation-sensitive admission with shared semantic analyses.
+The causal frontier is the only authority for guaranteed completion. Original
+physical facts, possible returns and source subscriptions grant no credit.
+
+Soundness, matching, ownership and rearming are mandatory. Currently supported
+inputs must continue compiling through checked OAHS construction. Recorded
+temporary ordering, resource and compilation-cost regressions are permitted;
+final acceptance recovers demonstrated GEMM/MAT overlap and useful sharing
+through the general path. Historical event counts and byte identity are not
+optimization targets. Explain remaining corpus tradeoffs individually.
+
+Keep the existing atomic optional-recurring decline and bounded local
+original-control retry. Report their reason and complete failed-attempt work;
+a retry is service evidence, not success of the declined mechanism. Peer/queue
+kernels do not take the observation retry. Do not add the old conservative
+serializer/dispatcher or completed-plan deletion/subset search.
+
+## Continuous implementation and review loop
+
+User-directed execution policy (2026-09-23): continue through the complete plan.
+A stage or commit checkpoint is not authorization to stop. Each coherent step:
+
+1. Implement the shared mechanism and its positive, negative and composition tests.
+2. Run relevant checks with the aggregate two-worker limit.
+3. Obtain explicit acceptance from three independent reviewers: architecture/design,
+   correctness, and performance (including ordering, resources and compile work).
+4. Resolve blocking findings and obtain rereview of the final patch.
+5. Record the scope, evidence, limitations and all three verdicts; commit that step.
+6. Proceed directly to the next dependency-ordered step.
+
+Review acceptance applies to the named increment, not to unfinished stages or
+unmeasured device claims. Temporary regressions remain visible in the ledger.
+Do not commit a rejected step or substitute the implementer's own verdict for a
+reviewer's. Only an actual external blocker or a user pause interrupts this loop.
+
+## Shared interfaces and invariants
+
+| Interface | Meaning |
+| --- | --- |
+| Physical uses | Original accesses, descriptor state, selector dependencies, exact/may footprints and independent occurrence relations. |
+| Generation families | Producing episodes, participating readers, next conflicts, initialization, reload, bypass and continuation obligations. Finite descriptions, not unrolled histories. |
+| Endpoint requirements | Original owner, role, participation, stable ordered gap, required source history and deadline. |
+| Support obligations | Completion/consumption needed by a deadline, candidate actual transfers and support actually established. |
+| Ordered packets | Exact command words, logical matching, ownership intervals and physical bindings. Check and commit the same words. |
+| Certificates | Proved, disproved under represented facts, or unknown, with failed premise and affected interface. Budget exhaustion is unknown. |
+
+Extend existing records, with a real consumer for every new query. Keep facts,
+certificates and deterministic selection policy separate. Establish occurrence
+identities, ordered gaps and exact packet materialization early; enable richer
+policies only after their support contracts exist. Region exit implies no drain.
+The ACC exception never releases matrix operands, completes FIX or consumes events.
+
+## Stage 0 — Close the current checkpoint and pin migration evidence
+
+Already adapted: shared InsertSync import (`dbe56f7e6`), ACC contract
+(`37554ef9b`), hardening (`be14229f2`) and physical/child occurrence foundation
+(`53a8458a4`). Do not port them twice or claim the last foundation is a complete
+lifecycle/occurrence service.
+
+- Finish the interrupted portable checks and complete ordering comparison of the
+  changed DeepSeek CSA compatibility plan before widening control refinement.
+- Pin supported inputs, binary/plan identities, resources and construction work,
+  including discarded attempts. Keep one temporary-regression ledger.
+- Protect exact-fit starvation, atomic rollback and exact check/commit order.
+  Consolidate consistent existing materialization into a shared transaction.
+- Verify the missing shared merge-sort effect correction (`94c8b0f1`) against
+  current lowering and adapt its shared effects/tests only. Castptr origins are
+  already ported; do not restore an OAHS instruction whitelist or FFTS gate.
+
+Exit: reproducible evidence, classified CSA change, explicit inherited failures
+and protected transaction invariants. No new device claim.
+
+## Stage 1 — Complete shared physical-use and occurrence consumers
+
+Build on `53a8458a4`, adapting common lifecycle/source/receipt queries from
+`55e70638`. Preserve original owners, participating child entries/body/exits,
+endpoint positions and shared suffixes through refinement. Physical footprint,
+occurrence correspondence and event feasibility remain separate outcomes.
+Independent relations and partial facts survive unrelated unknown relations or
+infeasible optional materialization. Reuse immutable original analyses.
+
+Separate further scalar/footprint improvements from activation of richer
+control refinement. Each query replaces an existing consumer restriction;
+never hide the old recognizers behind a new class.
+
+Exit: carried/IV selectors, equivalent expressions/views and unrelated state
+preserve applicable facts; event capacity does not bound physical knowledge;
+refinement preserves an independently valid nested readiness/release protocol.
+
+## Stage 2 — Generation families and affected-interval support
+
+Start with one generation read by two children before reuse. Vary reloads,
+skipped children, outside readers, unrelated producer work and overwrite after
+the parent. Adapt mechanisms/tests from `315459c2` and `2b1fe121`, not their
+whole-cell/whole-producer recognizers.
+
+Represent initialization, read/write episodes, reload, bypass, scratch reuse
+and epilogue obligations. Replace global vetoes with certificates covering every
+residual repair and exported obligation whose placement could change in the
+affected interval. Preserve the X/Y fence-relocation negative. Scope exclusive
+resource interference to that interface too. Open entry/exit obligations are
+explicit; full contextual replay remains the execution/checking mechanism.
+
+Replace whole-cell ACC eligibility only when the access/production-episode
+relation preserves obligations from older incompatible accesses.
+
+Exit: unrelated work outside a proved interval stops vetoing admission; reload,
+overlap and missing-support negatives remain protected.
+
+## Stage 3 — Compose endpoint roles and certify placement
+
+Collect first-consumer, first-write and final-reader requirements before owner
+refinement. Preserve distinct ordered gaps when roles coincide. Participation
+comes from original bounds, step and control, including zero/single visits,
+skips, repeated entries and nested shared suffixes. Query matched endpoints,
+same generation or next participating use rather than require one metadata mode.
+
+Adapt joint collection (`58ce63c9`) with common correspondence (`55e70638`).
+Adapt exact-gap/publication-prefix certificates (`edcdcece`, `01aa6e5a`) covering
+intermediate work, outward publications, matching occurrences and neighboring
+event uses. Revalidate after relevant edits. Unknown/budget exhaustion retains
+separate boundaries; it never justifies motion. Discovery is independent of
+benefit heuristics; materialization may remain demand-driven.
+
+Exit: endpoint roles coexist without losing participation or positions; no
+sharing relies on uncertified boundary movement.
+
+## Stage 4 — Select complete support and bind ordered packets
+
+Select complete readiness/release obligations before ordinary residual repair.
+Discover required transfers whose existing source histories and endpoints cover
+additional completion or consumption needs. Preserve separate readiness cuts;
+never enlarge prefixes or move a return to manufacture coverage.
+
+Use one packet qualification/binding path for direct, recurring, relay,
+shared-return and helper clients. Apply proposed words privately in exact order:
+the first actual receipt may establish second-leg credit. Check realizability
+before suppressing another transfer; an unavailable direct direction need not
+reject an otherwise supported packet. Check matching, occupancy, active/dormant
+ownership and both neighboring event uses at actual deadlines, replacing global
+key-count proxies. FIFO provenance is not a relay premise; intermediate work
+and outward publication checks remain mandatory.
+
+Adapt required-provider/shared-return mechanisms (`3f547429`, `e8ed8596`,
+`9cadd35c`) and ownership/relay tests (`7f22b091`, unported `b62b89de`,
+`74dcd195`, `89f5b2d6`, `9f2063c2`). Add deadline-driven rearming using both
+`0b25d581` and `e5fe6147`: conditional balance, stale receipts, earlier deadlines
+and later edits are part of the mechanism, not optional follow-ups.
+
+Decline failed optional proposals atomically. Keep independent groups only when
+support proves separation. No arbitrary subset or final helper-deletion search.
+
+Exit: every construction entry uses the same support and binding contracts;
+possible returns never substitute for acquired credit.
+
+## Stage 5 — Consolidate and recover quality
+
+Remove superseded paths as replacements pass acceptance. Restore the mechanism
+portfolio: GEMM/MAT overlap, retained generations, cross-cell returns, RMSNorm,
+attention, CSA refinement and scarce-key cases. Follow Qwen/DeepSeek prefill from
+physical fact to candidate, selected transfer, emitted order and coupled device
+execution; do not assume every kernel must speed up.
+
+Do not recover counts with broad release merging, speculative future fences,
+completed-plan helper deletion or the old experimental option matrix. Reference
+gains must come through the shared constructor. Obtain an independent generality
+review and update the draft's construction rules and proof obligations alongside
+established mechanisms; finite tests are not general proofs.
+
+## Validation, cost and working discipline
+
+At every default-path checkpoint, run focused positive/negative, equivalence and
+composition tests through real import/construction, then supported-input
+construction/reconstruction with unchanged independent checks. Compare complete
+payload-order sets on changed plans; report commands/resources and work
+separately. Distinguish mechanism selection, optional decline, retry and authored
+exclusion. Keep historical campaigns separate from current-head evidence.
+
+The generality matrix includes independent/coupled selectors, arithmetic/views,
+partial FIFO facts, relevant/unrelated descriptors and predicates, initialization,
+reload, outside readers, skipped/repeated children, coincident endpoint roles,
+cross-cell returns, stale consumption, dormant ownership and packet-supported
+second-leg reuse. Final device tests use authentic coupled execution.
+
+Extract established plan-equivalent cost reductions when their consumer exists:
+next-provider-only selection (`42b051bc`), empty classification/state-copy
+avoidance (`0b25d581`), and measured unchanged-query hoisting. New caches or
+reusable region execution require a recomputation witness and invalidation/cold
+equivalence tests. Open region interfaces are required now; new execution engines
+are not. Keep local resource-intensive work within the aggregate two-worker cap.
+
+This document is the canonical sequence; TODO tracks tasks; HANDOFF records the
+current checkpoint and exact evidence. Old M1–M5 labels remain historical bounded
+achievements, distinct from active refactor stages 0–5. The [donor ledger](oahs-donor-ledger.md) records
+adapted portions, excluded portions, actual consumers and branch validation.
+
+## Temporary-regression ledger at the starting checkpoint
+
+| Witness | Current evidence / missing capability | Owner / recovery |
+| --- | --- | --- |
+| DeepSeek CSA compatibility case 1 | Construction/reconstruction pass. Finite explicit-command comparisons show +20/-20 relations for one active outer visit (+40/-40 for two); added A-extraction-to-external-receive order. No peer-progress conclusion. | Stage 0 classification; stages 1–3 if correspondence/support is missing. |
+| GEMM resources | 330/652/1296 pairs vs historical 182/360/716; hardening removed ordering, no new device timing. | Stages 3–5 certified sharing and binding, not broad merge restoration. |
+| Fence-heavy replay work | RMSNorm/TopK/route_sort work grew after deadline-local fencing. | Measured plan-equivalent work track; preserve actual-deadline repair. |
+| Qwen topk_select, kernel_softmax_prepare | Starting baseline had two refusals. Current service passes 18/19: softmax_prepare uses a visible local observation retry, not a successful refined protocol. | Retain topk refusal and softmax refined-path failure; service coverage is distinct from mechanism recovery. |
+| Physical refinement limits | One compatible period materialized per owner; other independent relations remain physical facts. | Stages 1–3 consumers; no event-derived analysis limit. |
+
+## Progress after the first consolidated increment
+
+Stage 0 host closure and a Stage 1 common-query increment are implemented.
+22 portable suites, all three native drivers, 88 corpus cases, GEMM and the
+recorded targeted/prefill witnesses pass. Previously passing emitted plans are
+unchanged. Compatibility service coverage improves to 18/19 through a visible
+local retry; refined softmax support remains open. CSA's +20/-20 one-visit order
+change is classified and retained as a recovery witness. Full details and exact
+artifact pins are in HANDOFF. This does not complete Stage 1 or stages 2–5.
+
+## Accepted implementation steps
+
+### A — Shared facts and exact recurring materialization
+
+Base: `d5718272e`. Architecture/design reviewer: **ACCEPT**; correctness reviewer:
+**ACCEPT**; performance reviewer: **ACCEPT** (2026-09-23). Each independently
+reviewed the implementation and recorded host evidence without running parallel
+builds or tests. Their acceptance covers this increment, not full Stage 1.
+
+Architecture verified one causal authority, shared physical queries, immutable
+correspondence and identical checked/committed materialization. Correctness
+verified all-path pairing, no partial credit on exhausted queries, intervening
+key occurrences, packet ordering and the pinned merge-sort output contract.
+Performance verified unchanged previously passing plans, separate query-work
+accounting and no unexplained new timing regression. Single host timings do not
+establish a speedup. The inherited mixed CSA order and fallback-only softmax
+service improvement remain open. Detailed evidence is linked from HANDOFF.
+
+Architecture's nonblocking finding: `RequirementFrontier::lifecycleRelease`
+duplicates the shared use record and has no consumer; remove with the next
+shared-query consumer change. Continue Stage 1 immediately after this commit.
+
+## Historical audit detail and restart checkpoints
+
+The material below records earlier reasoning/evidence. Its numbering and active
+status do not supersede the consolidated stages above.
+
+# Original semantic correction sequence
 
 Active branch: `codex/oahs-gemm-base`, baseline `37554ef9b`. The historical
 GEMM snapshot is rebased as `f08b28194` atop upstream `66bd855ed`, followed by

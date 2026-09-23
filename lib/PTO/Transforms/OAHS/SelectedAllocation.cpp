@@ -39,22 +39,33 @@ Id Constructor::reusable(Pipe source, Pipe observer, const State& state)
 bool Constructor::clearInterval(Id key, Cut source, Cut target) const
 {
     if (source == target) {
-        return true; // appended after all existing words at this cut
+        return true; // appended after all existing commands in this word
     }
-    if (!control.straight(source, target)) {
+    const auto& correspondence = control.correspondence(source, target);
+    if (!correspondence.proved()) {
         return false;
     }
     const auto& identity = frontier.keys()[key];
-    for (const auto& endpoint : ledger.records()) {
-        if (!ledger.active(endpoint.id)) continue;
-        const auto& c = endpoint.command;
-        if ((c.kind != Command::Publish && c.kind != Command::Acquire) || c.source != identity.source ||
-            c.observer != identity.observer || c.key != identity.key) {
-            continue;
-        }
-        if (control.straight(source, endpoint.cut) && control.straight(endpoint.cut, target) &&
-            endpoint.cut != source) {
+    for (const auto& pair : correspondence.pairs) {
+        if (!control.straight(pair.first, pair.second)) {
             return false;
+        }
+        for (const auto& endpoint : ledger.records()) {
+            if (!ledger.active(endpoint.id)) {
+                continue;
+            }
+            const auto& command = endpoint.command;
+            if ((command.kind != Command::Publish && command.kind != Command::Acquire) ||
+                command.source != identity.source || command.observer != identity.observer ||
+                command.key != identity.key) {
+                continue;
+            }
+            for (auto occurrence : control.wordOccurrences[endpoint.cut]) {
+                if (occurrence != pair.first && control.straight(pair.first, occurrence) &&
+                    control.straight(occurrence, pair.second)) {
+                    return false;
+                }
+            }
         }
     }
     return true;
@@ -435,6 +446,7 @@ bool Constructor::bind(Group& group, RequirementStage stage)
         decision.source = group.source;
         decision.observer = observer;
         decision.required = group.requirements;
+        decision.lifecycles = requirements.demandsAt(current, group.requirements);
         const auto request = result.decisions.size();
         for (auto cut : group.publications) {
             decision.endpoints.push_back(ledger.append(cut,
@@ -481,6 +493,7 @@ bool Constructor::bind(Group& group, RequirementStage stage)
     decision.source = group.source;
     decision.observer = observer;
     decision.required = group.requirements;
+    decision.lifecycles = requirements.demandsAt(current, group.requirements);
     decision.commonCut = group.common;
     auto source = group.publication;
     for (Id hop = 1; hop < path.size(); ++hop) {

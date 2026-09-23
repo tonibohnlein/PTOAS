@@ -200,7 +200,10 @@ void TMrgSortOp::getEffects(
     PTO_ADD_WRITE(effects, opnd);
   }
   auto executed = getExcutedMutable();
-  if (!executed.empty()) {
+  // The emitted TMRGSORT's GetExhaustedData<false> leaves executed counts
+  // untouched. This output effect belongs only to the exhausting variant;
+  // it does not imply any completion or event credit for its internal V->S.
+  if (!executed.empty() && getExhausted()) {
     PTO_ADD_WRITE(effects, executed[0]);
   }
 }

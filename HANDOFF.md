@@ -1,6 +1,114 @@
 # OAHS current handoff
 
-## Active checkpoint — shared physical facts and child occurrences
+## Active checkpoint — common lifecycle/occurrence consumers (2026-09-23)
+
+Branch `codex/oahs-gemm-base`, starting HEAD `d5718272e`. Foundation changes have explicit ACCEPT verdicts from all three independent reviewers.
+They are being committed as Step A; this does not complete Stage 1.
+The user requires an implementation → three-reviewer acceptance → commit loop,
+continuing through all stages without stopping at intermediate checkpoints.
+The canonical [stages 0–5](docs/designs/oahs-semantic-corrections.md) and
+[36-donor ledger](docs/designs/oahs-donor-ledger.md) are persistent; TODO tracks
+that sequence. Stage 0's host closure is complete. Stage 1 remains active; the
+common-query increment below is implemented and host-validated, not the whole
+semantic refactor.
+
+### Implemented in this increment
+
+- One `OrderedPacket` materialization path constructs recurring trial words and
+  committed words, preserving fixed prefixes, intra-word order and request IDs.
+  It does not yet implement arbitrary gaps or the full Stage 4 binder.
+- `RequirementFrontiers` owns shared physical-use roles, source-release candidates
+  and separate successor/return deadlines. Ordinary entry placement, recurring
+  release queries and binding provenance consume those records. The superseded
+  private recurring release lookup and old indexing implementation are removed.
+- `Control::correspondence` records every source/receipt occurrence pair over
+  original control, or returns explicit unknown/disproved results. Binding checks
+  all corresponding intervals and every occurrence of an intervening key use.
+  Immutable queries are memoized; budget exhaustion grants no partial credit.
+- Shared merge-sort effects exclude executed-count writes for `exhausted=false`.
+  Verified the emitted template argument and local A2/A3 and A5 PTO-ISA paths at
+  `0c112d61f41342bd0867ce1080c29f1590d72484`. Shared effects/translation tests cover
+  those architectures; native construction retains its A3 contract. No opcode
+  admission gate or target expansion was introduced.
+- The new first-use test wrongly required a single exit. Its corrected assertion
+  checks both the copied zero-trip exit and original shared-suffix exit, with the
+  same original boundary identity. Production occurrence behavior was unchanged.
+- The draft's endpoint-qualification section now describes bounded occurrence
+  pairing and one ordered proposal for checking/commitment, including the limits.
+  Existing edits to its references and GEMM supplement were preserved.
+
+### Current evidence and its limits
+
+Evidence: `../oahs-gemm-base-builds/refactor-stage0/` and
+`../oahs-gemm-base-builds/refactor-stage1/`. The latter contains the supported-input
+manifest, original source hashes, pinned candidate binaries, plans, native logs
+and `summary.json`. All prepared-source hashes match the prior physical-use run.
+
+- **22/22 portable suites pass**, including correspondence, budget exhaustion,
+  hidden intervening key use, two-reader deadlines, reload provenance, independent
+  bank/child composition and unchanged independent causal references.
+- **All three native drivers pass**, including the new shared merge-sort effects
+  and existing equivalent scalar/view/independent-period cases.
+- **88/88 corpus**, **GEMM**, three targeted kernels and both Qwen/DeepSeek
+  prefill witnesses construct/reconstruct; their emitted plans are identical to
+  the recorded physical-foundation baseline. The previously passing compatibility
+  plans are unchanged too. GEMM retains 330/652/1296 pairs and the narrower refill
+  ordering from hardening; no new device timing is claimed.
+- Compatibility service coverage is **18/19**, formerly 17/19. The newly accepted
+  `kernel_softmax_prepare` is explicitly **an observation decline and checked
+  original-control retry**. The new occurrence check refuses an invalid refined
+  binding before it can become a later byte-completion failure. This is not a
+  successful refined protocol, a merge-sort gain or resolved generation support.
+  Qwen `topk_select` remains the inherited refusal.
+- Corpus replay stays at 448,848 visits and GEMM at 21,846. New immutable occurrence
+  queries add 173,563 corpus visits, reported separately. The recorded single host
+  run totals about 52.1s of constructor time vs 52.8s previously; this is not a
+  controlled speedup claim. Discarded query work is exported too.
+- No sanitizer or device campaign was run. A focused-link script initially read
+  the compile manifest before CMake regeneration, omitting the new sources; it
+  now refreshes that list first. No project-wide rebuild was required.
+
+### Classified CSA regression and recovery obligation
+
+The previously unreviewed CSA compatibility change is **mixed**, not event-key
+renaming: +20/-20 payload start/completion relations for one all-active outer
+visit, +40/-40 for two; alternating participation gives +8/-8 and +16/-16.
+The A extraction moves before the B-readiness exchange; its immediate return
+then carries A completion to a later MTE2 external receive. The vector function
+is byte-identical. Current changes retain this prior physical-foundation plan.
+
+`refactor-stage0/csa-order.py` and `csa-order.json` retain exact plan hashes and
+nine finite complete local-order comparisons. External set/wait ports are
+included, but peer progress and hidden lowering effects are not modeled. The
+added and removed orders are reported separately. Stages 2–4 must recover this
+through scoped support/placement/rearming, not by discarding better physical facts.
+
+### Remaining boundary and exact next action
+
+Continue Stage 1 by connecting shared source/receipt correspondence to the
+remaining placement consumers and inventorying partial physical/FIFO facts.
+Do not widen control refinement until every affected original child interface
+remains available. The existing single-owner recurrence grammar, private enclosing
+observation qualifier and one-period materialization restriction remain explicit
+limitations. Generation-scoped support, joint endpoint roles, prefix certificates,
+arbitrary ordered gaps and general deadline binding remain stages 2–4.
+
+The new records describe candidate physical support, never completion. Existing
+relationship-fallback omission trials remain; replace their responsibility with
+actual support at Stage 4, without adding another completed-plan search. Final
+reference recovery, coupled device work and independent generality review remain
+open. See the canonical regression ledger and the draft for proof obligations.
+
+### Changed-code review
+
+The fast changed-code checker has nine reviewed `G.FMT.11-CPP` false positives:
+its line regex mistakes nested-call parentheses and continued conditions for
+unbraced bodies. Every reported body has braces. Exact findings and line-by-line
+review are in `refactor-stage1/compliance.log` and `compliance-review.md`. The real
+125-column initializer finding was fixed. No suppressions or checker weakening
+were added; `git diff --check` passes. Compiler builds introduce no warnings.
+
+## Historical physical-foundation checkpoint (before this increment)
 
 Branch `codex/oahs-gemm-base`. The preceding hardening checkpoint is committed
 as `be14229f2`; this checkpoint adds a general physical-use and occurrence
@@ -42,7 +150,7 @@ portable checks before using these facts to widen construction. Later work must
 add generation/support intervals, exact endpoint gaps/participation and a common
 packet/binding contract; none is supplied by these records alone.
 
-## Active checkpoint — harden the retained GEMM constructor
+## Historical checkpoint — harden the retained GEMM constructor
 
 - Worktree: `/home/toni/work/pypto3_sync_more/PTOAS-oahs-gemm-base`.
 - Branch: `codex/oahs-gemm-base`; committed baseline: `37554ef9b`.
@@ -54,8 +162,9 @@ packet/binding contract; none is supplied by these records alone.
   [semantic corrections](docs/designs/oahs-semantic-corrections.md).
   Do not merge the old WIP refactor wholesale or restart again.
 
-Source `env.local.sh`; the tracked `env.sh` contains historical machine paths.
-Preserve `.codex/CLAUDE.md` line-ending noise and local workspace configuration.
+Workspace environment backup: `../oahs-gemm-base-builds/workspace-local-backup/env.local.sh`.
+The tracked `env.sh` contains historical machine paths. Local configuration was
+moved out of the source tree; line endings were normalized in `d5718272e`.
 Use at most two resource-intensive workers across all local commands.
 
 ### Hardening result and exact evidence

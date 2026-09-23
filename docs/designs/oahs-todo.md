@@ -6,36 +6,39 @@ also protect useful payload ordering, resource availability, and construction
 cost. Do not reduce synchronization counts by enlarging publication prefixes or
 advancing acquisition deadlines.
 
-## Current priority order — GEMM baseline restart, 2026-09-22
+## Active refactor stages — 2026-09-23
 
-Use [the semantic correction sequence](oahs-semantic-corrections.md) as the
-implementation order. The review covers a later branch; establish each missing
-fact on this baseline before replacing its consumer.
+Canonical sequence: [semantic corrections](oahs-semantic-corrections.md).
+Donors supply mechanisms/counterexamples, not a chronological cherry-pick queue.
 
-1. **Implemented: harden and validate `37554ef9b`.** First-use separation,
-   deadline-local fencing, position-preserving release sharing and atomic
-   optional-cohort decline pass focused/native checks. Corpus: 88/88; inherited
-   compatibility refusals: 2/19. Resource/replay regressions are in HANDOFF.
-2. **Active: shared facts and occurrence interfaces.** Dependency-sliced
-   physical-use records and paired child entry/body/exit paths are implemented.
-   Preserve their original owner membership while refining reachability. Finish
-   the changed CSA ordering review and portable checks; exact endpoint gaps,
-   next-use links and partial FIFO knowledge remain open.
-3. Extend generation/support intervals and compose first-consumer, first-write
-   and final-reader requirements before control refinement. Preserve residual
-   repair and access-scoped ACC obligations.
-4. Consolidate exact ordered-packet construction/binding, then exploit actual
-   required-return coverage on a native prefill witness. Port later mechanisms
-   selectively; retire superseded paths when their obligations are covered.
-5. Recover reference GEMM/MAT and targeted ordering gains, classify corpus
-   tradeoffs, and run matched device validation. Update the draft's algorithm
-   and proof obligations alongside established mechanisms.
+- [x] **Stage 0 host closure:** portable/native checks, classified CSA mixed
+  ordering, pinned manifest, exact packet materialization/starvation and shared
+  merge-sort effects. Peer progress/device claims remain outside this evidence.
+- [ ] **Stage 1 (active):** shared physical-use/deadline records and bounded
+  occurrence pairing are implemented and host-validated. Complete the remaining
+  placement consumers and partial-knowledge inventory; retain copied children.
+- [ ] **Stage 2:** generation families, open region obligations and affected
+  producer-support intervals; access/episode-scoped ACC replacement.
+- [ ] **Stage 3:** compose first-read/first-write/final-read endpoints with exact
+  gaps, original participation and invalidated publication-prefix certificates.
+- [ ] **Stage 4:** complete actual-return support, common ordered packets,
+  deadline-specific binding/ownership and checked rearming.
+- [ ] **Stage 5:** remove replaced paths, restore reference overlap/sharing,
+  explain corpus tradeoffs, coupled device validation and generality review.
 
-The old GEMM source snapshot's notes below are historical. The later device
-campaign reported parity with the manual kernel; current host validation does
-not constitute a new device timing claim. Preserve that plan and the independent
-checker while replacing recognizer restrictions. Temporary implementation
-boundaries must remain explicit in the correction document.
+Implemented foundations: shared instruction/ACC ports, hardening `be14229f2`,
+physical-use and child correspondence `53a8458a4`. Their existence does not mean
+stages 1–4 are complete. Keep the existing bounded local retry visible; do not
+add the old serializing constructor or count retries as mechanism successes.
+
+Cost track: extract measured plan-equivalent reductions with their consumers;
+new caches/region execution require evidence and invalidation tests. Two local
+resource-intensive workers maximum in aggregate.
+
+## Historical GEMM checkpoint and parked findings
+
+The following source-checkpoint notes are historical. Event counts, old milestone
+names and old validation do not define the current implementation or acceptance.
 
 ## Locally completed GEMM plan milestone
 

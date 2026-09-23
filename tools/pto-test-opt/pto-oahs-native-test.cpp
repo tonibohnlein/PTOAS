@@ -176,6 +176,63 @@ module attributes {pto.target_arch = "a3"} {
     require(text(function) == once);
   }
 }
+// The shared effect contract follows the emitted template parameter, not
+// constructor admission. Non-exhausting sort has no scalar output write.
+static void testMergeSortEffects(MLIRContext &context) {
+  const char *source = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @merge_effects(
+      %a: !pto.tile_buf<vec, 1x128xf32>, %b: !pto.tile_buf<vec, 1x128xf32>,
+      %tmp: !pto.tile_buf<vec, 1x256xf32>, %dst: !pto.tile_buf<vec, 1x256xf32>) {
+    %executed = arith.constant dense<0> : vector<4xi16>
+    pto.tmrgsort ins(%a, %b, %tmp {exhausted = false} :
+      !pto.tile_buf<vec, 1x128xf32>, !pto.tile_buf<vec, 1x128xf32>,
+      !pto.tile_buf<vec, 1x256xf32>) outs(%dst, %executed :
+      !pto.tile_buf<vec, 1x256xf32>, vector<4xi16>)
+    return
+  }
+})mlir";
+  for (auto arch : {"a2", "a3", "a5"}) {
+    auto module = parseSourceString<ModuleOp>(source, &context);
+    require(bool(module));
+    (*module)->setAttr("pto.target_arch", StringAttr::get(&context, arch));
+    auto function = module->lookupSymbol<func::FuncOp>("merge_effects");
+    TMrgSortOp sort;
+    function.walk([&](TMrgSortOp op) { sort = op; });
+    for (bool exhausted : {false, true}) {
+      sort.setExhausted(exhausted);
+      SmallVector<MemoryEffects::EffectInstance> effects;
+      sort.getEffects(effects);
+      // Two inputs, scratch read/write, output, and optional executed counts.
+      require(effects.size() == (exhausted ? 6u : 5u));
+      unsigned executedWrites = 0;
+      for (const auto &effect : effects) {
+        if (effect.getValue() == sort.getExcuted() &&
+            isa<MemoryEffects::Write>(effect.getEffect())) {
+          ++executedWrites;
+        }
+      }
+      require(executedWrites == unsigned(exhausted));
+    }
+    sort.setExhausted(false);
+    MemoryDependentAnalyzer aliases;
+    SyncIRs phases;
+    Buffer2MemInfoMap buffers;
+    PTOIRTranslator translator(phases, aliases, buffers, function, SyncAnalysisMode::NORMALSYNC);
+    require(succeeded(translator.Build()));
+    require(translator.describeSemantics().complete());
+    // OAHS currently exposes an A3 target contract. Shared effects/translation
+    // above remain target-independent; this test does not widen that contract.
+    if (StringRef(arch) != "a3") {
+      continue;
+    }
+    oahs::NativeAnalysis analysis;
+    require(succeeded(oahs::analyzeHandoffSync(function, analysis)));
+    require(analysis.phases.size() == 1);
+    require(succeeded(oahs::runHandoffSync(function)));
+  }
+}
+
 static void testSharedSemantics(MLIRContext &context) {
   // These operations have no OAHS registration or single-phase marker. Their
   // ordinary production interfaces are sufficient for either constructor.
@@ -781,6 +838,7 @@ int main(int argc, char **argv) {
   testCarriedPointerRoundTrip(context);
   testPublicAuthoredEvents(context);
   testSharedSemantics(context);
+  testMergeSortEffects(context);
   testScalarDivisionEffects(context);
   testPreservedProtocols(context);
   testPreservedCollectives(context);

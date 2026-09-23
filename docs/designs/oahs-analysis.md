@@ -97,3 +97,35 @@ contract. Pinned reference comparisons provide finite evidence under matched
 contracts; they do not complete the general simulation proof or device
 qualification. Real population accounting uses the
 [evidence tools](../../tools/oahs-evidence/README.md).
+
+## Shared physical-use and occurrence queries (2026-09-23)
+
+`RequirementFrontiers` now owns the constructor's common physical-use view.
+Each `(original site, physical cell)` record retains access roles, original
+context, qualified release candidate and distinct successor/return deadlines.
+Ordinary entry placement and recurring qualification consume these same records;
+selected decisions retain the original relationships and candidate return
+subscriptions. A return deadline is not an acquired receipt. Definite overwrite
+still kills only succession provenance, never outstanding causal history.
+
+`Control::correspondence` pairs all participating occurrences of two emitted
+words by traversing original control with either no pending publication or its
+actual source site. Repeated publication, unmatched acquisition and a pending
+publication at exit disprove matching under the represented graph. All matched
+site pairs are retained, including copies sharing an original command word.
+Invalid queries and bounded-work exhaustion return unknown with no usable pairs.
+The work bound is independent of event capacity; repeated queries reuse facts
+about immutable control, never selected causal state.
+
+Binding's interval check consumes that relation and inspects every occurrence of
+an intervening event command. A canonical cut outside one interval cannot hide
+another occurrence inside it. The existing straight-interval sufficient
+certificate remains; this query alone does not generalize lifetime succession,
+source coverage, neighbor rearming or endpoint motion. Same-word matching also
+requires the binder's publication-before-acquisition ordering premise.
+
+Tests include equivalent child words, missing participation, repeated publication,
+exit balance, exhausted analysis, reload provenance, two readers with a common
+next overwrite, unrelated storage and a hidden intervening key occurrence.
+The new interface does not yet replace the single-owner recurrence grammar or
+supply generation-scoped producer support; those are later refactor stages.
