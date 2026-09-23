@@ -188,10 +188,6 @@ struct SelectedPlan {
 // F1--F8 construction service used by the live handoff pass.
 // Fixed words are preserved in order. Unsupported typed effects are refused,
 // never erased or delegated to another constructor on failure.
-// Read-only physical-role qualification. This grants neither completion nor
-// event credit and does not imply that construction or allocation will succeed.
-bool hasQualifiedRecurringAccesses(const Program&);
-
 SelectedPlan constructSelectedPlan(const Program&, const Commands& fixed = {});
 
 } // namespace mlir::pto::oahs

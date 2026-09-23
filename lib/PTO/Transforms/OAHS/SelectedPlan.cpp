@@ -192,14 +192,6 @@ SelectedPlan Constructor::run(const Commands& fixed, bool useRecurring)
 } // namespace mlir::pto::oahs::selected
 
 namespace mlir::pto::oahs {
-bool hasQualifiedRecurringAccesses(const Program& program)
-{
-    selected::Control control(program);
-    StorageFrontierAnalysis storage(program);
-    selected::RequirementFrontiers requirements(program, control, storage);
-    return control.complete && storage.complete() && requirements.complete() &&
-        !selected::qualifyCyclicFrontiers(program, control, requirements).empty();
-}
 SelectedPlan constructSelectedPlan(const Program& program, const Commands& fixed)
 {
     const auto start = std::chrono::steady_clock::now();

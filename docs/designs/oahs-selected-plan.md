@@ -644,3 +644,30 @@ Scope preparation reuses the original reachability traversal and visits each
 original operation's access list once per producer engine. Revalidation extends
 the existing stabilized inspection pass; it adds no fixed-point solve or witness
 search per relationship/edit. Work is charged separately in producerSupportWork.
+
+### Enclosing bank facts and materialization (Step L)
+
+Successful semantic bank refinement is admitted independently of whether a
+private recurring protocol qualifies. The removed hasQualifiedRecurringAccesses
+query copied the refined program and rebuilt analyses solely to ask that protocol
+question. Boundary closure, original participation, effect validation and complete
+child entry/body/exit correspondence remain requirements of refineBankOccurrences.
+Physical relations grant no completion or event-allocation permission.
+
+Native materialization has an independent limit of4096 added graph sites per
+bank refinement, including copied headers: (period-1)*(bodySites+1). A refusal
+retains the original control and independently derived physical-use relations,
+with a distinct materialization-budget diagnostic. This is an added-site budget,
+not a bound on all accumulated graph sites or child-interface metadata. The
+existing restriction against multiplying a second enclosing bank dimension
+remains explicit; it is not replaced by private-cycle qualification.
+
+Varying effects are computed once per binding, including native ACC classes.
+All residue variants for a used phase are derived together from immutable input.
+An unchanged residue or an outside occurrence keeps its original phase record;
+changed variants get separate records. Only a completely replaced phase can
+reuse its ID for the first changed variant. This avoids residue zero corrupting
+a later unchanged residue or an outside occurrence, while preserving the
+validator's requirement that each physical phase appear in observed control.
+Per-phase preparation is cached; work follows represented effects and copies,
+without a fresh period-wide scan for every residue.

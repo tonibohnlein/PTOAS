@@ -1135,7 +1135,7 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
-  for (unsigned variant = 0; variant < 15; ++variant) {
+  for (unsigned variant = 0; variant < 20; ++variant) {
     std::string source = input;
     auto replace = [&](const std::string &from, const std::string &to) {
       const auto at = source.find(from);
@@ -1150,7 +1150,7 @@ module attributes {pto.target_arch = "a3"} {
       replace("iter_args(%slot = %zero) -> index", "iter_args(%slot = %zero, %unrelated = %n) -> (index, index)");
       replace("scf.yield %next : index", "scf.yield %next, %unrelated : index, index");
     }
-    if (variant == 2 || variant == 3 || variant == 10 || variant == 11) {
+    if (variant == 2 || variant == 3 || variant == 10 || variant == 11 || variant == 16) {
       replace("%result = scf.for", "scf.for");
       replace(" iter_args(%slot = %zero) -> index", "");
       replace("%advance = arith.addi %slot, %one : index", "");
@@ -1178,12 +1178,12 @@ module attributes {pto.target_arch = "a3"} {
       scf.if %predicate { }
       scf.yield %next : index)mlir");
     }
-    if (variant == 6) {
+    if (variant == 6 || variant == 17) {
       replace("%bank = pto.alloc_tile", "%allocation = pto.alloc_tile");
       replace("      pto.tload", "      %bank = pto.treshape %allocation : "
           "!pto.tile_buf<vec, 1x32xf32> -> !pto.tile_buf<vec, 1x32xf32>\n      pto.tload");
     }
-    if (variant == 7) {
+    if (variant == 7 || variant >= 18) {
       replace("%two = arith.constant 2", "%two = arith.constant 17");
     }
     if (variant == 8) {
@@ -1224,6 +1224,17 @@ module attributes {pto.target_arch = "a3"} {
       replace("to %n step %one iter_args", "to %n step %two iter_args");
       replace("scf.yield %next : index", "scf.for %child = %zero to %one step %one { }\n      scf.yield %next : index");
     }
+    if (variant >= 15) {
+      replace("pto.tabs ins(%bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)",
+              "scf.for %child = %zero to %two step %one { }");
+    }
+    if (variant == 19) {
+      std::string padding;
+      for (unsigned i = 0; i < 300; ++i) {
+        padding += "%padding" + std::to_string(i) + " = arith.constant 0 : index\n";
+      }
+      replace("%advance = arith.addi", padding + "%advance = arith.addi");
+    }
     auto module = parseSourceString<ModuleOp>(source, &context);
     if (!check(bool(module) && succeeded(verify(*module)), "parse scalar dependency slice variant")) {
       return false;
@@ -1241,7 +1252,7 @@ module attributes {pto.target_arch = "a3"} {
       return false;
     }
     auto mapping = SyncSlotMapping::derive(loop, bank.getAddr());
-    const unsigned period = variant == 7 ? 17 : (variant == 14 ? 6 : 2);
+    const unsigned period = (variant == 7 || variant >= 18) ? 17 : (variant == 14 ? 6 : 2);
     if (!check(variant == 8 ? !mapping : mapping && mapping->period == period,
                "selector slice lost a proved relation or admitted unknown evolution, variant " +
                    std::to_string(variant))) {
@@ -1262,6 +1273,31 @@ module attributes {pto.target_arch = "a3"} {
     if (!check(succeeded(oahs::analyzeHandoffSync(function, imported)) && text(function) == original,
                "dependency-sliced native import changed original IR")) {
       return false;
+    }
+    if (variant >= 15) {
+      oahs::NativeAnalysis selected;
+      if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, selected)),
+                 "enclosing semantic import failed")) {
+        return false;
+      }
+      const bool bankOccurrence = llvm::any_of(selected.program.observed->observations,
+          [](const auto& observation) {
+            return llvm::any_of(observation.atoms, [](const auto& atom) {
+              return atom.kind == oahs::ObservationAtom::LoopResidue;
+            });
+          });
+      if (!check(bankOccurrence == (variant != 19),
+                 "enclosing occurrence materialization confused physical facts with protocol or budget")) {
+        return false;
+      }
+      if (variant == 19 && !check(
+              llvm::any_of(selected.observationNotes, [](const auto& note) {
+                return note.find("bank control: occurrence materialization budget") != std::string::npos;
+              }) && llvm::any_of(selected.program.physicalUses, [](const auto& use) {
+                return use.period == 17;
+              }), "budget refusal erased the independent physical relation")) {
+        return false;
+      }
     }
     if (variant != 8 && variant != 9) {
       for (unsigned slot = 0; slot < period; ++slot) {

@@ -113,7 +113,7 @@ Fixture fixture(bool guarded, bool reentered, unsigned banks)
     return {std::move(refined.program), std::move(bank)};
 }
 
-void accumulatorOverlay()
+void accumulatorOverlay(bool reversed, bool outside = false)
 {
     auto f = fixture(false, false, 2);
     auto& p = f.child;
@@ -126,6 +126,7 @@ void accumulatorOverlay()
     accumulator.ranges = {{0, 131072}};
     const auto cell = unsigned(p.cells.size());
     p.cells.push_back(accumulator);
+    std::size_t outsidePhase = o::NoControlId;
     for (std::size_t i = 0; i < p.operations.size(); ++i) {
         auto& operation = p.operations[i];
         if (operation.pipe != o::Pipe::M) {
@@ -137,9 +138,33 @@ void accumulatorOverlay()
         other.back().nativeAccumulatorClass = 1;
         // Same bytes and roles, different proved access contracts. An enclosing
         // overlay must retain this distinction through a refined child.
-        f.bank.effects.push_back({i, {operation.accesses, std::move(other)}});
+        f.bank.effects.push_back({i, reversed ? std::vector<std::vector<o::Access>>{other, operation.accesses} :
+            std::vector<std::vector<o::Access>>{operation.accesses, other}});
+        if (outside) {
+            // The outside occurrence retains the conservative union; neither
+            // specialized residue equals that original physical phase.
+            operation.accesses.push_back({cell, true, true, false, 1});
+            outsidePhase = i;
+        }
+    }
+    if (outside) {
+        auto& q = *p.observed;
+        auto node = q.sites[q.entry];
+        node.operation = outsidePhase;
+        node.successors = {q.entry};
+        node.backedgeOwners.clear();
+        node.observation = q.observations.size();
+        q.observations.push_back({node.observation, {}, true});
+        q.entry = q.sites.size();
+        q.sites.push_back(std::move(node));
     }
     const auto refined = o::refineBankOccurrences(p, f.bank);
+    if (outside && refined.success) {
+        const auto& accesses = refined.program.operations[outsidePhase].accesses;
+        require(std::count_if(accesses.begin(), accesses.end(), [&](const auto& access) {
+                    return access.cell == cell;
+                }) == 2, "enclosing refinement mutated an outside occurrence's physical effects");
+    }
     require(refined.success, refined.reason);
     bool seen[2] = {false, false};
     const auto& q = *refined.program.observed;
@@ -158,7 +183,8 @@ void accumulatorOverlay()
             const auto access = std::find_if(accesses.begin(), accesses.end(), [&](const auto& a) {
                 return a.cell == cell;
             });
-            require(access != accesses.end() && access->nativeAccumulatorClass == atom.value,
+            const auto expected = reversed ? 1 - atom.value : atom.value;
+            require(access != accesses.end() && access->nativeAccumulatorClass == expected,
                     "enclosing refinement replaced an exact child ACC access contract");
         }
     }
@@ -469,7 +495,9 @@ void composedReaders(unsigned variant)
 } // namespace
 int main()
 {
-    accumulatorOverlay();
+    accumulatorOverlay(false);
+    accumulatorOverlay(true);
+    accumulatorOverlay(false, true);
     for (unsigned variant = 0; variant < 6; ++variant) {
         composedReaders(variant);
     }

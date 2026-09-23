@@ -53,8 +53,14 @@ resource-intensive workers maximum in aggregate.
    consumer/source-class scope is rechecked on stabilized replay after edits;
    general publication-prefix and exact generation-family support remain open. Replace the overwrite guard/enclosing protocol-admission gate
    only when shared semantic certificates cover their existing obligations.
+   Enclosing bank materialization now consumes semantic boundary/child checks
+   directly; private-protocol feasibility is no longer an import prerequisite.
 4. Actual required-return sharing and deadline-driven rearming through the common
    interfaces, followed by outstanding F/G ordering recovery and consolidation.
+   L adds a pinned CSA compilation recovery: sites367→913, requirements3727→32963,
+   replay9068→959017 after removing protocol-based physical admission. The tested
+   nonempty cube order sets are unchanged; the cost increase is not hidden by
+   reinstating the admission gate. Evidence: refactor-step-l/csa-work-resources.json.
 
 Each coherent increment requires architecture, correctness and asymptotic-cost
 review acceptance before its commit. Different selected ledger revisions are not

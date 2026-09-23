@@ -207,6 +207,7 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
   if (policy == ObservationPolicy::OriginalControl) {
     return success();
   }
+  constexpr std::size_t ObservationSiteBudget = 4096;
   // Leaf loops are refined independently. No product of unrelated loop periods
   // is formed. Unsupported arithmetic keeps the original sound SCF graph.
   auto &constants = out.scalarFacts.constants;
@@ -331,7 +332,6 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     });
     // Optional control materialization has a separate work budget. Precise
     // physical relations above remain available when this expansion is skipped.
-    constexpr std::size_t ObservationSiteBudget = 4096;
     if (model.bodySites.size() > ObservationSiteBudget / (2 * model.period)) {
       out.observationNotes.push_back("kept original control: occurrence materialization budget");
       continue;
@@ -392,12 +392,15 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
         todo.push_back(next);
       }
     }
-    auto refined = refineBankOccurrences(out.program, model);
-    auto local = refined.program;
-    if (refined.success) {
-      local.observed->loops = {local.observed->loops.back()};
+    // Bound added materialization, including copied headers, independently of
+    // private event feasibility. Physical-use relations remain in the program.
+    const bool exceedsSiteBudget = model.bodySites.size() >= ObservationSiteBudget / (model.period - 1);
+    if (exceedsSiteBudget) {
+      out.observationNotes.push_back("kept original bank control: occurrence materialization budget");
+      continue;
     }
-    if (!refined.success || !hasQualifiedRecurringAccesses(local)) {
+    auto refined = refineBankOccurrences(out.program, model);
+    if (!refined.success) {
       out.observationNotes.push_back("kept original bank interface: " + refined.reason);
       continue;
     }

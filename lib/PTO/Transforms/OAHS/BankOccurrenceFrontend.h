@@ -27,8 +27,7 @@ inline std::set<Effect> effectSet(const std::vector<Access>& accesses)
 
 // The frontend supplies exact per-residue byte effects. Only varying effects
 // are overlaid: an enclosing MAT selector cannot undo a child's L0 selection.
-inline std::vector<Access> specialize(const std::vector<Access>& accesses,
-    const CountedLoopRegion::PeriodicEffects& binding, unsigned residue)
+inline std::set<Effect> varyingEffects(const CountedLoopRegion::PeriodicEffects& binding)
 {
     std::set<Effect> varying, common = effectSet(binding.residues.front());
     for (const auto& effects : binding.residues) {
@@ -45,6 +44,11 @@ inline std::vector<Access> specialize(const std::vector<Access>& accesses,
     for (const auto& effect : common) {
         varying.erase(effect);
     }
+    return varying;
+}
+inline std::vector<Access> specialize(const std::vector<Access>& accesses,
+    const CountedLoopRegion::PeriodicEffects& binding, const std::set<Effect>& varying, unsigned residue)
+{
     std::vector<Access> out;
     for (const auto& access : accesses) {
         if (!varying.count(
@@ -224,6 +228,12 @@ ObservedImport refineBankOccurrences(const Program& input, const CountedLoopRegi
             }
         }
     }
+    // Compute the binding-wide union/intersection once, not once per residue
+    // and refined child phase. Application still preserves each child's facts.
+    std::map<std::size_t, std::set<bank_occurrence_detail::Effect>> varying;
+    for (const auto& [operation, binding] : effects) {
+        varying.emplace(operation, bank_occurrence_detail::varyingEffects(*binding));
+    }
     out.program = input;
     auto& q = *out.program.observed;
     const auto capacity = (q.sites.max_size() - q.sites.size()) / (loop.period - 1);
@@ -231,6 +241,13 @@ ObservedImport refineBankOccurrences(const Program& input, const CountedLoopRegi
     if (insufficientCapacity) {
         out.reason = "bank interface exceeds intrinsic site capacity";
         return out;
+    }
+    std::vector<bool> outside(input.operations.size());
+    for (std::size_t site = 0; site < old.sites.size(); ++site) {
+        const auto operation = old.sites[site].operation;
+        if (operation != NoControlId && !members.count(site)) {
+            outside[operation] = true;
+        }
     }
     std::vector<std::map<std::size_t, std::size_t>> copies(loop.period);
     std::vector<std::size_t> headers;
@@ -251,19 +268,34 @@ ObservedImport refineBankOccurrences(const Program& input, const CountedLoopRegi
                     const auto key = std::make_pair(node.operation, residue);
                     auto found = phases.find(key);
                     if (found == phases.end()) {
-                        auto op = input.operations[node.operation];
-                        op.accesses = bank_occurrence_detail::specialize(op.accesses, *binding->second, residue);
-                        const bool unchanged = bank_occurrence_detail::effectSet(op.accesses) ==
-                            bank_occurrence_detail::effectSet(input.operations[node.operation].accesses);
-                        if (unchanged) {
-                            found = phases.emplace(key, node.operation).first;
-                        } else if (residue == 0) {
-                            found = phases.emplace(key, node.operation).first;
-                            out.program.operations[node.operation] = std::move(op);
-                        } else {
-                            found = phases.emplace(key, out.program.operations.size()).first;
-                            out.program.operations.push_back(std::move(op));
+                        const auto& originalPhase = input.operations[node.operation];
+                        const auto originalEffects = bank_occurrence_detail::effectSet(originalPhase.accesses);
+                        std::vector<std::vector<Access>> variants;
+                        std::vector<bool> unchanged;
+                        bool retainOriginal = outside[node.operation];
+                        for (unsigned value = 0; value < loop.period; ++value) {
+                            variants.push_back(bank_occurrence_detail::specialize(
+                                originalPhase.accesses, *binding->second, varying.at(original), value));
+                            unchanged.push_back(bank_occurrence_detail::effectSet(variants.back()) == originalEffects);
+                            retainOriginal |= unchanged.back();
                         }
+                        for (unsigned value = 0; value < loop.period; ++value) {
+                            auto phase = node.operation;
+                            if (!unchanged[value]) {
+                                auto op = originalPhase;
+                                op.accesses = std::move(variants[value]);
+                                if (value == 0 && !retainOriginal) {
+                                    // No occurrence retains the original effects.
+                                    // Reuse its ID rather than leave an absent phase.
+                                    out.program.operations[phase] = std::move(op);
+                                } else {
+                                    phase = out.program.operations.size();
+                                    out.program.operations.push_back(std::move(op));
+                                }
+                            }
+                            phases.emplace(std::make_pair(node.operation, value), phase);
+                        }
+                        found = phases.find(key);
                     }
                     node.operation = found->second;
                 }

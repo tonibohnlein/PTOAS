@@ -1,6 +1,48 @@
 # OAHS current handoff
 
-## Current iteration — Step K persistent producer-repair support
+## Current iteration — Step L semantic enclosing-bank admission
+
+Baseline `b02d4de4f`. Successful enclosing bank refinement no longer depends on
+hasQualifiedRecurringAccesses; the redundant program copy/analysis wrapper and
+unused API are removed. Boundary, participation, effect and child-correspondence
+checks remain. A4096-added-site budget counts copied headers, preserves physical
+facts on refusal and is independent of keys. It does not bound all child metadata.
+The existing restriction on multiplying a second enclosing bank dimension remains.
+
+Varying effects are computed once per binding. Review found an existing phase
+alias bug: changing residue zero could overwrite a record needed by a later
+unchanged residue or an outside occurrence. All residue variants are now derived
+from immutable input together; reuse of an original ID requires that none of its
+original occurrences/effects remain. Reversed ACC overlays and outside shared
+phase records reproduce/protect that correction. Native carried/IV/view nested
+write-only fixtures reproduce the old recognition restriction and now pass;
+17-bank facts and budget-refused facts survive actual import and construction.
+
+All three reviewers ACCEPT. All22portable suites plus final bank-occurrence test,
+three native drivers,88/88corpus,18/19compatibility (same refusal),GEMM,two prefills
+and three targets pass. One compatibility output changes: DeepSeek CSA case1
+qk_pv_aic removes four static helper pairs and adds two FIX fences. Nonempty cube
+traces22/342 payloads have identical complete order sets (0added/0removed);
+unchanged vector traces also match. Whole-file pairs108→104, static used key
+identities28→27. This finite evidence is not a universal ordering proof.
+
+**Compilation debt:** that cube's sites367→913, relationships3727→32963,
+updates54→182 and replay9068→959017. It exposes33 unsummarized backedges and183
+contextual solves (initial +182 updates); unchanged-ledger advances already reuse
+state. Performance review found no new avoidable factor but this is a substantial
+representation/replay regression, explicitly accepted under the migration policy.
+Recover it through shared occurrence/region execution, not a protocol-benefit gate.
+Exact evidence, old-failure probes, pins, relations, resource/work records:
+`../oahs-gemm-base-builds/refactor-step-l/`. Final source edits after native campaign
+are named Boolean/line wrapping only. Scoped compliance clean; no sanitizer/device.
+
+Next: exact command-gap source qualification with ordinary direct transfers as
+its first client. Local early-publication ordering is distinct from persistent
+absolute prefix preservation; the latter still needs affected-interface closure
+or withdrawal/requalification of dependent support. Retain this distinction and
+the F/G/L recovery ledger while continuing the three-reviewer commit loop.
+
+## Previous iteration — Step K persistent producer-repair support
 
 Baseline `8ed95b6da`. Generation proposals retain their original affected consumer
 sites and every preceding read/write access class. Stabilized contextual replay
