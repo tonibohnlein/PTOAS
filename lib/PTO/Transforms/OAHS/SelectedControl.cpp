@@ -81,6 +81,7 @@ void loopSummaries(Control& control)
     control.headerAccesses.resize(graph.sites.size());
     std::map<Id, std::set<Id>> loops;
     std::map<Id, std::set<Id>> tails;
+    std::vector<std::pair<Id, Id>> unqualified;
     for (Id source = 0; source < graph.sites.size(); ++source) {
         if (!control.reachable[source]) {
             continue;
@@ -115,6 +116,11 @@ void loopSummaries(Control& control)
             if (singleEntry) {
                 loops[header].insert(body.begin(), body.end());
                 tails[header].insert(source);
+            } else {
+                // Original labels may connect refined occurrence modes rather
+                // than a natural loop. The reduced graph remains a scheduling
+                // order only; causal propagation must use every original edge.
+                unqualified.emplace_back(source, header);
             }
         }
     }
@@ -138,6 +144,38 @@ void loopSummaries(Control& control)
             edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
         }
     }
+    if (unqualified.empty()) {
+        return;
+    }
+    // Classify all unresolved labels together. A cross-component edge in this
+    // candidate scheduling graph cannot introduce a cycle; preserve it as a
+    // finite occurrence transition. Cyclic interfaces use original-edge replay.
+    auto candidate = graph;
+    std::vector<std::vector<Id>> predecessors(graph.sites.size());
+    for (Id site = 0; site < graph.sites.size(); ++site) {
+        candidate.sites[site].successors = control.constructionEdges[site];
+    }
+    for (const auto& edge : unqualified) {
+        candidate.sites[edge.first].successors.push_back(edge.second);
+    }
+    for (Id site = 0; site < candidate.sites.size(); ++site) {
+        for (auto next : candidate.sites[site].successors) {
+            predecessors[next].push_back(site);
+            ++control.transitionClassificationWork;
+        }
+    }
+    std::vector<Id> membership;
+    strongComponents(candidate, predecessors, control.reachable, membership);
+    control.transitionClassificationWork += candidate.sites.size();
+    for (const auto& edge : unqualified) {
+        if (membership[edge.first] != membership[edge.second]) {
+            control.constructionEdges[edge.first].push_back(edge.second);
+            ++control.finiteOccurrenceTransitions;
+        } else {
+            ++control.unsummarizedBackedges;
+        }
+    }
+
 }
 bool bodyOrder(const Control& control, const std::vector<Id>& membership,
                Id group, Component& component)

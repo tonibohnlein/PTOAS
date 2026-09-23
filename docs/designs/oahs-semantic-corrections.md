@@ -208,7 +208,7 @@ current checkpoint and exact evidence. Old M1–M5 labels remain historical boun
 achievements, distinct from active refactor stages 0–5. The [donor ledger](oahs-donor-ledger.md) records
 adapted portions, excluded portions, actual consumers and branch validation.
 
-## Temporary-regression ledger at the starting checkpoint
+## Temporary-regression ledger (starting checkpoint and accepted increments)
 
 | Witness | Current evidence / missing capability | Owner / recovery |
 | --- | --- | --- |
@@ -217,6 +217,8 @@ adapted portions, excluded portions, actual consumers and branch validation.
 | Fence-heavy replay work | RMSNorm/TopK/route_sort work grew after deadline-local fencing. | Measured plan-equivalent work track; preserve actual-deadline repair. |
 | Qwen topk_select, kernel_softmax_prepare | Starting baseline had two refusals. Current service passes 18/19: softmax_prepare uses a visible local observation retry, not a successful refined protocol. | Retain topk refusal and softmax refined-path failure; service coverage is distinct from mechanism recovery. |
 | Physical refinement limits | One compatible period materialized per owner; other independent relations remain physical facts. | Stages 1–3 consumers; no event-derived analysis limit. |
+| Step F structural replay / compatibility 7 | 402-payload finite qk_pv_aiv: +4/−108 against E; +8/−0 against checked full contextual replay. Independent native validation passes. | Stages 2–4 support/placement/rearming; preserve full-contextual plans and exact added edges. Compile-time recovery is not ordering equivalence. |
+| Step F compatibility 15/16 | Finite aiv body: +2/−0 against full contextual replay; −4/+0 against E. Corrected bindings exercise 18 cube and 110 vector payloads; cube order is unchanged. | Same recovery obligation; no aggregate subtraction of added and removed order. |
 
 ## Progress after the first consolidated increment
 
@@ -322,6 +324,26 @@ This is bounded generation composition and producer-repair protection, not the
 full Stage 2 affected interface. Exported-prefix/consumer-side/continuation and
 retirement ordering, broader endpoint participation and access-scoped ACC remain
 open. Continue directly with demanded endpoint discovery across reader regions.
+
+### F — Joint endpoint demand and refined-control propagation
+
+Base: `a8af1636c`. Architecture/design, correctness and performance: **ACCEPT**.
+Original requirements jointly request first-consumer, first-write and final-reader
+separation, independent of a local recurring-benefit test or unrelated carried
+values. Shared nearest-use classifications distinguish read-only and write-bearing
+boundaries and memoize each site/cell/direction. Unknown does not prove uniformity.
+Native anchor reachability is observation-scoped, preserving shared-word aliases.
+Finite refined transitions are retained; unresolved cyclic interfaces select
+contextual replay before solving. Classification is one SCC computation, with
+existing component sorting charged separately (up to O(V log V)).
+
+All 22 portable suites, three native drivers and supported-input gates pass.
+Reader-only retained/reloaded tests narrow finite order by 54/30 relations with
+zero added. Six corpus and ten compatibility plans change. The ledger above
+records mixed ordering and full-contextual comparison regressions explicitly.
+Neither structural replay nor the complete increment is plan-equivalent to E.
+Exact evidence: `../oahs-gemm-base-builds/refactor-step-f/`; scope/limitations and
+next action are in HANDOFF. Proceed into normalized original participation.
 
 ## Historical audit detail and restart checkpoints
 

@@ -473,6 +473,31 @@ bool firstUseOrdering(MLIRContext &context) {
     oahs::NativeAnalysis imported;
     if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, imported)),
                "import nested first-use fixture")) return false;
+    const auto &graph = *imported.program.observed;
+    std::vector<bool> reached(graph.sites.size()), live(graph.observations.size());
+    std::vector<oahs::Cut> pending{graph.entry};
+    while (!pending.empty()) {
+      const auto at = pending.back();
+      pending.pop_back();
+      if (reached[at]) {
+        continue;
+      }
+      reached[at] = true;
+      if (oahs::legalCommandCut(imported.program, at)) {
+        live[graph.sites[at].observation] = true;
+      }
+      for (auto next : graph.sites[at].successors) {
+        pending.push_back(next);
+      }
+    }
+    for (oahs::Cut at = 0; at < graph.sites.size(); ++at) {
+      const auto observation = graph.sites[at].observation;
+      const bool available = observation != oahs::NoControlId && live[observation];
+      if (!check(bool(imported.cuts[at]) == available,
+                 "native anchors disagree with live command words, including canonical aliases")) {
+        return false;
+      }
+    }
     SmallVector<scf::ForOp> loops;
     function.walk([&](scf::ForOp loop) { loops.push_back(loop); });
     oahs::Commands commands(oahs::commandCutCount(imported.program));
@@ -494,8 +519,14 @@ bool firstUseOrdering(MLIRContext &context) {
         if (isa_and_nonnull<TMatmulOp>(imported.cuts[cut]))
           commands[cut].push_back({oahs::Command::Barrier, oahs::Pipe::M});
       }
-      if (!check(oahs::checkCausalFrontier(imported.program, commands).accepted,
-                 "repeated initialization must retain a real completion repair")) return false;
+      const auto repaired = oahs::checkCausalFrontier(imported.program, commands);
+      if (!repaired.accepted) {
+        llvm::errs() << "first-use variant=" << variant << " cut=" << repaired.cut
+                     << " command=" << repaired.command << " reason=" << repaired.reason << "\n";
+      }
+      if (!check(repaired.accepted, "repeated initialization must retain a real completion repair")) {
+        return false;
+      }
     }
   }
   return true;
@@ -645,12 +676,28 @@ module attributes {pto.target_arch = "a3"} {
     return
   }
 })mlir";
-  for (bool reload : {false, true}) {
+  for (unsigned variant = 0; variant < 4; ++variant) {
     std::string source = input;
-    if (reload) {
+    if (variant == 1) {
       source.replace(source.find("// RELOAD"), std::string("// RELOAD").size(),
           "pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) "
           "outs(%bank : !pto.tile_buf<vec, 1x32xf32>)");
+    }
+    if (variant >= 2) {
+      const std::string store = "        pto.tstore ins(%out : !pto.tile_buf<vec, 1x32xf32>) "
+                                "outs(%dst : !pto.partition_tensor_view<1x32xf32>)\n";
+      for (auto at = source.find(store); at != std::string::npos; at = source.find(store)) {
+        source.erase(at, store.size());
+      }
+    }
+    if (variant == 3) {
+      const std::string loop = "scf.for %j = %zero to %two step %one {";
+      const auto at = source.find(loop);
+      source.replace(at, loop.size(),
+          "%unused = scf.for %j = %zero to %two step %one iter_args(%counter = %zero) -> index {");
+      const auto end = source.find("      }", at);
+      source.insert(end, "        %next_counter = arith.addi %counter, %one : index\n"
+                         "        scf.yield %next_counter : index\n");
     }
     auto module = parseSourceString<ModuleOp>(source, &context);
     if (!check(bool(module), "reader-generation fixture failed to parse")) {
@@ -674,6 +721,50 @@ module attributes {pto.target_arch = "a3"} {
     }
   }
   return true;
+}
+
+bool uniformEndpointRoles(MLIRContext &context) {
+  const char *input = R"mlir(
+module attributes {pto.target_arch = "a3"} {
+  func.func @uniform(%src: !pto.partition_tensor_view<1x32xf32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %a = arith.constant 256 : i64
+    %b = arith.constant 4096 : i64
+    %bank = pto.alloc_tile addr = %a : !pto.tile_buf<vec, 1x32xf32>
+    %out = pto.alloc_tile addr = %b : !pto.tile_buf<vec, 1x32xf32>
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%bank : !pto.tile_buf<vec, 1x32xf32>)
+    pto.tabs ins(%bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    scf.for %i = %zero to %two step %one {
+      pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>) outs(%bank : !pto.tile_buf<vec, 1x32xf32>)
+      pto.tabs ins(%bank : !pto.tile_buf<vec, 1x32xf32>) outs(%out : !pto.tile_buf<vec, 1x32xf32>)
+    }
+    return
+  }
+})mlir";
+  auto module = parseSourceString<ModuleOp>(input, &context);
+  if (!check(bool(module), "uniform endpoint fixture failed to parse")) {
+    return false;
+  }
+  auto function = *module->getOps<func::FuncOp>().begin();
+  oahs::NativeAnalysis imported;
+  if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, imported)),
+             "uniform endpoint import failed")) {
+    return false;
+  }
+  for (const auto &observation : imported.program.observed->observations) {
+    for (const auto &atom : observation.atoms) {
+      if (!check(atom.kind != oahs::ObservationAtom::LoopHasPrevious &&
+                 atom.kind != oahs::ObservationAtom::LoopHasNext,
+                 "uniform roles unnecessarily split original control")) {
+        return false;
+      }
+    }
+  }
+  return check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function)),
+               "uniform roles failed native construction/reconstruction");
 }
 
 bool slotDependencySlices(MLIRContext &context) {
@@ -1042,6 +1133,10 @@ bool runFile(MLIRContext &context, const char *path) {
                  << " boundary_sites=" << work.boundaryAnalysisSites
                  << " physical_use_sites=" << work.physicalUseQuerySites
                  << " producer_support_work=" << work.producerSupportWork
+                 << " unsummarized_backedges=" << work.unsummarizedBackedges
+                 << " finite_occurrence_transitions=" << work.finiteOccurrenceTransitions
+                 << " transition_classification_work=" << work.transitionClassificationWork
+                 << " native_endpoint_discovery_work=" << work.nativeEndpointDiscoveryWork
                  << " key_queries=" << work.keyQueries << " invariant=" << work.invariantSiteEvaluations
                  << " prepare_microseconds=" << work.preparationMicroseconds
                  << " sites=" << work.constructedSites << " words=" << work.commandWords
@@ -1061,6 +1156,8 @@ bool runFile(MLIRContext &context, const char *path) {
                  << (report.declinedObservation ? report.declinedObservation->work.replaySiteEvaluations : 0)
                  << " observation_discarded_occurrence_sites="
                  << (report.declinedObservation ? report.declinedObservation->work.occurrenceAnalysisSites : 0)
+                 << " observation_discarded_native_endpoint_work="
+                 << (report.declinedObservation ? report.declinedObservation->work.nativeEndpointDiscoveryWork : 0)
                  << " observation_discarded_producer_support_work="
                  << (report.declinedObservation ? report.declinedObservation->work.producerSupportWork : 0)
                  << " observation_discarded_physical_use_sites="
@@ -1256,6 +1353,7 @@ int main(int argc, char **argv) {
                       positive(context, collective, "collective") &&
                       positive(context, queue, "queue") && mutations(context) && constantAddresses(context) &&
                       slotMappings(context) && slotDependencySlices(context) && readerGenerations(context) &&
+                      uniformEndpointRoles(context) &&
                       accumulatorOrdering(context) && firstUseOrdering(context);
   return passed ? 0 : 1;
 }

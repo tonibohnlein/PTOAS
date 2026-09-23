@@ -18,6 +18,7 @@ namespace mlir::pto::oahs {
 struct SelectedPlan;
 struct NativeAnalysis {
   Program program;
+  uint64_t endpointDiscoveryWork = 0;
   // Preserved lowering-owned protocols; handles refer to unchanged original IR.
   llvm::SmallVector<SyncProtocolModel, 0> protocols;
   AnalysisResult analysis;
@@ -28,7 +29,9 @@ struct NativeAnalysis {
   // Original SSA roots indexed by Cell::storageOrigins. Equal numeric local
   // addresses may have several roots; root identity alone is not disjointness.
   llvm::SmallVector<Value> storageRoots;
-  // Original command anchors. Null entries are unavailable synthetic decisions.
+  // Original command anchors. Null entries are unavailable synthetic decisions
+  // or observations with no reachable occurrence. Dead aliases of live words
+  // retain their anchors, including the canonical representative.
   llvm::SmallVector<mlir::Operation *> cuts;
   // Representative reachable cut per phase (NoControlId if unreachable);
   // refined observations can have

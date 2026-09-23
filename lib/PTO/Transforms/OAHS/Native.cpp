@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 #include "PTO/Transforms/OAHS/Native.h"
 #include "ObservationUnion.h"
+#include "SelectedInternal.h"
 #include "NativeFirstUse.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/SyncCodegen.h"
@@ -75,6 +76,7 @@ PipelineType nativePipe(Pipe value) {
 }
 struct Import {
   Program program;
+  uint64_t endpointDiscoveryWork = 0;
   SmallVector<SyncProtocolModel, 0> protocols;
   SmallVector<mlir::Operation *> payload;
   SmallVector<Value> storageRoots;
@@ -215,6 +217,25 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
   };
   SmallVector<scf::ForOp> loops;
   function.walk([&](scf::ForOp loop) { loops.push_back(loop); });
+  // Snapshot original requirements once: later control refinement must not
+  // erase another endpoint role or manufacture a new source of causal credit.
+  std::map<std::size_t, bool> endpointSeparation;
+  if (!loops.empty()) {
+    selected::Control control(out.program);
+    StorageFrontierAnalysis storage(out.program);
+    selected::RequirementFrontiers requirements(out.program, control, storage);
+    if (!requirements.complete()) {
+      out.observationNotes.push_back("kept original endpoint vocabulary: " + requirements.reason());
+    }
+    for (auto loop : loops) {
+      const auto owner = ids.lookup(loop.getOperation());
+      endpointSeparation.emplace(owner, requirements.complete() && requirements.needsOccurrenceSeparation(owner));
+    }
+    const auto& work = storage.stats();
+    out.endpointDiscoveryWork = work.staticSites + work.forwardEvaluations + work.backwardEvaluations +
+        work.nearestUseEvaluations + requirements.size() + control.loopEntryPreparationSites +
+        requirements.endpointClassificationWork() + control.transitionClassificationWork;
+  }
   for (auto loop : loops) {
     bool nested = false;
     loop.getRegion().walk([&](mlir::Operation *op) {
@@ -222,7 +243,6 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
     });
     if (nested || !isa<IndexType>(loop.getInductionVar().getType()) ||
         loop->hasAttr("unsignedCmp") || loop->hasAttr("unsigned_cmp") ||
-        (!loop.getInitArgs().empty() && !out.slotLoops.count(loop.getOperation())) ||
         integer(loop.getLowerBound()) != std::optional<int64_t>(0) ||
         integer(loop.getStep()) != std::optional<int64_t>(1))
       continue;
@@ -251,14 +271,10 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
       for (auto next : control.sites[at].successors)
         work.push_back(next);
     }
-    std::set<Pipe> participants;
-    for (auto site : model.bodySites) {
-      const auto physical = control.sites[site].operation;
-      if (physical != NoControlId)
-        participants.insert(out.program.operations[physical].pipe);
+    const bool physicalResidues = slots != out.slotLoops.end() && slots->second.period > 1;
+    if (!physicalResidues && !endpointSeparation.at(model.owner)) {
+      continue; // No currently supported occurrence separation was requested.
     }
-    if (participants.size() < 2)
-      continue; // no cross-engine recurrence to refine
     loop.getRegion().walk([&](scf::IfOp choice) {
       auto cmp = choice.getCondition().getDefiningOp<arith::CmpIOp>();
       if (!cmp || (cmp.getPredicate() != arith::CmpIPredicate::eq &&
@@ -303,16 +319,9 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
                                      refined.reason);
       continue;
     }
-    if (policy == ObservationPolicy::QualifiedAccessRoles) {
-      // Qualify this region from shared physical effects, not operation names.
-      // Do not refine unrelated loops merely because a prior loop qualified.
-      auto local = refined.program;
-      local.observed->loops = {local.observed->loops.back()};
-      if (!hasQualifiedRecurringAccesses(local)) {
-        out.observationNotes.push_back("kept original SCF control: no qualified recurring access roles");
-        continue;
-      }
-    }
+    // Roles were collected together from the original program, including
+    // readers whose producer is outside this child. Successful local private
+    // protocol construction is not a prerequisite for preserving those roles.
     out.program = std::move(refined.program);
     out.loopOwners[model.owner] = loop;
     if (slots != out.slotLoops.end())
@@ -432,6 +441,21 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
         reached[next] = true;
         pending.push_back(next);
       }
+  }
+  // An unreachable canonical site can still name a word executed by a live
+  // alias. Only observations with no reachable occurrence lose their anchor.
+  const auto& observed = *out.program.observed;
+  std::vector<bool> liveObservation(observed.observations.size());
+  for (Cut at = 0; at < out.anchors.size(); ++at) {
+    if (reached[at] && legalCommandCut(out.program, at)) {
+      liveObservation[observed.sites[at].observation] = true;
+    }
+  }
+  for (Cut at = 0; at < out.anchors.size(); ++at) {
+    const auto observation = observed.sites[at].observation;
+    if (observation == NoControlId || !liveObservation[observation]) {
+      out.anchors[at] = nullptr;
+    }
   }
   return success();
 }
@@ -1044,7 +1068,7 @@ LogicalResult checkObservationPredicate(const OriginalObservation &observation,
   return success();
 }
 
-using NativeConstructor = llvm::function_ref<Result(const Program &)>;
+using NativeConstructor = llvm::function_ref<Result(const Program &, uint64_t)>;
 using NativeChecker = llvm::function_ref<Result(const Program &, const Commands &)>;
 
 LogicalResult execute(func::FuncOp function, NativeConstructor constructor,
@@ -1065,7 +1089,7 @@ LogicalResult execute(func::FuncOp function, NativeConstructor constructor,
     if (op != function.getOperation())
       originalOperations.push_back(op);
   });
-  auto result = constructor(input.program);
+  auto result = constructor(input.program, input.endpointDiscoveryWork);
   if (!result.success) {
     return function.emitError("handoff: ") << result.reason;
   }
@@ -1382,8 +1406,9 @@ LogicalResult executeSelectedAttempt(
   // loops retain their original SCF graph. Bounding geometry never becomes a
   // full-write certificate. Every attempt owns a fresh import and ledger.
   return executeTransaction(function,
-      [report](const Program &program) {
+      [report](const Program &program, uint64_t endpointDiscoveryWork) {
         auto selected = constructSelectedPlan(program);
+        selected.work.nativeEndpointDiscoveryWork = endpointDiscoveryWork;
         Result result;
         result.success = selected.success;
         result.reason = selected.reason;
@@ -1481,6 +1506,7 @@ LogicalResult analyzeHandoffSyncWithPolicy(func::FuncOp function,
   result.cuts = std::move(input.anchors);
   result.phaseCuts = std::move(input.phaseCuts);
   result.observationNotes = std::move(input.observationNotes);
+  result.endpointDiscoveryWork = input.endpointDiscoveryWork;
   if (!result.analysis.complete)
     return function.emitError("handoff analysis: ") << result.analysis.reason;
   return success();

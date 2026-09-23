@@ -45,6 +45,8 @@ struct Control {
     // Construction-only, zero-or-more loop summary traversal. Acceptance uses
     // graph's original edges, not these exit-summary edges or hypotheses.
     std::vector<std::vector<Id>> constructionEdges, headerAccesses;
+    std::size_t unsummarizedBackedges = 0, finiteOccurrenceTransitions = 0;
+    uint64_t transitionClassificationWork = 0;
     std::vector<Component> components;
     std::vector<Id> component, position, frame;
     std::vector<bool> reachable;
@@ -290,6 +292,14 @@ struct RequirementFrontier {
     // share a pipeline while retaining different publications or deadlines.
     Cut deadline = NoAnalysisId;
 };
+// A request for an original owner to expose an endpoint role. Collection is
+// independent of channel selection, event capacity and refinement order.
+struct EndpointRequirement {
+    enum Role { FirstConsumer, FirstWrite, FinalReader } role = FirstConsumer;
+    Id owner = NoAnalysisId;
+    StorageOrigin access;
+    StorageRelationship relationship;
+};
 class RequirementFrontiers {
 public:
     RequirementFrontiers(const Program&, const Control&, const StorageFrontierAnalysis&);
@@ -300,6 +310,9 @@ public:
     const LifecycleUse& use(Cut site, unsigned cell) const;
     Cut recurringRelease(Cut site, unsigned cell) const;
     const ReaderParticipation& readerParticipation(Cut site, unsigned cell) const;
+    const std::vector<EndpointRequirement>& endpoints(Id originalOwner) const;
+    bool needsOccurrenceSeparation(Id originalOwner) const;
+    uint64_t endpointClassificationWork() const { return endpointWork; }
     const PhysicalUseFrontier& nextUses(
         const std::vector<Cut>& starts, unsigned cell, const std::vector<Cut>& stops) const;
     std::vector<SelectedLifecycleDemand> demandsAt(
@@ -322,6 +335,10 @@ private:
     mutable std::map<std::pair<Cut, unsigned>, LifecycleUse> uses;
     mutable std::map<std::pair<Cut, unsigned>, ReaderParticipation> readerRoles;
     std::vector<std::vector<RequirementFrontier>> byDeadline;
+    mutable bool endpointsIndexed = false;
+    mutable uint64_t endpointWork = 0;
+    mutable std::map<std::tuple<Cut, unsigned, bool>, bool> separationByUse;
+    mutable std::map<Id, std::vector<EndpointRequirement>> byOwner;
 };
 // A storage/control qualifier: it returns requirements and original frontiers,
 // not commands or physical key choices. Empty means ordinary F1--F8 applies.

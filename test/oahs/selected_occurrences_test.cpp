@@ -308,6 +308,107 @@ void composedPhysicalUses()
 
 }
 
+void finiteModeTransitions()
+{
+    auto p = base(1);
+    p.operations = {op(o::Pipe::MTE2, {{0, false, true}}), op(o::Pipe::V, {{0, true, false}})};
+    o::ObservedControl graph;
+    graph.qualification = "finite child modes inside an original outer recurrence";
+    graph.entry = 0;
+    graph.exit = 9;
+    graph.scopes = {{o::AnalysisContext::Function, o::NoControlId, o::NoControlId},
+                    {o::AnalysisContext::ForBody, 0, 1}, {o::AnalysisContext::ForBody, 1, 3}};
+    const std::vector<std::vector<o::Cut>> edges{{1}, {2}, {3, 9}, {4}, {5}, {6}, {7}, {8}, {10}, {}, {2}};
+    graph.sites.resize(edges.size());
+    for (o::Cut at = 0; at < edges.size(); ++at) {
+        auto& site = graph.sites[at];
+        site.successors = edges[at];
+        site.backedgeOwners.assign(edges[at].size(), o::NoControlId);
+        site.observation = at;
+        site.context = at >= 3 && at <= 8 ? 2 : (at == 2 || at == 10 ? 1 : 0);
+        graph.observations.push_back({at, {}, true});
+    }
+    graph.sites[5].backedgeOwners[0] = graph.sites[7].backedgeOwners[0] = 3;
+    graph.sites[10].backedgeOwners[0] = 1;
+    graph.sites[5].operation = 0;
+    graph.sites[7].operation = 1;
+    p.observed = std::move(graph);
+    o::selected::Control control(p);
+    require(control.complete, control.reason);
+    require(control.unsummarizedBackedges == 0 && control.finiteOccurrenceTransitions == 2,
+            "finite occurrence transitions became natural loops or forced whole-graph replay");
+    require(control.constructionEdges[5] == std::vector<o::Cut>{6} &&
+                control.constructionEdges[7] == std::vector<o::Cut>{8},
+            "finite occurrence transition lost its actual predecessor");
+    require(control.headerAccesses[6].empty() && control.headerAccesses[8].empty(),
+            "finite transition manufactured a previous-iteration history");
+    o::selected::Constructor constructor(p);
+    auto plan = constructor.run({}, false);
+    require(plan.success, plan.reason);
+    require(plan.channels.empty() && plan.work.contextualReplays == 0,
+            "finite occurrence transitions depended on recurring admission or full replay");
+    require(o::checkCausalFrontier(p, plan.commands).accepted,
+            "finite-mode construction lost an original physical obligation");
+}
+
+void composedEndpointDemands()
+{
+    const auto P = o::Pipe::MTE2, Q = o::Pipe::V;
+    auto p = base(2);
+    p.operations = {op(P, {{0, false, true}, {1, true, false}}),
+                    op(Q, {{0, true, false}, {1, false, true}}),
+                    op(P, {{0, false, true}, {1, true, false}})};
+    p.body = seq({leaf(0), {o::Region::For, {leaf(1)}}, leaf(2)});
+    auto imported = o::addStructuredBoundaryCuts(p);
+    require(imported.success, imported.reason);
+    o::selected::Control control(imported.program);
+    o::StorageFrontierAnalysis storage(imported.program);
+    o::selected::RequirementFrontiers facts(imported.program, control, storage);
+    o::Cut owner = o::NoAnalysisId;
+    for (const auto& scope : control.graph.contexts) {
+        if (scope.kind == o::AnalysisContext::ForBody) {
+            owner = scope.ownerSite;
+        }
+    }
+    require(owner != o::NoAnalysisId, "endpoint fixture lost its original reader owner");
+    const auto& demands = facts.endpoints(owner);
+    for (auto role : {o::selected::EndpointRequirement::FirstConsumer,
+                      o::selected::EndpointRequirement::FirstWrite,
+                      o::selected::EndpointRequirement::FinalReader}) {
+        require(std::any_of(demands.begin(), demands.end(), [&](const auto& demand) {
+                    return demand.role == role && demand.owner == owner && demand.access.operation == 1;
+                }), "one child role silently discarded another role at the same original access");
+    }
+    require(facts.needsOccurrenceSeparation(owner), "mixed first/continuing roles lost refinement demand");
+    require(facts.endpoints(o::NoAnalysisId).empty(), "unknown owner manufactured endpoint requests");
+    auto rmw = base(1);
+    rmw.operations = {op(P, {{0, true, true}}), op(Q, {{0, true, false}})};
+    rmw.body = seq({leaf(0), {o::Region::For, {leaf(1)}}});
+    auto rmwImported = o::addStructuredBoundaryCuts(rmw);
+    require(rmwImported.success, rmwImported.reason);
+    o::selected::Control rmwControl(rmwImported.program);
+    o::StorageFrontierAnalysis rmwStorage(rmwImported.program);
+    o::selected::RequirementFrontiers rmwFacts(rmwImported.program, rmwControl, rmwStorage);
+    require(rmwFacts.needsOccurrenceSeparation(owner),
+            "outside RMW suppressed a reader child's first/continuing demand");
+    p.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}})};
+    p.operations.push_back(p.operations[0]);
+    p.operations.push_back(p.operations[1]);
+    p.body = seq({leaf(0), leaf(1), {o::Region::For, {seq({leaf(2), leaf(3)})}}});
+    imported = o::addStructuredBoundaryCuts(p);
+    require(imported.success, imported.reason);
+    o::selected::Control uniformControl(imported.program);
+    o::StorageFrontierAnalysis uniformStorage(imported.program);
+    o::selected::RequirementFrontiers uniform(imported.program, uniformControl, uniformStorage);
+    for (const auto& scope : uniformControl.graph.contexts) {
+        if (scope.kind == o::AnalysisContext::ForBody) {
+            require(!uniform.endpoints(scope.ownerSite).empty(), "uniform fixture has no endpoint demands");
+            require(!uniform.needsOccurrenceSeparation(scope.ownerSite),
+                    "uniform roles requested unnecessary control copies");
+        }
+    }
+}
+
 void mixedReaderParticipation()
 {
     for (bool before : {false, true}) {
@@ -439,6 +540,8 @@ int main()
     joinedSources();
     publicationBoundaries();
     composedPhysicalUses();
+    finiteModeTransitions();
+    composedEndpointDemands();
     mixedReaderParticipation();
     physicalDeadlines();
     o::selected::ReplayTestAccess::everyInterveningOccurrence();

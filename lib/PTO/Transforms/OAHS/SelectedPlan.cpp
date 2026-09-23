@@ -14,6 +14,7 @@ Constructor::Constructor(const Program& p)
     : program(p), frontier(p), control(p), storage(p), requirements(p, control, storage),
       ledger(p, control.canonicalCut), finalized(control.graph.sites.size())
 {
+    needsContextualReplay = control.unsummarizedBackedges != 0;
 }
 bool Constructor::fail(SelectedFailure failure, std::string reason, Cut cut)
 {
@@ -114,6 +115,9 @@ SelectedPlan Constructor::run(const Commands& fixed, bool useRecurring)
         result.work.cells = program.cells.size();
         result.work.eligibleKeys = frontier.keys().size();
         result.work.components = control.components.size();
+        result.work.unsummarizedBackedges = control.unsummarizedBackedges;
+        result.work.finiteOccurrenceTransitions = control.finiteOccurrenceTransitions;
+        result.work.transitionClassificationWork = control.transitionClassificationWork;
         result.work.cyclicComponents = std::size_t(std::count_if(
             control.components.begin(), control.components.end(),
             [](const Component& block) { return block.cyclic; }));

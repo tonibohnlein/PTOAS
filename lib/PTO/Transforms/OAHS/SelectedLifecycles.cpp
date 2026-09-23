@@ -95,6 +95,102 @@ RequirementFrontiers::RequirementFrontiers(
     ready = true;
 }
 
+const std::vector<EndpointRequirement>& RequirementFrontiers::endpoints(Id originalOwner) const
+{
+    static const std::vector<EndpointRequirement> empty;
+    if (!ready) {
+        return empty;
+    }
+    if (!endpointsIndexed) {
+        // One immutable index, built only for consumers that request endpoint
+        // discovery. Normal construction does not pay for unused native facts.
+        std::map<Id, std::vector<Id>> contextOwners;
+        contextOwners.emplace(NoAnalysisId, std::vector<Id>{});
+        auto owners = [&](Id context) -> const std::vector<Id>& {
+            std::vector<Id> path;
+            auto current = context;
+            while (!contextOwners.count(current)) {
+                path.push_back(current);
+                current = control->graph.contexts[current].parent;
+            }
+            while (!path.empty()) {
+                const auto at = path.back();
+                path.pop_back();
+                const auto& scope = control->graph.contexts[at];
+                auto list = contextOwners.at(scope.parent);
+                if (scope.kind == AnalysisContext::ForBody) {
+                    list.push_back(scope.ownerSite);
+                }
+                contextOwners.emplace(at, std::move(list));
+            }
+            return contextOwners.at(context);
+        };
+        for (const auto& frontiers : byDeadline) {
+            for (const auto& frontier : frontiers) {
+                if (frontier.source == frontier.observer) {
+                    continue;
+                }
+                const auto& relationship = frontier.relationship;
+                auto request = [&](EndpointRequirement::Role role, const StorageOrigin& access) {
+                    for (auto owner : owners(control->graph.cutContexts[access.site])) {
+                        byOwner[owner].push_back({role, owner, access, relationship});
+                    }
+                };
+                if (relationship.kind == StorageRelationship::RAW) {
+                    request(EndpointRequirement::FirstConsumer, relationship.target);
+                } else {
+                    request(EndpointRequirement::FirstWrite, relationship.target);
+                }
+                if (relationship.kind == StorageRelationship::WAR) {
+                    request(EndpointRequirement::FinalReader, relationship.source);
+                }
+            }
+        }
+        endpointsIndexed = true;
+    }
+    const auto found = byOwner.find(originalOwner);
+    return found != byOwner.end() ? found->second : empty;
+}
+
+bool RequirementFrontiers::needsOccurrenceSeparation(Id originalOwner) const
+{
+    for (const auto& request : endpoints(originalOwner)) {
+        const bool backward = request.role != EndpointRequirement::FinalReader;
+        const auto site = request.access.site;
+        ++endpointWork;
+        const auto key = std::make_tuple(site, request.relationship.cell, backward);
+        const auto cached = separationByUse.find(key);
+        if (cached != separationByUse.end()) {
+            if (cached->second) {
+                return true;
+            }
+            continue;
+        }
+        auto& separate = separationByUse[key];
+        const auto& frontier = storage->nearestUses(
+            backward ? control->predecessors[site] : control->graph.sites[site].successors,
+            request.relationship.cell, {}, backward);
+        if (!frontier.complete) {
+            continue;
+        }
+        unsigned roles = frontier.boundaries.empty() ? 0u : 4u;
+        for (const auto& access : frontier.accesses) {
+            ++endpointWork;
+            const auto role = use(access.site, request.relationship.cell).roles;
+            // A write-bearing access is one production boundary, not two
+            // alternative paths. Preserve its read obligation in physical facts.
+            roles |= (role & 2u) ? 2u : (role & 1u);
+        }
+        const bool readerAndOther = (roles & 1u) && (roles & 6u);
+        const bool initialAndWriter = (roles & 2u) && (roles & 4u);
+        separate = readerAndOther || (backward && initialAndWriter);
+        if (separate) {
+            return true;
+        }
+    }
+    return false;
+}
+
 const std::vector<RequirementFrontier>& RequirementFrontiers::at(Cut site) const
 {
     static const std::vector<RequirementFrontier> empty;
@@ -184,6 +280,7 @@ const ReaderParticipation& RequirementFrontiers::readerParticipation(Cut site, u
     auto roles = [&](const PhysicalUseFrontier& frontier) {
         unsigned mask = frontier.boundaries.empty() ? 0u : 4u;
         for (const auto& access : frontier.accesses) {
+            ++endpointWork;
             const auto role = use(access.site, cell).roles;
             if (role == 3 || !role) {
                 return 8u; // RMW cannot be classified as a fresh write episode.

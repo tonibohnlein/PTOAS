@@ -115,6 +115,10 @@ struct SelectedWork {
     uint64_t boundaryAnalysisSites = 0;
     uint64_t physicalUseQuerySites = 0;
     uint64_t producerSupportWork = 0;
+    // Native original-program discovery, before selected construction/retries.
+    uint64_t nativeEndpointDiscoveryWork = 0;
+    uint64_t unsummarizedBackedges = 0, finiteOccurrenceTransitions = 0;
+    uint64_t transitionClassificationWork = 0;
     uint64_t frontierVisits = 0, selectedUpdates = 0, replaySiteEvaluations = 0;
     uint64_t forwardSiteEvaluations = 0;
     uint64_t keyQueries = 0, invariantSiteEvaluations = 0;

@@ -234,3 +234,50 @@ continuation and retirement ordering remain separate obligations for later
 composition; independent validation still enforces safety and event legality.
 The new mechanism does not claim no added payload order. Full ordering sets,
 resources and compilation work must be reported independently on changed plans.
+
+### Joint original endpoint demands
+
+`RequirementFrontiers::endpoints(owner)` collects first-consumer, first-write and
+final-reader requirements together from cross-engine physical relationships,
+before native control refinement. Each record retains its original access,
+relationship and enclosing owner. Discovery does not require a useful protocol
+inside the child and unrelated carried scalars do not invalidate the records.
+
+Materialization currently requests separation when nearest original uses mix
+read-only and write-bearing boundaries, or an initial boundary with a preceding
+write. An RMW is one write-bearing boundary for this query; its read obligation
+remains in the physical facts and downstream generation checks. Independent
+bank-residue demands remain separate. A false query means no supported
+separation was requested, not proof that all occurrence distinctions are
+irrelevant: different producing identities and unavailable facts remain open.
+
+Classification is cached per access/cell/direction, independently of relationship
+multiplicity. Native discovery work is reported separately from construction.
+This increment keeps existing zero-lower/unit-step observation arithmetic;
+normalized positive-step participation is the next dependent change. Exclusive
+resource-only requirements and terminal readers without a reuse relationship
+are not newly covered by this index.
+
+### Refinement and construction traversal
+
+An original backedge label is not proof that an edge in a refined graph is a
+natural loop. Construction first qualifies its natural-loop summaries. It then
+classifies all remaining labelled edges together in a candidate scheduling
+graph, including the qualified exit summaries. Edges crossing this graph's SCCs
+are finite transitions and remain in the construction traversal. Remaining
+cyclic interfaces require existing contextual replay from the start: causal
+propagation uses every original edge and unfinalized payloads supply pending
+effects, never desired completion. The reduced graph only schedules decisions.
+Original SCCs and word spans still govern cache reuse.
+
+The classification runs once and reports finite transitions, unsummarized cyclic
+edges and graph-size work. The shared SCC helper sorts component members, so its
+current bound includes up to O(V log V) sorting. Synthetic exit-summary edges may
+conservatively classify additional cycles; they never justify deleting original
+semantic edges or granting completion. The independent final checker is unchanged.
+
+Native command anchors follow observation liveness, not individual site
+reachability. An unreachable canonical representative retains its anchor when a
+reachable copy shares its word. Observations with no reachable occurrence have
+no emitted anchor. This prevents composed first-use refinement from exposing
+phantom command positions while retaining actual shared-word emission.

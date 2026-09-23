@@ -378,6 +378,10 @@ void composedReaders(unsigned variant)
         return;
     }
     const auto plan = o::constructSelectedPlan(refined.program);
+    if (variant == 0) {
+        require(plan.work.unsummarizedBackedges != 0 && plan.work.contextualReplays != 0,
+                "cyclic occurrence interfaces lost original-edge replay");
+    }
     if (variant == 3) {
         require(plan.declinedRecurring && plan.declinedRecurring->reason.find("producer repair") != std::string::npos,
                 "unsupported Y repair crossed the newly supported X overwrite");

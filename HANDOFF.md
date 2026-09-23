@@ -1,6 +1,44 @@
 # OAHS current handoff
 
-## Current iteration — Step E reader episodes and scoped producer repair
+## Current iteration — Step F composed original endpoint demands
+
+Step E committed `a8af1636c`. Original cross-engine requirements now collect
+first-consumer, first-write and final-reader roles together before refinement.
+Reader-only children and unrelated carried values no longer lose their endpoints
+through the old local-benefit gate. Shared nearest-use classification is memoized;
+RMW is one write-bearing boundary, without dropping its physical read obligation.
+Dead original observations lose native anchors; live shared-word aliases retain
+them. Finite refined transitions stay in ordinary propagation. One batch SCC
+classification reserves contextual replay for unresolved cyclic interfaces.
+
+Architecture/design, correctness and performance reviewers ACCEPT this increment
+under the documented temporary-regression policy. All 22 portable suites, three
+native drivers, 88/88 corpus, 18/19 compatibility (inherited topk refusal), GEMM,
+two prefills and three targets pass. The latter six plans are unchanged from E.
+Evidence: `../oahs-gemm-base-builds/refactor-step-f/` contains exact binary/input/
+plan pins, diagnostics, resources, full finite relation sets and work counters.
+The compliance check has one nested-condition bracing-regex false positive;
+the body is braced. No sanitizer or device run.
+
+Reader-only retained/reload witnesses remove 54/30 relations and add zero;
+dynamic event pairs rise 8→10 / 16→18. Six corpus and ten compatibility plans
+change. Finite corpus comparisons find no changed relations; this is not a proof
+for all runtime bindings. Compatibility 7 qk_pv_aiv (402 payloads) adds 4 and
+removes 108 relations against E; versus checked full contextual replay it adds 8
+and removes zero. Compatibility 15/16 aiv each add 2 versus full contextual replay.
+These are explicit outstanding ordering recoveries, not plan-equivalent cost
+optimizations. Full-contextual case 7 takes about 25.4 seconds / 899,029 replay
+visits; the structural path about 1.35 seconds / 54,993 visits on this host.
+Compiler speed does not discharge the ordering obligation. The changed-order
+artifacts state finite bindings; 15/16 exercise cube and vector tail bodies,
+not all trip counts or peer schedules.
+
+Continue immediately with shared original-loop domains and normalized positive-
+step participation, then exported generation support, access-scoped ACC, common
+packet binding and required-return/rearming composition. Stages 1–5 remain open;
+these bounded increments do not declare the full refactor complete.
+
+## Previous iteration — Step E reader episodes and scoped producer repair
 
 Step D committed `2a19c6f86`. The enclosing cycle now uses shared nearest-use
 reader participation instead of one-child observation grammar. Two-child, reload
