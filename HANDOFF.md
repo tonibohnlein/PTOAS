@@ -26,10 +26,9 @@ until lowering supplies an internal insertion contract; its first legal later
 source is subscribed separately from the analytically sufficient phase cut.
 Support intervals now distinguish an uninterrupted physical interval from a full-content generation.
 These records grant no selected completion.
-An import audit now compares declared explicit memory effects with the shared
-translated phase lists and reports unverified instruction signatures. It does
-not certify implicit effects, target legality, or definite write coverage;
-those remain separate lowering/profile obligations.
+Both algorithms use the instruction effects supplied by the shared `SyncInput`.
+The additional FrontierSynch import audit has been removed; there is no separate
+instruction whitelist. Definite write coverage remains a separate proof obligation.
 Phase A now also indexes original SSA producers of branch conditions, counted
 loop bounds, while conditions, and translated payload addresses as typed
 value-availability prerequisites. Pure scalar dependency chains are followed to translated phases, while incoming

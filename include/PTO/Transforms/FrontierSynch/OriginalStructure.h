@@ -65,13 +65,6 @@ struct PhysicalAddressRelation {
   const BaseMemInfo *memory = nullptr;
   std::vector<SmallVector<uint64_t>> addresses;
 };
-struct OriginalEffectAudit {
-  // This checks that declared explicit memory effects reached the shared
-  // translation. It does not certify unknown implicit effects, instruction
-  // legality, visibility, or full-byte overwrite coverage.
-  bool explicitEffectsMatched = true;
-  std::vector<std::size_t> unverifiedOriginalSites;
-};
 struct OriginalStructure {
   func::FuncOp function;
   Region body;
@@ -80,7 +73,6 @@ struct OriginalStructure {
   std::vector<mlir::Operation *> originalSites;
   std::vector<Value> storageRoots;
   std::vector<PhysicalAddressRelation> physicalAddresses;
-  OriginalEffectAudit effectAudit;
   std::unique_ptr<SyncTileDescriptorState> descriptors;
 };
 // Requires verified original IR. Failure leaves the caller's result unchanged.

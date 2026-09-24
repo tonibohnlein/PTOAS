@@ -92,12 +92,11 @@ accesses found before the escape. An uninterrupted producer-to-reuse physical
 interval is recorded separately from full-generation establishment. No native
 translated write currently has full-byte coverage evidence, so such an interval
 does not silently kill older writers or qualify a generation-specific release.
-The FrontierSynch importer also checks that each declared explicit memory effect of
-a translated instruction is present among its shared phase effects. Missing
-interfaces, unmapped resources, and modeled macro signatures remain unverified.
-Passing this check is necessary, not sufficient, for the draft's full target
-contract: implicit effects, instruction legality, synchronization primitives,
-visibility, and invocation assumptions still need qualified profile evidence.
+The FrontierSynch importer consumes instruction effects from the shared
+`SyncInput`, using the same contract as the existing InsertSync algorithm.
+It performs no additional effect audit or instruction whitelist check. Corrections
+to operation effects belong in the shared definition and apply to both algorithms.
+Full-byte overwrite coverage still requires evidence beyond a translated write.
 The original-value query also follows pure SSA dependencies of branch/loop
 conditions and translated payload addresses to producer phases. It indexes a typed prerequisite at
 the control site and subscribes the producer's executable source boundary.

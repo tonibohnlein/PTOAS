@@ -14,7 +14,6 @@
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/raw_ostream.h"
 #include <array>
-#include <set>
 #include <string>
 
 namespace {
@@ -61,20 +60,6 @@ mlir::LogicalResult inspectRequests(const fs::ProgramAnalysis &analysis, Counts 
   return mlir::success();
 }
 
-void printUnverified(const fs::OriginalStructure &structure) {
-  std::set<llvm::StringRef> names;
-  for (const auto site : structure.effectAudit.unverifiedOriginalSites) {
-    if (site < structure.originalSites.size()) {
-      names.insert(structure.originalSites[site]->getName().getStringRef());
-    }
-  }
-  llvm::outs() << "  unverified-op-kinds:";
-  for (const auto name : names) {
-    llvm::outs() << " " << name;
-  }
-  llvm::outs() << "\n";
-}
-
 mlir::LogicalResult analyze(mlir::func::FuncOp function) {
   mlir::pto::SyncInput input;
   if (mlir::failed(input.build(function))) {
@@ -98,9 +83,7 @@ mlir::LogicalResult analyze(mlir::func::FuncOp function) {
                << "\n  RAW=" << counts.hazards[0] << " WAR=" << counts.hazards[1] << " WAW=" << counts.hazards[2]
                << " interpreted=" << counts.interpreted << " readers=" << counts.readers
                << "\n  unknown-occurrence=" << counts.unknownOccurrence
-               << " decoded-unresolved=" << counts.decodedUnresolved
-               << " unverified-effects=" << structure.effectAudit.unverifiedOriginalSites.size() << "\n";
-  printUnverified(structure);
+               << " decoded-unresolved=" << counts.decodedUnresolved << "\n";
   return mlir::success();
 }
 

@@ -49,8 +49,6 @@ LogicalResult run(func::FuncOp function, const SyncInput& input)
            << " original storage requirements, " << typedRequirements
            << " control-value prerequisites, and " << analysis.lifetimes().stats().accessIncidences
            << " physical access incidences; "
-           << analysis.structure().effectAudit.unverifiedOriginalSites.size()
-           << " original instruction signatures lack explicit-effect matching; "
            << "construction is not implemented yet";
 }
 } // namespace mlir::pto::frontiersynch

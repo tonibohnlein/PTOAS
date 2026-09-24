@@ -130,11 +130,11 @@ The test executable uses `SyncInput`, `importOriginalStructure` and
 `ProgramAnalysis` from the current sources. It interprets **every** indexed
 storage requirement, checks its source subscription, and verifies that the
 original IR remains unchanged. It reports RAW/WAR/WAW counts, physical bank
-relations, unknown occurrence results and the explicit-effect audit. It neither
+relations and unknown occurrence results. It neither
 allocates events nor invokes the unfinished constructor.
 
 `complete()` here is preparation completeness. Unknown correspondence, missing
-full-write proofs and unverified effects remain visible; a successful process
+full-write proofs remain unresolved; a successful process
 exit does not certify a complete implementation of draft 0.42.
 
 ## Materialize the manual reference
@@ -166,10 +166,11 @@ can cause the existing pass to skip the function.
 
 ## Current validation checkpoint
 
-On 2026-09-24, all five lit tests passed using a freshly compiled focused runner
-and the existing LLVM 19 toolchain. The runner compiled the current Phase A and
-shared-translator sources and linked the available generated PTO dialect
-dependencies, following the handoff's existing probe approach. The checkout's
+On 2026-09-24, all five corpus lit tests and the TAXPY regression passed using a
+freshly compiled focused runner and the existing LLVM 19 toolchain. The runner
+compiled the current Phase A, shared translator and PTO dialect implementation,
+with operation/interface headers regenerated from this checkout and the remaining
+available dialect dependencies. This follows the handoff's existing probe approach. The checkout's
 normal full compiler build remains unavailable; the CMake target is registered
 for a normally configured checkout. Local artifacts are under
 `.local/frontier-corpus/`, including the runner, build script/logs and lit output.
@@ -185,18 +186,16 @@ The already-built local runner can be used immediately from this checkout:
 | TileLang GEMM | 9 | 4 | 77 | 77 |
 | PyPTO GEMM | 7 | 4 | 35 | 35 |
 | FA cube | 12 | 6 | 96 | 96 |
-| FA vector | 28 | 2 | 1930 | 1930 |
+| FA vector | 28 | 2 | 1976 | 1976 |
 | Vector add | 6 | 3 | 58 | 58 |
 
 Counts are this checkpoint's observations, not desired synchronization counts.
-The explicit-effect audit reports `pto.alloc_tile` in every input and also
-`pto.taxpy` in FA vector. Allocation audit entries are not proof of missing
-payload data effects. TAXPY needs separate attention: its semantics read and
-update the destination, while the current declared effect implementation lists
-source/scalar reads and a destination write, omitting the destination read.
-The audit also encounters the scalar read without a mapped storage buffer.
-The fixture retains TAXPY so this effect-contract gap remains visible; no fix
-or full-effect certification is implied by this corpus passing.
+Both algorithms consume the same instruction effects through `SyncInput`;
+FrontierSynch performs no additional effect audit or instruction whitelist check.
+TAXPY's shared effect definition includes reading and writing its destination,
+matching `dst += src * scalar`. The focused
+[`frontier_synch_taxpy_effects.pto`](../frontier_synch_taxpy_effects.pto) regression
+checks dependencies on both loaded inputs and the destination write.
 
 No full EmitC/VPTO compilation, simulator/NPU execution, numerical comparison,
 event-protocol validation or performance measurement has been performed for

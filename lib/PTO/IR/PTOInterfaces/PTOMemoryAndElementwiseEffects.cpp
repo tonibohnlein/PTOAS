@@ -63,6 +63,7 @@ void TAxpyOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_READ(effects, getSrcMutable());
   PTO_ADD_READ(effects, getScalarMutable());
+  PTO_ADD_READ(effects, getDstMutable());
   PTO_ADD_WRITE(effects, getDstMutable());
 }
 
