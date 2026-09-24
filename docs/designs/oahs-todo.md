@@ -473,3 +473,13 @@ source-word-beginning placement remain sufficient limits. See HANDOFF and AK
 artifacts for validation and cost evidence. Next: common recurring/return
 packet competition and the deadline-wide class3 guard, then the AD ordering
 recovery and final corpus/device gates.
+
+## Current continuation after AL
+
+AL replaces the class3 guard's duplicate whole-loop entry test with the same
+indexed `nextEntrySource` semantic query used by the structured binder. This
+removes an avoidable scan and false-positive deferrals; it is not guaranteed
+plan-equivalent because class3 may now be tried when the old broad predicate
+was true but the actual entry qualifier was false. Three source reviews accepted
+the change. See HANDOFF/AL artifacts for final host evidence. The deadline-wide
+guard itself and structured packet binding remain unfinished.

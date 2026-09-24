@@ -1823,3 +1823,15 @@ no-refresh conditions are sufficient representation limits. Their replacement
 requires composed occurrence correspondence, gap support and actual reuse
 obligations; changed syntax or unrelated work must not be mistaken for a
 target limitation.
+
+## AL design — one loop-entry opportunity query
+
+The class3 migration guard no longer scans every original loop with a second,
+broader syntactic entry predicate. It asks `nextEntrySource` for the current
+requirement classes, using the same indexed containing-loop, original
+participation, source freshness and crossed-publication facts as the structured
+binder. Thus a false preflight cannot conceal an entry source that that binder
+would admit on the same ledger revision. A true result is only an opportunity;
+it grants no key, packet or completion credit. The deadline-wide class3 guard
+remains a transitional sufficient priority rule until all competing structured
+packets have common realizations.

@@ -1,5 +1,34 @@
 # OAHS current handoff
 
+## Active after Step AL — shared loop-entry opportunity preflight
+
+AL removes the class3 guard's duplicate whole-loop, syntactic loop-entry test.
+The guard now asks the same indexed, lazy `nextEntrySource` query as the
+structured binder, with the current required access classes. A negative
+answer cannot hide an entry source the binder would qualify on that frozen
+ledger state; a positive answer is only an opportunity, never packet or key
+credit. The deadline-wide class3 guard remains transitional. This precision
+change can permit class3 after an old false-positive veto; it is not promised
+to be plan-equivalent in general.
+
+Final host evidence: 25/25 portable suites, three native drivers, 88/88
+corpus, 18/19 compatibility (inherited refusal), GEMM, two prefills and three
+targeted inputs pass. Every campaign plan matches AK, so complete finite
+payload order and SET/WAIT resources are unchanged. Selected updates/replay
+sites stay 8225/7100684, normal candidates/selected stay 687/623 and common-cut
+queries stay 9422. Measured aggregate compiler microseconds 321030904→316105171
+are noisy, not a speed claim; the removed loop scan is not separately counted.
+Changed-code check is clean. Architecture/generality, correctness and
+asymptotic-performance reviewers ACCEPT. No sanitizer/device campaign.
+Artifacts: `../oahs-gemm-base-builds/refactor-step-al/` (`design.md`,
+`summary.json`, `results.json`, `changed-order.json`, `work.json`, `reviews.md`).
+
+Next: replace the remaining structured realization and deadline-wide class3
+guard through common request/packet binding, preserving useful early returns
+and actual reuse deadlines. AD `hc_head_reduce` +122/-20 ordering recovery,
+final consolidation, full generality and coupled device evidence remain open.
+Continue the three-reviewer commit loop.
+
 ## Active after Step AK — exact one-shot entry gaps and historical keys
 
 AK parameterizes the shared source-gap query by its actual original deadline.

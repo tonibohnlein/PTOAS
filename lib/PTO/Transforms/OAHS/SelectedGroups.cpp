@@ -210,30 +210,12 @@ bool Constructor::sourceFrontier(
 bool Constructor::earlierLoopEntrySource(
     Pipe source, const std::vector<FrontierRequirement>& required) const
 {
-    if (!program.observed || required.empty()) { return false; }
-    const auto observer = program.operations[control.graph.operations[current]].pipe;
-    for (const auto& loop : control.loopEntries) {
-        const auto& first = loop.firstConsumers[unsigned(observer)];
-        const bool containsDeadline =
-            std::find(loop.sites.begin(), loop.sites.end(), current) != loop.sites.end();
-        const bool eligible = !first.empty() && control.canonicalCut[loop.entry] == loop.entry &&
-            containsDeadline;
-        if (!eligible) { continue; }
-        if (!std::all_of(first.begin(), first.end(), [&](Cut cut) {
-            return std::all_of(required.begin(), required.end(), [&](const auto& r) {
-                const auto roles = requirements.use(cut, r.cell).roles;
-                return (roles & 2) || ((roles & 1) && r.sourceWrite);
-            });
-        })) { continue; }
-        // This only retains an existing earlier option for the structured
-        // binder. Its key and complete packet are still checked there.
-        if (std::any_of(result.sources.begin(), result.sources.end(), [&](const auto& handle) {
-            return handle.pipe == source && handle.version == cache.version &&
-                handle.snapshot.reachable() && control.straight(handle.cut, loop.entry);
-        })) { return true; }
-        if (!loop.issuedPipes.count(source)) { return true; }
+    std::set<Id> needed;
+    for (const auto& requirement : required) {
+        needed.insert(accessClass(requirement));
     }
-    return false;
+    Id cursor = 0;
+    return bool(nextEntrySource(source, required, needed, cursor));
 }
 
 std::optional<Constructor::EntrySourceFact> Constructor::nextEntrySource(
