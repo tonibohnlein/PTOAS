@@ -1900,3 +1900,31 @@ constructor now exercises earlier completed reverse-key reuse. A later
 selected reverse use and an empty-but-unrearmed reverse key are independent
 negatives. This is a binding precision extension, not general alternative or
 recurring acknowledgment qualification.
+
+## AP design — joined prior-consumption frontier through one binder
+
+Several selected old WAIT identities may be alternative consumptions of one
+forward event generation. A joined consumption query proves that each
+participating original path reaches the later source after exactly one of
+those WAITs. The query retains each actual post-WAIT word gap and rejects an
+intervening selected use of the forward key. It grants no payload or event
+credit. Unique acyclic source/deadline words, one actual old WAIT per path and
+one source prefix are sufficient representation premises of this increment.
+
+Singleton and joined consumption queries feed the same class-one binder. Its
+complete packet publishes one reverse SET at each participating old-WAIT gap,
+acquires the reverse event and republishes the forward event at the unchanged
+source, then acquires forward readiness at the unchanged deadline. Per-arm
+event-chain checks, exact packet preparation, owner/neighbor qualification,
+persistent publication support and selected causal replay remain mandatory.
+The realization shape names every actual reverse-publication cut; a joined
+packet cannot be ranked as if its support were one source-local SET.
+
+A fresh reverse key is required for joined paths. Their helpers remain retained
+support outside singleton `rememberReturn` retirement. Historical reverse-key
+reuse across alternatives, cyclic/multiple-generation correspondence and
+retirement need their own neighboring-use and ownership certificates. Refusal
+keeps the checked source-local realization available. The normal-constructor
+two-path witness has strictly fewer complete payload-order relations than a
+valid source-local packet on both paths; this finite comparison does not prove
+a general ordering optimum or recover the cyclic `hc_head_reduce` case.

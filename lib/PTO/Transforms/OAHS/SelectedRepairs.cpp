@@ -8,6 +8,22 @@
 #include "SelectedInternal.h"
 
 namespace mlir::pto::oahs::selected {
+namespace {
+bool uniqueAcyclicWord(const Control& control, Cut cut)
+{
+    const bool validCut = cut < control.canonicalCut.size() && control.canonicalCut[cut] == cut;
+    if (!validCut) {
+        return false;
+    }
+    const auto component = control.component[cut];
+    if (component == NoAnalysisId || control.components[component].cyclic) { return false; }
+    return std::count_if(control.wordOccurrences[cut].begin(),
+        control.wordOccurrences[cut].end(), [&](Cut site) {
+            return control.reachable[site];
+        }) == 1;
+}
+} // namespace
+
 bool Constructor::fixedBoundaryPacket(const SourceGapQualification& facts, Group& group)
 {
     // One designated source-local acknowledgment, followed by the ordinary
@@ -89,16 +105,8 @@ std::optional<ConsumptionFrontier> Constructor::singletonConsumptionFrontier(
     const bool matchedDeadline = toDeadline.proved() && toDeadline.pairs.size() == 1 &&
         toDeadline.pairs.front().first == source;
     if (!matchedDeadline) { return {}; }
-    const auto unique = [&](Cut cut) {
-        const auto component = control.component[cut];
-        if (component == NoAnalysisId || control.components[component].cyclic ||
-            control.canonicalCut[cut] != cut) { return false; }
-        return std::count_if(control.wordOccurrences[cut].begin(),
-            control.wordOccurrences[cut].end(), [&](Cut site) {
-                return control.reachable[site];
-            }) == 1;
-    };
-    const bool uniqueWords = unique(source) && unique(facts.deadline);
+    const bool uniqueWords = uniqueAcyclicWord(control, source) &&
+        uniqueAcyclicWord(control, facts.deadline);
     if (!uniqueWords) { return {}; }
     const auto& consumers = cache.cuts[source].incoming.consumptions[forward];
     const bool singleConsumer = consumers.size() == 1;
@@ -110,7 +118,7 @@ std::optional<ConsumptionFrontier> Constructor::singletonConsumptionFrontier(
     const auto& identity = frontier.keys()[forward];
     const bool matching = old.command.kind == Command::Acquire &&
         old.command.source == identity.source && old.command.observer == identity.observer &&
-        old.command.key == identity.key && unique(old.cut) &&
+        old.command.key == identity.key && uniqueAcyclicWord(control, old.cut) &&
         control.straight(old.cut, source) && old.cut != source;
     if (!matching) { return {}; }
     const auto& fromWait = control.correspondence(old.cut, source);
@@ -141,6 +149,122 @@ std::optional<ConsumptionFrontier> Constructor::singletonConsumptionFrontier(
     return ConsumptionFrontier{wait, *sourceGap, facts.gap, ledger.version()};
 }
 
+std::optional<JoinedConsumptionFrontier> Constructor::joinedConsumptionFrontier(
+    const SourceGapQualification& facts, Id forward)
+{
+    const bool valid = facts.proved() && facts.version == ledger.version() &&
+        facts.gap.left == NoAnalysisId && forward < frontier.keys().size() &&
+        facts.prefixes.size() == 1 && uniqueAcyclicWord(control, facts.gap.cut) &&
+        uniqueAcyclicWord(control, facts.deadline);
+    if (!valid) { return {}; }
+    const auto source = facts.gap.cut;
+    const auto& toDeadline = control.correspondence(source, facts.deadline);
+    const bool matchedDeadline = toDeadline.proved() && toDeadline.pairs.size() == 1 &&
+        toDeadline.pairs.front().first == source;
+    if (!matchedDeadline) {
+        return {};
+    }
+    const auto& waits = cache.cuts[source].incoming.consumptions[forward];
+    const bool alternatives = waits.size() >= 2;
+    if (!alternatives) {
+        return {};
+    }
+    const auto& identity = frontier.keys()[forward];
+    JoinedConsumptionFrontier out;
+    out.version = ledger.version();
+    std::vector<Cut> waitCuts;
+    std::map<Cut, Id> waitByCut;
+    std::set<Id> oldWaits;
+    for (auto wait : waits) {
+        const bool activeWait = wait < ledger.records().size() && ledger.active(wait);
+        if (!activeWait) {
+            return {};
+        }
+        const auto& old = ledger.endpoint(wait);
+        const bool matching = old.command.kind == Command::Acquire &&
+            old.command.source == identity.source && old.command.observer == identity.observer &&
+            old.command.key == identity.key && uniqueAcyclicWord(control, old.cut) &&
+            waitByCut.emplace(old.cut, wait).second;
+        if (!matching) { return {}; }
+        const auto gap = ledger.gapAfter(wait);
+        const auto after = cache.afterEndpoint.find(wait);
+        const bool consumed = gap && after != cache.afterEndpoint.end() &&
+            after->second.consumptions[forward] == std::vector<Id>{wait} &&
+            after->second.causal.facts()->events[forward].occupancy == 1;
+        if (!consumed) { return {}; }
+        waitCuts.push_back(old.cut);
+        oldWaits.insert(wait);
+        out.alternatives.push_back({wait, *gap, facts.gap, ledger.version()});
+    }
+    const auto& matching = control.correspondence(waitCuts, {source});
+    const bool matchedSources = matching.proved() && matching.pairs.size() == waits.size();
+    if (!matchedSources) {
+        return {};
+    }
+    for (const auto& [old, next] : matching.pairs) {
+        if (next != source || !waitByCut.count(old)) { return {}; }
+    }
+
+    // Original correspondence proves one old WAIT on each participating path.
+    // Exclude another selected use of its event generation before republication.
+    std::vector<bool> interior(control.graph.sites.size(), false);
+    result.work.normalKeySites += interior.size();
+    std::vector<Cut> pending;
+    for (auto cut : waitCuts) {
+        const auto& next = control.graph.sites[cut].successors;
+        pending.insert(pending.end(), next.begin(), next.end());
+    }
+    while (!pending.empty()) {
+        const auto at = pending.back();
+        pending.pop_back();
+        if (at == source || !control.reachable[at] || interior[at]) { continue; }
+        interior[at] = true;
+        ++result.work.normalKeySites;
+        const auto& next = control.graph.sites[at].successors;
+        pending.insert(pending.end(), next.begin(), next.end());
+    }
+    std::map<Cut, bool> wordIntersects;
+    for (auto id : ledger.eventUses(identity)) {
+        ++result.work.repairNeighborUses;
+        const bool relevantUse = ledger.active(id) && !oldWaits.count(id);
+        if (!relevantUse) {
+            continue;
+        }
+        const auto& endpoint = ledger.endpoint(id);
+        if (endpoint.cut == source) { continue; }
+        const auto wordCut = control.canonicalCut[endpoint.cut];
+        if (const auto found = waitByCut.find(wordCut); found != waitByCut.end()) {
+            const auto [cached, inserted] = wordIntersects.try_emplace(wordCut, false);
+            if (inserted) {
+                const auto& word = ledger.word(wordCut);
+                const auto oldAt = std::find(word.begin(), word.end(), found->second);
+                cached->second = oldAt == word.end();
+                if (!cached->second) {
+                    for (auto next = oldAt + 1; next != word.end(); ++next) {
+                        ++result.work.normalKeySites;
+                        const auto& command = ledger.endpoint(*next).command;
+                        const bool eventUse = command.kind == Command::Publish ||
+                            command.kind == Command::Acquire;
+                        cached->second |= eventUse && keyIndex(frontier, command) == forward;
+                    }
+                }
+            }
+            if (cached->second) { return {}; }
+            continue;
+        }
+        const auto [cached, inserted] = wordIntersects.try_emplace(wordCut, false);
+        if (inserted) {
+            for (auto site : control.wordOccurrences[wordCut]) {
+                ++result.work.normalKeySites;
+                cached->second |= interior[site];
+            }
+        }
+        if (cached->second) { return {}; }
+    }
+    if (facts.prefixes.front().facts()->events[forward].occupancy != 1) { return {}; }
+    return out;
+}
+
 bool Constructor::separatedBoundaryPacket(const SourceGapQualification& facts, Group& group)
 {
     if (facts.deadline != current || facts.gap.left != NoAnalysisId) { return false; }
@@ -156,26 +280,35 @@ bool Constructor::separatedBoundaryPacket(const SourceGapQualification& facts, G
                 return !canPublish(atSource, forward);
             });
         if (!missingRearming) { continue; }
-        const auto consumed = singletonConsumptionFrontier(facts, forward);
-        if (!consumed) { continue; }
-        // The reverse key may have completed an earlier exchange. Only a
-        // historical candidate needs the original continuation mask; share
-        // its word queries across all reverse-key alternatives.
+        std::vector<ConsumptionFrontier> arms;
+        if (const auto single = singletonConsumptionFrontier(facts, forward)) {
+            arms.push_back(*single);
+        } else if (const auto joined = joinedConsumptionFrontier(facts, forward)) {
+            arms = joined->alternatives;
+        }
+        if (arms.empty()) { continue; }
+        // Historical reverse reuse is currently certified only for one old
+        // consumption. Joined sources require a virgin reverse key until a
+        // neighboring-use proof spans every alternative continuation.
         std::vector<bool> afterConsumption;
         std::map<Cut, bool> wordIntersects;
-        const auto after = cache.afterEndpoint.find(consumed->wait);
         for (Id reverse = 0; reverse < frontier.keys().size(); ++reverse) {
             const auto& b = frontier.keys()[reverse];
             const bool eligibleReverse = b.source == observer && b.observer == group.source &&
                 helperFreeKey(reverse);
-            const bool available = after != cache.afterEndpoint.end() &&
-                canPublish(after->second, reverse);
-            if (!eligibleReverse || !available) { continue; }
-            if (!ledger.eventUses(b).empty()) {
+            if (!eligibleReverse) { continue; }
+            const auto& reverseUses = ledger.eventUses(b);
+            const bool unsupportedHistoricalJoin = arms.size() != 1 && !reverseUses.empty();
+            if (unsupportedHistoricalJoin) { continue; }
+            const auto firstAfter = cache.afterEndpoint.find(arms.front().wait);
+            const bool initiallyAvailable = firstAfter != cache.afterEndpoint.end() &&
+                canPublish(firstAfter->second, reverse);
+            if (!initiallyAvailable) { continue; }
+            if (!reverseUses.empty()) {
                 if (afterConsumption.empty()) {
                     afterConsumption.resize(control.graph.sites.size());
                     result.work.normalKeySites += afterConsumption.size();
-                    std::vector<Cut> pending{ledger.endpoint(consumed->wait).cut};
+                    std::vector<Cut> pending{ledger.endpoint(arms.front().wait).cut};
                     while (!pending.empty()) {
                         const auto site = pending.back(); pending.pop_back();
                         if (!control.reachable[site] || afterConsumption[site]) { continue; }
@@ -191,34 +324,50 @@ bool Constructor::separatedBoundaryPacket(const SourceGapQualification& facts, G
             const Command returnWait{Command::Acquire, b.source, b.observer, b.key};
             const Command forwardSet{Command::Publish, a.source, a.observer, a.key};
             const Command forwardWait{Command::Acquire, a.source, a.observer, a.key};
-            // This contracted chain proves only event rearming. Payload
-            // coverage remains the real sourceGapFacts certificate.
-            const std::vector<std::pair<Command, FrontierBinding>> chain{
-                {returnSet, {consumed->returnSource.cut, 1}},
-                {returnWait, {facts.gap.cut, 0}},
-                {forwardSet, {facts.gap.cut, 1}},
-                {forwardWait, {current, 0}}};
-            result.work.repairSourceCommands += chain.size();
-            if (!frontier.eventChain(after->second.causal, chain)) { continue; }
-            const auto request = result.decisions.size();
-            const OrderedPacket endpoints{
-                {consumed->returnSource.cut, returnSet,
-                    EndpointPurpose::ConsumptionAcknowledgment, request, consumed->wait,
-                    consumed->returnSource},
-                {facts.gap.cut, returnWait,
-                    EndpointPurpose::ConsumptionAcknowledgment, request, consumed->wait, facts.gap},
-                {facts.gap.cut, forwardSet, EndpointPurpose::Completion, request,
-                    NoAnalysisId, facts.gap},
-                {current, forwardWait, EndpointPurpose::Completion, request}};
-            auto packet = prepareOwnedPacket(endpoints);
-            if (!packet || packet->restoredEndpoints || !preservePublications(*packet)) {
-                continue;
+            bool legal = true;
+            for (const auto& old : arms) {
+                const auto after = cache.afterEndpoint.find(old.wait);
+                const bool available = after != cache.afterEndpoint.end() &&
+                    canPublish(after->second, reverse);
+                if (!available) { legal = false; break; }
+                // The contracted chain establishes event rearming only.
+                // sourceGapFacts supplies payload coverage independently.
+                const std::vector<std::pair<Command, FrontierBinding>> chain{
+                    {returnSet, {old.returnSource.cut, 1}},
+                    {returnWait, {facts.gap.cut, 0}},
+                    {forwardSet, {facts.gap.cut, 1}},
+                    {forwardWait, {current, 0}}};
+                result.work.repairSourceCommands += chain.size();
+                if (!frontier.eventChain(after->second.causal, chain)) {
+                    legal = false;
+                    break;
+                }
             }
+            if (!legal) { continue; }
+            const auto request = result.decisions.size();
+            OrderedPacket endpoints;
+            std::vector<Cut> returnSources;
+            for (const auto& old : arms) {
+                endpoints.push_back({old.returnSource.cut, returnSet,
+                    EndpointPurpose::ConsumptionAcknowledgment, request, old.wait,
+                    old.returnSource});
+                returnSources.push_back(control.canonicalCut[old.returnSource.cut]);
+            }
+            const auto acknowledged = arms.size() == 1 ? arms.front().wait : NoAnalysisId;
+            endpoints.push_back({facts.gap.cut, returnWait,
+                EndpointPurpose::ConsumptionAcknowledgment, request, acknowledged, facts.gap});
+            endpoints.push_back({facts.gap.cut, forwardSet,
+                EndpointPurpose::Completion, request, NoAnalysisId, facts.gap});
+            endpoints.push_back({current, forwardWait, EndpointPurpose::Completion, request});
+            auto packet = prepareOwnedPacket(endpoints);
+            if (!packet || packet->restoredEndpoints || !preservePublications(*packet)) { continue; }
             packet->qualified = true;
             group.packet = std::move(*packet);
             group.forwardKey = forward;
             group.repairKey = reverse;
-            group.repairedAcquisition = consumed->wait;
+            group.repairedAcquisition = acknowledged;
+            std::sort(returnSources.begin(), returnSources.end());
+            group.repairPublications = std::move(returnSources);
             return true;
         }
     }

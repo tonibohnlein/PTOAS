@@ -147,6 +147,42 @@ struct ReplayTestAccess {
             "later same-word key use reused the superseded consumption identity");
     }
 
+    static void joinedConsumptionCorrespondence()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto input = base(2, 1);
+        input.operations = {op(P, {{0, false, true}}), op(Q, {{0, true, false}}),
+            op(Q, {{0, true, false}}), op(P, {{1, false, true}})};
+        auto cuts = [](const Program& p) {
+            std::vector<Cut> out(p.operations.size(), NoAnalysisId);
+            for (Cut site = 0; site < p.observed->sites.size(); ++site) {
+                const auto op = p.observed->sites[site].operation;
+                if (op != NoAnalysisId) { out[op] = site; }
+            }
+            return out;
+        };
+        input.body = seq({leaf(0), {Region::Choice, {leaf(1), leaf(2)}}, leaf(3)});
+        auto imported = addStructuredBoundaryCuts(input);
+        require(imported.success, imported.reason);
+        Constructor alternatives(imported.program);
+        const auto branch = cuts(imported.program);
+        const auto& joined = alternatives.control.correspondence(
+            {branch[1], branch[2]}, {branch[3]});
+        require(joined.proved() && joined.pairs.size() == 2,
+            "mutually exclusive old WAIT sources lost exact correspondence");
+        require(!alternatives.control.correspondence({branch[1]}, {branch[3]}).proved(),
+            "a path bypassing the old WAIT was treated as acknowledged");
+
+        input.body = seq({leaf(0), leaf(1), leaf(2), leaf(3)});
+        imported = addStructuredBoundaryCuts(input);
+        require(imported.success, imported.reason);
+        Constructor sequential(imported.program);
+        const auto ordered = cuts(imported.program);
+        require(!sequential.control.correspondence(
+            {ordered[1], ordered[2]}, {ordered[3]}).proved(),
+            "two sequential old WAITs were treated as alternative publications");
+    }
+
     static void historicalReverseNeighbors()
     {
         const auto P = Pipe::MTE2, Q = Pipe::V;
@@ -792,6 +828,113 @@ void joinedConsumptionReturn()
             "joined return accepted an unconsumed branch");
 }
 
+void separatedJoinedConsumptionReturn()
+{
+    using namespace mlir::pto::oahs;
+    const auto P = Pipe::MTE2, Q = Pipe::V;
+    auto input = base(3, 1);
+    input.operations = {op(P, {{0,false,true}}), op(Q, {{0,true,false}}),
+        op(Q, {{0,true,false}}), op(Q, {}), op(P, {{1,false,true}}),
+        op(P, {{2,false,true}}), op(Q, {{1,true,false}})};
+    input.body = seq({leaf(0), {Region::Choice, {leaf(1),leaf(2)}},
+        leaf(3), leaf(4), leaf(5), leaf(6)});
+    const auto imported = addStructuredBoundaryCuts(input);
+    require(imported.success, imported.reason);
+    const auto& p = imported.program;
+    const auto& graph = *p.observed;
+    auto cut = [&](unsigned operation) {
+        for (Cut site = 0; site < graph.sites.size(); ++site) {
+            if (graph.sites[site].operation == operation) { return site; }
+        }
+        return NoAnalysisId;
+    };
+    Commands fixed(commandCutCount(p));
+    fixed[graph.sites[cut(0)].successors.front()] = {{Command::Publish,P,Q,0}};
+    fixed[cut(1)] = fixed[cut(2)] = {{Command::Acquire,P,Q,0}};
+    const auto plan = constructSelectedPlan(p, fixed);
+    require(plan.success, "separated joined construction: " + plan.reason);
+    const auto earlyReturn = [&](Cut word) {
+        const auto& commands = plan.commands[word];
+        return commands.size() >= 2 && commands[0].kind == Command::Acquire &&
+            commands[1].kind == Command::Publish && commands[1].source == Q &&
+            commands[1].observer == P;
+    };
+    require(earlyReturn(cut(1)) && earlyReturn(cut(2)),
+        "alternative old WAITs did not publish guarded early acknowledgments");
+    require(plan.work.repairSelected == 1 && plan.work.joinedAcknowledgments == 1,
+        "joined early return did not enter common class-one selection");
+    require(checkCausalFrontier(p, plan.commands).accepted,
+        "separated joined return failed cold validation");
+    auto withBarriers = fixed;
+    withBarriers[cut(1)].push_back({Command::Barrier, P, Q, 0});
+    withBarriers[cut(2)].push_back({Command::Barrier, P, Q, 0});
+    const auto fenced = constructSelectedPlan(p, withBarriers);
+    require(fenced.success, "unrelated-barrier joined construction: " + fenced.reason);
+    for (auto branch : {1U, 2U}) {
+        const auto& word = fenced.commands[cut(branch)];
+        require(std::any_of(word.begin(), word.end(), [&](const Command& command) {
+            return command.kind == Command::Publish && command.source == Q && command.observer == P;
+        }), "a non-event barrier erased the early consumption frontier");
+    }
+    auto late = plan.commands;
+    const auto returnSet = late[cut(1)][1];
+    late[cut(1)].erase(late[cut(1)].begin() + 1);
+    late[cut(2)].erase(late[cut(2)].begin() + 1);
+    late[cut(5)].insert(late[cut(5)].begin(), returnSet);
+    require(checkCausalFrontier(p, late).accepted,
+        "source-local comparison packet failed cold validation");
+    using Relations = std::set<std::pair<unsigned, unsigned>>;
+    auto completeOrders = [&](const Commands& selected) {
+        std::vector<Relations> paths;
+        std::function<void(Cut,Program,Commands,std::vector<Command>)> walk;
+        walk = [&](Cut at, Program flat, Commands words, std::vector<Command> pending) {
+            pending.insert(pending.end(), selected[at].begin(), selected[at].end());
+            const auto& site = graph.sites[at];
+            if (site.operation != NoAnalysisId) {
+                flat.operations.push_back(p.operations[site.operation]);
+                words.push_back(std::move(pending)); pending.clear();
+            }
+            if (at == graph.exit) {
+                words.push_back(std::move(pending));
+                std::vector<unsigned> visits(flat.operations.size());
+                std::iota(visits.begin(), visits.end(), 0);
+                Relations order;
+                require(bool(oahs_oracle::graph(flat, words, visits, {}, nullptr, nullptr, &order)),
+                    "joined alternative failed independent complete-order check");
+                paths.push_back(std::move(order));
+            } else {
+                for (auto next : site.successors) { walk(next, flat, words, pending); }
+            }
+        };
+        auto flat = p; flat.observed.reset(); flat.body = {}; flat.operations.clear();
+        walk(graph.entry, flat, {}, {});
+        return paths;
+    };
+    const auto earlyOrders = completeOrders(plan.commands);
+    const auto lateOrders = completeOrders(late);
+    require(earlyOrders.size() == 2 && lateOrders.size() == earlyOrders.size(),
+        "joined alternative fixture lost a participating path");
+    for (unsigned path = 0; path < earlyOrders.size(); ++path) {
+        const bool included = std::includes(lateOrders[path].begin(), lateOrders[path].end(),
+            earlyOrders[path].begin(), earlyOrders[path].end());
+        const bool distinct = lateOrders[path].size() > earlyOrders[path].size();
+        // The flattened path numbers issue/completion vertices separately:
+        // 5 completes the unrelated Q operation, 8 issues the later P load.
+        const bool removed = lateOrders[path].count({5, 8}) && !earlyOrders[path].count({5, 8});
+        require(included && distinct && removed,
+            "early joined ordering path=" + std::to_string(path) +
+            " early=" + std::to_string(earlyOrders[path].size()) +
+            " late=" + std::to_string(lateOrders[path].size()) +
+            " included=" + std::to_string(included) + " removed=" + std::to_string(removed));
+    }
+    for (auto branch : {1U, 2U}) {
+        auto missing = plan.commands;
+        missing[cut(branch)].erase(missing[cut(branch)].begin() + 1);
+        require(!checkCausalFrontier(p, missing).accepted,
+            "missing guarded acknowledgment publication remained legal");
+    }
+}
+
 void repeatedJoinedPacket()
 {
     auto input = base(2, 1);
@@ -1372,6 +1515,7 @@ int main()
     o::selected::ReplayTestAccess::ownedCandidateOrder();
     o::selected::ReplayTestAccess::exactSourceGap();
     o::selected::ReplayTestAccess::separatedConsumptionFacts();
+    o::selected::ReplayTestAccess::joinedConsumptionCorrespondence();
     o::selected::ReplayTestAccess::historicalReverseNeighbors();
     o::selected::ReplayTestAccess::sourceGapOccurrences();
     o::selected::ReplayTestAccess::sourceGapBarriers();
@@ -1379,6 +1523,7 @@ int main()
     pendingAccumulatorHistories();
     repeatedJoinedPacket();
     joinedConsumptionReturn();
+    separatedJoinedConsumptionReturn();
     o::selected::ReplayTestAccess::privateAcknowledgment();
     o::selected::ReplayTestAccess::privateClosedAcknowledgment();
     orderedPacketMaterialization();

@@ -127,6 +127,10 @@ struct ConsumptionFrontier {
     WordGap forwardSource;
     uint64_t version = 0;
 };
+struct JoinedConsumptionFrontier {
+    std::vector<ConsumptionFrontier> alternatives;
+    uint64_t version = 0;
+};
 struct PacketEndpoint {
     Cut cut;
     Command command;
@@ -560,6 +564,9 @@ struct Group {
     // one directional key across branches, not one key per branch. Empty means
     // the original single-cut/F7 path. The candidate is tied to the selected map.
     std::vector<Cut> publications = {};
+    // Actual reverse publications of a selected consumption repair. Distinct
+    // alternative old WAITs may supply one joined reverse receipt.
+    std::vector<Cut> repairPublications = {};
     Id forwardKey = NoAnalysisId, repairKey = NoAnalysisId;
     Id repairedAcquisition = NoAnalysisId;
     uint64_t version = 0;
@@ -811,6 +818,8 @@ private:
     bool separatedBoundaryPacket(const SourceGapQualification&, Group&);
     std::optional<ConsumptionFrontier> singletonConsumptionFrontier(
         const SourceGapQualification&, Id) const;
+    std::optional<JoinedConsumptionFrontier> joinedConsumptionFrontier(
+        const SourceGapQualification&, Id);
     std::optional<WordGap> earlyPublicationMilestone(Cut, Pipe) const;
     bool clearInterval(Id, Cut, Cut) const;
     std::vector<Pipe> route(Pipe, Pipe) const;

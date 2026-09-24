@@ -1,5 +1,51 @@
 # OAHS current handoff
 
+## Active after Step AP — joined prior consumption at early source gaps
+
+AP extends the common class-one consumption repair to an acyclic joined
+frontier: multiple actual old WAIT identities can correspond to one later
+forward source when every participating original path contains exactly one.
+The shared query retains each exact post-WAIT gap and refuses an intervening
+forward-key use. Singleton and joined facts use one binder, which checks the
+complete reverse/forward packet, key ownership, neighboring uses and persistent
+publication support before selected causal replay grants credit. The
+realization shape records all early reverse SET cuts. An unrelated selected
+barrier is not mistaken for an event use.
+
+The normal constructor selects guarded SETs after both alternative old WAITs.
+On each of two finite paths, the independent oracle finds its complete
+payload-order relation a strict subset of a valid source-local acknowledgment;
+on the first path the sets have 36 versus 48 relations. Deleting either early
+SET is rejected. Direct original-control tests reject a bypassed or sequential
+old WAIT; an unrelated-barrier variant keeps the opportunity. This establishes
+the bounded mechanism, not a general proof or a native quality recovery.
+
+Final exact-code host checkpoint: 25/25 portable suites, three native drivers,
+88/88 corpus, 18/19 compatibility (same inherited refusal), GEMM, two prefills
+and three targeted inputs pass. All 113 campaign plan hashes equal AO, hence
+campaign complete payload order and SET/WAIT resources are unchanged. Matched
+selected updates/replay sites remain 8238/7101060; normal key-site work rises
+1021884→1031360 and repair-neighbor visits 19990→20152, while repair-source
+commands remain 48. Measured compiler microseconds 316657094→323129764 are
+noisy and not a speed conclusion. The final test-only complete-order assertion
+passed the focused test and all 25 portable suites after the campaign. The
+changed-code check passes. Architecture/generality, correctness and
+asymptotic-performance reviewers ACCEPT. No sanitizer/device campaign.
+Artifacts: `../oahs-gemm-base-builds/refactor-step-ap/` (`design.md`,
+`summary.json`, `results.json`, `work.json`, `reviews.md`, validation logs,
+the read-only `hc_head_reduce` trace and diagnostic build).
+
+Current sufficient limits: unique acyclic joined source/deadline, one old
+WAIT per participating path, a fresh reverse key, and retained joined helpers
+outside singleton retirement. The AD `hc_head_reduce` +122/-20 finite ordering
+debt remains: its later source-local V→MTE2 acknowledgment imports unrelated
+vector completion before MTE2 loads, and this AP acyclic frontier does not
+qualify its cyclic/multiple-generation histories. Next derive a generation-
+scoped recurring consumption frontier and exact early helper support through
+the same binder, without moving or duplicating notifications on a visit.
+Then continue broader affected-use support, class-three guarding, and final
+quality/generality/device gates through the three-reviewer commit loop.
+
 ## Active after Step AO — historical reverse-key binding in common class one
 
 AO removes the virgin reverse-key gate from AN's bounded prior-consumption

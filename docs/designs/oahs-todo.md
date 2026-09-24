@@ -520,3 +520,16 @@ history, ownership and consumption knowledge. Unique noncyclic occurrence
 correspondence and the checked legacy path remain; alternative/recurring
 consumption, same-word historical reverse uses and broader binding are open.
 See HANDOFF and AO artifacts for final evidence.
+
+## Current continuation after AP
+
+AP adds an acyclic joined prior-consumption frontier to AN/AO's common
+class-one separated-repair binder. Alternative old WAITs now publish their
+guarded reverse acknowledgment immediately after actual consumption, and the
+realization shape preserves every support cut. The normal-constructor witness
+retains independent receiver work relative to a valid source-local packet;
+direct bypass/sequential correspondence and unrelated-barrier cases protect
+the semantic boundary. All three reviewers accepted the bounded mechanism.
+Host plans remain identical to AO; work and resource evidence is in HANDOFF/AP
+artifacts. Joined helper retirement, historical reverse reuse, cyclic/multiple
+generation consumption and AD `hc_head_reduce` ordering recovery remain open.

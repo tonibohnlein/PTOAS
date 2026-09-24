@@ -259,9 +259,9 @@ std::optional<CertifiedRealization> Constructor::normalOrdinary(
                  group.publication, group.source, observer, {gap.cut}, {control.canonicalCut[current]}};
     out.shape.push_back({group.source, observer, {gap.cut}, {control.canonicalCut[current]}});
     if (repair) {
-        const Cut returnSource = group.repairedAcquisition == NoAnalysisId ? gap.cut :
-            ledger.endpoint(group.repairedAcquisition).cut;
-        out.shape.push_back({observer, group.source, {returnSource}, {gap.cut}});
+        auto returnSources = group.repairPublications;
+        if (returnSources.empty()) { returnSources.push_back(gap.cut); }
+        out.shape.push_back({observer, group.source, returnSources, {gap.cut}});
     }
     out.ordinary = std::move(group);
     return out;
