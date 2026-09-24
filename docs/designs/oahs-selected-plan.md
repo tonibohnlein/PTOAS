@@ -1707,3 +1707,35 @@ full broad-credit counterexample. This is bounded class3, not general common
 return transport or completed F8 rearming. No kernel, datatype, or shape gate
 was introduced. The stronger migration target is local binding of the earlier
 structured frontiers under the same realization policy.
+
+## AH design — bounded alternative-source common client
+
+`discoverSourceFrontier` already proves an alternative set of original source
+cuts and their target correspondence. The normal selector now consumes that
+fact for a helper-free class0 packet on a previously unused directional key.
+Each participating cut gets one SET at its earliest selected-word gap where
+the motivating physical classes are complete; the current deadline gets one
+WAIT. The cut set is an alternative publication frontier, not simultaneous
+publications on one execution. A relevant actual incoming receipt may supply
+the source completion, but an unrelated WAIT cannot be crossed merely to move
+the publication later. Missing exact gaps leave the structured binder in
+charge.
+
+The candidate's full physical coverage is the intersection of independently
+established access-class completion across those source prefixes, excluding
+classes crossed by an original access. It does not discard an older writer's
+credit because a later reader of the same cell remains pending. Shared
+occurrence correspondence, ownership, key availability at every source,
+exact packet materialization and persistent publication support precede common
+selection. Only the selected causal update grants credit. Prefix derivation
+occurs once per source, outside key competition; its causal history transport
+cost is charged and may depend on retained program history.
+
+This migrates the early alternative writer and two-provider normal-constructor
+cases, including a same-word unrelated WAIT, while retaining missing-source
+and refreshed-reader negatives. The alternative reader return needing a
+historically used key is still handled by the checked structured path. Thus AH
+is a bounded client of the common selector, not general alternative binding.
+Historical-key, recurring, loop-entry and dormant-owner packets still need a
+common scoped realization contract. The deadline-wide AG class3 priority guard
+remains transitional until those competitors are represented.

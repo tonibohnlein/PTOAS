@@ -733,6 +733,8 @@ private:
         Group, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&,
         bool repair = false, std::optional<WordGap> prescribedGap = {},
         Id prescribedKey = NoAnalysisId, const SourceGapQualification* prescribedFacts = nullptr);
+    std::optional<CertifiedRealization> normalAlternative(
+        const Group&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
     std::optional<CertifiedRealization> normalCorridor(
         const Group&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
     std::optional<CertifiedRealization> normalCommonCut(

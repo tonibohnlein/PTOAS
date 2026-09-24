@@ -1,5 +1,47 @@
 # OAHS current handoff
 
+## Active after Step AH — bounded alternative-source realization
+
+AH routes qualified alternative writer frontiers through the common class0
+realization selector. Shared source discovery supplies the original cut set;
+for each cut the constructor finds the earliest selected-word gap with the
+motivating physical completion. An unrelated incoming WAIT cannot broaden the
+release. All-path physical coverage is computed per access class, so an early
+return may support an older writer while a refreshed reader remains pending.
+Occurrence correspondence, virgin-key eligibility, exact packet binding,
+persistent publication support and authoritative selected propagation remain
+required. The normal decision records every publication cut.
+
+On this source, 25/25 portable suites, three native drivers, 88/88 corpus,
+18/19 compatibility (the inherited refusal), GEMM, two prefills and three
+targeted inputs pass. Compatibility cases 4 and 12 each use two fewer SET/WAIT
+pairs; their complete finite payload-order relations are unchanged for both
+checked scalar bindings. All other campaign outputs match AG. Successful-input
+aggregate selected updates 8227->8225, replay sites 7101322->7100684,
+normal candidates 674->687, selected normal candidates 612->623,
+publication-support sites 263121->263443, SETs 3779->3775 and WAITs
+3778->3774. Measured aggregate compiler microseconds 319344749->316686314
+are noisy and are not an asymptotic claim. Prefix derivation is outside key
+competition; each causal step can still transport program-sized history.
+Changed-code check is clean. Architecture/generality, correctness and
+asymptotic-performance reviewers ACCEPT the bounded mechanism. No sanitizer
+or device campaign.
+
+The normal-constructor `{2,5}` early-writer and two-provider fixtures select
+through the common record, including an unrelated same-word WAIT. The `{4,7}`
+reader-return fixture remains on the checked structured binder; it verifies
+that independent old-writer coverage survives a later refreshed reader without
+claiming that reader's WAR completion. Historical-key reuse, recurring and
+loop-entry alternative realization, and the deadline-wide class3 migration
+guard remain unfinished. The AD `hc_head_reduce` +122/-20 ordering loss remains
+open. Artifacts: `../oahs-gemm-base-builds/refactor-step-ah/` (`design.md`,
+`summary.json`, `results.json`, `changed-order.json`, `work.json`, `reviews.md`).
+
+Next: migrate the return/loop-entry alternatives and qualified historical-key
+binding into the same scoped realization contract; replace the class3 priority
+guard when all competing requests are represented. Continue the three-reviewer
+commit loop, then recover AD ordering through common source/support decisions.
+
 ## Active after Step AG — bounded terminal common-cut realization
 
 AG adds a bounded class3 direct SET/WAIT at a terminal current-word tail to

@@ -261,6 +261,124 @@ std::optional<CertifiedRealization> Constructor::normalOrdinary(
     out.ordinary = std::move(group);
     return out;
 }
+std::optional<CertifiedRealization> Constructor::normalAlternative(
+    const Group& request, const std::vector<FrontierRequirement>& due,
+    const std::vector<DueObligation>& universe)
+{
+    if (!request.common) { return {}; }
+    const auto discovered = discoverSourceFrontier(request.source, request.requirements);
+    if (!discovered || discovered->publications.empty()) { return {}; }
+    const auto observer = program.operations[control.graph.operations[current]].pipe;
+    const auto motivating = classes(request.requirements);
+    struct AlternativePrefix {
+        WordGap gap;
+        FrontierState state;
+    };
+    std::vector<AlternativePrefix> prefixes;
+    for (auto cut : discovered->publications) {
+        auto state = cache.cuts[cut].incoming.causal;
+        if (!state.reachable()) { return {}; }
+        const auto& word = ledger.word(cut);
+        bool found = false;
+        for (Id offset = 0; offset <= word.size(); ++offset) {
+            const bool covered = std::all_of(motivating.begin(), motivating.end(), [&](Id access) {
+                const auto* history = state.facts()->history.find(access);
+                return history && frontierContains(*history, PipeCount + unsigned(request.source));
+            });
+            if (covered) {
+                prefixes.push_back({{cut, offset ? word[offset - 1] : NoAnalysisId,
+                    offset < word.size() ? word[offset] : NoAnalysisId}, state});
+                found = true;
+                break;
+            }
+            if (offset == word.size()) { break; }
+            const auto& command = ledger.endpoint(word[offset]).command;
+            // Cross an incoming receipt only when it makes a motivating
+            // physical completion available. Otherwise an unrelated WAIT
+            // would silently broaden this new class-0 publication.
+            if (command.kind == Command::BarrierAll) { break; }
+            ++result.work.sourceGapCommands;
+            const auto step = frontier.command(state, command, {cut, offset});
+            if (!step.applied) { return {}; }
+            if (command.kind == Command::Acquire) {
+                const bool relevant = std::any_of(motivating.begin(), motivating.end(), [&](Id access) {
+                    const auto* before = state.facts()->history.find(access);
+                    const auto* after = step.state.facts()->history.find(access);
+                    const auto hasSource = [&](const auto* history) {
+                        return history && frontierContains(*history, PipeCount + unsigned(request.source));
+                    };
+                    return !hasSource(before) && hasSource(after);
+                });
+                if (!relevant) { break; }
+            }
+            state = step.state;
+        }
+        if (!found) { return {}; }
+    }
+    std::set<Id> physical;
+    for (const auto& r : due) {
+        const auto access = accessClass(r);
+        if (discovered->crossedClasses.count(access)) { continue; }
+        const bool atSources = std::all_of(prefixes.begin(), prefixes.end(), [&](const auto& prefix) {
+            const auto* history = prefix.state.facts()->history.find(access);
+            return history && frontierContains(*history, PipeCount + unsigned(request.source));
+        });
+        if (atSources) { physical.insert(access); }
+    }
+    const auto own = normalizedCoverage(universe, due, motivating);
+    const auto covered = normalizedCoverage(universe, due, physical);
+    const bool coversOwn = !own.empty() && subset(own, covered);
+    if (!coversOwn) { return {}; }
+    for (Id key = 0; key < frontier.keys().size(); ++key) {
+        const auto& identity = frontier.keys()[key];
+        if (identity.source != request.source || identity.observer != observer ||
+            !helperFreeKey(key) || !ledger.eventUses(identity).empty()) { continue; }
+        OrderedPacket endpoints;
+        bool sourceReady = true;
+        for (const auto& prefix : prefixes) {
+            State atGap;
+            atGap.causal = prefix.state;
+            sourceReady &= canPublish(atGap, key);
+            endpoints.push_back({prefix.gap.cut,
+                {Command::Publish, request.source, observer, identity.key},
+                EndpointPurpose::Completion, result.decisions.size(), NoAnalysisId, prefix.gap});
+        }
+        if (!sourceReady) { continue; }
+        endpoints.push_back({current, {Command::Acquire, request.source, observer, identity.key},
+            EndpointPurpose::Completion, result.decisions.size(), NoAnalysisId, ledger.tail(current)});
+        auto packet = prepareOwnedPacket(endpoints);
+        if (!packet || packet->restoredEndpoints || !preservePublications(*packet)) { continue; }
+        packet->qualified = true;
+        CertifiedRealization out;
+        out.version = ledger.version();
+        out.physicalCoverage = physical;
+        out.coverage = covered;
+        out.ownCoverage = own;
+        auto group = request;
+        group.common = false;
+        group.publications = discovered->publications;
+        group.publication = *std::min_element(group.publications.begin(), group.publications.end(),
+            [&](Cut a, Cut b) { return control.position[a] < control.position[b]; });
+        group.forwardKey = key;
+        group.version = ledger.version();
+        group.packet = std::move(*packet);
+        for (const auto& r : due) {
+            const auto access = accessClass(r);
+            const bool additional = physical.count(access) && !motivating.count(access);
+            if (additional) { group.supporting.push_back(r); }
+        }
+        out.sourceMilestone = group.publication;
+        out.order = {control.frame[group.publication], NoAnalysisId - control.position[group.publication],
+            group.publication, group.source, observer, group.publications, {control.canonicalCut[current]}};
+        out.shape.push_back({group.source, observer, group.publications, {control.canonicalCut[current]}});
+        for (auto obligation : covered) {
+            out.support.push_back({RealizationSupport::Completion, obligation, current});
+        }
+        out.ordinary = std::move(group);
+        return out;
+    }
+    return {};
+}
 void Constructor::indexSelectedReturns()
 {
     const auto& endpoints = ledger.records();
@@ -604,6 +722,7 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
     for (const auto& demand : demands) {
         ordinaryRequests.push_back(sourceGroup(demand.first.first, demand.second, due, false));
         retain(normalOrdinary(ordinaryRequests.back(), due, universe));
+        retain(normalAlternative(ordinaryRequests.back(), due, universe));
     }
     std::map<std::vector<Id>, std::vector<Id>> roots;
     for (auto family : families) {
@@ -680,6 +799,7 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
         SelectedDecision decision;
         decision.consumer = current;
         decision.publication = group.publication;
+        decision.publicationFrontier = group.publications;
         decision.commonCut = group.common;
         decision.sourceMilestone = selected.sourceMilestone;
         decision.publicationGapLeft = selected.selectedSourceGap.left;
@@ -701,11 +821,15 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
         if (!commitOwnedPacket(*group.packet, decision) || !update() || !settleRearming(decision)) {
             return false;
         }
-        if (selected.selectedSourceGap.left == NoAnalysisId &&
-            std::any_of(oldWord.begin(), oldWord.end(), [&](Id id) {
-                const auto& c = ledger.endpoint(id).command;
-                return c.kind == Command::Acquire && c.observer == group.source;
-            })) { ++result.work.earlyPublications; }
+        const bool priorIncoming = std::any_of(oldWord.begin(), oldWord.end(), [&](Id id) {
+            const auto& c = ledger.endpoint(id).command;
+            return c.kind == Command::Acquire && c.observer == group.source;
+        });
+        const bool newEarlyPublication = group.publications.empty() &&
+            selected.selectedSourceGap.left == NoAnalysisId && priorIncoming;
+        if (newEarlyPublication) {
+            ++result.work.earlyPublications;
+        }
         if (group.repairKey != NoAnalysisId) {
             decision.repairOutputVersion = ledger.version();
             ++result.work.acknowledgments;

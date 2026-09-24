@@ -100,6 +100,18 @@ and AG artifacts for validation, complete ordering and work counts. General
 class3, historical-key binding, cross-cell return composition and quality
 recovery remain open.
 
+## Current continuation after AH
+
+AH moves bounded alternative writer sources into class0 common selection with
+exact earliest sufficient gaps and independent all-path physical coverage.
+The normal `{2,5}` and two-provider fixtures exercise the shared selector;
+`{4,7}` retained reader returns remain on the checked structured binder.
+Two compatibility plans remove two event pairs each with equal complete finite
+payload order. Host service and the three independent source reviews pass;
+see HANDOFF and AH artifacts. Historical-key, recurring and loop-entry
+alternative binding, removal of the class3 priority guard, general source
+subscriptions and AD quality recovery remain open.
+
 ## Current continuation after R
 
 User-approved sequence is the "Adopted continuation" in the canonical semantic

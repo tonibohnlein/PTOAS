@@ -213,11 +213,17 @@ void alternativeReturnCoverage()
         const auto found = std::find_if(plan.decisions.begin(), plan.decisions.end(), [](const auto& d) {
             return d.consumer == 9 && d.source == R && !d.supporting.empty();
         });
-        require((found != plan.decisions.end()) == (variant == 0),
-                "alternative provider used missing or refreshed extra coverage");
-        if (variant == 0) {
+        require((found != plan.decisions.end()) == (variant != 1),
+                "alternative provider used missing branch coverage or lost independent writer credit");
+        if (found != plan.decisions.end()) {
             require(found->publicationFrontier == std::vector<o::Cut>{4, 7},
                     "additional coverage moved the selected alternative source boundaries");
+            const bool coversReader = std::any_of(found->supporting.begin(), found->supporting.end(),
+                [](const auto& r) {
+                    return r.cell == 0 && r.source == Q && !r.sourceWrite && r.consumerWrite;
+                });
+            require(coversReader == (variant == 0),
+                    "alternative return misclassified its original reader coverage");
         }
         for (const auto& path : {std::vector<o::Cut>{0, 1, 2, 3, 4, 5, 8, 9, 10},
                                  std::vector<o::Cut>{0, 1, 2, 6, 7, 8, 9, 10}}) {
@@ -414,6 +420,8 @@ void alternativeEarlySources()
     require(plan.decisions.size() == 1 &&
             plan.decisions[0].publicationFrontier == std::vector<o::Cut>{2, 5},
             "missing alternative publication frontier immediately after the required writers");
+    require(plan.decisions[0].sourceMilestone == 2,
+            "alternative writers did not enter the common realization selector");
     require(count(plan, o::Command::Publish) == 2 && count(plan, o::Command::Acquire) == 1,
             "alternative sources need one SET per arm, one shared WAIT");
     require(plan.commands[7].size() == 1 && plan.commands[7][0].kind == o::Command::Acquire,
@@ -453,6 +461,26 @@ void alternativeEarlySources()
     // A backward source search cannot erase an earlier source occurrence on a
     // bypass path. Add a path which bypasses both writers: its missing source
     // participation must make the early-frontier candidate unavailable.
+    // An unrelated incoming WAIT in each alternative source word must not
+    // broaden the already available P completion published to Q.
+    o::Commands incoming(o::commandCutCount(p));
+    incoming[0].push_back({o::Command::Publish, R, P, 0});
+    incoming[2].push_back({o::Command::Acquire, R, P, 0});
+    incoming[5].push_back({o::Command::Acquire, R, P, 0});
+    const auto early = accepted(p, incoming);
+    require(early.decisions.size() == 1 && early.decisions[0].sourceMilestone == 2,
+            "unrelated incoming wait disabled the earlier alternative sources");
+    for (auto cut : {2u, 5u}) {
+        const auto& word = early.commands[cut];
+        const auto release = std::find_if(word.begin(), word.end(), [](const auto& command) {
+            return command.kind == o::Command::Publish && command.source == P && command.observer == Q;
+        });
+        const auto incomingWait = std::find_if(word.begin(), word.end(), [](const auto& command) {
+            return command.kind == o::Command::Acquire && command.source == R && command.observer == P;
+        });
+        require(release != word.end() && incomingWait != word.end() && release < incomingWait,
+                "alternative source release imported unrelated incoming completion");
+    }
     auto bypass = p;
     bypass.observed->sites[0].successors.push_back(7);
     const auto conservative = accepted(bypass);
@@ -486,6 +514,8 @@ void competingAlternativeSources()
     });
     require(early != plan.decisions.end(),
             "second provider hid the first provider's alternative publication frontier");
+    require(early->sourceMilestone == 2,
+            "two-provider alternative source did not use the common realization selector");
 }
 void noUnusedTerminalReturn()
 {
