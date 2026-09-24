@@ -259,6 +259,7 @@ void importStorage(func::FuncOp function, const SyncInput &input,
 LogicalResult importOriginalStructure(func::FuncOp function, const SyncInput &input,
                                       OriginalStructure &result) {
   OriginalStructure candidate;
+  candidate.function = function;
   SyncSlotMapping::AnalysisContext scalarFacts;
   if (failed(importControl(function, input, scalarFacts, candidate))) {
     return failure();

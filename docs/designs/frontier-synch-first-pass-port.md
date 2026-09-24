@@ -24,7 +24,7 @@ InsertSync modes. The analyses below belong to handoff Phase A.
    Consume `SyncInput` records; isolate the donor's dependencies on its old
    `Program` representation. Connect scalar observations to actual address
    slices. Preserve conservative footprints when exact matching is unknown.
-3. **Occurrences and composed reader frontiers.** Port original read summaries,
+3. **Occurrences and composed reader frontiers — source port connected.** Port original read summaries,
    guarded participation and child/re-entry correspondence (D1–D4). Distinguish
    independent participants from alternative ones. Retain original owners and
    executable predicate availability without multiplying independent selectors.
@@ -133,3 +133,49 @@ and after import, and every translated phase must appear once in the region tree
 Exact commands, inputs and build logs are kept with the artifact path in
 `HANDOFF.md`. Full pass build, generality acceptance and synchronization-quality
 claims remain outside this extraction's evidence.
+
+## Stage 3 occurrence and reader-frontier source port
+
+`OriginalReadQueries` now consumes the Stage 2 original region tree and physical
+accesses in `frontiersynch::run`. It ports the donor's interned, guarded first/last
+reader expressions and sequence/choice/counted-loop composition. A read interval
+returns `NoHit`, an exact conditional frontier, or `Unknown` with a reason.
+Independent readers remain conjunctive; mutually exclusive readers retain their
+original predicates. Write-delimited segments are structural intervals, not
+proofs of an executed generation or complete overwrite.
+
+`OccurrenceQueries` supplies a restricted D1 fixed-visit query, D2 bank
+correspondence, and original child membership/skip/repeat facts for D4 clients.
+The D2 certificate requires a qualified counted owner, one address per residue,
+disjoint bank extents, and mandatory represented uses in each visit. A finite
+noninjective or conditional relation retains its Stage 2 may-footprints but does
+not acquire an exact predecessor-use distance. No event pool or selected command
+participates in these queries.
+
+The reader query checks whether its predicate is available at each read-site
+leaf. That is narrower than executable availability at a future SET/WAIT gap;
+Stage 4 must check the actual proposed endpoint. The current original-child
+query retains source identities and members, but does not transport selected
+credit or copied child interfaces. D1 guarded alternative origins, general D2
+permutations, and full D4 re-entry correspondence remain unported. These are
+representation limits, not hardware restrictions. Unknown results preserve the
+original access obligations.
+
+The normal handoff entry is the real consumer: it queries represented reader
+cell/engine projections and bank relations, then reports counts before its
+existing construction-unimplemented result. It does not claim that an analyzed
+frontier is already a selected protocol. Future source milestones and typed
+requirements belong to Stage 4.
+
+The serial current-source probe at
+`/home/toni/work/pypto3_sync_more/handoff-builds/phase-a-stage3/` checks two
+optional siblings, a predicate unavailable at the first read, an exact fixed
+visit, a nested child interval whose whole-loop participation is unknown, and
+separate noninjective period-4 and exact period-3 address relations. The exact
+relation survives the unrelated noninjective one. The focused build links
+existing generated dialect/LLVM dependencies; it is not a full compiler build.
+Query work is indexed by original read incidences and memoized structural
+subtrees. The current entry still queries each represented cell/reader
+projection separately; aggregate cost for large projection populations remains
+to be measured. Generality review, full service, corpus and device evidence
+remain pending.

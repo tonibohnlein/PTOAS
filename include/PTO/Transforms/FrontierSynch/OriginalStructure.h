@@ -56,6 +56,7 @@ struct PhysicalAddressRelation {
   std::vector<SmallVector<uint64_t>> addresses;
 };
 struct OriginalStructure {
+  func::FuncOp function;
   Region body;
   std::vector<PhysicalOperation> operations;
   std::vector<Cell> cells;

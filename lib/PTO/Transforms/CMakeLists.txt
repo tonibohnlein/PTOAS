@@ -140,6 +140,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/SyncInput.cpp
   FrontierSynch/FrontierSynch.cpp
   FrontierSynch/OriginalStructure.cpp
+  FrontierSynch/OccurrenceQueries.cpp
   Passes/PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
   Passes/PTOMaterializeImplicitTmp.cpp
