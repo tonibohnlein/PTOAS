@@ -124,6 +124,42 @@ void scarcity()
     require(bool(oahs_oracle::graph(p, result.commands, {0, 1, 2, 3, 4, 5}, {{3, 5}})),
             "T6b stable repair added read-x completion before read-z issue");
 }
+void priorConsumptionCommonRepair()
+{
+    auto p = base(2, 1);
+    p.operations = {op(P, {{0, false, true, true}}),
+                    op(Q, {{0, true, false}}),
+                    op(Q, {}),
+                    op(P, {{1, false, true, true}}),
+                    op(Q, {{1, true, false}})};
+    const auto plan = accepted(p);
+    const auto repaired = std::find_if(plan.decisions.begin(), plan.decisions.end(),
+        [](const auto& decision) {
+            return decision.repairedAcquisition != o::NoAnalysisId;
+        });
+    require(repaired != plan.decisions.end(),
+            "prior consumption did not enter a common class-one repair");
+    require(std::any_of(plan.realizationChoices.begin(), plan.realizationChoices.end(),
+        [](const auto& choice) {
+            return choice.deadline == 4 && choice.placementClass == 1;
+        }), "separated acknowledgment was not selected through common policy");
+    require(plan.commands[1].size() == 3 &&
+            plan.commands[1][1].kind == o::Command::Acquire &&
+            plan.commands[1][2].kind == o::Command::Publish &&
+            plan.commands[1][2].source == Q &&
+            plan.commands[4].size() == 3 &&
+            plan.commands[4][0].kind == o::Command::Acquire &&
+            plan.commands[4][0].source == Q &&
+            plan.commands[4][1].kind == o::Command::Publish &&
+            plan.commands[4][1].source == P,
+            "old consumption was not acknowledged before unrelated receiver work");
+    require(bool(oahs_oracle::graph(p, plan.commands, {0, 1, 2, 3, 4}, {{2, 4}})),
+            "unrelated receiver completion was imported into the later receipt");
+    auto missing = plan.commands;
+    missing[1].erase(missing[1].begin() + 2);
+    require(!o::checkCausalFrontier(p, missing).accepted,
+            "deleting the early acknowledgment publication remained legal");
+}
 void atomicClosedRepair()
 {
     // Public portable fixed-ledger coverage; native authored events are skipped.
@@ -205,6 +241,7 @@ int main()
     straightLine();
     sharedCredit();
     scarcity();
+    priorConsumptionCommonRepair();
     atomicClosedRepair();
     structured();
     qualification();

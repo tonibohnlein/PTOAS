@@ -1,5 +1,49 @@
 # OAHS current handoff
 
+## Active after Step AN — prior-consumption repair in common class one
+
+AN migrates the unique old-WAIT acknowledgment into the common ordinary
+realization selector. A versioned consumption fact identifies the actual old
+WAIT and its exact following gap. A complete four-endpoint packet publishes
+the reverse acknowledgment there, waits for it at the certified later source,
+then republishes the forward key and acquires it at the due deadline. The
+common binder checks the prescribed packet and persistent publication support;
+only selected contextual replay grants payload credit. The helper enters the
+existing rearming registry. `eventChain` checks only contracted event legality:
+its caller must prove occurrence, matching, unchanged generations over omitted
+work, coverage, neighbors, ownership and publication support. It exports no
+payload completion and is not a general noncontiguous insertion proof.
+
+Normal-constructor evidence selects class one, retains independent Q work in
+the complete-order oracle, and rejects deletion of the early helper SET.
+Private hardening tests reject stale source facts and show that legal same-word
+key reuse identifies the newer WAIT, not the superseded old one. The latter is
+a remapping test, not a direct suffix-scan refusal. Unique noncyclic words, one
+actual prior consumption, a virgin reverse key and unchanged event interval
+remain sufficient limits. Alternative/recurring consumption correspondence and
+historical reverse binding are unfinished; the old checked path remains for
+unqualified cases.
+
+Host evidence: 25/25 portable suites, three native drivers, 88/88 corpus,
+18/19 compatibility (inherited refusal), GEMM, two prefills and three targeted
+inputs pass. All 113 campaign plan hashes match AM, so their complete payload
+order and SET/WAIT resources are unchanged. Matched selected updates/replay
+sites remain 8238/7101060; normal key-site work rises 1010704→1013935 and
+repair-source commands 12→28. Aggregate measured compiler microseconds
+321966953→318718600 are noisy, not a speed claim. Changed-code check passes.
+Architecture/generality, correctness and asymptotic-performance reviewers
+ACCEPT the bounded change. No sanitizer/device campaign.
+Artifacts: `../oahs-gemm-base-builds/refactor-step-an/` (`design.md`,
+`summary.json`, `results.json`, `work.json`, `reviews.md`).
+
+Next: remove the remaining legacy unique-WAIT path only when common binding
+covers non-virgin reverse keys, alternative consumptions and recurring
+occurrences with actual deadline-specific ownership. Trace the first source
+of AD `hc_head_reduce` +122/-20 finite ordering debt; no AJ–AN increment has
+recovered it. The deadline-wide class-three guard, broader affected-use
+regional support, final corpus/device generality and quality gates remain
+open. Continue the three-reviewer commit loop.
+
 ## Active after Step AM — joined regional one-shot entry in common selection
 
 AM lets the shared nextEntrySource regional fact feed a class-three one-shot

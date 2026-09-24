@@ -492,6 +492,29 @@ FrontierStep CausalFrontier::command(const FrontierState& s, const Command& c, F
         return reject(s, FrontierFailure::AcquisitionNotFull, "acquisition requires must-full matched publication");
     return extend(s, c.kind == Command::Acquire ? c.observer : c.source, &c, NoAnalysisId, key, binding);
 }
+bool CausalFrontier::eventChain(
+    const FrontierState& source,
+    const std::vector<std::pair<Command, FrontierBinding>>& commands) const
+{
+    const auto checked = checkState(source);
+    if (!checked.applied || !source.reachable()) { return false; }
+    auto data = std::make_shared<detail::CausalFrontierState>();
+    data->model = model;
+    data->facts.reach = source.data->facts.reach;
+    data->facts.events = source.data->facts.events;
+    data->facts.terminalRetired = source.data->facts.terminalRetired;
+    data->facts.mayBeRetired = source.data->facts.mayBeRetired;
+    data->facts.history.reset(model->historyClasses);
+    FrontierState state;
+    state.data = std::move(data);
+    for (const auto& [command, binding] : commands) {
+        const auto step = this->command(state, command, binding);
+        if (!step.applied) { return false; }
+        state = step.state;
+    }
+    return true;
+}
+
 FrontierStep CausalFrontier::exit(const FrontierState& s) const
 {
     auto checked = checkState(s);

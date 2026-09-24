@@ -12,7 +12,8 @@ bool Constructor::fixedBoundaryPacket(const SourceGapQualification& facts, Group
 {
     // One designated source-local acknowledgment, followed by the ordinary
     // matched transfer. No candidate-ledger solve or provisional reservation.
-    if (facts.deadline != current || facts.gap.left != NoAnalysisId) { return false; }
+    const bool actualBoundary = facts.deadline == current && facts.gap.left == NoAnalysisId;
+    if (!actualBoundary) { return false; }
     const auto& keys = frontier.keys();
     for (Id forward = 0; forward < keys.size(); ++forward) {
         if (!sourceKeyNeighbors(facts, forward)) { continue; }
@@ -68,6 +69,136 @@ bool Constructor::fixedBoundaryPacket(const SourceGapQualification& facts, Group
             group.packet = std::move(*packet);
             group.forwardKey = forward;
             group.repairKey = reverse;
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace mlir::pto::oahs::selected
+
+namespace mlir::pto::oahs::selected {
+std::optional<ConsumptionFrontier> Constructor::singletonConsumptionFrontier(
+    const SourceGapQualification& facts, Id forward) const
+{
+    const bool valid = facts.proved() && facts.version == ledger.version() &&
+        facts.gap.left == NoAnalysisId && forward < frontier.keys().size() &&
+        facts.prefixes.size() == 1;
+    if (!valid) { return {}; }
+    const auto source = facts.gap.cut;
+    const auto& toDeadline = control.correspondence(source, facts.deadline);
+    const bool matchedDeadline = toDeadline.proved() && toDeadline.pairs.size() == 1 &&
+        toDeadline.pairs.front().first == source;
+    if (!matchedDeadline) { return {}; }
+    const auto unique = [&](Cut cut) {
+        const auto component = control.component[cut];
+        if (component == NoAnalysisId || control.components[component].cyclic ||
+            control.canonicalCut[cut] != cut) { return false; }
+        return std::count_if(control.wordOccurrences[cut].begin(),
+            control.wordOccurrences[cut].end(), [&](Cut site) {
+                return control.reachable[site];
+            }) == 1;
+    };
+    const bool uniqueWords = unique(source) && unique(facts.deadline);
+    if (!uniqueWords) { return {}; }
+    const auto& consumers = cache.cuts[source].incoming.consumptions[forward];
+    const bool singleConsumer = consumers.size() == 1;
+    if (!singleConsumer) { return {}; }
+    const auto wait = consumers.front();
+    const bool activeWait = wait < ledger.records().size() && ledger.active(wait);
+    if (!activeWait) { return {}; }
+    const auto& old = ledger.endpoint(wait);
+    const auto& identity = frontier.keys()[forward];
+    const bool matching = old.command.kind == Command::Acquire &&
+        old.command.source == identity.source && old.command.observer == identity.observer &&
+        old.command.key == identity.key && unique(old.cut) &&
+        control.straight(old.cut, source) && old.cut != source;
+    if (!matching) { return {}; }
+    const auto& fromWait = control.correspondence(old.cut, source);
+    const bool matchedSource = fromWait.proved() && fromWait.pairs.size() == 1 &&
+        fromWait.pairs.front() == std::make_pair(old.cut, source) &&
+        clearInterval(forward, old.cut, source);
+    if (!matchedSource) { return {}; }
+    const auto sourceGap = ledger.gapAfter(wait);
+    const auto after = cache.afterEndpoint.find(wait);
+    const bool actualSource = sourceGap && after != cache.afterEndpoint.end() &&
+        after->second.consumptions[forward] == std::vector<Id>{wait} &&
+        after->second.causal.facts()->events[forward].occupancy == 1 &&
+        facts.prefixes.front().facts()->events[forward].occupancy == 1;
+    if (!actualSource) { return {}; }
+    // clearInterval excludes its starting word; preserve the exact suffix
+    // after the old WAIT before inserting the reverse publication.
+    const auto& word = ledger.word(old.cut);
+    const auto at = std::find(word.begin(), word.end(), wait);
+    const bool foundWait = at != word.end();
+    if (!foundWait) { return {}; }
+    for (auto next = at + 1; next != word.end(); ++next) {
+        const auto& command = ledger.endpoint(*next).command;
+        const bool sameForwardUse =
+            (command.kind == Command::Publish || command.kind == Command::Acquire) &&
+            keyIndex(frontier, command) == forward;
+        if (sameForwardUse) { return {}; }
+    }
+    return ConsumptionFrontier{wait, *sourceGap, facts.gap, ledger.version()};
+}
+
+bool Constructor::separatedBoundaryPacket(const SourceGapQualification& facts, Group& group)
+{
+    if (facts.deadline != current || facts.gap.left != NoAnalysisId) { return false; }
+    const auto observer = program.operations[control.graph.operations[current]].pipe;
+    for (Id forward = 0; forward < frontier.keys().size(); ++forward) {
+        const auto& a = frontier.keys()[forward];
+        if (a.source != group.source || a.observer != observer ||
+            !sourceKeyNeighbors(facts, forward)) { continue; }
+        const bool missingRearming = std::all_of(
+            facts.prefixes.begin(), facts.prefixes.end(), [&](const FrontierState& prefix) {
+                State atSource;
+                atSource.causal = prefix;
+                return !canPublish(atSource, forward);
+            });
+        if (!missingRearming) { continue; }
+        const auto consumed = singletonConsumptionFrontier(facts, forward);
+        if (!consumed) { continue; }
+        for (Id reverse = 0; reverse < frontier.keys().size(); ++reverse) {
+            const auto& b = frontier.keys()[reverse];
+            const bool eligibleReverse = b.source == observer && b.observer == group.source &&
+                helperFreeKey(reverse) && ledger.eventUses(b).empty();
+            if (!eligibleReverse) { continue; }
+            const auto after = cache.afterEndpoint.find(consumed->wait);
+            const bool reverseReady = after != cache.afterEndpoint.end() &&
+                canPublish(after->second, reverse);
+            if (!reverseReady) { continue; }
+            const Command returnSet{Command::Publish, b.source, b.observer, b.key};
+            const Command returnWait{Command::Acquire, b.source, b.observer, b.key};
+            const Command forwardSet{Command::Publish, a.source, a.observer, a.key};
+            const Command forwardWait{Command::Acquire, a.source, a.observer, a.key};
+            // This contracted chain proves only event rearming. Payload
+            // coverage remains the real sourceGapFacts certificate.
+            const std::vector<std::pair<Command, FrontierBinding>> chain{
+                {returnSet, {consumed->returnSource.cut, 1}},
+                {returnWait, {facts.gap.cut, 0}},
+                {forwardSet, {facts.gap.cut, 1}},
+                {forwardWait, {current, 0}}};
+            result.work.repairSourceCommands += chain.size();
+            if (!frontier.eventChain(after->second.causal, chain)) { continue; }
+            const auto request = result.decisions.size();
+            const OrderedPacket endpoints{
+                {consumed->returnSource.cut, returnSet,
+                    EndpointPurpose::ConsumptionAcknowledgment, request, consumed->wait,
+                    consumed->returnSource},
+                {facts.gap.cut, returnWait,
+                    EndpointPurpose::ConsumptionAcknowledgment, request, consumed->wait, facts.gap},
+                {facts.gap.cut, forwardSet, EndpointPurpose::Completion, request,
+                    NoAnalysisId, facts.gap},
+                {current, forwardWait, EndpointPurpose::Completion, request}};
+            auto packet = prepareOwnedPacket(endpoints);
+            if (!packet || packet->restoredEndpoints || !preservePublications(*packet)) {
+                continue;
+            }
+            packet->qualified = true;
+            group.packet = std::move(*packet);
+            group.forwardKey = forward;
+            group.repairKey = reverse;
+            group.repairedAcquisition = consumed->wait;
             return true;
         }
     }

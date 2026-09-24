@@ -1855,3 +1855,26 @@ support. Only selected contextual replay grants completion. The inherited
 regional query still requires whole-source-pipe inactivity in the loop; that
 is a sufficient opportunity restriction and must be replaced by an
 affected-use/occurrence query before claiming general regional entry support.
+
+## AN design — prior-consumption acknowledgment through the common selector
+
+A selected old WAIT can supply the exact original consumption identity needed to
+rearm a later ordinary forward key. A versioned `ConsumptionFrontier` retains
+that WAIT, its immediate following word gap, and the later source gap. The
+common class-one ordinary probe checks a prescribed four-endpoint packet: the
+reverse publication immediately after the actual old WAIT, reverse acquisition
+and forward publication at the certified later source, and forward acquisition
+at the due deadline. It commits the same packet through common binding and
+registers the selected helper in the existing rearming ownership record. Only
+a selected contextual update grants payload completion.
+
+The event-only contracted-chain probe does not export physical access credit.
+It assumes caller-proved occurrence matching, participation, unchanged event
+generations across omitted work, source coverage, key neighbors, ownership and
+persistent publication support. It is not a certificate for arbitrary
+noncontiguous command insertion. Stale ledger versions refuse, and a legal
+same-word key reuse names its newer actual WAIT rather than borrowing the older
+consumption. The unique, noncyclic words, one actual consumption and virgin
+reverse key are sufficient limits of this first migration; alternatives,
+recurrence and historical reverse binding remain open. The legacy checked
+repair remains for cases outside this bounded certificate.

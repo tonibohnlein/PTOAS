@@ -187,6 +187,10 @@ public:
     // the selected body's inductive closure from its actual incoming interface.
     FrontierStep assumePreviousAccesses(const FrontierState&, const std::vector<std::size_t>&) const;
     FrontierStep command(const FrontierState&, const Command&, FrontierBinding) const;
+    // Check an event-only contracted path. Access histories are intentionally
+    // absent and the resulting state is never exported as memory credit.
+    bool eventChain(const FrontierState&,
+        const std::vector<std::pair<Command, FrontierBinding>>&) const;
     FrontierStep exit(const FrontierState&) const;
 
 private:

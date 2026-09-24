@@ -397,16 +397,19 @@ bool Constructor::clearInterval(Id key, Cut source, Cut target) const
         if (!control.straight(pair.first, pair.second)) {
             return false;
         }
+        std::map<Cut, bool> wordIntersects;
         for (auto id : ledger.eventUses(identity)) {
-            if (!ledger.active(id)) {
-                continue;
-            }
-            for (auto occurrence : control.wordOccurrences[ledger.endpoint(id).cut]) {
-                if (occurrence != pair.first && control.straight(pair.first, occurrence) &&
-                    control.straight(occurrence, pair.second)) {
-                    return false;
+            if (!ledger.active(id)) { continue; }
+            const auto word = control.canonicalCut[ledger.endpoint(id).cut];
+            const auto [found, inserted] = wordIntersects.try_emplace(word, false);
+            if (inserted) {
+                for (auto occurrence : control.wordOccurrences[word]) {
+                    found->second |= occurrence != pair.first &&
+                        control.straight(pair.first, occurrence) &&
+                        control.straight(occurrence, pair.second);
                 }
             }
+            if (found->second) { return false; }
         }
     }
     return true;

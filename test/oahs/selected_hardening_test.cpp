@@ -105,6 +105,48 @@ struct ReplayTestAccess {
         require(!sourceGap(c, before, key, own).proved(), "dormant key use was mistaken for a virgin key");
     }
 
+    static void separatedConsumptionFacts()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(2, 1);
+        p.operations = {op(P, {{0, false, true, true}}), op(Q, {{0, true, false}}),
+            op(Q, {}), op(P, {{1, false, true, true}}), op(Q, {{1, true, false}})};
+        Constructor c(p);
+        c.current = 4;
+        c.ledger.append(1, {Command::Publish, P, Q, 0}, EndpointPurpose::Fixed);
+        const auto oldWait = c.ledger.append(1, {Command::Acquire, P, Q, 0}, EndpointPurpose::Fixed);
+        require(c.contextualReplay(), "separated-consumption fixture failed replay");
+        const std::vector<FrontierRequirement> required{{1, P, true, 4, true, false}};
+        auto facts = c.sourceGapFacts({4, NoAnalysisId, NoAnalysisId}, P, Q, required);
+        require(facts.proved(), "separated-consumption fixture lost its source facts");
+        const auto forward = keyIndex(c.frontier, {Command::Publish, P, Q, 0});
+        require(forward != NoAnalysisId, "separated-consumption fixture lacks a key");
+        const auto frontier = c.singletonConsumptionFrontier(facts, forward);
+        require(frontier && frontier->wait == oldWait,
+            "actual prior consumption was not identified at its original word");
+        c.ledger.append(1, {Command::Publish, Q, P, 0}, EndpointPurpose::Fixed);
+        c.ledger.append(1, {Command::Acquire, Q, P, 0}, EndpointPurpose::Fixed);
+        c.ledger.append(1, {Command::Publish, P, Q, 0}, EndpointPurpose::Fixed);
+        const auto newerWait = c.ledger.append(1, {Command::Acquire, P, Q, 0}, EndpointPurpose::Fixed);
+        require(!c.singletonConsumptionFrontier(facts, forward),
+            "stale source certificate survived a selected word edit");
+        require(c.contextualReplay(), "same-word forward use fixture failed replay");
+        facts = c.sourceGapFacts({4, NoAnalysisId, NoAnalysisId}, P, Q, required);
+        require(facts.proved(), "same-word forward use erased independent source coverage");
+        const auto& oldWord = c.ledger.word(c.ledger.endpoint(oldWait).cut);
+        require(oldWord.size() == 6, "same-word fixture lost selected endpoint identities");
+        const auto at = std::find(oldWord.begin(), oldWord.end(), oldWait);
+        require(at != oldWord.end(), "same-word fixture lost old WAIT");
+        require(std::any_of(std::next(at), oldWord.end(), [&](Id id) {
+            const auto& command = c.ledger.endpoint(id).command;
+            return (command.kind == Command::Publish || command.kind == Command::Acquire) &&
+                keyIndex(c.frontier, command) == forward;
+        }), "same-word fixture lost its later forward-key use");
+        const auto latest = c.singletonConsumptionFrontier(facts, forward);
+        require(latest && latest->wait == newerWait && latest->wait != oldWait,
+            "later same-word key use reused the superseded consumption identity");
+    }
+
     static void sourceGapOccurrences()
     {
         const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE1;
@@ -1272,6 +1314,7 @@ int main()
     o::selected::ReplayTestAccess::ownedPackets(true);
     o::selected::ReplayTestAccess::ownedCandidateOrder();
     o::selected::ReplayTestAccess::exactSourceGap();
+    o::selected::ReplayTestAccess::separatedConsumptionFacts();
     o::selected::ReplayTestAccess::sourceGapOccurrences();
     o::selected::ReplayTestAccess::sourceGapBarriers();
     earlyPublication();

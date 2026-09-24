@@ -494,3 +494,17 @@ competing saved-source normal-constructor tests cover the selected cases.
 The whole-source-pipe inactivity condition and one-shot unique occurrence
 remain sufficient restrictions; affected-use regional support and general
 recurring entry binding are unfinished. See HANDOFF and AM artifacts.
+
+## Current continuation after AN
+
+AN migrates the unique prior-consumption ordinary acknowledgment into common
+class-one selection. Its shared versioned consumption fact gives the reverse
+SET its actual early gap; the complete four-endpoint packet is checked and
+committed transactionally. Event-only probing never exports payload credit.
+The normal constructor demonstrates selection and preserved independent Q
+work; private tests cover stale facts and same-word reuse selecting the newer
+WAIT. Per-word interval memoization preserves the old predicate's answer.
+Unique noncyclic words and a virgin reverse key remain sufficient limits;
+multiple/recurring consumption frontiers and historical reverse binding are
+unfinished. The joined and checked legacy paths remain for unqualified cases.
+See HANDOFF and AN artifacts for host evidence and the three reviews.

@@ -119,6 +119,14 @@ struct SourceGapQualification {
     std::string reason;
     bool proved() const { return outcome == ProofOutcome::Proved; }
 };
+// A selected, actually consumed forward generation and its exact next
+// source. This is original/ledger correspondence, never acquired credit.
+struct ConsumptionFrontier {
+    Id wait = NoAnalysisId;
+    WordGap returnSource;
+    WordGap forwardSource;
+    uint64_t version = 0;
+};
 struct PacketEndpoint {
     Cut cut;
     Command command;
@@ -553,6 +561,7 @@ struct Group {
     // the original single-cut/F7 path. The candidate is tied to the selected map.
     std::vector<Cut> publications = {};
     Id forwardKey = NoAnalysisId, repairKey = NoAnalysisId;
+    Id repairedAcquisition = NoAnalysisId;
     uint64_t version = 0;
     Cut entryAcquisition = NoAnalysisId;
     Id entryReturnKey = NoAnalysisId;
@@ -799,6 +808,9 @@ private:
         std::map<Cut, bool>& wordIntersects);
     bool sourceGapKey(const SourceGapQualification&, Id);
     bool fixedBoundaryPacket(const SourceGapQualification&, Group&);
+    bool separatedBoundaryPacket(const SourceGapQualification&, Group&);
+    std::optional<ConsumptionFrontier> singletonConsumptionFrontier(
+        const SourceGapQualification&, Id) const;
     std::optional<WordGap> earlyPublicationMilestone(Cut, Pipe) const;
     bool clearInterval(Id, Cut, Cut) const;
     std::vector<Pipe> route(Pipe, Pipe) const;

@@ -222,7 +222,9 @@ std::optional<CertifiedRealization> Constructor::normalOrdinary(
     out.ownCoverage = normalizedCoverage(universe, due, classes(group.requirements));
     if (out.coverage.empty() || out.ownCoverage.empty()) { return {}; }
     if (repair) {
-        if (!fixedBoundaryPacket(facts, group)) { return {}; }
+        const bool completeRepair = separatedBoundaryPacket(facts, group) ||
+            fixedBoundaryPacket(facts, group);
+        if (!completeRepair) { return {}; }
         out.placementClass = 1;
         out.support.push_back({RealizationSupport::Consumption, group.forwardKey, gap.cut});
     }
@@ -257,7 +259,9 @@ std::optional<CertifiedRealization> Constructor::normalOrdinary(
                  group.publication, group.source, observer, {gap.cut}, {control.canonicalCut[current]}};
     out.shape.push_back({group.source, observer, {gap.cut}, {control.canonicalCut[current]}});
     if (repair) {
-        out.shape.push_back({observer, group.source, {gap.cut}, {gap.cut}});
+        const Cut returnSource = group.repairedAcquisition == NoAnalysisId ? gap.cut :
+            ledger.endpoint(group.repairedAcquisition).cut;
+        out.shape.push_back({observer, group.source, {returnSource}, {gap.cut}});
     }
     out.ordinary = std::move(group);
     return out;
@@ -971,13 +975,22 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
         if (group.repairKey != NoAnalysisId) {
             decision.repairedForwardKey = frontier.keys()[group.forwardKey].key;
             decision.repairReverseKey = frontier.keys()[group.repairKey].key;
+            decision.repairedAcquisition = group.repairedAcquisition;
             decision.repairInputVersion = ledger.version();
         }
         const auto oldWord = ledger.word(group.publication);
         if (group.entryAcquisition != NoAnalysisId) { needsContextualReplay = true; }
-        if (!commitOwnedPacket(*group.packet, decision) || !update() || !settleRearming(decision)) {
-            return false;
+        if (!commitOwnedPacket(*group.packet, decision)) { return false; }
+        if (group.repairedAcquisition != NoAnalysisId) {
+            const bool completeShape = decision.endpoints.size() == 4;
+            if (!completeShape) {
+                return fail(SelectedFailure::SelectedUpdate,
+                    "separated repair changed its complete endpoint shape", current);
+            }
+            rememberReturn(decision.endpoints[0], decision.endpoints[1]);
         }
+        if (!update()) { return false; }
+        if (!settleRearming(decision)) { return false; }
         const bool priorIncoming = std::any_of(oldWord.begin(), oldWord.end(), [&](Id id) {
             const auto& c = ledger.endpoint(id).command;
             return c.kind == Command::Acquire && c.observer == group.source;
@@ -990,7 +1003,9 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
         if (group.repairKey != NoAnalysisId) {
             decision.repairOutputVersion = ledger.version();
             ++result.work.acknowledgments;
-            ++result.work.joinedAcknowledgments;
+            if (group.repairedAcquisition == NoAnalysisId) {
+                ++result.work.joinedAcknowledgments;
+            }
         }
         if (decision.commonCut) { ++result.work.commonCutTransfers; }
         if (group.entryAcquisition != NoAnalysisId) { ++result.work.loopEntryTransfers; }
