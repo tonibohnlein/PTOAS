@@ -1799,3 +1799,27 @@ publication are negative. These tests establish a restricted local client,
 not general loop-entry binding. Empty words are an exact-gap implementation
 limit, not a physical-lifetime condition. Replace them using common gap and
 historical-key certificates before retiring the checked structured path.
+
+## AK design — exact one-shot entry gaps and historical binding
+
+AJ's one-shot entry facts now use the shared source-gap query with the original
+entry as its explicit deadline. Ordinary and fixed-boundary clients retain a
+current-deadline guard. The entry client proves a unique noncyclic source and
+entry word, source-to-entry correspondence, invariant first consumer and no
+source-class refresh. Its saved source is sufficient before the source word,
+so the SET uses that word's beginning gap. The WAIT stays at the entry word's
+tail, after existing commands, as required by the extracted entry certificate.
+A terminal `BarrierAll` at that word is refused explicitly. Both gaps are
+versioned and checked by the common packet materializer.
+
+Key binding uses `sourceGapKey`: every participating source occurrence must
+have actual empty occupancy and consumption knowledge, selected uses from the
+source onward are excluded, and dormant ownership remains disallowed. A prior
+key use is no longer a veto by itself. Complete packet and persistent
+publication checks remain required; only selected contextual replay grants
+credit. This is an exact one-shot bridge, not a general recurring entry
+binder. The unique-word, noncyclic, source-word-beginning, helper-free and
+no-refresh conditions are sufficient representation limits. Their replacement
+requires composed occurrence correspondence, gap support and actual reuse
+obligations; changed syntax or unrelated work must not be mistaken for a
+target limitation.

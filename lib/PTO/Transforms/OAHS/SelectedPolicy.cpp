@@ -200,7 +200,8 @@ std::optional<CertifiedRealization> Constructor::normalOrdinary(
     const auto computed = prescribedFacts ? SourceGapQualification{} :
         sourceGapFacts(gap, group.source, observer, group.requirements);
     const auto& facts = prescribedFacts ? *prescribedFacts : computed;
-    if (!facts.proved()) { return {}; }
+    const bool currentFacts = facts.proved() && facts.deadline == current;
+    if (!currentFacts) { return {}; }
     CertifiedRealization out;
     out.version = ledger.version();
     out.sourceMilestone = sourceMilestone;
@@ -420,21 +421,37 @@ std::optional<CertifiedRealization> Constructor::normalEntry(
                 return control.reachable[site];
             }) == 1;
         };
-        // This first local client proves one-shot execution and uses empty
-        // words as exact gaps; other gap and recurrence shapes stay structured.
-        const bool exactWords = uniqueOneShot(publication) && uniqueOneShot(entry) &&
-            ledger.word(publication).empty() && ledger.word(entry).empty();
-        if (!exactWords) { continue; }
-        const auto& source = cache.cuts[publication].before;
-        if (!source.causal.reachable()) { continue; }
+        const bool exactOccurrences = uniqueOneShot(publication) && uniqueOneShot(entry);
+        if (!exactOccurrences) { continue; }
+        const auto& sourceWord = ledger.word(publication);
+        const auto& entryWord = ledger.word(entry);
+        if (std::any_of(entryWord.begin(), entryWord.end(), [&](Id id) {
+            return ledger.endpoint(id).command.kind == Command::BarrierAll;
+        })) {
+            continue;
+        }
+        // The entry certificate permits the receipt after existing commands
+        // in that word; moving it before them would cross an unproved barrier.
+        const WordGap entryGap = ledger.tail(entry);
+        // The saved source covers the lifetime before this word. Later gaps
+        // would import selected commands into the publication prefix.
+        const WordGap sourceGap{publication, NoAnalysisId,
+            sourceWord.empty() ? NoAnalysisId : sourceWord.front()};
+        const auto facts = sourceGapFacts(sourceGap, request.source, observer,
+            request.requirements, entry);
+        if (!facts.proved()) { continue; }
         std::set<Id> physical;
         for (const auto& r : due) {
             const auto access = accessClass(r);
-            const auto* history = source.causal.facts()->history.find(access);
-            const bool covered = history &&
-                frontierContains(*history, PipeCount + unsigned(request.source)) &&
-                freshBetween(publication, entry, access) &&
-                !fact->loop->issuedClasses.count(access);
+            bool covered = !fact->loop->issuedClasses.count(access);
+            for (const auto& prefix : facts.prefixes) {
+                const auto* history = prefix.facts()->history.find(access);
+                covered &= history &&
+                    frontierContains(*history, PipeCount + unsigned(request.source));
+            }
+            for (const auto& pair : control.correspondence(publication, entry).pairs) {
+                covered &= freshBetween(pair.first, pair.second, access);
+            }
             if (covered) { physical.insert(access); }
         }
         const auto own = normalizedCoverage(universe, due, motivating);
@@ -444,15 +461,14 @@ std::optional<CertifiedRealization> Constructor::normalEntry(
         for (Id key = 0; key < frontier.keys().size(); ++key) {
             const auto& identity = frontier.keys()[key];
             if (identity.source != request.source || identity.observer != observer ||
-                !helperFreeKey(key) || !ledger.eventUses(identity).empty() ||
-                !canPublish(source, key)) { continue; }
+                !sourceGapKey(facts, key)) { continue; }
             OrderedPacket endpoints{
                 {publication, {Command::Publish, request.source, observer, identity.key},
                     EndpointPurpose::Completion, result.decisions.size(), NoAnalysisId,
-                    ledger.tail(publication)},
+                    sourceGap},
                 {entry, {Command::Acquire, request.source, observer, identity.key},
                     EndpointPurpose::Completion, result.decisions.size(), NoAnalysisId,
-                    ledger.tail(entry)}};
+                    entryGap}};
             auto packet = prepareOwnedPacket(endpoints);
             if (!packet || packet->restoredEndpoints || !preservePublications(*packet)) { continue; }
             packet->qualified = true;
@@ -471,7 +487,7 @@ std::optional<CertifiedRealization> Constructor::normalEntry(
             CertifiedRealization out;
             out.version = ledger.version();
             out.sourceMilestone = publication;
-            out.selectedSourceGap = ledger.tail(publication);
+            out.selectedSourceGap = sourceGap;
             out.physicalCoverage = physical;
             out.coverage = covered;
             out.ownCoverage = own;

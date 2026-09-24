@@ -412,18 +412,20 @@ bool Constructor::clearInterval(Id key, Cut source, Cut target) const
     return true;
 }
 SourceGapQualification Constructor::sourceGapFacts(
-    const WordGap& gap, Pipe source, Pipe observer, const std::vector<FrontierRequirement>& required)
+    const WordGap& gap, Pipe source, Pipe observer, const std::vector<FrontierRequirement>& required,
+    Cut deadline)
 {
     ++result.work.sourceGapQueries;
+    if (deadline == NoAnalysisId) { deadline = current; }
     SourceGapQualification out;
     out.gap = gap;
     out.source = source;
     out.observer = observer;
-    out.deadline = current;
+    out.deadline = deadline;
     out.version = ledger.version();
     out.reason = "source gap lacks a current matched occurrence certificate";
     const bool invalidQuery = !cache.success || cache.version != ledger.version() ||
-        required.empty() || gap.cut >= control.graph.sites.size();
+        required.empty() || gap.cut >= control.graph.sites.size() || deadline >= control.graph.sites.size();
     if (invalidQuery) {
         return out;
     }
@@ -436,7 +438,7 @@ SourceGapQualification Constructor::sourceGapFacts(
         out.reason = "source gap neighbors changed";
         return out;
     }
-    const auto& correspondence = control.correspondence(gap.cut, current);
+    const auto& correspondence = control.correspondence(gap.cut, deadline);
     if (!correspondence.proved()) {
         return out;
     }
@@ -485,7 +487,8 @@ SourceGapQualification Constructor::sourceGapFacts(
 bool Constructor::sourceKeyNeighbors(const SourceGapQualification& facts, Id key)
 {
     const bool valid = facts.proved() && facts.version == ledger.version() && cache.version == facts.version &&
-        facts.deadline == current && key < frontier.keys().size() && !facts.prefixes.empty();
+        facts.deadline < control.graph.sites.size() && key < frontier.keys().size() &&
+        !facts.prefixes.empty();
     if (!valid || !helperFreeKey(key)) { return false; }
     const auto& identity = frontier.keys()[key];
     if (identity.source != facts.source || identity.observer != facts.observer) { return false; }
@@ -498,7 +501,7 @@ bool Constructor::sourceKeyNeighbors(const SourceGapQualification& facts, Id key
         facts.futureSites.resize(control.graph.sites.size());
         result.work.normalKeySites += facts.futureSites.size();
         std::vector<Cut> pending;
-        for (const auto& pair : control.correspondence(facts.gap.cut, current).pairs) {
+        for (const auto& pair : control.correspondence(facts.gap.cut, facts.deadline).pairs) {
             pending.push_back(pair.first);
         }
         while (!pending.empty()) {

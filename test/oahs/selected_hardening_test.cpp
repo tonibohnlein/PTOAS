@@ -87,7 +87,8 @@ struct ReplayTestAccess {
         require(queries == c.result.work.sourceGapQueries && commands == c.result.work.sourceGapCommands,
                 "physical-key alternatives reexecuted the same source prefix");
         c.current = 2;
-        require(!c.sourceGapKey(facts, key), "gap proof leaked to a different deadline at the same revision");
+        require(facts.deadline == 3 && c.sourceGapKey(facts, key),
+                "explicit gap deadline was replaced by the constructor cursor");
         c.current = 3;
         const auto publication = c.ledger.append(3, {Command::Publish, P, R, 0}, EndpointPurpose::Fixed);
         const auto receipt = c.ledger.append(3, {Command::Acquire, P, R, 0}, EndpointPurpose::Fixed);

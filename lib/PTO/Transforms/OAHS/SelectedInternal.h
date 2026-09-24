@@ -791,7 +791,8 @@ private:
     Id reusable(Pipe, Pipe, const State&);
     bool canPublish(const State&, Id) const;
     SourceGapQualification sourceGapFacts(
-        const WordGap&, Pipe, Pipe, const std::vector<FrontierRequirement>&);
+        const WordGap&, Pipe, Pipe, const std::vector<FrontierRequirement>&,
+        Cut deadline = NoAnalysisId);
     bool sourceKeyNeighbors(const SourceGapQualification&, Id);
     bool selectedKeyUsesOutside(const std::vector<bool>& futureSites, Id key,
         std::map<Cut, bool>& wordIntersects);

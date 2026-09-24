@@ -12,7 +12,7 @@ bool Constructor::fixedBoundaryPacket(const SourceGapQualification& facts, Group
 {
     // One designated source-local acknowledgment, followed by the ordinary
     // matched transfer. No candidate-ledger solve or provisional reservation.
-    if (facts.gap.left != NoAnalysisId) { return false; }
+    if (facts.deadline != current || facts.gap.left != NoAnalysisId) { return false; }
     const auto& keys = frontier.keys();
     for (Id forward = 0; forward < keys.size(); ++forward) {
         if (!sourceKeyNeighbors(facts, forward)) { continue; }

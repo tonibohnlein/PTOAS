@@ -460,3 +460,16 @@ Acceptance criteria:
   before and after structural sharing;
 - GEMM and attention measurements report preparation, qualification, replay,
   and final-validation work separately.
+
+## Current continuation after AK
+
+AK extends the shared source-gap query to an explicit one-shot entry deadline
+and makes the common loop-entry client accept nonempty source/entry words and
+actually rearmed historical keys. SET remains at the earliest saved-source
+gap; WAIT stays at the certified entry tail. Normal-constructor positives
+cover both nonempty words and historical reuse; a missing consumption path
+uses another key. Unique one-shot occurrences, helper-free ownership and
+source-word-beginning placement remain sufficient limits. See HANDOFF and AK
+artifacts for validation and cost evidence. Next: common recurring/return
+packet competition and the deadline-wide class3 guard, then the AD ordering
+recovery and final corpus/device gates.

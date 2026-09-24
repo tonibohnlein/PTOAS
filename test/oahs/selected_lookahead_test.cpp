@@ -766,6 +766,50 @@ void invariantLoopEntry()
     p.observed->loops.front().atLeastOnce = false;
     require(accepted(p).work.loopEntryTransfers == 0, "unknown/zero-trip entry was acquired unconditionally");
 }
+void nonemptyOneShotEntryGaps()
+{
+    auto p = invariantLoopProgram();
+    o::Commands fixed(o::commandCutCount(p));
+    fixed[0] = {{o::Command::Publish, R, P, 0},
+                {o::Command::Publish, R, Q, 0}};
+    fixed[1] = {{o::Command::Acquire, R, P, 0}};
+    fixed[3] = {{o::Command::Acquire, R, Q, 0}};
+    const auto plan = accepted(p, fixed);
+    require(std::any_of(plan.decisions.begin(), plan.decisions.end(), [](const auto& decision) {
+        return decision.consumer == 5 && decision.sourceMilestone == 1;
+    }), "nonempty source/entry words fell back from common selection");
+    require(plan.commands[1].size() == 2 &&
+            plan.commands[1][0].kind == o::Command::Publish &&
+            plan.commands[1][1].kind == o::Command::Acquire,
+            "input release was delayed behind unrelated source acquisition");
+    require(plan.commands[3].size() == 2 &&
+            plan.commands[3][0].kind == o::Command::Acquire &&
+            plan.commands[3][0].source == R &&
+            plan.commands[3][1].source == P,
+            "entry receipt crossed an existing acquisition in its word");
+}
+
+void historicalOneShotEntryKey()
+{
+    auto p = invariantLoopProgram(2);
+    o::Commands fixed(o::commandCutCount(p));
+    fixed[0] = {{o::Command::Publish, P, Q, 0},
+                {o::Command::Acquire, P, Q, 0},
+                {o::Command::Publish, Q, P, 0},
+                {o::Command::Acquire, Q, P, 0}};
+    const auto plan = accepted(p, fixed);
+    require(std::any_of(plan.decisions.begin(), plan.decisions.end(), [](const auto& decision) {
+        return decision.consumer == 5 && decision.sourceMilestone == 1;
+    }), "consumed historical key fell back from common loop-entry selection");
+    require(plan.commands[1].size() == 1 && plan.commands[1][0].key == 0 &&
+            plan.commands[3].size() == 1 && plan.commands[3][0].key == 0,
+            "common entry binding did not reuse the actually rearmed key");
+    fixed[0].erase(fixed[0].begin() + 2, fixed[0].end());
+    const auto unavailable = accepted(p, fixed);
+    require(unavailable.commands[1].size() == 1 && unavailable.commands[1][0].key == 1,
+            "entry binding reused a key without publisher knowledge of consumption");
+}
+
 void reuseOneShotEntryKey()
 {
     auto p = invariantLoopProgram(1);
@@ -1067,6 +1111,8 @@ int main()
     changedRepublicationDeadline();
     enclosingAcquisitionAndRearming();
     invariantLoopEntry();
+    nonemptyOneShotEntryGaps();
+    historicalOneShotEntryKey();
     reuseOneShotEntryKey();
     helperFreeLoopEntry();
     entryWaitMustNotCrossPublication();

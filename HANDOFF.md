@@ -1,5 +1,44 @@
 # OAHS current handoff
 
+## Active after Step AK — exact one-shot entry gaps and historical keys
+
+AK parameterizes the shared source-gap query by its actual original deadline.
+The one-shot common loop-entry client now admits nonempty source and entry
+words: the SET uses the certified source-word beginning, and the WAIT remains
+at the entry-word tail so existing commands are not crossed. A terminal
+`BarrierAll` in the entry word is refused. Existing ordinary/fixed-boundary
+clients explicitly require their current deadline. The shared historical-key
+query checks actual empty occupancy, consumption knowledge, ownership and
+future selected uses; a key's mere history no longer forces the structured
+binder. Complete packet and persistent-publication checks precede selection,
+and only selected contextual replay grants credit.
+
+Normal-constructor positives cover unrelated fixed acquisitions in both words
+and a previously consumed P→Q key. Removing its reverse return forces the
+other key. Earlier zero-trip, source-refresh, observer-publication and enclosing
+re-entry negatives remain. These establish only unique noncyclic one-shot
+entry occurrences, a beginning source gap and helper-free key ownership.
+General recurring entry, dormant ownership and later source-gap repair stay
+unfinished.
+
+Final host evidence: 25/25 portable suites, three native drivers, 88/88
+corpus, 18/19 compatibility (inherited refusal), GEMM, two prefills and three
+targeted inputs pass. Every campaign plan matches AJ; complete finite payload
+order and SET/WAIT resource deltas are empty. Aggregate selected updates and
+replay sites remain 8225 and 7100684, source-gap queries 5078 and key sites
+1010704. Measured compiler microseconds 316563190→321030904 are noisy, not a
+speed claim. Changed-code check passes. Architecture/generality, correctness
+and asymptotic-performance reviewers ACCEPT the bounded final change; no
+sanitizer/device campaign. Artifacts: `../oahs-gemm-base-builds/refactor-step-ak/`
+(`design.md`, `summary.json`, `results.json`, `changed-order.json`, `work.json`,
+`reviews.md`).
+
+Next: make complete recurring and required-return packets compete through the
+same selected-realization path, then remove the deadline-wide class3 migration
+guard. AD `hc_head_reduce` +122/-20 ordering recovery, final consolidation,
+full generality and coupled device evidence remain open. Continue the
+three-reviewer commit loop.
+
 ## Active after Step AJ — one-shot loop-entry common realization
 
 AJ extracts indexed, lazy `nextEntrySource` facts from the structured loop-entry
