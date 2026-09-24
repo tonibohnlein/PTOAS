@@ -222,7 +222,7 @@ struct SelectedWork {
     // Whole-original-graph contextual solves, and updates that reused nothing.
     std::size_t contextualReplays = 0, unreusedUpdates = 0;
 };
-// Diagnostics and work from the single discarded optional attempt. Its
+// Diagnostics and work from one discarded optional attempt. Its
 // endpoints and causal state never participate in the returned construction.
 struct DeclinedRecurringAttempt {
     SelectedFailure failure = SelectedFailure::None;
@@ -254,6 +254,9 @@ struct SelectedPlan {
     FrontierCheck certificate;
     SelectedWork work;
     std::optional<DeclinedRecurringAttempt> declinedRecurring;
+    // The last optional first-use observation layer was declined while
+    // retaining previously qualified storage/occurrence interfaces.
+    std::optional<DeclinedRecurringAttempt> declinedFirstUse;
     // Native local-only admission retry; discarded work remains visible.
     std::optional<DeclinedRecurringAttempt> declinedObservation;
 };

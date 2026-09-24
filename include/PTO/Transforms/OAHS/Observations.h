@@ -88,6 +88,9 @@ struct ObservedControl {
   std::vector<ObservedScope> scopes;
   std::vector<ObservedLoop> loops;
   std::size_t entry = 0, exit = 0;
+  // Optional first-use control copies actually installed after earlier
+  // occurrence refinements. Used only to avoid a duplicate admission retry.
+  std::size_t firstUsePrefixes = 0;
   // Named input/frontend proof boundary, not a causal-completion assertion.
   std::string qualification;
 };

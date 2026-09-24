@@ -62,6 +62,7 @@ public:
       selectArm(site, site, 1);
     }
     updateLoops();
+    ++q.firstUsePrefixes;
     q.qualification += "; qualified-first-use-prefix-v1";
   }
 

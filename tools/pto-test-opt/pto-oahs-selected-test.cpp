@@ -160,6 +160,7 @@ bool mutations(MLIRContext &context) {
     const auto before = text(function);
     bool changed = false;
     ScopedDiagnosticHandler diagnostics(&context, [](Diagnostic &) { return success(); });
+    oahs::SelectedPlan report;
     const auto status = oahs::testing::runSelectedHandoffSyncWithMutation(function, [&](func::FuncOp working) {
       mlir::Operation *victim = nullptr;
       working.walk([&](mlir::Operation *op) {
@@ -174,8 +175,11 @@ bool mutations(MLIRContext &context) {
         else { victim->erase(); }
         changed = true;
       }
-    });
-    if (!check(changed && failed(status) && text(function) == before, "atomic reconstruction refusal")) {
+    }, &report);
+    const bool atomicRefusal = changed && failed(status) && text(function) == before &&
+                               !report.declinedFirstUse && !report.declinedObservation;
+    if (!check(atomicRefusal,
+               "atomic reconstruction refusal without admission retry")) {
       return false;
     }
   }
@@ -873,7 +877,7 @@ bool originalResidueDecisions(MLIRContext &context) {
   oahs::SelectedPlan plan;
   return check(witnessedLoad && witnessedRead &&
                succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)) &&
-               !plan.declinedObservation,
+               !plan.declinedObservation && !plan.declinedFirstUse,
                "normalized raw-residue protocol failed construction/reconstruction");
 }
 
@@ -1135,7 +1139,7 @@ module attributes {pto.target_arch = "a3"} {
                "reader generation failed native construction/reconstruction")) {
       return false;
     }
-    if (!check(!plan.declinedObservation && !plan.declinedRecurring,
+    if (!check(!plan.declinedObservation && !plan.declinedFirstUse && !plan.declinedRecurring,
                "reader generation depended on an optional fallback")) {
       return false;
     }
@@ -1257,7 +1261,8 @@ module attributes {pto.target_arch = "a3"} {
     oahs::SelectedPlan plan;
     if (!check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)),
                "optional reader native reconstruction")) { return false; }
-    if (expectedParticipation && !check(!plan.declinedObservation && !plan.declinedRecurring &&
+    if (expectedParticipation && !check(!plan.declinedObservation && !plan.declinedFirstUse &&
+                                        !plan.declinedRecurring &&
                               !plan.activations.empty() && plan.channels.size() == 2,
                               "optional children require one activated readiness/return family")) { return false; }
   }
@@ -1312,7 +1317,8 @@ module attributes {pto.target_arch = "a3"} {
     auto function = module->lookupSymbol<func::FuncOp>("source_gap");
     oahs::SelectedPlan plan;
     const bool constructed = check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)) &&
-                   plan.work.earlyPublications != 0 && !plan.declinedObservation && !plan.declinedRecurring,
+                   plan.work.earlyPublications != 0 && !plan.declinedObservation &&
+                   !plan.declinedFirstUse && !plan.declinedRecurring,
                "native exact-gap construction/reconstruction missed early publication");
     if (!constructed) {
       return false;
@@ -1572,7 +1578,7 @@ module attributes {pto.target_arch = "a3"} {
     const bool constructed = check(succeeded(oahs::testing::runSelectedHandoffSyncWithMutation(function, {}, &plan)) &&
                    std::any_of(plan.decisions.begin(), plan.decisions.end(),
                        [](const auto& decision) { return !decision.supporting.empty(); }) &&
-                   !plan.declinedObservation && !plan.declinedRecurring,
+                   !plan.declinedObservation && !plan.declinedFirstUse && !plan.declinedRecurring,
                "native construction missed actual required-return coverage");
     if (!constructed) {
       return false;
@@ -1879,7 +1885,7 @@ module attributes {pto.target_arch = "a3"} {
     }
     if (variant <= 6 || variant == 10 || variant == 11) {
       if (!check(plan.work.boundaryAnalysisSites != 0 && plan.work.physicalUseQuerySites != 0 &&
-                     !plan.declinedObservation && !plan.declinedRecurring,
+                     !plan.declinedObservation && !plan.declinedFirstUse && !plan.declinedRecurring,
                  "equivalent native representation bypassed shared boundary construction, variant " +
                      std::to_string(variant))) {
         return false;
@@ -1900,7 +1906,8 @@ module attributes {pto.target_arch = "a3"} {
         }
       }
     }
-    if (variant == 7 && !check(bool(plan.declinedObservation),
+    const bool unrefinedRetry = bool(plan.declinedObservation) && !plan.declinedFirstUse;
+    if (variant == 7 && !check(unrefinedRetry,
                              "unrealizable optional observations were not declined atomically")) {
       return false;
     }
@@ -2073,6 +2080,15 @@ bool runFile(MLIRContext &context, const char *path) {
                  << work.frontierUnknown
                  << " recurring=" << work.recurringChannels
                  << " recurring_proposals=" << work.recurringProposals
+                 << " first_use_declined=" << bool(report.declinedFirstUse)
+                 << " first_use_discarded_replay_sites="
+                 << (report.declinedFirstUse ? report.declinedFirstUse->work.replaySiteEvaluations : 0)
+                 << " first_use_discarded_occurrence_sites="
+                 << (report.declinedFirstUse ? report.declinedFirstUse->work.occurrenceAnalysisSites : 0)
+                 << " first_use_discarded_native_endpoint_work="
+                 << (report.declinedFirstUse ? report.declinedFirstUse->work.nativeEndpointDiscoveryWork : 0)
+                 << " first_use_discarded_elapsed_us="
+                 << (report.declinedFirstUse ? report.declinedFirstUse->work.elapsedMicroseconds : 0)
                  << " observation_declined=" << bool(report.declinedObservation)
                  << " observation_discarded_replay_sites="
                  << (report.declinedObservation ? report.declinedObservation->work.replaySiteEvaluations : 0)
@@ -2169,6 +2185,10 @@ bool runFile(MLIRContext &context, const char *path) {
     if (report.declinedObservation) {
       llvm::errs() << "observation-decline cut=" << report.declinedObservation->cut
                    << " reason=" << report.declinedObservation->reason << "\n";
+    }
+    if (report.declinedFirstUse) {
+      llvm::errs() << "first-use-decline cut=" << report.declinedFirstUse->cut
+                   << " reason=" << report.declinedFirstUse->reason << "\n";
     }
     for (const auto &fence : report.fences) {
       llvm::errs() << "fence cut=" << fence.cut << " observer=" << pipeName(fence.observer)

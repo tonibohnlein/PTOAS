@@ -567,3 +567,17 @@ common binding; investigate corpus 31's cut-120 failed candidate first. Then
 attribute the separate non-retry corpus 1/compatibility 7 changes and resume
 guarded source continuation, broader binding and linked-pipeline recovery.
 See HANDOFF and AR artifacts for exact evidence and reviewer boundaries.
+
+## Current continuation after AS
+
+AS retains previously qualified child and bank observations when the last
+optional first-use prefix creates an `EventResource` realization/rearming
+refusal. It is one bounded whole-layer retry, with both failed-attempt records
+visible; it does not search first-use subsets or grant failed credit. Twelve
+AR plans recover their AQ emissions and nonempty ordering; four non-retry
+changes remain. Three reviewers accept the bounded service correction.
+Transport first-use participation, exact source gaps and key-use occurrence
+through the full qualified graph next, so the intermediate retry becomes
+unnecessary. Preserve the existing peer-progress exclusion and fill its
+dedicated negative test when that interface is changed. See HANDOFF and AS
+artifacts; do not mark general first-use composition complete.

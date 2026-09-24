@@ -470,7 +470,11 @@ repeated initialization paths; it grants no completion credit and does not
 weaken the access-scoped native accumulator rule. Newly admitted refinements
 must preserve previously qualified child endpoint and key-use correspondence.
 AR's native expansion exposed an EventResource retry that drops that interface;
-this composition obligation is open, not part of the first-use fact itself.
+AS now retains the preceding qualified interface through a fixed last-layer
+admission retry when an actually materialized first-use prefix causes an
+event-realization refusal. The failed candidate grants no credit and remains
+visible in diagnostics. This contains the observed ordering loss; the full
+first-use/child occurrence-composition obligation is still open.
 
 The exact stripped Shenggan step4 payload is a native regression accompanied by
 an independent concrete local-memory/event-order check. The selected plan keeps

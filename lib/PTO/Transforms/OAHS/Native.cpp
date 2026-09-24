@@ -98,7 +98,10 @@ struct Import {
   std::vector<std::pair<mlir::Operation *, PhysicalUseRelation>> physicalUses;
   std::vector<std::string> observationNotes;
 };
-enum class ObservationPolicy { OriginalControl, RefineLeafLoops, QualifiedAccessRoles };
+enum class ObservationPolicy {
+  OriginalControl, RefineLeafLoops, QualifiedAccessRolesWithoutFirstUse,
+  QualifiedAccessRoles
+};
 // Every actual original instruction is an anchor, including scalar/control
 // instructions and region terminators. Synthetic branch/loop decisions have no
 // anchor and cannot acquire emitted commands. Payload phases remain unchanged.
@@ -557,7 +560,9 @@ LogicalResult importObservedCuts(func::FuncOp function, Import &out,
         reads.predicateCount() + reads.frontierCount();
   }
   out.endpointDiscoveryWork += constants.evaluations + ranges.evaluations;
-  native_detail::importFirstUse(function, out.program, ids, out.observationNotes);
+  if (policy != ObservationPolicy::QualifiedAccessRolesWithoutFirstUse) {
+    native_detail::importFirstUse(function, out.program, ids, out.observationNotes);
+  }
   const auto originals = out.anchors;
   out.anchors.assign(commandCutCount(out.program), nullptr);
   for (Cut at = 0; at < out.anchors.size(); ++at) {
@@ -1666,16 +1671,23 @@ LogicalResult testing::checkHandoffObservationPredicate(
 namespace {
 LogicalResult executeSelectedAttempt(
     func::FuncOp function, llvm::function_ref<void(func::FuncOp)> mutate, SelectedPlan *report,
-    ObservationPolicy policy) {
+    ObservationPolicy policy, bool *firstUseMaterialized = nullptr) {
   if (report) {
     *report = SelectedPlan{};
+  }
+  if (firstUseMaterialized) {
+    *firstUseMaterialized = false;
   }
   // Choose observations before construction from shared physical access roles.
   // Qualified normalized loops use original first/next-use guards; unrelated
   // loops retain their original SCF graph. Bounding geometry never becomes a
   // full-write certificate. Every attempt owns a fresh import and ledger.
   return executeTransaction(function,
-      [report](const Program &program, uint64_t endpointDiscoveryWork) {
+      [report, firstUseMaterialized](const Program &program, uint64_t endpointDiscoveryWork) {
+        if (firstUseMaterialized) {
+          *firstUseMaterialized = program.observed &&
+                                  program.observed->firstUsePrefixes != 0;
+        }
         auto selected = constructSelectedPlan(program);
         selected.work.nativeEndpointDiscoveryWork = endpointDiscoveryWork;
         Result result;
@@ -1707,6 +1719,7 @@ LogicalResult executeSelectedHandoffSync(
     externalProtocol |= getSyncProtocolModel(op).has_value();
   });
   SelectedPlan candidate;
+  bool firstUseMaterialized = false;
   std::string diagnostics;
   LogicalResult status = failure();
   {
@@ -1716,7 +1729,9 @@ LogicalResult executeSelectedHandoffSync(
       stream << '\n';
       return success();
     });
-    status = executeSelectedAttempt(function, mutate, &candidate, ObservationPolicy::QualifiedAccessRoles);
+    status = executeSelectedAttempt(function, mutate, &candidate,
+                                    ObservationPolicy::QualifiedAccessRoles,
+                                    &firstUseMaterialized);
   }
   if (succeeded(status) || candidate.success || externalProtocol ||
       candidate.failure != SelectedFailure::EventResource) {
@@ -1728,12 +1743,50 @@ LogicalResult executeSelectedHandoffSync(
     }
     return status;
   }
+  // First-use prefix splitting is the last optional observation layer. When
+  // full-qualified construction cannot realize a key, retain preceding
+  // child/storage interfaces through a fresh fixed-policy admission attempt.
+  std::optional<DeclinedRecurringAttempt> firstUseDecline;
+  std::optional<DeclinedRecurringAttempt> priorDecline;
+  if (firstUseMaterialized) {
+    firstUseDecline = DeclinedRecurringAttempt{
+        candidate.failure, candidate.reason, candidate.cut, candidate.work};
+    SelectedPlan prior;
+    {
+      ScopedDiagnosticHandler capture(function.getContext(), [&](Diagnostic& diagnostic) {
+        llvm::raw_string_ostream stream(diagnostics);
+        diagnostic.print(stream);
+        stream << '\n';
+        return success();
+      });
+      status = executeSelectedAttempt(function, mutate, &prior,
+          ObservationPolicy::QualifiedAccessRolesWithoutFirstUse);
+    }
+    prior.declinedFirstUse = firstUseDecline;
+    const bool cannotRetryOriginal = succeeded(status) || prior.success ||
+                                     prior.failure != SelectedFailure::EventResource;
+    if (cannotRetryOriginal) {
+      if (succeeded(status)) {
+        function.emitRemark("handoff: declined optional first-use observation after ")
+            << candidate.reason;
+      } else if (!diagnostics.empty()) {
+        llvm::errs() << diagnostics;
+      }
+      if (report) {
+        *report = std::move(prior);
+      }
+      return status;
+    }
+    priorDecline = DeclinedRecurringAttempt{
+        prior.failure, prior.reason, prior.cut, prior.work};
+  }
   // The failed private clone is gone. Retain all immutable physical relations
   // while trying original command words with no speculative observation copies.
   SelectedPlan original;
   status = executeSelectedAttempt(function, mutate, &original, ObservationPolicy::OriginalControl);
-  original.declinedObservation = DeclinedRecurringAttempt{
-      candidate.failure, candidate.reason, candidate.cut, candidate.work};
+  original.declinedFirstUse = firstUseDecline;
+  original.declinedObservation = priorDecline.value_or(DeclinedRecurringAttempt{
+      candidate.failure, candidate.reason, candidate.cut, candidate.work});
   if (succeeded(status)) {
     function.emitRemark("handoff: declined optional observation materialization after ") << candidate.reason;
   } else if (!diagnostics.empty()) {

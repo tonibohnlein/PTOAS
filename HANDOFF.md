@@ -1,5 +1,51 @@
 # OAHS current handoff
 
+## Active after Step AS — retain prior qualified observations on first-use refusal
+
+AS makes the final optional first-use observation layer a fixed admission
+transaction. If a local-only full-qualified attempt fails specifically with
+`EventResource` after actually installing a first-use prefix, a fresh import
+and constructor try the same previously qualified access-role observations
+without that last prefix. `OriginalControl` is tried only if the intermediate
+attempt also fails with `EventResource`. A successful construction or any
+other failure, including reconstruction failure, stops retries. Peer/queue
+operations retain the existing no-retry rule. The result records the failed
+first-use and preceding-layer attempts separately with reason, cut and work;
+neither supplies completion credit or reservations to a later attempt.
+
+The new real-constructor lit fixture composes a nonunit first-use loop with
+child endpoint distinctions under scarce event realization: the full attempt
+declines, the preceding qualified layer constructs and reconstructs, and the
+original-control layer is not used. It emits the same plan as AQ for its pinned
+projection input. Existing no-first-use retry and reconstruction-mutation
+assertions now distinguish this intermediate admission. The applicable old
+`RefineLeafLoops` import behavior is retained. Three independent source
+reviewers ACCEPT the bounded architecture, correctness and asymptotic cost;
+they do not call it a complete occurrence-composition solution.
+
+The pinned campaign passes 88/88 corpus, 18/19 compatibility with the inherited
+refusal, GEMM, both prefills and three targeted inputs. Twelve plans that AR
+sent to `OriginalControl` instead retain the earlier 340-site class of
+qualified interface (case 31) and are byte-identical to AQ. Thus their AR
+added ordering on nonempty finite traces is removed; the four other AR plan
+changes remain separately classified. AS selected totals are 3756 SET/3771
+WAIT versus AR's 3636/3651. Aggregate selected replay rises
+6971985→7103183; rejected first-use attempts add 205956 separately recorded
+replay sites. Native microseconds 293347838→312220355 are noisy and not a
+speed claim. Exact work/resources and trace limitations are in
+`../oahs-gemm-base-builds/refactor-step-as/` (`design.md`, `results.json`,
+`work.md`, build/test logs). No sanitizer/device campaign.
+
+The full first-use-qualified constructor still refuses event realization or
+rearming at corpus 31 cut 120. AS contains the ordering loss without solving
+transport of its occurrence/source/key-use interface. **Next:** derive that
+transport through the common first-use/child interface, and use a normal
+constructor witness to retain the full qualified graph without a retry.
+Then return to AQ's guarded source-continuation/AD quality debt and the broader
+packet/support/linked-pipeline milestones. Dedicated peer-EventResource and
+both-failed-layer test mutations remain useful evidence gaps. Continue the
+three-reviewer commit loop; do not count this retry as full-path success.
+
 ## Active after Step AR — shared-domain first-use roles; observation composition debt
 
 AR replaces the native first-use adapter's literal zero/unit-step recognition
