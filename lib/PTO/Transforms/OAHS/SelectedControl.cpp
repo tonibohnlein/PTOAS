@@ -360,6 +360,12 @@ Control::Control(const Program& program)
             loopEntries.push_back(std::move(facts));
         }
     }
+    loopEntriesAtSite.resize(graph.sites.size());
+    for (Id index = 0; index < loopEntries.size(); ++index) {
+        for (auto site : loopEntries[index].sites) {
+            if (site < loopEntriesAtSite.size()) { loopEntriesAtSite[site].push_back(index); }
+        }
+    }
     // One pass over the sites fixes the canonical word of each site, the sites
     // sharing it, and the range of components it spans. canonicalCommandCut
     // names the EARLIEST site carrying an observation, so the first occurrence

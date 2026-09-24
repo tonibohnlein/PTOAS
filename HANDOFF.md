@@ -1,5 +1,45 @@
 # OAHS current handoff
 
+## Active after Step AJ — one-shot loop-entry common realization
+
+AJ extracts indexed, lazy `nextEntrySource` facts from the structured loop-entry
+binder and makes a bounded one-shot entry packet a class0 common realization.
+Both clients now consume the same saved-source, first-observer, freshness,
+source-to-entry occurrence and crossed-publication facts. The common client
+requires noncyclic unique source/entry emitted words, empty exact gaps, a
+virgin helper-free key and a matched SET-at-source/WAIT-at-entry packet. It
+privately checks packet and persistent publication support; selected contextual
+replay alone grants completion and must reduce the complete residual. The
+legacy path still handles recurring, regional, historical-key and nonempty-gap
+entry cases.
+
+The normal-constructor invariant-entry fixture selects the common record at
+its early source while unrelated producer work and repeated child reads remain
+independent. Explicit source-class refresh, crossed observer publication,
+zero-trip/bypass, and enclosing re-entry negatives decline the one-shot client;
+the re-entry fixture identifies its actual P→Q entry decision.
+
+Final validation: 25/25 portable suites, three native drivers, 88/88 corpus,
+18/19 compatibility (inherited refusal), GEMM, two prefills and three targeted
+inputs pass. Campaign outputs match AI exactly, so finite complete payload
+order, SET/WAIT resources and selected work counters remain unchanged. The
+new per-site loop-entry index costs O(total represented loop-site memberships)
+and is not separately charged by the existing preparation counter; measured
+aggregate compiler microseconds 315170788->316563190 are noisy. Changed-code
+check is clean. Architecture/generality, correctness and asymptotic-performance
+reviewers ACCEPT the bounded mechanism after the lazy-query fix. No sanitizer
+or device campaign. Artifacts: `../oahs-gemm-base-builds/refactor-step-aj/`
+(`design.md`, `summary.json`, `results.json`, `changed-order.json`, `work.json`,
+`reviews.md`).
+
+Next: replace empty-word and virgin-key limits with the shared exact-gap and
+historical-key services for loop-entry packets, while preserving one-shot
+versus recurrence proof and actual reuse deadlines. Then make complete
+recurring/return packets compete through the same selector and remove the
+deadline-wide class3 migration guard. AD `hc_head_reduce` ordering recovery,
+full stage consolidation and device evidence remain open. Continue the
+three-reviewer commit loop.
+
 ## Active after Step AI — historical-key alternative binding
 
 AI lets the common alternative-source realization consider a previously used

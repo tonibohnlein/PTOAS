@@ -1767,3 +1767,35 @@ receipt negative also triggers conservative same-word neighbor exclusion, so
 it does not isolate the source-time occupancy check. Host campaign outputs
 remain unchanged from AH; acceptance is the new focused binding capability
 and preserved independent validation, not a campaign command reduction.
+
+## AJ design — bounded one-shot entry as a common realization
+
+The structured loop-entry binder previously reconstructed its own source and
+participation facts and qualified complete packets by global candidate
+analysis. AJ exposes those facts through `nextEntrySource`, indexed by current
+original site and advanced lazily. The query retains the at-least-once/no-bypass
+first-observer summary, the required access roles, source-to-entry
+correspondence, source-class freshness, saved source snapshot, and selected
+observer publications crossed by an early WAIT. The legacy binder consumes
+the same query and can stop after a successful packet; no second completion
+state is added.
+
+The first common client requires one-shot, unique reachable emitted words for
+both source and entry. Source-outside-inner-loop alone would not prove this:
+an enclosing backedge can republish the same physical key. In this bounded
+fragment the two words are empty, giving exact stable gaps, and the key has
+no selected uses or dormant ownership. Actual source state proves completion
+and publishability. Every claimed extra access class must survive the same
+source-to-entry and inside-region freshness checks. The complete SET/WAIT
+packet passes common preparation and persistent-publication support. The
+selected update enables contextual replay before granting credit; the fixed
+complete residual must strictly decrease. No source or key is reserved by a
+failed private proposal.
+
+The one-shot fixture enters common selection through its early source and
+retains independent producer work and repeated reader uses. Enclosing
+re-entry, zero-trip/bypass, source-class refresh and a crossed observer
+publication are negative. These tests establish a restricted local client,
+not general loop-entry binding. Empty words are an exact-gap implementation
+limit, not a physical-lifetime condition. Replace them using common gap and
+historical-key certificates before retiring the checked structured path.

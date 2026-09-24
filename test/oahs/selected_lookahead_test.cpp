@@ -724,6 +724,9 @@ void invariantLoopEntry()
             "first pass lost the unique observer deadline");
     const auto plan = accepted(p);
     require(plan.work.loopEntryTransfers == 1, "invariant readiness not acquired at loop entry");
+    require(std::any_of(plan.decisions.begin(), plan.decisions.end(), [](const auto& decision) {
+        return decision.consumer == 5 && decision.sourceMilestone == 1;
+    }), "one-shot loop entry did not enter common realization selection");
     require(plan.commands[1].size() == 1 && plan.commands[1][0].kind == o::Command::Publish,
             "loop-entry readiness includes unrelated source work");
     require(plan.commands[3].size() == 1 && plan.commands[3][0].kind == o::Command::Acquire,
@@ -755,6 +758,11 @@ void invariantLoopEntry()
     entry.loops.front().sites.push_back(8);
     require(accepted(earlier).work.loopEntryTransfers == 0,
             "entry acquisition unnecessarily gates an earlier observer payload");
+    auto refreshed = invariantLoopProgram();
+    refreshed.operations.push_back(op(P, {{0, false, true}}));
+    refreshed.observed->sites[4].operation = refreshed.operations.size() - 1;
+    require(accepted(refreshed).work.loopEntryTransfers == 0,
+            "source-class refresh inside the loop inherited entry completion");
     p.observed->loops.front().atLeastOnce = false;
     require(accepted(p).work.loopEntryTransfers == 0, "unknown/zero-trip entry was acquired unconditionally");
 }
@@ -1002,6 +1010,10 @@ void enclosingAcquisitionAndRearming()
     const auto p = enclosingChoice();
     const auto plan = accepted(p);
     require(plan.work.loopEntryTransfers == 1, "alternative first consumers lost enclosing acquisition");
+    const auto entryDecision = std::find_if(plan.decisions.begin(), plan.decisions.end(),
+        [](const auto& decision) { return decision.source == P && decision.publication == 1; });
+    require(entryDecision != plan.decisions.end() && entryDecision->sourceMilestone == o::NoAnalysisId,
+            "enclosing re-entry was admitted as a one-shot common packet");
     require(plan.commands[1].size() == 2 && plan.commands[1][0].kind == o::Command::Publish &&
             plan.commands[1][1].kind == o::Command::Acquire,
             "enclosing completion must be acquired once, without an immediate return");

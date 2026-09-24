@@ -67,6 +67,7 @@ struct Control {
         std::set<Id> issuedClasses;
     };
     std::vector<LoopEntryFacts> loopEntries;
+    std::vector<std::vector<Id>> loopEntriesAtSite;
     uint64_t loopEntryPreparationSites = 0;
     // Memo of canonicalCommandCut, and the sites sharing each canonical word,
     // with the component span of each such word. These are facts about the
@@ -548,8 +549,8 @@ struct Group {
     std::set<Id> coverage;
     bool common = false;
     // A participation-qualified set of alternative early source cuts. It uses
-    // one virgin directional key, not one key per branch. Empty means the
-    // original single-cut/F7 path. The candidate is tied to the selected map.
+    // one directional key across branches, not one key per branch. Empty means
+    // the original single-cut/F7 path. The candidate is tied to the selected map.
     std::vector<Cut> publications = {};
     Id forwardKey = NoAnalysisId, repairKey = NoAnalysisId;
     uint64_t version = 0;
@@ -719,6 +720,13 @@ private:
     std::optional<SourceFrontierFacts> discoverSourceFrontier(
         Pipe, const std::vector<FrontierRequirement>&);
     bool earlierLoopEntrySource(Pipe, const std::vector<FrontierRequirement>&) const;
+    struct EntrySourceFact {
+        const Control::LoopEntryFacts* loop = nullptr;
+        Cut publication = NoAnalysisId;
+        bool regional = false;
+    };
+    std::optional<EntrySourceFact> nextEntrySource(
+        Pipe, const std::vector<FrontierRequirement>&, const std::set<Id>&, Id& cursor) const;
     bool sourceFrontier(Pipe, const std::vector<FrontierRequirement>&,
                         const std::vector<FrontierRequirement>&, Group&);
     bool loopEntryFrontier(Pipe, const std::vector<FrontierRequirement>&,
@@ -734,6 +742,8 @@ private:
         bool repair = false, std::optional<WordGap> prescribedGap = {},
         Id prescribedKey = NoAnalysisId, const SourceGapQualification* prescribedFacts = nullptr);
     std::optional<CertifiedRealization> normalAlternative(
+        const Group&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
+    std::optional<CertifiedRealization> normalEntry(
         const Group&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);
     std::optional<CertifiedRealization> normalCorridor(
         const Group&, const std::vector<FrontierRequirement>&, const std::vector<DueObligation>&);

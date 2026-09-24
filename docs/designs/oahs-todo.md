@@ -124,6 +124,19 @@ negative test's same-word qualification. Loop-entry and recurring common
 binding, dormant ownership, broader historical-key gaps and AD quality
 recovery remain open.
 
+## Current continuation after AJ
+
+AJ indexes original loop-entry membership and lazily exposes qualified
+saved-source, first-consumer, freshness, occurrence and crossed-publication
+facts to both the structured binder and a bounded one-shot common client. The
+normal constructor selects the early invariant-entry packet; enclosing
+re-entry and source refresh remain negative. Three source reviews and host
+service pass; campaign plans are unchanged from AI. Empty endpoint words and
+virgin key remain explicit precision limits to replace with shared exact-gap
+and historical-key queries. See HANDOFF and AJ artifacts. General recurring
+entry support, class3 guard removal, AD quality recovery and device evidence
+remain open.
+
 ## Current continuation after R
 
 User-approved sequence is the "Adopted continuation" in the canonical semantic

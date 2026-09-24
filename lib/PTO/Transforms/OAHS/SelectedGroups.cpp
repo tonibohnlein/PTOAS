@@ -236,34 +236,27 @@ bool Constructor::earlierLoopEntrySource(
     return false;
 }
 
-bool Constructor::loopEntryFrontier(
+std::optional<Constructor::EntrySourceFact> Constructor::nextEntrySource(
     Pipe source, const std::vector<FrontierRequirement>& required,
-    const std::vector<FrontierRequirement>& all, Group& group)
+    const std::set<Id>& needed, Id& cursor) const
 {
-    if (!program.observed || required.empty()) return false;
-    std::set<Id> needed;
-    for (const auto& r : required) needed.insert(accessClass(r));
+    const bool available = program.observed && !required.empty() &&
+        current < control.loopEntriesAtSite.size();
+    if (!available) { return {}; }
     const auto observer = program.operations[control.graph.operations[current]].pipe;
-    for (const auto& loop : control.loopEntries) {
+    const auto& containing = control.loopEntriesAtSite[current];
+    while (cursor < containing.size()) {
+        const auto& loop = control.loopEntries[containing[cursor++]];
         const auto& first = loop.firstConsumers[unsigned(observer)];
-        // SCC construction may visit a later consumer before a qualified
-        // first use. The invariant incoming requirement still belongs at the
-        // original entry when every first consumer needs the same completion.
-        const bool eligible = !first.empty() &&
-            std::find(loop.sites.begin(), loop.sites.end(), current) != loop.sites.end() &&
-            control.canonicalCut[loop.entry] == loop.entry;
-        if (!eligible) continue;
-        if (!std::all_of(first.begin(), first.end(), [&](Cut cut) {
+        const bool eligible = !first.empty() && control.canonicalCut[loop.entry] == loop.entry;
+        if (!eligible) { continue; }
+        const bool sameRequirements = std::all_of(first.begin(), first.end(), [&](Cut cut) {
             return std::all_of(required.begin(), required.end(), [&](const auto& r) {
                 const auto roles = requirements.use(cut, r.cell).roles;
                 return (roles & 2) || ((roles & 1) && r.sourceWrite);
             });
-        })) continue;
-        // Moving a wait ahead of Q's first payload can still order another
-        // engine through an earlier Q publication. Consult actual selected
-        // words, not just payload order. Existing entry commands precede the
-        // appended acquisition; existing deadline commands follow it only if
-        // we hoist, so the latter must also be checked.
+        });
+        if (!sameRequirements) { continue; }
         const bool communicates = std::any_of(
             loop.crossedWords[unsigned(observer)].begin(),
             loop.crossedWords[unsigned(observer)].end(), [&](Cut cut) {
@@ -273,32 +266,27 @@ bool Constructor::loopEntryFrontier(
                         (command.kind == Command::Publish && command.source == observer);
                 });
             });
-        if (communicates) continue;
-        // No relevant source-class occurrence may be refreshed inside the
-        // region. Readiness/release belongs to this bank, not to a maximum
-        // operation number or to every operation on its source engine.
-        if (std::any_of(needed.begin(), needed.end(), [&](Id access) {
+        if (communicates) { continue; }
+        const bool refreshed = std::any_of(needed.begin(), needed.end(), [&](Id access) {
             return loop.issuedClasses.count(access) != 0;
-        })) continue;
+        });
+        if (refreshed) { continue; }
         const SelectedSource* selected = nullptr;
         for (const auto& handle : result.sources) {
             if (handle.pipe != source || handle.version != cache.version || !handle.snapshot.reachable() ||
-                !control.straight(handle.cut, loop.entry)) continue;
+                !control.straight(handle.cut, loop.entry)) { continue; }
             bool covered = true;
             const auto& snapshot = cache.cuts[handle.cut].before.causal;
-            if (!snapshot.reachable()) continue;
+            if (!snapshot.reachable()) { continue; }
             for (auto access : needed) {
                 const auto* history = snapshot.facts()->history.find(access);
                 covered &= freshBetween(handle.cut, loop.entry, access) && history &&
                     frontierContains(*history, PipeCount + unsigned(source));
             }
-            if (covered && (!selected || control.position[handle.cut] < control.position[selected->cut]))
+            if (covered && (!selected || control.position[handle.cut] < control.position[selected->cut])) {
                 selected = &handle;
+            }
         }
-        // With no saved source in this invocation, a source-inactive region
-        // can establish its incoming completion at entry. All alternative first
-        // observer payloads must need these same classes: a branch containing
-        // unrelated observer work is not a reason to advance its deadline.
         const bool regional = !selected && !loop.issuedPipes.count(source) &&
             std::none_of(loop.sites.begin(), loop.sites.end(), [&](Cut cut) {
                 return std::any_of(ledger.word(cut).begin(), ledger.word(cut).end(), [&](Id id) {
@@ -307,11 +295,26 @@ bool Constructor::loopEntryFrontier(
                         ((c.kind == Command::Publish || c.kind == Command::Acquire) && c.observer == source);
                 });
             });
-        if (!selected && !regional) continue;
+        if (!selected && !regional) { continue; }
         const auto publication = selected ? selected->cut : loop.entry;
-        if (!regional && !control.correspondence(publication, loop.entry).proved()) {
-            continue;
-        }
+        if (!regional && !control.correspondence(publication, loop.entry).proved()) { continue; }
+        return EntrySourceFact{&loop, publication, regional};
+    }
+    return {};
+}
+bool Constructor::loopEntryFrontier(
+    Pipe source, const std::vector<FrontierRequirement>& required,
+    const std::vector<FrontierRequirement>& all, Group& group)
+{
+    if (!program.observed || required.empty()) { return false; }
+    std::set<Id> needed;
+    for (const auto& r : required) { needed.insert(accessClass(r)); }
+    const auto observer = program.operations[control.graph.operations[current]].pipe;
+    Id cursor = 0;
+    while (auto fact = nextEntrySource(source, required, needed, cursor)) {
+        const auto& loop = *fact->loop;
+        const auto publication = fact->publication;
+        const bool regional = fact->regional;
         auto candidates = [&](Pipe a, Pipe b) {
             std::vector<Id> keys;
             for (Id key = 0; key < frontier.keys().size(); ++key) {

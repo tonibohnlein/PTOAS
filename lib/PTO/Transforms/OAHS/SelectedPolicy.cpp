@@ -397,6 +397,96 @@ std::optional<CertifiedRealization> Constructor::normalAlternative(
     }
     return {};
 }
+std::optional<CertifiedRealization> Constructor::normalEntry(
+    const Group& request, const std::vector<FrontierRequirement>& due,
+    const std::vector<DueObligation>& universe)
+{
+    const auto observer = program.operations[control.graph.operations[current]].pipe;
+    const auto motivating = classes(request.requirements);
+    if (motivating.empty()) { return {}; }
+    const bool containsEntry = current < control.loopEntriesAtSite.size() &&
+        !control.loopEntriesAtSite[current].empty();
+    if (!containsEntry) { return {}; }
+    Id cursor = 0;
+    while (auto fact = nextEntrySource(request.source, request.requirements, motivating, cursor)) {
+        if (fact->regional || fact->publication == fact->loop->entry) { continue; }
+        const auto publication = fact->publication, entry = fact->loop->entry;
+        const auto uniqueOneShot = [&](Cut cut) {
+            const auto component = control.component[cut];
+            if (component == NoAnalysisId || control.components[component].cyclic ||
+                control.canonicalCut[cut] != cut) { return false; }
+            const auto& copies = control.wordOccurrences[cut];
+            return std::count_if(copies.begin(), copies.end(), [&](Cut site) {
+                return control.reachable[site];
+            }) == 1;
+        };
+        // This first local client proves one-shot execution and uses empty
+        // words as exact gaps; other gap and recurrence shapes stay structured.
+        const bool exactWords = uniqueOneShot(publication) && uniqueOneShot(entry) &&
+            ledger.word(publication).empty() && ledger.word(entry).empty();
+        if (!exactWords) { continue; }
+        const auto& source = cache.cuts[publication].before;
+        if (!source.causal.reachable()) { continue; }
+        std::set<Id> physical;
+        for (const auto& r : due) {
+            const auto access = accessClass(r);
+            const auto* history = source.causal.facts()->history.find(access);
+            const bool covered = history &&
+                frontierContains(*history, PipeCount + unsigned(request.source)) &&
+                freshBetween(publication, entry, access) &&
+                !fact->loop->issuedClasses.count(access);
+            if (covered) { physical.insert(access); }
+        }
+        const auto own = normalizedCoverage(universe, due, motivating);
+        const auto covered = normalizedCoverage(universe, due, physical);
+        const bool coversOwn = !own.empty() && subset(own, covered);
+        if (!coversOwn) { continue; }
+        for (Id key = 0; key < frontier.keys().size(); ++key) {
+            const auto& identity = frontier.keys()[key];
+            if (identity.source != request.source || identity.observer != observer ||
+                !helperFreeKey(key) || !ledger.eventUses(identity).empty() ||
+                !canPublish(source, key)) { continue; }
+            OrderedPacket endpoints{
+                {publication, {Command::Publish, request.source, observer, identity.key},
+                    EndpointPurpose::Completion, result.decisions.size(), NoAnalysisId,
+                    ledger.tail(publication)},
+                {entry, {Command::Acquire, request.source, observer, identity.key},
+                    EndpointPurpose::Completion, result.decisions.size(), NoAnalysisId,
+                    ledger.tail(entry)}};
+            auto packet = prepareOwnedPacket(endpoints);
+            if (!packet || packet->restoredEndpoints || !preservePublications(*packet)) { continue; }
+            packet->qualified = true;
+            auto group = request;
+            group.common = false;
+            group.publication = publication;
+            group.entryAcquisition = entry;
+            group.forwardKey = key;
+            group.version = ledger.version();
+            group.packet = std::move(*packet);
+            for (const auto& r : due) {
+                const auto access = accessClass(r);
+                const bool additional = physical.count(access) && !motivating.count(access);
+                if (additional) { group.supporting.push_back(r); }
+            }
+            CertifiedRealization out;
+            out.version = ledger.version();
+            out.sourceMilestone = publication;
+            out.selectedSourceGap = ledger.tail(publication);
+            out.physicalCoverage = physical;
+            out.coverage = covered;
+            out.ownCoverage = own;
+            out.order = {control.frame[publication], NoAnalysisId - control.position[publication],
+                publication, request.source, observer, {publication}, {entry}};
+            out.shape.push_back({request.source, observer, {publication}, {entry}});
+            for (auto obligation : covered) {
+                out.support.push_back({RealizationSupport::Completion, obligation, current});
+            }
+            out.ordinary = std::move(group);
+            return out;
+        }
+    }
+    return {};
+}
 void Constructor::indexSelectedReturns()
 {
     const auto& endpoints = ledger.records();
@@ -741,6 +831,7 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
         ordinaryRequests.push_back(sourceGroup(demand.first.first, demand.second, due, false));
         retain(normalOrdinary(ordinaryRequests.back(), due, universe));
         retain(normalAlternative(ordinaryRequests.back(), due, universe));
+        retain(normalEntry(ordinaryRequests.back(), due, universe));
     }
     std::map<std::vector<Id>, std::vector<Id>> roots;
     for (auto family : families) {
@@ -836,6 +927,7 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
             decision.repairInputVersion = ledger.version();
         }
         const auto oldWord = ledger.word(group.publication);
+        if (group.entryAcquisition != NoAnalysisId) { needsContextualReplay = true; }
         if (!commitOwnedPacket(*group.packet, decision) || !update() || !settleRearming(decision)) {
             return false;
         }
@@ -854,6 +946,7 @@ std::optional<bool> Constructor::selectNormal(const std::vector<DueObligation>& 
             ++result.work.joinedAcknowledgments;
         }
         if (decision.commonCut) { ++result.work.commonCutTransfers; }
+        if (group.entryAcquisition != NoAnalysisId) { ++result.work.loopEntryTransfers; }
         result.decisions.push_back(std::move(decision));
     }
     auto predicted = classes(due);
