@@ -551,3 +551,19 @@ guarded source-continuation query with executable original predicate
 availability and occurrence correlation, then feed that fact to the common
 packet binder. Keep the +122/-20 finite ordering debt open until a nonempty
 complete-order comparison proves recovery.
+
+## Current continuation after AR
+
+AR uses the shared original counted-loop domain and scalar constant proof for
+native first-use roles, removing the zero/unit-step spelling restriction.
+Focused native and prepared-host service pass; three reviewers accept the
+bounded semantic adapter. Twelve plans now take an EventResource-triggered
+original-control retry after the new first-use split, discarding previously
+qualified child endpoint interfaces. Nonempty projection traces add ordering.
+This is an unfinished construction-composition regression, not a reason to
+restore the syntax gate or a command-count improvement. Preserve existing
+occurrence, source-boundary and key-use facts through first-use cloning and
+common binding; investigate corpus 31's cut-120 failed candidate first. Then
+attribute the separate non-retry corpus 1/compatibility 7 changes and resume
+guarded source continuation, broader binding and linked-pipeline recovery.
+See HANDOFF and AR artifacts for exact evidence and reviewer boundaries.

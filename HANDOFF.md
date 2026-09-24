@@ -1,5 +1,52 @@
 # OAHS current handoff
 
+## Active after Step AR — shared-domain first-use roles; observation composition debt
+
+AR replaces the native first-use adapter's literal zero/unit-step recognition
+with `SyncSlotMapping::originalLoopDomain` and shared constant evaluation. A
+supported `iv == lower` conjunction now describes the first participating
+visit for nonzero lower bounds, positive nonunit steps and equivalent constant
+expressions. The import still requires every enclosing loop term, signed index
+semantics, separated decisions and a closed child occurrence interface. It
+adds no completion credit or event-specific qualification. The native test
+uses the real importer and independent causal checker for positive spellings,
+partial/disjunctive/duplicate/mismatched terms and unsigned-comparison
+negatives. The test driver now reports the exact failed optional-observation
+reason and cut, rather than only a retry counter.
+
+Final focused build and three linked native drivers pass; the prepared campaign
+reconstructs 88/88 corpus, 18/19 compatibility (same inherited refusal), GEMM,
+both prefills and three targeted inputs. The AR campaign recorded 16 changed
+plans against AQ, whose emitted hashes equal the earlier pinned baseline for
+all 113 inputs. Full 21-executable portable suite was not repeated because AR
+changes only the native adapter/test driver. No sanitizer/device campaign.
+The three independent reviewers ACCEPT the bounded semantic adapter and
+asymptotic cost; they explicitly leave its construction integration unfinished.
+Artifacts: `../oahs-gemm-base-builds/refactor-step-ar/` (`design.md`,
+`results.json`, `changed-order.json`, `work.md`, logs and diagnostic trace).
+
+The quality debt is concrete. Twelve changed inputs now decline optional
+observation after an EventResource failure and retry with original control,
+discarding previously qualified child endpoint copies. In corpus case 31 the
+failed candidate reports cut 120 and no reusable key/nonrecursive consumption
+acknowledgment for source 3, observer 2, deadline 132. Its 340-site observed
+interface collapses to 114 original sites; guarded child exchanges become
+unconditional. Independent nonempty finite traces add 80 payload-order
+relations per projection case, and corpus case 75 adds 1320. Corpus case 1
+and compatibility case 7 have mixed changes without this retry and require
+separate attribution. Empty qwen-down traces and unresolved diagnostic rows
+give no quality evidence. Lower command count is not a quality claim.
+
+**Next:** preserve/transport the already qualified child endpoint participation,
+source boundaries and key-use occurrence when first-use prefix cloning is
+admitted, then bind the resulting exact packet without dropping the whole
+observation interface. Start with corpus 31's failed candidate and a small
+normal-constructor composition witness; compare full payload-order sets and
+resources. Do not restore the zero/unit-step recognition gate or install an
+output-plan search. The AQ guarded-source continuation and AD ordering debts,
+joined helper retirement, broader support/binding, linked pipeline and final
+device gates remain open. Continue the three-reviewer loop.
+
 ## Active after Step AQ — historically used reverse keys across joined consumption
 
 AQ removes the joined-only virgin reverse-key gate from the common class-one

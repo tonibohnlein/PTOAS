@@ -515,23 +515,42 @@ bool firstUseOrdering(MLIRContext &context) {
   const auto begin = original.find("    pto.tmatmul ins");
   const auto middle = original.find("    pto.tmatmul.acc ins");
   const auto end = original.find("    return");
-  for (unsigned variant = 0; variant < 4; ++variant) {
+  for (unsigned variant = 0; variant < 10; ++variant) {
     std::string source = original.substr(0, begin);
     source += R"mlir(
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %c4 = arith.constant 4 : index
+    %c5 = arith.constant 5 : index
+    %c7 = arith.constant 7 : index
+    %c9 = arith.constant 9 : index
+    %c5equiv = arith.subi %c9, %c4 : index
     scf.for %tile = %c0 to %c2 step %c1 {
-    scf.for %outer = %c0 to %c2 step %c1 {
-      scf.for %inner = %c0 to %c2 step %c1 {
-        %firstOuter = arith.cmpi eq, %outer, %c0 : index
-        %firstInner = arith.cmpi eq, %inner, %c0 : index
 )mlir";
-    if (variant == 0 || variant == 3) {
-      source += variant == 0 ? "        %first = arith.andi %firstOuter, %firstInner : i1\n"
+    const bool shifted = variant >= 4;
+    const auto lower = shifted ? "%c5" : "%c0";
+    const auto upper = shifted ? "%c9" : "%c2";
+    const auto step = shifted ? "%c2" : "%c1";
+    const auto literal = variant == 7 ? "%c7" : variant >= 5 ? "%c5equiv" : lower;
+    source += std::string("    scf.for %outer = ") + lower + " to " + upper +
+        " step " + step + " {\n";
+    source += std::string("      scf.for %inner = ") + lower + " to " + upper +
+        " step " + step + " {\n";
+    source += variant == 6 ? std::string("        %firstOuter = arith.cmpi eq, ") + literal +
+        ", %outer : index\n" : std::string("        %firstOuter = arith.cmpi eq, %outer, ") +
+        literal + " : index\n";
+    source += std::string("        %firstInner = arith.cmpi eq, %inner, ") + literal + " : index\n";
+    if (variant == 0 || variant == 3 || shifted) {
+      source += variant != 3 ? "        %first = arith.andi %firstOuter, %firstInner : i1\n"
                              : "        %first = arith.ori %firstOuter, %firstInner : i1\n";
     }
-    const char *condition = variant == 1 ? "%firstInner" : variant == 2 ? "%firstOuter" : "%first";
+    if (variant == 8) {
+      source += "        %duplicate = arith.andi %first, %firstOuter : i1\n";
+    }
+    const char *condition = variant == 1 ? "%firstInner" : variant == 2 ? "%firstOuter" :
+        variant == 8 ? "%duplicate" : "%first";
     source += std::string("        scf.if ") + condition + " {\n";
     source += original.substr(begin, middle - begin);
     source += "        } else {\n";
@@ -548,9 +567,28 @@ bool firstUseOrdering(MLIRContext &context) {
     auto module = parseSourceString<ModuleOp>(source, &context);
     if (!check(bool(module), "parse nested first-use fixture")) return false;
     auto function = module->lookupSymbol<func::FuncOp>("matrix");
+    SmallVector<scf::ForOp> loops;
+    function.walk([&](scf::ForOp loop) { loops.push_back(loop); });
+    if (variant == 9) {
+      loops[1]->setAttr("unsignedCmp", UnitAttr::get(&context));
+    }
     oahs::NativeAnalysis imported;
     if (!check(succeeded(oahs::testing::analyzeSelectedHandoffSync(function, imported)),
                "import nested first-use fixture")) return false;
+    const bool qualifiedFirstUse = llvm::any_of(imported.observationNotes,
+        [](const std::string &note) {
+          return note == "qualified original first-use region prefix";
+        });
+    const bool expectedFirstUse = variant == 0 || (shifted && variant < 7);
+    if (expectedFirstUse &&
+        !check(qualifiedFirstUse, "shared loop domain did not qualify equivalent first-use role")) {
+      return false;
+    }
+    const bool refusedFirstUse = variant == 3 || variant == 7 || variant == 8 || variant == 9;
+    if (refusedFirstUse &&
+        !check(!qualifiedFirstUse, "unsupported first-use predicate was incorrectly qualified")) {
+      return false;
+    }
     const auto &graph = *imported.program.observed;
     std::vector<bool> reached(graph.sites.size()), live(graph.observations.size());
     std::vector<oahs::Cut> pending{graph.entry};
@@ -576,8 +614,6 @@ bool firstUseOrdering(MLIRContext &context) {
         return false;
       }
     }
-    SmallVector<scf::ForOp> loops;
-    function.walk([&](scf::ForOp loop) { loops.push_back(loop); });
     oahs::Commands commands(oahs::commandCutCount(imported.program));
     for (oahs::Cut cut = 0; cut < commands.size(); ++cut) {
       if (imported.cuts[cut] == loops[1].getOperation()) {
@@ -590,9 +626,9 @@ bool firstUseOrdering(MLIRContext &context) {
     }
     commands[oahs::invocationExitCut(imported.program)] = {{oahs::Command::BarrierAll}};
     const auto checked = oahs::checkCausalFrontier(imported.program, commands);
-    if (!check(checked.accepted == (variant == 0),
+    if (!check(checked.accepted == expectedFirstUse,
                "first use or genuinely repeating initialization completion")) return false;
-    if (variant != 0) {
+    if (!expectedFirstUse) {
       for (oahs::Cut cut = 0; cut < commands.size(); ++cut) {
         if (isa_and_nonnull<TMatmulOp>(imported.cuts[cut]))
           commands[cut].push_back({oahs::Command::Barrier, oahs::Pipe::M});
@@ -2130,6 +2166,10 @@ bool runFile(MLIRContext &context, const char *path) {
       llvm::errs() << (i ? "," : "") << report.channels[i].period;
     }
     llvm::errs() << (report.channels.empty() ? "-" : "") << " reason=" << report.reason << "\n";
+    if (report.declinedObservation) {
+      llvm::errs() << "observation-decline cut=" << report.declinedObservation->cut
+                   << " reason=" << report.declinedObservation->reason << "\n";
+    }
     for (const auto &fence : report.fences) {
       llvm::errs() << "fence cut=" << fence.cut << " observer=" << pipeName(fence.observer)
                    << " version=" << fence.version << " residuals=";

@@ -9,6 +9,7 @@
 #define PTO_OAHS_NATIVE_FIRST_USE_H
 #include "SelectedInternal.h"
 #include "PTO/Transforms/OAHS/ObservedPrograms.h"
+#include "PTO/Transforms/InsertSync/SyncSlotMapping.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -16,48 +17,39 @@
 
 namespace mlir::pto::oahs::native_detail {
 // Qualification depends only on original scalar/control semantics, never on
-// payload names or effects. Native import is the owner of this proof boundary.
-inline std::optional<int64_t> firstUseInteger(Value value) {
-  auto constant = value.getDefiningOp<arith::ConstantOp>();
-  if (!constant) {
-    return {};
-  }
-  auto attr = dyn_cast<IntegerAttr>(constant.getValue());
-  const bool supported = attr && attr.getValue().getBitWidth() <= 64;
-  if (!supported) {
-    return {};
-  }
-  return attr.getInt();
-}
-
-inline bool firstUseTerms(Value condition, SmallVectorImpl<Value> &ivs) {
+// payload names or effects. Use the same constant and counted-domain proofs
+// as physical occurrence analysis.
+inline bool firstUseTerms(Value condition, DenseMap<Value, uint64_t> &terms,
+                          SyncSlotMapping::ConstantCache &constants) {
   if (auto conjunction = condition.getDefiningOp<arith::AndIOp>()) {
-    return firstUseTerms(conjunction.getLhs(), ivs) && firstUseTerms(conjunction.getRhs(), ivs);
+    return firstUseTerms(conjunction.getLhs(), terms, constants) &&
+           firstUseTerms(conjunction.getRhs(), terms, constants);
   }
   auto cmp = condition.getDefiningOp<arith::CmpIOp>();
   const bool equality = cmp && cmp.getPredicate() == arith::CmpIPredicate::eq;
   if (!equality) {
     return false;
   }
-  Value iv = cmp.getLhs(), literal = cmp.getRhs();
-  if (firstUseInteger(iv)) {
-    std::swap(iv, literal);
-  }
-  const bool first = firstUseInteger(literal) == std::optional<int64_t>(0);
-  if (!first || llvm::is_contained(ivs, iv)) {
+  const auto lhs = SyncSlotMapping::evaluateConstant(cmp.getLhs(), constants);
+  const auto rhs = SyncSlotMapping::evaluateConstant(cmp.getRhs(), constants);
+  const bool oneConstant = lhs.has_value() != rhs.has_value();
+  if (!oneConstant) {
     return false;
   }
-  ivs.push_back(iv);
-  return true;
+  const auto iv = lhs ? cmp.getRhs() : cmp.getLhs();
+  const auto literal = lhs ? *lhs : *rhs;
+  return terms.try_emplace(iv, literal).second;
 }
 
-inline SmallVector<scf::ForOp> firstUseLoops(scf::IfOp choice) {
-  SmallVector<Value> ivs;
-  if (!firstUseTerms(choice.getCondition(), ivs)) {
+inline SmallVector<scf::ForOp> firstUseLoops(scf::IfOp choice,
+    SyncSlotMapping::ConstantCache &constants, SyncSlotMapping::RangeCache &ranges,
+    DenseMap<mlir::Operation *, std::optional<SyncSlotMapping::LoopDomain>> &domains) {
+  DenseMap<Value, uint64_t> terms;
+  if (!firstUseTerms(choice.getCondition(), terms, constants)) {
     return {};
   }
   SmallVector<scf::ForOp> loops;
-  for (auto *parent = choice->getParentOp(); parent && !ivs.empty(); parent = parent->getParentOp()) {
+  for (auto *parent = choice->getParentOp(); parent && !terms.empty(); parent = parent->getParentOp()) {
     if (isa<scf::WhileOp>(parent)) {
       return {};
     }
@@ -65,25 +57,31 @@ inline SmallVector<scf::ForOp> firstUseLoops(scf::IfOp choice) {
     if (!loop) {
       continue;
     }
-    const auto found = llvm::find(ivs, loop.getInductionVar());
-    const bool unsupported = found == ivs.end() || !isa<IndexType>(loop.getInductionVar().getType()) ||
-        loop->hasAttr("unsignedCmp") || loop->hasAttr("unsigned_cmp") ||
-        firstUseInteger(loop.getLowerBound()) != std::optional<int64_t>(0) ||
-        firstUseInteger(loop.getStep()) != std::optional<int64_t>(1);
+    const auto found = terms.find(loop.getInductionVar());
+    if (found == terms.end()) { return {}; }
+    auto domain = domains.find(loop.getOperation());
+    if (domain == domains.end()) {
+      domain = domains.try_emplace(loop.getOperation(),
+          SyncSlotMapping::originalLoopDomain(loop, constants, ranges)).first;
+    }
+    const bool unsupported = !domain->second || found->second != domain->second->lower;
     if (unsupported) {
       return {};
     }
-    ivs.erase(found);
+    terms.erase(found);
     loops.push_back(loop);
   }
-  return ivs.empty() ? loops : SmallVector<scf::ForOp>{};
+  return terms.empty() ? loops : SmallVector<scf::ForOp>{};
 }
 
 inline void importFirstUse(func::FuncOp function, Program &program,
                           const DenseMap<mlir::Operation *, std::size_t> &ids,
                           std::vector<std::string> &notes) {
+  SyncSlotMapping::ConstantCache constants;
+  SyncSlotMapping::RangeCache ranges;
+  DenseMap<mlir::Operation *, std::optional<SyncSlotMapping::LoopDomain>> domains;
   function.walk([&](scf::IfOp choice) {
-    auto loops = firstUseLoops(choice);
+    auto loops = firstUseLoops(choice, constants, ranges, domains);
     if (loops.empty()) {
       return;
     }

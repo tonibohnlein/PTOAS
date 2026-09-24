@@ -457,14 +457,20 @@ occurrence correspondence, comparable frontiers, and a balanced merged token
 stream. This prevents count reduction from delaying A readiness until B is
 available.
 
-A separate first-use qualifier recognizes conjunctions of original normalized
-loop first-visit equalities. It splits only the entry prefix until the decision
+A separate first-use qualifier recognizes conjunctions of original counted-loop
+first-visit equalities, `iv == lower`, using the shared scalar/domain proof.
+Equivalent constant expressions and positive nonunit steps retain the same
+semantic role; exact nonnegative bounds, signed index semantics and all
+enclosing-loop terms remain sufficient proof premises. It splits only the entry prefix until the decision
 or participating backedge and rejoins the existing graph afterward. The copied
 prefix shares physical operations, observations, storage history, and event
 state. Missing terms, disjunctions, unsupported bounds or steps, and intervening
 while loops retain conservative control. The qualifier removes impossible
 repeated initialization paths; it grants no completion credit and does not
-weaken the access-scoped native accumulator rule.
+weaken the access-scoped native accumulator rule. Newly admitted refinements
+must preserve previously qualified child endpoint and key-use correspondence.
+AR's native expansion exposed an EventResource retry that drops that interface;
+this composition obligation is open, not part of the first-use fact itself.
 
 The exact stripped Shenggan step4 payload is a native regression accompanied by
 an independent concrete local-memory/event-order check. The selected plan keeps
