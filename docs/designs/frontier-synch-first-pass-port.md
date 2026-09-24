@@ -19,7 +19,7 @@ InsertSync modes. The analyses below belong to handoff Phase A.
    `SyncSlotMapping.h` and `SyncTileDescriptorState.h` from the donor's
    `InsertSync` directory into `Handoff`. Only include guards and the descriptor
    header's local include path change. Existing type names are retained.
-2. **Physical storage and original control.** Extract storage origins, physical
+2. **Physical storage and original control — ported and connected.** Extract storage origins, physical
    uses, interval partitioning and original structured owner/site identities.
    Consume `SyncInput` records; isolate the donor's dependencies on its old
    `Program` representation. Connect scalar observations to actual address
@@ -36,8 +36,9 @@ InsertSync modes. The analyses below belong to handoff Phase A.
 For each stage: extract the donor dependency closure, identify its real consumer,
 check the draft contract, and record remaining representation limits. Do not
 bring over a constructor dependency merely to make an analysis header compile.
-Wire the assembled Phase A into `frontiersynch::run` once its physical/control input
-exists; this first source port is not yet invoked by that entry point.
+The stage-2 physical/control import now runs in `frontiersynch::run` and consumes
+the stage-1 scalar and descriptor analyses. Construction remains the next
+independent layer after the staged analysis port.
 
 ## Stage 1 crosswalk and limits
 
@@ -65,3 +66,70 @@ The port is checked against the pinned donor after reversing the two mechanical
 path/guard changes. Focused header compilation is recorded in `HANDOFF.md`.
 This establishes extraction fidelity, not full first-pass or native integration
 acceptance. Constructor, corpus and device validation belong to later stages.
+
+## Stage 2 extraction and draft check
+
+The handoff entry now calls `importOriginalStructure(function, input, result)`.
+The result owns original region/cell records and descriptor facts; it borrows
+MLIR values, original operations and translated phase pointers from the unchanged
+function and `SyncInput`. A failed control import leaves the output unchanged.
+
+| Donor source | Extracted component | Adaptation |
+| --- | --- | --- |
+| `OAHS/Plan.h` | Original region, access and cell records | Extracted into `OriginalStructure.h`; no dependency on the old selected plan or target/event state. Phase records reference the shared translated instruction. |
+| `OAHS/Native.cpp`, original-region import | Sequence, choice, for/while tree and stable original owners | Every translated phase is retained, including multiple phases at one source operation. Multi-block regions are refused explicitly. |
+| `InsertSync/SyncOriginClosure.h` and `SyncOriginPropagation.h` | Structured SSA origin graph and delta fixed point | Read-only origin query; no rewrite or second translation of instruction effects. Carried/unknown geometry is conservatively widened in handoff-private copies. |
+| `OAHS/Native.cpp`, physical extraction | Address-dependency slices, finite address sets, footprint grouping | Queries one selector at a time, retains its owner and addresses. No copied operation populations or selected occurrence dimension. |
+| `MemoryDependentAnalyzer::storageCoordinates` | Checked local absolute / GM root-relative interval qualification | Extracted into the handoff importer; production alias behavior is untouched. |
+| `OAHS/StorageWitnesses.h::appendCanonicalStorage` | Endpoint partition and pairwise conservative overlap witnesses | Uses the original record type and size-sized cell IDs. The unused older unpartitioned builder is omitted. Braces/formatting are mechanical changes. |
+
+This implements Section 3's physical-fact/control foundation. Exact single
+intervals in the same qualified coordinate space share canonical byte atoms.
+An unknown footprint overlapping two disjoint exact intervals does not make
+those intervals alias each other. A finite multi-address footprint remains a
+may-set. Its scalar period supplies no D2 physical-permutation proof, no
+predecessor reader, no event resource, and no completion credit.
+
+### Preserved and temporary premises
+
+- The shared translator remains the effect authority. Root closure enriches the
+  provenance of represented effects; it does not recover effects omitted by
+  translation. The donor's post-translation effect-refresh machinery is not
+  part of this read-only analysis port.
+- Region import requires verified single-block structured regions and retains
+  every translated phase. Unsupported structure is a representation refusal,
+  not a hardware limit. Original predicates remain available through owner
+  anchors; executable guarded frontiers are stage 3.
+- A physical address specialization requires a qualified allocation-root address
+  slice and nonoverflowing translated extent/offsets. Views use the root's
+  address and their translated offsets. Unsupported roots keep their original
+  conservative effects. Extending address-root proofs belongs to the shared
+  physical query, not a new opcode or kernel handler.
+- Loop-carried or unknown origin geometry is widened while its possible root
+  identities survive. This is an explicit sufficient restriction of this port;
+  original-relative view/occurrence proofs must replace it before precision for
+  those uses is claimed. No exact-cell or definite-write fact follows from a
+  root identity alone.
+- Imported writes retain `definiteWrite=false`. Bounding extents do not establish
+  complete overwrite. Stage 4 must consume an effect-coverage certificate before
+  applying provenance kills.
+- Finite address relations are independent. The independent period-2/period-3
+  example retains two relations; it does not generate a period-6 control graph.
+  The scalar exploration limit remains the stage-1 precision budget.
+
+### Work and validation boundary
+
+Origin propagation uses the donor delta worklist. Canonical partition work is
+charged to distinct footprint endpoints and output incidences; conservative
+alias pairs can be quadratic in distinct footprints. Scalar exploration remains
+bounded per queried footprint/owner and uses the shared scalar fact caches.
+There is no event allocation, candidate-plan replay or dynamic-loop unrolling.
+
+Focused current-source importer probes cover equivalent induction/carried
+selectors plus unrelated carried state, independent selectors, partially unknown
+addresses, GM aliases, and nested original control. A component probe checks
+nontransitive overlap and cyclic origin propagation. Source IR is compared before
+and after import, and every translated phase must appear once in the region tree.
+Exact commands, inputs and build logs are kept with the artifact path in
+`HANDOFF.md`. Full pass build, generality acceptance and synchronization-quality
+claims remain outside this extraction's evidence.

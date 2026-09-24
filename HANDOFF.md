@@ -1,62 +1,74 @@
-# FrontierSynch foundation
+# FrontierSynch first-pass port
 
 Branch: `codex/handoff-foundation`.
-Base: upstream PTOAS `master`, `f5eff3ee249697f6157088f649c6434fcc9d7c5b`.
-The upstream repository has no `main` branch.
+Committed foundation: `e7537ad90`; scalar/descriptor source port: `2516cdd4d`.
+Base: upstream `master`, `f5eff3ee249697f6157088f649c6434fcc9d7c5b`.
+Donor: `371fdb344d2783b92d6c39424c507b2ce082e08c`.
+Draft checked: paper repository `7e3f59c`, revision 0.40, Section 3.
 
-## Scope of this increment
+## Current increment: physical storage and original control
 
-`pto-insert-sync` accepts `algorithm=existing` (default) and
-`algorithm=handoff`. Existing construction, motion, redundancy removal,
-allocation and emission remain in place. Authored synchronization and function
-declarations keep their existing exclusion before either constructor runs.
+`frontiersynch::run` now imports original structure from the shared `SyncInput`:
 
-Both modes consume `SyncInput`, which owns the original InsertSync translator's
-control/instruction nodes and memory records. Instruction views retain every
-translated phase, its original operation, pipeline, reads/writes, macro phase
-and existing UnitFlag metadata. No second opcode/effect registry is introduced.
-This shares the translator's contract; it does not establish completeness of
-all hardware effects or enable any new native-order exemption.
+- Original sequence/choice/for/while structure, stable source owners, and every
+  translated instruction phase.
+- Possible storage roots through structured SSA, finite dependency-sliced
+  addresses, canonical intervals and conservative pairwise overlap witnesses.
+- Effective descriptor dimensions and original loop-domain qualification from
+  the previous source port.
 
-The handoff entry point currently reports that construction is not implemented.
-It does not emit synchronization or invoke another constructor. No code from the
-old OAHS constructor, its retries, campaign tools or reference data was imported.
+The import is read-only. Records borrow original IR and instruction pointers;
+those owners must outlive the result. Unsupported control reports failure and
+leaves the caller's output unchanged. The handoff mode still reports that
+construction is not implemented after completing this analysis.
 
-Translation failures now propagate through nested structured regions as
-`LogicalResult`; partial nodes and memory records are discarded instead of
-calling `llvm_unreachable`. All current translator callers handle failure.
+`algorithm=existing` retains the upstream InsertSync construction path and the
+same shared instruction input. This increment changes handoff analysis only.
 
-## Validation and next step
+[Port sequence, donor crosswalk, and gate inventory](docs/designs/frontier-synch-first-pass-port.md).
 
-The source diff passes `git diff --check`. No compile or runtime validation has
-been completed. An isolated CMake configuration with Python bindings disabled
-hit an upstream tools/ptoas dependency on the Python extension targets; build
-setup was stopped to keep this increment focused. The worktree has its own venv.
+## Scope and remaining limits
 
-Next: establish focused compilation/import checks, then implement immutable
-original physical-use/control queries and the first draft constructor engine
-from paper revision 0.40. Treat that paper as a working specification. Keep the
-existing mode intact throughout; do not import the old OAHS constructor to
-preserve historical example outputs.
+The tree is original control, not an occurrence refinement. Scalar address
+periods do not establish physical predecessor-use relationships. Carried or
+unknown origin geometry remains conservative. Definite overwrite coverage is
+not inferred from a bounding interval. The shared translator remains responsible
+for effect completeness; read-only root analysis does not recreate missing
+translated effects.
 
-## First-pass port in progress
+Next: stage 3, port guarded original read summaries, occurrence correspondence
+and child/re-entry relationships into these records. Then stage 4 ports
+lifetimes and constructor-facing requirements/source milestones. Keep this a
+source extraction, recording necessary adapter changes against the working
+specification.
 
-The first extraction copies the donor scalar dependency/loop-domain analysis
-and effective tile-descriptor state into `include/PTO/Transforms/Handoff`.
-The source is pinned to `371fdb344d2783b92d6c39424c507b2ce082e08c`; changes
-are mechanical include-path/guard changes only. These analyses are not yet
-called by the handoff stub.
+## Validation
 
-The staged port and revision-0.40 crosswalk are recorded in
-[the first-pass port plan](docs/designs/frontier-synch-first-pass-port.md).
-Next: extract physical storage and original control records, then connect
-address observations to these scalar facts. This is a port of the donor
-analyses; the finite scalar orbit must not be treated as physical-use matching.
+Current handoff/import and translator sources compile in a focused C++17 probe
+with the project's warning flags. The probe links existing LLVM 19 and generated
+PTO dialect dependencies from the donor build; this is not a fresh full compiler
+build. The earlier full CMake configuration remains blocked by the upstream
+Python-extension dependency when Python bindings are disabled.
 
-Validation for this extraction: both headers exactly match the pinned donor
-after normalizing their include guards and local include path; `git diff
---check` passes. A serial C++17 `-fsyntax-only` check including both headers
-passes against this checkout's source headers and the existing LLVM 19 / donor
-generated PTO headers. This is a focused header check, not a build or execution
-of the new handoff path. No native integration or generality acceptance is
-claimed for this source-only extraction.
+Port probes and commands are retained at:
+`/home/toni/work/pypto3_sync_more/handoff-builds/phase-a-stage2/`.
+The build script compiles the current importer, SyncInput, translator, alias
+analyzer, shared macro/common/debug implementation, and probe with at most two
+workers. No old constructor is linked.
+
+The induction and carried-selector examples both retain separate periods 2 and
+3 despite unrelated carried state. GM-alias and nested if/for/while inputs pass.
+The probe also checks nontransitive overlap witnesses, cyclic root propagation,
+unchanged source IR, and one tree occurrence per translated phase. The
+partially unknown-address input retains the independent period-3 relation and
+an unknown footprint. The multi-block CFG is explicitly refused as expected
+(exit 6 in the probe). `results.log` and `source-manifest.txt` pin the outcomes
+and analyzed sources. `git diff --check` passes.
+
+No sanitizer, corpus, device or synchronization-quality campaign was run.
+Separate generality acceptance of the complete first pass remains pending.
+
+The changed-code scanner reports brace errors on expressions with multiple
+parentheses; inspected bodies all have braces. These are false positives in its
+greedy line regex (G.FMT.11-CPP), not suppressed findings. No other finding was
+reported. New port files use explicit braces and retain donor license headers.
