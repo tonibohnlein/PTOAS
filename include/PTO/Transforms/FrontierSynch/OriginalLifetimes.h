@@ -68,24 +68,45 @@ struct OriginalMayAfter {
 struct OriginalRequirement {
     StorageRelationship relationship;
     SourceMilestone source, deadline;
+    // Every original translated access incidence represented by this physical
+    // demand. Coalescing duplicate cell/kind reasons must not erase a witness.
+    // Stable shared incidence lists owned by OriginalLifetimes; requests and
+    // support inventories do not copy them for every may-origin relationship.
+    const std::vector<std::size_t>* sourceEffects = nullptr;
+    const std::vector<std::size_t>* targetEffects = nullptr;
+    PipelineType sourceEngine = PipelineType::PIPE_UNASSIGNED;
+    PipelineType targetEngine = PipelineType::PIPE_UNASSIGNED;
+    // The ordinary physical demand is for whole-operation completion. A
+    // separately qualified native access protection may later discharge only
+    // its particular access obligation.
+    enum class Scope { WholeOperation } completionScope = Scope::WholeOperation;
     // A source boundary is a subscription, not a publication or causal credit.
     bool sourceSubscribed = false;
+    bool sourceGapExecutable = false, deadlineGapExecutable = false;
     bool occurrenceKnown = false;
     bool episodeKnown = false;
 };
 struct SourceSubscription {
     SourceMilestone position;
+    // Earliest analytically sufficient source, which can be inside a
+    // multi-phase instruction and therefore not directly executable.
+    SourceMilestone sufficientPosition;
     std::size_t deadlineOperation = NoControlId, cell = 0;
     StorageRelationship::Kind kind = StorageRelationship::RAW;
     // Stable index in requirementsAt(deadlineOperation).
     std::size_t requirementIndex = 0;
+    bool executableInOriginalIR = false;
 };
 // The affected original continuation between a producer and a possible reuse.
 // Complete means every reachable original site in this interval was inspected;
 // it does not assert that the producer established a full content generation.
 struct OriginalSupportInterval {
     bool complete = false, reachesReuse = false, mayBypass = false;
-    bool mayReload = false, mayReenter = false, generationEstablished = false;
+    bool mayReload = false, mayReenter = false;
+    // An uninterrupted physical interval does not imply that its producer
+    // overwrote all previous contents. Keep that stronger generation proof
+    // separate from the interval and its outstanding older obligations.
+    bool stablePhysicalInterval = false, generationEstablished = false;
     std::size_t producer = NoControlId, reuse = NoControlId, cell = 0;
     std::vector<StorageOrigin> readers;
     std::vector<OriginalRequirement> affectedRequirements;

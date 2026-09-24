@@ -43,6 +43,11 @@ struct PhysicalOperation {
   const CompoundInstanceElement *instruction = nullptr;
   std::size_t original = NoControlId;
   std::vector<Access> accesses;
+  // Only the outer boundaries of a multi-phase original instruction are
+  // directly executable in the unchanged IR. Internal phase cuts need a
+  // separate lowering contract before they can host synchronization.
+  bool beforeExecutable = false, afterExecutable = false;
+  std::size_t enclosingAfter = NoControlId;
 };
 struct Region {
   enum Kind { Sequence, Choice, For, While, Operation } kind = Sequence;
@@ -60,6 +65,13 @@ struct PhysicalAddressRelation {
   const BaseMemInfo *memory = nullptr;
   std::vector<SmallVector<uint64_t>> addresses;
 };
+struct OriginalEffectAudit {
+  // This checks that declared explicit memory effects reached the shared
+  // translation. It does not certify unknown implicit effects, instruction
+  // legality, visibility, or full-byte overwrite coverage.
+  bool explicitEffectsMatched = true;
+  std::vector<std::size_t> unverifiedOriginalSites;
+};
 struct OriginalStructure {
   func::FuncOp function;
   Region body;
@@ -68,6 +80,7 @@ struct OriginalStructure {
   std::vector<mlir::Operation *> originalSites;
   std::vector<Value> storageRoots;
   std::vector<PhysicalAddressRelation> physicalAddresses;
+  OriginalEffectAudit effectAudit;
   std::unique_ptr<SyncTileDescriptorState> descriptors;
 };
 // Requires verified original IR. Failure leaves the caller's result unchanged.

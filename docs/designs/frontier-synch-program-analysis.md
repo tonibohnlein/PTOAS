@@ -75,6 +75,35 @@ yet establish D2/D4 recurrence frontiers.
 interpretation is exact. The constructor must treat Unknown as an unresolved
 obligation.
 
+The follow-up retains all translated source and target effect incidences through
+shared lists in a coalesced demand and records its two engines and whole-operation completion
+scope. Guarded reader frontiers can be expanded to original before/after
+payload cuts, but each candidate separately records guard availability and
+whether that cut is executable in the unchanged IR. Only the outer boundaries
+of a multi-phase source operation are presently executable. When its earliest
+sufficient phase boundary is internal, the source index subscribes the first
+executable boundary after that whole operation and retains the earlier
+analytical position so construction can account for the broadened prefix. The selected
+command-word position and source snapshot remain Phase B facts.
+
+`firstMayUse` and `lastMayUse` now reject starts/stops outside the requested
+owner and return Unknown when traversal escapes that owner, retaining any may
+accesses found before the escape. An uninterrupted producer-to-reuse physical
+interval is recorded separately from full-generation establishment. No native
+translated write currently has full-byte coverage evidence, so such an interval
+does not silently kill older writers or qualify a generation-specific release.
+The FrontierSynch importer also checks that each declared explicit memory effect of
+a translated instruction is present among its shared phase effects. Missing
+interfaces, unmapped resources, and modeled macro signatures remain unverified.
+Passing this check is necessary, not sufficient, for the draft's full target
+contract: implicit effects, instruction legality, synchronization primitives,
+visibility, and invocation assumptions still need qualified profile evidence.
+The original-value query also follows pure SSA dependencies of branch/loop
+conditions and translated payload addresses to producer phases. It indexes a typed prerequisite at
+the control site and subscribes the producer's executable source boundary.
+Block arguments and unmodeled effectful intermediates retain an unresolved
+incoming case. No indexed typed prerequisite is treated as already available.
+
 Each subscribed source now identifies its exact deadline requirement by index.
 The requirement builder coalesces duplicate incidences of one physical cell
 and hazard kind at a target, while retaining distinct cells, kinds and possible
@@ -113,6 +142,6 @@ fact into exact participation or selected completion.
 - Add finite return/consequence and compatibility indexes only when the first
   constructor has a concrete consumer; keep their source positions subscribed
   before traversal.
-- Validate a linked handoff mode and compare the query answers against an
+- Validate a linked `frontier-synch` mode and compare the query answers against an
   independent fixture; focused source probes alone do not establish full
   first-pass generality or construction service.

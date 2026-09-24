@@ -13,6 +13,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <tuple>
 
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -105,6 +106,8 @@ struct OriginalLifetimes::Impl {
         std::vector<bool> noFullWriter;
     };
     std::vector<CellInfo> cells;
+    using EffectKey = std::tuple<std::size_t, std::size_t, bool>;
+    std::map<EffectKey, std::vector<std::size_t>> effectsByRole;
     std::vector<std::vector<OriginalRequirement>> byDeadline;
     std::vector<std::vector<SourceSubscription>> bySource;
     mutable std::map<std::size_t, std::vector<bool>> ownerMembers;
@@ -132,6 +135,17 @@ struct OriginalLifetimes::Impl {
             }
         }
         cells.resize(value.cells.size());
+        for (std::size_t operation = 0; operation < value.operations.size(); ++operation) {
+            for (std::size_t incidence = 0; incidence < value.operations[operation].accesses.size(); ++incidence) {
+                const auto& effect = value.operations[operation].accesses[incidence];
+                if (effect.read) {
+                    effectsByRole[{operation, effect.cell, false}].push_back(incidence);
+                }
+                if (effect.write) {
+                    effectsByRole[{operation, effect.cell, true}].push_back(incidence);
+                }
+            }
+        }
         for (std::size_t cell = 0; cell < cells.size(); ++cell) {
             auto& info = cells[cell];
             info.accessAt.resize(graph.sites.size());
@@ -256,34 +270,53 @@ struct OriginalLifetimes::Impl {
             if (!reachable[target]) {
                 continue;
             }
-            std::set<std::pair<std::size_t, StorageRelationship::Kind>> emitted;
+            std::set<std::pair<std::size_t, StorageRelationship::Kind>> demands;
             for (const auto& access : original.operations[target].accesses) {
-                const auto& info = cells[access.cell];
-                auto append = [&](StorageRelationship::Kind kind, const Matrix& matrix) {
-                    if (!emitted.emplace(access.cell, kind).second) {
-                        return;
-                    }
+                if (access.read) {
+                    demands.emplace(access.cell, StorageRelationship::RAW);
+                }
+                if (access.write) {
+                    demands.emplace(access.cell, StorageRelationship::WAR);
+                    demands.emplace(access.cell, StorageRelationship::WAW);
+                }
+            }
+            for (const auto& key : demands) {
+                const auto [cell, kind] = key;
+                const auto& info = cells[cell];
+                const bool sourceWrites = kind != StorageRelationship::WAR;
+                const bool targetWrites = kind != StorageRelationship::RAW;
+                const auto& matrix = kind == StorageRelationship::WAR ? info.previousReaders : info.previousWriters;
+                const auto& targetEffects = effectsByRole.at({target, cell, targetWrites});
                     for (const auto& source : originsAt(matrix, info, target)) {
                         OriginalRequirement request;
-                        request.relationship = {kind, access.cell, source, {target, target}};
+                        request.relationship = {kind, cell, source, {target, target}};
                         request.source = {source.operation, SourceMilestone::After};
                         request.deadline = {target, SourceMilestone::Before};
-                        request.sourceSubscribed = true;
+                        request.sourceEffects = &effectsByRole.at({source.operation, cell, sourceWrites});
+                        request.targetEffects = &targetEffects;
+                        request.sourceEngine = original.operations[source.operation].instruction->kPipeValue;
+                        request.targetEngine = original.operations[target].instruction->kPipeValue;
+                        request.sourceGapExecutable = original.operations[source.operation].afterExecutable;
+                        request.deadlineGapExecutable = original.operations[target].beforeExecutable;
                         // A marginal origin is not an occurrence or episode certificate.
                         const auto index = byDeadline[target].size();
-                        bySource[source.operation].push_back(
-                            {request.source, target, access.cell, kind, index});
+                        const auto executableSource = original.operations[source.operation].enclosingAfter;
+                        const bool validSource = executableSource < original.operations.size();
+                        request.sourceSubscribed = validSource;
+                        if (validSource) {
+                            SourceSubscription subscription;
+                            subscription.position = {executableSource, SourceMilestone::After};
+                            subscription.sufficientPosition = request.source;
+                            subscription.deadlineOperation = target;
+                            subscription.cell = cell;
+                            subscription.kind = kind;
+                            subscription.requirementIndex = index;
+                            subscription.executableInOriginalIR = true;
+                            bySource[executableSource].push_back(std::move(subscription));
+                        }
                         byDeadline[target].push_back(request);
                         ++work.requirements;
                     }
-                };
-                if (access.read) {
-                    append(StorageRelationship::RAW, info.previousWriters);
-                }
-                if (access.write) {
-                    append(StorageRelationship::WAR, info.previousReaders);
-                    append(StorageRelationship::WAW, info.previousWriters);
-                }
             }
         }
     }
@@ -319,18 +352,34 @@ struct OriginalLifetimes::Impl {
             result.reason = "unresolved original owner or cell";
             return result;
         }
+        const auto owner = query.owner == NoControlId ? &original.body : ownerRegions.at(query.owner);
+        auto membership = ownerMembers.find(query.owner);
+        if (membership == ownerMembers.end()) {
+            std::vector<std::size_t> operations;
+            collect(*owner, operations);
+            std::vector<bool> members(original.operations.size());
+            for (auto operation : operations) {
+                members[operation] = true;
+            }
+            membership = ownerMembers.emplace(query.owner, std::move(members)).first;
+        }
+        const auto& member = membership->second;
         if (query.starts.empty() || (!query.read && !query.write)) {
             result.reason = "missing continuation start or access class";
             return result;
         }
         for (auto site : query.starts) {
-            if (site >= graph.sites.size() || !reachable[site]) {
+            const bool invalidSite = site >= graph.sites.size() || !reachable[site];
+            const bool outsideOwner = site < original.operations.size() && !member[site];
+            if (invalidSite || outsideOwner) {
                 result.reason = "invalid original interval start";
                 return result;
             }
         }
         for (auto site : query.stops) {
-            if (site >= graph.sites.size()) {
+            const bool invalidSite = site >= graph.sites.size();
+            const bool outsideOwner = site < original.operations.size() && !member[site];
+            if (invalidSite || outsideOwner) {
                 result.reason = "invalid original interval stop";
                 return result;
             }
@@ -338,6 +387,7 @@ struct OriginalLifetimes::Impl {
         const std::set<std::size_t> stops(query.stops.begin(), query.stops.end());
         std::vector<bool> seen(graph.sites.size());
         std::vector<std::size_t> pending = query.starts;
+        bool leftOwner = false;
         while (!pending.empty()) {
             const auto site = pending.back();
             pending.pop_back();
@@ -346,6 +396,12 @@ struct OriginalLifetimes::Impl {
             }
             seen[site] = true;
             ++work.frontierSites;
+            const bool outsideOwner = site < original.operations.size() && !member[site];
+            if (outsideOwner) {
+                leftOwner = true;
+                result.reachesBoundary = true;
+                continue;
+            }
             if (stops.count(site) && !query.includeStops) {
                 result.reachesBoundary = true;
                 continue;
@@ -367,7 +423,11 @@ struct OriginalLifetimes::Impl {
             pending.insert(pending.end(), next.begin(), next.end());
         }
         result.status =
-            result.accesses.empty() ? PhysicalUseFrontier::Status::NoHit : PhysicalUseFrontier::Status::Present;
+            leftOwner ? PhysicalUseFrontier::Status::Unknown :
+            (result.accesses.empty() ? PhysicalUseFrontier::Status::NoHit : PhysicalUseFrontier::Status::Present);
+        if (leftOwner) {
+            result.reason = "original use interval leaves its qualified owner";
+        }
         std::sort(result.accesses.begin(), result.accesses.end(), [](const auto& a, const auto& b) {
             return a.site < b.site;
         });
@@ -601,8 +661,10 @@ OriginalSupportInterval OriginalLifetimes::supportBetween(
         }
         incoming.insert(incoming.end(), graph.sites[site].successors.begin(), graph.sites[site].successors.end());
     }
-    result.generationEstablished = impl->cells[cell].accessAt[producer].definiteWrite && !result.mayReload &&
-                                   !result.mayReenter && !result.mayBypass && !bypassesProducer[reuse];
+    result.stablePhysicalInterval = !result.mayReload && !result.mayReenter &&
+                                    !result.mayBypass && !bypassesProducer[reuse];
+    result.generationEstablished = result.stablePhysicalInterval &&
+                                   impl->cells[cell].accessAt[producer].definiteWrite;
     return result;
 }
 OriginalAccessSummary OriginalLifetimes::all(std::size_t owner, std::size_t cell) const

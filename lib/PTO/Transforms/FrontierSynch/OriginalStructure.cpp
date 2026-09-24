@@ -11,7 +11,9 @@
 #include "PTO/Transforms/FrontierSynch/OriginalStructure.h"
 #include "PTO/Transforms/FrontierSynch/StorageWitnesses.h"
 #include "StorageOrigins.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include <functional>
+#include <set>
 
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -32,6 +34,15 @@ LogicalResult importControl(func::FuncOp function, const SyncInput &input,
   for (const auto *phase : input.instructions()) {
     operationIds[phase->elementOp].push_back(result.operations.size());
     result.operations.push_back({phase, originalAnchors.lookup(phase->elementOp), {}});
+  }
+  for (const auto &[source, phases] : operationIds) {
+    if (!phases.empty()) {
+      result.operations[phases.front()].beforeExecutable = true;
+      result.operations[phases.back()].afterExecutable = true;
+      for (auto phase : phases) {
+        result.operations[phase].enclosingAfter = phases.back();
+      }
+    }
   }
   std::vector<bool> represented(result.operations.size());
   bool invalidControl = false;
@@ -258,6 +269,91 @@ void importStorage(func::FuncOp function, const SyncInput &input,
     return input.memory().MemAlias(memories[a].get(), memories[b].get());
   });
 }
+void auditExplicitEffects(const SyncInput &input, OriginalStructure &result) {
+  DenseMap<mlir::Operation *, SmallVector<const CompoundInstanceElement *>> phases;
+  DenseMap<mlir::Operation *, std::size_t> originalIds;
+  for (auto [id, operation] : llvm::enumerate(result.originalSites)) {
+    originalIds[operation] = id;
+  }
+  for (const auto *phase : input.instructions()) {
+    phases[phase->elementOp].push_back(phase);
+  }
+  for (const auto &[operation, translated] : phases) {
+    bool matched = true;
+    llvm::SmallPtrSet<const BaseMemInfo *, 8> representedReads, representedWrites;
+    for (const auto *phase : translated) {
+      representedReads.insert(phase->useVec.begin(), phase->useVec.end());
+      representedWrites.insert(phase->defVec.begin(), phase->defVec.end());
+    }
+    const bool modeledMacro = llvm::any_of(translated, [](const auto *phase) {
+      return phase->macroOpInstanceId >= 0;
+    });
+    auto interface = dyn_cast<MemoryEffectOpInterface>(operation);
+    if (!interface || modeledMacro) {
+      matched = false;
+    } else {
+      SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 4> effects;
+      interface.getEffects(effects);
+      for (const auto &effect : effects) {
+        const bool read = isa<MemoryEffects::Read>(effect.getEffect());
+        const bool write = isa<MemoryEffects::Write>(effect.getEffect());
+        if (!read && !write) {
+          matched = false;
+          continue;
+        }
+        const auto value = effect.getValue();
+        if (!value) {
+          matched = false;
+          continue;
+        }
+        const auto mapped = input.buffers().find(value);
+        if (mapped == input.buffers().end()) {
+          matched = false;
+          continue;
+        }
+        for (const auto &memory : mapped->second) {
+          const bool represented = read ? representedReads.contains(memory.get()) :
+                                          representedWrites.contains(memory.get());
+          matched &= represented;
+        }
+      }
+    }
+    if (!matched) {
+      result.effectAudit.explicitEffectsMatched = false;
+      result.effectAudit.unverifiedOriginalSites.push_back(originalIds.lookup(operation));
+    }
+  }
+  for (auto [id, operation] : llvm::enumerate(result.originalSites)) {
+    const bool notLeafUntranslated = phases.count(operation) || operation->getNumRegions() != 0;
+    if (notLeafUntranslated) {
+      continue;
+    }
+    auto interface = dyn_cast<MemoryEffectOpInterface>(operation);
+    if (!interface) {
+      if (!isMemoryEffectFree(operation)) {
+        result.effectAudit.explicitEffectsMatched = false;
+        result.effectAudit.unverifiedOriginalSites.push_back(id);
+      }
+      continue;
+    }
+    SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 4> effects;
+    interface.getEffects(effects);
+    const bool omitted = llvm::any_of(effects, [&](const auto &effect) {
+      const bool dataEffect = isa<MemoryEffects::Read>(effect.getEffect()) ||
+                              isa<MemoryEffects::Write>(effect.getEffect());
+      return dataEffect && effect.getValue() && input.buffers().contains(effect.getValue());
+    });
+    if (omitted) {
+      result.effectAudit.explicitEffectsMatched = false;
+      result.effectAudit.unverifiedOriginalSites.push_back(id);
+    }
+  }
+  llvm::sort(result.effectAudit.unverifiedOriginalSites);
+  result.effectAudit.unverifiedOriginalSites.erase(
+      std::unique(result.effectAudit.unverifiedOriginalSites.begin(),
+                  result.effectAudit.unverifiedOriginalSites.end()),
+      result.effectAudit.unverifiedOriginalSites.end());
+}
 } // namespace
 
 LogicalResult importOriginalStructure(func::FuncOp function, const SyncInput &input,
@@ -270,6 +366,7 @@ LogicalResult importOriginalStructure(func::FuncOp function, const SyncInput &in
   }
   candidate.descriptors = std::make_unique<SyncTileDescriptorState>(function);
   importStorage(function, input, scalarFacts, candidate);
+  auditExplicitEffects(input, candidate);
   result = std::move(candidate);
   return success();
 }

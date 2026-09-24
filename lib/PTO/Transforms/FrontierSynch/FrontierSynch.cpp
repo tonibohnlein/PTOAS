@@ -23,6 +23,7 @@ LogicalResult run(func::FuncOp function, const SyncInput& input)
         return function.emitError("frontier-synch: original lifetime analysis failed: ") << analysis.reason();
     }
     std::size_t dueRequirements = 0, decodedReaders = 0, unresolved = 0;
+    std::size_t typedRequirements = 0;
     bool sampled = false;
     for (std::size_t site = 0; site < analysis.structure().operations.size(); ++site) {
         const auto& requests = analysis.requirementsAt(site);
@@ -37,12 +38,19 @@ LogicalResult run(func::FuncOp function, const SyncInput& input)
             sampled = true;
         }
     }
+    for (std::size_t site = 0; site < analysis.structure().originalSites.size(); ++site) {
+        typedRequirements += analysis.typedRequirementsAt(site).size();
+    }
     return function.emitError("frontier-synch: imported ")
            << input.instructions().size() << " instruction phases through InsertSync; analyzed "
            << analysis.structure().cells.size() << " storage cells, " << decodedReaders
            << " structural reader frontiers in one sampled request, " << unresolved
            << " sampled request with unresolved premises; indexed " << dueRequirements
-           << " original storage requirements and " << analysis.lifetimes().stats().accessIncidences
-           << " physical access incidences; construction is not implemented yet";
+           << " original storage requirements, " << typedRequirements
+           << " control-value prerequisites, and " << analysis.lifetimes().stats().accessIncidences
+           << " physical access incidences; "
+           << analysis.structure().effectAudit.unverifiedOriginalSites.size()
+           << " original instruction signatures lack explicit-effect matching; "
+           << "construction is not implemented yet";
 }
 } // namespace mlir::pto::frontiersynch

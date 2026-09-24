@@ -12,7 +12,9 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <set>
 #include <tuple>
+#include "llvm/ADT/DenseSet.h"
 
 namespace mlir::pto::frontiersynch {
 namespace {
@@ -72,6 +74,8 @@ struct ProgramAnalysis::Impl {
   using AlternativeKey = std::tuple<std::size_t, std::size_t, StorageRelationship::Kind>;
   std::map<AlternativeKey, std::vector<StorageOrigin>> alternatives;
   std::map<std::pair<unsigned, unsigned>, std::vector<OriginalRequirementId>> directions;
+  std::vector<std::vector<TypedOriginalRequirement>> typedByDeadline;
+  std::vector<std::vector<std::pair<std::size_t, std::size_t>>> typedBySource;
   std::map<std::tuple<std::size_t, std::size_t, std::size_t>, FixedVisitCorrespondence> fixedVisits;
   std::map<std::pair<std::size_t, std::size_t>, DecodedRequirement> cache;
   std::map<std::pair<std::size_t, std::size_t>, InterpretedRequirement> interpretations;
@@ -80,7 +84,8 @@ struct ProgramAnalysis::Impl {
   std::map<std::tuple<std::size_t, std::size_t, unsigned>, std::vector<StorageOrigin>> readerUses;
   explicit Impl(const OriginalStructure &original)
       : readers(original), owners(original.operations.size()),
-        banks(original.physicalAddresses.size()) {
+        banks(original.physicalAddresses.size()),
+        typedByDeadline(original.originalSites.size()), typedBySource(original.operations.size()) {
     std::vector<std::size_t> path;
     indexOwners(original.body, path, owners);
   }
@@ -104,6 +109,101 @@ ProgramAnalysis::ProgramAnalysis(const SyncInput &source, OriginalStructure stru
         const auto to = unsigned(original.operations[target].instruction->kPipeValue);
         impl->directions[{from, to}].push_back({target, index});
       }
+    }
+  }
+  DenseMap<mlir::Operation *, SmallVector<std::size_t>> phases;
+  for (std::size_t phase = 0; phase < original.operations.size(); ++phase) {
+    phases[original.operations[phase].instruction->elementOp].push_back(phase);
+  }
+  DenseMap<Value, std::set<std::tuple<std::size_t, unsigned, std::size_t>>> typedSeen;
+  auto collectTyped = [&](std::size_t target, Value required,
+                          TypedOriginalRequirement::Cause cause) {
+    llvm::DenseSet<Value> seen;
+    std::set<std::size_t> emitted;
+    SmallVector<Value> pending{required};
+    bool incomingOrUnknown = false;
+    while (!pending.empty()) {
+      const auto value = pending.pop_back_val();
+      if (!value || !seen.insert(value).second) {
+        continue;
+      }
+      auto *producer = value.getDefiningOp();
+      if (!producer) {
+        incomingOrUnknown = true;
+        continue;
+      }
+      const auto found = phases.find(producer);
+      if (found != phases.end()) {
+        for (auto phase : found->second) {
+          if (!emitted.insert(phase).second) {
+            continue;
+          }
+          if (!typedSeen[required].emplace(target, unsigned(cause), phase).second) {
+            continue;
+          }
+          TypedOriginalRequirement request;
+          request.cause = cause;
+          request.source = {phase, SourceMilestone::After};
+          request.deadlineOriginalSite = target;
+          request.requiredValue = required;
+          request.sourceEngine = original.operations[phase].instruction->kPipeValue;
+          request.sourceGapExecutable = original.operations[phase].afterExecutable;
+          const auto index = impl->typedByDeadline[target].size();
+          impl->typedByDeadline[target].push_back(request);
+          const auto executableSource = original.operations[phase].enclosingAfter;
+          if (executableSource < impl->typedBySource.size()) {
+            impl->typedBySource[executableSource].push_back({target, index});
+          }
+        }
+        continue;
+      }
+      if (!isMemoryEffectFree(producer)) {
+        incomingOrUnknown = true;
+      }
+      pending.append(producer->operand_begin(), producer->operand_end());
+    }
+    if (incomingOrUnknown) {
+      if (!typedSeen[required].emplace(target, unsigned(cause), NoControlId).second) {
+        return;
+      }
+      TypedOriginalRequirement request;
+      request.cause = cause;
+      request.deadlineOriginalSite = target;
+      request.requiredValue = required;
+      request.incomingOrUnknownSource = true;
+      impl->typedByDeadline[target].push_back(request);
+    }
+  };
+  for (auto [site, operation] : llvm::enumerate(original.originalSites)) {
+    if (auto choice = dyn_cast<scf::IfOp>(operation)) {
+      collectTyped(site, choice.getCondition(), TypedOriginalRequirement::Cause::BranchCondition);
+    } else if (auto loop = dyn_cast<scf::ForOp>(operation)) {
+      for (auto bound : {loop.getLowerBound(), loop.getUpperBound(), loop.getStep()}) {
+        collectTyped(site, bound, TypedOriginalRequirement::Cause::LoopBound);
+      }
+    } else if (auto condition = dyn_cast<scf::ConditionOp>(operation)) {
+      collectTyped(site, condition.getCondition(), TypedOriginalRequirement::Cause::WhileCondition);
+    }
+  }
+  for (const auto &phase : original.operations) {
+    llvm::DenseSet<Value> seenAddresses;
+    SmallVector<Value> addresses;
+    auto collectAddresses = [&](ArrayRef<const BaseMemInfo *> memories) {
+      for (const auto *memory : memories) {
+        if (!memory || !memory->rootBuffer) {
+          continue;
+        }
+        if (auto alloc = memory->rootBuffer.getDefiningOp<AllocTileOp>()) {
+          if (alloc.getAddr() && seenAddresses.insert(alloc.getAddr()).second) {
+            addresses.push_back(alloc.getAddr());
+          }
+        }
+      }
+    };
+    collectAddresses(phase.instruction->defVec);
+    collectAddresses(phase.instruction->useVec);
+    for (auto address : addresses) {
+      collectTyped(phase.original, address, TypedOriginalRequirement::Cause::Address);
     }
   }
 }
@@ -137,6 +237,16 @@ const std::vector<OriginalRequirementId> &ProgramAnalysis::requirementsFromTo(
   static const std::vector<OriginalRequirementId> empty;
   const auto found = impl->directions.find({unsigned(source), unsigned(target)});
   return found == impl->directions.end() ? empty : found->second;
+}
+const std::vector<TypedOriginalRequirement> &ProgramAnalysis::typedRequirementsAt(
+    std::size_t originalSite) const {
+  static const std::vector<TypedOriginalRequirement> empty;
+  return originalSite < impl->typedByDeadline.size() ? impl->typedByDeadline[originalSite] : empty;
+}
+const std::vector<std::pair<std::size_t, std::size_t>> &ProgramAnalysis::typedSubscriptionsAt(
+    std::size_t sourceOperation) const {
+  static const std::vector<std::pair<std::size_t, std::size_t>> empty;
+  return sourceOperation < impl->typedBySource.size() ? impl->typedBySource[sourceOperation] : empty;
 }
 const DecodedRequirement &ProgramAnalysis::decodeAt(std::size_t target, std::size_t index) const {
   const auto &requirements = storage.requirementsAt(target);
@@ -369,6 +479,10 @@ OriginalBoundaryResult ProgramAnalysis::boundary(const DecodedRequirement &requi
   result.nonempty = readers.nonempty;
   result.frontier = first ? readers.first : readers.last;
   result.guardsAvailableAtReadSites = readers.guardsAvailableAtReadSites;
+  if (!readers.guardsAvailableAtReadSites) {
+    result.reason = "reader participation is unavailable at an original read site";
+    return result;
+  }
   if (!requirement.requirement.episodeKnown || !requirement.requirement.occurrenceKnown) {
     result.reason = "structural reader frontier lacks a qualified episode and occurrence interval";
     return result;
@@ -462,6 +576,24 @@ OriginalBoundaryResult ProgramAnalysis::qualifiedBoundary(const InterpretedRequi
   qualified.requirement.occurrenceKnown = true;
   qualified.requirement.episodeKnown = true;
   return boundary(qualified, first);
+}
+std::vector<OriginalEndpointCandidate> ProgramAnalysis::endpointCandidates(
+    const OriginalBoundaryResult &boundary, SourceMilestone::Side side) const {
+  std::vector<OriginalEndpointCandidate> result;
+  if (boundary.status != OriginalBoundaryResult::Status::Exact) {
+    return result;
+  }
+  for (const auto &[operation, guard] : impl->readers.guardedAccesses(boundary.frontier)) {
+    const bool invalidEndpoint = operation >= original.operations.size() || guard == 0;
+    if (invalidEndpoint) {
+      return {};
+    }
+    const auto &use = original.operations[operation];
+    const bool executable = side == SourceMilestone::Before ?
+        use.beforeExecutable : use.afterExecutable;
+    result.push_back({{operation, side}, guard, guardAvailableAt(guard, operation), executable});
+  }
+  return result;
 }
 ParticipationExpression ProgramAnalysis::predicate(std::size_t id) const { return impl->readers.predicate(id); }
 GuardedReadFrontier ProgramAnalysis::readerFrontier(std::size_t id) const { return impl->readers.frontier(id); }

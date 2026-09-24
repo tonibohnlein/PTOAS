@@ -35,8 +35,26 @@ struct OriginalBoundaryResult {
   const std::vector<StorageOrigin> *mayAccesses = nullptr;
   std::string reason;
 };
+struct OriginalEndpointCandidate {
+  SourceMilestone position;
+  std::size_t predicate = 0;
+  bool guardAvailableAtOperation = false;
+  bool executableInOriginalIR = false;
+};
 struct OriginalRequirementId {
   std::size_t deadline = NoControlId, index = 0;
+};
+struct TypedOriginalRequirement {
+  enum class Cause { BranchCondition, LoopBound, WhileCondition, Address } cause = Cause::BranchCondition;
+  SourceMilestone source;
+  std::size_t deadlineOriginalSite = NoControlId;
+  Value requiredValue;
+  PipelineType sourceEngine = PipelineType::PIPE_UNASSIGNED;
+  bool incomingOrUnknownSource = false;
+  bool sourceGapExecutable = false;
+  // The original SSA dependency is a requirement, not proof that the source
+  // completion is natively available at this dynamic control occurrence.
+  bool occurrenceQualified = false;
 };
 struct OriginalAllQuery {
   std::size_t owner = NoControlId, cell = 0;
@@ -101,6 +119,9 @@ public:
   const std::vector<OriginalRequirement> &requirementsAt(std::size_t operation) const;
   const std::vector<OriginalRequirementId> &requirementsFromTo(PipelineType source,
                                                                PipelineType target) const;
+  const std::vector<TypedOriginalRequirement> &typedRequirementsAt(std::size_t originalSite) const;
+  const std::vector<std::pair<std::size_t, std::size_t>> &typedSubscriptionsAt(
+      std::size_t sourceOperation) const;
   // Decode only an applicable indexed request. The immutable source positions
   // were subscribed before construction; decoding need not precede traversal.
   const DecodedRequirement &decodeAt(std::size_t operation, std::size_t index) const;
@@ -121,6 +142,10 @@ public:
   OriginalBoundaryResult qualifiedBoundary(const InterpretedRequirement &requirement,
                                            const OriginalSupportInterval &support,
                                            bool first) const;
+  // A qualified original frontier expands to guarded legal payload cuts.
+  // Selected-word positions and their causal source snapshots belong to Phase B.
+  std::vector<OriginalEndpointCandidate> endpointCandidates(const OriginalBoundaryResult &boundary,
+                                                            SourceMilestone::Side side) const;
   ParticipationExpression predicate(std::size_t id) const;
   GuardedReadFrontier readerFrontier(std::size_t id) const;
   bool guardAvailableAt(std::size_t predicateId, std::size_t operation) const;

@@ -1,15 +1,40 @@
-# FrontierSynch first-pass port
+# FrontierSynch status
 
-Branch: `codex/handoff-foundation`.
-Committed foundation: `e7537ad90`; scalar/descriptor source port: `2516cdd4d`;
-physical/control source port: `38c2f995c`; occurrence/reader source port:
-`ff2224d18`; lifetime/source-subscription port: `82c89199f`.
+
+Branch: `codex/handoff-foundation`. FrontierSynch is selected with
+`pto-insert-sync{algorithm=frontier-synch}`; `algorithm=existing` remains
+available.
+
+Status: Phase A has a usable query boundary for a first constructor draft, but
+is not complete against the draft. Full-write and implicit-effect proofs,
+general D1/D2/D4 correspondence, and executable participation remain open.
+The seven foundation commits introduce FrontierSynch under its current name.
+
 Base: upstream `master`, `f5eff3ee249697f6157088f649c6434fcc9d7c5b`.
 Donor: `371fdb344d2783b92d6c39424c507b2ce082e08c`.
 Draft checked: paper repository `dc5c309`, revision 0.41 representation pass,
 Sections 3.1–3.5 and `REVISION_0_41_REPRESENTATION.md`.
 
 ## Current increment: coherent Phase A query boundary
+
+The follow-up review of the five Phase A commits found five remaining items.
+The current checkpoint closes the owner escape in `firstMayUse`/`lastMayUse`, retains
+every source/target translated-effect witness when coalescing a physical demand,
+and exposes guarded original endpoint candidates with their executable-cut
+qualification. A multi-phase original instruction offers only its outer cuts
+until lowering supplies an internal insertion contract; its first legal later
+source is subscribed separately from the analytically sufficient phase cut.
+Support intervals now distinguish an uninterrupted physical interval from a full-content generation.
+These records grant no selected completion.
+An import audit now compares declared explicit memory effects with the shared
+translated phase lists and reports unverified instruction signatures. It does
+not certify implicit effects, target legality, or definite write coverage;
+those remain separate lowering/profile obligations.
+Phase A now also indexes original SSA producers of branch conditions, counted
+loop bounds, while conditions, and translated payload addresses as typed
+value-availability prerequisites. Pure scalar dependency chains are followed to translated phases, while incoming
+values and unmodeled effectful producers remain explicit unresolved cases.
+These requests do not claim native availability or selected completion.
 
 `ProgramAnalysis` owns the original structure and its provenance, occurrence and
 guarded-reader services. Requirements and source subscriptions exist before
@@ -66,11 +91,11 @@ the Stage 3 reader/occurrence facts, and now indexes original storage demands:
 
 The analysis is read-only. Records borrow original IR and instruction pointers;
 those owners must outlive the result. Unsupported control reports failure and
-leaves the caller's output unchanged. The handoff mode still reports that
+leaves the caller's output unchanged. The `frontier-synch` mode still reports that
 construction is not implemented after completing this analysis.
 
 `algorithm=existing` retains the upstream InsertSync construction path and the
-same shared instruction input. This increment changes handoff analysis only.
+same shared instruction input. The new mode currently changes analysis only.
 
 [Port sequence, donor crosswalk, and gate inventory](docs/designs/frontier-synch-first-pass-port.md).
 
@@ -85,15 +110,18 @@ subscriptions identify original positions, not ordered command-word gaps or
 source snapshots under selected waits. The shared translator remains responsible
 for effect completeness.
 
-Next: qualify executable endpoint gaps and full-write coverage where a shared
-target/effect proof exists, then have the first constructor draft consume these
-indexed requests while evaluating selected causal credit separately. D1/D2/D4
-general occurrence composition and return/compatibility precision remain
-explicit Unknown cases; do not widen them by assuming a recipe matched.
+Next: add a shared lowering/effect certificate for definite full-cell writes and
+complete implicit effects; bounding geometry and a generic MLIR Write effect do
+not prove either. Extend D1/D2/D4 correspondence and executable participation
+from that evidence, then have the first constructor draft consume these indexed
+requests while evaluating selected causal credit separately. Control-value
+prerequisites are indexed but lack qualified native-availability and dynamic
+occurrence matching; return/compatibility precision also remains open. Do not
+widen these facts by assuming a recipe matched.
 
 ## Validation
 
-Current handoff/import and translator sources compile in a focused C++17 probe
+Current FrontierSynch importer and translator sources compile in a focused C++17 probe
 with the project's warning flags. The probe links existing LLVM 19 and generated
 PTO dialect dependencies from the donor build; this is not a fresh full compiler
 build. The earlier full CMake configuration remains blocked by the upstream
@@ -117,7 +145,7 @@ and analyzed sources. `git diff --check` passes.
 
 The Stage 3 focused probe passes optional sibling readers, a late unavailable
 predicate, exact fixed visit, nested child interval versus unknown whole-loop
-participation, and independent noninjective/exact bank relations. The handoff
+participation, and independent noninjective/exact bank relations. The FrontierSynch
 entry reports analysis counts and still refuses construction. Focused probe
 source/build logs are retained at the Stage 3 artifact path.
 
@@ -141,18 +169,27 @@ The current D2 extension checks the same-role period-three predecessor domain
 and its first-three-use incoming case. A focused mixed-incidence mutation adds
 a fixed write to the same cell and confirms the periodic interpretation is
 withheld. Source subscriptions are checked against exact requirement indices.
-`Handoff.cpp` passes focused C++17
-syntax compilation with the project's LLVM 19 flags. The changed-code scanner
-and `git diff --check` pass. No normal selected constructor exists yet, so this
+`FrontierSynch.cpp` and the `PTOInsertSync.cpp` dispatch compile with the
+project's LLVM 19 flags. The changed-code scanner passed for the Phase A
+checkpoint, and `git diff --check` passes for the rename. No normal selected constructor exists yet, so this
 does not establish synchronization-plan quality or full supported-input service.
 
 No sanitizer, corpus, device or synchronization-quality campaign was run.
+The current checkpoint does not establish complete target effects, full-write
+coverage, or constructor service.
 Three read-only reviews of this increment checked architecture/generality,
 correctness, and avoidable asymptotic work. Their mixed-incidence and repeated
 scan findings were corrected; they did not validate a complete Phase A or a
 selected synchronization plan. Separate generality acceptance of the complete
 first pass remains pending.
 
-The old Stage 4 scanner false positives were removed by naming the compound
-conditions. The current changed-code scanner reports zero findings. New source
-files retain the repository license header.
+The Stage 4 scanner false positives were removed by naming compound
+conditions; its changed-code scan reported zero findings. New source files
+retain the repository license header.
+
+The FrontierSynch layout was checked with a clean serial rebuild of the
+eight-input Phase A probe and focused C++17 syntax checks of the mode dispatch.
+All eight inputs passed. The changed-code scanner reports 60 pre-existing
+unbraced-control findings in the ported sources;
+no control bodies changed during naming. No constructor or device validation was
+added for this structural checkpoint.

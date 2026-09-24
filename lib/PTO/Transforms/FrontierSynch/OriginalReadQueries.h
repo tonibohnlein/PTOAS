@@ -232,6 +232,19 @@ public:
     const auto leaf = found->second.find(operation);
     return leaf == found->second.end() ? 0 : leaf->second;
   }
+  std::vector<std::pair<std::size_t, std::size_t>> guardedAccesses(std::size_t root) {
+    if (root >= frontiers.size()) {
+      return {};
+    }
+    // Populate the shared leaf-condition map once, then retain its original
+    // operation identities and exact predicates for endpoint qualification.
+    condition(root, NoControlId);
+    const auto found = conditions.find(root);
+    if (found == conditions.end()) {
+      return {};
+    }
+    return {found->second.begin(), found->second.end()};
+  }
   ParticipationExpression predicate(std::size_t id) const {
     return id < predicates.size() ? predicates[id] : ParticipationExpression{};
   }

@@ -2,7 +2,7 @@
 
 ## Source and boundary
 
-Recipient: `codex/handoff-foundation`, foundation `e7537ad90`.
+Recipient: `codex/handoff-foundation`, foundation `dbd99c242`.
 Donor: `codex/oahs-gemm-base` at
 `371fdb344d2783b92d6c39424c507b2ce082e08c`.
 Specification checked: synchronization draft revision 0.40, paper repository
@@ -11,13 +11,13 @@ Specification checked: synchronization draft revision 0.40, paper repository
 Port existing analyses in dependency order. Preserve their implementation and
 record differences from the working draft before adapting their consumers.
 The shared `SyncInput` remains the source of instruction effects for both
-InsertSync modes. The analyses below belong to handoff Phase A.
+InsertSync modes. The analyses below belong to FrontierSynch Phase A.
 
 ## Stages
 
 1. **Scalar and descriptor facts — source port present.** Copy
    `SyncSlotMapping.h` and `SyncTileDescriptorState.h` from the donor's
-   `InsertSync` directory into `Handoff`. Only include guards and the descriptor
+   `InsertSync` directory into `FrontierSynch`. Only include guards and the descriptor
    header's local include path change. Existing type names are retained.
 2. **Physical storage and original control — ported and connected.** Extract storage origins, physical
    uses, interval partitioning and original structured owner/site identities.
@@ -69,7 +69,7 @@ acceptance. Constructor, corpus and device validation belong to later stages.
 
 ## Stage 2 extraction and draft check
 
-The handoff entry now calls `importOriginalStructure(function, input, result)`.
+The FrontierSynch entry now calls `importOriginalStructure(function, input, result)`.
 The result owns original region/cell records and descriptor facts; it borrows
 MLIR values, original operations and translated phase pointers from the unchanged
 function and `SyncInput`. A failed control import leaves the output unchanged.
@@ -78,9 +78,9 @@ function and `SyncInput`. A failed control import leaves the output unchanged.
 | --- | --- | --- |
 | `OAHS/Plan.h` | Original region, access and cell records | Extracted into `OriginalStructure.h`; no dependency on the old selected plan or target/event state. Phase records reference the shared translated instruction. |
 | `OAHS/Native.cpp`, original-region import | Sequence, choice, for/while tree and stable original owners | Every translated phase is retained, including multiple phases at one source operation. Multi-block regions are refused explicitly. |
-| `InsertSync/SyncOriginClosure.h` and `SyncOriginPropagation.h` | Structured SSA origin graph and delta fixed point | Read-only origin query; no rewrite or second translation of instruction effects. Carried/unknown geometry is conservatively widened in handoff-private copies. |
+| `InsertSync/SyncOriginClosure.h` and `SyncOriginPropagation.h` | Structured SSA origin graph and delta fixed point | Read-only origin query; no rewrite or second translation of instruction effects. Carried/unknown geometry is conservatively widened in FrontierSynch-private copies. |
 | `OAHS/Native.cpp`, physical extraction | Address-dependency slices, finite address sets, footprint grouping | Queries one selector at a time, retains its owner and addresses. No copied operation populations or selected occurrence dimension. |
-| `MemoryDependentAnalyzer::storageCoordinates` | Checked local absolute / GM root-relative interval qualification | Extracted into the handoff importer; production alias behavior is untouched. |
+| `MemoryDependentAnalyzer::storageCoordinates` | Checked local absolute / GM root-relative interval qualification | Extracted into the FrontierSynch importer; production alias behavior is untouched. |
 | `OAHS/StorageWitnesses.h::appendCanonicalStorage` | Endpoint partition and pairwise conservative overlap witnesses | Uses the original record type and size-sized cell IDs. The unused older unpartitioned builder is omitted. Braces/formatting are mechanical changes. |
 
 This implements Section 3's physical-fact/control foundation. Exact single
@@ -162,7 +162,7 @@ unported. These are
 representation limits, not hardware restrictions. Unknown results preserve the
 original access obligations.
 
-The normal handoff entry is the real consumer: it queries represented reader
+The normal FrontierSynch entry is the real consumer: it queries represented reader
 cell/engine projections and bank relations, then reports counts before its
 existing construction-unimplemented result. It does not claim that an analyzed
 frontier is already a selected protocol. Stage 4 adds source milestones and
@@ -213,7 +213,7 @@ it is not a guarded canonical frontier for arbitrary access classes. An owner
 argument identifies the original scope but does not itself prove occurrence
 matching or impose a lexical stop.
 
-The handoff entry consumes the indexed requirements and reports their
+The FrontierSynch entry consumes the indexed requirements and reports their
 population while retaining its construction-unimplemented result. A normal
 source-port probe covers two optional readers before reuse, a reload between
 them, source subscriptions, partial-write history retention, and the affected
