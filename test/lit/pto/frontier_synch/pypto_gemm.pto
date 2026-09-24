@@ -1,0 +1,120 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Source: https://github.com/Shenggan/pypto-gemm/blob/4b7fe5558996f8468f0c55189fc44092222c5085/hpgemm_step4_manual_pipeline.py
+// See README.md for specialization, memory map and validation limits.
+// HAND lines are the manual reference; the default input has no synchronization.
+// RUN: pto-frontier-analysis-test %s | FileCheck %s
+// RUN: %python %S/materialize.py %s > %t.manual.pto
+// RUN: pto-frontier-analysis-test --verify-only %t.manual.pto | FileCheck %s --check-prefix=MANUAL
+// CHECK: pypto_gemm: phases=7 cells={{[1-9][0-9]*}} bank-relations={{[1-9][0-9]*}}
+// CHECK: RAW={{[1-9][0-9]*}} WAR={{[1-9][0-9]*}} WAW={{[1-9][0-9]*}} interpreted={{[1-9][0-9]*}}
+// CHECK: unknown-occurrence={{[1-9][0-9]*}}
+// CHECK: original-ir-unchanged; construction-not-run
+// MANUAL: verified: local-sync={{[1-9][0-9]*}} cross-sync=0
+
+!amat = !pto.tile_buf<loc=mat, dtype=f16, rows=128, cols=256, v_row=128, v_col=256, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!bmat = !pto.tile_buf<loc=mat, dtype=f16, rows=256, cols=256, v_row=256, v_col=256, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!left = !pto.tile_buf<loc=left, dtype=f16, rows=128, cols=64, v_row=128, v_col=64, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+!right = !pto.tile_buf<loc=right, dtype=f16, rows=64, cols=256, v_row=64, v_col=256, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!acc = !pto.tile_buf<loc=acc, dtype=f32, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @pypto_gemm(%a: !pto.ptr<f16>, %b: !pto.ptr<f16>, %c: !pto.ptr<f32>)
+    attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %c4096 = arith.constant 4096 : index
+    %c16384 = arith.constant 16384 : index
+    %c32768 = arith.constant 32768 : index
+    %c65536 = arith.constant 65536 : index
+    %c131072 = arith.constant 131072 : index
+    %av = pto.make_tensor_view %a, shape = [%c256, %c4096], strides = [%c4096, %c1] : !pto.tensor_view<?x?xf16>
+    %bv = pto.make_tensor_view %b, shape = [%c4096, %c256], strides = [%c256, %c1] : !pto.tensor_view<?x?xf16>
+    %cv = pto.make_tensor_view %c, shape = [%c256, %c256], strides = [%c256, %c1] : !pto.tensor_view<?x?xf32>
+    %acc_addr = arith.constant 0 : i64
+    %acc = pto.alloc_tile addr = %acc_addr : !acc
+    // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_FIX>, #pto.pipe<PIPE_M>, %c1]
+    // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE1>, #pto.pipe<PIPE_MTE2>, %c0]
+    // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE1>, #pto.pipe<PIPE_MTE2>, %c1]
+    // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_MTE1>, %c0]
+    // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_MTE1>, %c1]
+    scf.for %tile = %c0 to %c2 step %c1 {
+      %row = arith.muli %tile, %c128 : index
+      %out = pto.partition_view %cv, offsets = [%row, %c0], sizes = [%c128, %c256] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<128x256xf32>
+      // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_FIX>, #pto.pipe<PIPE_M>, %c1]
+      %final_mat = scf.for %k = %c0 to %c16 step %c1 iter_args(%mat_previous = %c1) -> index {
+        %mat_next = arith.addi %mat_previous, %c1 : index
+        %slot = arith.remui %mat_next, %c2 : index
+        %column = arith.muli %k, %c256 : index
+        %al1_offset = arith.muli %slot, %c65536 : index
+        %al1_address = arith.addi %al1_offset, %c0 : index
+        %al1_i64 = arith.index_cast %al1_address : index to i64
+        %al1 = pto.alloc_tile addr = %al1_i64 : !amat
+        %bl1_offset = arith.muli %slot, %c131072 : index
+        %bl1_address = arith.addi %bl1_offset, %c131072 : index
+        %bl1_i64 = arith.index_cast %bl1_address : index to i64
+        %bl1 = pto.alloc_tile addr = %bl1_i64 : !bmat
+        // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE1>, #pto.pipe<PIPE_MTE2>, %slot]
+        %ap = pto.partition_view %av, offsets = [%row, %column], sizes = [%c128, %c256] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<128x256xf16>
+        %bp = pto.partition_view %bv, offsets = [%column, %c0], sizes = [%c256, %c256] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<256x256xf16>
+        pto.tload ins(%ap : !pto.partition_tensor_view<128x256xf16>) outs(%al1 : !amat)
+        pto.tload ins(%bp : !pto.partition_tensor_view<256x256xf16>) outs(%bl1 : !bmat)
+        // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_MTE1>, %slot]
+        // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_MTE1>, %slot]
+        %final_l0 = scf.for %kk = %c0 to %c4 step %c1 iter_args(%l0_previous = %c1) -> index {
+          %l0_next = arith.addi %l0_previous, %c1 : index
+          %side = arith.remui %l0_next, %c2 : index
+          %al0_offset = arith.muli %side, %c16384 : index
+          %al0_address = arith.addi %al0_offset, %c0 : index
+          %al0_i64 = arith.index_cast %al0_address : index to i64
+          %al0 = pto.alloc_tile addr = %al0_i64 : !left
+          %bl0_offset = arith.muli %side, %c32768 : index
+          %bl0_address = arith.addi %bl0_offset, %c0 : index
+          %bl0_i64 = arith.index_cast %bl0_address : index to i64
+          %bl0 = pto.alloc_tile addr = %bl0_i64 : !right
+          %offset = arith.muli %kk, %c64 : index
+          // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_MTE1>, %side]
+          pto.textract ins(%al1, %c0, %offset : !amat, index, index) outs(%al0 : !left)
+          pto.textract ins(%bl1, %offset, %c0 : !bmat, index, index) outs(%bl0 : !right)
+          // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE1>, #pto.pipe<PIPE_M>, %side]
+          // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE1>, #pto.pipe<PIPE_M>, %side]
+          %first_k = arith.cmpi eq, %k, %c0 : index
+          %first_kk = arith.cmpi eq, %kk, %c0 : index
+          %init = arith.andi %first_k, %first_kk : i1
+          scf.if %init {
+            pto.tmatmul ins(%al0, %bl0 : !left, !right) outs(%acc : !acc)
+          } else {
+            pto.tmatmul.acc ins(%acc, %al0, %bl0 : !acc, !left, !right) outs(%acc : !acc)
+          }
+          // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_MTE1>, %side]
+          scf.yield %side : index
+        }
+        // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE1>, #pto.pipe<PIPE_MTE2>, %slot]
+        scf.yield %slot : index
+      }
+      // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_FIX>, %c0]
+      // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_FIX>, %c0]
+      pto.tstore ins(%acc : !acc) outs(%out : !pto.partition_tensor_view<128x256xf32>)
+      // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_FIX>, #pto.pipe<PIPE_M>, %c1]
+    }
+    // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_FIX>, #pto.pipe<PIPE_M>, %c1]
+    // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE1>, #pto.pipe<PIPE_MTE2>, %c0]
+    // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE1>, #pto.pipe<PIPE_MTE2>, %c1]
+    // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_MTE1>, %c0]
+    // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_MTE1>, %c1]
+    // HAND: pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

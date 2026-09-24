@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Source: https://github.com/tile-ai/tilelang-ascend/blob/1986dd76569f321c821bb8ce85d5b5b397010d71/examples/elementwise/elementwise_add_pipeline.py
+// See README.md for specialization, memory map and validation limits.
+// HAND lines are the manual reference; the default input has no synchronization.
+// RUN: pto-frontier-analysis-test %s | FileCheck %s
+// RUN: %python %S/materialize.py %s > %t.manual.pto
+// RUN: pto-frontier-analysis-test --verify-only %t.manual.pto | FileCheck %s --check-prefix=MANUAL
+// CHECK: vector_add: phases=6 cells={{[1-9][0-9]*}} bank-relations={{[1-9][0-9]*}}
+// CHECK: RAW={{[1-9][0-9]*}} WAR={{[1-9][0-9]*}} WAW={{[1-9][0-9]*}} interpreted={{[1-9][0-9]*}}
+// CHECK: unknown-occurrence={{[1-9][0-9]*}}
+// CHECK: original-ir-unchanged; construction-not-run
+// MANUAL: verified: local-sync={{[1-9][0-9]*}} cross-sync=0
+
+!vec = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=128, v_row=16, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @vector_add(%a: !pto.ptr<f32>, %b: !pto.ptr<f32>, %c: !pto.ptr<f32>, %lane: index)
+    attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %c128 = arith.constant 128 : index
+    %c8192 = arith.constant 8192 : index
+    %c16384 = arith.constant 16384 : index
+    %c32768 = arith.constant 32768 : index
+    %av = pto.make_tensor_view %a, shape = [%c128, %c128], strides = [%c128, %c1] : !pto.tensor_view<?x?xf32>
+    %bv = pto.make_tensor_view %b, shape = [%c128, %c128], strides = [%c128, %c1] : !pto.tensor_view<?x?xf32>
+    %cv = pto.make_tensor_view %c, shape = [%c128, %c128], strides = [%c128, %c1] : !pto.tensor_view<?x?xf32>
+    %lane_row = arith.muli %lane, %c16 : index
+    %a_first_addr = arith.constant 0 : i64
+    %a_first = pto.alloc_tile addr = %a_first_addr : !vec
+    %b_first_addr = arith.constant 16384 : i64
+    %b_first = pto.alloc_tile addr = %b_first_addr : !vec
+    // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_MTE2>, %c0]
+    // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_MTE2>, %c1]
+    // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_MTE2>, %c0]
+    %ap0 = pto.partition_view %av, offsets = [%lane_row, %c0], sizes = [%c16, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+    pto.tload ins(%ap0 : !pto.partition_tensor_view<16x128xf32>) outs(%a_first : !vec)
+    %bp0 = pto.partition_view %bv, offsets = [%lane_row, %c0], sizes = [%c16, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+    pto.tload ins(%bp0 : !pto.partition_tensor_view<16x128xf32>) outs(%b_first : !vec)
+    // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, %c0]
+    scf.for %i = %c0 to %c4 step %c1 {
+      %cur = arith.remui %i, %c2 : index
+      %next = arith.addi %i, %c1 : index
+      %nxt = arith.remui %next, %c2 : index
+      %has_next = arith.cmpi slt, %next, %c4 : index
+      scf.if %has_next {
+        %next_row0 = arith.muli %next, %c32 : index
+        %next_row = arith.addi %next_row0, %lane_row : index
+        %anext_offset = arith.muli %nxt, %c8192 : index
+        %anext_address = arith.addi %anext_offset, %c0 : index
+        %anext_i64 = arith.index_cast %anext_address : index to i64
+        %anext = pto.alloc_tile addr = %anext_i64 : !vec
+        %bnext_offset = arith.muli %nxt, %c8192 : index
+        %bnext_address = arith.addi %bnext_offset, %c16384 : index
+        %bnext_i64 = arith.index_cast %bnext_address : index to i64
+        %bnext = pto.alloc_tile addr = %bnext_i64 : !vec
+        // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_MTE2>, %nxt]
+        %ap = pto.partition_view %av, offsets = [%next_row, %c0], sizes = [%c16, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+        pto.tload ins(%ap : !pto.partition_tensor_view<16x128xf32>) outs(%anext : !vec)
+        %bp = pto.partition_view %bv, offsets = [%next_row, %c0], sizes = [%c16, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+        pto.tload ins(%bp : !pto.partition_tensor_view<16x128xf32>) outs(%bnext : !vec)
+        // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, %nxt]
+      }
+      %acur_offset = arith.muli %cur, %c8192 : index
+      %acur_address = arith.addi %acur_offset, %c0 : index
+      %acur_i64 = arith.index_cast %acur_address : index to i64
+      %acur = pto.alloc_tile addr = %acur_i64 : !vec
+      %bcur_offset = arith.muli %cur, %c8192 : index
+      %bcur_address = arith.addi %bcur_offset, %c16384 : index
+      %bcur_i64 = arith.index_cast %bcur_address : index to i64
+      %bcur = pto.alloc_tile addr = %bcur_i64 : !vec
+      %ccur_offset = arith.muli %cur, %c8192 : index
+      %ccur_address = arith.addi %ccur_offset, %c32768 : index
+      %ccur_i64 = arith.index_cast %ccur_address : index to i64
+      %ccur = pto.alloc_tile addr = %ccur_i64 : !vec
+      // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, %cur]
+      pto.tadd ins(%acur, %bcur : !vec, !vec) outs(%ccur : !vec)
+      // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %cur]
+      // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %cur]
+      %row0 = arith.muli %i, %c32 : index
+      %row = arith.addi %row0, %lane_row : index
+      %out = pto.partition_view %cv, offsets = [%row, %c0], sizes = [%c16, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+      pto.tstore ins(%ccur : !vec) outs(%out : !pto.partition_tensor_view<16x128xf32>)
+      // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_MTE2>, %cur]
+    }
+    // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_MTE2>, %c0]
+    // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_MTE2>, %c1]
+    return
+  }
+}

@@ -80,3 +80,13 @@ add_llvm_executable(pto-bisheng-scheduler-test
 )
 
 target_link_libraries(pto-bisheng-scheduler-test PRIVATE PTOASBishengScheduler)
+
+add_llvm_executable(pto-frontier-analysis-test
+  pto-frontier-analysis-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-analysis-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
+)
+add_dependencies(pto-frontier-analysis-test PTOOpsIncGen PTOPassesIncGen)

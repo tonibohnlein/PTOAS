@@ -1,0 +1,215 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Source: https://github.com/tile-ai/tilelang-ascend/blob/1986dd76569f321c821bb8ce85d5b5b397010d71/examples/flash_attention/fa_opt/flash_attn_bhsd_expert_h16_d128.py
+// See README.md for specialization, memory map and validation limits.
+// HAND lines are the manual reference; the default input has no synchronization.
+// RUN: pto-frontier-analysis-test %s | FileCheck %s
+// RUN: %python %S/materialize.py %s > %t.manual.pto
+// RUN: pto-frontier-analysis-test --verify-only %t.manual.pto | FileCheck %s --check-prefix=MANUAL
+// CHECK: expert_fa_vector: phases=28 cells={{[1-9][0-9]*}} bank-relations={{[1-9][0-9]*}}
+// CHECK: RAW={{[1-9][0-9]*}} WAR={{[1-9][0-9]*}} WAW={{[1-9][0-9]*}} interpreted={{[1-9][0-9]*}}
+// CHECK: unknown-occurrence={{[1-9][0-9]*}}
+// CHECK: original-ir-unchanged; construction-not-run
+// MANUAL: verified: local-sync={{[1-9][0-9]*}} cross-sync={{[1-9][0-9]*}}
+
+!half = !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!vec = !pto.tile_buf<loc=vec, dtype=f32, rows=64, cols=128, v_row=64, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!row = !pto.tile_buf<loc=vec, dtype=f32, rows=64, cols=8, v_row=64, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @expert_fa_vector(%ws1: !pto.ptr<f16>, %ws2: !pto.ptr<f16>, %ws3: !pto.ptr<f16>,
+    %output: !pto.ptr<f16>, %lane: index, %ffts: !pto.ptr<i64>)
+    attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %c14 = arith.constant 14 : index
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %c2048 = arith.constant 2048 : index
+    %c1792 = arith.constant 1792 : index
+    %c165888 = arith.constant 165888 : index
+    %c169984 = arith.constant 169984 : index
+    %c198656 = arith.constant 198656 : index
+    // CROSS: pto.set_ffts %ffts : !pto.ptr<i64>
+    %zero = arith.constant 0.0 : f32
+    %large = arith.constant 1073741824.0 : f32
+    %scale = arith.constant 0.08838834764831845 : f32
+    %negative_scale = arith.constant -0.08838834764831845 : f32
+    %lane_row = arith.muli %lane, %c64 : index
+    %ov = pto.make_tensor_view %output, shape = [%c256, %c128], strides = [%c128, %c1] : !pto.tensor_view<?x?xf16>
+    %w1v = pto.make_tensor_view %ws1, shape = [%c1792, %c128], strides = [%c128, %c1] : !pto.tensor_view<?x?xf16>
+    %w2v = pto.make_tensor_view %ws2, shape = [%c1792, %c128], strides = [%c128, %c1] : !pto.tensor_view<?x?xf16>
+    %w3v = pto.make_tensor_view %ws3, shape = [%c1792, %c128], strides = [%c128, %c1] : !pto.tensor_view<?x?xf16>
+    %acc_o_addr = arith.constant 0 : i64
+    %acc_o = pto.alloc_tile addr = %acc_o_addr : !vec
+    %io_addr = arith.constant 32768 : i64
+    %io = pto.alloc_tile addr = %io_addr : !half
+    %s_half_addr = arith.constant 49152 : i64
+    %s_half = pto.alloc_tile addr = %s_half_addr : !half
+    %work_addr = arith.constant 65536 : i64
+    %work = pto.alloc_tile addr = %work_addr : !vec
+    %buf_addr = arith.constant 98304 : i64
+    %buf = pto.alloc_tile addr = %buf_addr : !vec
+    %scratch_addr = arith.constant 131072 : i64
+    %scratch = pto.alloc_tile addr = %scratch_addr : !vec
+    %sumexp_addr = arith.constant 163840 : i64
+    %sumexp = pto.alloc_tile addr = %sumexp_addr : !row
+    %neg0_addr = arith.constant 165888 : i64
+    %neg0 = pto.alloc_tile addr = %neg0_addr : !row
+    %neg1_addr = arith.constant 167936 : i64
+    %neg1 = pto.alloc_tile addr = %neg1_addr : !row
+    // CROSS: pto.sync.set <PIPE_MTE2>, 1 {ffts_mode = 2 : i32}
+    // CROSS: pto.sync.set <PIPE_MTE2>, 5 {ffts_mode = 2 : i32}
+    // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE2>, %c0]
+    // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_V>, %c0]
+    scf.for %task = %c0 to %c2 step %c1 {
+      pto.texpands ins(%zero : f32) outs(%acc_o : !vec)
+      // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+      pto.texpands ins(%zero : f32) outs(%sumexp : !row)
+      // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+      pto.texpands ins(%large : f32) outs(%neg0 : !row)
+      // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+      pto.texpands ins(%large : f32) outs(%neg1 : !row)
+      // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+      scf.for %batch = %c0 to %c3 step %c1 {
+        %base = arith.muli %batch, %c14 : index
+        %remaining = arith.subi %c32, %base : index
+        %count = arith.minsi %remaining, %c14 : index
+        // CROSS: pto.sync.wait <PIPE_MTE2>, 3 {ffts_mode = 2 : i32}
+        // Online softmax batch.
+        scf.for %i = %c0 to %count step %c1 {
+          %side = arith.remui %i, %c2 : index
+          %wsrow0 = arith.muli %i, %c128 : index
+          %wsrow = arith.addi %wsrow0, %lane_row : index
+          %factor_offset = arith.muli %i, %c2048 : index
+          %factor_address = arith.addi %factor_offset, %c169984 : index
+          %factor_i64 = arith.index_cast %factor_address : index to i64
+          %factor = pto.alloc_tile addr = %factor_i64 : !row
+          %sum_i_offset = arith.muli %i, %c2048 : index
+          %sum_i_address = arith.addi %sum_i_offset, %c198656 : index
+          %sum_i_i64 = arith.index_cast %sum_i_address : index to i64
+          %sum_i = pto.alloc_tile addr = %sum_i_i64 : !row
+          %previous = arith.subi %c1, %side : index
+          %negcur_offset = arith.muli %side, %c2048 : index
+          %negcur_address = arith.addi %negcur_offset, %c165888 : index
+          %negcur_i64 = arith.index_cast %negcur_address : index to i64
+          %negcur = pto.alloc_tile addr = %negcur_i64 : !row
+          %negprev_offset = arith.muli %previous, %c2048 : index
+          %negprev_address = arith.addi %negprev_offset, %c165888 : index
+          %negprev_i64 = arith.index_cast %negprev_address : index to i64
+          %negprev = pto.alloc_tile addr = %negprev_i64 : !row
+          // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE2>, %c0]
+          %pair_start = arith.cmpi eq, %side, %c0 : index
+          scf.if %pair_start {
+            // CROSS: pto.sync.wait <PIPE_MTE2>, 0 {ffts_mode = 2 : i32}
+          }
+          %inp = pto.partition_view %w1v, offsets = [%wsrow, %c0], sizes = [%c64, %c128] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x128xf16>
+          pto.tload ins(%inp : !pto.partition_tensor_view<64x128xf16>) outs(%io : !half)
+          // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, %c0]
+          // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, %c0]
+          pto.tcvt ins(%io : !half) outs(%work : !vec)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE2>, %c0]
+          pto.trowmax ins(%work, %scratch : !vec, !vec) outs(%negcur : !row)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          pto.tmuls ins(%negcur, %negative_scale : !row, f32) outs(%negcur : !row)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          pto.tmin ins(%negcur, %negprev : !row, !row) outs(%negcur : !row)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          pto.trowexpand ins(%negcur : !row) outs(%buf : !vec)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          pto.taxpy ins(%work, %scale : !vec, f32) outs(%buf : !vec)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          pto.texp ins(%buf : !vec) outs(%work : !vec)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_V>, %c0]
+          pto.tcvt ins(%work : !vec) outs(%s_half : !half)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c0]
+          // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c0]
+          %out = pto.partition_view %w2v, offsets = [%wsrow, %c0], sizes = [%c64, %c128] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x128xf16>
+          pto.tstore ins(%s_half : !half) outs(%out : !pto.partition_tensor_view<64x128xf16>)
+          // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_V>, %c0]
+          %next = arith.addi %i, %c1 : index
+          %parity = arith.remui %next, %c2 : index
+          %pair_end = arith.cmpi eq, %parity, %c0 : index
+          %batch_end = arith.cmpi eq, %next, %count : index
+          %signal = arith.ori %pair_end, %batch_end : i1
+          scf.if %signal {
+            // CROSS: pto.sync.set <PIPE_MTE3>, 2 {ffts_mode = 2 : i32}
+          }
+          pto.trowsum ins(%work, %scratch : !vec, !vec) outs(%sum_i : !row)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          pto.tsub ins(%negcur, %negprev : !row, !row) outs(%factor : !row)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+        }
+        // CROSS: pto.sync.set <PIPE_MTE2>, 1 {ffts_mode = 2 : i32}
+        // Output accumulation batch.
+        scf.for %i = %c0 to %count step %c1 {
+          %side = arith.remui %i, %c2 : index
+          %wsrow0 = arith.muli %i, %c128 : index
+          %wsrow = arith.addi %wsrow0, %lane_row : index
+          %factor_offset = arith.muli %i, %c2048 : index
+          %factor_address = arith.addi %factor_offset, %c169984 : index
+          %factor_i64 = arith.index_cast %factor_address : index to i64
+          %factor = pto.alloc_tile addr = %factor_i64 : !row
+          %sum_i_offset = arith.muli %i, %c2048 : index
+          %sum_i_address = arith.addi %sum_i_offset, %c198656 : index
+          %sum_i_i64 = arith.index_cast %sum_i_address : index to i64
+          %sum_i = pto.alloc_tile addr = %sum_i_i64 : !row
+          pto.texp ins(%factor : !row) outs(%factor : !row)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          pto.tmul ins(%sumexp, %factor : !row, !row) outs(%sumexp : !row)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          pto.tadd ins(%sumexp, %sum_i : !row, !row) outs(%sumexp : !row)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          pto.trowexpand ins(%factor : !row) outs(%buf : !vec)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          pto.tmul ins(%acc_o, %buf : !vec, !vec) outs(%acc_o : !vec)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE2>, %c0]
+          %pair_start = arith.cmpi eq, %side, %c0 : index
+          scf.if %pair_start {
+            // CROSS: pto.sync.wait <PIPE_MTE2>, 4 {ffts_mode = 2 : i32}
+          }
+          %inp = pto.partition_view %w3v, offsets = [%wsrow, %c0], sizes = [%c64, %c128] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x128xf16>
+          pto.tload ins(%inp : !pto.partition_tensor_view<64x128xf16>) outs(%io : !half)
+          // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, %c0]
+          // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE2>, #pto.pipe<PIPE_V>, %c0]
+          pto.tcvt ins(%io : !half) outs(%work : !vec)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+          // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE2>, %c0]
+          pto.tadd ins(%acc_o, %work : !vec, !vec) outs(%acc_o : !vec)
+          // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+        }
+        // CROSS: pto.sync.set <PIPE_MTE2>, 5 {ffts_mode = 2 : i32}
+      }
+      pto.trowexpand ins(%sumexp : !row) outs(%buf : !vec)
+      // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+      pto.tdiv ins(%acc_o, %buf : !vec, !vec) outs(%acc_o : !vec)
+      // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+      // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_V>, %c0]
+      pto.tcvt ins(%acc_o : !vec) outs(%s_half : !half)
+      // LOWERING: pto.barrier #pto.pipe<PIPE_V>
+      // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c0]
+      // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE3>, %c0]
+      %outrow0 = arith.muli %task, %c128 : index
+      %outrow = arith.addi %outrow0, %lane_row : index
+      %out = pto.partition_view %ov, offsets = [%outrow, %c0], sizes = [%c64, %c128] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x128xf16>
+      pto.tstore ins(%s_half : !half) outs(%out : !pto.partition_tensor_view<64x128xf16>)
+      // HAND: pto.set_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_V>, %c0]
+    }
+    // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_V>, #pto.pipe<PIPE_MTE2>, %c0]
+    // HAND: pto.wait_flag_dyn [#pto.pipe<PIPE_MTE3>, #pto.pipe<PIPE_V>, %c0]
+    return
+  }
+}
