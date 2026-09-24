@@ -28,7 +28,7 @@ InsertSync modes. The analyses below belong to handoff Phase A.
    guarded participation and child/re-entry correspondence (D1–D4). Distinguish
    independent participants from alternative ones. Retain original owners and
    executable predicate availability without multiplying independent selectors.
-4. **Lifetimes and constructor-facing requirements.** Port generation/support
+4. **Lifetimes and constructor-facing requirements — source port connected.** Port generation/support
    intervals, distinct source milestones and consumer deadlines. Connect typed
    original-use queries and source subscriptions to the new constructor input.
    Selected completion remains the constructor's responsibility.
@@ -154,18 +154,19 @@ participates in these queries.
 
 The reader query checks whether its predicate is available at each read-site
 leaf. That is narrower than executable availability at a future SET/WAIT gap;
-Stage 4 must check the actual proposed endpoint. The current original-child
-query retains source identities and members, but does not transport selected
-credit or copied child interfaces. D1 guarded alternative origins, general D2
-permutations, and full D4 re-entry correspondence remain unported. These are
+Later endpoint qualification must check the actual proposed position. The
+current original-child query retains source identities and members, but does not
+transport selected credit or copied child interfaces. D1 guarded alternative
+origins, general D2 permutations, and full D4 re-entry correspondence remain
+unported. These are
 representation limits, not hardware restrictions. Unknown results preserve the
 original access obligations.
 
 The normal handoff entry is the real consumer: it queries represented reader
 cell/engine projections and bank relations, then reports counts before its
 existing construction-unimplemented result. It does not claim that an analyzed
-frontier is already a selected protocol. Future source milestones and typed
-requirements belong to Stage 4.
+frontier is already a selected protocol. Stage 4 adds source milestones and
+typed original requirements.
 
 The serial current-source probe at
 `/home/toni/work/pypto3_sync_more/handoff-builds/phase-a-stage3/` checks two
@@ -179,3 +180,51 @@ subtrees. The current entry still queries each represented cell/reader
 projection separately; aggregate cost for large projection populations remains
 to be measured. Generality review, full service, corpus and device evidence
 remain pending.
+
+## Stage 4 original lifetimes and requirement subscriptions
+
+`OriginalLifetimes` adapts the donor `StorageFrontierAnalysis`'s four marginal
+provenance flows (previous/next writers and readers) to `OriginalStructure` and
+the Stage 3 control graph. Partial or unknown writes retain older origins; only
+an independently proved full overwrite may kill them. The current importer does
+not set `definiteWrite`, so this port makes no fresh-generation claim merely
+because a translated operation writes a bounded footprint. Read-modify-write
+effects retain both reader and writer origins.
+
+The port indexes RAW, WAR and WAW original requirements by target deadline and
+registers their source subscriptions before construction begins. Source-after
+and target-before are stable original positions. They are not complete ordered
+command-word gaps or selected SET/WAIT endpoints. A marginal source is not an
+occurrence match, executable guard, established episode or completed transfer;
+those fields remain explicitly unqualified. The future constructor must query
+the current residual and causal frontier before selecting any communication.
+
+Typed read-only queries expose `all` original accesses by physical cell/owner,
+first/last original-use may frontiers within explicit starts and stops, and the
+affected support interval between a represented producer and possible reuse.
+The support interval retains readers, intervening reloads, bypass/re-entry
+possibilities and **all** original requirements encountered on those paths,
+including other cells. Its `complete` flag means the finite original graph was
+traversed; it does not authorize a protocol or claim complete producer support
+under future selected edits. Endpoint participation and source-prefix
+preservation still require the Stage 3 guarded expressions and later selected
+ledger checks. The current first/last use query returns marginal access sets;
+it is not a guarded canonical frontier for arbitrary access classes. An owner
+argument identifies the original scope but does not itself prove occurrence
+matching or impose a lexical stop.
+
+The handoff entry consumes the indexed requirements and reports their
+population while retaining its construction-unimplemented result. A normal
+source-port probe covers two optional readers before reuse, a reload between
+them, source subscriptions, partial-write history retention, and the affected
+support interval. Stage 3 probes continue to pass. Artifacts are at
+`/home/toni/work/pypto3_sync_more/handoff-builds/phase-a-stage4/`.
+
+Remaining first-pass work before claiming the full draft contract: full-write
+coverage certificates; guarded alternative origins and general D2/D4
+correspondence; owner-qualified canonical first-conflict/last-use queries with
+endpoint-gap predicate availability; and persistent support/source-prefix
+dependencies through selected edits. These are explicit precision and
+construction boundaries, not hardware limits or permission to drop original
+requirements. The focused source build does not establish full native service,
+corpus quality or generality acceptance.
