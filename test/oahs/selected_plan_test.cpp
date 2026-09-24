@@ -160,6 +160,30 @@ void priorConsumptionCommonRepair()
     require(!o::checkCausalFrontier(p, missing).accepted,
             "deleting the early acknowledgment publication remained legal");
 }
+void historicalReverseRepair()
+{
+    auto p = base(2, 1);
+    p.operations = {op(Q, {}), op(P, {{0, false, true, true}}),
+        op(Q, {{0, true, false}}), op(Q, {}),
+        op(P, {{1, false, true, true}}), op(Q, {{1, true, false}})};
+    o::Commands fixed(o::commandCutCount(p));
+    fixed[1] = {{o::Command::Publish, Q, P, 0},
+        {o::Command::Acquire, Q, P, 0}};
+    const auto plan = accepted(p, fixed);
+    const auto repaired = std::find_if(plan.decisions.begin(), plan.decisions.end(),
+        [](const auto& decision) {
+            return decision.repairedAcquisition != o::NoAnalysisId &&
+                decision.repairReverseKey == 0;
+        });
+    require(repaired != plan.decisions.end(),
+        "an actually rearmed historical reverse key was not bound by common repair");
+    require(std::any_of(plan.realizationChoices.begin(), plan.realizationChoices.end(),
+        [](const auto& choice) {
+            return choice.deadline == 5 && choice.placementClass == 1;
+        }), "historical reverse key did not enter common class-one selection");
+    require(bool(oahs_oracle::graph(p, plan.commands, {0, 1, 2, 3, 4, 5}, {{3, 5}})),
+        "historical reverse binding imported unrelated receiver work");
+}
 void atomicClosedRepair()
 {
     // Public portable fixed-ledger coverage; native authored events are skipped.
@@ -242,6 +266,7 @@ int main()
     sharedCredit();
     scarcity();
     priorConsumptionCommonRepair();
+    historicalReverseRepair();
     atomicClosedRepair();
     structured();
     qualification();

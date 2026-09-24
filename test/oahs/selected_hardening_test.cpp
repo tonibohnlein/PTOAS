@@ -147,6 +147,63 @@ struct ReplayTestAccess {
             "later same-word key use reused the superseded consumption identity");
     }
 
+    static void historicalReverseNeighbors()
+    {
+        const auto P = Pipe::MTE2, Q = Pipe::V;
+        auto p = base(2, 1);
+        p.operations = {op(Q, {}), op(P, {{0, false, true, true}}),
+            op(Q, {{0, true, false}}), op(Q, {}),
+            op(P, {{1, false, true, true}}), op(Q, {{1, true, false}})};
+        Constructor c(p);
+        c.current = 5;
+        c.ledger.append(1, {Command::Publish, Q, P, 0}, EndpointPurpose::Fixed);
+        c.ledger.append(1, {Command::Acquire, Q, P, 0}, EndpointPurpose::Fixed);
+        c.ledger.append(2, {Command::Publish, P, Q, 0}, EndpointPurpose::Fixed);
+        c.ledger.append(2, {Command::Acquire, P, Q, 0}, EndpointPurpose::Fixed);
+        require(c.contextualReplay(), "historical reverse neighbor fixture failed replay");
+        Group group; group.source = P; group.publication = 5;
+        group.requirements = {{1, P, true, 5, true, false}};
+        auto facts = c.sourceGapFacts({5, NoAnalysisId, NoAnalysisId}, P, Q,
+            group.requirements);
+        const auto version = c.ledger.version();
+        require(facts.proved() && c.separatedBoundaryPacket(facts, group),
+            "completed earlier reverse generation was rejected by common repair");
+        require(group.packet && c.ledger.version() == version,
+            "historical reverse probe committed selected event state");
+        c.ledger.append(3, {Command::Publish, Q, P, 0}, EndpointPurpose::Fixed);
+        c.ledger.append(3, {Command::Acquire, Q, P, 0}, EndpointPurpose::Fixed);
+        require(c.contextualReplay(), "later reverse neighbor fixture failed replay");
+        group.packet.reset();
+        facts = c.sourceGapFacts({5, NoAnalysisId, NoAnalysisId}, P, Q,
+            group.requirements);
+        require(facts.proved() && !c.separatedBoundaryPacket(facts, group),
+            "reverse key with a selected use after old WAIT was rebound across it");
+
+        auto priorWord = p;
+        std::swap(priorWord.operations[2], priorWord.operations[3]);
+        Constructor unrearmed(priorWord);
+        unrearmed.current = 5;
+        unrearmed.ledger.append(1, {Command::Publish, Q, P, 0}, EndpointPurpose::Fixed);
+        unrearmed.ledger.append(2, {Command::Publish, P, Q, 0}, EndpointPurpose::Fixed);
+        unrearmed.ledger.append(2, {Command::Acquire, Q, P, 0}, EndpointPurpose::Fixed);
+        const auto forwardWait = unrearmed.ledger.append(3,
+            {Command::Acquire, P, Q, 0}, EndpointPurpose::Fixed);
+        require(unrearmed.contextualReplay(), "empty-but-unrearmed fixture failed replay");
+        const auto reverse = keyIndex(unrearmed.frontier, {Command::Publish, Q, P, 0});
+        const auto afterWait = unrearmed.cache.afterEndpoint.find(forwardWait);
+        require(reverse != NoAnalysisId && afterWait != unrearmed.cache.afterEndpoint.end() &&
+            afterWait->second.causal.facts()->events[reverse].occupancy == 1 &&
+            !unrearmed.canPublish(afterWait->second, reverse),
+            "unrearmed fixture did not isolate missing consumption knowledge");
+        Group unresolved; unresolved.source = P; unresolved.publication = 5;
+        unresolved.requirements = group.requirements;
+        const auto unrearmedFacts = unrearmed.sourceGapFacts({5, NoAnalysisId, NoAnalysisId},
+            P, Q, unresolved.requirements);
+        require(unrearmedFacts.proved(), "unrearmed fixture lost physical source coverage");
+        require(!unrearmed.separatedBoundaryPacket(unrearmedFacts, unresolved),
+            "empty reverse key without known consumption was treated as rearmed");
+    }
+
     static void sourceGapOccurrences()
     {
         const auto P = Pipe::MTE2, Q = Pipe::V, R = Pipe::MTE1;
@@ -1315,6 +1372,7 @@ int main()
     o::selected::ReplayTestAccess::ownedCandidateOrder();
     o::selected::ReplayTestAccess::exactSourceGap();
     o::selected::ReplayTestAccess::separatedConsumptionFacts();
+    o::selected::ReplayTestAccess::historicalReverseNeighbors();
     o::selected::ReplayTestAccess::sourceGapOccurrences();
     o::selected::ReplayTestAccess::sourceGapBarriers();
     earlyPublication();

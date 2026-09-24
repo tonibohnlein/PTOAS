@@ -1878,3 +1878,25 @@ consumption. The unique, noncyclic words, one actual consumption and virgin
 reverse key are sufficient limits of this first migration; alternatives,
 recurrence and historical reverse binding remain open. The legacy checked
 repair remains for cases outside this bounded certificate.
+
+## AO design — historically used reverse key at an actual consumption frontier
+
+AN's complete class-one packet no longer requires a virgin reverse key. A
+historical reverse generation is eligible when the actual state after the old
+forward WAIT permits its publication, the shared owner/deferred checks pass,
+and selected event uses are outside the original continuation beginning at
+that WAIT word. The continuation includes successors and backedges, so a
+later selected use cannot be crossed by the inserted return. The continuation
+mask is built lazily for the first otherwise eligible historical reverse key;
+all reverse alternatives reuse the mask and canonical-word intersection memo.
+A virgin key needs neither scan. The complete packet, exact gaps and persistent
+publication support remain authoritative, and no unselected return grants
+credit.
+
+The old-WAIT/source/deadline occurrences remain unique and noncyclic; selected
+reverse uses in the old-WAIT word or later, dormant ownership and missing
+consumption knowledge still refuse this bounded realization. The normal
+constructor now exercises earlier completed reverse-key reuse. A later
+selected reverse use and an empty-but-unrearmed reverse key are independent
+negatives. This is a binding precision extension, not general alternative or
+recurring acknowledgment qualification.

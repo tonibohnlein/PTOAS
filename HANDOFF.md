@@ -1,5 +1,47 @@
 # OAHS current handoff
 
+## Active after Step AO — historical reverse-key binding in common class one
+
+AO removes the virgin reverse-key gate from AN's bounded prior-consumption
+packet. An earlier selected reverse-key generation can be reused when actual
+causal state after the old forward WAIT proves it publishable, shared ownership
+allows it, and every selected use of that key lies outside the original
+continuation beginning at the old-WAIT word. The continuation includes
+backedges; its mask is built lazily only for an otherwise eligible historical
+key, shared across reverse alternatives and charged with its word scans.
+The existing exact gaps, four-endpoint packet, persistent publication contract
+and authoritative selected replay remain unchanged.
+
+A normal-constructor test reuses a previously completed Q→P key. Private tests
+separately reject a later reverse use and an empty but unrearmed reverse key;
+the latter places all reverse uses before the old forward WAIT and explicitly
+checks missing consumption knowledge. A pre-probe version assertion protects
+transactionality. Unique noncyclic old-WAIT/source/deadline correspondence,
+helper-free ownership, and no reverse use in the old-WAIT word or continuation
+remain sufficient limits. Alternative/recurring consumption and same-word
+historical reverse binding still use checked paths or refuse.
+
+Host evidence: 25/25 portable suites, three native drivers, 88/88 corpus,
+18/19 compatibility (inherited refusal), GEMM, two prefills and three targeted
+inputs pass. All 113 campaign emitted-plan hashes match AN, so their complete
+payload order and SET/WAIT resources are unchanged. Matched selected
+updates/replay sites stay 8238/7101060; normal key-site work rises
+1013935→1021884, repair-source commands 28→48. Measured compiler microseconds
+318718600→316657094 are noisy, not a speed conclusion. A post-campaign
+condition-formatting-only edit passed focused tests and changed-code checking.
+Architecture/generality, correctness and asymptotic-performance reviewers
+ACCEPT the bounded change. No sanitizer/device campaign.
+Artifacts: `../oahs-gemm-base-builds/refactor-step-ao/` (`design.md`,
+`summary.json`, `results.json`, `work.json`, `reviews.md`).
+
+Next: combine alternative and recurring consumption-frontier correspondence
+with this common binding, then retire the legacy unique-WAIT path when its
+remaining cases are represented. The AD `hc_head_reduce` +122/-20 finite
+ordering debt remains; trace its first unnecessarily late source or wait.
+Deadline-wide class-three guarding, broader affected-use regional support,
+final generality and coupled device evidence remain open. Continue the
+three-reviewer commit loop.
+
 ## Active after Step AN — prior-consumption repair in common class one
 
 AN migrates the unique old-WAIT acknowledgment into the common ordinary

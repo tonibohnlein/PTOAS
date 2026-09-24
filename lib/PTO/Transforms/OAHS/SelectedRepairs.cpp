@@ -158,15 +158,35 @@ bool Constructor::separatedBoundaryPacket(const SourceGapQualification& facts, G
         if (!missingRearming) { continue; }
         const auto consumed = singletonConsumptionFrontier(facts, forward);
         if (!consumed) { continue; }
+        // The reverse key may have completed an earlier exchange. Only a
+        // historical candidate needs the original continuation mask; share
+        // its word queries across all reverse-key alternatives.
+        std::vector<bool> afterConsumption;
+        std::map<Cut, bool> wordIntersects;
+        const auto after = cache.afterEndpoint.find(consumed->wait);
         for (Id reverse = 0; reverse < frontier.keys().size(); ++reverse) {
             const auto& b = frontier.keys()[reverse];
             const bool eligibleReverse = b.source == observer && b.observer == group.source &&
-                helperFreeKey(reverse) && ledger.eventUses(b).empty();
-            if (!eligibleReverse) { continue; }
-            const auto after = cache.afterEndpoint.find(consumed->wait);
-            const bool reverseReady = after != cache.afterEndpoint.end() &&
+                helperFreeKey(reverse);
+            const bool available = after != cache.afterEndpoint.end() &&
                 canPublish(after->second, reverse);
-            if (!reverseReady) { continue; }
+            if (!eligibleReverse || !available) { continue; }
+            if (!ledger.eventUses(b).empty()) {
+                if (afterConsumption.empty()) {
+                    afterConsumption.resize(control.graph.sites.size());
+                    result.work.normalKeySites += afterConsumption.size();
+                    std::vector<Cut> pending{ledger.endpoint(consumed->wait).cut};
+                    while (!pending.empty()) {
+                        const auto site = pending.back(); pending.pop_back();
+                        if (!control.reachable[site] || afterConsumption[site]) { continue; }
+                        afterConsumption[site] = true;
+                        ++result.work.normalKeySites;
+                        const auto& next = control.graph.sites[site].successors;
+                        pending.insert(pending.end(), next.begin(), next.end());
+                    }
+                }
+                if (!selectedKeyUsesOutside(afterConsumption, reverse, wordIntersects)) { continue; }
+            }
             const Command returnSet{Command::Publish, b.source, b.observer, b.key};
             const Command returnWait{Command::Acquire, b.source, b.observer, b.key};
             const Command forwardSet{Command::Publish, a.source, a.observer, a.key};

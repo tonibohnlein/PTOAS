@@ -508,3 +508,15 @@ Unique noncyclic words and a virgin reverse key remain sufficient limits;
 multiple/recurring consumption frontiers and historical reverse binding are
 unfinished. The joined and checked legacy paths remain for unqualified cases.
 See HANDOFF and AN artifacts for host evidence and the three reviews.
+
+## Current continuation after AO
+
+AO removes the virgin reverse-key prerequisite from AN's common class-one
+packet when actual after-WAIT rearming and full original-continuation neighbor
+checks prove a historical key reusable. The continuation mask is lazy and
+shared across reverse alternatives. A normal-constructor earlier-use witness,
+a later-neighbor negative and an empty-but-unrearmed negative distinguish
+history, ownership and consumption knowledge. Unique noncyclic occurrence
+correspondence and the checked legacy path remain; alternative/recurring
+consumption, same-word historical reverse uses and broader binding are open.
+See HANDOFF and AO artifacts for final evidence.
