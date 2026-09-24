@@ -28,6 +28,13 @@ set(PTOIR_TEST_DEPENDS
   ptoas_runtime_deps
   pto-test-opt
   pto-frontier-analysis-test
+  pto-frontier-interval-core-test
+  pto-frontier-interval-test
+  pto-factored-provenance-test
+  pto-frontier-obligations-test
+  pto-frontier-value-arithmetic-test
+  pto-frontier-value-test
+  pto-frontier-lifetime-test
   pto-vpto-scheduler-tracker-test
   pto-bisheng-scheduler-test
 )

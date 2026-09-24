@@ -4,58 +4,134 @@ Branch: `codex/handoff-foundation`. FrontierSynch is selected with
 `pto-insert-sync{algorithm=frontier-synch}`; `algorithm=existing` remains
 available.
 
-Status: Phase A has an original-program query boundary, but is not complete
-against the specified first-pass contract in draft v0.43. The current paper
-revision is v0.44; its operative Phase A sections are unchanged from v0.43.
-Factored conditional provenance, directional covering boundaries, the qualified
-interval rule, and complete look-ahead preparation remain unimplemented.
-Construction still reports an explicit failure.
-The seven foundation commits introduce FrontierSynch under its current name.
+## Current integration update — 2026-09-24
+
+Downloads patches for steps 2–6 have been integrated on the baseline below.
+All five increments passed scoped independent review and integrated validation. The [integrated review](docs/designs/frontier-synch-steps2-6-review.md)
+records merge corrections, evidence and the remaining gates. Changes are
+uncommitted. No full Phase A parity or working constructor is claimed.
+
+The current implementation includes original cuts and snapshot keys, qualified
+shared full-write semantics, scoped factored histories, original-value/endpoint
+qualification, and guarded obligation families with lazy queries. Steps 7–14
+remain. The numbered inventory and detailed source-status prose below describe
+the pinned pre-integration baseline; use the integration record and parity
+ledger for subsequent changes.
+
+## Pinned baseline before steps 2–6
+
+Status: Phase A has an original-program query boundary and a committed acyclic
+factored provenance core, but does not yet meet every specified Phase A
+procedure/interface in draft v0.44. Its operative analysis contract is inherited
+from v0.43. Conditional provenance integration, full-cell overwrite
+qualification, complete D1–D4 service, directional covering boundaries, the
+interval rule, and full look-ahead preparation remain partial or absent.
+Construction still reports an explicit failure. The seven original foundation
+commits introduced FrontierSynch under its current name; later increments do
+not turn that foundation into complete Phase A parity.
 
 Base: upstream `master`, `f5eff3ee249697f6157088f649c6434fcc9d7c5b`.
 Donor: `371fdb344d2783b92d6c39424c507b2ce082e08c`.
-Implementation reviewed: `3bbc58a67` on `codex/handoff-foundation`.
-Draft checked: paper repository `4905f8a`, revision 0.44, on 2026-09-24.
-Its Phase A contract is the v0.43 contract introduced at `a13650a`. The
-implementation checkpoint below predates both revisions; its historical
-v0.42 comparison remains below. The current comparison and four review gates
-are in [the v0.44 parity inventory](docs/designs/frontier-synch-v0.44-parity.md).
+Implementation inspected for the current checklist:
+`0a38c8e9f4bd4852177c1dd6f6e0d0ee26b6ca16` on `codex/handoff-foundation`.
+Factored-core commit: `9bba6552055d5386ff7242c58031b0412885a0d6`.
+Earlier query-boundary review: `3bbc58a67` (historical).
+Draft inspected: supplied revision 0.44 PDF, 83 pages. Manuscript pins retained
+from this handoff are `4905f8a` (v0.44) and `a13650a` (v0.43); their operative
+Phase A equivalence is recorded in the implementation plan, not independently
+rechecked between manuscript commits by this documentation update.
+
+The [v0.44 parity checklist](docs/designs/frontier-synch-v0.44-parity.md) replaces
+the earlier four broad gates. It records each specified behavior's assumptions,
+implementation entry and actual consumer, status, test evidence, real-input
+blocker and later gate. The previous inventory's `6220bb6c` baseline and claim
+that there is no provenance/demand DAG are obsolete. Historical v0.42/source-port
+notes below are retained as history, not the current completion specification.
+
+## Committed factored core: present, not fully integrated
+
+`FactoredProvenance.h` implements shared original writer/reader and RAW/WAR/WAW
+demand expressions over an acyclic cell projection. Reads query their incoming
+writers; writes and read-modify-writes generate old-state requirements before
+updating provenance. Definite writes replace the state; possible writes retain
+older origins/readers. Backward next-use roots and translated-effect incidence
+lists are retained. `OriginalLifetimes::factored` owns the lazy per-cell result,
+and `ProgramAnalysis::interpretAt` exposes it as `factoredUse`.
+
+The core's prior reviewer acceptance is reported by the implementation plan and
+is retained at that scope. The committed `--factored-self-test` checks a guarded
+RMW/optional-reader fixture, a possible write, a backward next-writer query, and
+a 64-optional-reader node-count bound. Its effects are synthetic and its small
+expected demand sets are handwritten; it is not a native full-overwrite test,
+an incoming-reader test, or an independent general concrete scanner. Those test
+definitions were inspected, not rerun for this documentation-only update.
+
+Current limits must not be hidden by that acceptance. `requirementsAt` still
+returns marginal source-target records; attaching the factored result does not
+make guarded demands their public obligation model. The core rejects any
+For/While in the supplied whole body, starts with one incoming-writer sentinel
+and no incoming-reader interface, and keys choices by original if-owner rather
+than a common defining-value/occurrence identity. Every imported write remains
+`definiteWrite=false`. Steps 2–6 and the supported repeated-summary work extend
+this core; they should not reimplement it as though it were absent.
 
 ## Current draft parity and implementation sequence
 
-The parity target is every *specified* Phase A behavior in the current draft,
-including retained physical provenance, All/MayAfter, typed prerequisites,
-D1–D4, and the v0.43 additions. Open general symbolic matching and selected
-construction are recorded as such, not silently claimed implemented.
+The parity target is every *specified* Phase A procedure and interface in the
+original-program contract, Section 3, relevant Section 4.1 interfaces and
+Appendix I, including inherited D1–D4. Existing storage partitioning, All,
+MayAfter, typed prerequisites and source cuts are part of that target. Missing
+specified behavior is an implementation gap, even when an API conservatively
+returns Unknown. General symbolic problems explicitly left open by the draft
+remain separate; so do selected-state and packet construction responsibilities.
 
-1. Factored provenance and demands: the current four marginal bit matrices
-   give conservative may relationships, but lose shared branch correlations.
-   All imported writes still lack a definite full-cell proof. A shared guarded
-   expression service and its real-effect qualification are required.
-2. Directional boundaries: current exact/may reader frontiers and operation
-   cuts are present; independent source and target covering results over
-   original cut intervals are absent.
-3. Exact occurrence/frontier rules: restricted fixed visit, same-role period,
-   and invariant-reader rules exist. The specified guarded alternatives,
-   supported D2/D4 transport, and symbolic interval rule are incomplete.
-4. Look-ahead preparation: current requirements have deadline/source indexes
-   and subscribed operation cuts. Stable obligation/group/descriptor
-   separation, closure over all referenced sources, and the qualified two-link
-   consequence service are absent.
+| Step | Bounded increment |
+| --- | --- |
+| 1 | Establish the complete parity checklist and correct the committed baseline/evidence record. |
+| 2 | Define common occurrence, legal cut, owner, continuation and complete query/cache records. |
+| 3 | Supply qualified full-cell overwrite information through shared effects and storage geometry. |
+| 4 | Complete and integrate factored provenance, incoming interfaces and supported projections. |
+| 5 | Implement original-value, arithmetic and endpoint-availability qualification. |
+| 6 | Make stable guarded physical/typed/incoming obligations the construction-facing model. |
+| 7 | Complete conflict-specific D1 fixed visits and guarded alternative/incoming sources. |
+| 8 | Complete D2 physical-permutation correspondence, distinct roles and both boundary domains. |
+| 9 | Implement D4 composition and supported re-entry transport of qualified relations. |
+| 10 | Complete common exact first/last queries, D3 and the restricted interval-participation rule. |
+| 11 | Implement independent directional covering boundaries over original cut intervals. |
+| 12 | Build request groups and the three specified prederived descriptor slots. |
+| 13 | Complete subscriptions, finite support preparation and scoped two-link consequences. |
+| 14 | Perform the integrated public-interface semantic/corpus, preservation and cost review. |
 
-Each increment needs focused semantic tests, corpus queries, and an independent
-review against its full specified contract before the next increment. The
-earlier occurrence-relation proposal in the paper repository is exploratory;
-it is not a substitute for implementing already specified rules.
+Step 1 passed independent coverage review on 2026-09-24 after clarifying that
+kernel assertions require a specified rule's premises; unsupported matching
+must remain explicit Unknown. This accepts the inventory, not implementation
+parity. For each later step: implement the bounded change,
+run focused semantic checks, obtain independent review against that gate, fix
+findings and record the accepted commit separately. A partial acceptance names
+its remaining work and later gate. The final reviewer rechecks the integrated
+contract, not just the collection of prior component approvals.
 
-The five development kernels were run through the current actual pass modes:
-`existing` compiled and emitted C++ for all five; `frontier-synch` reached the
-expected construction-not-implemented diagnostic. The Phase A corpus runner
-completed all five, but all 2,242 interpreted storage requirements reported
-Unknown occurrence correspondence. These runs establish the baseline only;
-they do not establish plan correctness, device behavior, or draft parity.
+The actual `frontiersynch::run` consumer currently counts indexed requirements,
+interprets one sampled request and stops at the construction-not-implemented
+diagnostic. The corpus runner interprets every indexed marginal requirement,
+checks direct source subscriptions and unchanged IR, but does not assert the
+intended exact kernel relationships or evaluate the factored demand contents.
+Public query availability is not evidence that the constructor consumes it.
+
+Historical corpus/mode runs reported that `existing` emitted C++ for all five
+development kernels and `frontier-synch` reached its expected construction
+failure. The Phase A runner reported all 2,242 kernel occurrence interpretations
+as Unknown. These are retained baseline observations, not new runs or acceptance
+targets. The separate TAXPY fixture expects three non-Unknown fixed visits, so
+the implementation is not universally Unknown on straight-line input. No result
+here establishes selected-plan correctness, device behavior or complete parity.
 
 ## Historical draft 0.42 comparison
+
+This comparison predates the factored core and the v0.43 refinement. In
+particular, its whole-query-record DAG wording below is historical, not an
+instruction to enumerate joint reader sets or replace the current shared
+Both/Choose representation. Current procedure status is in the v0.44 checklist.
 
 [The source comparison and acceptance cases](docs/designs/frontier-synch-v0.42-gaps.md)
 record the earlier gap inventory. The draft retains the original/selected-state
@@ -80,7 +156,7 @@ and executable endpoint predicates. The draft's general mixed-write/while
 qualification, combined adequacy/cost result, and complete packet integration
 also remain research obligations; changing the baseline does not prove them.
 
-## Implemented checkpoint: coherent Phase A query boundary
+## Earlier implemented checkpoint: coherent Phase A query boundary
 
 The follow-up review of the five Phase A commits found five remaining items.
 The current checkpoint closes the owner escape in `firstMayUse`/`lastMayUse`, retains
@@ -139,7 +215,7 @@ restriction, not proof that a less regular lifetime lacks a valid protocol.
 
 [Contract, draft limits and LLVM/MLIR replacement audit](docs/designs/frontier-synch-program-analysis.md).
 
-## Stage 4 baseline: original lifetimes and requirement subscriptions
+## Historical Stage 4 baseline: original lifetimes and requirement subscriptions
 
 `frontiersynch::run` imports original structure from the shared `SyncInput`, queries
 the Stage 3 reader/occurrence facts, and now indexes original storage demands:
@@ -165,31 +241,38 @@ same shared instruction input. The new mode currently changes analysis only.
 
 ## Scope and remaining limits
 
-The tree is original control, not a selected occurrence refinement. Stage 3's
-restricted D1/D2/D4 certificates remain unchanged. Stage 4's marginal histories
-and support intervals are complete may facts, not exact generation or protocol
-certificates. All imported writes remain non-definite until an effect-coverage
-proof is ported; a reload therefore retains older possible writers. Source
-subscriptions identify original positions, not ordered command-word gaps or
-source snapshots under selected waits. The shared translator remains responsible
-for effect completeness.
+The tree is original control, not a selected occurrence refinement. Marginal
+histories and support intervals remain may facts. The factored core supplements
+them on its acyclic formation fragment; it does not supply general occurrence,
+endpoint or protocol certificates. Step 3 now qualifies supported full writes through shared semantics; unknown
+coverage retains conservative write histories. Source subscriptions
+identify original positions, not selected source-time snapshots or acquired
+completion. The shared translator remains responsible for effect completeness.
 
-Recommended next increment: qualify full-cell effects for an explicit initial
-instruction fragment, then implement the draft's fixed-use acyclic joint
-records with continuation-aware owners and guarded source subscriptions. Use
-the conditional-write example in the gap inventory as the first comparison
-fixture. Preserve unsupported effects and correlations as unresolved demands.
-The symbolic interval and sufficient-boundary rules can then extend that
-interface under their own premises. Extend repeated-use D2/D4 qualification
-before composing those records across re-entry. This order is an implementation
-recommendation, not a new restriction in the paper.
+The next implementation increment after the accepted step-6 increment is **step 7
+(D1)**. Keep the shared instruction interfaces and the accepted factored core;
+do not add an instruction admission whitelist or kernel-specific recognizers.
 
-Control-value prerequisites still lack qualified native availability and
-dynamic occurrence matching; return/compatibility precision remains open.
-The constructor must evaluate actual completion, matching, event reuse, and
-ordered command-word placement separately from these original facts.
+Specific supported gaps include D1's rejection of intervening reads, D2's
+same-operation/single-role restriction and missing successor domains, D4's lack
+of qualified transport, the coupled first/last availability result, and missing
+covering/interval/descriptor/support-closure procedures. The checklist assigns
+each to a later gate rather than describing it as an open research problem.
+The availability service has passed its step-5 scope; the consequence service
+remains assigned to step 13. Broader symbolic qualification beyond the draft's supported
+rules remains distinct. Actual completion, matching, event reuse and ordered
+selected-word placement are Phase B responsibilities.
 
-## Validation
+## Validation and evidence provenance
+
+This step-1 update is a source/documentation audit. The implementation entry
+points and committed test assertions were inspected, and the delivery includes
+whitespace/applicability and checklist-structure checks. No compiler, probe,
+corpus, lit, sanitizer or device run was performed for this update. Independent
+step-1 coverage review accepted the corrected inventory on 2026-09-24; the
+decision and required wording correction are recorded in the parity ledger.
+
+### Historical implementation validation (not rerun for step 1)
 
 The 0.42 comparison is a documentation and source inspection update. No compiler
 build, probe, corpus, sanitizer, or device run was performed for it. The evidence

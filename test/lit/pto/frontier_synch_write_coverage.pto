@@ -1,0 +1,242 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// SPDX-License-Identifier: LicenseRef-CANN-Open-Software-License-2.0
+// RUN: pto-frontier-analysis-test %s | FileCheck %s
+// These are real PTO imports and public ProgramAnalysis assertions. They do
+// not invoke the unfinished constructor. Every assertion is checked by the
+// runner, including the exact predecessor tags on the decisive accesses.
+// CHECK: complete_and_rmw: write-coverage-expectations-passed
+// CHECK: partial_preserves_origins: write-coverage-expectations-passed
+// CHECK: descriptor_updates: write-coverage-expectations-passed
+// CHECK: row_subview: write-coverage-expectations-passed
+// CHECK: strided_subview: write-coverage-expectations-passed
+// CHECK: dynamic_address: write-coverage-expectations-passed
+// CHECK: unsupported_write: write-coverage-expectations-passed
+// CHECK: padding_is_not_allocation: write-coverage-expectations-passed
+// CHECK: load_variant: write-coverage-expectations-passed
+// CHECK: original-ir-unchanged; construction-not-run
+
+!vec = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!part = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!dyn = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!row = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!rows = !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=8, v_row=2, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!padded = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=15, blayout=row_major, slayout=none_box, fractal=512, pad=1>
+module attributes {pto.target_arch = "a3"} {
+  func.func @complete_and_rmw(%ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 4096 : i64
+    %a2 = arith.constant 8192 : i64
+    %scale = arith.constant 2.0 : f32
+    %x = pto.alloc_tile addr = %a0 : !vec
+    %y = pto.alloc_tile addr = %a1 : !vec
+    %z = pto.alloc_tile addr = %a2 : !vec
+    %view = pto.make_tensor_view %ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec) {test.tag = "W0", test.strong = true, test.coverage = "qualified"}
+    pto.tadd ins(%x, %x : !vec, !vec) outs(%y : !vec) {test.tag = "R0", test.strong = true, test.raw = ["W0"]}
+    pto.tadd ins(%y, %y : !vec, !vec) outs(%x : !vec) {test.tag = "W1", test.next_readers = ["X"], test.strong = true, test.raw = ["R0"], test.war = ["R0"], test.waw = ["W0"]}
+    pto.taxpy ins(%y, %scale : !vec, f32) outs(%x : !vec) {test.tag = "X", test.strong = true, test.raw = ["R0", "W1"], test.war = [], test.waw = ["W1"]}
+    pto.tadd ins(%x, %x : !vec, !vec) outs(%z : !vec) {test.tag = "R1", test.raw = ["X"]}
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec) {test.tag = "W2", test.strong = true, test.waw = ["X"], test.war = ["R1"]}
+    return
+  }
+
+  func.func @partial_preserves_origins(%ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 4096 : i64
+    %a2 = arith.constant 8192 : i64
+    %scale = arith.constant 2.0 : f32
+    %x = pto.alloc_tile addr = %a0 : !vec
+    %y = pto.alloc_tile addr = %a1 : !vec
+    %z = pto.alloc_tile addr = %a2 : !vec
+    %view = pto.make_tensor_view %ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %px = pto.alloc_tile addr = %a0 : !part
+    %py = pto.alloc_tile addr = %a1 : !part
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec) {test.tag = "W0", test.strong = true}
+    pto.tadd ins(%x, %x : !vec, !vec) outs(%y : !vec) {test.tag = "R0", test.raw = ["W0"]}
+    pto.tadd ins(%py, %py : !part, !part) outs(%px : !part) {test.tag = "P", test.strong = false, test.coverage = "qualified", test.raw = ["R0"], test.war = ["R0"], test.waw = ["W0"]}
+    pto.taxpy ins(%py, %scale : !part, f32) outs(%px : !part) {test.tag = "PM", test.strong = false, test.coverage = "qualified", test.raw = ["R0", "W0", "P"], test.waw = ["W0", "P"], test.war = ["R0"]}
+    pto.tadd ins(%x, %x : !vec, !vec) outs(%z : !vec) {test.tag = "R1", test.raw = ["W0", "P", "PM"]}
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec) {test.tag = "W2", test.strong = true, test.waw = ["W0", "P", "PM"], test.war = ["R0", "PM", "R1"]}
+    return
+  }
+
+  // Admitted runtime values satisfy 0 <= n <= 16. The importer does not
+  // receive a constant n, so it must withhold a must-write extent.
+  func.func @descriptor_updates(%ptr: !pto.ptr<f32>, %n: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 4096 : i64
+    %a2 = arith.constant 8192 : i64
+    %scale = arith.constant 2.0 : f32
+    %x = pto.alloc_tile addr = %a0 valid_row = %c16 valid_col = %c16 : !dyn
+    %y = pto.alloc_tile addr = %a1 valid_row = %c16 valid_col = %c16 : !dyn
+    %view = pto.make_tensor_view %ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%y : !dyn) {test.tag = "Y"}
+    pto.tadd ins(%y, %y : !dyn, !dyn) outs(%x : !dyn) {test.tag = "D0", test.strong = true}
+    pto.set_validshape %x, %c8, %c16 : !dyn
+    pto.set_validshape %y, %c8, %c16 : !dyn
+    pto.tadd ins(%y, %y : !dyn, !dyn) outs(%x : !dyn) {test.tag = "D1", test.strong = false, test.coverage = "qualified"}
+    pto.set_validshape %x, %n, %c16 : !dyn
+    pto.set_validshape %y, %n, %c16 : !dyn
+    pto.tadd ins(%y, %y : !dyn, !dyn) outs(%x : !dyn) {test.tag = "D2", test.strong = false, test.coverage = "unknown-descriptor"}
+    pto.set_validshape %x, %c16, %c16 : !dyn
+    pto.set_validshape %y, %c16, %c16 : !dyn
+    pto.tadd ins(%y, %y : !dyn, !dyn) outs(%x : !dyn) {test.tag = "D3", test.strong = true, test.waw = ["D0", "D1", "D2"]}
+    pto.set_validshape %x, %c0, %c0 : !dyn
+    pto.set_validshape %y, %c0, %c0 : !dyn
+    pto.tadd ins(%y, %y : !dyn, !dyn) outs(%x : !dyn) {test.tag = "D4", test.strong = false, test.coverage = "qualified", test.waw = ["D3"]}
+    return
+  }
+
+  func.func @row_subview(%ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 4096 : i64
+    %a2 = arith.constant 8192 : i64
+    %scale = arith.constant 2.0 : f32
+    %x = pto.alloc_tile addr = %a0 : !vec
+    %y = pto.alloc_tile addr = %a1 : !vec
+    %z = pto.alloc_tile addr = %a2 : !vec
+    %view = pto.make_tensor_view %ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec) {test.tag = "W"}
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%y : !vec) {test.tag = "Y"}
+    %xr = "pto.subview"(%x, %c2, %c0) {sizes = [1, 16], operandSegmentSizes = array<i32: 1, 2, 0, 0>} : (!vec, index, index) -> !row
+    %yr = "pto.subview"(%y, %c2, %c0) {sizes = [1, 16], operandSegmentSizes = array<i32: 1, 2, 0, 0>} : (!vec, index, index) -> !row
+    pto.tadd ins(%yr, %yr : !row, !row) outs(%xr : !row) {test.tag = "Row", test.strong = true, test.coverage = "qualified", test.raw = ["Y"], test.waw = ["W"]}
+    pto.tadd ins(%x, %x : !vec, !vec) outs(%z : !vec) {test.tag = "R", test.raw = ["W", "Row"]}
+    return
+  }
+
+  func.func @strided_subview(%ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 4096 : i64
+    %a2 = arith.constant 8192 : i64
+    %scale = arith.constant 2.0 : f32
+    %x = pto.alloc_tile addr = %a0 : !vec
+    %y = pto.alloc_tile addr = %a1 : !vec
+    %z = pto.alloc_tile addr = %a2 : !vec
+    %view = pto.make_tensor_view %ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec) {test.tag = "W"}
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%y : !vec) {test.tag = "Y"}
+    %xr = "pto.subview"(%x, %c0, %c0) {sizes = [2, 8], operandSegmentSizes = array<i32: 1, 2, 0, 0>} : (!vec, index, index) -> !rows
+    %yr = "pto.subview"(%y, %c0, %c0) {sizes = [2, 8], operandSegmentSizes = array<i32: 1, 2, 0, 0>} : (!vec, index, index) -> !rows
+    pto.tadd ins(%yr, %yr : !rows, !rows) outs(%xr : !rows) {test.tag = "View", test.strong = false, test.coverage = "non-unique-location"}
+    pto.tadd ins(%x, %x : !vec, !vec) outs(%z : !vec) {test.tag = "R", test.raw = ["W", "View"]}
+    return
+  }
+
+  func.func @dynamic_address(%ptr: !pto.ptr<f32>, %which: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 4096 : i64
+    %a2 = arith.constant 8192 : i64
+    %scale = arith.constant 2.0 : f32
+    %view = pto.make_tensor_view %ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    // Finite but unresolved physical alternatives must not overwrite both cells.
+    %addr = arith.select %which, %a0, %a1 : i64
+    %selected = pto.alloc_tile addr = %addr : !vec
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%selected : !vec) {test.tag = "Dynamic", test.strong = false, test.coverage = "non-unique-location"}
+    return
+  }
+
+  func.func @unsupported_write(%ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 4096 : i64
+    %a2 = arith.constant 8192 : i64
+    %scale = arith.constant 2.0 : f32
+    %x = pto.alloc_tile addr = %a0 : !vec
+    %y = pto.alloc_tile addr = %a1 : !vec
+    %z = pto.alloc_tile addr = %a2 : !vec
+    %view = pto.make_tensor_view %ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec) {test.tag = "W"}
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%y : !vec) {test.tag = "Y"}
+    pto.tmov ins(%y : !vec) outs(%x : !vec) {test.tag = "Move", test.strong = false, test.coverage = "unknown-semantics"}
+    pto.tadd ins(%x, %x : !vec, !vec) outs(%z : !vec) {test.tag = "R", test.raw = ["W", "Move"]}
+    return
+  }
+
+  func.func @padding_is_not_allocation(%ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 4096 : i64
+    %a2 = arith.constant 8192 : i64
+    %scale = arith.constant 2.0 : f32
+    %x = pto.alloc_tile addr = %a0 : !vec
+    %y = pto.alloc_tile addr = %a1 : !vec
+    %z = pto.alloc_tile addr = %a2 : !vec
+    %view = pto.make_tensor_view %ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec) {test.tag = "W"}
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%y : !vec) {test.tag = "Y"}
+    %px = pto.alloc_tile addr = %a0 : !padded
+    %py = pto.alloc_tile addr = %a1 : !padded
+    pto.tadd ins(%py, %py : !padded, !padded) outs(%px : !padded) {test.tag = "Pad", test.strong = false, test.coverage = "qualified"}
+    pto.tadd ins(%x, %x : !vec, !vec) outs(%z : !vec) {test.tag = "R", test.raw = ["W", "Pad"]}
+    return
+  }
+
+  func.func @load_variant(%ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 4096 : i64
+    %a2 = arith.constant 8192 : i64
+    %scale = arith.constant 2.0 : f32
+    %x = pto.alloc_tile addr = %a0 : !vec
+    %y = pto.alloc_tile addr = %a1 : !vec
+    %z = pto.alloc_tile addr = %a2 : !vec
+    %view = pto.make_tensor_view %ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec) {test.tag = "W", test.strong = true}
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec) {test.tag = "Variant", test.strong = false, test.coverage = "unknown-semantics"} left_padding_num = %c0 : index
+    pto.tadd ins(%x, %x : !vec, !vec) outs(%z : !vec) {test.tag = "R", test.raw = ["W", "Variant"]}
+    return
+  }
+
+}

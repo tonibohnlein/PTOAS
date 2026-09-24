@@ -498,6 +498,7 @@ def BitcastOp : PTO_Op<"bitcast", [
 // -------------------------
 def TLoadOp  : PTO_TOp<"tload", [
   PTO_DpsInitOpInterface,
+  TileWriteCoverageOpInterface,
   AttrSizedOperandSegments,
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
@@ -604,6 +605,19 @@ def TLoadOp  : PTO_TOp<"tload", [
   
   let extraClassDeclaration = [{
     static StringRef getOpName() { return "pto_load"; }
+    bool writesAllValidTileElements(::mlir::Value value) {
+      // The ordinary transfer writes the destination's valid rectangle. The
+      // padding/conditional-initialization overloads need their own contract;
+      // optional value operands can change the transfer's extent or position.
+      // Declining this refinement does not discard their ordinary effects.
+      auto initialize = getOperation()->getAttrOfType<::mlir::BoolAttr>("init_out_buffer");
+      if (getOperation()->getNumOperands() != 2 ||
+          getOperation()->hasAttr("pad_mode") ||
+          (initialize && initialize.getValue())) {
+        return false;
+      }
+      return value == getDst();
+    }
     ShapedType getSrcOperandType() {
        return cast<ShapedType>(getSrc().getType());
     }
@@ -3377,6 +3391,7 @@ def TAbsOp : PTO_TOp<"tabs", [
 
 def TAddOp : PTO_TOp<"tadd", [
   PTO_DpsInitOpInterface,
+  TileWriteCoverageOpInterface,
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
@@ -3519,6 +3534,7 @@ def TAddSOp : PTO_TOp<"tadds", [
 
 def TAxpyOp : PTO_TOp<"taxpy", [
   PTO_DpsInitOpInterface,
+  TileWriteCoverageOpInterface,
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {

@@ -140,4 +140,29 @@ def PTO_DpsInitOpInterface : OpInterface<"PTO_DpsInitOpInterface"> {
   }];
 }
 
+// An opt-in semantic lower bound on a write, independent of its may-effects.
+// In particular, implementing this interface says nothing about old-content
+// reads, physical aliasing, padding bytes, asynchronous completion or legal cuts.
+def TileWriteCoverageOpInterface : OpInterface<"TileWriteCoverageOpInterface"> {
+  let description = [{
+    Tests whether every current valid logical element of a named destination
+    tile is written on each execution of this whole operation. False withholds
+    that guarantee; it does not mean that the operation performs no write. MemoryEffectsOpInterface remains
+    authoritative for may-reads and may-writes, including read-modify-write.
+    A client must separately prove the descriptor dimensions at this use and
+    the mapping from those elements to exact physical cells. Allocation extent,
+    a destination-style operand and a generic Write effect are not that proof.
+    No guarantee is made for inactive rows, masked columns or padding bytes.
+    Operations without this interface retain all their ordinary effects.
+  }];
+  let cppNamespace = "::mlir::pto";
+  let methods = [
+    InterfaceMethod<"Whether this effect writes every current valid element of value.",
+      "bool", "writesAllValidTileElements", (ins "::mlir::Value":$value), [{}],
+      /*defaultImplementation=*/[{
+        return value == $_op.getDst();
+      }]>
+  ];
+}
+
 #endif // MLIR_DIALECT_PTO_IR_PTOINTERFACES

@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// SPDX-License-Identifier: LicenseRef-CANN-Open-Software-License-2.0
+// RUN: pto-test-opt --pto-insert-sync="algorithm=existing" %s | FileCheck %s --check-prefix=EXISTING
+// RUN: not pto-test-opt --pto-insert-sync="algorithm=frontier-synch" %s 2>&1 | FileCheck %s --check-prefix=FRONTIER
+// The existing mode must still emit the shared-effects RAW/WAW synchronization.
+// FrontierSynch still intentionally stops at its unimplemented constructor;
+// reaching that diagnostic is a mode smoke test, not a successful construction.
+// EXISTING: pto.set_flag
+// EXISTING: pto.wait_flag
+// EXISTING: pto.taxpy
+// FRONTIER: frontier-synch: imported
+// FRONTIER-SAME: construction is not implemented yet
+!vec = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a3"} {
+  func.func @both_modes(%ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 4096 : i64
+    %a2 = arith.constant 8192 : i64
+    %scale = arith.constant 2.0 : f32
+    %x = pto.alloc_tile addr = %a0 : !vec
+    %y = pto.alloc_tile addr = %a1 : !vec
+    %z = pto.alloc_tile addr = %a2 : !vec
+    %view = pto.make_tensor_view %ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !pto.tensor_view<?x?xf32>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%x : !vec)
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf32>) outs(%y : !vec)
+    pto.taxpy ins(%y, %scale : !vec, f32) outs(%x : !vec)
+    return
+  }
+
+}

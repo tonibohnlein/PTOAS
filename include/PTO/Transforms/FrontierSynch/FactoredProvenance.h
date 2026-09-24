@@ -9,233 +9,316 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_FACTOREDPROVENANCE_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_FACTOREDPROVENANCE_H
 
+#include "PTO/Transforms/FrontierSynch/FactoredUse.h"
 #include "PTO/Transforms/FrontierSynch/OriginalStructure.h"
-#include <string>
+#include "PTO/Transforms/FrontierSynch/OriginalValueQueries.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include <map>
 
 namespace mlir::pto::frontiersynch {
 
-// A shared expression for one cell in an acyclic original-control projection.
-// Node IDs are immutable; a Choice always names the same original condition
-// occurrence in every provenance and demand expression that refers to it.
-struct FactoredUseNode {
-  enum class Kind { Empty, Incoming, Access, Both, Choose, Demand } kind = Kind::Empty;
-  enum class Sort { Origins, Demands } sort = Sort::Origins;
-  enum class Hazard { RAW, WAR, WAW } hazard = Hazard::RAW;
-  std::size_t left = 0, right = 0, owner = NoControlId, operation = NoControlId;
-};
-
-struct FactoredUseResult {
-  // Completeness here means the original acyclic syntax was formed into an
-  // expression. It does not qualify geometry, guards at endpoints, or an
-  // occurrence continuation for exact placement.
-  bool complete = false;
-  std::size_t cell = NoControlId;
-  std::string reason;
-  std::size_t demands = 0, finalWriters = 0, finalReaders = 0;
-  std::vector<FactoredUseNode> nodes;
-  // Each access queries its incoming state before the original operation's
-  // combined read/write transfer. These are useful even when a later write
-  // replaces the outgoing state.
-  std::vector<std::size_t> priorWriters, priorReaders;
-  // Backward expressions stop at this projection's exit. Empty is not a proof
-  // that a larger enclosing continuation has no further access.
-  std::vector<std::size_t> nextWriters, nextReaders;
-  // An operation leaf retains every shared translated-effect incidence of
-  // its read and write roles. The leaf does not merge those effect witnesses.
-  std::vector<std::vector<std::size_t>> readIncidences, writeIncidences;
+// Selects one original invocation or one visit of a repeated child. No body
+// visit stands for the complete repeat; before/after while visits are distinct.
+struct FactoredProjectionScope {
+    FactoredUseFrame::Kind kind = FactoredUseFrame::Kind::Invocation;
+    std::size_t owner = NoControlId;
+    bool operator<(const FactoredProjectionScope& other) const
+    {
+        return std::tie(kind, owner) < std::tie(other.kind, other.owner);
+    }
 };
 
 class FactoredProvenance {
 public:
-  explicit FactoredProvenance(const OriginalStructure &original, std::size_t cell)
-      : original(original), cell(cell) {
-    result.cell = cell;
-    result.nodes.push_back({});
-    FactoredUseNode incoming;
-    incoming.kind = FactoredUseNode::Kind::Incoming;
-    result.nodes.push_back(incoming);
-    result.priorWriters.assign(original.operations.size(), 0);
-    result.priorReaders.assign(original.operations.size(), 0);
-    result.nextWriters.assign(original.operations.size(), 0);
-    result.nextReaders.assign(original.operations.size(), 0);
-    result.readIncidences.resize(original.operations.size());
-    result.writeIncidences.resize(original.operations.size());
-    if (cell >= original.cells.size()) {
-      result.reason = "invalid original physical cell";
-      return;
+    explicit FactoredProvenance(
+        const OriginalStructure& original, std::size_t cell, FactoredProjectionScope scope = {},
+        FactoredUseInterface boundary = {}, const OriginalValueQueries* shared = nullptr)
+    {
+        std::unique_ptr<OriginalValueQueries> ownedValues;
+        if (!shared) {
+            ownedValues = std::make_unique<OriginalValueQueries>(original);
+            shared = ownedValues.get();
+        }
+        FactoredUseFrame frame;
+        frame.original = reinterpret_cast<std::uintptr_t>(&original);
+        frame.snapshot = original.version;
+        frame.cell = cell;
+        frame.owner = scope.owner;
+        frame.kind = scope.kind;
+        result.frame = frame;
+        result.cell = cell;
+        result.arena = boundary.arena ? boundary.arena : std::make_shared<FactoredUseArena>(frame);
+        if (!(result.arena->frame() == frame)) {
+            result.reason = "factored inputs require the same original instance, cell, and occurrence scope";
+            return;
+        }
+        const auto* root = projectionRoot(original.body, scope);
+        if (cell >= original.cells.size() || !root) {
+            result.reason = "invalid original physical cell or fixed-use projection scope";
+            return;
+        }
+        if (!boundary.arena) {
+            boundary.arena = result.arena;
+            // No child is silently fresh. These are named original-history inputs,
+            // not a fictitious completed writer/reader or runtime history variable.
+            boundary.incoming = {
+                boundary.arena->incoming(scope.owner, FactoredUseNode::Boundary::Entry, FactoredUseNode::Role::Writer),
+                boundary.arena->incoming(scope.owner, FactoredUseNode::Boundary::Entry, FactoredUseNode::Role::Reader)};
+            if (scope.kind != FactoredUseFrame::Kind::Invocation) {
+                boundary.following = {
+                    boundary.arena->incoming(
+                        scope.owner, FactoredUseNode::Boundary::Exit, FactoredUseNode::Role::Writer),
+                    boundary.arena->incoming(
+                        scope.owner, FactoredUseNode::Boundary::Exit, FactoredUseNode::Role::Reader)};
+            }
+            // Invocation following roots are empty *at its designated original exit*,
+            // not a claim about a caller's continuation beyond that horizon.
+        }
+        ProjectionAdapter adapter(original, cell, *boundary.arena, *shared);
+        FactoredUseProjection projection;
+        projection.frame = frame;
+        projection.body = adapter.project(*root, projection.accesses);
+        FactoredUseBuilder builder(std::move(projection), std::move(boundary));
+        result = builder.take();
+        projectionWork = adapter.work;
     }
-    if (hasRepetition(original.body)) {
-      result.reason = "factored occurrence projection has an unresolved repetition";
-      return;
-    }
-    State forward{1, 0, 0};
-    forward = transfer(original.body, forward, false);
-    result.demands = forward.demands;
-    result.finalWriters = forward.writers;
-    result.finalReaders = forward.readers;
-    State backward{0, 0, 0};
-    transfer(original.body, backward, true);
-    result.complete = true;
-  }
 
-  const FactoredUseResult &get() const { return result; }
+    const FactoredUseResult& get() const { return result; }
+    FactoredUseResult take() { return std::move(result); }
+    struct ProjectionWork {
+        std::size_t syntax = 0, effectIncidences = 0, guards = 0;
+    };
+    const ProjectionWork& preparationWork() const { return projectionWork; }
 
 private:
-  struct State {
-    std::size_t writers = 0, readers = 0, demands = 0;
-  };
-
-  bool hasRepetition(const Region &region) const {
-    if (region.kind == Region::For || region.kind == Region::While) {
-      return true;
-    }
-    for (const auto &child : region.children) {
-      if (hasRepetition(child)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  std::size_t append(FactoredUseNode node) {
-    const auto id = result.nodes.size();
-    result.nodes.push_back(node);
-    return id;
-  }
-
-  std::size_t access(std::size_t operation) {
-    FactoredUseNode node;
-    node.kind = FactoredUseNode::Kind::Access;
-    node.operation = operation;
-    return append(node);
-  }
-
-  std::size_t both(std::size_t a, std::size_t b, FactoredUseNode::Sort sort) {
-    if (!a || a == b) {
-      return b;
-    }
-    if (!b) {
-      return a;
-    }
-    FactoredUseNode node;
-    node.kind = FactoredUseNode::Kind::Both;
-    node.sort = sort;
-    node.left = a;
-    node.right = b;
-    return append(node);
-  }
-
-  std::size_t choose(std::size_t owner, std::size_t yes, std::size_t no,
-                     FactoredUseNode::Sort sort) {
-    if (yes == no) {
-      return yes;
-    }
-    FactoredUseNode node;
-    node.kind = FactoredUseNode::Kind::Choose;
-    node.sort = sort;
-    node.owner = owner;
-    node.left = yes;
-    node.right = no;
-    return append(node);
-  }
-
-  std::size_t demand(std::size_t sources, std::size_t target, FactoredUseNode::Hazard hazard) {
-    if (!sources) {
-      return 0;
-    }
-    FactoredUseNode node;
-    node.kind = FactoredUseNode::Kind::Demand;
-    node.sort = FactoredUseNode::Sort::Demands;
-    node.hazard = hazard;
-    node.left = sources;
-    node.operation = target;
-    return append(node);
-  }
-
-  State transfer(const Region &region, State state, bool backward) {
-    if (region.kind == Region::Operation) {
-      if (region.operation >= original.operations.size()) {
-        return state;
-      }
-      bool reads = false, writes = false, fullWrite = false;
-      for (std::size_t incidence = 0; incidence < original.operations[region.operation].accesses.size();
-           ++incidence) {
-        const auto &effect = original.operations[region.operation].accesses[incidence];
-        if (effect.cell == cell) {
-          reads |= effect.read;
-          writes |= effect.write;
-          fullWrite |= effect.write && effect.definiteWrite;
-          if (!backward) {
-            if (effect.read) {
-              result.readIncidences[region.operation].push_back(incidence);
+    static const Region* findOwner(const Region& region, std::size_t owner)
+    {
+        if (region.kind != Region::Operation && region.originalOwner == owner) {
+            return &region;
+        }
+        for (const auto& child : region.children) {
+            if (const auto* found = findOwner(child, owner)) {
+                return found;
             }
-            if (effect.write) {
-              result.writeIncidences[region.operation].push_back(incidence);
+        }
+        return nullptr;
+    }
+    static const Region* projectionRoot(const Region& body, FactoredProjectionScope scope)
+    {
+        if (scope.kind == FactoredUseFrame::Kind::Invocation) {
+            return scope.owner == NoControlId ? &body : nullptr;
+        }
+        if (scope.owner == NoControlId) {
+            return nullptr;
+        }
+        const auto* owner = findOwner(body, scope.owner);
+        if (!owner) {
+            return nullptr;
+        }
+        if (scope.kind == FactoredUseFrame::Kind::ForBody) {
+            return owner->kind == Region::For && owner->children.size() == 1 ? &owner->children[0] : nullptr;
+        }
+        if ((scope.kind != FactoredUseFrame::Kind::WhileBefore && scope.kind != FactoredUseFrame::Kind::WhileAfter) ||
+            owner->kind != Region::While || owner->children.size() != 2) {
+            return nullptr;
+        }
+        return &owner->children[scope.kind == FactoredUseFrame::Kind::WhileBefore ? 0 : 1];
+    }
+    struct ProjectionAdapter {
+        const OriginalStructure& original;
+        std::size_t cell;
+        FactoredUseArena& arena;
+        const OriginalValueQueries& values;
+        DenseMap<mlir::Operation*, std::size_t> siteIds;
+        ProjectionWork work;
+        ProjectionAdapter(
+            const OriginalStructure& original, std::size_t cell, FactoredUseArena& arena,
+            const OriginalValueQueries& values)
+            : original(original), cell(cell), arena(arena), values(values)
+        {
+            for (std::size_t id = 0; id < original.originalSites.size(); ++id) {
+                siteIds.try_emplace(original.originalSites[id], id);
             }
-          }
         }
-      }
-      if (!backward) {
-        result.priorWriters[region.operation] = state.writers;
-        result.priorReaders[region.operation] = state.readers;
-        if (reads) {
-          state.demands = both(state.demands,
-                               demand(state.writers, region.operation, FactoredUseNode::Hazard::RAW),
-                               FactoredUseNode::Sort::Demands);
+        std::size_t guard(const Region& region)
+        {
+            ++work.guards;
+            if (region.originalOwner >= original.originalSites.size()) {
+                return NoFactoredId;
+            }
+            auto choice = dyn_cast<scf::IfOp>(original.originalSites[region.originalOwner]);
+            if (!choice) {
+                return NoFactoredId;
+            }
+            const auto identity = values.identity(choice.getCondition());
+            if (!identity.value) {
+                return NoFactoredId;
+            }
+            return arena.test(
+                {reinterpret_cast<std::uintptr_t>(identity.value.getAsOpaquePointer()), identity.occurrenceScope});
         }
-        if (writes) {
-          state.demands = both(state.demands,
-                               demand(state.writers, region.operation, FactoredUseNode::Hazard::WAW),
-                               FactoredUseNode::Sort::Demands);
-          state.demands = both(state.demands,
-                               demand(state.readers, region.operation, FactoredUseNode::Hazard::WAR),
-                               FactoredUseNode::Sort::Demands);
+        bool summarize(const Region& region, bool& reads, bool& writes)
+        {
+            ++work.syntax;
+            if (region.kind == Region::Operation) {
+                if (region.operation >= original.operations.size()) {
+                    return false;
+                }
+                for (const auto& effect : original.operations[region.operation].accesses) {
+                    ++work.effectIncidences;
+                    if (effect.cell == cell) {
+                        reads |= effect.read;
+                        writes |= effect.write;
+                    }
+                }
+            }
+            for (const auto& child : region.children) {
+                if (!summarize(child, reads, writes)) {
+                    return false;
+                }
+            }
+            return true;
         }
-      } else {
-        result.nextWriters[region.operation] = state.writers;
-        result.nextReaders[region.operation] = state.readers;
-      }
-      if (fullWrite) {
-        state.writers = access(region.operation);
-        state.readers = backward && reads ? access(region.operation) : 0;
-      } else {
-        if (writes) {
-          state.writers = both(state.writers, access(region.operation),
-                               FactoredUseNode::Sort::Origins);
+        FactoredUseRegion project(const Region& region, std::vector<std::shared_ptr<const FactoredUseAccess>>& accesses)
+        {
+            ++work.syntax;
+            FactoredUseRegion out;
+            out.owner = region.originalOwner;
+            if (region.kind == Region::For || region.kind == Region::While) {
+                out.kind = FactoredUseRegion::Kind::OpaqueRepeat;
+                // Do not unroll or evaluate one body as though it were the repeat.
+                for (const auto& child : region.children) {
+                    if (!summarize(child, out.mayRead, out.mayWrite)) {
+                        out.kind = FactoredUseRegion::Kind::Unresolved;
+                    }
+                }
+                return out;
+            }
+            if (region.kind == Region::Operation) {
+                if (region.operation >= original.operations.size()) {
+                    out.kind = FactoredUseRegion::Kind::Unresolved;
+                    return out;
+                }
+                out.kind = FactoredUseRegion::Kind::Access;
+                out.access = accesses.size();
+                auto access = std::make_shared<FactoredUseAccess>();
+                access->operation = region.operation;
+                const auto& effects = original.operations[region.operation].accesses;
+                for (std::size_t incidence = 0; incidence < effects.size(); ++incidence) {
+                    ++work.effectIncidences;
+                    const auto& effect = effects[incidence];
+                    if (effect.cell != cell) {
+                        continue;
+                    }
+                    access->read |= effect.read;
+                    access->write |= effect.write;
+                    // This is a consumer of the common coverage qualification, not a
+                    // geometry-based substitute for that proof (Phase A step 3).
+                    access->definiteWrite |= effect.write && effect.definiteWrite;
+                    if (effect.read) {
+                        access->readIncidences.push_back(incidence);
+                    }
+                    if (effect.write) {
+                        access->writeIncidences.push_back(incidence);
+                    }
+                }
+                accesses.push_back(std::move(access));
+                return out;
+            }
+            if (region.kind == Region::Choice) {
+                out.kind = FactoredUseRegion::Kind::Choice;
+                out.condition = guard(region);
+            }
+            for (const auto& child : region.children) {
+                out.children.push_back(project(child, accesses));
+            }
+            return out;
         }
-        if (reads) {
-          state.readers = both(state.readers, access(region.operation),
-                               FactoredUseNode::Sort::Origins);
-        }
-      }
-      return state;
-    }
-    const bool binaryChoice = region.kind == Region::Choice && region.children.size() == 2;
-    if (binaryChoice) {
-      auto yes = transfer(region.children[0], state, backward);
-      auto no = transfer(region.children[1], state, backward);
-      return {choose(region.originalOwner, yes.writers, no.writers,
-                     FactoredUseNode::Sort::Origins),
-              choose(region.originalOwner, yes.readers, no.readers,
-                     FactoredUseNode::Sort::Origins),
-              choose(region.originalOwner, yes.demands, no.demands,
-                     FactoredUseNode::Sort::Demands)};
-    }
-    if (!backward) {
-      for (const auto &child : region.children) {
-        state = transfer(child, state, false);
-      }
-    } else {
-      for (auto child = region.children.rbegin(); child != region.children.rend(); ++child) {
-        state = transfer(*child, state, true);
-      }
-    }
-    return state;
-  }
+    };
+    FactoredUseResult result;
+    ProjectionWork projectionWork;
+};
 
-  const OriginalStructure &original;
-  std::size_t cell;
-  FactoredUseResult result;
+// One original instance owns the default projections. Different cells, loop
+// bodies, and while regions have different cache entries. Explicit boundary
+// applications are not cached under these default-input keys.
+class FactoredUseService {
+public:
+    explicit FactoredUseService(const OriginalStructure& original, const OriginalValueQueries* values = nullptr)
+        : original(original),
+          version(original.version),
+          values(values),
+          scopes(original.operations.size()),
+          represented(original.operations.size())
+    {
+        index(original.body, {});
+        invalid.reason = "invalid original operation or physical cell";
+        changed.reason = "original program changed; rebuild factored use service";
+    }
+    const FactoredUseResult& root(std::size_t cell) const { return get(cell, {}); }
+    const FactoredUseResult& at(std::size_t operation, std::size_t cell) const
+    {
+        return operation < scopes.size() && represented[operation] ? get(cell, scopes[operation]) : invalid;
+    }
+    // The supplied roots may come from a previously formed acyclic transfer.
+    // The arena's frame must match this exact scope. Cross-reentry transport is
+    // deliberately not inferred; later D4 supplies that separate qualification.
+    FactoredUseResult applyAt(std::size_t operation, std::size_t cell, FactoredUseInterface boundary) const
+    {
+        if (original.version != version) {
+            return changed;
+        }
+        if (operation >= scopes.size() || !represented[operation] || cell >= original.cells.size() || !boundary.arena) {
+            return invalid;
+        }
+        return FactoredProvenance(original, cell, scopes[operation], std::move(boundary), values).take();
+    }
+
+private:
+    const FactoredUseResult& get(std::size_t cell, FactoredProjectionScope scope) const
+    {
+        if (original.version != version) {
+            return changed;
+        }
+        if (cell >= original.cells.size()) {
+            return invalid;
+        }
+        const auto key = std::make_pair(cell, scope);
+        auto found = cache.find(key);
+        if (found == cache.end()) {
+            found = cache
+                        .emplace(
+                            key,
+                            std::make_unique<FactoredProvenance>(original, cell, scope, FactoredUseInterface{}, values))
+                        .first;
+        }
+        return found->second->get();
+    }
+    void index(const Region& region, FactoredProjectionScope scope)
+    {
+        if (region.kind == Region::Operation && region.operation < scopes.size()) {
+            scopes[region.operation] = scope;
+            represented[region.operation] = true;
+        }
+        for (std::size_t child = 0; child < region.children.size(); ++child) {
+            auto next = scope;
+            if (region.kind == Region::For) {
+                next = {FactoredUseFrame::Kind::ForBody, region.originalOwner};
+            } else if (region.kind == Region::While) {
+                next = {
+                    child == 0 ? FactoredUseFrame::Kind::WhileBefore : FactoredUseFrame::Kind::WhileAfter,
+                    region.originalOwner};
+            }
+            index(region.children[child], next);
+        }
+    }
+    const OriginalStructure& original;
+    OriginalProgramVersion version;
+    const OriginalValueQueries* values;
+    std::vector<FactoredProjectionScope> scopes;
+    std::vector<bool> represented;
+    mutable std::map<std::pair<std::size_t, FactoredProjectionScope>, std::unique_ptr<FactoredProvenance>> cache;
+    FactoredUseResult invalid, changed;
 };
 
 } // namespace mlir::pto::frontiersynch

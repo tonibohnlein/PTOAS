@@ -83,6 +83,7 @@ target_link_libraries(pto-bisheng-scheduler-test PRIVATE PTOASBishengScheduler)
 
 add_llvm_executable(pto-frontier-analysis-test
   pto-frontier-analysis-test.cpp
+  FactoredProvenanceNativeTests.cpp
   PARTIAL_SOURCES_INTENDED
 )
 target_link_libraries(pto-frontier-analysis-test PRIVATE
@@ -90,3 +91,58 @@ target_link_libraries(pto-frontier-analysis-test PRIVATE
   MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
 )
 add_dependencies(pto-frontier-analysis-test PTOOpsIncGen PTOPassesIncGen)
+
+# The production original-point/control core is intentionally MLIR-independent.
+add_llvm_executable(pto-frontier-interval-core-test
+  pto-frontier-interval-core-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_include_directories(pto-frontier-interval-core-test PRIVATE
+  "${CMAKE_SOURCE_DIR}/include"
+  "${CMAKE_SOURCE_DIR}/lib/PTO/Transforms/FrontierSynch"
+)
+
+add_llvm_executable(pto-frontier-interval-test
+  pto-frontier-interval-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-interval-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
+)
+add_dependencies(pto-frontier-interval-test PTOOpsIncGen PTOPassesIncGen)
+# The same production expression transfer can be checked without an MLIR runtime.
+add_llvm_executable(pto-factored-provenance-test
+  pto-factored-provenance-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_include_directories(pto-factored-provenance-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+
+# Phase A semantic tests use production records and always-active assertions.
+add_llvm_executable(pto-frontier-obligations-test
+  ../../test/standalone/frontier_obligations_test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_include_directories(pto-frontier-obligations-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+add_llvm_executable(pto-frontier-value-arithmetic-test
+  ../../test/frontier-synch-step5/arithmetic.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_include_directories(pto-frontier-value-arithmetic-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+add_llvm_executable(pto-frontier-value-test
+  ../../test/frontier-synch-step5/native.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-value-test PRIVATE
+  MLIRIR MLIRParser MLIRSupport MLIRFuncDialect MLIRArithDialect MLIRSCFDialect
+)
+add_dependencies(pto-frontier-value-test PTOOpsIncGen)
+add_llvm_executable(pto-frontier-lifetime-test
+  pto-frontier-lifetime-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+target_link_libraries(pto-frontier-lifetime-test PRIVATE
+  PTOIR PTOTransforms MLIRIR MLIRParser MLIRSupport
+  MLIRFuncDialect MLIRArithDialect MLIRSCFDialect MLIRControlFlowDialect
+)
+add_dependencies(pto-frontier-lifetime-test PTOOpsIncGen PTOPassesIncGen)

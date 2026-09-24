@@ -7,7 +7,7 @@
 // PARTICULAR PURPOSE. See LICENSE in the root of the software repository for the full text of the
 // License.
 #include "PTO/Transforms/FrontierSynch/OriginalLifetimes.h"
-#include "Control.h"
+#include "OriginalIntervals.h"
 #include <algorithm>
 #include <deque>
 #include <limits>
@@ -94,6 +94,8 @@ void indexOwnerRegions(const Region& region, std::map<std::size_t, const Region*
 
 struct OriginalLifetimes::Impl {
     const OriginalStructure& original;
+    OriginalProgramVersion version;
+    const OriginalValueQueries* values;
     detail::ControlGraph graph;
     std::vector<bool> reachable;
     std::vector<bool> repeatedOperation;
@@ -106,24 +108,33 @@ struct OriginalLifetimes::Impl {
         std::vector<bool> noFullWriter;
     };
     std::vector<CellInfo> cells;
-    mutable std::map<std::size_t, std::unique_ptr<FactoredProvenance>> factoredByCell;
+    FactoredUseService factoredUses;
     using EffectKey = std::tuple<std::size_t, std::size_t, bool>;
     std::map<EffectKey, std::vector<std::size_t>> effectsByRole;
     std::vector<std::vector<OriginalRequirement>> byDeadline;
     std::vector<std::vector<SourceSubscription>> bySource;
     mutable std::map<std::size_t, std::vector<bool>> ownerMembers;
     std::map<std::size_t, const Region*> ownerRegions;
-    mutable std::vector<unsigned> continuationVisited;
-    mutable unsigned continuationEpoch = 0;
+    mutable std::map<OriginalInterval, OriginalMayAfter> continuations;
+    mutable std::map<std::pair<OriginalInterval, bool>, PhysicalUseFrontier> intervalFrontiers;
     mutable OriginalLifetimeStats work;
     bool ready = false;
+    bool requirementsBuilt = false;
     std::string error;
 
-    explicit Impl(const OriginalStructure& value) : original(value), graph(detail::buildControlGraph(value))
+    explicit Impl(const OriginalStructure& value, const OriginalValueQueries* values)
+        : original(value),
+          version(value.version),
+          values(values),
+          graph(detail::buildControlGraph(value)),
+          factoredUses(value, values)
     {
+        if (!graph.valid) {
+            error = graph.reason;
+            return;
+        }
         reachable = detail::reachableSites(graph);
         indexOwnerRegions(value.body, ownerRegions);
-        continuationVisited.resize(graph.sites.size());
         repeatedOperation.resize(value.operations.size());
         markRepeatingRegions(value.body, repeatedOperation);
         predecessors.resize(graph.sites.size());
@@ -185,7 +196,6 @@ struct OriginalLifetimes::Impl {
             solve(info, true);
             computeUninitialized(info);
         }
-        buildRequirements();
         ready = true;
     }
     void solve(CellInfo& info, bool backward)
@@ -219,7 +229,11 @@ struct OriginalLifetimes::Impl {
                 if (access.write) {
                     ws[bit / 64] |= uint64_t(1) << (bit % 64);
                 }
-                if (access.read) {
+                // RMW has already queried both old modes. After a definite
+                // overwrite it is a new writer, not a pure reader of the old
+                // generation. In reverse order its read precedes the overwrite, so
+                // retain it. A possible/partial RMW must retain both modes.
+                if (access.read && (backward || !access.definiteWrite)) {
                     rs[bit / 64] |= uint64_t(1) << (bit % 64);
                 }
             }
@@ -265,6 +279,13 @@ struct OriginalLifetimes::Impl {
         }
         return result;
     }
+    void ensureRequirements()
+    {
+        if (ready && !requirementsBuilt) {
+            buildRequirements();
+            requirementsBuilt = true;
+        }
+    }
     void buildRequirements()
     {
         for (std::size_t target = 0; target < original.operations.size(); ++target) {
@@ -288,36 +309,36 @@ struct OriginalLifetimes::Impl {
                 const bool targetWrites = kind != StorageRelationship::RAW;
                 const auto& matrix = kind == StorageRelationship::WAR ? info.previousReaders : info.previousWriters;
                 const auto& targetEffects = effectsByRole.at({target, cell, targetWrites});
-                    for (const auto& source : originsAt(matrix, info, target)) {
-                        OriginalRequirement request;
-                        request.relationship = {kind, cell, source, {target, target}};
-                        request.source = {source.operation, SourceMilestone::After};
-                        request.deadline = {target, SourceMilestone::Before};
-                        request.sourceEffects = &effectsByRole.at({source.operation, cell, sourceWrites});
-                        request.targetEffects = &targetEffects;
-                        request.sourceEngine = original.operations[source.operation].instruction->kPipeValue;
-                        request.targetEngine = original.operations[target].instruction->kPipeValue;
-                        request.sourceGapExecutable = original.operations[source.operation].afterExecutable;
-                        request.deadlineGapExecutable = original.operations[target].beforeExecutable;
-                        // A marginal origin is not an occurrence or episode certificate.
-                        const auto index = byDeadline[target].size();
-                        const auto executableSource = original.operations[source.operation].enclosingAfter;
-                        const bool validSource = executableSource < original.operations.size();
-                        request.sourceSubscribed = validSource;
-                        if (validSource) {
-                            SourceSubscription subscription;
-                            subscription.position = {executableSource, SourceMilestone::After};
-                            subscription.sufficientPosition = request.source;
-                            subscription.deadlineOperation = target;
-                            subscription.cell = cell;
-                            subscription.kind = kind;
-                            subscription.requirementIndex = index;
-                            subscription.executableInOriginalIR = true;
-                            bySource[executableSource].push_back(std::move(subscription));
-                        }
-                        byDeadline[target].push_back(request);
-                        ++work.requirements;
+                for (const auto& source : originsAt(matrix, info, target)) {
+                    OriginalRequirement request;
+                    request.relationship = {kind, cell, source, {target, target}};
+                    request.source = {source.operation, SourceMilestone::After};
+                    request.deadline = {target, SourceMilestone::Before};
+                    request.sourceEffects = &effectsByRole.at({source.operation, cell, sourceWrites});
+                    request.targetEffects = &targetEffects;
+                    request.sourceEngine = original.operations[source.operation].instruction->kPipeValue;
+                    request.targetEngine = original.operations[target].instruction->kPipeValue;
+                    request.sourceGapExecutable = original.operations[source.operation].afterExecutable;
+                    request.deadlineGapExecutable = original.operations[target].beforeExecutable;
+                    // A marginal origin is not an occurrence or episode certificate.
+                    const auto index = byDeadline[target].size();
+                    const auto executableSource = original.operations[source.operation].enclosingAfter;
+                    const bool validSource = executableSource < original.operations.size();
+                    request.sourceSubscribed = validSource;
+                    if (validSource) {
+                        SourceSubscription subscription;
+                        subscription.position = {executableSource, SourceMilestone::After};
+                        subscription.sufficientPosition = request.source;
+                        subscription.deadlineOperation = target;
+                        subscription.cell = cell;
+                        subscription.kind = kind;
+                        subscription.requirementIndex = index;
+                        subscription.executableInOriginalIR = true;
+                        bySource[executableSource].push_back(std::move(subscription));
                     }
+                    byDeadline[target].push_back(request);
+                    ++work.requirements;
+                }
             }
         }
     }
@@ -347,6 +368,10 @@ struct OriginalLifetimes::Impl {
     {
         PhysicalUseFrontier result;
         ++work.frontierQueries;
+        if (query.version && query.version != version) {
+            result.reason = "original-program version mismatch";
+            return result;
+        }
         const bool invalidCell = query.cell >= cells.size();
         const bool invalidOwner = query.owner != NoControlId && !ownerRegions.count(query.owner);
         if (invalidCell || invalidOwner) {
@@ -423,158 +448,250 @@ struct OriginalLifetimes::Impl {
             const auto& next = backward ? predecessors[site] : graph.sites[site].successors;
             pending.insert(pending.end(), next.begin(), next.end());
         }
-        result.status =
-            leftOwner ? PhysicalUseFrontier::Status::Unknown :
-            (result.accesses.empty() ? PhysicalUseFrontier::Status::NoHit : PhysicalUseFrontier::Status::Present);
+        result.status = leftOwner ? PhysicalUseFrontier::Status::Unknown :
+                                    (result.accesses.empty() ? PhysicalUseFrontier::Status::NoHit :
+                                                               PhysicalUseFrontier::Status::Present);
         if (leftOwner) {
             result.reason = "original use interval leaves its qualified owner";
         }
         std::sort(result.accesses.begin(), result.accesses.end(), [](const auto& a, const auto& b) {
             return a.site < b.site;
         });
+        for (const auto& access : result.accesses) {
+            const OriginalCut cut{access.operation, backward ? OriginalCut::After : OriginalCut::Before};
+            if (!resolveOriginalCut(original, cut)) {
+                result.status = PhysicalUseFrontier::Status::Unknown;
+                result.reason = "physical frontier has no executable original cut";
+                result.cuts.clear();
+                return result;
+            }
+            result.cuts.push_back(cut);
+        }
         return result;
     }
-    OriginalMayAfter mayAfter(const OriginalContinuationQuery& query) const
+    OriginalIntervalResult prepare(OriginalIntervalRequest request) const
+    {
+        OriginalIntervalResult result;
+        if (original.version != version) {
+            result.reason = "original program changed; rebuild Phase A";
+            return result;
+        }
+        if (request.selector.cell >= cells.size() ||
+            (request.selector.engine && *request.selector.engine >= unsigned(PipelineType::PIPE_NUM)) ||
+            (request.selector.physicalRelation != NoControlId &&
+             request.selector.physicalRelation >= original.physicalAddresses.size())) {
+            result.reason = "invalid original physical selector";
+            return result;
+        }
+        return detail::prepareOriginalInterval(graph, version, std::move(request));
+    }
+    bool matches(std::size_t operation, const OriginalAccessSelector& selector) const
+    {
+        const auto& payload = original.operations[operation];
+        if (selector.engine && unsigned(payload.instruction->kPipeValue) != *selector.engine) {
+            return false;
+        }
+        for (const auto& effect : payload.accesses) {
+            if (effect.cell == selector.cell &&
+                (selector.physicalRelation == NoControlId || effect.physicalRelation == selector.physicalRelation) &&
+                ((selector.read && effect.read) || (selector.write && effect.write))) {
+                return true;
+            }
+        }
+        return false;
+    }
+    PhysicalUseFrontier frontier(const OriginalInterval& interval, bool backward) const
+    {
+        PhysicalUseFrontier result;
+        result.interval = interval;
+        const auto prepared = prepare(interval.query);
+        if (!prepared.valid || prepared.interval != interval) {
+            result.reason = prepared.valid ? "inconsistent original interval owner" : prepared.reason;
+            return result;
+        }
+        const auto key = std::make_pair(interval, backward);
+        const auto prior = intervalFrontiers.find(key);
+        if (prior != intervalFrontiers.end()) {
+            ++work.intervalCacheHits;
+            return prior->second;
+        }
+        const auto walk = detail::walkOriginalInterval(
+            graph, interval, [&](std::size_t operation) { return matches(operation, interval.query.selector); },
+            backward ? detail::IntervalSelection::Last : detail::IntervalSelection::First);
+        work.frontierSites += walk.visitedSites;
+        result.cases = walk.cases;
+        result.reachesBoundary = walk.noHitPath;
+        for (auto operation : walk.operations) {
+            result.accesses.push_back({operation, operation});
+        }
+        if (!walk.complete || (walk.operations.empty() && walk.unresolvedOccurrence)) {
+            result.reason = walk.complete ? "unqualified repeated stop interpretation" : walk.reason;
+        } else {
+            result.status =
+                walk.operations.empty() ? PhysicalUseFrontier::Status::NoHit : PhysicalUseFrontier::Status::Present;
+            for (auto operation : walk.operations) {
+                const OriginalCut cut{operation, backward ? OriginalCut::After : OriginalCut::Before};
+                if (!resolveOriginalCut(original, cut)) {
+                    result.status = PhysicalUseFrontier::Status::Unknown;
+                    result.reason = "physical frontier has no executable original cut";
+                    result.cuts.clear();
+                    break;
+                }
+                result.cuts.push_back(cut);
+            }
+        }
+        return intervalFrontiers.emplace(key, std::move(result)).first->second;
+    }
+    OriginalMayAfter mayAfter(const OriginalInterval& interval) const
     {
         OriginalMayAfter result;
-        const bool validStart = query.start.operation < original.operations.size();
-        const bool validStop = query.stop.operation == NoControlId ||
-            query.stop.operation < original.operations.size();
-        const bool validAccess = query.read || query.write;
-        const bool reachableStart = validStart && reachable[query.start.operation];
-        const bool reachableStop = validStop &&
-            (query.stop.operation == NoControlId || reachable[query.stop.operation]);
-        const bool invalid = query.cell >= cells.size() || !validAccess || !reachableStart || !reachableStop;
-        if (invalid) {
-            result.reason = "invalid original continuation or access class";
+        result.interval = interval;
+        const auto prepared = prepare(interval.query);
+        if (!prepared.valid || prepared.interval != interval) {
+            result.reason = prepared.valid ? "inconsistent original interval owner" : prepared.reason;
             return result;
         }
-        const auto foundOwner = ownerRegions.find(query.owner);
-        const auto* region = query.owner == NoControlId ? &original.body :
-            (foundOwner == ownerRegions.end() ? nullptr : foundOwner->second);
-        if (!region) {
-            result.reason = "unresolved original physical-use owner";
-            return result;
+        const auto prior = continuations.find(interval);
+        if (prior != continuations.end()) {
+            ++work.intervalCacheHits;
+            return prior->second;
         }
-        auto membership = ownerMembers.find(query.owner);
-        if (membership == ownerMembers.end()) {
-            std::vector<std::size_t> operations;
-            collect(*region, operations);
-            std::vector<bool> members(original.operations.size());
-            for (auto operation : operations) {
-                members[operation] = true;
-            }
-            membership = ownerMembers.emplace(query.owner, std::move(members)).first;
+        const auto walk = detail::walkOriginalInterval(
+            graph, interval, [&](std::size_t operation) { return matches(operation, interval.query.selector); });
+        work.frontierSites += walk.visitedSites;
+        result.cases = walk.cases;
+        result.mayBypassStop = walk.cases.reachedOwnerExit;
+        for (auto operation : walk.operations) {
+            result.witnesses.push_back({operation, operation});
         }
-        const auto& member = membership->second;
-        if (!member[query.start.operation] ||
-            (query.stop.operation != NoControlId && !member[query.stop.operation])) {
-            result.reason = "continuation endpoint lies outside its original owner";
-            return result;
-        }
-        const bool identicalGap = query.start.operation == query.stop.operation &&
-            query.start.side == query.stop.side;
-        if (identicalGap) {
-            if (repeatedOperation[query.start.operation]) {
-                result.reason = "identical static gap has unresolved repeated occurrences";
-            } else {
-                result.status = OriginalMayAfter::Status::NoHit;
-            }
-            return result;
-        }
-        if (continuationEpoch == std::numeric_limits<unsigned>::max()) {
-            std::fill(continuationVisited.begin(), continuationVisited.end(), 0);
-            continuationEpoch = 0;
-        }
-        const auto epoch = ++continuationEpoch;
-        std::vector<std::size_t> pending = query.start.side == SourceMilestone::Before ?
-            std::vector<std::size_t>{query.start.operation} :
-            graph.sites[query.start.operation].successors;
-        bool crossedBackedge = false;
-        bool leftOwner = false;
-        while (!pending.empty()) {
-            const auto site = pending.back();
-            pending.pop_back();
-            if (continuationVisited[site] == epoch) {
-                continue;
-            }
-            continuationVisited[site] = epoch;
-            ++work.frontierSites;
-            if (site == query.stop.operation && query.stop.side == SourceMilestone::Before) {
-                continue;
-            }
-            if (site == graph.exit) {
-                result.mayBypassStop |= query.stop.operation != NoControlId;
-                continue;
-            }
-            const bool outside = site < original.operations.size() && !member[site];
-            if (outside) {
-                leftOwner = true;
-                result.mayBypassStop |= query.stop.operation != NoControlId;
-                continue;
-            }
-            const auto& access = cells[query.cell].accessAt[site];
-            const bool matches = (query.read && access.read) || (query.write && access.write);
-            if (matches) {
-                result.witnesses.push_back({site, site});
-            }
-            if (site == query.stop.operation) {
-                continue;
-            }
-            for (std::size_t i = 0; i < graph.sites[site].successors.size(); ++i) {
-                crossedBackedge |= graph.sites[site].backedgeOwners[i] != NoControlId;
-                pending.push_back(graph.sites[site].successors[i]);
-            }
-        }
-        if (!result.witnesses.empty()) {
+        if (!walk.complete) {
+            result.reason = walk.reason;
+        } else if (!result.witnesses.empty()) {
             result.status = OriginalMayAfter::Status::May;
-            return result;
+        } else if (walk.unresolvedOccurrence) {
+            result.reason = "continuation has an unqualified repeated stop interpretation";
+        } else {
+            result.status = OriginalMayAfter::Status::NoHit;
         }
-        const bool repeatedEndpoint = repeatedOperation[query.start.operation] ||
-            (query.stop.operation != NoControlId && repeatedOperation[query.stop.operation]);
-        // A caller cannot assert occurrence matching merely by setting a flag.
-        // Until a checked D1/D2/D4 certificate is carried here, keep this
-        // negative result unknown across repeated endpoints.
-        const bool unresolvedRecurrence = crossedBackedge || repeatedEndpoint;
-        if (leftOwner || unresolvedRecurrence) {
-            result.reason = leftOwner ? "continuation leaves its original owner" :
-                                        "continuation crosses an unresolved recurrence";
-            return result;
-        }
-        result.status = OriginalMayAfter::Status::NoHit;
-        return result;
+        return continuations.emplace(interval, std::move(result)).first->second;
     }
 };
 
-OriginalLifetimes::OriginalLifetimes(const OriginalStructure& original) : impl(std::make_unique<Impl>(original)) {}
+OriginalLifetimes::OriginalLifetimes(const OriginalStructure& original, const OriginalValueQueries* values)
+    : impl(std::make_unique<Impl>(original, values))
+{}
 OriginalLifetimes::~OriginalLifetimes() = default;
-bool OriginalLifetimes::complete() const { return impl->ready; }
-const std::string& OriginalLifetimes::reason() const { return impl->error; }
+bool OriginalLifetimes::complete() const { return impl->ready && impl->original.version == impl->version; }
+const std::string& OriginalLifetimes::reason() const
+{
+    static const std::string changed = "original program changed; rebuild Phase A";
+    return impl->original.version != impl->version ? changed : impl->error;
+}
 const OriginalLifetimeStats& OriginalLifetimes::stats() const { return impl->work; }
 const FactoredUseResult& OriginalLifetimes::factored(std::size_t cell) const
 {
-    auto found = impl->factoredByCell.find(cell);
-    if (found == impl->factoredByCell.end()) {
-        found = impl->factoredByCell.emplace(
-            cell, std::make_unique<FactoredProvenance>(impl->original, cell)).first;
+    if (!complete()) {
+        static const FactoredUseResult invalid;
+        return invalid;
     }
-    return found->second->get();
+    return impl->factoredUses.root(cell);
+}
+const FactoredUseResult& OriginalLifetimes::factoredAt(std::size_t operation, std::size_t cell) const
+{
+    if (!complete()) {
+        static const FactoredUseResult invalid;
+        return invalid;
+    }
+    return impl->factoredUses.at(operation, cell);
+}
+FactoredUseResult OriginalLifetimes::applyFactoredAt(
+    std::size_t operation, std::size_t cell, FactoredUseInterface boundary) const
+{
+    if (!complete()) {
+        static const FactoredUseResult invalid;
+        return invalid;
+    }
+    return impl->factoredUses.applyAt(operation, cell, std::move(boundary));
 }
 const std::vector<OriginalRequirement>& OriginalLifetimes::requirementsAt(std::size_t operation) const
 {
+    impl->ensureRequirements();
     static const std::vector<OriginalRequirement> empty;
-    return impl->ready && operation < impl->byDeadline.size() ? impl->byDeadline[operation] : empty;
+    return complete() && operation < impl->byDeadline.size() ? impl->byDeadline[operation] : empty;
 }
 const std::vector<SourceSubscription>& OriginalLifetimes::subscriptionsAt(std::size_t operation) const
 {
+    impl->ensureRequirements();
     static const std::vector<SourceSubscription> empty;
-    return impl->ready && operation < impl->bySource.size() ? impl->bySource[operation] : empty;
+    return complete() && operation < impl->bySource.size() ? impl->bySource[operation] : empty;
+}
+std::optional<bool> OriginalLifetimes::mayOriginAt(
+    std::size_t operation, std::size_t cell, std::size_t source, bool reader, bool incoming) const
+{
+    if (!impl->ready || operation >= impl->original.operations.size() || cell >= impl->cells.size()) {
+        return std::nullopt;
+    }
+    if (!impl->reachable[operation]) {
+        return false;
+    }
+    const auto& info = impl->cells[cell];
+    if (incoming) {
+        // The baseline has no supplied entry histories. Retain a possible
+        // incoming reader/writer until a definite write cuts every such path.
+        // This says nothing about acquired completion at that write.
+        return info.noFullWriter[operation];
+    }
+    if (source >= impl->original.operations.size()) {
+        return false;
+    }
+    const auto bit = info.originAt[source];
+    if (bit == NoControlId) {
+        return false;
+    }
+    const auto& matrix = reader ? info.previousReaders : info.previousWriters;
+    return matrix.test(operation, bit);
+}
+std::optional<bool> OriginalLifetimes::hasMayOriginsAt(std::size_t operation, std::size_t cell, bool reader) const
+{
+    if (!impl->ready || operation >= impl->original.operations.size() || cell >= impl->cells.size()) {
+        return std::nullopt;
+    }
+    if (!impl->reachable[operation]) {
+        return false;
+    }
+    const auto& info = impl->cells[cell];
+    if (info.noFullWriter[operation]) {
+        return true;
+    }
+    const auto& matrix = reader ? info.previousReaders : info.previousWriters;
+    for (std::size_t word = 0; word < matrix.width; ++word) {
+        if (matrix.words[operation * matrix.width + word]) {
+            return true;
+        }
+    }
+    return false;
+}
+std::vector<StorageOrigin> OriginalLifetimes::mayOriginsAt(std::size_t operation, std::size_t cell, bool reader) const
+{
+    if (!impl->ready || operation >= impl->original.operations.size() || cell >= impl->cells.size() ||
+        !impl->reachable[operation]) {
+        return {};
+    }
+    const auto& info = impl->cells[cell];
+    return impl->originsAt(reader ? info.previousReaders : info.previousWriters, info, operation);
+}
+const std::vector<std::size_t>& OriginalLifetimes::effectIncidences(
+    std::size_t operation, std::size_t cell, bool write) const
+{
+    static const std::vector<std::size_t> empty;
+    const auto found = impl->effectsByRole.find({operation, cell, write});
+    return found == impl->effectsByRole.end() ? empty : found->second;
 }
 StorageLifecycle OriginalLifetimes::lifecycleAt(std::size_t operation, std::size_t cell) const
 {
     StorageLifecycle result;
     result.cell = cell;
-    if (!impl->ready || operation >= impl->original.operations.size() || cell >= impl->cells.size() ||
+    if (!complete() || operation >= impl->original.operations.size() || cell >= impl->cells.size() ||
         !impl->reachable[operation]) {
         return result;
     }
@@ -591,72 +708,109 @@ StorageLifecycle OriginalLifetimes::lifecycleAt(std::size_t operation, std::size
 }
 PhysicalUseFrontier OriginalLifetimes::firstUse(const OriginalUseQuery& query) const
 {
-    if (!impl->ready) {
+    if (!complete()) {
         return {};
     }
     return impl->frontier(query, false);
 }
 PhysicalUseFrontier OriginalLifetimes::lastUse(const OriginalUseQuery& query) const
 {
-    if (!impl->ready) {
+    if (!complete()) {
         return {};
     }
     return impl->frontier(query, true);
 }
+PhysicalUseFrontier OriginalLifetimes::firstUse(const OriginalInterval& interval) const
+{
+    if (!complete()) {
+        return {};
+    }
+    ++impl->work.frontierQueries;
+    return impl->frontier(interval, false);
+}
+PhysicalUseFrontier OriginalLifetimes::lastUse(const OriginalInterval& interval) const
+{
+    if (!complete()) {
+        return {};
+    }
+    ++impl->work.frontierQueries;
+    return impl->frontier(interval, true);
+}
 OriginalSupportInterval OriginalLifetimes::supportBetween(
     std::size_t producer, std::size_t reuse, std::size_t cell) const
 {
+    OriginalIntervalRequest request;
+    request.version = impl->version;
+    request.selector.cell = cell;
+    request.occurrence.source = producer;
+    request.occurrence.target = reuse;
+    request.start = {producer, OriginalCut::After};
+    request.stop = {reuse, OriginalCut::Before};
+    const auto prepared = prepareInterval(std::move(request));
+    if (!prepared.valid) {
+        OriginalSupportInterval result;
+        result.reason = prepared.reason;
+        return result;
+    }
+    return supportBetween(prepared.interval);
+}
+OriginalSupportInterval OriginalLifetimes::supportBetween(const OriginalInterval& interval) const
+{
     OriginalSupportInterval result;
+    result.interval = interval;
+    const auto& query = interval.query;
+    const auto producer = query.occurrence.source, reuse = query.occurrence.target;
+    const auto cell = query.selector.cell;
     result.producer = producer;
     result.reuse = reuse;
     result.cell = cell;
-    if (!impl->ready || cell >= impl->cells.size() || producer >= impl->original.operations.size() ||
-        reuse >= impl->original.operations.size() || !impl->reachable[producer] || !impl->reachable[reuse] ||
-        !impl->cells[cell].accessAt[producer].write || !impl->cells[cell].accessAt[reuse].write) {
-        result.reason = "support interval lacks represented producer and reuse writes";
+    const auto prepared = prepareInterval(query);
+    if (!prepared.valid || prepared.interval != interval) {
+        result.reason = prepared.valid ? "inconsistent original support owner" : prepared.reason;
         return result;
     }
+    if (producer >= impl->original.operations.size() || reuse >= impl->original.operations.size() ||
+        query.start != OriginalCut{producer, OriginalCut::After} ||
+        query.stop != OriginalCut{reuse, OriginalCut::Before} || query.includeStoppingAccess || !query.selector.read ||
+        !query.selector.write || query.selector.engine || query.selector.physicalRelation != NoControlId ||
+        !impl->cells[cell].accessAt[producer].write || !impl->cells[cell].accessAt[reuse].write) {
+        result.reason = "support interval lacks complete producer/reuse write roles";
+        return result;
+    }
+    impl->ensureRequirements();
     const auto& graph = impl->graph;
-    result.affectedRequirements.insert(
-        result.affectedRequirements.end(), impl->byDeadline[producer].begin(), impl->byDeadline[producer].end());
-    std::vector<bool> seen(graph.sites.size());
-    std::vector<std::size_t> pending = graph.sites[producer].successors;
-    while (!pending.empty()) {
-        const auto site = pending.back();
-        pending.pop_back();
-        if (seen[site]) {
-            continue;
+    const auto walk = detail::walkOriginalInterval(graph, interval, [](std::size_t) { return true; });
+    if (!walk.complete) {
+        result.reason = walk.reason;
+        return result;
+    }
+    result.cases = walk.cases;
+    result.reachesReuse = walk.cases.reachedStop;
+    result.mayBypass = walk.cases.reachedOwnerExit;
+    result.mayReenter = std::find(walk.operations.begin(), walk.operations.end(), producer) != walk.operations.end();
+    std::set<std::size_t> affected{producer};
+    for (auto site : walk.operations) {
+        const auto& access = impl->cells[cell].accessAt[site];
+        if (access.read) {
+            result.readers.push_back({site, site});
         }
-        seen[site] = true;
-        if (site == reuse) {
-            result.reachesReuse = true;
-            result.affectedRequirements.insert(
-                result.affectedRequirements.end(), impl->byDeadline[site].begin(), impl->byDeadline[site].end());
-            continue;
-        }
-        if (site == graph.exit) {
-            result.mayBypass = true;
-            continue;
-        }
-        if (site == producer) {
-            result.mayReenter = true;
-        }
-        if (site < impl->original.operations.size()) {
-            const auto& access = impl->cells[cell].accessAt[site];
-            if (access.read) {
-                result.readers.push_back({site, site});
-            }
-            result.mayReload |= access.write && site != producer;
-            result.affectedRequirements.insert(
-                result.affectedRequirements.end(), impl->byDeadline[site].begin(), impl->byDeadline[site].end());
-        }
-        pending.insert(pending.end(), graph.sites[site].successors.begin(), graph.sites[site].successors.end());
+        result.mayReload |= access.write && site != producer;
+        affected.insert(site);
+    }
+    if (result.reachesReuse) {
+        affected.insert(reuse);
+    }
+    for (auto site : affected) {
+        result.affectedRequirements.insert(
+            result.affectedRequirements.end(), impl->byDeadline[site].begin(), impl->byDeadline[site].end());
     }
     if (!result.reachesReuse) {
-        result.reason = "reuse is not reachable from this original producer";
+        result.reason = "reuse is not reachable in this original continuation";
         return result;
     }
     result.complete = true;
+    // Retain the independent incoming-path check. A local interval does not
+    // prove that every target visit has this producer, nor invent an origin.
     std::vector<bool> bypassesProducer(graph.sites.size());
     std::vector<std::size_t> incoming{graph.entry};
     while (!incoming.empty()) {
@@ -666,21 +820,19 @@ OriginalSupportInterval OriginalLifetimes::supportBetween(
             continue;
         }
         bypassesProducer[site] = true;
-        if (site == reuse) {
-            break;
-        }
         incoming.insert(incoming.end(), graph.sites[site].successors.begin(), graph.sites[site].successors.end());
     }
-    result.stablePhysicalInterval = !result.mayReload && !result.mayReenter &&
-                                    !result.mayBypass && !bypassesProducer[reuse];
-    result.generationEstablished = result.stablePhysicalInterval &&
+    result.stablePhysicalInterval =
+        !result.mayReload && !result.mayReenter && !result.mayBypass && !bypassesProducer[reuse];
+    result.generationEstablished = result.stablePhysicalInterval && !walk.unresolvedOccurrence &&
+                                   query.occurrence.incomingInterface == NoControlId &&
                                    impl->cells[cell].accessAt[producer].definiteWrite;
     return result;
 }
 OriginalAccessSummary OriginalLifetimes::all(std::size_t owner, std::size_t cell) const
 {
     OriginalAccessSummary result;
-    if (!impl->ready || cell >= impl->cells.size()) {
+    if (!complete() || cell >= impl->cells.size()) {
         return result;
     }
     const auto* region = owner == NoControlId ? &impl->original.body : findOwner(impl->original.body, owner);
@@ -703,14 +855,53 @@ OriginalAccessSummary OriginalLifetimes::all(std::size_t owner, std::size_t cell
     }
     return result;
 }
-OriginalMayAfter OriginalLifetimes::mayAfter(const OriginalContinuationQuery& query) const
+OriginalIntervalResult OriginalLifetimes::prepareInterval(OriginalIntervalRequest request) const
 {
-    if (!impl->ready) {
+    if (!complete()) {
+        OriginalIntervalResult result;
+        result.reason = "original analysis is incomplete or its snapshot changed";
+        return result;
+    }
+    return impl->prepare(std::move(request));
+}
+OriginalMayAfter OriginalLifetimes::mayAfter(const OriginalInterval& interval) const
+{
+    if (!complete()) {
         OriginalMayAfter result;
-        result.reason = impl->error;
+        result.reason = "original analysis is incomplete or its snapshot changed";
         return result;
     }
     ++impl->work.frontierQueries;
-    return impl->mayAfter(query);
+    return impl->mayAfter(interval);
+}
+OriginalMayAfter OriginalLifetimes::mayAfter(const OriginalContinuationQuery& query) const
+{
+    OriginalIntervalRequest request;
+    request.version = impl->version;
+    request.selector.cell = query.cell;
+    request.selector.read = query.read;
+    request.selector.write = query.write;
+    request.start = query.start;
+    request.stop = query.stop.operation == NoControlId && query.stop.kind == OriginalCut::Kind::Payload ?
+                       OriginalCut::scope(query.owner, OriginalCut::After) :
+                       query.stop;
+    request.includeStoppingAccess =
+        request.stop.kind == OriginalCut::Kind::Payload && request.stop.side == OriginalCut::After;
+    request.continuationOwner = query.owner;
+    request.occurrence.source = query.start.operation;
+    request.occurrence.target = query.stop.operation;
+    const auto prepared = prepareInterval(std::move(request));
+    if (!prepared.valid) {
+        OriginalMayAfter result;
+        result.reason = prepared.reason;
+        return result;
+    }
+    // The legacy owner was a hard containment premise, not permission to widen.
+    if (prepared.interval.owner != query.owner) {
+        OriginalMayAfter result;
+        result.reason = "continuation endpoint lies outside its original owner";
+        return result;
+    }
+    return mayAfter(prepared.interval);
 }
 } // namespace mlir::pto::frontiersynch
