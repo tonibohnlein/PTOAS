@@ -22,6 +22,11 @@ struct Access {
   bool read = false, write = false;
   // Full-cell overwrite requires a separate effect-coverage proof.
   bool definiteWrite = false;
+  // Original translated effect identity; the cell alone does not identify
+  // which independent physical selector produced this use.
+  const BaseMemInfo *memory = nullptr;
+  // The specific qualified address relation for this translated effect.
+  std::size_t physicalRelation = NoControlId;
 };
 struct Cell {
   bool exclusive = false;

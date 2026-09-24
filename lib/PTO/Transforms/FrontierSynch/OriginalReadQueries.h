@@ -238,6 +238,16 @@ public:
   GuardedReadFrontier frontier(std::size_t id) const {
     return id < frontiers.size() ? frontiers[id] : GuardedReadFrontier{};
   }
+  // Conservative availability at an original phase's payload operation.
+  // Exact before/after command-word availability is checked during binding.
+  bool availableAt(std::size_t predicateId, std::size_t operation) const {
+    if (!original || operation >= original->operations.size()) {
+      return false;
+    }
+    const auto site = original->operations[operation].original;
+    return site < original->originalSites.size() && original->originalSites[site] &&
+           predicateAvailable(predicateId, original->originalSites[site]);
+  }
   std::vector<OriginalParticipationDemand> participationDemands() {
     std::vector<OriginalParticipationDemand> out;
     if (!original) {
@@ -583,12 +593,19 @@ private:
       if (!region.qualifiedCounted || region.originalOwner == NoControlId) {
         return unknown("counted read interval lacks an original iteration-domain proof");
       }
-      if (body.nonempty != 1) {
+      const bool hasLoopSite = region.originalOwner < original->originalSites.size() &&
+          original->originalSites[region.originalOwner];
+      if (!hasLoopSite) {
+        return unknown("counted read interval lacks an original loop site");
+      }
+      auto *loopSite = original->originalSites[region.originalOwner];
+      if (body.nonempty != 1 && !predicateAvailable(body.nonempty, loopSite)) {
         return unknown("reader participation is not proved invariant across iterations");
       }
-      const auto nonempty = region.zeroTripPossible
-                                ? atom({ObservationAtom::LoopNonEmpty, region.originalOwner, 0, 1})
-                                : 1;
+      const auto visits = region.zeroTripPossible
+                              ? atom({ObservationAtom::LoopNonEmpty, region.originalOwner, 0, 1})
+                              : 1;
+      const auto nonempty = combine(true, visits, body.nonempty);
       return {
           true,
           nonempty,

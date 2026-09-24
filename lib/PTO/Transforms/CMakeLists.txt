@@ -142,6 +142,7 @@ add_mlir_dialect_library(PTOTransforms
   FrontierSynch/OriginalStructure.cpp
   FrontierSynch/OccurrenceQueries.cpp
   FrontierSynch/OriginalLifetimes.cpp
+  FrontierSynch/ProgramAnalysis.cpp
   Passes/PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
   Passes/PTOMaterializeImplicitTmp.cpp

@@ -22,6 +22,8 @@ struct FootprintUse {
   std::size_t operation;
   bool read, write;
   bool definiteWrite = false;
+  const BaseMemInfo *memory = nullptr;
+  std::size_t physicalRelation = NoControlId;
 };
 struct FootprintGroup {
   Cell description;
@@ -59,7 +61,8 @@ WitnessCounts appendCanonicalStorage(OriginalStructure &p,
     for (auto g : members) {
       for (const auto &u : groups[g].uses) {
         p.operations.at(u.operation)
-            .accesses.push_back({id, u.read, u.write, exact && u.write && u.definiteWrite});
+            .accesses.push_back({id, u.read, u.write, exact && u.write && u.definiteWrite,
+                                 u.memory, u.physicalRelation});
       }
     }
   };

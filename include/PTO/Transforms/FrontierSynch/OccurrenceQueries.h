@@ -34,7 +34,7 @@ class OccurrenceQueries {
 public:
   explicit OccurrenceQueries(const OriginalStructure &original);
   ~OccurrenceQueries();
-  PhysicalBankCorrespondence bank(const PhysicalAddressRelation &relation) const;
+  PhysicalBankCorrespondence bank(std::size_t relationId) const;
   FixedVisitCorrespondence fixedVisit(std::size_t source, std::size_t target,
                                       std::size_t cell) const;
   std::vector<ChildOccurrence> children(std::size_t owner) const;

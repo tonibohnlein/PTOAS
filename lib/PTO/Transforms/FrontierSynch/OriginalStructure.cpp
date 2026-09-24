@@ -180,6 +180,7 @@ void importStorage(func::FuncOp function, const SyncInput &input,
   DenseMap<const BaseMemInfo *, std::size_t> groupIds;
   std::vector<std::unique_ptr<BaseMemInfo>> memories;
   std::vector<FootprintGroup> groups;
+  std::vector<std::size_t> groupRelations;
   auto groupFor = [&](const BaseMemInfo *original) {
     auto found = groupIds.find(original);
     if (found != groupIds.end()) {
@@ -187,6 +188,7 @@ void importStorage(func::FuncOp function, const SyncInput &input,
     }
     const auto group = groups.size();
     groupIds[original] = group;
+    std::size_t relationId = NoControlId;
     auto memory = original->clone();
     auto origin = origins.find(original->baseBuffer);
     // The root-set closure gives possible provenance, not geometry. Keep carried
@@ -206,6 +208,7 @@ void importStorage(func::FuncOp function, const SyncInput &input,
           memory->baseAddresses.end());
       memory->hasKnownPhysicalAddresses = true;
       memory->aliasesUnknownRange = false;
+      relationId = result.physicalAddresses.size();
       result.physicalAddresses.push_back(std::move(*relation));
     }
     const bool local = memory->scope != AddressSpace::GM && memory->scope != AddressSpace::Zero;
@@ -237,17 +240,18 @@ void importStorage(func::FuncOp function, const SyncInput &input,
     }
     setCoordinates(*memory, root, cell);
     groups.push_back(std::move(entry));
+    groupRelations.push_back(relationId);
     memories.push_back(std::move(memory));
     return group;
   };
   for (auto [i, operation] : llvm::enumerate(result.operations)) {
     for (const auto *memory : operation.instruction->defVec) {
       const auto group = groupFor(memory);
-      groups[group].uses.push_back({i, false, true});
+      groups[group].uses.push_back({i, false, true, false, memory, groupRelations[group]});
     }
     for (const auto *memory : operation.instruction->useVec) {
       const auto group = groupFor(memory);
-      groups[group].uses.push_back({i, true, false});
+      groups[group].uses.push_back({i, true, false, false, memory, groupRelations[group]});
     }
   }
   appendCanonicalStorage(result, groups, [&](std::size_t a, std::size_t b) {

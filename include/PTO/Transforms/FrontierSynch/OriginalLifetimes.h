@@ -52,6 +52,19 @@ struct SourceMilestone {
     std::size_t operation = NoControlId;
     enum Side { Before, After } side = After;
 };
+// A query between original operation boundaries. A missing stop means the
+// designated owner's continuation through exit. Selected words are absent.
+struct OriginalContinuationQuery {
+    std::size_t cell = 0, owner = NoControlId;
+    SourceMilestone start, stop;
+    bool read = true, write = true;
+};
+struct OriginalMayAfter {
+    enum class Status { Unknown, NoHit, May } status = Status::Unknown;
+    std::vector<StorageOrigin> witnesses;
+    bool mayBypassStop = false;
+    std::string reason;
+};
 struct OriginalRequirement {
     StorageRelationship relationship;
     SourceMilestone source, deadline;
@@ -64,6 +77,8 @@ struct SourceSubscription {
     SourceMilestone position;
     std::size_t deadlineOperation = NoControlId, cell = 0;
     StorageRelationship::Kind kind = StorageRelationship::RAW;
+    // Stable index in requirementsAt(deadlineOperation).
+    std::size_t requirementIndex = 0;
 };
 // The affected original continuation between a producer and a possible reuse.
 // Complete means every reachable original site in this interval was inspected;
@@ -99,6 +114,7 @@ public:
     // All represented accesses of this cell in the original region. This is a
     // may-set, not proof that any particular member participates in an episode.
     OriginalAccessSummary all(std::size_t owner, std::size_t cell) const;
+    OriginalMayAfter mayAfter(const OriginalContinuationQuery&) const;
 
 private:
     struct Impl;

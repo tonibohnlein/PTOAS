@@ -10,6 +10,7 @@
 #include "Control.h"
 #include <algorithm>
 #include <deque>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -69,12 +70,32 @@ const Region* findOwner(const Region& region, std::size_t owner)
     }
     return nullptr;
 }
+void markRepeatingRegions(const Region& region, std::vector<bool>& repeated, bool repeating = false)
+{
+    repeating |= region.kind == Region::For || region.kind == Region::While;
+    if (region.kind == Region::Operation && region.operation < repeated.size()) {
+        repeated[region.operation] = repeating;
+    }
+    for (const auto& child : region.children) {
+        markRepeatingRegions(child, repeated, repeating);
+    }
+}
+void indexOwnerRegions(const Region& region, std::map<std::size_t, const Region*>& owners)
+{
+    if (region.kind != Region::Operation && region.originalOwner != NoControlId) {
+        owners.emplace(region.originalOwner, &region);
+    }
+    for (const auto& child : region.children) {
+        indexOwnerRegions(child, owners);
+    }
+}
 } // namespace
 
 struct OriginalLifetimes::Impl {
     const OriginalStructure& original;
     detail::ControlGraph graph;
     std::vector<bool> reachable;
+    std::vector<bool> repeatedOperation;
     std::vector<std::vector<std::size_t>> predecessors;
     struct CellInfo {
         std::vector<StorageOrigin> origins;
@@ -86,6 +107,10 @@ struct OriginalLifetimes::Impl {
     std::vector<CellInfo> cells;
     std::vector<std::vector<OriginalRequirement>> byDeadline;
     std::vector<std::vector<SourceSubscription>> bySource;
+    mutable std::map<std::size_t, std::vector<bool>> ownerMembers;
+    std::map<std::size_t, const Region*> ownerRegions;
+    mutable std::vector<unsigned> continuationVisited;
+    mutable unsigned continuationEpoch = 0;
     mutable OriginalLifetimeStats work;
     bool ready = false;
     std::string error;
@@ -93,6 +118,10 @@ struct OriginalLifetimes::Impl {
     explicit Impl(const OriginalStructure& value) : original(value), graph(detail::buildControlGraph(value))
     {
         reachable = detail::reachableSites(graph);
+        indexOwnerRegions(value.body, ownerRegions);
+        continuationVisited.resize(graph.sites.size());
+        repeatedOperation.resize(value.operations.size());
+        markRepeatingRegions(value.body, repeatedOperation);
         predecessors.resize(graph.sites.size());
         byDeadline.resize(value.operations.size());
         bySource.resize(value.operations.size());
@@ -227,9 +256,13 @@ struct OriginalLifetimes::Impl {
             if (!reachable[target]) {
                 continue;
             }
+            std::set<std::pair<std::size_t, StorageRelationship::Kind>> emitted;
             for (const auto& access : original.operations[target].accesses) {
                 const auto& info = cells[access.cell];
                 auto append = [&](StorageRelationship::Kind kind, const Matrix& matrix) {
+                    if (!emitted.emplace(access.cell, kind).second) {
+                        return;
+                    }
                     for (const auto& source : originsAt(matrix, info, target)) {
                         OriginalRequirement request;
                         request.relationship = {kind, access.cell, source, {target, target}};
@@ -237,7 +270,9 @@ struct OriginalLifetimes::Impl {
                         request.deadline = {target, SourceMilestone::Before};
                         request.sourceSubscribed = true;
                         // A marginal origin is not an occurrence or episode certificate.
-                        bySource[source.operation].push_back({request.source, target, access.cell, kind});
+                        const auto index = byDeadline[target].size();
+                        bySource[source.operation].push_back(
+                            {request.source, target, access.cell, kind, index});
                         byDeadline[target].push_back(request);
                         ++work.requirements;
                     }
@@ -278,7 +313,9 @@ struct OriginalLifetimes::Impl {
     {
         PhysicalUseFrontier result;
         ++work.frontierQueries;
-        if (query.cell >= cells.size() || (query.owner != NoControlId && !findOwner(original.body, query.owner))) {
+        const bool invalidCell = query.cell >= cells.size();
+        const bool invalidOwner = query.owner != NoControlId && !ownerRegions.count(query.owner);
+        if (invalidCell || invalidOwner) {
             result.reason = "unresolved original owner or cell";
             return result;
         }
@@ -334,6 +371,116 @@ struct OriginalLifetimes::Impl {
         std::sort(result.accesses.begin(), result.accesses.end(), [](const auto& a, const auto& b) {
             return a.site < b.site;
         });
+        return result;
+    }
+    OriginalMayAfter mayAfter(const OriginalContinuationQuery& query) const
+    {
+        OriginalMayAfter result;
+        const bool validStart = query.start.operation < original.operations.size();
+        const bool validStop = query.stop.operation == NoControlId ||
+            query.stop.operation < original.operations.size();
+        const bool validAccess = query.read || query.write;
+        const bool reachableStart = validStart && reachable[query.start.operation];
+        const bool reachableStop = validStop &&
+            (query.stop.operation == NoControlId || reachable[query.stop.operation]);
+        const bool invalid = query.cell >= cells.size() || !validAccess || !reachableStart || !reachableStop;
+        if (invalid) {
+            result.reason = "invalid original continuation or access class";
+            return result;
+        }
+        const auto foundOwner = ownerRegions.find(query.owner);
+        const auto* region = query.owner == NoControlId ? &original.body :
+            (foundOwner == ownerRegions.end() ? nullptr : foundOwner->second);
+        if (!region) {
+            result.reason = "unresolved original physical-use owner";
+            return result;
+        }
+        auto membership = ownerMembers.find(query.owner);
+        if (membership == ownerMembers.end()) {
+            std::vector<std::size_t> operations;
+            collect(*region, operations);
+            std::vector<bool> members(original.operations.size());
+            for (auto operation : operations) {
+                members[operation] = true;
+            }
+            membership = ownerMembers.emplace(query.owner, std::move(members)).first;
+        }
+        const auto& member = membership->second;
+        if (!member[query.start.operation] ||
+            (query.stop.operation != NoControlId && !member[query.stop.operation])) {
+            result.reason = "continuation endpoint lies outside its original owner";
+            return result;
+        }
+        const bool identicalGap = query.start.operation == query.stop.operation &&
+            query.start.side == query.stop.side;
+        if (identicalGap) {
+            if (repeatedOperation[query.start.operation]) {
+                result.reason = "identical static gap has unresolved repeated occurrences";
+            } else {
+                result.status = OriginalMayAfter::Status::NoHit;
+            }
+            return result;
+        }
+        if (continuationEpoch == std::numeric_limits<unsigned>::max()) {
+            std::fill(continuationVisited.begin(), continuationVisited.end(), 0);
+            continuationEpoch = 0;
+        }
+        const auto epoch = ++continuationEpoch;
+        std::vector<std::size_t> pending = query.start.side == SourceMilestone::Before ?
+            std::vector<std::size_t>{query.start.operation} :
+            graph.sites[query.start.operation].successors;
+        bool crossedBackedge = false;
+        bool leftOwner = false;
+        while (!pending.empty()) {
+            const auto site = pending.back();
+            pending.pop_back();
+            if (continuationVisited[site] == epoch) {
+                continue;
+            }
+            continuationVisited[site] = epoch;
+            ++work.frontierSites;
+            if (site == query.stop.operation && query.stop.side == SourceMilestone::Before) {
+                continue;
+            }
+            if (site == graph.exit) {
+                result.mayBypassStop |= query.stop.operation != NoControlId;
+                continue;
+            }
+            const bool outside = site < original.operations.size() && !member[site];
+            if (outside) {
+                leftOwner = true;
+                result.mayBypassStop |= query.stop.operation != NoControlId;
+                continue;
+            }
+            const auto& access = cells[query.cell].accessAt[site];
+            const bool matches = (query.read && access.read) || (query.write && access.write);
+            if (matches) {
+                result.witnesses.push_back({site, site});
+            }
+            if (site == query.stop.operation) {
+                continue;
+            }
+            for (std::size_t i = 0; i < graph.sites[site].successors.size(); ++i) {
+                crossedBackedge |= graph.sites[site].backedgeOwners[i] != NoControlId;
+                pending.push_back(graph.sites[site].successors[i]);
+            }
+        }
+        if (!result.witnesses.empty()) {
+            result.status = OriginalMayAfter::Status::May;
+            return result;
+        }
+        const bool repeatedEndpoint = repeatedOperation[query.start.operation] ||
+            (query.stop.operation != NoControlId && repeatedOperation[query.stop.operation]);
+        // A caller cannot assert occurrence matching merely by setting a flag.
+        // Until a checked D1/D2/D4 certificate is carried here, keep this
+        // negative result unknown across repeated endpoints.
+        const bool unresolvedRecurrence = crossedBackedge || repeatedEndpoint;
+        if (leftOwner || unresolvedRecurrence) {
+            result.reason = leftOwner ? "continuation leaves its original owner" :
+                                        "continuation crosses an unresolved recurrence";
+            return result;
+        }
+        result.status = OriginalMayAfter::Status::NoHit;
         return result;
     }
 };
@@ -483,5 +630,15 @@ OriginalAccessSummary OriginalLifetimes::all(std::size_t owner, std::size_t cell
         }
     }
     return result;
+}
+OriginalMayAfter OriginalLifetimes::mayAfter(const OriginalContinuationQuery& query) const
+{
+    if (!impl->ready) {
+        OriginalMayAfter result;
+        result.reason = impl->error;
+        return result;
+    }
+    ++impl->work.frontierQueries;
+    return impl->mayAfter(query);
 }
 } // namespace mlir::pto::frontiersynch

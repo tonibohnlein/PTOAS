@@ -3,12 +3,54 @@
 Branch: `codex/handoff-foundation`.
 Committed foundation: `e7537ad90`; scalar/descriptor source port: `2516cdd4d`;
 physical/control source port: `38c2f995c`; occurrence/reader source port:
-`ff2224d18`. Stage 4 is uncommitted.
+`ff2224d18`; lifetime/source-subscription port: `82c89199f`.
 Base: upstream `master`, `f5eff3ee249697f6157088f649c6434fcc9d7c5b`.
 Donor: `371fdb344d2783b92d6c39424c507b2ce082e08c`.
-Draft checked: paper repository `7e3f59c`, revision 0.40, Section 3.
+Draft checked: paper repository `dc5c309`, revision 0.41 representation pass,
+Sections 3.1–3.5 and `REVISION_0_41_REPRESENTATION.md`.
 
-## Current increment: original lifetimes and requirement subscriptions
+## Current increment: coherent Phase A query boundary
+
+`ProgramAnalysis` owns the original structure and its provenance, occurrence and
+guarded-reader services. Requirements and source subscriptions exist before
+traversal. `decodeAt` gives a cheap indexed request; `interpretAt` brings its
+original-only occurrence, may-origin, reader-boundary and support requests into
+one lazy construction-facing record. The record marks unsupported D1/D2/D4
+correspondence Unknown instead of converting bank geometry or a structural
+reader expression into an exact use episode. Each bank relation is attached to
+its translated effect and the correct RAW/WAR/WAW role. Phase A performs no
+event allocation or selected completion reasoning. `all`, an owner/interval-
+qualified `mayAfter`, source/direction indexes and source subscriptions remain
+queryable. The invariant
+conditional-reader case is now handled by the counted D3 rule when its exact
+original predicate is available before the loop; iteration-varying participation
+remains Unknown.
+
+The shared translated effect identity and direct physical-relation ID are
+retained with each access. Physical evidence alone does not establish
+source/target occurrence matching.
+
+The revised draft separates original structure, requirement records, qualified
+placement structure, and the look-ahead index from selected completion.
+`ProgramAnalysis` follows that boundary. For one mandatory same-role use of an
+exact disjoint-bank permutation, its occurrence interpretation now records the
+periodic predecessor distance **within the counted owner**. Initial uses and
+transport across child re-entry remain unresolved. Admission additionally
+requires every source/target hazard-role incidence on the cell to follow that
+selector; an overlapping fixed access cannot inherit its period. Source subscriptions carry
+the stable index of their exact deadline requirement, and duplicate incidences
+of the same physical cell/role no longer duplicate that demand.
+
+The constructor-facing interpretation holds shared lifecycle, alternative-
+origin and boundary may-set handles instead of duplicating these populations
+for every relationship. A support inventory is expanded only by
+`qualifySupport`; for RAW/WAR its candidate interval is scoped to a producing
+write and next conflicting write. A unique-write candidate is a sufficient
+restriction, not proof that a less regular lifetime lacks a valid protocol.
+
+[Contract, draft limits and LLVM/MLIR replacement audit](docs/designs/frontier-synch-program-analysis.md).
+
+## Stage 4 baseline: original lifetimes and requirement subscriptions
 
 `frontiersynch::run` imports original structure from the shared `SyncInput`, queries
 the Stage 3 reader/occurrence facts, and now indexes original storage demands:
@@ -43,10 +85,11 @@ subscriptions identify original positions, not ordered command-word gaps or
 source snapshots under selected waits. The shared translator remains responsible
 for effect completeness.
 
-Next: complete owner/occurrence-qualified first-conflict and last-use queries,
-full-write coverage certificates and endpoint-gap predicate availability before
-claiming the complete draft Phase A. The first constructor draft then consumes
-these indexed requests and evaluates selected causal credit separately.
+Next: qualify executable endpoint gaps and full-write coverage where a shared
+target/effect proof exists, then have the first constructor draft consume these
+indexed requests while evaluating selected causal credit separately. D1/D2/D4
+general occurrence composition and return/compatibility precision remain
+explicit Unknown cases; do not widen them by assuming a recipe matched.
 
 ## Validation
 
@@ -86,12 +129,30 @@ subscriptions, retention of older possible writers after an unproved reload,
 and the affected producer interval. The existing Stage 3 inputs still pass.
 This is focused source-port evidence, not a complete linked compiler/corpus run.
 
-No sanitizer, corpus, device or synchronization-quality campaign was run.
-Separate generality acceptance of the complete first pass remains pending.
+For the current Phase A query increment, the serial focused probe was rebuilt
+from clean objects and passes eight inputs, including invariant versus
+iteration-varying conditional readers, independent bank selectors, two reader
+children, and a reload. It checks source subscriptions, retained bank/effect
+identity, lazy decoded requirements, May/NoHit/Unknown continuation outcomes,
+one shared exact **structural** final-reader expression for two optional
+children, while requirement-level frontier placement remains Unknown without
+episode/occurrence proof. It also checks unresolved-negative behavior.
+The current D2 extension checks the same-role period-three predecessor domain
+and its first-three-use incoming case. A focused mixed-incidence mutation adds
+a fixed write to the same cell and confirms the periodic interpretation is
+withheld. Source subscriptions are checked against exact requirement indices.
+`Handoff.cpp` passes focused C++17
+syntax compilation with the project's LLVM 19 flags. The changed-code scanner
+and `git diff --check` pass. No normal selected constructor exists yet, so this
+does not establish synchronization-plan quality or full supported-input service.
 
-The changed-code scanner (`--base HEAD`) reports ten G.FMT.11-CPP brace
-errors in the new lifetime file. Each cited `if` has an explicit brace body;
-the scanner's greedy line regex mistakes nested condition parentheses for the
-end of the control statement. These are inspected false positives, not
-suppressed findings. It reports no other finding. New port files retain donor
-license headers.
+No sanitizer, corpus, device or synchronization-quality campaign was run.
+Three read-only reviews of this increment checked architecture/generality,
+correctness, and avoidable asymptotic work. Their mixed-incidence and repeated
+scan findings were corrected; they did not validate a complete Phase A or a
+selected synchronization plan. Separate generality acceptance of the complete
+first pass remains pending.
+
+The old Stage 4 scanner false positives were removed by naming the compound
+conditions. The current changed-code scanner reports zero findings. New source
+files retain the repository license header.

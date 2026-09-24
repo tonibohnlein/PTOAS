@@ -228,3 +228,31 @@ dependencies through selected edits. These are explicit precision and
 construction boundaries, not hardware limits or permission to drop original
 requirements. The focused source build does not establish full native service,
 corpus quality or generality acceptance.
+
+## Coherent Phase A result after the source ports
+
+The source ports are now assembled through `ProgramAnalysis`, following the working
+draft v0.41's three-way distinction: fixed original facts, complete physical
+requirements, and placement opportunities. The result owns the immutable
+original structure and shared query services. It indexes every requirement by
+deadline and direction, subscribes every represented source position before
+construction, and decodes an applicable request on demand. The decoded answer
+retains the original physical-use owner, source and deadline positions,
+translated effect identity, independent bank evidence, guarded reader frontiers
+and explicit unresolved premises. Alternative origins, source/target histories
+and fixed-visit correspondence are queried only when needed; eagerly copying or
+searching them for every marginal edge can multiply work.
+
+`All` is a conservative may summary; `MayAfter` uses a designated original
+continuation; first/last results use a qualified reader interval or return
+Unknown with retained may accesses. A source subscription, return opportunity,
+or structural no-hit grants no selected completion.
+
+This is an interface consolidation, not a claim that every draft derivation is
+now exact. Imported full writes remain unproved; D1 alternative guards, broad
+D2/D4 correspondence, write-frontier selection and endpoint-gap predicate
+availability still need proofs. The counted reader rule now accepts a
+nonconstant but iteration-invariant original condition when its value is
+available before the loop; a condition recomputed from the loop induction
+remains unresolved. [The Phase A contract](frontier-synch-program-analysis.md) records these
+limits and the LLVM/MLIR replacement audit.

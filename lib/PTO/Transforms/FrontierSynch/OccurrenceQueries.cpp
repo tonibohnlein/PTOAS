@@ -33,15 +33,25 @@ const Region *findOwner(const Region &region, std::size_t owner) {
   }
   return nullptr;
 }
-bool mandatoryUse(const Region &region, std::size_t operation) {
+void collectMandatoryUses(const Region &region, std::set<std::size_t> &operations) {
   if (region.kind == Region::Operation) {
-    return region.operation == operation;
+    operations.insert(region.operation);
+    return;
   }
   if (region.kind == Region::Choice || region.kind == Region::While || region.kind == Region::For) {
-    return false;
+    return;
   }
-  return llvm::any_of(region.children,
-                      [&](const Region &child) { return mandatoryUse(child, operation); });
+  for (const auto &child : region.children) {
+    collectMandatoryUses(child, operations);
+  }
+}
+void indexOwners(const Region &region, std::map<std::size_t, const Region *> &owners) {
+  if (region.kind != Region::Operation && region.originalOwner != NoControlId) {
+    owners.emplace(region.originalOwner, &region);
+  }
+  for (const auto &child : region.children) {
+    indexOwners(child, owners);
+  }
 }
 bool separated(const PhysicalAddressRelation &relation) {
   const auto size = relation.memory->allocateSize;
@@ -73,7 +83,24 @@ struct OccurrenceQueries::Impl {
   std::vector<bool> reachable;
   std::vector<std::vector<std::size_t>> predecessors, components;
   std::vector<std::size_t> membership;
+  std::vector<std::vector<std::size_t>> relationUses;
+  std::map<std::size_t, const Region *> owners;
+  mutable std::map<std::size_t, std::set<std::size_t>> mandatoryByOwner;
   explicit Impl(const OriginalStructure &original) : control(detail::buildControlGraph(original)) {
+    relationUses.resize(original.physicalAddresses.size());
+    indexOwners(original.body, owners);
+    for (std::size_t operation = 0; operation < original.operations.size(); ++operation) {
+      for (const auto &access : original.operations[operation].accesses) {
+        if (access.physicalRelation >= relationUses.size()) {
+          continue;
+        }
+        auto &uses = relationUses[access.physicalRelation];
+        const bool newOperation = uses.empty() || uses.back() != operation;
+        if (newOperation) {
+          uses.push_back(operation);
+        }
+      }
+    }
     reachable = detail::reachableSites(control);
     predecessors.resize(control.sites.size());
     for (std::size_t source = 0; source < control.sites.size(); ++source) {
@@ -95,8 +122,13 @@ OccurrenceQueries::OccurrenceQueries(const OriginalStructure &original)
     : original(original), impl(std::make_unique<Impl>(original)) {}
 OccurrenceQueries::~OccurrenceQueries() = default;
 
-PhysicalBankCorrespondence OccurrenceQueries::bank(const PhysicalAddressRelation &relation) const {
+PhysicalBankCorrespondence OccurrenceQueries::bank(std::size_t relationId) const {
   PhysicalBankCorrespondence result;
+  if (relationId >= original.physicalAddresses.size()) {
+    result.reason = "invalid physical address relation";
+    return result;
+  }
+  const auto &relation = original.physicalAddresses[relationId];
   result.owner = relation.owner;
   result.memory = relation.memory;
   result.reason = "bank relation lacks a qualified physical permutation";
@@ -104,23 +136,25 @@ PhysicalBankCorrespondence OccurrenceQueries::bank(const PhysicalAddressRelation
       relation.memory->scope == AddressSpace::Zero || !separated(relation)) {
     return result;
   }
-  const auto *owner = findOwner(original.body, relation.owner);
+  const auto foundOwner = impl->owners.find(relation.owner);
+  const auto *owner = foundOwner == impl->owners.end() ? nullptr : foundOwner->second;
   if (!owner || owner->kind != Region::For || !owner->qualifiedCounted ||
       owner->children.size() != 1) {
     return result;
   }
-  for (std::size_t i = 0; i < original.operations.size(); ++i) {
-    const auto *instruction = original.operations[i].instruction;
-    const auto uses = llvm::is_contained(instruction->useVec, relation.memory) ||
-                      llvm::is_contained(instruction->defVec, relation.memory);
-    if (uses) {
-      if (!mandatoryUse(owner->children.front(), i)) {
-        result.participatingOperations.clear();
-        result.reason = "bank use is not proved to participate in every visit";
-        return result;
-      }
-      result.participatingOperations.push_back(i);
+  auto mandatory = impl->mandatoryByOwner.find(relation.owner);
+  if (mandatory == impl->mandatoryByOwner.end()) {
+    std::set<std::size_t> uses;
+    collectMandatoryUses(owner->children.front(), uses);
+    mandatory = impl->mandatoryByOwner.emplace(relation.owner, std::move(uses)).first;
+  }
+  for (auto operation : impl->relationUses[relationId]) {
+    if (!mandatory->second.count(operation)) {
+      result.participatingOperations.clear();
+      result.reason = "bank use is not proved to participate in every visit";
+      return result;
     }
+    result.participatingOperations.push_back(operation);
   }
   if (result.participatingOperations.empty()) {
     result.reason = "no original access uses the physical selector";
