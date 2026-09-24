@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_FRONTIERSYNCH_ORIGINALLIFETIMES_H
 #define PTO_TRANSFORMS_FRONTIERSYNCH_ORIGINALLIFETIMES_H
 #include "PTO/Transforms/FrontierSynch/OriginalStructure.h"
+#include "PTO/Transforms/FrontierSynch/FactoredProvenance.h"
 #include <memory>
 
 namespace mlir::pto::frontiersynch {
@@ -126,6 +127,9 @@ public:
     bool complete() const;
     const std::string& reason() const;
     const OriginalLifetimeStats& stats() const;
+    // Qualified fixed-use expression service. An incomplete answer leaves the
+    // conservative marginal requirements intact.
+    const FactoredUseResult& factored(std::size_t cell) const;
     StorageLifecycle lifecycleAt(std::size_t operation, std::size_t cell) const;
     const std::vector<OriginalRequirement>& requirementsAt(std::size_t operation) const;
     const std::vector<SourceSubscription>& subscriptionsAt(std::size_t operation) const;

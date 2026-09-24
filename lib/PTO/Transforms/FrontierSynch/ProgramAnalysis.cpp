@@ -409,6 +409,7 @@ const InterpretedRequirement &ProgramAnalysis::interpretAt(std::size_t target, s
   answer.firstConflict = firstConflict(*answer.decoded);
   answer.lastRelevantUse = lastRelevantUse(*answer.decoded);
   answer.mayAlternativeSources = &alternativeSourcesFor(*answer.decoded);
+  answer.factoredUse = &storage.factored(relation.cell);
   // The origin group is a may-set. D1 path guards and the possible absence of
   // an incoming full writer remain explicit in targetUse and are not inferred
   // from this vector's cardinality.

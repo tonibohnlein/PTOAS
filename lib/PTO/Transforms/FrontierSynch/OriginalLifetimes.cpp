@@ -106,6 +106,7 @@ struct OriginalLifetimes::Impl {
         std::vector<bool> noFullWriter;
     };
     std::vector<CellInfo> cells;
+    mutable std::map<std::size_t, std::unique_ptr<FactoredProvenance>> factoredByCell;
     using EffectKey = std::tuple<std::size_t, std::size_t, bool>;
     std::map<EffectKey, std::vector<std::size_t>> effectsByRole;
     std::vector<std::vector<OriginalRequirement>> byDeadline;
@@ -550,6 +551,15 @@ OriginalLifetimes::~OriginalLifetimes() = default;
 bool OriginalLifetimes::complete() const { return impl->ready; }
 const std::string& OriginalLifetimes::reason() const { return impl->error; }
 const OriginalLifetimeStats& OriginalLifetimes::stats() const { return impl->work; }
+const FactoredUseResult& OriginalLifetimes::factored(std::size_t cell) const
+{
+    auto found = impl->factoredByCell.find(cell);
+    if (found == impl->factoredByCell.end()) {
+        found = impl->factoredByCell.emplace(
+            cell, std::make_unique<FactoredProvenance>(impl->original, cell)).first;
+    }
+    return found->second->get();
+}
 const std::vector<OriginalRequirement>& OriginalLifetimes::requirementsAt(std::size_t operation) const
 {
     static const std::vector<OriginalRequirement> empty;

@@ -95,6 +95,9 @@ struct InterpretedRequirement {
   OriginalBoundaryResult firstConflict, lastRelevantUse;
   const std::vector<StorageOrigin> *mayAlternativeSources = nullptr;
   bool alternativeGuardsQualified = false;
+  // Shared conditional original-use expression. Acyclic formation alone is
+  // not an exact occurrence or executable endpoint qualification.
+  const FactoredUseResult *factoredUse = nullptr;
 };
 
 // Owns the immutable original structure and its construction-facing query services.
